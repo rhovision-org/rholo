@@ -10,7 +10,7 @@
 
 We ported a consensus node from Scala to Rust and inverted the usual relationship between a port and its
 reference. The reference implementation is not the oracle: the oracle is a register of
-<!-- counts:laws -->79 laws<!-- counts:end -->, machine-checked in Lean 4 and Coq, from which conformance
+<!-- counts:laws -->80 laws<!-- counts:end -->, machine-checked in Lean 4 and Coq, from which conformance
 corpora are **emitted** and run 1:1 through the node. The reference's surviving contribution is not truth
 but *vectors* — a 165-file differential corpus of its own contracts. Around this inversion sits a wider
 assurance apparatus: an authored findings register whose rows close only when the bad state is no longer
@@ -115,7 +115,7 @@ Documentation drift is treated as a defect class, not a documentation problem. T
 register total must mark it —
 
 ```
-... the register holds <!-- counts:laws -->79 laws<!-- counts:end --> ...
+... the register holds <!-- counts:laws -->80 laws<!-- counts:end --> ...
 ```
 
 — and [`tools/emit-lean-counts.sh`](../../../tools/emit-lean-counts.sh) rewrites every marked span from

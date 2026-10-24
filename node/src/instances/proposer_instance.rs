@@ -31,6 +31,8 @@ use rchain_casper::state::ProposerState;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
 use rchain_shared::log::{Log, LogSource};
 
+use crate::resources::ResourceGuard;
+
 /// Log one propose outcome. Routine outcomes (no new deploys, not bonded, a propose already in
 /// flight) are `debug`; every outcome that means *a block was expected and was not produced* is
 /// louder, so a stalled proposer cannot hide behind a serving node. A `BugError` is an internal
@@ -54,6 +56,12 @@ fn log_propose_result(log: &Arc<dyn Log>, result: &(ProposeResult, Option<BlockM
                 &format!(
                     "propose failed with an internal error: {reason} — no block was produced, so \
                      the chain will not advance until this is fixed"
+                ),
+            ),
+            ProposeStatus::ResourcePressure(state) => log.warn(
+                source,
+                &format!(
+                    "propose withheld: the node is {state} and is not producing (resource fallback,                      unit C)"
                 ),
             ),
             status @ (ProposeStatus::TooFarAheadOfLastFinalized
@@ -92,6 +100,7 @@ pub fn create(
     propose_requests_tx: mpsc::Sender<(ProposeSource, oneshot::Sender<ProposerResult>)>,
     proposer: Proposer,
     state: Arc<tokio::sync::Mutex<ProposerState>>,
+    resources: Arc<ResourceGuard>,
     log: Arc<dyn Log>,
 ) -> impl tokio_stream::Stream<Item = (ProposeResult, Option<BlockMessage>)> + Send + 'static {
     create_with_retry(
@@ -99,6 +108,7 @@ pub fn create(
         propose_requests_tx,
         proposer,
         state,
+        resources,
         log,
         NOT_DUE_RETRY,
     )
@@ -109,6 +119,7 @@ fn create_with_retry(
     propose_requests_tx: mpsc::Sender<(ProposeSource, oneshot::Sender<ProposerResult>)>,
     proposer: Proposer,
     state: Arc<tokio::sync::Mutex<ProposerState>>,
+    resources: Arc<ResourceGuard>,
     log: Arc<dyn Log>,
     not_due_retry: Duration,
 ) -> impl tokio_stream::Stream<Item = (ProposeResult, Option<BlockMessage>)> + Send + 'static {
@@ -126,6 +137,7 @@ fn create_with_retry(
             let state = state.clone();
             let tx = propose_requests_tx.clone();
             let proposer = proposer.clone();
+            let resources = resources.clone();
             let log = log.clone();
             async move {
                 let permit = match lock.clone().try_acquire_owned() {
@@ -136,6 +148,37 @@ fn create_with_retry(
                         return None;
                     }
                 };
+
+                // **The fallback gate** (unit C, B37): a node that has stopped producing does not
+                // call the proposer at all. The requester gets a refusal naming the state, and no
+                // retry is scheduled — the autopropose timer asks again, so recovery needs no restart.
+                let fallback = resources.snapshot().fallback;
+                if fallback.stops_production() {
+                    let result = (
+                        ProposeResult {
+                            propose_status: ProposeStatus::ResourcePressure(
+                                fallback.as_str().to_string(),
+                            ),
+                        },
+                        None,
+                    );
+                    chan::oneshot_send(
+                        propose_id_def,
+                        ProposerResult::Failure {
+                            status: result.0.propose_status.clone(),
+                            seq_number: 0,
+                            message: format!(
+                                "the node is {} ({}); it is not proposing",
+                                fallback.as_str(),
+                                resources.snapshot().fallback_reason
+                            ),
+                        },
+                    );
+                    log_propose_result(&log, &result);
+                    state.lock().await.latest_propose_result = Some(result.clone());
+                    drop(permit);
+                    return Some(result);
+                }
 
                 let (r_tx, r_rx) = oneshot::channel();
                 {
@@ -262,6 +305,14 @@ mod tests {
         )
     }
 
+    /// A guard whose fallback state is `Normal`: the propose gate is open.
+    fn healthy() -> Arc<ResourceGuard> {
+        ResourceGuard::inert(crate::resources::ResourceSnapshot {
+            fallback: crate::resources::ResourceState::Normal,
+            ..crate::resources::ResourceSnapshot::default()
+        })
+    }
+
     /// Send one request, drive the stream for `window`, and report how often the creator was asked.
     async fn asks_after_one_request(
         outcome: BlockCreatorResult,
@@ -275,6 +326,7 @@ mod tests {
             tx.clone(),
             proposer(outcome, calls.clone()),
             Arc::new(tokio::sync::Mutex::new(ProposerState::default())),
+            healthy(),
             Arc::new(rchain_shared::log::NopLog),
             retry,
         );
@@ -322,5 +374,62 @@ mod tests {
     #[test]
     fn the_retry_lands_past_the_stall_escape() {
         assert!(NOT_DUE_RETRY > rchain_casper::blocks::proposer::proposer::ROUND_STALL_ESCAPE);
+    }
+
+    /// **A node that has stopped producing does not call the proposer** (unit C, B37). The request is
+    /// answered with a `Failure` naming the state — not a silent `Empty` — and no "not due" retry is
+    /// scheduled: the timer asks again, so recovery needs no restart.
+    #[tokio::test]
+    async fn a_refused_propose_is_logged_and_not_retried() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = mpsc::channel(16);
+        let critical = ResourceGuard::inert(crate::resources::ResourceSnapshot {
+            fallback: crate::resources::ResourceState::Critical,
+            fallback_reason: "headroom below the critical floor",
+            ..crate::resources::ResourceSnapshot::default()
+        });
+        let stream = create_with_retry(
+            rx,
+            tx.clone(),
+            proposer(BlockCreatorResult::NoNewDeploys, calls.clone()),
+            Arc::new(tokio::sync::Mutex::new(ProposerState::default())),
+            critical,
+            Arc::new(rchain_shared::log::NopLog),
+            Duration::from_millis(50),
+        );
+        let (otx, orx) = oneshot::channel();
+        tx.send((ProposeSource::Automatic, otx)).await.unwrap();
+        let mut stream = Box::pin(stream);
+        let first = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("the request is answered")
+            .expect("one result");
+        assert!(matches!(
+            first.0.propose_status,
+            ProposeStatus::ResourcePressure(ref state) if state == "critical"
+        ));
+        assert!(first.1.is_none(), "no block is produced under pressure");
+
+        let refusal = orx.await.expect("the requester is answered");
+        assert!(
+            matches!(
+                refusal,
+                ProposerResult::Failure {
+                    status: ProposeStatus::ResourcePressure(_),
+                    ..
+                }
+            ),
+            "the caller learns why: {refusal:?}"
+        );
+
+        // The retry window passes with the proposer still never called, and no second result.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), stream.next())
+                .await
+                .is_err(),
+            "a withheld propose must not schedule the not-due retry"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }

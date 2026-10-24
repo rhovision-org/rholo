@@ -59,6 +59,7 @@ import Rchain.Stop
 import Rchain.Reset
 import Rchain.Genesis
 import Rchain.Vesting
+import Rchain.Publication
 import Rchain.Casper.Views
 import Rchain.Casper.Bonds
 import Rchain.Casper.Rounds

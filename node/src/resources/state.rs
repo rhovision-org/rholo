@@ -5,15 +5,18 @@
 //! sample is reported as `unavailable`, never as `normal`.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use rchain_shared::lock::Unpoison;
+
+use super::fallback::{Fallback, ResourceState};
 use super::{cgroup, colocation, disk, meminfo};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceSnapshot {
-    /// `normal` when the host facts were read; `unavailable` when the memory facts could not be. The
-    /// pressure states (`throttled`/`critical`) arrive with unit C.
+    /// The **raw read**: `normal` when the host facts were read, `unavailable` when the memory facts
+    /// could not be. The pressure state machine's word is [`Self::fallback`].
     pub state: &'static str,
     pub mem_available_mb: u64,
     pub mem_total_mb: u64,
@@ -29,6 +32,14 @@ pub struct ResourceSnapshot {
     pub sampled_at_ms: u64,
     /// Which readers contributed, e.g. `meminfo+cgroup+disk`.
     pub source: String,
+    /// **The fallback state** (unit C): `normal`, `throttled`, `critical`, or `unavailable` when the
+    /// sample is stale or unreadable. The hysteresis lives in [`Fallback`]; the watchdog writes the
+    /// resulting word and reason here beside the sample that produced them.
+    pub fallback: ResourceState,
+    /// Why the fallback state is what it is, in a stable phrase.
+    pub fallback_reason: &'static str,
+    /// When the fallback state last changed, in milliseconds since the Unix epoch.
+    pub fallback_since_ms: u64,
 }
 
 impl Default for ResourceSnapshot {
@@ -46,6 +57,9 @@ impl Default for ResourceSnapshot {
             rnode_processes: 0,
             sampled_at_ms: 0,
             source: "none".to_string(),
+            fallback: ResourceState::Unavailable,
+            fallback_reason: "no sample has been taken",
+            fallback_since_ms: 0,
         }
     }
 }
@@ -92,12 +106,36 @@ fn gather(data_dir: &Path) -> ResourceSnapshot {
         } else {
             source.join("+")
         },
+        // Overlaid by the watchdog's state machine; a bare `gather` has no trend to judge.
+        fallback: ResourceState::Unavailable,
+        fallback_reason: "the pressure state machine has not sampled yet",
+        fallback_since_ms: 0,
     }
 }
 
 struct Inner {
     snapshot: RwLock<ResourceSnapshot>,
+    /// The hysteresis tracker, owned by the watchdog thread. `Mutex` rather than `RwLock`: every access
+    /// mutates the streak.
+    fallback: Mutex<Fallback>,
     data_dir: PathBuf,
+}
+
+impl Inner {
+    /// Run the state machine over one sample and publish it with the sample it was derived from.
+    fn observe_and_store(&self, mut snapshot: ResourceSnapshot) {
+        let now = now_ms();
+        {
+            let mut fb = self.fallback.lock().unpoison();
+            fb.observe(&snapshot, now);
+            snapshot.fallback = fb.state();
+            snapshot.fallback_reason = fb.reason();
+            snapshot.fallback_since_ms = fb.since_ms();
+        }
+        if let Ok(mut current) = self.snapshot.write() {
+            *current = snapshot;
+        }
+    }
 }
 
 /// A snapshot that a dedicated thread refreshes; the thread stops once the guard is dropped.
@@ -109,8 +147,11 @@ impl ResourceGuard {
     pub fn start(data_dir: PathBuf, interval: Duration) -> Result<Arc<Self>, String> {
         let inner = Arc::new(Inner {
             snapshot: RwLock::new(gather(&data_dir)),
+            fallback: Mutex::new(Fallback::default()),
             data_dir,
         });
+        // The first sample establishes the state; the loop keeps it current.
+        inner.observe_and_store(gather(&inner.data_dir));
         let weak = Arc::downgrade(&inner);
         std::thread::Builder::new()
             .name("resource-watchdog".to_string())
@@ -118,10 +159,7 @@ impl ResourceGuard {
                 let Some(inner) = weak.upgrade() else {
                     break;
                 };
-                let snapshot = gather(&inner.data_dir);
-                if let Ok(mut current) = inner.snapshot.write() {
-                    *current = snapshot;
-                }
+                inner.observe_and_store(gather(&inner.data_dir));
                 drop(inner);
                 std::thread::sleep(interval);
             })
@@ -134,6 +172,7 @@ impl ResourceGuard {
         Arc::new(ResourceGuard {
             inner: Arc::new(Inner {
                 snapshot: RwLock::new(snapshot),
+                fallback: Mutex::new(Fallback::default()),
                 data_dir: PathBuf::new(),
             }),
         })
@@ -149,6 +188,26 @@ impl ResourceGuard {
 
     pub fn sample_now(&self) -> ResourceSnapshot {
         gather(&self.inner.data_dir)
+    }
+
+    /// **The operator's resume** (unit C): a fresh sample is taken and a latched pressure state is
+    /// cleared **only if that sample is actually clear**. It cannot override live pressure: a pressured
+    /// node answers with its measured state. Returns the resulting state.
+    pub fn resume(&self) -> ResourceState {
+        let mut snapshot = gather(&self.inner.data_dir);
+        let now = now_ms();
+        let state = {
+            let mut fb = self.inner.fallback.lock().unpoison();
+            let state = fb.resume(&snapshot, now);
+            snapshot.fallback = fb.state();
+            snapshot.fallback_reason = fb.reason();
+            snapshot.fallback_since_ms = fb.since_ms();
+            state
+        };
+        if let Ok(mut current) = self.inner.snapshot.write() {
+            *current = snapshot;
+        }
+        state
     }
 }
 
@@ -173,6 +232,7 @@ mod tests {
     fn an_inert_guard_returns_its_snapshot() {
         let snapshot = ResourceSnapshot {
             state: "normal",
+            fallback: ResourceState::Normal,
             mem_available_mb: 512,
             source: "test".to_string(),
             ..Default::default()

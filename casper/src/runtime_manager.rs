@@ -575,6 +575,16 @@ impl RuntimeManager {
         &self.history_repo
     }
 
+    /// Move `CURRENT_ROOT` to `post_state` if a checkpoint recorded it (law 80, B40).
+    ///
+    /// This is the **acceptance** half of the split: `RSpace::create_checkpoint` records a candidate
+    /// root as known, and this publishes it once the block carrying it is in the DAG. `Ok(false)`
+    /// means the store does not know the root, so it is not publishable — never write a pointer to a
+    /// state no checkpoint produced.
+    pub async fn publish_accepted_root(&self, post_state: Blake2b256Hash) -> Result<bool, String> {
+        self.history_repo.publish_if_known(post_state).await
+    }
+
     pub fn get_mergeable_store(&self) -> &MergeableStore {
         &self.mergeable_store
     }

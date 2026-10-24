@@ -29,4 +29,10 @@ pub trait AdminWebApi: Send + Sync {
     /// the shards whose clear *failed*, which is the case an operator has to know about — a clear that
     /// did not reach the store must not read as a resume.
     async fn resume_autopropose(&self) -> Result<String, BlockApiException>;
+
+    /// **The resource-fallback resume** (unit C, B37): take a fresh sample and clear a latched
+    /// `throttled`/`critical`/`unavailable` state **only if that sample is actually clear**. Returns
+    /// the resulting state's word; anything but `normal` means the node is still pressured and the
+    /// operator's request did not override it.
+    async fn resume_resource_fallback(&self) -> Result<String, BlockApiException>;
 }

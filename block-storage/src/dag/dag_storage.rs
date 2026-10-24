@@ -326,6 +326,20 @@ pub trait BlockDagStorage: Send + Sync {
         Err("this DAG storage cannot rewind (no `drop_above` impl)".to_string())
     }
 
+    /// **Remove derived-index rows that point at a block this DAG does not hold** (B39, HAZOP
+    /// F-U17-11): the deploy index and the deployer index, returning how many rows each lost.
+    ///
+    /// The repair's subject is the **surviving block set**, not the list a particular rewind happened
+    /// to drop. A crash between dropping metadata and cleaning the indexes leaves rows pointing at
+    /// blocks that are gone; a later rewind that drops nothing must still remove them, and so must
+    /// boot on an upgraded store. The rule is idempotent: a second call finds nothing to remove.
+    ///
+    /// The default answers `(0, 0)`, which is honest for a backend that keeps no derived indexes —
+    /// unlike the refusing defaults above, there is nothing here that a no-op could leave believed.
+    async fn repair_derived_indexes(&self) -> Result<(usize, usize), String> {
+        Ok((0, 0))
+    }
+
     /// **Record that this node is rewinding to `marker.anchor`, and that it has finished** (see
     /// [`ResetMarker`]) — the write that lets a restart repair a reset that crashed half-way.
     ///

@@ -83,9 +83,9 @@ pub fn to_public_status(
         propose_on_deploy: caps.propose_on_deploy,
         manual_propose: caps.manual_propose,
         dev_mode: caps.dev_mode,
-        degraded: resource.state.to_string(),
-        // Admission is not wired yet (unit B); the field is the contract a pressure state will flip.
-        accepts_deploys: true,
+        degraded: resource.fallback.as_str().to_string(),
+        // The contract, now backed by the state machine: only `normal` accepts new work.
+        accepts_deploys: !resource.fallback.refuses_ingress(),
     }
 }
 
@@ -155,6 +155,9 @@ pub fn to_operator_status(
         }),
         resources: ResourceStatusDto {
             state: resource.state.to_string(),
+            fallback_state: resource.fallback.as_str().to_string(),
+            fallback_reason: resource.fallback_reason.to_string(),
+            fallback_since_ms: resource.fallback_since_ms,
             mem_available_mb: resource.mem_available_mb,
             mem_total_mb: resource.mem_total_mb,
             cgroup_version: resource.cgroup_version.to_string(),
@@ -290,11 +293,53 @@ pub fn to_data_at_name_response(dbs: &[DataWithBlockInfo], length: i32) -> DataA
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resources::ResourceState;
     use rchain_casper::api::block_api::HaltStatus;
     use rchain_models::ast::Expr;
     use rchain_models::casper::protocol::deploy_service::{
         BondInfo, Status, VersionInfo as CasperVersionInfo,
     };
+
+    /// **The public contract follows the fallback state** (unit C, B38): `degraded` is the state
+    /// machine's word, and `acceptsDeploys` is true only in `normal`. A throttled or critical node must
+    /// not advertise that it will take work.
+    #[test]
+    fn accepts_deploys_is_false_under_pressure() {
+        let status = Status {
+            version: CasperVersionInfo {
+                api: "1".to_string(),
+                node: "n".to_string(),
+            },
+            address: "a".to_string(),
+            network_id: "root".to_string(),
+            shard_id: "root".to_string(),
+            peers: 0,
+            nodes: 0,
+            min_phlo_price: 0,
+            latest_block_number: 0,
+        };
+        let caps = Capabilities {
+            autopropose: false,
+            propose_on_deploy: false,
+            manual_propose: false,
+            admin_http: false,
+            dev_mode: false,
+        };
+        for (state, word, accepts) in [
+            (ResourceState::Normal, "normal", true),
+            (ResourceState::Throttled, "throttled", false),
+            (ResourceState::Critical, "critical", false),
+            (ResourceState::Unavailable, "unavailable", false),
+        ] {
+            let snapshot = ResourceSnapshot {
+                fallback: state,
+                ..ResourceSnapshot::default()
+            };
+            let public = to_public_status(&status, &caps, &snapshot);
+            assert_eq!(public.degraded, word);
+            assert_eq!(public.accepts_deploys, accepts, "{word}");
+        }
+    }
 
     fn light_block_info() -> LightBlockInfo {
         LightBlockInfo {

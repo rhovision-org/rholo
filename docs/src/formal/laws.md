@@ -11,9 +11,9 @@ saying **what it is about**.
 > carry a part of it). It counts *clauses* rather than laws and separates **`proved-tied`** (proved *and*
 > tied to the node by a conformance corpus) from **`proved-model`** (proved about a model a human keeps
 > in sync); the prose on this page is the narrative reading of the same rows, and where the two
-> disagree, the register is right. Its total is **<!-- counts:proved-laws -->72<!-- counts:end --> of
-> <!-- counts:laws -->79 laws<!-- counts:end --> proved at all — <!-- counts:proved-tied-laws -->19<!-- counts:end --> tied to the node by a corpus,
-> <!-- counts:proved-model-laws -->55<!-- counts:end --> over the model — with two more laws proved but *vacuous* (their statements restate their
+> disagree, the register is right. Its total is **<!-- counts:proved-laws -->73<!-- counts:end --> of
+> <!-- counts:laws -->80 laws<!-- counts:end --> proved at all — <!-- counts:proved-tied-laws -->19<!-- counts:end --> tied to the node by a corpus,
+> <!-- counts:proved-model-laws -->56<!-- counts:end --> over the model — with two more laws proved but *vacuous* (their statements restate their
 > own definitions, and the register has a word for that).
 
 ## The set, and what each part of it is about

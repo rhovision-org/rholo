@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn a_pressured_node_refuses_grpc_deploys_with_resource_exhausted() {
         use crate::resources::admission::AdmissionPolicy;
-        use crate::resources::{PressureGate, ResourceGuard, ResourceSnapshot};
+        use crate::resources::{PressureGate, ResourceGuard, ResourceSnapshot, ResourceState};
 
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -271,6 +271,7 @@ mod tests {
             .unwrap_or(0);
         let snapshot = |available_mb: u64| ResourceSnapshot {
             state: "normal",
+            fallback: ResourceState::Normal,
             mem_available_mb: available_mb,
             mem_total_mb: 8_192,
             sampled_at_ms: now_ms,

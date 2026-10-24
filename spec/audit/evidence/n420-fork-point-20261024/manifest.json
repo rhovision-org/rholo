@@ -1,0 +1,15 @@
+{
+  "boundary": "finite devnet witness; no universal safety theorem",
+  "source_dev_sha": "63b73d2c5c186410ab0c58bcbc5f75b54575cce8",
+  "image": "sha256:16ea238f769d25fb6d74ecb635892bd6b8ef35632b31ec8e5c4d830bd8fe9bbf",
+  "observed_date": "2026-10-24",
+  "files": {
+    "README.md": "5b4fc6cb989541b0ae0d72f7821b063c1a5cbcda118bc41ba145ab5b9936d985",
+    "fork-point.json": "38f2a41dd6590745dea2a6386a582966d8d7589184744f8d54db05d4eb697a6d"
+  },
+  "non_claims": [
+    "one four-validator devnet, one partition, one merge; not a universal safety theorem",
+    "the live 840->841 replay remains #421/#429's",
+    "the merge's own pre-state is the merged state of its parents; the negative control is the common base"
+  ]
+}

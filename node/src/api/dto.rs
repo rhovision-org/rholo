@@ -347,8 +347,15 @@ pub struct OperatorStatus {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceStatusDto {
-    /// `normal` | `unavailable` (A1); `throttled`/`critical` arrive with unit C.
+    /// The **raw read**: `normal` | `unavailable`.
     pub state: String,
+    /// The fallback state machine's word (unit C): `normal` | `throttled` | `critical` |
+    /// `unavailable`.
+    pub fallback_state: String,
+    /// Why the fallback state is what it is, in a stable phrase.
+    pub fallback_reason: String,
+    /// When the fallback state last changed (ms since the Unix epoch).
+    pub fallback_since_ms: u64,
     pub mem_available_mb: u64,
     pub mem_total_mb: u64,
     /// `v1` | `v2` | `unavailable`.

@@ -225,6 +225,8 @@ mod tests {
     };
     use std::collections::BTreeMap;
 
+    use crate::resources::{ResourceSnapshot, ResourceState};
+
     /// A block API that answers from its fields and records what it was asked — the `StubBlockApi`
     /// pattern `deploy_grpc_service_v1.rs` and `tonic.rs`'s tests use. The methods this file never
     /// calls are `unreachable!`: a stub that returns a plausible value there would hide a call the
@@ -497,6 +499,32 @@ mod tests {
     /// test that wants to exercise a real drip names somebody else.
     fn faucet_target() -> String {
         key_and_address().1
+    }
+
+    /// **A node in `Critical` attests nothing, and the stub is never asked** (unit C, B37).
+    #[tokio::test]
+    async fn a_resource_refusal_attests_nothing() {
+        let critical = ResourceGuard::inert(ResourceSnapshot {
+            fallback: ResourceState::Critical,
+            fallback_reason: "headroom below the critical floor",
+            ..ResourceSnapshot::default()
+        });
+        let api = WebApiImpl::new(
+            Arc::new(StubBlockApi::default()),
+            Arc::new(StubTransactionApi),
+            None,
+            "root".to_string(),
+            critical,
+        );
+        let err = api
+            .finality_attestation(&"00".repeat(16))
+            .await
+            .expect_err("a critical node must not attest");
+        assert!(
+            err.0.contains("critical") && err.0.contains("not attesting"),
+            "the refusal names the state: {}",
+            err.0
+        );
     }
 
     fn api(block_api: StubBlockApi, deployer_key: Option<PrivateKey>) -> WebApiImpl {
@@ -1364,6 +1392,17 @@ impl WebApi for WebApiImpl {
         &self,
         nonce: &str,
     ) -> Result<FinalityAttestation, BlockApiException> {
+        // **A node that has stopped producing does not attest** (unit C, B37). The refusal is before
+        // the signature exists — the property that matters, because a caller can publish what it is
+        // given, so a claim this node is not entitled to make must not be created even briefly.
+        let snapshot = self.resources.snapshot();
+        if snapshot.fallback.stops_production() {
+            return Err(BlockApiException(format!(
+                "the node is {} ({}); it is not attesting",
+                snapshot.fallback.as_str(),
+                snapshot.fallback_reason
+            )));
+        }
         self.block_api
             .finality_attestation(nonce)
             .await

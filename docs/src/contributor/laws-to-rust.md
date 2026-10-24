@@ -66,7 +66,7 @@ cross-cutting "no silent partiality / no `unsafe`" discipline; it fails the buil
 ---
 
 **The table stops at law 29, and that is this page's scope rather than the register's.** The register is
-at <!-- counts:laws-entries -->79 laws and 103 entries<!-- counts:end --> (`spec/laws.tsv`, emitted from `spec/Rchain/Laws.lean`); this page is a
+at <!-- counts:laws-entries -->80 laws and 104 entries<!-- counts:end --> (`spec/laws.tsv`, emitted from `spec/Rchain/Laws.lean`); this page is a
 hand-written narrative for the first twenty-nine, which are the ones about rholang evaluation and the
 storage layer it rests on. Extending it through 30–71 — the scheduler's validated-speculation phase, the
 Proof-of-Stake and finality rows, the wire and session laws, and the distributed-system set — is its own

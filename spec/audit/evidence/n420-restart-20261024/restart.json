@@ -1,0 +1,23 @@
+{
+  "boundary": "finite restart/replay witness on a below-minimum host; not a supported-tier claim",
+  "container": "n420soak-validator-1",
+  "anchor_block": "c7fa52d099cbec6db09624f35d0cb42bff65b6c4a445d8e6645c2e2252223230",
+  "anchor_height": 1196,
+  "replay_seconds": 11.560377597808838,
+  "before": {
+    "oom_killed": false,
+    "restarts": 0
+  },
+  "after": {
+    "oom_killed": false,
+    "restarts": 0
+  },
+  "recovered_height": 1197,
+  "anchor_still_present": true,
+  "fallback_state": "normal",
+  "manual_restart": true,
+  "non_claims": [
+    "one node, one SIGKILL; not a universal recovery theorem",
+    "restarted with the operator's --allow-under-minimum on a below-minimum host"
+  ]
+}

@@ -87,6 +87,9 @@ const OCAPN_DIAL_RATE_LIMIT_PER_SEC: u64 = 2;
 /// script cannot hammer the node's own actuator, the same reason the sibling admin routes have one.
 const RESUME_AUTOPROPOSE_RATE_LIMIT_PER_SEC: u64 = 1;
 
+/// The resource-fallback resume is an operator action like the autopropose resume: one per second.
+const RESUME_RESOURCE_RATE_LIMIT_PER_SEC: u64 = 1;
+
 /// The subject an ingress bound uses when the request carries no connection information.
 ///
 /// That happens when a router is called directly rather than served — which is what the tests do. One
@@ -1059,7 +1062,7 @@ pub const OPENAPI_JSON: &str = r##"{
           "proposeOnDeploy": { "type": "boolean", "description": "Propose immediately after a deploy is accepted" },
           "manualPropose": { "type": "boolean", "description": "Blocks only by an explicit propose" },
           "devMode": { "type": "boolean", "description": "Dev mode is on" },
-          "degraded": { "type": "string", "description": "The sampled resource state: normal while the host facts are readable, unavailable when they are not. A word, not a number; the pressure states arrive with the fallback-state unit" },
+          "degraded": { "type": "string", "description": "The pressure fallback state: normal | throttled | critical | unavailable (a stale or unreadable sample reports unavailable). A word, not a number; the numbers are on the operator surface" },
           "acceptsDeploys": { "type": "boolean", "description": "Whether the node is accepting deploys right now. True until the admission/fallback units land" }
         }
       },
@@ -1079,7 +1082,7 @@ pub const OPENAPI_JSON: &str = r##"{
           "proposeOnDeploy": { "type": "boolean", "description": "Propose immediately after a deploy is accepted" },
           "manualPropose": { "type": "boolean", "description": "Blocks only by an explicit propose" },
           "devMode": { "type": "boolean", "description": "Dev mode is on" },
-          "degraded": { "type": "string", "description": "The sampled resource state: normal while the host facts are readable, unavailable when they are not. A pressure state arrives with the fallback-state unit" },
+          "degraded": { "type": "string", "description": "The pressure fallback state: normal | throttled | critical | unavailable. A word, not a number; the numbers are on the operator surface" },
           "acceptsDeploys": { "type": "boolean", "description": "Whether the node is accepting deploys right now. True until the admission/fallback units land" },
           "adminHttp": { "type": "boolean", "description": "The admin HTTP surface is published" },
           "consecutiveSelfValidationFailures": { "type": "integer", "format": "int64", "description": "Self-validation failures the proposer has recorded in a row; cleared by a successful propose" },
@@ -1113,7 +1116,10 @@ pub const OPENAPI_JSON: &str = r##"{
         "type": "object",
         "description": "The sampled host-resource snapshot (A1), on the operator surface only. A reading with a source and an age, not a certificate: state=normal means the node did not see pressure at the sample, not that it is healthy",
         "properties": {
-          "state": { "type": "string", "description": "normal | unavailable (throttled/critical arrive with unit C)" },
+          "state": { "type": "string", "description": "The raw read: normal | unavailable" },
+          "fallbackState": { "type": "string", "description": "The pressure state machine: normal | throttled | critical | unavailable. Only normal accepts new deploy/explore work; critical also stops proposing and attesting" },
+          "fallbackReason": { "type": "string", "description": "Why the fallback state is what it is" },
+          "fallbackSinceMs": { "type": "integer", "format": "int64", "description": "When the fallback state last changed (ms since the Unix epoch)" },
           "memAvailableMb": { "type": "integer", "format": "int64" },
           "memTotalMb": { "type": "integer", "format": "int64" },
           "cgroupVersion": { "type": "string", "description": "v1 | v2 | unavailable" },
@@ -1433,6 +1439,30 @@ async fn admin_propose(State(state): State<AdminState>) -> Response {
 /// what the node does on the caller's word.
 async fn admin_resume_autopropose(State(state): State<AdminState>) -> Response {
     json_result(state.admin_web_api.resume_autopropose().await)
+}
+
+/// `POST /api/v1/resources/resume` — clear a latched resource fallback state (unit C, B37).
+///
+/// It takes a **fresh sample** and clears only when that sample is clear; a pressured node answers
+/// `409` with the measured state, so the actuator cannot override live pressure. It never touches the
+/// autopropose halt: that is an integrity decision, not a resource one.
+async fn admin_resume_resources(State(state): State<AdminState>) -> Response {
+    match state.admin_web_api.resume_resource_fallback().await {
+        Ok(word) if word == "normal" => (
+            StatusCode::OK,
+            Json(json!({ "state": word, "message": "resource fallback cleared" })),
+        )
+            .into_response(),
+        Ok(word) => (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "state": word,
+                "message": "the node is still under resource pressure; the resume did not override it"
+            })),
+        )
+            .into_response(),
+        Err(BlockApiException(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!(e))).into_response(),
+    }
 }
 
 /// **The ingress bound, keyed on the peer and applied before the body is decoded.**
@@ -1804,7 +1834,23 @@ pub fn admin_router(state: AdminState) -> Router {
                 "autopropose resume rate limit exceeded",
             ),
             peer_rate_limit,
-        ));
+        ))
+        // The resource resume has its own bucket: an operator clearing the two actuators must not
+        // spend one's allowance on the other.
+        .merge(
+            Router::new()
+                .route("/api/v1/resources/resume", post(admin_resume_resources))
+                .route_layer(middleware::from_fn_with_state(
+                    (
+                        Arc::new(KeyedRateLimiter::new(
+                            RESUME_RESOURCE_RATE_LIMIT_PER_SEC,
+                            MAX_TRACKED_PEERS,
+                        )),
+                        "resource resume rate limit exceeded",
+                    ),
+                    peer_rate_limit,
+                )),
+        );
 
     Router::new()
         .route("/api/propose", post(admin_propose))
@@ -1984,7 +2030,7 @@ mod tests {
         RhoDataResponse, VersionInfo,
     };
     use crate::diagnostics::scrape_data_builder::Configuration;
-    use crate::resources::{AdmissionPolicy, ResourceSnapshot};
+    use crate::resources::{AdmissionPolicy, ResourceSnapshot, ResourceState};
     use crate::web::transaction::TransactionResponse;
     use async_trait::async_trait;
     use axum::body::to_bytes;
@@ -2204,6 +2250,7 @@ mod tests {
     fn healthy_snapshot() -> ResourceSnapshot {
         ResourceSnapshot {
             state: "normal",
+            fallback: ResourceState::Normal,
             mem_available_mb: 4_096,
             mem_total_mb: 8_192,
             sampled_at_ms: std::time::SystemTime::now()
@@ -2693,6 +2740,10 @@ mod tests {
 
         async fn resume_autopropose(&self) -> Result<String, BlockApiException> {
             Ok("resumed".to_string())
+        }
+
+        async fn resume_resource_fallback(&self) -> Result<String, BlockApiException> {
+            Ok("normal".to_string())
         }
     }
 
@@ -3745,6 +3796,30 @@ mod tests {
             .await
             .expect("a response");
         assert_eq!(served.status(), StatusCode::OK, "the admin listener does");
+    }
+
+    /// **The resource-fallback resume is an admin actuator** (unit C, B37): mounted on the privileged
+    /// listener and answering the resulting state. The pressure semantics are the state machine's,
+    /// pinned in `resources::fallback`; this pins the route and its answer shape.
+    #[tokio::test]
+    async fn the_resource_resume_route_answers_the_state() {
+        use tower::ServiceExt;
+        let reply = admin_router(txn_state(None, false))
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/resources/resume")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["state"], "normal");
     }
 
     /// **And the delegations route moved with it** (W-N3-03): it answered any caller's question about

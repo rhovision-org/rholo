@@ -18,6 +18,7 @@ use rchain_block_storage::syntax::{
 use rchain_comm::peer_node::PeerNode;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_comm::transport::transport_layer::TransportLayer;
+use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::casper::protocol::casper_message::{
     BlockMessage, CasperMessage, FinalizedFringe,
 };
@@ -241,7 +242,17 @@ async fn create_store_broadcast_genesis(
 
     put_block(block_store, genesis_block.clone()).await?;
     put_approved_block(approved_store, genesis_fringe.clone()).await?;
+    let genesis_post = genesis_block.post_state_hash;
     insert_genesis(dag, genesis_block).await?;
+    // **The genesis block is accepted: publish its state** (law 80, B40). Its checkpoint recorded the
+    // root as known; without this the pointer would stay at the empty root until the first accepted
+    // block.
+    if let Err(e) = runtime_manager
+        .publish_accepted_root(Blake2b256Hash::from_byte_array(genesis_post.as_bytes()))
+        .await
+    {
+        log.warn(source, &format!("could not publish the genesis root: {e}"));
+    }
     comm_util
         .stream_to_peers(&FinalizedFringeSerde.mk_packet(&genesis_fringe), None)
         .await;
@@ -474,6 +485,86 @@ pub async fn apply<I: RSpaceImporter + Send + 'static, E: RSpaceExporter>(
             )?);
         } else {
             log.info(source, "Reconnecting to existing network...");
+        }
+    }
+
+    // **The derived-index audit, at every boot** (B39, HAZOP F-U17-11). It is independent of the reset
+    // marker: a store can carry stale rows from a crash on an older build, or from a rewind whose empty
+    // metadata drop skipped the cleanup. The repair is idempotent and derives the stale rows from the
+    // surviving block set. A failure is logged and the node runs — the rows make the proposer skip a
+    // pooled deploy (its replay guard reads the index), which is a defect to repair on the next boot,
+    // not a reason to refuse to serve a chain.
+    let audit_started = std::time::Instant::now();
+    match dag.repair_derived_indexes().await {
+        Ok((0, 0)) => {}
+        Ok((deploy_rows, deployer_rows)) => log.warn(
+            source,
+            &format!(
+                "boot index audit repaired {deploy_rows} deploy-index and {deployer_rows} \
+                 deployer-index row(s) that named a block this DAG does not hold (B39, F-U17-11; {} ms)",
+                audit_started.elapsed().as_millis()
+            ),
+        ),
+        Err(e) => log.warn(
+            source,
+            &format!(
+                "boot index audit could not run: {e}; stale derived-index rows may make the proposer \
+                 skip a pooled deploy until it succeeds"
+            ),
+        ),
+    }
+
+    // **Republish the latest accepted root** (law 80, B40, HAZOP F-U17-10). A block that was inserted
+    // before a crash left its checkpoint's root recorded as *known* and never published; the tip's
+    // post-state is an accepted state, so it is a legitimate `CURRENT_ROOT`. A root this store does
+    // not know is not published — the pointer is left where it was and the mismatch is logged.
+    {
+        let repr = dag.get_representation().await;
+        if let Some(tip) = repr.latest_fringe().iter().max_by_key(|m| m.height) {
+            let tip_hash = tip.id;
+            match block_store.get(&[tip_hash]).await {
+                Ok(blocks) => match blocks.into_iter().flatten().next() {
+                    Some(block) => {
+                        let root =
+                            Blake2b256Hash::from_byte_array(block.post_state_hash.as_bytes());
+                        match runtime_manager.publish_accepted_root(root).await {
+                            Ok(true) => log.info(
+                                source,
+                                &format!(
+                                    "republished CURRENT_ROOT at the latest accepted block {}",
+                                    tip_hash.to_hex()
+                                ),
+                            ),
+                            Ok(false) => log.warn(
+                                source,
+                                &format!(
+                                    "the latest accepted block {} names a root this store does not \
+                                     know; CURRENT_ROOT is left where it was",
+                                    tip_hash.to_hex()
+                                ),
+                            ),
+                            Err(e) => log.warn(
+                                source,
+                                &format!("could not republish CURRENT_ROOT: {e}"),
+                            ),
+                        }
+                    }
+                    None => log.warn(
+                        source,
+                        &format!(
+                            "the DAG's tip {} has no stored body; CURRENT_ROOT is left where it was",
+                            tip_hash.to_hex()
+                        ),
+                    ),
+                },
+                Err(e) => log.warn(
+                    source,
+                    &format!(
+                        "could not read the tip {} to republish CURRENT_ROOT: {e}",
+                        tip_hash.to_hex()
+                    ),
+                ),
+            }
         }
     }
 

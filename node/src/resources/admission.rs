@@ -14,6 +14,7 @@
 //! attestations, and does not change the public `degraded` word. It is one gate on the ingress,
 //! evaluated per request against the last sample.
 
+use super::fallback::ResourceState;
 use super::state::{ResourceGuard, ResourceSnapshot};
 
 /// The absolute floor: below 256 MiB of available memory there is no honest deploy to admit. This is
@@ -103,6 +104,44 @@ pub fn evaluate(
             ),
         };
     }
+
+    // **The fallback state is the primary gate** (unit C): a node that has latched Throttled or
+    // Critical refuses new work whatever a single sample says, and a stale or unreadable sample is
+    // its own reason rather than being folded into "unavailable".
+    match snapshot.fallback {
+        ResourceState::Normal => {}
+        ResourceState::Throttled => {
+            return AdmissionVerdict::Refuse {
+                reason: "resource state throttled",
+                detail: format!(
+                "{} ({} MiB available); new deploy and explore work is refused while the node is \
+                     throttled",
+                snapshot.fallback_reason,
+                effective_available_mb(snapshot)
+            ),
+            }
+        }
+        ResourceState::Critical => {
+            return AdmissionVerdict::Refuse {
+                reason: "resource state critical",
+                detail: format!(
+                    "{} ({} MiB available); the node has stopped producing and refuses new work",
+                    snapshot.fallback_reason,
+                    effective_available_mb(snapshot)
+                ),
+            }
+        }
+        ResourceState::Unavailable => {
+            return AdmissionVerdict::Refuse {
+                reason: "resource state unavailable",
+                detail: format!(
+                    "{}; admission refuses rather than treating an untrusted sample as healthy",
+                    snapshot.fallback_reason
+                ),
+            }
+        }
+    }
+
     let age_ms = now_ms.saturating_sub(snapshot.sampled_at_ms);
     if age_ms > policy.max_sample_age_ms {
         return AdmissionVerdict::Refuse {
@@ -158,6 +197,7 @@ mod tests {
     fn snapshot(available_mb: u64) -> ResourceSnapshot {
         ResourceSnapshot {
             state: "normal",
+            fallback: ResourceState::Normal,
             mem_available_mb: available_mb,
             mem_total_mb: 8_192,
             sampled_at_ms: 1_000,

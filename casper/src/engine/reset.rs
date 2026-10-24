@@ -100,9 +100,11 @@ pub async fn rewind_and_purge(
 ///   would throw those away. The marker is only telling the caller where to catch up from.
 ///
 /// **The repair is total over the record's effects** (law 72, `spec/Rchain/Durability.lean`): the
-/// completion is written only once the runtime root has moved, so a `Rewinding` a boot can find is one
-/// whose root may not have — and a guard that repaired only the two stores would hand a node to the
-/// catch-up walk with the runtime still rooted at the state the rewind dropped.
+/// completion is written only once every effect has returned — the rewind, the purge, the runtime root
+/// **and the derived-index cleanup** (B39, HAZOP F-U17-11). A `Rewinding` a boot can find is one whose
+/// root or indexes may not have moved, and a guard that repaired only the two stores would hand a node
+/// to the catch-up walk with the runtime still rooted at the state the rewind dropped, or with a deploy
+/// index still telling the proposer that a pooled deploy was already included.
 ///
 /// The marker is **not** cleared here. It is cleared when the node's frontier passes the anchor (the
 /// catch-up walk's own end), and that is the honest condition: until then, a crash must land back in
@@ -133,13 +135,19 @@ pub async fn resume_after_reset(
                 anchor_block.post_state_hash.as_bytes(),
             ))
             .await?;
+        // **The fourth effect, before the record says the stores agree** (B39). A crash that left the
+        // metadata drop applied and the index cleanup not is exactly the state this call repairs; it
+        // derives the stale rows from what survives, so it does not depend on this boot's rewind having
+        // dropped anything.
+        let (deploy_rows, deployer_rows) = dag.repair_derived_indexes().await?;
         log.warn(
             source,
             &format!(
                 "this node was rewinding to {} (height {}) when it stopped, part-way through the \
                  reset's durable effects: re-applied the rewind ({} block(s)), removed {purged} body(ies) \
-                 the DAG does not hold, and reset the runtime to the anchor's state — the three effects \
-                 the completion record brackets (law 72, #320, C274)",
+                 the DAG does not hold, reset the runtime to the anchor's state, and repaired \
+                 {deploy_rows} deploy-index and {deployer_rows} deployer-index row(s) — the four effects \
+                 the completion record brackets (law 72, #320, C274, B39)",
                 marker.anchor.to_hex(),
                 i64::from(marker.height),
                 dropped.len(),

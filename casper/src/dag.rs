@@ -403,17 +403,24 @@ impl BlockDagKeyValueStorage {
     /// rewind takes them whole. What this pass fixes is the *survivor* — the anchor, whose finalisers
     /// were the blocks just dropped.
     ///
+    /// **The derived indexes are repaired against what survives, not against what this call dropped**
+    /// (B39, HAZOP F-U17-11). `dropped` is only what *this* call removed: a crash that dropped metadata
+    /// and died before the cleanup leaves rows behind, and a later rewind that drops nothing — or a boot
+    /// with no rewind at all — must still remove them. A stale deploy-index row is not inert: the
+    /// proposer's replay guard (`casper/src/blocks/proposer/proposer.rs:697`) treats "in the DAG" as
+    /// "already included" and silently skips the pooled deploy. The repair is idempotent, so it runs on
+    /// every rewind rather than behind a "did the drop return anything" branch.
+    ///
     /// **What this does not drop, stated rather than implied.** The block *messages* live in
     /// `BlockStore`, which this type does not own, so the bodies stay on disk. `deployer_indexed_from`
     /// also stays as it is: its claim is "complete from this height **up to the tip**", and with the tip
-    /// now at the anchor that claim is still true of the shorter chain.
+    /// now at the anchor that claim is still true of the shorter chain. The deploy-pool accounting
+    /// (`pooled_by_deployer`, `pooled_term_bytes`) is not touched: the pool holds only *un-included*
+    /// deploys, and a deploy that was included had its share returned when it left the pool.
     pub async fn drop_above(&self, height: BlockHeight) -> Result<Vec<BlockHash>, String> {
         let _guard = self.lock.lock().await;
 
         let dropped = self.block_metadata_store.drop_above(height).await?;
-        if dropped.is_empty() {
-            return Ok(dropped);
-        }
 
         // Clear the survivours' orphaned marks (see the doc above). One pass over what the store now
         // holds: the fringes a surviving block *declares* are the names that are still resolvable, and
@@ -454,28 +461,73 @@ impl BlockDagKeyValueStorage {
         let rebuilt = Self::rebuild_representation(&self.block_metadata_store).await?;
         *self.representation.write().await = Arc::new(rebuilt);
 
-        let gone: BTreeSet<Vec<u8>> = dropped.iter().map(|h| h.as_bytes().to_vec()).collect();
+        let surviving_set: BTreeSet<Vec<u8>> =
+            surviving.iter().map(|h| h.as_bytes().to_vec()).collect();
+        let (deploy_rows, deployer_rows) = self.repair_derived_index_rows(&surviving_set).await?;
+        if deploy_rows + deployer_rows > 0 {
+            eprintln!(
+                "[rewind] repaired {} deploy-index and {} deployer-index row(s) that named a block \
+                 this DAG no longer holds",
+                deploy_rows, deployer_rows
+            );
+        }
+        Ok(dropped)
+    }
+
+    /// The hashes this DAG currently holds, as bytes — the survivor set both the rewind's orphan-mark
+    /// pass and its derived-index repair are judged against.
+    async fn surviving_block_hashes(&self) -> BTreeSet<Vec<u8>> {
+        self.block_metadata_store
+            .dag_set()
+            .await
+            .iter()
+            .map(|h| h.as_bytes().to_vec())
+            .collect()
+    }
+
+    /// Remove every derived-index row whose block is not in `surviving`, returning
+    /// `(deploy rows removed, deployer rows removed)`.
+    ///
+    /// Idempotent: a second call with the same survivor set removes nothing. It derives the stale rows
+    /// from the **survivors**, not from a dropped list, which is what lets it repair a state an earlier
+    /// crash left behind (`drop_above`'s early return was the shape that skipped this).
+    async fn repair_derived_index_rows(
+        &self,
+        surviving: &BTreeSet<Vec<u8>>,
+    ) -> Result<(usize, usize), String> {
         let deploys = self.deploy_index.to_map().await?;
         let stale: Vec<DeployId> = deploys
             .into_iter()
-            .filter(|(_, hash)| gone.contains(hash.as_bytes().as_slice()))
+            .filter(|(_, hash)| !surviving.contains(hash.as_bytes().as_slice()))
             .map(|(id, _)| id)
             .collect();
+        let deploy_rows = stale.len();
         if !stale.is_empty() {
             self.deploy_index.delete(&stale).await?;
         }
+        let mut deployer_rows = 0usize;
         if let Some(index) = &self.deployer_index {
             let entries = index.to_map().await?;
+            // The store carries the backfill cursor and its count beside the rows. They are not
+            // derived-index rows: the cursor's claim ("complete from this height up to the tip") is
+            // still true of a shorter chain after a rewind, and removing it would make the node
+            // re-backfill from scratch. The 8-byte values could never equal a 32-byte block hash, so
+            // filtering by value alone would already spare them — naming them says why.
             let stale: Vec<Vec<u8>> = entries
                 .into_iter()
-                .filter(|(_, value)| gone.contains(value))
+                .filter(|(key, value)| {
+                    key.as_slice() != DEPLOYER_INDEXED_FROM_KEY
+                        && key.as_slice() != DEPLOYER_INDEX_COUNT_KEY
+                        && !surviving.contains(value)
+                })
                 .map(|(key, _)| key)
                 .collect();
+            deployer_rows = stale.len();
             if !stale.is_empty() {
                 index.delete(&stale).await?;
             }
         }
-        Ok(dropped)
+        Ok((deploy_rows, deployer_rows))
     }
 
     /// Attach the deployer index. From here on every inserted block is indexed. A store that has
@@ -1040,6 +1092,15 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
     /// refused to rewind on exactly the node that needed it.
     async fn drop_above(&self, height: BlockHeight) -> Result<Vec<BlockHash>, String> {
         BlockDagKeyValueStorage::drop_above(self, height).await
+    }
+
+    /// **The forward, for the same reason as `drop_above`'s.** The boot guard and the reset bracket hold
+    /// the DAG as `&dyn BlockDagStorage`; the trait's default answers `(0, 0)` (honest for a backend
+    /// with no indexes), and without this forward a `dyn` caller would repair nothing on the one storage
+    /// that has rows to repair.
+    async fn repair_derived_indexes(&self) -> Result<(usize, usize), String> {
+        let surviving = self.surviving_block_hashes().await;
+        self.repair_derived_index_rows(&surviving).await
     }
 
     /// **The reset's record, from the storage that can keep one** (F-U5-01, register C274). Three
@@ -2123,6 +2184,129 @@ mod tests {
             0,
             "the included deploy's term bytes leave the budget with its row"
         );
+    }
+
+    /// **A rewind repairs the derived indexes against the surviving block set, not the dropped list**
+    /// (B39, HAZOP F-U17-11).
+    ///
+    /// A crash between the metadata drop and the index cleanup leaves a row naming a block the DAG no
+    /// longer holds. The row is not inert: the proposer's replay guard (`select_deploys`) reads
+    /// `lookup_by_deploy_id`, treats "in the DAG" as "already included", and silently skips the pooled
+    /// deploy. The repair must remove it even when the rewind itself drops nothing — which is the shape
+    /// the old early return missed.
+    ///
+    /// Falsifier: keep the early return and the second call removes nothing; the deploy stays
+    /// unselectable.
+    #[tokio::test]
+    async fn repair_removes_stale_entries_and_releases_the_pool_slot() {
+        let storage = build_storage_over_unshared(empty_metadata_store().await).await;
+        let deploy = deploy_by(0, 7);
+        storage.add_deploy(deploy.clone()).await.unwrap();
+        storage
+            .deploy_index
+            .put(&[(deploy.sig.clone(), hash(42))])
+            .await
+            .unwrap();
+        assert_eq!(
+            storage.lookup_by_deploy_id(&deploy.sig).await.unwrap(),
+            Some(hash(42)),
+            "the fixture is the row a crash after the metadata drop leaves"
+        );
+
+        let dropped = storage
+            .drop_above(BlockHeight::try_from(0).unwrap())
+            .await
+            .unwrap();
+        assert!(dropped.is_empty(), "nothing is above the anchor");
+        assert_eq!(
+            storage.lookup_by_deploy_id(&deploy.sig).await.unwrap(),
+            None,
+            "the stale row is gone, so the replay guard no longer skips the pooled deploy"
+        );
+        assert!(
+            storage
+                .pooled_deploys()
+                .await
+                .unwrap()
+                .contains_key(&deploy.sig),
+            "the deploy was never included, so its pool place is still its own"
+        );
+        assert_eq!(
+            storage.repair_derived_indexes().await.unwrap(),
+            (0, 0),
+            "the repair is idempotent"
+        );
+    }
+
+    /// **The crash the early return left behind**: metadata dropped directly (the pre-fix shape — the
+    /// derived cleanup never ran), so the index still names a block the DAG does not hold. The audit
+    /// removes it, which is what the reset bracket's `Rewinding` branch and the boot hook call.
+    #[tokio::test]
+    async fn a_crash_before_the_index_cleanup_is_repaired_by_the_audit() {
+        let storage = build_storage_over_unshared(empty_metadata_store().await).await;
+        let deploy = deploy_by(0, 11);
+        storage.add_deploy(deploy.clone()).await.unwrap();
+        let h = hash(3);
+        let processed = rchain_models::casper::protocol::casper_message::ProcessedDeploy {
+            deploy: deploy.clone(),
+            cost: rchain_models::casper::protocol::casper_message::PCost { cost: 0 },
+            deploy_log: vec![],
+            is_failed: false,
+            system_deploy_error: None,
+        };
+        let mut b = block(h);
+        b.state.deploys = vec![processed];
+        storage.insert(meta(h, &[], 3), b).await.unwrap();
+        assert_eq!(
+            storage.lookup_by_deploy_id(&deploy.sig).await.unwrap(),
+            Some(h)
+        );
+
+        // The crash window: the metadata drop ran, the index cleanup did not.
+        let dropped = storage
+            .block_metadata_store
+            .drop_above(BlockHeight::try_from(0).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(dropped, vec![h]);
+        assert_eq!(
+            storage.lookup_by_deploy_id(&deploy.sig).await.unwrap(),
+            Some(h),
+            "the stale row is the crash's residue"
+        );
+        assert_eq!(storage.repair_derived_indexes().await.unwrap(), (1, 0));
+        assert_eq!(
+            storage.lookup_by_deploy_id(&deploy.sig).await.unwrap(),
+            None,
+            "the audit repairs the row the crash left"
+        );
+    }
+
+    /// The audit's subject is the surviving set: a row for a block this DAG never held is removed, and
+    /// the deployer index is repaired by the same rule.
+    #[tokio::test]
+    async fn a_rewind_derives_cleanup_from_survivors_not_the_dropped_list() {
+        let deployer_index: Arc<dyn KeyValueTypedStore<Vec<u8>, Vec<u8>>> = Arc::new(
+            KeyValueTypedStoreCodec::new(in_memory(), Arc::new(BytesCodec), Arc::new(BytesCodec)),
+        );
+        let seed = deployer_index.clone();
+        let storage = build_storage_over_unshared(empty_metadata_store().await)
+            .await
+            .with_deployer_index(deployer_index)
+            .await
+            .expect("the deployer index attaches");
+        let deploy = deploy_by(1, 9);
+        storage
+            .deploy_index
+            .put(&[(deploy.sig.clone(), hash(77))])
+            .await
+            .unwrap();
+        seed.put(&[(vec![9u8], hash(77).as_bytes().to_vec())])
+            .await
+            .unwrap();
+
+        assert_eq!(storage.repair_derived_indexes().await.unwrap(), (1, 1));
+        assert_eq!(storage.repair_derived_indexes().await.unwrap(), (0, 0));
     }
 
     fn deploy_with_id(id: usize) -> SignedDeployData {

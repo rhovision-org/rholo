@@ -67,7 +67,7 @@ conservation and its withdrawal — the four the port did not implement when the
 48 is the fee consequence of a denied deploy, which the plan's Programme B opened as a row because it
 is a rule neither this port nor the Scala it was ported from implements, and 49 is the gas a matched
 deploy is charged — the first row about cost rather than state." -/
-def lawCeiling : Nat := 79
+def lawCeiling : Nat := 80
 
 /-- **The ceiling the completeness check requires: the number of *entries*, hand-maintained for
 `lawCeiling`'s own reason.** The numbering check above validates *numbers* (1..`lawCeiling`) and
@@ -78,7 +78,7 @@ check stayed green, while the emitter's summary read "57 entries" against a base
 C80). Pinned by hand rather than derived, because a check that counted the rows would compare the
 register to itself and a dropped row would take its own evidence along. **Adding a row means bumping
 this** — the same tax `lawCeiling` already carries. -/
-def entryCeiling : Nat := 103
+def entryCeiling : Nat := 104
 
 /-- **The declarations the register names whose proofs rest on the *compiler* — empty as of 2026-09-25,
 and checked in both directions by check 6b.**

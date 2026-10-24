@@ -42,7 +42,7 @@ jemalloc purge and the #117 retention test; the devnet/Docker memory ceiling.
 | B34 | memory-aware HTTP `503` and gRPC `resource_exhausted` before decode/execution | B |
 | B35 | bounded in-flight permits (reuse #426; never a second semaphore) | B |
 | B36 | atomic duplicate reservation + byte-based pool accounting | B |
-| B37 | `Normal → Throttled → Critical → Halt` fallback state machine with propose/attest gates | C |
+| B37 | `Normal → Throttled → Critical` (+`Unavailable`) fallback state machine with propose/attest gates; `Halt` remains the operator/integrity `HaltRecord`, never automatic on pressure | C |
 | B38 | status/metrics visibility: public `degraded`/`acceptsDeploys`, operator headroom/provenance | A1 |
 | B39 | idempotent rewind cleanup + start-up derived-index audit/repair | D2 |
 | B40 | `CURRENT_ROOT` published only after block acceptance | D1 |
@@ -63,14 +63,14 @@ or `owed: <unit> — <path::test>` where it is not yet built. `owed:` is visible
 | H-RS-01 | T-RS-1 a host below the replay floor starts and OOMs during the DAG rebuild | none | B31 | C-RS-1, C-RS-5 | the policy floor is overridable and is not a measured curve above ~5k blocks | node/tests/resource_preflight_arming.rs::the_preflight_refuses_a_validator_warns_an_observer_and_honours_the_override |
 | H-RS-02 | T-RS-2 a burst of concurrent decoded/executed deploys and explores | B20 (429), bounded queues | B33, B34, B35 | C-RS-2 | a fast spike can beat the sample interval; body limits bound it | node/src/web/http.rs::a_deploy_is_refused_503_before_the_body_is_decoded |
 | H-RS-03 | T-RS-3 pool amplification: count-only caps, duplicate re-parse, body/term asymmetry | B21, B22 | B36 | C-RS-1 | the HTTP body cap still allows a 2 MiB decode before the 64 KiB term bound | casper/src/dag.rs::a_pool_at_its_byte_cap_refuses_before_the_store |
-| H-RS-04 | T-RS-4 the replay/merge peak exceeds headroom mid-run | none | B33, B37 | C-RS-3 | replay is superlinear and unmeasured at target height | owed: unit C/E — `node/src/resources/state.rs::critical_stops_propose_and_attest` |
+| H-RS-04 | T-RS-4 the replay/merge peak exceeds headroom mid-run | none | B33, B37 | C-RS-3 | replay is superlinear and unmeasured at target height | node/src/resources/fallback.rs::critical_stops_production |
 | H-RS-05 | T-RS-5 data-dir/disk exhaustion; LMDB map full | LMDB map sizes, sparse reservations | B31 | C-RS-3 | free space is checked at start, not bounded at runtime | node/src/resources/disk.rs::a_missing_data_dir_is_an_error_not_zero_free |
 | H-RS-06 | T-RS-6 no cgroup/ringfence; external host pressure or kernel OOM | devnet memory ceiling (deployment only) | B32, B33, B38 | C-RS-5 | the node cannot set cgroup limits or choose the OOM victim | node/src/resources/cgroup.rs::parses_v2_memory_cpu_and_events |
 | H-RS-07 | T-RS-7 co-located validators: one host loss defeats quorum | none | B32, B38 (advisory) | C-RS-5 | host topology is the operator's; containers may hide siblings | node/src/resources/colocation.rs::counts_only_processes_named_rnode |
 | H-RS-08 | T-RS-8 CPU-quota starvation; replay/finality lag | `available_parallelism` (workers) | B31, B33 | C-RS-3 | worker capping is deferred; the quota is only reported | node/src/resources/cgroup.rs::parses_v1_memory_and_cpu_limits |
-| H-RS-09 | T-RS-9 a degraded node still accepts work or advertises healthy | `is_node_read_only` (config) | B34, B37, B38 | C-RS-1, C-RS-5 | one status snapshot is not an independent read | owed: unit C — `node/src/resources/state.rs::normal_to_throttled_needs_hysteresis` |
-| H-RS-10 | T-RS-10 a restart replays into the same OOM | supervisor restart | B31, B32 | C-RS-6 | the supervisor can always restart anyway; the preflight must refuse first | owed: unit E — `tools/resource-restart-arm.sh` |
-| H-RS-11 | T-RS-11 ambiguous acceptance, an orphan root or a stale derived index | root-pair write, reset bracket | B39, B40 | C-RS-1 | no cross-store WAL; D1/D2 reduce and repair the known windows | owed: unit D — `casper/src/blocks/block_processor.rs::a_failed_insert_leaves_the_current_root_where_it_was` |
+| H-RS-09 | T-RS-9 a degraded node still accepts work or advertises healthy | `is_node_read_only` (config) | B34, B37, B38 | C-RS-1, C-RS-5 | one status snapshot is not an independent read | node/src/resources/fallback.rs::normal_to_throttled_needs_hysteresis |
+| H-RS-10 | T-RS-10 a restart replays into the same OOM | supervisor restart | B31, B32 | C-RS-6 | the supervisor can always restart anyway; the preflight must refuse first | spec/audit/evidence/n420-restart-20261024/restart.json |
+| H-RS-11 | T-RS-11 ambiguous acceptance, an orphan root or a stale derived index | root-pair write, reset bracket | B39, B40 | C-RS-1 | no cross-store WAL; D1/D2 reduce and repair the known windows | casper/tests/current_root_publication.rs::a_failed_insert_leaves_the_current_root_where_it_was |
 | H-RS-12 | T-RS-12 peers cannot route around a degraded validator | none | none — out of node-local scope | C-RS-4 | needs #427/M3 protocol work and peer failover | owed: #427/#428 M3 |
 
 ## Barrier independence

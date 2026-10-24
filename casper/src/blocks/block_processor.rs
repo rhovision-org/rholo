@@ -5,9 +5,12 @@ use std::sync::Arc;
 
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
+use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
 use rchain_shared::log::{Log, LogSource};
+use rchain_shared::refined::BlockHeight;
 use tokio::sync::mpsc;
 use tokio::task::{JoinError, JoinSet};
 
@@ -77,6 +80,48 @@ impl BlockHashAnnouncements {
     }
 }
 
+/// **Publish an accepted block's post-state as `CURRENT_ROOT`** (law 80, B40, HAZOP F-U17-10).
+///
+/// Only a block at the DAG's top publishes: `latest_block_number()` is one past the highest height,
+/// so `block_num + 1 == latest` is the tip (a same-height sibling is also accepted; either
+/// post-state is a state an accepted block carried). An older acceptance does not move the pointer
+/// backwards.
+///
+/// A refusal (`Ok(false)`: no checkpoint recorded the root) or a store error is **logged, not
+/// returned** — the insert has already succeeded, and the boot reconciliation republishes the latest
+/// accepted root on the next start.
+pub(crate) async fn publish_accepted_root(
+    dag: &dyn BlockDagStorage,
+    runtime: &RuntimeManager,
+    block_num: BlockHeight,
+    post_state: StateHash,
+    log: &Arc<dyn Log>,
+) {
+    let latest = dag.get_representation().await.latest_block_number();
+    if i64::from(block_num) + 1 < latest {
+        return;
+    }
+    let root = Blake2b256Hash::from_byte_array(post_state.as_bytes());
+    let source = LogSource::new("casper.block-processor");
+    match runtime.publish_accepted_root(root).await {
+        Ok(true) => {}
+        Ok(false) => log.warn(
+            source,
+            &format!(
+                "accepted block at height {block_num} names a post-state no checkpoint recorded; \
+                 CURRENT_ROOT stays where it was (law 80)"
+            ),
+        ),
+        Err(e) => log.warn(
+            source,
+            &format!(
+                "could not publish the accepted root at height {block_num}: {e}; the boot \
+                 reconciliation retries"
+            ),
+        ),
+    }
+}
+
 /// Validate a block and insert it into the DAG (port of `validateAndAddToDag`).
 pub async fn validate_and_add_to_dag<F, Fut>(
     dag: &dyn BlockDagStorage,
@@ -115,7 +160,15 @@ where
         }
         Err(ValidateError::Internal(e)) => return Err(e),
     };
+    let accepted_post = block.post_state_hash;
+    let accepted_height = block_meta.block_num;
     dag.insert(block_meta, block).await?;
+    // **Only an accepted block publishes its state** (law 80, B40). A `ValidationFailed` block is
+    // inserted into the DAG with its failure recorded, but its post-state is not the node's state and
+    // must not become `CURRENT_ROOT`.
+    if status.is_ok() {
+        publish_accepted_root(dag, runtime, accepted_height, accepted_post, log).await;
+    }
     Ok(status)
 }
 

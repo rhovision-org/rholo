@@ -1,0 +1,15 @@
+{
+  "boundary": "finite 1 GiB fault-injection arm; not supported-tier acceptance",
+  "source_dev_sha": "7878df9e2",
+  "image": "sha256:16ea238f769d25fb6d74ecb635892bd6b8ef35632b31ec8e5c4d830bd8fe9bbf",
+  "observed_date": "2026-10-24",
+  "files": {
+    "README.md": "a71e001517c91eaaf474a6a4eda32dc1ce4890b2ef2dda4279e040fa8c52fe09",
+    "soak.json": "66c32d1da90af7480ba4c3beaf5f0406e1cd3c8ef25c123cb87fbd1252c49bc4"
+  },
+  "non_claims": [
+    "one run; a transient throttled interval is expected and recorded",
+    "1 GiB is below the advised minimum; this is not a supported-tier claim",
+    "no live network was touched"
+  ]
+}

@@ -58,6 +58,12 @@ impl AdminWebApi for AdminWebApiImpl {
             .map_err(BlockApiException)
     }
 
+    /// **The resource-fallback resume** (unit C, B37) — see the trait's doc. The state machine takes a
+    /// fresh sample; a pressured node answers with the measured state rather than clearing.
+    async fn resume_resource_fallback(&self) -> Result<String, BlockApiException> {
+        Ok(self.resources.resume().as_str().to_string())
+    }
+
     /// **The operator half of the status** (W-N3-01), read here rather than on the public listener.
     ///
     /// Everything it needs is reachable from `self.block_api` plus four process-wide counters — which

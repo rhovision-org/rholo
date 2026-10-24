@@ -21,6 +21,24 @@ impl RootRepository {
         self.roots_store.record_root(root).await
     }
 
+    /// The durable `CURRENT_ROOT`, **without** recording the empty root (the read half of
+    /// [`Self::current_root`]).
+    pub async fn published_root(&self) -> Result<Option<Blake2b256Hash>, String> {
+        self.roots_store.current_root().await
+    }
+
+    /// Record `root` as known without moving `CURRENT_ROOT` — the candidate-state half of the split
+    /// (law 80, B40, HAZOP F-U17-10).
+    pub async fn commit_deferred(&self, root: Blake2b256Hash) -> Result<(), String> {
+        self.roots_store.record_known_root(root).await
+    }
+
+    /// Move `CURRENT_ROOT` to `root` if the store already knows it; `Ok(false)` when it does not.
+    /// This is the acceptance half: the caller has inserted a block whose post-state is `root`.
+    pub async fn publish_if_known(&self, root: Blake2b256Hash) -> Result<bool, String> {
+        self.roots_store.publish_current_root(root).await
+    }
+
     /// The current root, recording the empty root on first use (port of `currentRoot`).
     pub async fn current_root(&self) -> Result<Blake2b256Hash, String> {
         match self.roots_store.current_root().await? {

@@ -15,6 +15,7 @@ pub mod admission;
 pub mod cgroup;
 pub mod colocation;
 pub mod disk;
+pub mod fallback;
 pub mod meminfo;
 pub mod policy;
 pub mod preflight;
@@ -22,6 +23,7 @@ pub mod state;
 
 pub use admission::{AdmissionPolicy, AdmissionVerdict, PressureGate};
 pub use cgroup::CgroupFacts;
+pub use fallback::{Fallback, ResourceState};
 pub use meminfo::MemInfo;
 pub use policy::{PolicyFloor, ResourcePolicy, StartupEnforcement, StartupFacts, StartupVerdict};
 pub use state::{ResourceGuard, ResourceSnapshot};

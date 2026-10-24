@@ -605,6 +605,8 @@ impl Proposer {
                     .await
                     {
                         Ok(meta) => {
+                            let accepted_post = block.post_state_hash;
+                            let accepted_height = meta.block_num;
                             // Persist the block body BEFORE recording it in the DAG. `insert`
                             // writes the deploy index + DAG state but not the full block, so a
                             // read landing between the two would otherwise hit "missing block".
@@ -625,6 +627,16 @@ impl Proposer {
                                     ))
                                 }
                             })?;
+                            // **The block is accepted: publish its state** (law 80, B40). The
+                            // checkpoint recorded the root as known; this moves `CURRENT_ROOT`.
+                            crate::blocks::block_processor::publish_accepted_root(
+                                dag.as_ref(),
+                                runtime.as_ref(),
+                                accepted_height,
+                                accepted_post,
+                                &log,
+                            )
+                            .await;
                             Ok(())
                         }
                         Err(err) => Err(err),

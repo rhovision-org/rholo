@@ -1,6 +1,6 @@
 # rholo: a language with a theorem, not just a test suite
 
-Rholang's <!-- counts:laws -->79 laws<!-- counts:end --> are machine-checked in Lean 4 and Coq, and
+Rholang's <!-- counts:laws -->80 laws<!-- counts:end --> are machine-checked in Lean 4 and Coq, and
 its authority cannot be forged — there is no syntax that writes a private name. Pre-testnet.
 
 **Whole classes of defect are absent by construction**: no `unsafe` in any of the fourteen crates, so
@@ -35,7 +35,7 @@ The documentation is served as a book (`mdbook serve docs`). It is organized sof
   what it is, why it fits a blockchain, and from processes and names through object-capability smart
   contracts.
 - **Part II — The ρ-calculus, formally** ([`docs/src/formal/`](docs/src/formal/)) — the grammar, the
-  sorts, and all <!-- counts:laws -->79 laws<!-- counts:end --> — the calculus (1–29), the surface a
+  sorts, and all <!-- counts:laws -->80 laws<!-- counts:end --> — the calculus (1–29), the surface a
   client writes and a matcher reads (30–43), the Proof-of-Stake epoch (44–47), the fee and charging
   rows (48–49), the depth guards (50), the progress rows (51–54), the bounded-work and namespace rows
   (55–56), the delegator's stake (57), the finality gate's forward dual (58), the wire and session laws
@@ -127,7 +127,7 @@ review findings* are catalogued in [`spec/RUST-VS-SCALA.md`](spec/RUST-VS-SCALA.
 from a gas cost that wraps negative to a hash-map iteration order that could have split a chain.
 
 **Proved.** The ρ-calculus and its node-level laws are machine-checked in Lean 4, with an α-equivalence
-metatheory in Coq: <!-- counts:laws -->79 laws<!-- counts:end -->. What binds them to *this* code is not
+metatheory in Coq: <!-- counts:laws -->80 laws<!-- counts:end -->. What binds them to *this* code is not
 review but a **conformance corpus** — each corpus is emitted from the Lean definition and run 1:1
 through the node by a Rust consumer, so a definition cannot drift from its corpus without the gate
 noticing ([`spec/INVENTORY.md`](spec/INVENTORY.md), [`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md)).
@@ -170,7 +170,7 @@ pre-testnet node leads.
 | **Memory safety** | No `unsafe` anywhere — `#![forbid(unsafe_code)]` in all fourteen crates | 52 `unsafe` blocks in the loader alone; forbidden in one crate | `unsafe` in `sui-types`; not forbidden | C++ — assertions cannot be compiled out |
 | **Authority cannot be forged** | **Unrepresentable** — no syntax writes a private name; a name exists only to be received | Checked — a program-derived address has no key, but granting the privilege is a runtime check | **Unrepresentable** — a linear `UID`, minted from the transaction digest | Absent as a concept — authority is a private key |
 | **Authority cannot be captured** | **Unrepresentable, and proved** — a COMM moves only the datum sent, into the receiver's own environment; closedness is a theorem | Checked at runtime | Unrepresentable — no dynamic dispatch | Moot — there are no calls to capture through |
-| **Machine-checked semantics** | Lean 4 + Coq — <!-- counts:laws -->79 laws<!-- counts:end -->; every registered witness resolves; zero `#[ignore]`d tests; the gate refuses `sorry`/`admit`/`opaque` | `frozen-abi` digests, which are checksums | Static bytecode verifier; **Move Prover absent from its tree and CI** | Nothing |
+| **Machine-checked semantics** | Lean 4 + Coq — <!-- counts:laws -->80 laws<!-- counts:end -->; every registered witness resolves; zero `#[ignore]`d tests; the gate refuses `sorry`/`admit`/`opaque` | `frozen-abi` digests, which are checksums | Static bytecode verifier; **Move Prover absent from its tree and CI** | Nothing |
 | **Peer identity** | Mutual TLS — the certificate's key is **bound to the identity the peer claims in the message**, so a peer cannot speak as another. **Which keys are admitted is unconstrained**: any valid certificate is a peer. That is a recorded decision, not an oversight — block validation, not the transport, is the authorization boundary. Of the ten findings under this precondition, six are closed at the layer where the harm was real, one is refuted, and three are deliberately open with their arguments stated ([§116](spec/audit/passes.md)) | Signed shreds, but no binding to a claimed identity | P2P layer is a git dependency — uninspectable in-tree | Plaintext; the handshake signs nothing |
 | **Supermajority arithmetic** | Exact `i128` integer — no floating point | `2f64/3f64` | Integer | Proof of work |
 | **Cost model bounds attacker work** | ✅ **closed out the same day** — a per-block phlo cap, and the five operations that were charged less than their work now charge for it | ❌ account copies are unbilled | Instruction tiers, 128 KiB transaction bound | ❌ no step budget at all |
@@ -203,7 +203,7 @@ that they are drafts. Every claim in either one is checkable against this tree.
 
 The rewrite is governed by [`AGENTS.md`](AGENTS.md) — the binding intent + formal specification —
 and the machine-checked formalizations in [`spec/`](spec/) (the law register
-[`spec/INVENTORY.md`](spec/INVENTORY.md) — <!-- counts:laws -->79 laws<!-- counts:end -->, counted and
+[`spec/INVENTORY.md`](spec/INVENTORY.md) — <!-- counts:laws -->80 laws<!-- counts:end -->, counted and
 emitted by `Rchain/Laws.lean` so the number cannot drift — plus the Lean/Coq tracks). The prime
 directive is a **faithful implementation of the ρ-calculus**: the laws are the oracle; the Scala node
 was the port reference.

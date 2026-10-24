@@ -1278,6 +1278,7 @@ pub async fn setup_node_program(
             id,
             &comm_state,
             &validator_opt,
+            resources.clone(),
             &log,
             metrics.clone(),
         )
@@ -1701,6 +1702,7 @@ async fn setup_shard_runtime(
     id: &NodeIdentifier,
     comm_state: &CommState,
     validator_opt: &Option<ValidatorIdentity>,
+    resources: Arc<ResourceGuard>,
     log: &Arc<dyn Log>,
     metrics: Arc<MetricsRegistry>,
 ) -> Result<ShardRuntime, String> {
@@ -2135,6 +2137,7 @@ async fn setup_shard_runtime(
             proposer_parts.queue_tx,
             proposer,
             proposer_parts.state,
+            resources.clone(),
             log.clone(),
         );
         tokio::spawn(async move {
@@ -2478,6 +2481,27 @@ pub async fn setup_shard(
     // Claim this shard's data directory before anything else touches it: a directory that belonged
     // to a different shard must fail startup, not read as an empty chain.
     check_shard_data_dir(&data_dir, spec, block_dag_storage.as_ref(), &block_store).await?;
+
+    // **Repair the derived indexes before the backfill declares the deployer index complete** (B39,
+    // HAZOP F-U17-11). The audit is independent of the reset marker: an upgraded store may carry rows
+    // from a crash on an older build, or from a rewind whose empty metadata drop skipped the cleanup.
+    // A failure is logged and the shard runs: the rows make the proposer's replay guard skip a pooled
+    // deploy, which the next boot retries, rather than a reason to refuse to serve the shard.
+    match dag_kv.repair_derived_indexes().await {
+        Ok((0, 0)) => {}
+        Ok((deploy_rows, deployer_rows)) => log.warn(
+            LogSource::new("coop.rchain.node.runtime.DeployerIndex"),
+            &format!(
+                "{}: derived-index audit repaired {deploy_rows} deploy-index and {deployer_rows} \
+                 deployer-index row(s) naming a block this DAG does not hold",
+                spec.shard_id
+            ),
+        ),
+        Err(e) => log.warn(
+            LogSource::new("coop.rchain.node.runtime.DeployerIndex"),
+            &format!("{}: derived-index audit failed: {e}", spec.shard_id),
+        ),
+    }
 
     // A node upgraded onto an existing chain indexes the blocks it already holds, once, in the
     // background; until it finishes, `GET /api/v1/deployer` reports the height it has reached.

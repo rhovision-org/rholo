@@ -14,6 +14,9 @@ pub enum ProposeStatus {
     NotEnoughNewBlocks,
     TooFarAheadOfLastFinalized,
     NoNewDeploys,
+    /// The node's resource fallback state is `Critical` or `Unavailable`: it has stopped producing
+    /// (unit C, barrier B37). The word is the state that withheld the proposal.
+    ResourcePressure(String),
 }
 
 impl fmt::Display for ProposeStatus {
@@ -39,6 +42,9 @@ impl fmt::Display for ProposeStatus {
             }
             ProposeStatus::BugError(reason) => {
                 write!(f, "Proposal failed: internal error ({reason})")
+            }
+            ProposeStatus::ResourcePressure(state) => {
+                write!(f, "Proposal withheld: resource pressure ({state})")
             }
         }
     }

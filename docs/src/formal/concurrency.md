@@ -16,8 +16,8 @@ determinism question is [Determinism of the block state transition](determinism.
 
 > The per-law **status** is the register's (`spec/LAWS.md`, emitted from `Rchain/Laws.lean` and refused
 > stale by the gate); the totals are
-> <!-- counts:laws-entries -->79 laws and 103 entries<!-- counts:end -->, of which
-> <!-- counts:proved-laws -->72<!-- counts:end --> are proved at all. Nothing on this page restates a status.
+> <!-- counts:laws-entries -->80 laws and 104 entries<!-- counts:end -->, of which
+> <!-- counts:proved-laws -->73<!-- counts:end --> are proved at all. Nothing on this page restates a status.
 
 ---
 
@@ -220,7 +220,7 @@ sequential one.
   `one_hop_depth2_diverges` (proven), and `depth2_next_step_disjoint` for Law 22 — the half of it
   that has content, since computability at dispatch is a fact about `resolve_children`'s signature.
 
-> **Formal.** The full law set is <!-- counts:laws-entries -->79 laws and 103 entries<!-- counts:end --> — [The laws](laws.md)
+> **Formal.** The full law set is <!-- counts:laws-entries -->80 laws and 104 entries<!-- counts:end --> — [The laws](laws.md)
 > is its reader-facing rendering and `spec/LAWS.md` the checked one; per-law source-of-truth pointers are
 > in [`spec/INVENTORY.md`](../../../spec/INVENTORY.md), and the machine realization of each law is
 > [The laws → Rust code](../contributor/laws-to-rust.md). This page is about the laws that govern

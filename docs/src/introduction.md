@@ -31,7 +31,7 @@ decade.
   builds up to object-capability smart contracts. Each chapter leads with intuition and ends with a
   pointer into the formal treatment.
 - **Part II — The ρ-calculus, formally** is the precise semantics: the grammar, the sorts, and the
-  **[<!-- counts:laws -->79 laws<!-- counts:end -->](formal/laws.md)** that govern the node — the
+  **[<!-- counts:laws -->80 laws<!-- counts:end -->](formal/laws.md)** that govern the node — the
   calculus (1–29), the surface a client writes and a matcher reads (30–43), the Proof-of-Stake epoch
   (44–47), the fee and charging rows (48–49), the two depth guards (50), the progress rows (51–54), the
   bounded-work and namespace rows (55–56), the delegator's stake (57), the finality gate's forward dual
@@ -57,5 +57,5 @@ decade.
 If you are an AI agent (or want the shortest path to a specific fact), start at
 [Navigation for AI agents](ai-entrypoint.md) — a goal-indexed map of this book and the machine-checked
 specification it links to. The authoritative formal specification lives outside this book, in the
-[`spec/`](../../spec/) tree (the law register — <!-- counts:laws -->79 laws<!-- counts:end -->, the Lean/Coq proofs, and the conformance corpora
+[`spec/`](../../spec/) tree (the law register — <!-- counts:laws -->80 laws<!-- counts:end -->, the Lean/Coq proofs, and the conformance corpora
 that bind the two to the node); this book explains it, it does not duplicate it.
