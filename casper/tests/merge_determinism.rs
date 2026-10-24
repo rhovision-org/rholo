@@ -1165,3 +1165,111 @@ async fn an_arrival_order_moves_the_round_snapshot_and_not_the_scope_a_block_der
         );
     }
 }
+
+/// Revalidating the same parents after an unrelated finaliser arrives must not
+/// expand their rejection input. This calls the production reader, not a mirror.
+#[tokio::test]
+async fn later_finalisers_cannot_change_a_parents_rejection_input() {
+    use rchain_block_storage::block_store::BlockStore;
+    use rchain_casper::multi_parent_casper::final_scope_rejections;
+    let dag = build_storage().await;
+    let store: BlockStore = Arc::new(KeyValueTypedStoreCodec::new(
+        in_memory(),
+        Arc::new(BlockHashCodec),
+        Arc::new(BlockMessageCodec),
+    ));
+    let g = shell(0x01, 1, 0, 0, &[]);
+    let x = shell(0x11, 1, 1, 1, &[g.block_hash]);
+    let y = shell(0x21, 2, 0, 2, &[x.block_hash]);
+    let mut later = shell(0x31, 3, 0, 2, &[x.block_hash]);
+    later.rejected_deploys = BTreeSet::from([vec![99]]);
+    for (b, fringe, state) in [
+        (&g, vec![], 1),
+        (&x, vec![g.block_hash], 2),
+        (&y, vec![x.block_hash], 3),
+    ] {
+        store.put(&[(b.block_hash, b.clone())]).await.unwrap();
+        insert(&dag, meta(b, &fringe, state), b.clone()).await;
+    }
+    let scope = BTreeSet::from([x.block_hash]);
+    let past = BTreeSet::from([g.block_hash, x.block_hash, y.block_hash]);
+    let children = dag.get_representation().await.child_map.clone();
+    let before = final_scope_rejections(&*dag, &store, &children, &scope, &past)
+        .await
+        .unwrap();
+    assert_eq!(before.get(&x.block_hash), Some(&BTreeSet::new()));
+    store
+        .put(&[(later.block_hash, later.clone())])
+        .await
+        .unwrap();
+    insert(&dag, meta(&later, &[x.block_hash], 4), later.clone()).await;
+    let children = dag.get_representation().await.child_map.clone();
+    let after = final_scope_rejections(&*dag, &store, &children, &scope, &past)
+        .await
+        .unwrap();
+    assert_eq!(
+        before, after,
+        "an out-of-view finaliser changed the parents' rejection set"
+    );
+    let extended = past
+        .union(&BTreeSet::from([later.block_hash]))
+        .copied()
+        .collect();
+    let included = final_scope_rejections(&*dag, &store, &children, &scope, &extended)
+        .await
+        .unwrap();
+    assert_eq!(
+        included.get(&x.block_hash),
+        Some(&later.rejected_deploys),
+        "an in-view finaliser's rejection evidence must remain effective"
+    );
+}
+
+/// A concurrent wider fringe may overwrite a local membership index. Replaying
+/// an earlier parent view must still derive that view's own rejection evidence.
+#[tokio::test]
+async fn later_fringe_membership_cannot_rewrite_a_parents_rejection_input() {
+    use rchain_block_storage::block_store::BlockStore;
+    use rchain_casper::multi_parent_casper::final_scope_rejections;
+    let dag = build_storage().await;
+    let store: BlockStore = Arc::new(KeyValueTypedStoreCodec::new(
+        in_memory(),
+        Arc::new(BlockHashCodec),
+        Arc::new(BlockMessageCodec),
+    ));
+    let g = shell(0x01, 1, 0, 0, &[]);
+    let x = shell(0x11, 1, 1, 1, &[g.block_hash]);
+    let v = shell(0x12, 4, 0, 1, &[g.block_hash]);
+    let mut y = shell(0x21, 2, 0, 2, &[x.block_hash]);
+    y.rejected_deploys = BTreeSet::from([vec![7]]);
+    let later = shell(0x31, 3, 0, 2, &[x.block_hash, v.block_hash]);
+    for (b, fringe, state) in [
+        (&g, vec![], 1),
+        (&x, vec![g.block_hash], 2),
+        (&v, vec![g.block_hash], 2),
+        (&y, vec![x.block_hash], 3),
+    ] {
+        store.put(&[(b.block_hash, b.clone())]).await.unwrap();
+        insert(&dag, meta(b, &fringe, state), b.clone()).await;
+    }
+    let scope = BTreeSet::from([x.block_hash]);
+    let past = BTreeSet::from([g.block_hash, x.block_hash, y.block_hash]);
+    let children = dag.get_representation().await.child_map.clone();
+    let before = final_scope_rejections(&*dag, &store, &children, &scope, &past)
+        .await
+        .unwrap();
+    assert_eq!(before.get(&x.block_hash), Some(&y.rejected_deploys));
+    store
+        .put(&[(later.block_hash, later.clone())])
+        .await
+        .unwrap();
+    insert(&dag, meta(&later, &[x.block_hash, v.block_hash], 4), later).await;
+    let children = dag.get_representation().await.child_map.clone();
+    let after = final_scope_rejections(&*dag, &store, &children, &scope, &past)
+        .await
+        .unwrap();
+    assert_eq!(
+        before, after,
+        "a later fringe membership overwrote the parents' rejection input"
+    );
+}

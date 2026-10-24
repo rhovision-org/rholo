@@ -41,6 +41,12 @@ use crate::runtime_manager::RuntimeManager;
 use crate::validator_identity::ValidatorIdentity;
 use crate::vault_parser;
 
+/// A temporarily partitioned Running node keeps its connection table, so the
+/// startup-only fork-tip request is not repeated when its route becomes
+/// reachable again. Bounded tip refresh discovers peers' current heads without
+/// admitting blocks, changing finality rules, or manufacturing work.
+const RUNNING_TIP_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+
 /// A peer message (port of `NodeLaunch.PeerMessage`).
 #[derive(Clone, Debug)]
 pub struct PeerMessage {
@@ -570,8 +576,25 @@ pub async fn apply<I: RSpaceImporter + Send + 'static, E: RSpaceExporter>(
         // state this node decided it needs, and it is the only one that loops.
         let requested = tokio::select! {
             _ = async {
-                while let Some(pm) = packet_rx.recv().await {
-                    engine.handle(&pm.peer, &pm.message).await;
+                let mut tip_refresh = tokio::time::interval(RUNNING_TIP_REFRESH_INTERVAL);
+                tip_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                // The startup request above has already run. Avoid an extra
+                // round at time zero, then reconcile a peer's tip every 30s.
+                tip_refresh.tick().await;
+                loop {
+                    tokio::select! {
+                        packet = packet_rx.recv() => {
+                            let Some(pm) = packet else { break; };
+                            engine.handle(&pm.peer, &pm.message).await;
+                        }
+                        _ = tip_refresh.tick() => {
+                            // A connected-but-previously-unreachable validator
+                            // can miss every hash announced during the partition.
+                            // Requesting latest heads makes ordinary block
+                            // retrieval discover the ancestry it did not hear.
+                            comm_util.send_fork_choice_tip_request().await;
+                        }
+                    }
                 }
             } => None,
             _ = reset_wake.notified() => Some(()),

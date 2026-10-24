@@ -172,9 +172,20 @@ def reset_with_reply_loss(bootstrap_ip, node_id, genesis):
     started = time.monotonic()
     try:
         adversarial.reset(bootstrap_ip, key=node_id)
+        reserved = positive.cmd("docker", "exec", positive.JOINER, "cat",
+                                "/proc/sys/net/ipv4/ip_local_reserved_ports").strip()
+        if reserved != "40400-40405":
+            raise AssertionError("SETUP_PORT_RESERVATION: node service ports are not reserved")
+        save("joiner_port_reservation.json", {"reserved_ports": reserved,
+                                              "scope": "disposable container network namespace"})
         limit = time.monotonic() + 45
         while time.monotonic() < limit:
             observed = adversarial.run("docker", "logs", positive.JOINER, timeout=15)
+            startup_errors = [line for line in observed.splitlines()
+                              if "Server error:" in line or "listener failed:" in line]
+            if startup_errors:
+                save("joiner_startup_failure.json", {"errors": startup_errors})
+                raise AssertionError("SETUP_JOINER_STARTUP: " + startup_errors[-1])
             requests = [line for line in observed.splitlines()
                         if "LFS fringe request " in line and "sent; awaiting admitted reply" in line]
             if "LFS state is successfully restored." in observed:

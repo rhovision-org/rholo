@@ -129,8 +129,11 @@ where
                 (Some(latest), Some(_)) => {
                     super::liveness::heights_behind(supported_tip, latest.height) > window
                 }
-                // Never spoken: it ages out only with quorum-backed progress.
-                (None, _) => i64::from(supported_tip) - i64::from(self.round_height) > window,
+                // Never spoken: allow the initial grace once, measured from
+                // chain origin by the whole-stake quorum clock. Measuring from
+                // round_height rearmed this absent sender after every boundary,
+                // freezing each fresh quiet round for another full window.
+                (None, _) => i64::from(supported_tip) > window,
             }
         });
         if closed {
@@ -532,6 +535,38 @@ mod tests {
     /// quorum-backed progress height exists. One fast proposer cannot
     /// silently close the round; the boundary may move again once a
     /// full-stake supermajority resumes sending messages.
+    #[test]
+    fn a_never_spoken_validator_does_not_rearm_its_grace_every_round() {
+        let bonds = [(0, 100), (1, 100), (2, 100), (3, 100)];
+        let window = super::super::liveness::LIVENESS_WINDOW;
+        let mut state: DagMessageState<i32, i32> = DagMessageState::empty();
+        state.insert_msg_mut(&at(0, 0, 0, 1, &bonds));
+        for step in 1..=window + 1 {
+            for sender in 0..3 {
+                let seq = if sender == 0 { step } else { step - 1 };
+                state.insert_msg_mut(&at(
+                    100 + step as i32 * 10 + sender,
+                    sender,
+                    seq,
+                    step + 1,
+                    &bonds,
+                ));
+            }
+        }
+        let first_boundary = window + 2;
+        assert_eq!(i64::from(state.round_height), first_boundary);
+        assert!(!state.latest_msgs.contains_key(&3));
+        for sender in 0..3 {
+            let seq = i64::from(state.latest_msgs[&sender].sender_seq) + 1;
+            state.insert_msg_mut(&at(1000 + sender, sender, seq, first_boundary + 1, &bonds));
+        }
+        assert_eq!(
+            i64::from(state.round_height),
+            first_boundary + 1,
+            "a never-spoken validator rearmed its grace after the quorum already retired it"
+        );
+    }
+
     #[test]
     fn missing_supermajority_freezes_round_until_quorum_returns() {
         let bonds = [(0, 100), (1, 100), (2, 100)];

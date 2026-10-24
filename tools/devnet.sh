@@ -470,7 +470,10 @@ docker_opts() {
     [[ "$spec" == *";"* ]] && sep=";"
     for pair in ${spec//$sep/ }; do envs="$envs -e $pair"; done
   fi
-  echo "-d --name $name --network $NETWORK $ports $limits $envs \
+  # Outbound bootstrap connections may start before every API listener binds.
+  # Keep their ephemeral source ports away from this container's service ports.
+  # This is namespaced to the disposable node, not a host or consensus setting.
+  echo "-d --name $name --network $NETWORK --sysctl net.ipv4.ip_local_reserved_ports=40400-40405 $ports $limits $envs \
     -v ${data}:/var/lib/rnode \
     -v ${CONTRACTS_DIR}:/contracts:ro"
 }

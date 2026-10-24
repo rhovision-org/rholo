@@ -97,20 +97,27 @@ async fn wait_for_genesis(client: &reqwest::Client, base: &str) {
 /// Poll until the node's `/api/blocks` reports at least one block — for a joiner, that is the
 /// restore's first visible effect. Before this, `/api/status` answers and `sync` may already read
 /// null (the task has not started), so neither is a readiness signal.
-async fn wait_for_blocks(client: &reqwest::Client, base: &str) {
+async fn wait_for_blocks(client: &reqwest::Client, base: &str, joiner: &common::TestNode) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
     loop {
-        if let Ok(resp) = client.get(format!("{base}/api/blocks")).send().await {
-            if let Ok(serde_json::Value::Array(blocks)) = resp.json::<serde_json::Value>().await {
-                if !blocks.is_empty() {
-                    return;
+        let last_read = match client.get(format!("{base}/api/blocks")).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                match resp.json::<serde_json::Value>().await {
+                    Ok(serde_json::Value::Array(blocks)) if !blocks.is_empty() => return,
+                    Ok(body) => format!("HTTP {status}, body: {body}"),
+                    Err(error) => format!("HTTP {status}, invalid JSON: {error}"),
                 }
             }
+            Err(error) => format!("request failed: {error}"),
+        };
+        if tokio::time::Instant::now() >= deadline {
+            let messages = joiner.log.messages();
+            panic!(
+                "the joiner never restored a block: {base}; last read: {last_read}; joiner log tail: {:?}",
+                messages.into_iter().rev().take(32).collect::<Vec<_>>()
+            );
         }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "the joiner never restored a block: {base}"
-        );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
@@ -244,7 +251,12 @@ fn compare_leaves(joiner: Option<DevVesting>, bootstrap: Option<DevVesting>) {
 
 async fn run_case(phase: Phase, spec: JoinerSpec, expected: Expected) {
     let boot_dir = temp_dir("lfs-boot");
-    let boot_ports = free_ports(6);
+    // Acquire both nodes' ports in one allocation. A pair needs twelve
+    // disjoint endpoints; independent ephemeral allocations may reuse a
+    // released port before either node binds it (especially under a debugger).
+    let pair_ports = free_ports(12);
+    let boot_ports = pair_ports[..6].to_vec();
+    let join_ports = pair_ports[6..].to_vec();
     let recipient = address(2);
     let snapshot = matches!(phase, Phase::Snapshot);
     let boot_conf = bootstrap_conf(
@@ -266,7 +278,6 @@ async fn run_case(phase: Phase, spec: JoinerSpec, expected: Expected) {
     );
 
     let join_dir = temp_dir("lfs-join");
-    let join_ports = free_ports(6);
     let mut join_conf = joiner_conf(&join_dir, &join_ports, &boot_peer);
     spec.apply(&mut join_conf, &join_dir);
 
@@ -295,7 +306,7 @@ async fn run_case(phase: Phase, spec: JoinerSpec, expected: Expected) {
             // A snapshot joiner restores at least the finalized fringe the bootstrap published before
             // it dialled; a genesis-only joiner restores to height 0.
             let target = if snapshot { 1 } else { 0 };
-            wait_for_blocks(&client, &join_base).await;
+            wait_for_blocks(&client, &join_base, &join_node).await;
             wait_for_height(&join_base, target, Duration::from_secs(120)).await;
             wait_for_sync_cleared(&join_admin, Duration::from_secs(120)).await;
             // The API serves before the launch phase finishes; "restored" and "the guard passed"
@@ -483,7 +494,11 @@ fn snapshot_restore_with_missing_descriptors_trusts_the_bootstrap() {
 fn a_restored_bonded_joiner_validates_and_proposes() {
     test_runtime().block_on(async {
         let boot_dir = temp_dir("lfs-bonded-boot");
-        let boot_ports = free_ports(6);
+        // Keep bootstrap/joiner endpoint sets disjoint even if the kernel
+        // would otherwise recycle ports between separate allocations.
+        let pair_ports = free_ports(12);
+        let boot_ports = pair_ports[..6].to_vec();
+        let join_ports = pair_ports[6..].to_vec();
         let recipient = address(2);
         let boot_conf = bootstrap_conf(
             &boot_dir,
@@ -511,7 +526,6 @@ fn a_restored_bonded_joiner_validates_and_proposes() {
         );
 
         let join_dir = temp_dir("lfs-bonded-join");
-        let join_ports = free_ports(6);
         let mut join_conf = joiner_conf(&join_dir, &join_ports, &boot_peer);
         JoinerSpec {
             recipient: Some(recipient.clone()),
@@ -534,7 +548,7 @@ fn a_restored_bonded_joiner_validates_and_proposes() {
 
         let join_base = format!("http://127.0.0.1:{}", join_ports[0]);
         let join_admin = format!("http://127.0.0.1:{}", join_ports[1]);
-        wait_for_blocks(&client, &join_base).await;
+        wait_for_blocks(&client, &join_base, &join_node).await;
         wait_for_sync_cleared(&join_admin, Duration::from_secs(120)).await;
         wait_for_running(&join_node).await;
 

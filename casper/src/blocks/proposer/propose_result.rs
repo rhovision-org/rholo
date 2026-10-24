@@ -14,12 +14,17 @@ pub enum ProposeStatus {
     NotEnoughNewBlocks,
     TooFarAheadOfLastFinalized,
     NoNewDeploys,
+    /// Unfinalized work remains; a bounded automatic attempt must revisit its pacing gate.
+    AwaitingFinality,
 }
 
 impl fmt::Display for ProposeStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ProposeStatus::ProposeSuccess => write!(f, "Propose succeed: Valid"),
+            ProposeStatus::AwaitingFinality => {
+                write!(f, "Proposal deferred: unfinalized work awaits its retry")
+            }
             ProposeStatus::NoNewDeploys => write!(f, "Proposal failed: NoNewDeploys"),
             ProposeStatus::InternalDeployError => {
                 write!(f, "Proposal failed: internal deploy error")
@@ -63,6 +68,8 @@ pub enum CheckProposeConstraintsResult {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BlockCreatorResult {
     NoNewDeploys,
+    /// Unfinalized work remains; a bounded automatic attempt must revisit its pacing gate.
+    AwaitingFinality,
     /// This validator has already produced a block since the last round boundary, and a second one in the
     /// same round would equivocate against itself — see `DagMessageState::has_advanced_past_the_round`. The
     /// proposer takes this only while the round can still close; past the elapsed `ROUND_STALL_ESCAPE` interval it escapes.

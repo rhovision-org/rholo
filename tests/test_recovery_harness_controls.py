@@ -36,6 +36,15 @@ class RejoinAgreementTests(unittest.TestCase):
     def heads(self):
         return [{"node":i,"height":70,"hash":"ab"*32} for i in range(8)]
 
+    def test_healing_wait_does_not_inject_helper_work(self):
+        from unittest.mock import patch
+        run = self.drill(self.heads())
+        with patch.object(m.a.Drill, "wait", return_value="aligned") as wait:
+            self.assertEqual(run.wait_for_healing("rejoin", lambda: True), "aligned")
+        wait.assert_called_once()
+        self.assertEqual(wait.call_args.kwargs, {"drive": False})
+        run.drive.assert_not_called()
+
     def test_marker_retention_at_different_heights_is_not_agreement(self):
         heads = self.heads()
         heads[-1]["height"] = 60
@@ -150,7 +159,7 @@ class PartitionFailureEvidenceTests(unittest.TestCase):
             out=Path(directory)
             (out/"result.json").write_text(json.dumps({"initial_finalized":[]}))
             run=Mock(out=out,marker="marker",value=42)
-            run.wait.side_effect=RuntimeError("healing timed out")
+            run.wait_for_healing.side_effect=RuntimeError("healing timed out")
             captures=[]
             def capture(*args):
                 captures.append(run.out.name)
@@ -178,6 +187,42 @@ class PartitionFailureEvidenceTests(unittest.TestCase):
             self.assertEqual(result["failed_phase"],"healing")
             self.assertTrue(result["rounds"][0]["partition_progress_observed"])
             run.fixed_snapshots.assert_not_called()
+
+
+
+class RecoveryStartupTests(unittest.TestCase):
+    def test_node_ports_are_reserved_in_generated_container_arguments(self):
+        import re, shlex, subprocess
+        text = (ROOT / "tools/devnet.sh").read_text()
+        body = re.search(r"(?ms)^docker_opts\(\) \{\n(.*?)^\}", text).group(1)
+        for name in ("devnet-bootstrap", "devnet-validator-1"):
+            script = ('BOOTSTRAP=devnet-bootstrap; NETWORK=devnet; ADMIN=true; '
+                      'DEVNET_SKIP_JOINER_GRPC_PUBLISH=1; DEVNET_NODE_MEMORY=2g; '
+                      'CONTRACTS_DIR=/contracts; data_volume() { echo node-data; }; '
+                      'docker_opts() {\n' + body + '\n}; '
+                      'docker_opts ' + name + ' 40402 40403 40405')
+            result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+            args = shlex.split(result.stdout)
+            self.assertEqual(args[args.index("--sysctl")+1],
+                             "net.ipv4.ip_local_reserved_ports=40400-40405")
+
+    def test_listener_failure_is_a_setup_error_not_a_missing_reply(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        spec = importlib.util.spec_from_file_location("anchor_startup", ROOT / "tests/lfs-anchored-checkpoint.py")
+        anchor = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(anchor)
+        def command(*args):
+            return "40400-40405" if "exec" in args else "99"
+        with patch.dict(anchor.os.environ, {"LFS_INITIAL_REPLY_LOSS": "1"}), \
+             patch.object(anchor.adversarial, "reset"), \
+             patch.object(anchor.positive, "cmd", side_effect=command), \
+             patch.object(anchor.subprocess, "run", return_value=SimpleNamespace(stdout="")), \
+             patch.object(anchor.adversarial, "run", return_value="Server error: the deploy gRPC listener failed: Address already in use"), \
+             patch.object(anchor.time, "monotonic", side_effect=[0, 0, 0]), \
+             patch.object(anchor, "save"):
+            with self.assertRaisesRegex(AssertionError, "SETUP_JOINER_STARTUP"):
+                anchor.reset_with_reply_loss("172.18.0.2", "node-id", "genesis")
 
 
 if __name__=="__main__":unittest.main()

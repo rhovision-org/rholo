@@ -251,6 +251,12 @@ impl Proposer {
         }
 
         match (self.create_block)(&self.validator, source).await? {
+            BlockCreatorResult::AwaitingFinality => Ok((
+                ProposeResult {
+                    propose_status: ProposeStatus::AwaitingFinality,
+                },
+                None,
+            )),
             BlockCreatorResult::NoNewDeploys => Ok((
                 ProposeResult {
                     propose_status: ProposeStatus::NoNewDeploys,
@@ -533,6 +539,9 @@ impl Proposer {
             // The first blocked observation is process-local monotonic time. None means the
             // round is healthy; restarts begin a fresh observation, never import a timer.
             let blocked_since: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+            // Independent monotonic retry for a quiet chain with unfinalized work.
+            // It belongs to this shard/proposer, not a process-global clock.
+            let quiet_retry_since: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
             Arc::new(move |vi: &ValidatorIdentity, source: ProposeSource| {
                 let runtime = runtime.clone();
                 let dag = dag.clone();
@@ -542,6 +551,7 @@ impl Proposer {
                 let shard_id = shard_id.clone();
                 let blocked_since_advance = blocked_since_advance.clone();
                 let blocked_since = blocked_since.clone();
+                let quiet_retry_since = quiet_retry_since.clone();
                 let dummy_deploy_opt = dummy_deploy_opt.clone();
                 let log = log.clone();
                 let health = health.clone();
@@ -561,6 +571,7 @@ impl Proposer {
                         dummy_deploy_opt.as_ref(),
                         &blocked_since_advance,
                         &blocked_since,
+                        &quiet_retry_since,
                         source,
                         &health,
                     )
@@ -857,6 +868,7 @@ async fn create_block<'a, F, Fut>(
     dummy_deploy_opt: Option<&(PrivateKey, String)>,
     blocked_since_advance: &std::sync::atomic::AtomicI64,
     blocked_since: &Mutex<Option<Instant>>,
+    quiet_retry_since: &Mutex<Option<Instant>>,
     source: ProposeSource,
     health: &ShardHealth,
 ) -> Result<BlockCreatorResult, String>
@@ -1199,6 +1211,17 @@ where
         attestation_reaches_supermajority(attestation_stake, own_stake, pre_state_bonds_stake);
 
     let cadence = cadence_due(&seen_heights, &creators_validator, tip);
+    // A stalled chain can keep a tip at the same height indefinitely. Height-based
+    // cadence alone then never becomes due, while the bounded deploy horizon has
+    // already expired. With >2/3 of the *whole bonded stake* still reachable,
+    // retry at most once per monotonic interval to supply the missing attestation.
+    // This is a local proposal schedule, not a change to finality or quorum rules.
+    let quiet_retry = quiet_finality_retry_due(
+        quiet_retry_since,
+        Instant::now(),
+        !nothing_to_finalize && !new_state_transition && quorum_reachable,
+        source == ProposeSource::Automatic,
+    );
     // Only a proposal the node raised on its own is paced (C171): the storm is a node reacting to remote
     // blocks, and a caller's explicit propose is not a reaction.
     let paced = source == ProposeSource::Automatic;
@@ -1206,7 +1229,7 @@ where
         nothing_to_finalize,
         new_state_transition,
         quorum_reachable,
-        cadence,
+        cadence || quiet_retry,
         paced,
     );
     // **Why this node did or did not attest, in its own log** (#213's diagnostic). Without it a validator
@@ -1216,7 +1239,7 @@ where
         nothing_to_finalize,
         new_state_transition,
         quorum_reachable,
-        cadence_due: cadence,
+        cadence_due: cadence || quiet_retry,
         paced,
         round_senders: pre_state.justifications.iter().map(|m| &m.sender).collect(),
         blocked_attempts: blocked_since_advance.load(std::sync::atomic::Ordering::Relaxed),
@@ -1276,6 +1299,20 @@ where
         }
     }
 
+    // A suppressed attestation with outstanding work is not an idle proposer.
+    // Without this distinction the stream receives NoNewDeploys and never wakes
+    // the monotonic quiet-finality timer on a no-autopropose network.
+    if deploys.is_empty()
+        && to_slash.is_empty()
+        && !change_epoch
+        && suppress_attestation
+        && !nothing_to_finalize
+        && quorum_reachable
+        && paced
+    {
+        return Ok(BlockCreatorResult::AwaitingFinality);
+    }
+
     BlockCreator {
         id: validator_identity.clone(),
         shard_id: shard_id.to_string(),
@@ -1321,6 +1358,63 @@ mod tests {
         )));
         *since.lock().unpoison() = None;
         assert_eq!(stall_ms_since(&since, first + Duration::from_secs(60)), 0);
+    }
+
+    #[test]
+    fn quiet_chain_retry_is_bounded_without_weakening_quorum() {
+        let since = Mutex::new(None);
+        let t = Instant::now();
+        assert!(!quiet_finality_retry_due(&since, t, true, true));
+        assert!(!quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE - Duration::from_millis(1),
+            true,
+            true
+        ));
+        assert!(quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE,
+            true,
+            true
+        ));
+        assert!(!quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE + Duration::from_millis(1),
+            true,
+            true
+        ));
+        assert!(quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE * 2,
+            true,
+            true
+        ));
+        // A lost quorum must not use a retry to mint a different finality rule.
+        assert!(!quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE * 3,
+            false,
+            true
+        ));
+        assert!(!quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE * 4,
+            true,
+            true
+        ));
+        assert!(quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE * 5,
+            true,
+            true
+        ));
+        // Explicit proposals have their own ingress and cannot arm the timer.
+        assert!(!quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE * 6,
+            true,
+            false
+        ));
     }
 
     /// A host-clock correction must not appear in the elapsed calculation. This
@@ -2178,6 +2272,39 @@ fn moving_attestation_stake(live_bonds: &BTreeMap<Validator, NonNegI64>, own: &V
         .filter(|(v, _)| *v != own)
         .map(|(_, s)| i128::from(i64::from(*s)))
         .sum()
+}
+
+/// Retry an outstanding finality obligation when the DAG's height stops moving.
+///
+/// Once the three-window attestation horizon expires, a quorum can be alive but
+/// unable to close the fringe: the tip stays fixed, and height-only cadence can
+/// never become due. This is a per-proposer monotonic *scheduling* hint. It is
+/// never used in the finality algorithm or in the bonded-stake denominator.
+/// The caller must require an actual unfinalized transition and reachable quorum.
+/// Re-entering a prompt/deploy-bearing round clears the timer so it never
+/// accidentally licenses an attestation to an idle chain.
+fn quiet_finality_retry_due(
+    since: &Mutex<Option<Instant>>,
+    now: Instant,
+    pending_and_reachable: bool,
+    automatic: bool,
+) -> bool {
+    let mut slot = since.lock().unpoison();
+    if !pending_and_reachable || !automatic {
+        *slot = None;
+        return false;
+    }
+    match *slot {
+        None => {
+            *slot = Some(now);
+            false
+        }
+        Some(first) if now.saturating_duration_since(first) >= ROUND_STALL_ESCAPE => {
+            *slot = Some(now);
+            true
+        }
+        Some(_) => false,
+    }
 }
 
 /// Whether this node has been quiet long enough to speak again, read from the height of its own latest

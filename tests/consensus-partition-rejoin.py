@@ -18,7 +18,43 @@ class WorkloadDrill(a.Drill):
         # This arm explicitly supplies work; it cannot establish quiet-chain liveness.
         return super().wait(description,condition,drive=True)
 
+    def wait_for_healing(self, description, condition):
+        # Online-partition progress is demonstrated while signed work is being
+        # supplied. Once the victim rejoins, adding Nil deploys on every retry
+        # changes the target faster than it can catch up. Certify retained
+        # finalized identity against a finite, quiescent workload instead.
+        # Preserve the original 150s bound and the strict all-node hash check.
+        return super().wait(description, condition, drive=False)
+
     def finalized_marker_agreement(self, min_height):
+        # A stale finalized height and a permanent divergence are different
+        # failure classes. Record the gate's own health before every read, and
+        # fail early if the node has abandoned an irrecoverable block.
+        # Fixture-created drills have no live runner or events file. Do not touch
+        # network/admin endpoints in that offline identity-only regression.
+        # A real execution always passes through Drill.__init__ and must capture
+        # the operator's irreversible-divergence verdict before its marker read.
+        if getattr(self, "events", None) is not None:
+            statuses = []
+            for i in range(self.args.validators):
+                operator = a.get(i, "/api/v1/status/operator", admin=True)
+                statuses.append({
+                    "node": i,
+                    "latest": operator.get("latestBlockNumber"),
+                    "peers": operator.get("peers"),
+                    "finality_stall": operator.get("finalityStall"),
+                    "unrestorable_records": operator.get("unrestorableRecords"),
+                    "unrestorable_block": operator.get("unrestorableBlock"),
+                    "undelivered_sends": operator.get("undeliveredSends"),
+                })
+            self.record(phase="healing_probe", target_min_height=min_height, nodes=statuses)
+            bad = [x for x in statuses if (x["unrestorable_records"] or 0) > 0]
+            if bad:
+                details = [(x["node"], x["unrestorable_block"]) for x in bad]
+                raise RuntimeError(
+                    f"PERMANENT_DIVERGENCE: {details}; finalized agreement cannot be"
+                    " certified by extending the wait. See healing_probe evidence."
+                )
         # Retaining the marker at different finalized heads is not yet rejoin
         # agreement. Keep waiting inside the existing 150-second healing bound.
         identities = self.finalized_marker(min_height, required=True)
@@ -125,8 +161,8 @@ def main():
                 record["phase"]="healing"
                 cmd("docker","network","connect","acceptance",victim)
                 target=max(x["height"] for x in identities)
-                recovered=d.wait("all validators agree on finalized height/hash and retain marker after partition healing",
-                                 lambda:d.finalized_marker_agreement(target))
+                recovered=d.wait_for_healing("all validators agree on finalized height/hash and retain marker after partition healing",
+                                            lambda:d.finalized_marker_agreement(target))
                 record["rejoined"]=recovered
                 record["phase"]="retention"
                 d.fixed_snapshots(original["initial_finalized"])

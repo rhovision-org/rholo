@@ -45,7 +45,7 @@ concurrency:
 
 jobs:
   fuzz:
-    if: ${{ github.event.inputs.mode != 'pr373-proof' && github.event.inputs.mode != 'pr373-proof-rust' && github.event.inputs.mode != 'final-gap' && github.event.inputs.mode != 'final-gap-rust' && github.event.inputs.mode != 'final-gap-nodes' && github.event.inputs.mode != 'final-gap-recovery' }}
+    if: ${{ github.event.inputs.mode != 'pr373-proof' && github.event.inputs.mode != 'pr373-proof-rust' && github.event.inputs.mode != 'final-gap' && github.event.inputs.mode != 'final-gap-rust' && github.event.inputs.mode != 'final-gap-nodes' && github.event.inputs.mode != 'final-gap-recovery' && github.event.inputs.mode != 'quiet-gap' && github.event.inputs.mode != 'quiet-seeded' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -288,6 +288,7 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s tests -p test_decimal_release_preflight.py -v
           python3 tests/consensus-drill-regression.py
+          python3 tests/test_quiet_chain_evidence.py
           python3 -m unittest discover -s tests -p test_recovery_harness_controls.py -v
       - name: Integrated Rust proof obligations
         run: |
@@ -314,14 +315,65 @@ jobs:
           required_test -p rchain-models --lib property_tests
           required_test -p rchain-casper --lib initial_fringe
           required_test -p rchain-casper --lib engine::node_syncing::tests
+          required_test -p rchain-node --lib instances::proposer_instance::tests
+          required_test -p rchain-casper --lib quiet_chain_retry_is_bounded_without_weakening_quorum
           required_test -p rchain-casper --lib round_escape
           required_test -p rchain-casper --lib quiet_chain_tests
           required_test -p rchain-casper --lib attestation_suppression_tests
+          required_test -p rchain-casper --test merge_determinism
           required_test -p rchain-casper --test committed_bounds
           required_test -p rchain-rholang --lib params_
           required_test -p rchain-rholang --lib an_unknown_params_format_is_refused
           required_test -p rchain-rholang --lib funding_the_pot
           required_test -p rchain-rholang --lib pot_funding_overflow
+      - name: Reintroduced quiet-wakeup and rejection-view faults must fail
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/final-gap
+          cp node/src/instances/proposer_instance.rs /tmp/proposer-instance-original.rs
+          cp casper/src/multi_parent_casper.rs /tmp/parent-merge-original.rs
+          trap 'cp /tmp/proposer-instance-original.rs node/src/instances/proposer_instance.rs; cp /tmp/parent-merge-original.rs casper/src/multi_parent_casper.rs' EXIT
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("node/src/instances/proposer_instance.rs")
+          s=p.read_text(); old="ProposeStatus::NotEnoughNewBlocks | ProposeStatus::AwaitingFinality"
+          assert s.count(old)==1
+          p.write_text(s.replace(old,"ProposeStatus::NotEnoughNewBlocks"))
+          PYCONTROL
+          if cargo test --locked -p rchain-node --lib pending_finality_is_retried_without_external_traffic > target/final-gap/quiet-wakeup-negative.log 2>&1; then
+            echo "Missing wakeup was not detected"
+            exit 1
+          fi
+          grep -q 'pending finality lost its wakeup' target/final-gap/quiet-wakeup-negative.log
+          cp /tmp/proposer-instance-original.rs node/src/instances/proposer_instance.rs
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("casper/src/multi_parent_casper.rs")
+          s=p.read_text(); old=".filter(|h| causal_past.contains(h))"
+          assert s.count(old)==1
+          p.write_text(s.replace(old,".filter(|_| true)"))
+          PYCONTROL
+          if cargo test --locked -p rchain-casper --test merge_determinism later_finalisers_cannot_change_a_parents_rejection_input > target/final-gap/rejection-view-negative.log 2>&1; then
+            echo "Out-of-view rejection input was not detected"
+            exit 1
+          fi
+          grep -q "an out-of-view finaliser changed the parents' rejection set" target/final-gap/rejection-view-negative.log
+          cp /tmp/parent-merge-original.rs casper/src/multi_parent_casper.rs
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("casper/src/multi_parent_casper.rs")
+          s=p.read_text(); old="        for member in newly_finalized.intersection(final_scope) {"
+          assert s.count(old)==1
+          fault="\n            if dag.lookup(member).await?.and_then(|m| m.member_of_fringe) != Some(fringe_hash_of(&meta.fringe)) { continue; }"
+          p.write_text(s.replace(old,old+fault))
+          PYCONTROL
+          if cargo test --locked -p rchain-casper --test merge_determinism later_fringe_membership_cannot_rewrite_a_parents_rejection_input > target/final-gap/membership-negative.log 2>&1; then
+            echo "Mutable membership was not detected"
+            exit 1
+          fi
+          grep -q "a later fringe membership overwrote the parents' rejection input" target/final-gap/membership-negative.log
+          echo "REINTRODUCED_QUIET_AND_REJECTION_VIEW_FAULTS_DETECTED"
       - name: Reintroduced send-only fault must fail the reply regression
         shell: bash
         run: |
@@ -531,3 +583,226 @@ jobs:
         run: |
           tools/devnet.sh down -v || true
           DEVNET_PREFIX=acceptance DEVNET_NETWORK=acceptance tools/devnet.sh down -v || true
+
+  quiet-435-real-nodes:
+    if: ${{ github.event.inputs.mode == 'quiet-gap' }}
+    name: Issue 435 quiet chain, one paused validator, no helpers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_NODE_MEMORY: "2g"
+      DEVNET_THREAD_POOL_SIZE: "2"
+      DEVNET_PREFIX: acceptance
+      DEVNET_NETWORK: acceptance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Build exact source node
+        run: |
+          set -euo pipefail
+          mkdir -p target/quiet-435
+          git rev-parse HEAD | tee target/quiet-435/source.txt
+          tools/devnet.sh build
+          docker image inspect rnode:local > target/quiet-435/image.json
+      - name: Execute independent N4 and N8 quiet-chain campaigns
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          failed=0
+          for n in 4 8; do
+            mkdir -p "target/quiet-435/n$n"
+            tools/devnet.sh up --validators "$n" --fresh --no-autopropose --epoch-length 10 > "target/quiet-435/n$n/start.log" 2>&1
+            start_code=$?
+            if [ "$start_code" -eq 0 ]; then
+              python3 tools/quiet-chain-issue-435.py --validators "$n" --window 240 --out "target/quiet-435/n$n" > "target/quiet-435/n$n/drill.log" 2>&1
+              code=$?
+            else
+              code=$start_code
+            fi
+            echo "quiet_n$n=$code" | tee -a target/quiet-435/exit-codes.txt
+            test "$code" -eq 0 || failed=1
+            for ((i=0; i<n; i++)); do
+              node="acceptance-validator-$i"
+              [ "$i" -ne 0 ] || node=acceptance-bootstrap
+              docker logs "$node" > "target/quiet-435/n$n/$node.log" 2>&1 || true
+            done
+            docker unpause "acceptance-validator-$((n-1))" >/dev/null 2>&1 || true
+            tools/devnet.sh down -v || true
+          done
+          exit "$failed"
+      - name: Preserve verdicts and node-level evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: quiet-435-${{ github.run_id }}
+          path: target/quiet-435/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Teardown disposable networks
+        if: always()
+        run: |
+          tools/devnet.sh down -v || true
+
+
+  quiet-435-seeded-real-nodes:
+    if: ${{ github.event.inputs.mode == 'quiet-seeded' }}
+    name: Issue 435 seeded-baseline quiet chain, no helpers during window
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_NODE_MEMORY: "2g"
+      DEVNET_THREAD_POOL_SIZE: "2"
+      DEVNET_PREFIX: acceptance
+      DEVNET_NETWORK: acceptance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Build exact source node
+        run: |
+          set -euo pipefail
+          mkdir -p target/quiet-435-seeded
+          git rev-parse HEAD | tee target/quiet-435-seeded/source.txt
+          tools/devnet.sh build
+          docker image inspect rnode:local > target/quiet-435-seeded/image.json
+      - name: Execute independent N4 and N8 quiet-chain campaigns
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          failed=0
+          for n in 4 8; do
+            mkdir -p "target/quiet-435-seeded/n$n"
+            tools/devnet.sh up --validators "$n" --fresh --no-autopropose --epoch-length 10 > "target/quiet-435-seeded/n$n/start.log" 2>&1
+            start_code=$?
+            if [ "$start_code" -eq 0 ]; then
+              python3 tools/quiet-chain-issue-435.py --initialization seeded --validators "$n" --window 240 --out "target/quiet-435-seeded/n$n" > "target/quiet-435-seeded/n$n/drill.log" 2>&1
+              code=$?
+            else
+              code=$start_code
+            fi
+            echo "quiet_n$n=$code" | tee -a target/quiet-435-seeded/exit-codes.txt
+            test "$code" -eq 0 || failed=1
+            for ((i=0; i<n; i++)); do
+              node="acceptance-validator-$i"
+              [ "$i" -ne 0 ] || node=acceptance-bootstrap
+              docker logs "$node" > "target/quiet-435-seeded/n$n/$node.log" 2>&1 || true
+            done
+            docker unpause "acceptance-validator-$((n-1))" >/dev/null 2>&1 || true
+            tools/devnet.sh down -v || true
+          done
+          exit "$failed"
+      - name: Preserve verdicts and node-level evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: quiet-435-seeded-${{ github.run_id }}
+          path: target/quiet-435-seeded/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Teardown disposable networks
+        if: always()
+        run: |
+          tools/devnet.sh down -v || true
+
+  lfs-restore-crash-regressions:
+    if: ${{ github.event.inputs.mode == 'final-gap-rust' }}
+    name: LFS restore repeated lifecycle and crash backtrace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler gdb
+      - name: Compile exact restore test and preserve provenance
+        run: |
+          mkdir -p target/lfs-crash
+          git rev-parse HEAD > target/lfs-crash/source.txt
+          cargo test --locked -p rchain-node --test lfs_restore_dev_tax --no-run --message-format=json > target/lfs-crash/build.jsonl
+      - name: Stress undebugged restores and capture a native core on failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=$(python3 -c 'import json; rows=[json.loads(l) for l in open("target/lfs-crash/build.jsonl")]; print(next(r["executable"] for r in rows if r.get("target",{}).get("name")=="lfs_restore_dev_tax" and r.get("executable")))')
+          ulimit -c unlimited
+          echo "$PWD/target/lfs-crash/core.%p" | sudo tee /proc/sys/kernel/core_pattern
+          for attempt in $(seq 1 12); do
+            log="target/lfs-crash/undebugged-$attempt.log"
+            if timeout 240s "$binary" --nocapture --test-threads=4 > "$log" 2>&1; then
+              grep -q 'test result: ok. 9 passed; 0 failed' "$log"
+              echo "undebugged attempt=$attempt PASS" | tee -a target/lfs-crash/verdicts.txt
+            else
+              echo "undebugged attempt=$attempt FAIL" | tee -a target/lfs-crash/verdicts.txt
+              for core in target/lfs-crash/core.*; do
+                [ -f "$core" ] || continue
+                # Rust ignores SIGPIPE; preserve that behavior under gdb while fatal signals still stop.
+              gdb --batch -ex 'set pagination off' -ex 'thread apply all bt' "$binary" "$core" > "$core.backtrace.txt" 2>&1 || true
+              done
+              tail -100 "$log"
+              exit 1
+            fi
+          done
+      - name: Repeat serial and parallel restores under debugger
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=$(python3 -c 'import json; rows=[json.loads(l) for l in open("target/lfs-crash/build.jsonl")]; print(next(r["executable"] for r in rows if r.get("target",{}).get("name")=="lfs_restore_dev_tax" and r.get("executable")))')
+          sha256sum "$binary" > target/lfs-crash/SHA256SUMS
+          failed=0
+          for threads in 1 4; do
+            for attempt in 1 2 3; do
+              log="target/lfs-crash/threads-$threads-run-$attempt.log"
+              # Rust ignores SIGPIPE; preserve that behavior under gdb while fatal signals still stop.
+              gdb --batch -ex 'set pagination off' -ex 'handle SIGPIPE nostop noprint pass' -ex run -ex 'thread apply all bt' --args "$binary" --nocapture --test-threads="$threads" > "$log" 2>&1 || true
+              if grep -q 'test result: ok. 9 passed; 0 failed' "$log" && ! grep -Eq 'received signal SIG|exited with code' "$log"; then
+                echo "threads=$threads attempt=$attempt PASS" | tee -a target/lfs-crash/verdicts.txt
+              else
+                echo "threads=$threads attempt=$attempt FAIL" | tee -a target/lfs-crash/verdicts.txt
+                tail -100 "$log"
+                failed=1
+                break 2
+              fi
+            done
+          done
+          exit "$failed"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: lfs-restore-crash-${{ github.run_id }}
+          path: target/lfs-crash/
+          if-no-files-found: error
+
+  lfs-native-address-sanitizer:
+    if: ${{ github.event.inputs.mode == 'final-gap-rust' }}
+    name: LFS restore native address sanitizer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTC_BOOTSTRAP: "1"
+      RUSTFLAGS: "-Zsanitizer=address -Cforce-frame-pointers=yes"
+      CC: clang
+      CXX: clang++
+      CFLAGS: "-fsanitize=address -fno-omit-frame-pointer"
+      CXXFLAGS: "-fsanitize=address -fno-omit-frame-pointer"
+      LDFLAGS: "-fsanitize=address"
+      ASAN_OPTIONS: "detect_leaks=0:halt_on_error=1"
+      RUST_BACKTRACE: full
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler clang
+      - name: Instrument Rust and native restore dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/lfs-asan
+          git rev-parse HEAD > target/lfs-asan/source.txt
+          cargo test --locked --target x86_64-unknown-linux-gnu -p rchain-node --test lfs_restore_dev_tax -- --nocapture --test-threads=4 2>&1 | tee target/lfs-asan/restore.log
+          grep -q 'test result: ok. 9 passed; 0 failed' target/lfs-asan/restore.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: lfs-native-asan-${{ github.run_id }}
+          path: target/lfs-asan/
+          if-no-files-found: error

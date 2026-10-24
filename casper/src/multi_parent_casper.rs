@@ -22,8 +22,8 @@ use rchain_shared::refined::BlockHeight;
 use crate::block_status::BlockStatus;
 use crate::interpreter_util::{validate_block_checkpoint, ResetRequest, ShardHealth};
 use crate::merging::{
-    rejections_of_fringe, BlockIndex, DeployChainIndex, MergeOutcome, MergeReport, MergeScope,
-    ParentsMergedState, RejectionsMap,
+    BlockIndex, DeployChainIndex, MergeOutcome, MergeReport, MergeScope, ParentsMergedState,
+    RejectionsMap,
 };
 use crate::runtime_manager::RuntimeManager;
 
@@ -161,75 +161,64 @@ async fn get_block_unsafe(
         .ok_or_else(|| format!("missing block {}", hash.to_hex()))
 }
 
-/// **The merge's rejection input, derived from per-block facts** (Law 66/68; C250's residue, C270).
+/// Derive rejection evidence solely from the parents' causal finalisers.
 ///
-/// `MergeScope::merge` used to read a `fringe-data` record keyed by the fringe. That store retired —
-/// one key, many bases was the ambiguity Law 66 names — so the claim it held, "the union of the
-/// `rejected_deploys` the blocks that *finalised* this fringe declared", is reproduced here from what
-/// each block already carries:
-///
-/// - a final-scope block `h` names the fringe it belongs to by the hash of that fringe's sorted set
-///   (`BlockMetadata.member_of_fringe`, written by `dag.rs::insert`);
-/// - the blocks that finalised a fringe `F` are the **children of `F`'s members whose own `fringe`
-///   equals `F`** — `child_map` is the index, and a block's `fringe` is the set it built on;
-/// - their `rejected_deploys` is a fact on the block itself, not on the metadata.
-///
-/// **The cost is the plan's first risk, answered**: O(|scope| + children of the scope) metadata and
-/// body reads, bounded by the merge's own final scope rather than the DAG. It replaces a walk over
-/// every record in the store — a lookup per final-scope block, not a fringe-history walk.
-///
-/// A final-scope block whose metadata names no fringe contributes no entry, and `merge` reads that as
-/// "not rejected" (its `_ => false`), which is what the store's absent record meant too.
-async fn final_scope_rejections(
+/// Both the global child index and `member_of_fringe` can change after these
+/// parents were accepted. A concurrent wider fringe can overwrite a member's
+/// local index, so that index is not a consensus input. Reconstruct each causal
+/// finaliser's newly-finalized closure from its own immutable fringe and parents,
+/// using the same seen-set difference as DAG insertion. Union only its evidence
+/// onto final-scope members it actually finalizes.
+#[doc(hidden)]
+pub async fn final_scope_rejections(
     dag: &dyn BlockDagStorage,
     block_store: &BlockStore,
     child_map: &BTreeMap<BlockHash, BTreeSet<BlockHash>>,
     final_scope: &BTreeSet<BlockHash>,
+    causal_past: &BTreeSet<BlockHash>,
 ) -> Result<RejectionsMap, String> {
     if final_scope.is_empty() {
         return Ok(RejectionsMap::new());
     }
-    // Which fringe each final-scope block belongs to (`member_of_fringe`), so each block is handed
-    // *its own* fringe's finalisers and not another's.
-    let mut members_of: BTreeMap<Blake2b256Hash, BTreeSet<BlockHash>> = BTreeMap::new();
-    for h in final_scope {
-        // **`?`, not `.ok()`**: a metadata store that cannot be read is an error, not "this block
-        // belongs to no fringe". `.ok()` here would have turned a store failure into a *smaller*
-        // finaliser set — a silently weaker rejection set rather than a refused merge, which is the
-        // class the type-system gate exists to keep out.
-        if let Some(f) = dag.lookup(h).await?.and_then(|meta| meta.member_of_fringe) {
-            members_of.entry(f).or_default().insert(*h);
-        }
-    }
-    // The finalisers, grouped by the fringe *they* named: the children of the scope's members whose
-    // own `fringe` hashes to that fringe. Each child is read once, so the cost is bounded by the
-    // children of the scope rather than by the scope × children product.
-    let mut finalisers_of: BTreeMap<Blake2b256Hash, Vec<BTreeSet<Vec<u8>>>> = BTreeMap::new();
-    for m in final_scope {
-        for child in child_map.get(m).into_iter().flatten() {
-            // As above: an unreadable store is an error rather than an absent child.
-            let Some(meta) = dag.lookup(child).await? else {
-                continue;
-            };
-            let Some(block) = block_store
-                .get(&[*child])
-                .await?
-                .into_iter()
-                .next()
-                .flatten()
-            else {
-                continue;
-            };
-            finalisers_of
-                .entry(fringe_hash_of(&meta.fringe))
-                .or_default()
-                .push(block.rejected_deploys);
-        }
-    }
+    let repr = dag.get_representation().await;
+    let msg_map = &repr.dag_message_state.msg_map;
+    let candidates: BTreeSet<BlockHash> = final_scope
+        .iter()
+        .flat_map(|h| child_map.get(h).into_iter().flatten().copied())
+        .filter(|h| causal_past.contains(h))
+        .collect();
     let mut map = RejectionsMap::new();
-    for (f, members) in &members_of {
-        let finalisers = finalisers_of.remove(f).unwrap_or_default();
-        map.extend(rejections_of_fringe(members, finalisers));
+    for child in candidates {
+        let meta = dag
+            .lookup(&child)
+            .await?
+            .ok_or_else(|| format!("missing causal finaliser metadata {}", child.to_hex()))?;
+        let block = get_block_unsafe(block_store, &child).await?;
+        let parents: BTreeSet<Message<BlockHash, Validator>> = meta
+            .justifications
+            .iter()
+            .map(|h| {
+                msg_map
+                    .get(h)
+                    .cloned()
+                    .ok_or_else(|| format!("missing causal finaliser parent {}", h.to_hex()))
+            })
+            .collect::<Result<_, String>>()?;
+        for h in &meta.fringe {
+            if !msg_map.contains_key(h) {
+                return Err(format!("missing causal finaliser fringe {}", h.to_hex()));
+            }
+        }
+        let previous: BTreeSet<BlockHash> = message_map::latest_fringe(msg_map, &parents)
+            .iter()
+            .map(|m| m.id)
+            .collect();
+        let newly_finalized = message_map::between(msg_map, &meta.fringe, &previous);
+        for member in newly_finalized.intersection(final_scope) {
+            map.entry(*member)
+                .or_default()
+                .extend(block.rejected_deploys.iter().cloned());
+        }
     }
     Ok(map)
 }
@@ -274,6 +263,13 @@ where
                 .ok_or_else(|| format!("parent not in message map: {}", h.to_hex()))
         })
         .collect::<Result<_, String>>()?;
+
+    // The closed causal view of these parents. Global child_map may already
+    // contain later blocks when a node replays this exact parent set.
+    let causal_past: BTreeSet<BlockHash> = parents
+        .iter()
+        .flat_map(|m| m.seen.iter().copied().chain(std::iter::once(m.id)))
+        .collect();
 
     // Currently finalized fringe.
     let prev_fringe = message_map::latest_fringe(msg_map, &parents);
@@ -450,9 +446,14 @@ where
                 ),
                 None => prev_fringe_state,
             };
-            let rejections =
-                final_scope_rejections(dag, block_store, &dag_repr.child_map, &m_scope.final_scope)
-                    .await?;
+            let rejections = final_scope_rejections(
+                dag,
+                block_store,
+                &dag_repr.child_map,
+                &m_scope.final_scope,
+                &causal_past,
+            )
+            .await?;
             let result = MergeScope::merge(
                 &m_scope,
                 base_state,
@@ -511,9 +512,14 @@ where
             ),
             None => fringe_state,
         };
-        let rejections =
-            final_scope_rejections(dag, block_store, &dag_repr.child_map, &m_scope.final_scope)
-                .await?;
+        let rejections = final_scope_rejections(
+            dag,
+            block_store,
+            &dag_repr.child_map,
+            &m_scope.final_scope,
+            &causal_past,
+        )
+        .await?;
         MergeScope::merge(
             &m_scope,
             base_state,
