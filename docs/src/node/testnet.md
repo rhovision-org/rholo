@@ -124,7 +124,7 @@ until its chain outcome can be reconciled.
 | node | faucet |
 |---|---|
 | `testnet.rhobot.net` (node A) | ✅ **works** — dev-mode plus a funded key (`/etc/rnode/faucet.env`), **0.3 REV per drip, ten drips per address per process**. Verified delivering on the 2026-10-06 chain |
-| `playground.rhobot.net` (and `rnodeapi.rhobot.net`) | ✅ **works** — dev-mode plus a deployer key |
+| `playground.rhobot.net` | ✅ **works** — dev-mode plus a deployer key |
 
 Two facts a client needs and neither is obvious: the faucet's **`deployId` is the deploy signature**, so
 `GET /api/v1/deploy-status/<signature>` reports what became of the drip (`ProcessedWithSuccess`, or the
@@ -248,28 +248,29 @@ are told apart by their port families.
 
 ### Where each node is
 
-| node | host | role | shard | HTTP API | public name |
-|---|---|---|---|---|---|
-| **A** `rnode` | `164.90.140.144` (nyc3) | genesis master, validator | `/testnet` | `http://164.90.140.144:40403` | **https://testnet.rhobot.net** |
-| **A** `rnode-d` | `164.90.140.144` (nyc3) | validator | `/testnet` | `http://164.90.140.144:41403` | — |
-| **B** `rnode` | `167.99.43.214` (ams3) | validator | `/testnet` | `http://167.99.43.214:40403` | — |
-| **B** `rnode-c` | `167.99.43.214` (ams3) | validator | `/testnet` | `http://167.99.43.214:41403` | — |
-| **observer** | `138.197.65.34` (rhobot-2) | observer — follows, never votes | `/testnet` | `http://138.197.65.34:42403` | — (firewalled to one client) |
-| **playground** | `138.197.65.34` (rhobot-2) | its own one-validator chain | `/playground` | `http://138.197.65.34:40403` | **https://playground.rhobot.net** (alias `rnodeapi.rhobot.net`) |
-| **history** | `138.197.65.34` (rhobot-2) | genesis-only snapshot, 13,946 wallets | `/history` | `http://138.197.65.34:43403` | **https://history.rhobot.net** |
+| node | IP address | protocol | gRPC ext | HTTP API | discovery | shard | role | public name |
+|---|---|---|---|---|---|---|---|---|
+| **A** `rnode` | `164.90.140.144` (nyc3) | 40400 | 40401 | **40403** | 40404 | `/testnet` | genesis master, validator | **https://testnet.rhobot.net** |
+| **A** `rnode-d` | `164.90.140.144` (nyc3) | 41400 | 41401 | **41403** | 41404 | `/testnet` | validator | — |
+| **B** `rnode` | `167.99.43.214` (ams3) | 40400 | 40401 | **40403** | 40404 | `/testnet` | validator | — |
+| **B** `rnode-c` | `167.99.43.214` (ams3) | 41400 | 41401 | **41403** | 41404 | `/testnet` | validator | — |
+| **observer** | `138.197.65.34` (rhobot-2) | 42400 | 42401 | **42403** | 42404 | `/testnet` | observer — follows, never votes | — (firewalled to one client) |
+| **playground** | `138.197.65.34` (rhobot-2) | 40400 | 40401 | **40403** | 40404 | `/playground` | its own one-validator chain | **https://playground.rhobot.net** |
+| **history** | `138.197.65.34` (rhobot-2) | 43400 | 43401 | **43403** | 43404 | `/history` | genesis-only snapshot, 13,946 wallets | **https://history.rhobot.net** |
 
-The same port offsets apply to every row: gRPC external is `…+1` (A `40401`, D `41401`, observer
-`42401`, history `43401`), gRPC internal `…+2`, discovery `…+4`, admin HTTP `…+5`. **Admin is disabled
-on all of them**, so `rnodeadmin.rhobot.net` (`nginx → 40405`) answers 404 rather than proposing.
+Each row is reachable at `IP:port` on that address — node A's HTTP API is
+`http://164.90.140.144:40403`, the observer's is `http://138.197.65.34:42403`. Within a row the
+ports are fixed offsets from the **protocol** port: `+1` gRPC external, `+2` gRPC internal (not
+shown), `+3` HTTP API, `+4` discovery, `+5` admin HTTP. Admin is **disabled on every node**, so
+nothing listens on `…+5`.
 
-`…/api/status` and `…/api/last-finalized-block` work on every row, so a specific node can always be
+`…/api/status` and `…/api/last-finalized-block` work on every row, so a single node can always be
 diagnosed without going through the public name.
 
 **What is exposed.** A and B publish `40400–40405` and `41400–41405` to the world, so every
 validator's HTTP and gRPC API is reachable **without TLS** — use `testnet.rhobot.net` unless you are
 diagnosing one node. The observer's `42403` is open to a single client address, and `43403` is
-reachable only through its own nginx vhost. The playground's `40405` is proxied as
-`rnodeadmin.rhobot.net` but the admin API is off there.
+reachable only through its own nginx vhost.
 
 **Why four equal stakes, a cap of 250, and no `--autopropose`.** The split and the cap were both
 learned by breaking it; the host lesson is the third item.
