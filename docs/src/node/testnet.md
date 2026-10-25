@@ -241,8 +241,35 @@ testnet.rhobot.net ──► node A 164.90.140.144 (10.108.0.3)   genesis master
                         └─ rnode: --dev-mode --propose-on-deploy --attest-on-new-blocks --bootstrap A
 ```
 
-Both hosts live in the `default-nyc3` VPC, the same one as rhobot-2, so they can also talk over private
-addresses (`10.108.0.0/20`). B and C share a host and are told apart by their port families.
+A is in `nyc3`, in the same VPC as rhobot-2, so A and rhobot-2 can also talk over private addresses
+(`10.108.0.0/20`). B is in **`ams3`** — a different region and a different VPC — so every A↔B exchange
+crosses the public internet, and every 3-of-4 quorum crosses an ocean. B's two nodes share a host and
+are told apart by their port families.
+
+### Where each node is
+
+| node | host | role | shard | HTTP API | public name |
+|---|---|---|---|---|---|
+| **A** `rnode` | `164.90.140.144` (nyc3) | genesis master, validator | `/testnet` | `http://164.90.140.144:40403` | **https://testnet.rhobot.net** |
+| **A** `rnode-d` | `164.90.140.144` (nyc3) | validator | `/testnet` | `http://164.90.140.144:41403` | — |
+| **B** `rnode` | `167.99.43.214` (ams3) | validator | `/testnet` | `http://167.99.43.214:40403` | — |
+| **B** `rnode-c` | `167.99.43.214` (ams3) | validator | `/testnet` | `http://167.99.43.214:41403` | — |
+| **observer** | `138.197.65.34` (rhobot-2) | observer — follows, never votes | `/testnet` | `http://138.197.65.34:42403` | — (firewalled to one client) |
+| **playground** | `138.197.65.34` (rhobot-2) | its own one-validator chain | `/playground` | `http://138.197.65.34:40403` | **https://playground.rhobot.net** (alias `rnodeapi.rhobot.net`) |
+| **history** | `138.197.65.34` (rhobot-2) | genesis-only snapshot, 13,946 wallets | `/history` | `http://138.197.65.34:43403` | **https://history.rhobot.net** |
+
+The same port offsets apply to every row: gRPC external is `…+1` (A `40401`, D `41401`, observer
+`42401`, history `43401`), gRPC internal `…+2`, discovery `…+4`, admin HTTP `…+5`. **Admin is disabled
+on all of them**, so `rnodeadmin.rhobot.net` (`nginx → 40405`) answers 404 rather than proposing.
+
+`…/api/status` and `…/api/last-finalized-block` work on every row, so a specific node can always be
+diagnosed without going through the public name.
+
+**What is exposed.** A and B publish `40400–40405` and `41400–41405` to the world, so every
+validator's HTTP and gRPC API is reachable **without TLS** — use `testnet.rhobot.net` unless you are
+diagnosing one node. The observer's `42403` is open to a single client address, and `43403` is
+reachable only through its own nginx vhost. The playground's `40405` is proxied as
+`rnodeadmin.rhobot.net` but the admin API is off there.
 
 **Why four equal stakes, a cap of 250, and no `--autopropose`.** The split and the cap were both
 learned by breaking it; the host lesson is the third item.
@@ -569,6 +596,36 @@ INFO [casper.engine.NodeLaunch] Making a transition to Running state.
 ```
 
 A join takes about 15 seconds and ~19 MB, measured.
+
+**Measured 2026-10-25: this is what a join looks like when there is nothing to catch up on.** Every
+node above was at height 1, so "restoring LFS state" had only the approved genesis fringe to fetch.
+Against the chain at height 28, a fresh data directory with `--bootstrap` receives the finalized
+fringe, then all 29 history and 235 data store items, then **every block #0–28** — and applies none of
+them. It sits at `h=0` while the bootstrap logs `Response sent.` to all 28 block requests, and after
+three 30-second idle rounds it reports:
+
+```
+ERROR [casper.engine.NodeSyncing] LFS state sync failed (attempt 1 of 3):
+      no block finished in 3 consecutive idle rounds of 30s
+```
+
+Reproduced on both `185ed283` and `2745dbb3`, so it is the join path, not a regression from the
+2026-10-24 merges. **A fresh node cannot join this chain today.**
+
+Until that is fixed, seed the observer from a synced node and let it reconnect:
+
+```bash
+# on the synced node (A) — the chain is ~1.3 MB at 109 blocks
+tar czf /tmp/seed.tgz -C /var/lib/rnode --exclude=node.key.pem --exclude=node.certificate.pem .
+# on the new node
+tar xzf /tmp/seed.tgz -C /var/lib/rnode-c
+```
+
+Excluding the two identity files is the load-bearing part: keeping them would hand the observer the
+seed node's node id, and peers would see two nodes claiming one identity (and every joiner's
+`--bootstrap` would then be ambiguous). With a fresh identity it logs `Reconnecting to existing
+network… republished CURRENT_ROOT at the latest accepted block <hash>` and follows from there —
+verified by a faucet deploy that took the net 28 → 29 and the observer with it.
 
 ## Adding a validator — what to watch
 
