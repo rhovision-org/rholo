@@ -615,37 +615,40 @@ INFO [casper.engine.NodeLaunch] Making a transition to Running state.
 
 A join takes about 15 seconds and ~19 MB, measured.
 
-**Measured 2026-10-25: the chain shape matters, and so does the firewall.** Every node above was at
-height 1, so "restoring LFS state" had only the approved genesis fringe to fetch. Against the chain at
-height 28, a fresh data directory with `--bootstrap` receives the finalized fringe, then all 29 history
-and 235 data store items, then **every block #0–28**. Whether it applies them depends on reachability:
-with inbound from every peer it reached the tip; with inbound from the bootstrap only it applied none
-and sat at `h=0`, logging `no block finished in 3 consecutive idle rounds of 30s`.
+**Measured 2026-10-25: a joiner must be reachable from every validator, not only its bootstrap.**
+The earlier height-1 run only restored the approved genesis fringe. A subsequent fresh join
+of the populated chain stalled at `h=0` after receiving the finalized fringe, store items and
+block gossip. A controlled A/B at height 58 (same binary `2745dbb3`, same chain, same flags)
+isolated the joiner's inbound firewall rule as the cause:
 
-**The observed live stall was reachability, not the walk.** A controlled A/B on 2026-10-25 (same
-binary `2745dbb3`, same chain at height 58, only the firewall changed) settled it: with inbound
-allowed from **every** peer the joiner reached `h=58`, `peers=5`, and followed a deploy 58 → 59; with
-inbound allowed from the **bootstrap only** it sat at `h=0`, `peers=6`, receiving gossip and no state
-answers, and failed the same way. **A joiner's `--protocol-port` and `--discovery-port` must accept
-inbound from every peer, not just `--bootstrap`** — peers can dial its neighbours but not it. The doc
-correction is [#458](https://github.com/rhovision-org/rholo/issues/458).
+| Allowed inbound peers on the joiner | Observed result |
+|---|---|
+| All validators (A in nyc3 and B in ams3) | Joined at `h=58` with `peers=5`, entered Running, and followed deploy 58 → 59 |
+| Bootstrap only | Stalled at `h=0` despite `peers=6` and incoming gossip; LFS timed out after three 30 s rounds |
 
-The walk had a **separate latent defect**: it consumed a key when an answer arrived and only then
-checked the block's content hash; a refused body left the key `Received`, and no request ever selected
-a `Received` key again — so the walk could never finish. The fix checks membership and the hash
-before writing state, re-asks `Received` keys on a resend, and reports the `init/requested/received`
-breakdown and the connected peer count in the give-up error (Law 81, register C337). A 28-block
-in-process join and the local reset arm pass ([the evidence
-record](../../../spec/audit/evidence/n457-mature-join-20261025/README.md)); this defect was **not** the cause
-of the observed live stall, and #457 stays open for the reachability diagnostic. What the joiner still
-trusts is stated in [what a joining node trusts](../spec/trust-model.md) — content is checked,
-finality is not.
+The joiner must accept **inbound protocol and discovery traffic from every validator** on
+its configured `--protocol-port` and `--discovery-port`, and reach the bootstrap outbound.
+A nonzero `peers` count in `/api/status` does **not** demonstrate reverse reachability.
+Check `ufw status verbose` and the host/provider firewall **before** attributing a stalled
+join to LFS or genesis. Limit allowed sources to the known validator peers; there is no
+reason to expose administrative APIs or unrelated ports.
 
-If you must join from a host that cannot accept inbound from every peer, seed the observer from a
-synced node and let it reconnect:
+The observed live stall was a reachability problem, **not** the block walk. The walk had
+a separate latent defect: it consumed a key before validating the received block hash,
+so a refused body could strand the key in `Received` and prevent retries. The fix checks
+membership and content hash before updating state, retries `Received` keys, and records the
+`init/requested/received` breakdown (Law 81, register C337). The 28-block in-process join
+and local reset regression passed ([evidence](../../../spec/audit/evidence/n457-mature-join-20261025/README.md)).
+The later hash-specific request/delivery diagnostic is on `dev` via #469; the asymmetric
+firewall regression and live re-check still belong to #457. A joiner's trust boundary is
+described in [what a joining node trusts](../spec/trust-model.md): content is checked,
+but finality is not thereby proven.
+
+If inbound access from the entire validator set cannot be established, an observer can
+instead be seeded from a synced node's data directory and reconnect:
 
 ```bash
-# on the synced node (A) — the chain is ~1.3 MB at 109 blocks
+# on the synced node (A) — the chain was ~1.3 MB at 109 blocks in the recorded run
 tar czf /tmp/seed.tgz -C /var/lib/rnode --exclude=node.key.pem --exclude=node.certificate.pem .
 # on the new node
 tar xzf /tmp/seed.tgz -C /var/lib/rnode-c
