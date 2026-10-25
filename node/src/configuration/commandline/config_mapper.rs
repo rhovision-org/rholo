@@ -315,6 +315,11 @@ pub fn from_options(options: &Options) -> Hocon {
             ));
         }
         opt_str(&mut e, "casper.sync-anchor", &run.sync_anchor);
+        opt_str(
+            &mut e,
+            "casper.expected-genesis-hash",
+            &run.expected_genesis_hash,
+        );
         if run.self_reset {
             e.push(("casper.self-reset".to_string(), Hocon::Boolean(true)));
         }
@@ -498,6 +503,17 @@ mod tests {
         assert_eq!(
             casper, None,
             "an absent flag must not write the key at all: {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn pinned_genesis_cli_reaches_casper_configuration() {
+        let hash = "11".repeat(32);
+        let mapped = from_options(&options(&["run", "--expected-genesis-hash", &hash]));
+        let casper = field(&mapped, "casper").expect("casper configuration");
+        assert_eq!(
+            field(casper, "expected-genesis-hash"),
+            Some(&Hocon::String(hash))
         );
     }
 

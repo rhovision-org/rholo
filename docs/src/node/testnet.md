@@ -442,19 +442,28 @@ one, as do `scripts/qos-cli/agent.mjs` and `scripts/localnet/pk.txt`. The exact 
 /etc/rnode/faucet.env                  FAUCET_KEY=… — the key node A's faucet signs with (dave's, funded)
 ```
 
-Genesis hash `713c0ebb0eb4ce866ae118aa1177a498b4edb2d431dd8b77d28abcdd4da9ea91` (four bonds at 250).
+Historical 2026-10-04 genesis hash `713c0ebb0eb4ce866ae118aa1177a498b4edb2d431dd8b77d28abcdd4da9ea91` (four bonds at 250). This is **not** the current testnet genesis.
 
 **Node ids are deliberately not written down here.** A rebuild regenerates them — both changed twice on
 2026-09-29 alone — so a page that pins them is wrong within the hour. Read the live ones per host from
 `GET /api/status` → `address`.
 
-The genesis hash depends only on the genesis *inputs* — bonds, wallets, parameters **and the genesis
-content itself** — not on either node's identity, **provided the ceremony is run by the first bond in
-bonds-file order** (Law 84, #456): that bond is the block's sender, the blessed deploys' signer and the
-governance admin, and a node whose key is not first refuses to create a genesis. Before that rule the
-creator's own key entered both the sender and the deploys' signatures, so two nodes with identical
-inputs produced different blocks — the `rnode-c` fork #456 measured. With the rule, the hash is stable
-across rebuilds but changes when any input changes: the 2026-09-26 rebuilds that signed for one validator all produced `e525129d…`, adding B's
+The genesis block depends on the canonical inputs: bonds, wallets, parameters, contract
+content **and the genesis ceremony identity**. Under the first-bond rule (Law 84, #456), the
+ceremony identity is deterministically the **first entry in bonds-file order**: its public key
+is the block sender and its private key signs the blessed governance deploys. Nodes without
+that identity refuse to create a new genesis unless the matching generated ceremony key
+is available. Previously, using each node's local key could produce different genesis blocks
+from otherwise identical inputs, as the `rnode-c` fork demonstrated.
+
+A joining node must import the network's existing signed genesis rather than recreate it.
+Use `--expected-genesis-hash` with the **full canonical genesis block hash from an independently
+trusted network record**. The node refuses to enter Running when an imported or persisted
+DAG starts with another genesis; this guard is **opt-in**, not an identity guarantee when the
+flag is omitted. `--sync-anchor` identifies a recovery block, **not** the network genesis.
+
+Historical changes to genesis inputs also changed the hash: the 2026-09-26 rebuilds
+that signed for one validator all produced `e525129d…`, adding B's
 bond moved it to `6a6db0db…`, and the 2026-09-29 rebuild — one bond *and* the content change below —
 produced `9f09e7a0…`, and the 2026-10-04 rebuild — four bonds at 250, a cap of 250 and an active set of
 4 — produced `713c0ebb…`, and the 2026-10-24 rebuild — the shard renamed from `/root` to `/testnet` — produced

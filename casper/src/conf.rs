@@ -176,6 +176,8 @@ pub struct CasperConf {
     /// Only consulted when this node's DAG is empty (the boot path that would otherwise request a
     /// fringe). Empty means the ordinary path, unchanged.
     pub sync_anchor: Option<String>,
+    /// Operator-pinned genesis block hash for joining an existing network.
+    pub expected_genesis_hash: Option<String>,
     /// **Whether this node may reset itself** — the acting half of F-U5-01, off by default (#320).
     ///
     /// When a `Divergence` record's revalidation budget is spent, the node can no longer extend the

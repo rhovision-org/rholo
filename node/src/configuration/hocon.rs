@@ -476,6 +476,7 @@ fn casper_conf_from_hocon(h: &Hocon) -> Result<CasperConf, String> {
             None => 0,
         },
         sync_anchor: to_optional_string(h, "sync-anchor")?,
+        expected_genesis_hash: to_optional_string(h, "expected-genesis-hash")?,
         // Absent means off: a node that does not opt into resetting itself keeps refusing, which is
         // exactly the behaviour every build before this one had.
         self_reset: match get_opt(h, "self-reset") {

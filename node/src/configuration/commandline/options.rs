@@ -695,6 +695,10 @@ pub struct Run {
     #[arg(long = "sync-anchor")]
     pub sync_anchor: Option<String>,
 
+    /// Full genesis block hash of the network to join.
+    #[arg(long = "expected-genesis-hash")]
+    pub expected_genesis_hash: Option<String>,
+
     /// Public keys of the Coop multisig vault.
     ///
     /// **Wired, but not to what the name suggests.** In the blessed contract these keys own the Coop
