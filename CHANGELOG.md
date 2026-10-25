@@ -118,7 +118,7 @@ cites PR numbers.
 
 ### Security and assurance
 
-- There is no `unsafe` code. 79 laws are machine-checked in Lean 4 and Coq, and CI checks the law
+- There is no `unsafe` code. 80 laws are machine-checked in Lean 4 and Coq, and CI checks the law
   register against the code.
 - Red-team, type-safety, HAZOP and production-readiness wargame passes were run, and every finding
   is closed in the register.
