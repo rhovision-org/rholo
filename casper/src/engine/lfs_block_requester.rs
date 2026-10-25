@@ -243,6 +243,9 @@ pub async fn request_blocks(
                     None => return Ok::<(), String>(()),
                 },
                 _ = tokio::time::sleep(request_timeout) => {
+                    // Read before the state lock: `connected_peers` takes the connections lock, and
+                    // holding the LFS state lock across it would order two unrelated locks.
+                    let peers = comm_util.connected_peers().await;
                     // An idle round: a whole resend interval with no block response. Whether it is
                     // *stuck* is a different question from whether it is *quiet*, and `finished` is
                     // the measure that answers it.
@@ -253,11 +256,25 @@ pub async fn request_blocks(
                     if finished == last_finished {
                         idle_rounds += 1;
                         if idle_rounds >= MAX_IDLE_ROUNDS {
+                            // The old text concluded "the fringe names state no peer is serving",
+                            // which is a guess. A joiner whose ports a peer cannot dial *in* to
+                            // looks healthy from here — the fringe and its state arrive over the
+                            // connections it made itself — and the guess sent #457 after a sync bug
+                            // that did not exist. Report what is observable instead.
+                            let reachability = if peers == 0 {
+                                "no peer is connected at all: check --bootstrap and discovery"
+                                    .to_string()
+                            } else {
+                                format!(
+                                    "{peers} peer(s) are connected but none is answering this \
+                                     node: check that every peer can reach this node's protocol \
+                                     port (--protocol-port) and discovery port (--discovery-port)"
+                                )
+                            };
                             return Err(format!(
                                 "no block finished in {idle_rounds} consecutive idle rounds of \
                                  {request_timeout:?} ({finished} block(s) finished, {outstanding} \
-                                 key(s) still outstanding): the fringe names state no peer is \
-                                 serving, so the walk cannot reach it"
+                                 key(s) still outstanding, {peers} peer(s) connected); {reachability}"
                             ));
                         }
                     } else {
@@ -268,7 +285,8 @@ pub async fn request_blocks(
                         source,
                         &format!(
                             "No block responses for {request_timeout:?}. Resending requests \
-                             ({idle_rounds}/{MAX_IDLE_ROUNDS} idle rounds without a finished block)."
+                             ({idle_rounds}/{MAX_IDLE_ROUNDS} idle rounds without a finished block, \
+                             {peers} peer(s) connected)."
                         ),
                     );
                     true
@@ -1236,6 +1254,118 @@ mod tests {
             state.finished.len(),
             N,
             "and it completed every block of the chain"
+        );
+    }
+
+    /// **#457: the give-up message must report the peers, not guess at the fringe.**
+    ///
+    /// A joiner that peers can dial *out* to but not dial *in* to looks healthy from inside: the
+    /// fringe arrives, its state arrives, `peers` is non-zero, and every block it asks for is simply
+    /// never answered. The old text concluded *"the fringe names state no peer is serving, so the
+    /// walk cannot reach it"* — a guess in the wrong direction, and the one that sent #457 after a
+    /// sync defect that did not exist: the same binary joins fine once the joiner's ports are open.
+    ///
+    /// Falsified in the witnessing form: restore the old message and the assertions below fail, which
+    /// is what an operator was left with — a message naming no peers and pointing at the wrong cause.
+    #[tokio::test]
+    async fn the_give_up_message_reports_the_connected_peers_and_points_at_reachability() {
+        let blocks = chain(2);
+        let tip = blocks.last().expect("a non-empty chain").block_hash;
+        // An empty store, so the tip is missing and the walk has to ask for it.
+        let store = store().await;
+        // A receiver nobody ever sends to: requests go out, nothing comes back.
+        let (_incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel(64);
+        let transport = Arc::new(RecordingTransport::default());
+        let connections: ConnectionsCell =
+            Arc::new(tokio::sync::RwLock::new(vec![peer("a"), peer("b")]));
+        let conf = RPConf {
+            local: peer("local"),
+            network_id: "testnet".to_string(),
+            bootstrap: None,
+            default_timeout: Duration::from_secs(10),
+            max_num_of_connections: 10,
+            clear_connections: ClearConnectionsConf {
+                num_of_connections_pinged: 10,
+            },
+        };
+        let comm_util = CommUtil::new(transport, conf, connections, Arc::new(NopLog));
+        let fringe = FinalizedFringe {
+            hashes: vec![tip],
+            state_hash: StateHash::new([0u8; 32]),
+            ancestry: Vec::new(),
+        };
+
+        let err = request_blocks(
+            &fringe,
+            &mut incoming_rx,
+            Duration::from_millis(10),
+            &store,
+            &comm_util,
+            &NopLog,
+        )
+        .await
+        .expect_err("a fringe whose block nobody serves must give up");
+
+        assert!(
+            err.contains("2 peer(s) connected"),
+            "the message must report the connections it actually has: {err}"
+        );
+        assert!(
+            err.contains("protocol port") && err.contains("discovery port"),
+            "…and point at the reachability that actually breaks a join: {err}"
+        );
+        assert!(
+            !err.contains("no peer is serving"),
+            "the old conclusion is a guess this node cannot make: {err}"
+        );
+    }
+
+    /// The other half of the same message: a node with **no** connections needs different advice than
+    /// one whose peers are connected but silent, because the failure it is looking at is its own
+    /// `--bootstrap`, not a firewall in front of a peer.
+    #[tokio::test]
+    async fn the_give_up_message_distinguishes_no_peers_from_silent_peers() {
+        let blocks = chain(2);
+        let tip = blocks.last().expect("a non-empty chain").block_hash;
+        let store = store().await;
+        let (_incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel(64);
+        let transport = Arc::new(RecordingTransport::default());
+        let connections: ConnectionsCell = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+        let conf = RPConf {
+            local: peer("local"),
+            network_id: "testnet".to_string(),
+            bootstrap: None,
+            default_timeout: Duration::from_secs(10),
+            max_num_of_connections: 10,
+            clear_connections: ClearConnectionsConf {
+                num_of_connections_pinged: 10,
+            },
+        };
+        let comm_util = CommUtil::new(transport, conf, connections, Arc::new(NopLog));
+        let fringe = FinalizedFringe {
+            hashes: vec![tip],
+            state_hash: StateHash::new([0u8; 32]),
+            ancestry: Vec::new(),
+        };
+
+        let err = request_blocks(
+            &fringe,
+            &mut incoming_rx,
+            Duration::from_millis(10),
+            &store,
+            &comm_util,
+            &NopLog,
+        )
+        .await
+        .expect_err("a fringe whose block nobody serves must give up");
+
+        assert!(
+            err.contains("no peer is connected at all"),
+            "with an empty connections list the message must say so: {err}"
+        );
+        assert!(
+            err.contains("--bootstrap"),
+            "and point at the thing that is actually wrong: {err}"
         );
     }
 }

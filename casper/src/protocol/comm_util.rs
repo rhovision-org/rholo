@@ -74,6 +74,17 @@ impl CommUtil {
     }
 
     /// Broadcast a packet (in one piece) to up to `scope_size` random peers (port of `sendToPeers`).
+    /// How many peers this node currently holds a connection with.
+    ///
+    /// The LFS block requester **broadcasts** rather than addressing peers, so it keeps no per-peer
+    /// accounting and cannot say *which* peer failed to answer. This count is the one peer fact it
+    /// can report when requests go unanswered, and the difference between "nobody is connected" and
+    /// "peers are connected but none is answering this node" is the difference between a wrong
+    /// `--bootstrap` and a firewall rule (#457).
+    pub async fn connected_peers(&self) -> usize {
+        self.connections.read().await.len()
+    }
+
     pub async fn send_to_peers(&self, message: &Packet, scope_size: Option<usize>) {
         let max = scope_size.unwrap_or(self.conf.max_num_of_connections);
         let peers = {
