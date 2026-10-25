@@ -332,10 +332,23 @@ impl CommUtil {
         self.send_to_peers(&packet, None).await;
     }
 
-    /// Broadcast a request for a block (port of `broadcastRequestForBlock`).
-    pub async fn broadcast_request_for_block(&self, hash: &BlockHash, scope_size: Option<usize>) {
+    /// Broadcast a request for a block and report **which peers it was sent to** — the per-hash
+    /// attribution the join diagnostic needs (#457). `send_to_peers` picks a random subset, so the
+    /// connection set is not the asked set; this returns the subset it actually used.
+    pub async fn broadcast_request_for_block(
+        &self,
+        hash: &BlockHash,
+        scope_size: Option<usize>,
+    ) -> Vec<PeerNode> {
         let packet = BlockRequestSerde.mk_packet(&BlockRequest { hash: *hash });
-        self.send_to_peers(&packet, scope_size).await;
+        let max = scope_size.unwrap_or(self.conf.max_num_of_connections);
+        let peers = {
+            let connections = self.connections.read().await;
+            random_connections(&connections, max)
+        };
+        let msg = protocol_helper::packet(&self.conf.local, &self.conf.network_id, packet);
+        self.transport.broadcast(&peers, msg).await;
+        peers
     }
 
     /// Request the fork-choice tip from peers (port of `sendForkChoiceTipRequest`).

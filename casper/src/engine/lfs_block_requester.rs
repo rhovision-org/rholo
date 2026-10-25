@@ -14,7 +14,7 @@
 //! sits in `NodeSyncing` for good **with a serving API and no error line**.
 
 use rchain_shared::chan;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -53,16 +53,47 @@ type St = LfsState<BlockHash>;
 /// provisional number.
 pub const MAX_IDLE_ROUNDS: u32 = 3;
 
-/// The peers whose block messages never arrived during the attempt — the reachability diagnostic's
-/// list. `asked` is the connection set at give-up, `answered` the peers `NodeSyncing::handle` saw a
-/// `BlockMessage` from. A peer in the first set and not the second is one that could not (or would
-/// not) answer, which is exactly the inbound-reachability shape #457 measured.
-fn unanswered_peers(asked: &[PeerNode], answered: &BTreeSet<NodeIdentifier>) -> Vec<String> {
-    asked
-        .iter()
-        .filter(|p| !answered.contains(&p.id))
-        .map(|p| p.to_string())
-        .collect()
+/// **The per-hash request log** (#457's attribution, after review). A connected peer is not
+/// necessarily asked — `request_next` broadcasts to a random subset (the walk uses `Some(1)`) — and a
+/// `BlockMessage` is not necessarily an answer (it may be gossip for another hash). So the give-up
+/// diagnostic reports what was *observed*: for each outstanding hash, the peers it was actually
+/// requested from that never delivered **that hash**.
+#[derive(Default)]
+pub struct BlockRequestLog {
+    /// The peers each hash was requested from, keyed by peer id and kept for display.
+    sent: BTreeMap<BlockHash, BTreeMap<NodeIdentifier, PeerNode>>,
+    /// The peers that delivered each hash.
+    answered: BTreeMap<BlockHash, BTreeSet<NodeIdentifier>>,
+}
+
+impl BlockRequestLog {
+    pub(crate) fn record_sent(&mut self, hash: &BlockHash, peers: &[PeerNode]) {
+        self.sent
+            .entry(*hash)
+            .or_default()
+            .extend(peers.iter().map(|p| (p.id.clone(), p.clone())));
+    }
+
+    pub(crate) fn record_answer(&mut self, hash: &BlockHash, peer: &NodeIdentifier) {
+        self.answered.entry(*hash).or_default().insert(peer.clone());
+    }
+
+    /// The peers `hash` was requested from that never delivered it, named. An answer for a
+    /// **different** hash does not clear this one, and a connected-but-unselected peer never appears.
+    pub(crate) fn unanswered(&self, hash: &BlockHash) -> Vec<String> {
+        self.sent
+            .get(hash)
+            .into_iter()
+            .flat_map(|peers| peers.iter())
+            .filter(|(id, _)| {
+                !self
+                    .answered
+                    .get(hash)
+                    .is_some_and(|answered| answered.contains(*id))
+            })
+            .map(|(_, peer)| peer.to_string())
+            .collect()
+    }
 }
 
 /// Validate a received block and, if accepted, request its justifications. Returns whether the
@@ -196,6 +227,7 @@ async fn request_next(
     block_store: &BlockStore,
     comm_util: &CommUtil,
     resend: bool,
+    block_requests: &Arc<tokio::sync::Mutex<BlockRequestLog>>,
 ) -> Result<(), String> {
     let is_end = { st.lock().await.is_finished() };
     let hashes = {
@@ -226,7 +258,8 @@ async fn request_next(
     }
     if !is_end && !missing.is_empty() {
         for h in &missing {
-            comm_util.broadcast_request_for_block(h, Some(1)).await;
+            let peers = comm_util.broadcast_request_for_block(h, Some(1)).await;
+            block_requests.lock().await.record_sent(h, &peers);
         }
     }
     Ok(())
@@ -243,7 +276,7 @@ pub async fn request_blocks(
     block_store: &BlockStore,
     comm_util: &CommUtil,
     log: &dyn Log,
-    answered_block_peers: &Arc<tokio::sync::Mutex<BTreeSet<NodeIdentifier>>>,
+    block_requests: &Arc<tokio::sync::Mutex<BlockRequestLog>>,
 ) -> Result<St, String> {
     let source = LogSource::new("casper.engine.LfsBlockRequester");
 
@@ -292,22 +325,42 @@ pub async fn request_blocks(
                     if finished == last_finished {
                         idle_rounds += 1;
                         if idle_rounds >= MAX_IDLE_ROUNDS {
-                            let asked = comm_util.connected_peers().await;
-                            let answered = answered_block_peers.lock().await.clone();
-                            let silent = unanswered_peers(&asked, &answered);
+                            let (outstanding_hashes, connected) = {
+                                let guard = st.lock().await;
+                                (
+                                    guard.d.keys().copied().take(8).collect::<Vec<_>>(),
+                                    guard.d.len(),
+                                )
+                            };
+                            let log = block_requests.lock().await;
+                            let attributed: Vec<String> = outstanding_hashes
+                                .iter()
+                                .filter_map(|hash| {
+                                    let silent = log.unanswered(hash);
+                                    (!silent.is_empty()).then(|| {
+                                        format!("{}: [{}]", hash.to_hex(), silent.join(", "))
+                                    })
+                                })
+                                .collect();
+                            let attribution = if attributed.is_empty() {
+                                "no recorded request to a peer is unanswered".to_string()
+                            } else {
+                                attributed.join("; ")
+                            };
+                            let peers = comm_util.connected_peers().await.len();
                             return Err(format!(
                                 "no block finished in {idle_rounds} consecutive idle rounds of \
                                  {request_timeout:?} ({finished} block(s) finished; outstanding: \
                                  {init} init, {requested} requested, {received} received; \
-                                 first outstanding: [{}]; {} connected peer(s) were asked; no block \
-                                 message from [{}]). The fringe names state no peer is serving, every \
-                                 answer is being refused, or the peers cannot answer this node: a \
-                                 joiner whose protocol and discovery ports admit only its bootstrap \
-                                 gets exactly this — they gossip to it and cannot dial in \
+                                 first outstanding: [{}]; {connected} outstanding hash(es), \
+                                 {peers} connected peer(s)). For the outstanding hashes, no block \
+                                 was received from the peers they were requested from: [{attribution}]. \
+                                 The fringe names state no peer is serving, every answer is being \
+                                 refused, or the peers cannot answer this node: a joiner whose \
+                                 protocol and discovery ports admit only its bootstrap gets \
+                                 exactly this — they gossip to it and cannot dial in \
                                  (#457/#458)",
-                                sample.join(", "),
-                                asked.len(),
-                                silent.join(", ")
+                                sample.join(", ")
                             ));
                         }
                     } else {
@@ -324,7 +377,15 @@ pub async fn request_blocks(
                     true
                 }
             };
-            request_next(&st, &response_hash_tx, block_store, comm_util, resend).await?;
+            request_next(
+                &st,
+                &response_hash_tx,
+                block_store,
+                comm_util,
+                resend,
+                block_requests,
+            )
+            .await?;
             if st.lock().await.is_finished() {
                 return Ok(());
             }
@@ -420,21 +481,44 @@ mod tests {
     use crate::protocol::casper_message_protocol::BlockRequestSerde;
     use crate::protocol::comm_util::{CommUtil, ConnectionsCell};
 
-    fn no_answers() -> Arc<tokio::sync::Mutex<BTreeSet<NodeIdentifier>>> {
-        Arc::new(tokio::sync::Mutex::new(BTreeSet::new()))
+    fn no_requests() -> Arc<tokio::sync::Mutex<BlockRequestLog>> {
+        Arc::new(tokio::sync::Mutex::new(BlockRequestLog::default()))
     }
 
-    /// #457's diagnostic: the give-up lists the peers that never sent a block message, not only a
-    /// count. `peer()` builds the identifier from its name, so the answered one must be absent.
+    /// #457's attribution, after review: the error names the peers a **hash** was requested from
+    /// that never delivered it. An unselected connected peer is never blamed, and an answer for a
+    /// different hash (gossip) does not clear the request.
     #[test]
-    fn unanswered_peers_names_the_peers_that_did_not_answer() {
-        let asked = vec![peer("bootstrap"), peer("validator-1"), peer("validator-2")];
-        let answered: BTreeSet<NodeIdentifier> = [peer("validator-1").id].into_iter().collect();
-        let silent = unanswered_peers(&asked, &answered);
-        assert_eq!(silent.len(), 2);
-        assert!(!silent.contains(&peer("validator-1").to_string()));
-        assert!(silent.contains(&peer("bootstrap").to_string()));
-        assert!(silent.contains(&peer("validator-2").to_string()));
+    fn the_request_log_names_only_requested_peers_that_did_not_deliver_the_hash() {
+        let mut log = BlockRequestLog::default();
+        let a = peer("validator-1");
+        let b = peer("validator-2");
+        let unselected = peer("validator-3");
+        let requested = BlockHash::new([1u8; 32]);
+        let gossip = BlockHash::new([2u8; 32]);
+
+        // The walk requests `requested` from A and B (it broadcasts to a subset, not the connection set).
+        log.record_sent(&requested, &[a.clone(), b.clone()]);
+        log.record_answer(&requested, &a.id);
+        // A block for another hash is not an answer to this request.
+        log.record_answer(&gossip, &b.id);
+
+        let silent = log.unanswered(&requested);
+        assert_eq!(silent, vec![b.to_string()], "only B is named");
+        assert!(
+            !silent.iter().any(|s| s == &a.to_string()),
+            "A delivered the hash"
+        );
+        assert!(
+            !silent.iter().any(|s| s == &unselected.to_string()),
+            "a connected peer that was never asked must not be blamed: {silent:?}"
+        );
+
+        log.record_answer(&requested, &b.id);
+        assert!(
+            log.unanswered(&requested).is_empty(),
+            "a delivery from B clears the hash"
+        );
     }
 
     fn source() -> LogSource {
@@ -740,7 +824,7 @@ mod tests {
             &store,
             &comm_util,
             &NopLog,
-            &no_answers(),
+            &no_requests(),
         )
         .await
         .expect("a healthy store");
@@ -846,7 +930,7 @@ mod tests {
             &store,
             &comm_util,
             &NopLog,
-            &no_answers(),
+            &no_requests(),
         )
         .await
         .expect("a healthy store");
@@ -971,7 +1055,7 @@ mod tests {
             &failing,
             &comm_util,
             &NopLog,
-            &no_answers(),
+            &no_requests(),
         )
         .await;
 
@@ -1025,7 +1109,7 @@ mod tests {
                 &failing,
                 &comm_util,
                 &NopLog,
-                &no_answers(),
+                &no_requests(),
             ),
         )
         .await;
@@ -1087,7 +1171,7 @@ mod tests {
             &store,
             &comm_util,
             &NopLog,
-            &no_answers(),
+            &no_requests(),
         )
         .await
         .expect("an empty fringe is not an error for this function");
@@ -1219,7 +1303,7 @@ mod tests {
                 &store,
                 &comm_util,
                 &NopLog,
-                &no_answers(),
+                &no_requests(),
             ),
         )
         .await;
@@ -1247,13 +1331,9 @@ mod tests {
              keys were init, requested or stranded as received: {err}"
         );
         assert!(
-            err.contains("connected peer(s) were asked"),
-            "the failure must name the peer count and the reachability shape (#457/#458): a joiner \
-             that admits only its bootstrap receives gossip and no state answers: {err}"
-        );
-        assert!(
-            err.contains("no block message from"),
-            "the failure must name the peers that did not answer, not only how many are connected: {err}"
+            err.contains("no block was received from the peers they were requested from"),
+            "the failure must attribute the missing hash to the peers it was requested from, not to \
+             the whole connection set: {err}"
         );
         assert!(
             transport
@@ -1327,7 +1407,7 @@ mod tests {
                 &store,
                 &comm_util,
                 &NopLog,
-                &no_answers(),
+                &no_requests(),
             ),
         )
         .await
@@ -1399,7 +1479,7 @@ mod tests {
                 &store,
                 &comm_util,
                 &NopLog,
-                &no_answers(),
+                &no_requests(),
             ),
         )
         .await
