@@ -141,11 +141,8 @@ cites PR numbers.
   out `node.key.pem` and `node.certificate.pem` (see `docs/src/node/testnet.md`).
 - **#456:** the genesis hash depends on which validator created it. A joiner must receive genesis
   from the network and cannot recompute it.
-- Losing two of four equal validators halts finality until one returns. There is no inactivity
-  leak.
 - This release needs a **new genesis** and cannot replay older chains.
 - Post-quantum signatures and key exchange are planned (#274) and not shipped.
-- Reads on the playground are slower than on the testnet. (#364, #370)
 
 ### Deferred RCHIPs
 
