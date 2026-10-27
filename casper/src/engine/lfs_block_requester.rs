@@ -686,6 +686,98 @@ mod tests {
             "the only requested block was saved, so the requester is finished"
         );
     }
+
+    /// A delayed duplicate is not a failed answer to every other outstanding request.
+    /// On the live chain, each duplicate used to trigger a full resend and generate
+    /// further duplicates, starving the ancestry walk behind its own reply traffic.
+    #[tokio::test]
+    async fn duplicate_delivery_does_not_resend_unrelated_outstanding_blocks() {
+        let blocks = chain(2);
+        let tip = &blocks[1];
+        let store = store().await;
+        let st = Arc::new(tokio::sync::Mutex::new(requested(tip.block_hash)));
+        let (request_tx, mut request_rx) = tokio::sync::mpsc::channel(2);
+        process_block(&st, &store, &NopLog, source(), &request_tx, tip)
+            .await
+            .unwrap();
+        assert_eq!(request_rx.try_recv(), Ok(false));
+        let before = {
+            let mut guard = st.lock().await;
+            *guard = guard.get_next(false).0;
+            guard.clone()
+        };
+        assert_eq!(before.d[&blocks[0].block_hash], ReqStatus::Requested);
+
+        process_block(&st, &store, &NopLog, source(), &request_tx, tip)
+            .await
+            .unwrap();
+        assert_eq!(*st.lock().await, before, "a duplicate changes no walk state");
+        assert!(
+            request_rx.try_recv().is_err(),
+            "a duplicate must not trigger requests for the still-pending parent"
+        );
+    }
+
+    /// Continuous unsolicited traffic is not progress. It must neither create
+    /// requests nor postpone the bounded failure of a genuinely unserved fringe.
+    #[tokio::test]
+    async fn unsolicited_blocks_do_not_reset_the_idle_failure_bound() {
+        let blocks = chain(2);
+        let tip = blocks[1].block_hash;
+        let store = store().await;
+        let (incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel(64);
+        let noise = blocks[0].clone(); // not known until the unserved tip arrives
+        let spam = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(2));
+            loop {
+                interval.tick().await;
+                if incoming_tx.send(noise.clone()).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let transport = Arc::new(RecordingTransport::default());
+        let conf = RPConf {
+            local: peer("local"),
+            network_id: "testnet".to_string(),
+            bootstrap: None,
+            default_timeout: Duration::from_secs(10),
+            max_num_of_connections: 10,
+            clear_connections: ClearConnectionsConf {
+                num_of_connections_pinged: 10,
+            },
+        };
+        let connections = Arc::new(tokio::sync::RwLock::new(vec![peer("bootstrap")]));
+        let comm_util = CommUtil::new(transport.clone(), conf, connections, Arc::new(NopLog));
+        let fringe = FinalizedFringe {
+            hashes: vec![tip],
+            state_hash: StateHash::new([0; 32]),
+            ancestry: Vec::new(),
+        };
+        let outcome = tokio::time::timeout(
+            Duration::from_millis(500),
+            request_blocks(
+                &fringe,
+                &mut incoming_rx,
+                Duration::from_millis(20),
+                &store,
+                &comm_util,
+                &NopLog,
+                &no_requests(),
+            ),
+        )
+        .await;
+        spam.abort();
+        let error = outcome
+            .expect("unsolicited traffic must not keep an incomplete walk alive")
+            .expect_err("no peer supplied the fringe block");
+        assert!(error.contains("no block finished"), "{error}");
+        assert_eq!(
+            transport.broadcasts.lock().unwrap().len(),
+            MAX_IDLE_ROUNDS as usize,
+            "only the initial request and bounded idle retries are sent"
+        );
+    }
     fn peer(name: &str) -> PeerNode {
         PeerNode::from(
             NodeIdentifier::new(name.as_bytes().to_vec()),
