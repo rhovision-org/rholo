@@ -6,9 +6,9 @@
 ## Existing instruments: reuse, do not duplicate
 
 - `tools/consensus-acceptance-drill.py`: verifies finalized marker retention, not general rollback safety.
-- N=4/N=8 quiet-finality and recovery workflows from #435/#453: verify exact candidate HEAD; a green unrelated workflow is not acceptance.
-- `docs/src/node/issue-447-application-acceptance.md` and the #448/#450/#451/#452 harnesses: verify valid internally connected 2+2 topology, causal merge and application-state integrity.
-- #428/#429 M1-M6 assurance proposal: distinct from an approval to launch mainnet.
+- N=4/N=8 quiet-finality and recovery workflows from #435/#453: verify exact candidate HEAD; #453 remains under review, and a green unrelated workflow is not acceptance.
+- `docs/src/node/issue-447-application-acceptance.md` and the merged #448/#450/#451 work: verify valid internally connected 2+2 topology, causal merge and application-state integrity. #452 was closed because its target implementation is already present through #450.
+- #428's M1-M6 assurance proposal: distinct from an approval to launch mainnet. The draft evaluator in #429 was closed pending agreement on the policy and evidence schema.
 
 ## Run identity and required artifacts
 
@@ -43,7 +43,7 @@ In an equal-stake 2+2 split neither 50% side is required to finalize independent
 - **INCOMPLETE:** a required arm, repetition, validator observation or independent review is missing.
 - **PASS:** all required arms and repetitions pass on the **same intended candidate SHA**, with complete independently verifiable evidence.
 
-The decision is **EVIDENCE-ONLY** unless every scoped arm passes and all open consensus or state-integrity blockers (#420, #435, #447, #450, #452) receive explicit evidence-based disposition. Only then may the candidate be labelled **MERGE-SAFE FOR REVIEW**, subject to Jim's review and repository merge policy. Neither outcome grants deployment authority. Hard-fork transition, network-specific migration and operator approval are separate gates.
+The decision is **EVIDENCE-ONLY** unless every scoped arm passes and all remaining consensus or state-integrity blockers (#420, #435 and #447) receive explicit evidence-based disposition, and the merged #450 evidence matches the candidate. Only then may the candidate be labelled **MERGE-SAFE FOR REVIEW**, subject to Jim's review and repository merge policy. Neither outcome grants deployment authority. Hard-fork transition, network-specific migration and operator approval are separate gates.
 
 ## Reviewer handoff
 
