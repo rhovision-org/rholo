@@ -46,8 +46,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  live-proof-binary:
+    if: ${{ github.event.inputs.mode == 'live-proof-binary' }}
+    name: Build exact dev Linux x86-64 binary for isolated live join proof
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Freeze exact merged dev revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach 3607cf9f7832054376ac33a4c1c56fd0b701e89d
+          test "$(git rev-parse HEAD)" = 3607cf9f7832054376ac33a4c1c56fd0b701e89d
+          mkdir -p target/live-proof
+          git rev-parse HEAD > target/live-proof/source-sha.txt
+          test -z "$(git status --porcelain)"
+      - name: Install pinned compiler and system dependencies
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.95.0 --profile minimal
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev libssl-dev pkg-config build-essential clang
+          ldd --version | head -1
+      - name: Compile locked release binary on Ubuntu 22.04
+        env:
+          CARGO_INCREMENTAL: '0'
+        run: |
+          set -euo pipefail
+          cargo +1.95.0 build --locked --release -p rchain-node --bin rnode
+          cp target/release/rnode target/live-proof/rnode
+          chmod 0755 target/live-proof/rnode
+          sha256sum target/live-proof/rnode > target/live-proof/SHA256SUMS
+          file target/live-proof/rnode > target/live-proof/file.txt
+          ldd target/live-proof/rnode > target/live-proof/ldd.txt
+          ./target/live-proof/rnode --version > target/live-proof/version.txt 2>&1
+          grep -F '3607cf9f' target/live-proof/version.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rholo-live-proof-binary-${{ github.run_id }}
+          path: target/live-proof/
+          retention-days: 3
+          if-no-files-found: error
+
   fuzz:
-    if: ${{ github.event.inputs.mode != 'pr373-proof' && github.event.inputs.mode != 'pr373-proof-rust' && github.event.inputs.mode != 'final-gap' && github.event.inputs.mode != 'final-gap-rust' && github.event.inputs.mode != 'final-gap-nodes' && github.event.inputs.mode != 'final-gap-recovery' && github.event.inputs.mode != 'quiet-gap' && github.event.inputs.mode != 'quiet-seeded' && github.event.inputs.mode != 'issue447-n4' && github.event.inputs.mode != 'issue447-conflict' && github.event.inputs.mode != 'issue447-registry' && github.event.inputs.mode != 'issue447-rcash' && github.event.inputs.mode != 'issue457-inbound' }}
+    if: ${{ github.event.inputs.mode != 'pr373-proof' && github.event.inputs.mode != 'pr373-proof-rust' && github.event.inputs.mode != 'final-gap' && github.event.inputs.mode != 'final-gap-rust' && github.event.inputs.mode != 'final-gap-nodes' && github.event.inputs.mode != 'final-gap-recovery' && github.event.inputs.mode != 'quiet-gap' && github.event.inputs.mode != 'quiet-seeded' && github.event.inputs.mode != 'issue447-n4' && github.event.inputs.mode != 'issue447-conflict' && github.event.inputs.mode != 'issue447-registry' && github.event.inputs.mode != 'issue447-rcash' && github.event.inputs.mode != 'issue457-inbound' && github.event.inputs.mode != 'live-proof-binary' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
