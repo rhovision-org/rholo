@@ -47,7 +47,7 @@ concurrency:
 
 jobs:
   fuzz:
-    if: ${{ github.event.inputs.mode != 'pr373-proof' && github.event.inputs.mode != 'pr373-proof-rust' && github.event.inputs.mode != 'final-gap' && github.event.inputs.mode != 'final-gap-rust' && github.event.inputs.mode != 'final-gap-nodes' && github.event.inputs.mode != 'final-gap-recovery' && github.event.inputs.mode != 'quiet-gap' && github.event.inputs.mode != 'quiet-seeded' && github.event.inputs.mode != 'issue447-n4' && github.event.inputs.mode != 'issue447-conflict' && github.event.inputs.mode != 'issue447-registry' && github.event.inputs.mode != 'issue447-rcash' }}
+    if: ${{ github.event.inputs.mode != 'pr373-proof' && github.event.inputs.mode != 'pr373-proof-rust' && github.event.inputs.mode != 'final-gap' && github.event.inputs.mode != 'final-gap-rust' && github.event.inputs.mode != 'final-gap-nodes' && github.event.inputs.mode != 'final-gap-recovery' && github.event.inputs.mode != 'quiet-gap' && github.event.inputs.mode != 'quiet-seeded' && github.event.inputs.mode != 'issue447-n4' && github.event.inputs.mode != 'issue447-conflict' && github.event.inputs.mode != 'issue447-registry' && github.event.inputs.mode != 'issue447-rcash' && github.event.inputs.mode != 'issue457-inbound' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -114,6 +114,76 @@ jobs:
       - name: Tear the devnet down
         if: always()
         run: tools/devnet.sh down -v || true
+
+  issue457-inbound:
+    if: ${{ github.event.inputs.mode == 'issue457-inbound' }}
+    name: Issue 457 asymmetric inbound reachability and recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_NODE_MEMORY: "2g"
+      DEVNET_THREAD_POOL_SIZE: "2"
+      DEVNET_PREFIX: n457reach
+      DEVNET_NETWORK: n457-reachability
+      DEVNET_GRPC_BASE: "55402"
+      DEVNET_HTTP_BASE: "55403"
+      DEVNET_ADMIN_BASE: "55405"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Validate the independent fault-injection predicates
+        run: |
+          set -euo pipefail
+          mkdir -p target/issue457
+          git rev-parse HEAD > target/issue457/source.txt
+          python3 -m unittest discover -s tests -p 'test_n457_asymmetric.py' -v 2>&1 | tee target/issue457/unit.log
+          command -v nsenter
+          command -v iptables
+      - name: Build pinned Docker node
+        run: |
+          set -euo pipefail
+          tools/devnet.sh build
+          docker image inspect rnode:local > target/issue457/image.json
+      - name: Run blocked-inbound and full-reachability controls
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p target/issue457/{blocked,open}
+          tools/devnet.sh up --validators 4 --fresh > target/issue457/start.log 2>&1
+          started=$?
+          if [ "$started" -ne 0 ]; then
+            echo "setup=$started" | tee target/issue457/verdicts.txt
+            exit "$started"
+          fi
+          python3 tools/n457-asymmetric-inbound.py             --min-height 28 --mature-timeout 600 --negative-timeout 315             --out target/issue457/blocked > target/issue457/blocked/run.log 2>&1
+          blocked=$?
+          # The reset discards the negative joiner's own namespace (and its
+          # firewall rules); it preserves the other three validator volumes.
+          python3 tools/n457-mature-join-arm.py             --min-height 28 --timeout 600 --out target/issue457/open             > target/issue457/open/run.log 2>&1
+          open=$?
+          printf 'blocked_inbound=%s\nfull_reachability=%s\n' "$blocked" "$open"             | tee target/issue457/verdicts.txt
+          if [ "$blocked" -ne 0 ] || [ "$open" -ne 0 ]; then
+            exit 1
+          fi
+      - name: Preserve source-pinned witness and node logs
+        if: always()
+        run: |
+          mkdir -p target/issue457
+          docker ps -a --filter "name=n457reach" > target/issue457/containers.txt || true
+          for node in n457reach-bootstrap n457reach-validator-1 n457reach-validator-2 n457reach-validator-3; do
+            docker logs "$node" > "target/issue457/$node.log" 2>&1 || true
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue457-asymmetric-${{ github.run_id }}
+          path: target/issue457/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove only the disposable fault-injection devnet
+        if: always()
+        run: |
+          tools/devnet.sh down -v || true
 
   issue447-n4:
     if: ${{ github.event.inputs.mode == 'issue447-n4' }}
