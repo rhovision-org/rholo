@@ -124,6 +124,8 @@ jobs:
       DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
       DEVNET_NODE_MEMORY: "2g"
       DEVNET_THREAD_POOL_SIZE: "2"
+      # The joiner is a passive replica; the test does not require it to propose.
+      DEVNET_RESET_PASSIVE: "1"
       DEVNET_PREFIX: n457reach
       DEVNET_NETWORK: n457-reachability
       DEVNET_GRPC_BASE: "55402"
@@ -156,13 +158,29 @@ jobs:
             echo "setup=$started" | tee target/issue457/verdicts.txt
             exit "$started"
           fi
-          python3 tools/n457-asymmetric-inbound.py             --min-height 28 --mature-timeout 600 --negative-timeout 315             --out target/issue457/blocked > target/issue457/blocked/run.log 2>&1
-          blocked=$?
-          # Reset discards only the fault-injected joiner's own namespace
-          # and firewall; the three surviving validator volumes are kept.
-          python3 tools/n457-mature-join-arm.py             --min-height 28 --timeout 600 --out target/issue457/open             > target/issue457/open/run.log 2>&1
+          # Run the fully reachable arm first, before the chain grows under
+          # continued auto-proposing during the negative reply-blackout window.
+          python3 tools/n457-mature-join-arm.py \
+            --min-height 28 --timeout 420 --out target/issue457/open \
+            > target/issue457/open/run.log 2>&1
           open=$?
-          printf 'blocked_inbound=%s\nfull_reachability=%s\n' "$blocked" "$open"             | tee target/issue457/verdicts.txt
+          docker logs n457reach-validator-3 \
+            > target/issue457/open/joiner.log 2>&1 || true
+          if grep -Eq 'active-bonds leaf not found|block receiver state full' \
+              target/issue457/open/joiner.log; then
+            echo 'FAIL: successful join was followed by a state/receiver error' \
+              >> target/issue457/open/run.log
+            open=1
+          fi
+          # The next reset discards only the joiner's store and network
+          # namespace. Surviving validators remain on their original volumes.
+          python3 tools/n457-asymmetric-inbound.py \
+            --min-height 28 --mature-timeout 240 --negative-timeout 180 \
+            --out target/issue457/blocked \
+            > target/issue457/blocked/run.log 2>&1
+          blocked=$?
+          printf 'inbound_reply_loss=%s\nfull_reachability=%s\n' "$blocked" "$open" \
+            | tee target/issue457/verdicts.txt
           if [ "$blocked" -ne 0 ] || [ "$open" -ne 0 ]; then
             exit 1
           fi

@@ -29,7 +29,7 @@ class AsymmetricReachabilityControls(unittest.TestCase):
             "no block was received from the peers they were requested from"
         )
         self.assertEqual(module.classify_negative(log, 0), [])
-        self.assertIn("the per-hash missing-answer attribution was not observed",
+        self.assertIn("block timeout omitted per-hash missing-answer attribution",
                       module.classify_negative(log.replace(module.ATTRIBUTION, ""), 0))
         self.assertTrue(module.classify_negative(log, 1))
 
@@ -38,6 +38,15 @@ class AsymmetricReachabilityControls(unittest.TestCase):
         self.assertTrue(module.store_items_arrived(
             "Received StoreItems(history: 29, data: 230) from bootstrap"
         ))
+
+    def test_tuple_page_failure_is_not_mislabeled_as_block_hash_attribution(self):
+        log = (
+            "LFS state sync failed (attempt 1 of 3): "
+            "the state-page walk was abandoned: "
+            "no tuple-space state page finished in 3 consecutive idle rounds"
+        )
+        self.assertEqual(module.classify_negative(log, 0), [])
+        self.assertTrue(module.classify_negative(log, 1))
 
     def test_packet_counters_rule_out_vacuous_network_block(self):
         lines = (
