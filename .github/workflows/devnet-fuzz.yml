@@ -46,8 +46,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  n457-proof-binary:
+    if: ${{ github.event.inputs.mode == 'n457-proof-binary' }}
+    name: Source-pinned fresh-join regressions and native proof binary
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31
+      - name: Install pinned compiler and native dependencies
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev libssl-dev pkg-config build-essential
+      - name: Exercise requester and state-restore regressions
+        run: |
+          set -euo pipefail
+          mkdir -p target/n457-proof
+          git rev-parse HEAD > target/n457-proof/source-sha.txt
+          cargo test --locked -p rchain-casper --lib engine::lfs_block_requester -- --nocapture 2>&1 | tee target/n457-proof/requester-tests.log
+          cargo test --locked -p rchain-casper --lib engine::node_syncing -- --nocapture 2>&1 | tee target/n457-proof/restore-tests.log
+      - name: Build native Linux proof binary
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          cargo build --locked --release -p rchain-node --bin rnode
+          cp target/release/rnode target/n457-proof/rnode
+          (cd target/n457-proof && sha256sum rnode > SHA256SUMS)
+          target/n457-proof/rnode --version > target/n457-proof/version.txt
+          grep -F "$(git rev-parse HEAD)" target/n457-proof/version.txt
+          ldd target/n457-proof/rnode > target/n457-proof/ldd.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: n457-native-proof-${{ github.run_id }}
+          path: target/n457-proof/
+          retention-days: 14
+          if-no-files-found: error
+
   fuzz:
-    if: ${{ github.event.inputs.mode != 'pr373-proof' && github.event.inputs.mode != 'pr373-proof-rust' && github.event.inputs.mode != 'final-gap' && github.event.inputs.mode != 'final-gap-rust' && github.event.inputs.mode != 'final-gap-nodes' && github.event.inputs.mode != 'final-gap-recovery' && github.event.inputs.mode != 'quiet-gap' && github.event.inputs.mode != 'quiet-seeded' && github.event.inputs.mode != 'issue447-n4' && github.event.inputs.mode != 'issue447-conflict' && github.event.inputs.mode != 'issue447-registry' && github.event.inputs.mode != 'issue447-rcash' && github.event.inputs.mode != 'issue457-inbound' }}
+    if: ${{ github.event.inputs.mode != 'pr373-proof' && github.event.inputs.mode != 'pr373-proof-rust' && github.event.inputs.mode != 'final-gap' && github.event.inputs.mode != 'final-gap-rust' && github.event.inputs.mode != 'final-gap-nodes' && github.event.inputs.mode != 'final-gap-recovery' && github.event.inputs.mode != 'quiet-gap' && github.event.inputs.mode != 'quiet-seeded' && github.event.inputs.mode != 'issue447-n4' && github.event.inputs.mode != 'issue447-conflict' && github.event.inputs.mode != 'issue447-registry' && github.event.inputs.mode != 'issue447-rcash' && github.event.inputs.mode != 'issue457-inbound' && github.event.inputs.mode != 'n457-proof-binary' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:

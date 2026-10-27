@@ -212,10 +212,13 @@ async fn process_block(
     let is_valid = validate_received_block(st, block, log, source).await;
     if is_valid {
         save_block(st, block_store, block).await?;
+        // Only a completed block can expose new ancestry. A delayed duplicate or
+        // an unsolicited/invalid body must not resend every outstanding hash:
+        // those replies create more duplicates and reset the idle failure timer.
+        // Owed keys with invalid bodies remain outstanding for the bounded idle
+        // retry; refusing a body never advances or completes the walk.
+        chan::send(request_tx, false).await;
     }
-    // A rejected body leaves its key outstanding (#457), so ask for it again immediately instead of
-    // waiting for the next idle round; the normal path resends nothing.
-    chan::send(request_tx, !is_valid).await;
     Ok(())
 }
 
@@ -711,7 +714,11 @@ mod tests {
         process_block(&st, &store, &NopLog, source(), &request_tx, tip)
             .await
             .unwrap();
-        assert_eq!(*st.lock().await, before, "a duplicate changes no walk state");
+        assert_eq!(
+            *st.lock().await,
+            before,
+            "a duplicate changes no walk state"
+        );
         assert!(
             request_rx.try_recv().is_err(),
             "a duplicate must not trigger requests for the still-pending parent"
