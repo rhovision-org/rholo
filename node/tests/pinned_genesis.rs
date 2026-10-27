@@ -85,12 +85,13 @@ async fn read_genesis_hash(base: &str) -> String {
 fn populated_dag_restart_accepts_its_pin_and_refuses_a_different_pin() {
     test_runtime().block_on(async {
         let dir = temp_dir("pinned-genesis-restart");
-        let ports = free_ports(5);
-        let base = format!("http://127.0.0.1:{}", ports[0]);
-        let conf = deploy_conf(&dir, &ports);
+        let initial_ports = free_ports(6);
+        let base = format!("http://127.0.0.1:{}", initial_ports[0]);
+        let mut conf = deploy_conf(&dir, &initial_ports);
+        conf.peers_discovery.port = initial_ports[5] as i32;
 
         let canonical = {
-            let node = start(&conf, ports[4], ports[0]).await;
+            let node = start(&conf, initial_ports[4], initial_ports[0]).await;
             wait_for_log(&node, "Making a transition to Running state.").await;
             let hash = read_genesis_hash(&base).await;
             node.request_stop();
@@ -102,11 +103,23 @@ fn populated_dag_restart_accepts_its_pin_and_refuses_a_different_pin() {
             hash
         };
 
-        let mut correct = conf.clone();
+        // Reuse the *same on-disk DAG* but bind a fresh set of ephemeral ports.
+        // Listener shutdown may outlive the serve handle briefly; rebinding its
+        // previous protocol port would turn a persistence check into an EADDRINUSE
+        // test of asynchronous listener teardown.
+        let matching_ports = free_ports(6);
+        let mut correct = deploy_conf(&dir, &matching_ports);
+        correct.peers_discovery.port = matching_ports[5] as i32;
         correct.casper.expected_genesis_hash = Some(canonical.clone());
         {
-            let node = start(&correct, ports[4], ports[0]).await;
+            let node = start(&correct, matching_ports[4], matching_ports[0]).await;
             wait_for_log(&node, "Making a transition to Running state.").await;
+            let restored_hash =
+                read_genesis_hash(&format!("http://127.0.0.1:{}", matching_ports[0])).await;
+            assert_eq!(
+                restored_hash, canonical,
+                "matching-pin restart must retain its genesis"
+            );
             node.request_stop();
             tokio::time::timeout(Duration::from_secs(30), node.handle)
                 .await
@@ -120,10 +133,12 @@ fn populated_dag_restart_accepts_its_pin_and_refuses_a_different_pin() {
         } else {
             "22".repeat(32)
         };
-        let mut wrong = conf;
+        let wrong_ports = free_ports(6);
+        let mut wrong = deploy_conf(&dir, &wrong_ports);
+        wrong.peers_discovery.port = wrong_ports[5] as i32;
         wrong.casper.expected_genesis_hash = Some(wrong_pin.clone());
         {
-            let node = start(&wrong, ports[4], ports[0]).await;
+            let node = start(&wrong, wrong_ports[4], wrong_ports[0]).await;
             wait_for_refusal(&node, &wrong_pin).await;
             node.request_stop();
             let _ = tokio::time::timeout(Duration::from_secs(30), node.handle).await;
