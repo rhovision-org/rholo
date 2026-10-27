@@ -1329,7 +1329,7 @@ mod tests {
         assert_eq!(roots.len(), 4, "state roots must be deduplicated");
         for required in [0x11, 0x22, 0x33, 0x44] {
             assert!(
-                roots.contains(&Blake2b256Hash::from_byte_array([required; 32])),
+                roots.contains(&Blake2b256Hash::from_byte_array(&[required; 32])),
                 "omitted required root {required:02x}"
             );
         }
@@ -1339,7 +1339,7 @@ mod tests {
         let legacy = collect_block_state_roots(&block_store, &height_map, &[])
             .await
             .unwrap();
-        assert!(!legacy.contains(&Blake2b256Hash::from_byte_array([0x44; 32])));
+        assert!(!legacy.contains(&Blake2b256Hash::from_byte_array(&[0x44; 32])));
         assert_eq!(legacy.len(), 3);
     }
 
