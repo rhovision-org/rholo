@@ -147,6 +147,7 @@ jobs:
       - name: Run blocked-inbound and full-reachability controls
         shell: bash
         run: |
+          set +e
           set -uo pipefail
           mkdir -p target/issue457/{blocked,open}
           tools/devnet.sh up --validators 4 --fresh > target/issue457/start.log 2>&1
@@ -157,8 +158,8 @@ jobs:
           fi
           python3 tools/n457-asymmetric-inbound.py             --min-height 28 --mature-timeout 600 --negative-timeout 315             --out target/issue457/blocked > target/issue457/blocked/run.log 2>&1
           blocked=$?
-          # The reset discards the negative joiner's own namespace (and its
-          # firewall rules); it preserves the other three validator volumes.
+          # Reset discards only the fault-injected joiner's own namespace
+          # and firewall; the three surviving validator volumes are kept.
           python3 tools/n457-mature-join-arm.py             --min-height 28 --timeout 600 --out target/issue457/open             > target/issue457/open/run.log 2>&1
           open=$?
           printf 'blocked_inbound=%s\nfull_reachability=%s\n' "$blocked" "$open"             | tee target/issue457/verdicts.txt

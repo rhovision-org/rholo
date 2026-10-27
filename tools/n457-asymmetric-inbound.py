@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""#457 disposable negative control: only the bootstrap may dial the joining node.
+"""#457 disposable join diagnostics under controlled inbound reply loss.
 
 Build a mature N=4 Docker chain first. This command resets validator-3 into an empty
 store, disconnects it, configures inbound packet drops *inside its own network
-namespace*, and reconnects it. Other validators and their Docker bridges are
-untouched. The positive control is tools/n457-mature-join-arm.py on the same chain.
+namespace*, and reconnects it. After the bootstrap has served its state metadata,
+inbound bootstrap block replies are also deliberately suppressed, requiring a
+bounded per-hash refusal. Other validators and their bridges are untouched.
+The positive control is tools/n457-mature-join-arm.py on the same chain.
 
 A failure of the negative arm is preserved as evidence, not retried until green.
-This is not a public-testnet acceptance run or a claim that peer reachability can
-be inferred solely from a connected-peer count.
+This is a deliberately stronger block-reply blackout than the real bootstrap-only
+firewall condition: a local four-node bridge was observed to restore entirely from
+the bootstrap despite all other peers being blocked (run 40561171514). This arm
+tests the per-hash timeout *diagnostic*, not the live root-cause reproduction.
+It is not public-testnet acceptance evidence.
 """
 
 import argparse
@@ -96,6 +101,10 @@ def dropped_packets(counter_text, ips):
     return total
 
 
+def store_items_arrived(log):
+    return "Received StoreItems(history:" in log
+
+
 def classify_negative(log, latest_height):
     """Return independent falsifiers rather than a generic CI success flag."""
     problems = []
@@ -121,7 +130,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     record = {
-        "claim": "#457 asymmetric blocked-inbound negative control",
+        "claim": "#457 post-StoreItems block-reply loss diagnostic negative control",
         "scope": "disposable Docker N4; not a public/live testnet run",
         "prefix": PREFIX, "network": NETWORK, "blocked_ports": BLOCKED_PORTS,
         "status": "INCOMPLETE",
@@ -167,6 +176,30 @@ def main():
         record["reconnected_ip"] = address(TARGET)
         print(f"reconnected {TARGET}: {record['reconnected_ip']}", flush=True)
 
+        # Bootstrap-only traffic can be enough to restore a local chain, even
+        # while every other validator is unreachable. Do not mark that as a
+        # diagnostic failure. Wait for the metadata it *must* provide, and only
+        # then suppress inbound block replies from the bootstrap as well.
+        store_deadline = time.monotonic() + 60
+        metadata_log = ""
+        while time.monotonic() < store_deadline:
+            lines = docker("logs", TARGET, check=False)
+            metadata_log = lines.stdout + lines.stderr
+            if store_items_arrived(metadata_log):
+                break
+            if "Making a transition to Running state." in metadata_log:
+                raise RuntimeError("joiner entered Running before metadata cutoff")
+            time.sleep(0.2)
+        if not store_items_arrived(metadata_log):
+            raise RuntimeError("bootstrap did not deliver StoreItems before fault cutoff")
+        record["store_items_delivered"] = True
+        for proto, port in BLOCKED_PORTS:
+            command(block_rule(pid, record["bootstrap_ip"], proto, port), timeout=15)
+        record["blackout_after_store_items"] = True
+        record["blackout_source_ip"] = record["bootstrap_ip"]
+        print("StoreItems received; now dropping inbound bootstrap block replies",
+              flush=True)
+
         deadline = time.monotonic() + args.negative_timeout
         last_status = {}
         log = ""
@@ -190,14 +223,17 @@ def main():
             "sudo", "nsenter", "-t", str(pid), "-n", "iptables",
             "-n", "-v", "-x", "-L", "INPUT"
         ]).stdout
-        record["dropped_packets"] = dropped_packets(
+        record["blocked_peer_packets"] = dropped_packets(
             record["rule_counters"], record["peer_ips"].values()
+        )
+        record["bootstrap_reply_packets_dropped"] = dropped_packets(
+            record["rule_counters"], [record["bootstrap_ip"]]
         )
         (out / "joiner.log").write_text(log)
         (out / "iptables-counters.txt").write_text(record["rule_counters"])
         issues = classify_negative(log, record["last_height"])
-        if record["dropped_packets"] == 0:
-            issues.append("no peer-to-joiner packets matched the inbound drop rules")
+        if record["bootstrap_reply_packets_dropped"] == 0:
+            issues.append("no bootstrap block-reply packets matched the post-store drop rules")
         record["falsifiers"] = issues
         record["status"] = "PASS" if not issues else "FAIL"
         for issue in issues:

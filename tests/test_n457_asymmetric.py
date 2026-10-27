@@ -33,6 +33,12 @@ class AsymmetricReachabilityControls(unittest.TestCase):
                       module.classify_negative(log.replace(module.ATTRIBUTION, ""), 0))
         self.assertTrue(module.classify_negative(log, 1))
 
+    def test_metadata_must_precede_bootstrap_reply_cutoff(self):
+        self.assertFalse(module.store_items_arrived("Received finalized fringe"))
+        self.assertTrue(module.store_items_arrived(
+            "Received StoreItems(history: 29, data: 230) from bootstrap"
+        ))
+
     def test_packet_counters_rule_out_vacuous_network_block(self):
         lines = (
             "0 0 DROP tcp -- * * 172.22.0.4 0.0.0.0/0 tcp dpt:40400\n"
