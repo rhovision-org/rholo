@@ -5,6 +5,7 @@
 
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,7 +29,7 @@ use rchain_models::casper::protocol::packet_type_tag::ToPacket;
 use rchain_rspace::state::{RSpaceExporter, RSpaceImporter};
 use rchain_shared::base16;
 use rchain_shared::log::{Log, LogSource};
-use rchain_shared::refined::NonNegI64;
+use rchain_shared::refined::{BlockHeight, NonNegI64};
 use tokio::sync::mpsc;
 
 use crate::blocks::block_retriever::BlockRetriever;
@@ -858,13 +859,28 @@ async fn check_expected_genesis(
     expected: &BlockHash,
 ) -> Result<(), String> {
     let repr = dag.get_representation().await;
-    let actual = repr
-        .height_map
-        .first_key_value()
-        .and_then(|(_, hashes)| hashes.first())
-        .ok_or_else(|| {
-            "expected genesis hash is pinned but the restored DAG is empty".to_string()
-        })?;
+    check_genesis_height_map(repr.height_map.as_ref(), expected)
+}
+
+/// The identity pin is a claim about the *unique block at height zero*, not about
+/// whichever block happens to appear first in an incomplete or forked DAG index.
+fn check_genesis_height_map(
+    heights: &BTreeMap<BlockHeight, BTreeSet<BlockHash>>,
+    expected: &BlockHash,
+) -> Result<(), String> {
+    let roots = heights.get(&BlockHeight::zero()).ok_or_else(|| {
+        "expected genesis hash is pinned but the restored DAG has no height-zero genesis; refusing to enter Running".to_string()
+    })?;
+    if roots.len() != 1 {
+        return Err(format!(
+            "expected one genesis at height zero, found {}; refusing to enter Running",
+            roots.len()
+        ));
+    }
+    let actual = roots.first().ok_or_else(|| {
+        "expected genesis hash is pinned but height zero is empty; refusing to enter Running"
+            .to_string()
+    })?;
     compare_genesis_hash(expected, actual)
 }
 
@@ -1059,6 +1075,38 @@ mod tests {
         assert!(error.contains("refusing to enter Running"));
         assert!(error.contains(&canonical.to_hex()));
         assert!(error.contains(&fork.to_hex()));
+    }
+
+    #[test]
+    fn pinned_genesis_requires_a_unique_height_zero_root() {
+        let canonical = BlockHash::try_from_hex(&"11".repeat(32)).unwrap();
+        let fork = BlockHash::try_from_hex(&"22".repeat(32)).unwrap();
+        let height_zero = BlockHeight::zero();
+        let height_one = BlockHeight::try_from(1).unwrap();
+
+        let empty = BTreeMap::new();
+        assert!(check_genesis_height_map(&empty, &canonical)
+            .unwrap_err()
+            .contains("no height-zero genesis"));
+
+        let missing_genesis = BTreeMap::from([(height_one, BTreeSet::from([canonical]))]);
+        assert!(check_genesis_height_map(&missing_genesis, &canonical)
+            .unwrap_err()
+            .contains("no height-zero genesis"));
+
+        let forked_genesis = BTreeMap::from([(height_zero, BTreeSet::from([canonical, fork]))]);
+        assert!(check_genesis_height_map(&forked_genesis, &canonical)
+            .unwrap_err()
+            .contains("expected one genesis"));
+
+        let valid = BTreeMap::from([
+            (height_zero, BTreeSet::from([canonical])),
+            (height_one, BTreeSet::from([fork])),
+        ]);
+        assert!(check_genesis_height_map(&valid, &canonical).is_ok());
+        assert!(check_genesis_height_map(&valid, &fork)
+            .unwrap_err()
+            .contains("differs from pinned genesis"));
     }
 
     use rchain_comm::peer_node::NodeIdentifier;
