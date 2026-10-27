@@ -642,13 +642,29 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         ));
     }
 
-    // The fringe tuple-space request above only hydrates the finalized-fringe root itself. Casper's
-    // read/validation APIs (explore, data-at-name, and mergeable-sidecar regeneration during block
-    // indexing) open the pre/post RSpace root of specific downloaded blocks directly, not just the
-    // fringe root - request those too, or an observer's local history reader has no root to open for
-    // anything but the exact fringe state once restore finishes.
+    // Validate the bootstrap's ancestry *before* using its state claims to drive extra
+    // trie requests. No undownloaded block may nominate arbitrary state roots.
+    let downloaded: BTreeSet<BlockHash> = block_st
+        .height_map
+        .values()
+        .flat_map(|s| s.iter().copied())
+        .collect();
+    check_ancestry_shape(&fringe.ancestry, &downloaded)?;
+
+    // The initial tuple-space leg hydrates only the finalized-fringe root. The block
+    // walk supplies every block's pre/post root, but validation and proposing also
+    // read each restored block's fringe_state_hash (the state finalized by its
+    // fringe). That intermediate merge root need not equal any downloaded block's
+    // pre/post root. Hydrating only the latter lets LFS report success and enter
+    // Running, then fail immediately at compute_bonds() because pos:active is
+    // absent in the unopened fringe trie (issue #457).
+    //
+    // Request the complete, deduplicated manifest while the bootstrap still serves
+    // state. An unserved ancestry root must fail the join, not silently produce a
+    // Running node with incomplete replay state.
     let fringe_root = Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes());
-    let block_roots = collect_block_state_roots(&block_store, &block_st.height_map).await?;
+    let block_roots =
+        collect_block_state_roots(&block_store, &block_st.height_map, &fringe.ancestry).await?;
     let extra_roots: Vec<Blake2b256Hash> = block_roots
         .into_iter()
         .filter(|root| *root != fringe_root)
@@ -681,12 +697,6 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     // **What the joiner can check before it writes anything** (Law 83, C338). The ancestry's shape is
     // checked against the downloaded set, and the finalized fringe's state is pinned to its block when
     // it names one block; a multi-member fringe is the residual C339 records.
-    let downloaded: BTreeSet<BlockHash> = block_st
-        .height_map
-        .values()
-        .flat_map(|s| s.iter().copied())
-        .collect();
-    check_ancestry_shape(&fringe.ancestry, &downloaded)?;
     // **The fringe's state hash is not checked here, and that is the finding** (C339). The served
     // root is the state *at* the fringe — for the ordinary answer the latest member's
     // `fringe_state_hash`, which is the state one fringe earlier than that block's own pre-state —
@@ -707,13 +717,22 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     Ok(())
 }
 
-/// Collect the pre/post RSpace state roots of every downloaded approved block, so the caller can
-/// request tuple-space data for any that aren't the finalized-fringe root already hydrated above.
+/// Collect the state roots used by both the downloaded block bodies and their
+/// restored per-block fringe claims. The latter are not necessarily block pre/post
+/// roots, but are accessed by consensus as soon as the node leaves NodeSyncing.
+/// Ancestor membership is validated by check_ancestry_shape before this call.
 async fn collect_block_state_roots(
     block_store: &BlockStore,
     height_map: &BTreeMap<i64, BTreeSet<BlockHash>>,
+    ancestry: &[BlockFringe],
 ) -> Result<BTreeSet<Blake2b256Hash>, String> {
     let mut roots = BTreeSet::new();
+
+    for bf in ancestry {
+        roots.insert(Blake2b256Hash::from_byte_array(
+            bf.fringe_state_hash.as_bytes(),
+        ));
+    }
 
     for hash in height_map.values().flat_map(|s| s.iter().copied()) {
         let block = block_store
@@ -1254,6 +1273,74 @@ mod tests {
 
         // The whole chain is in the DAG, so the latest block number equals the chain length.
         assert_eq!(dag.get_representation().await.latest_block_number(), n);
+    }
+
+    /// #457: block pre/post tries are not a complete post-LFS replay manifest.
+    /// A per-block finalised-fringe claim can name a distinct, intermediate
+    /// merge root. Restoring without that root makes the subsequent active-bonds
+    /// lookup fail even when LFS reaches Running and every block was downloaded.
+    #[tokio::test]
+    async fn restore_root_manifest_includes_distinct_ancestry_fringe_state() {
+        let mut genesis = chain_block(0, None);
+        genesis.pre_state_hash = StateHash::new([0x11; 32]);
+        genesis.post_state_hash = StateHash::new([0x22; 32]);
+        let mut child = chain_block(1, Some(genesis.block_hash));
+        child.pre_state_hash = genesis.post_state_hash;
+        child.post_state_hash = StateHash::new([0x33; 32]);
+
+        let block_store: BlockStore = Arc::new(KeyValueTypedStoreCodec::new(
+            in_memory(),
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockMessageCodec),
+        ));
+        for block in [&genesis, &child] {
+            block_store
+                .put(&[(block.block_hash, block.clone())])
+                .await
+                .unwrap();
+        }
+        let height_map = BTreeMap::from([
+            (0, BTreeSet::from([genesis.block_hash])),
+            (1, BTreeSet::from([child.block_hash])),
+        ]);
+        // Child's fringe root (0x44) is neither the pre nor the post
+        // state root of either downloaded block. Genesis repeats 0x11:
+        // deduplication must still hold.
+        let ancestry = vec![
+            BlockFringe {
+                block_hash: genesis.block_hash,
+                fringe: BTreeSet::new(),
+                fringe_state_hash: genesis.pre_state_hash,
+            },
+            BlockFringe {
+                block_hash: child.block_hash,
+                fringe: BTreeSet::new(),
+                fringe_state_hash: StateHash::new([0x44; 32]),
+            },
+        ];
+        let downloaded: BTreeSet<BlockHash> = height_map
+            .values()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        check_ancestry_shape(&ancestry, &downloaded).unwrap();
+        let roots = collect_block_state_roots(&block_store, &height_map, &ancestry)
+            .await
+            .unwrap();
+        assert_eq!(roots.len(), 4, "state roots must be deduplicated");
+        for required in [0x11, 0x22, 0x33, 0x44] {
+            assert!(
+                roots.contains(&Blake2b256Hash::from_byte_array([required; 32])),
+                "omitted required root {required:02x}"
+            );
+        }
+
+        // No ancestry is legitimate for older peers, but it must not
+        // introduce a fake root or silently fabricate fringe history.
+        let legacy = collect_block_state_roots(&block_store, &height_map, &[])
+            .await
+            .unwrap();
+        assert!(!legacy.contains(&Blake2b256Hash::from_byte_array([0x44; 32])));
+        assert_eq!(legacy.len(), 3);
     }
 
     /// **Law 83, C338: a fringe row for a block the walk did not download** is a claim the joiner
