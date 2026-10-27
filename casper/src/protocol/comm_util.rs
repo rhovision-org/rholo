@@ -189,6 +189,23 @@ impl CommUtil {
         }
     }
 
+    /// Fetch LFS ancestry from the configured source of the admitted fringe and
+    /// state pages. A discovered peer can acknowledge a request while its reply
+    /// path to the joiner is blocked; choosing one at random then costs an idle
+    /// retry for each ancestry frontier. The bootstrap is usable before it enters
+    /// the discovery connection set. Block hashes are still verified by the walk,
+    /// and an unserved block still fails under its existing bounded retry policy.
+    pub async fn request_lfs_block(&self, hash: &BlockHash) -> Vec<PeerNode> {
+        if let Some(bootstrap) = &self.conf.bootstrap {
+            self.request_for_block(bootstrap, hash).await;
+            vec![bootstrap.clone()]
+        } else {
+            // Standalone callers have no admitted bootstrap; retain their
+            // peer-based block walk rather than inventing a state source.
+            self.broadcast_request_for_block(hash, Some(1)).await
+        }
+    }
+
     /// Ask a peer for the blocks at heights `[from, to]` (C259's catch-up — see
     /// [`BlockRangeRequest`]).
     ///
