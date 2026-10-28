@@ -212,10 +212,13 @@ async fn process_block(
     let is_valid = validate_received_block(st, block, log, source).await;
     if is_valid {
         save_block(st, block_store, block).await?;
+        // Only a completed block can expose new ancestry. A delayed duplicate or
+        // an unsolicited/invalid body must not resend every outstanding hash:
+        // those replies create more duplicates and reset the idle failure timer.
+        // Owed keys with invalid bodies remain outstanding for the bounded idle
+        // retry; refusing a body never advances or completes the walk.
+        chan::send(request_tx, false).await;
     }
-    // A rejected body leaves its key outstanding (#457), so ask for it again immediately instead of
-    // waiting for the next idle round; the normal path resends nothing.
-    chan::send(request_tx, !is_valid).await;
     Ok(())
 }
 
@@ -258,7 +261,7 @@ async fn request_next(
     }
     if !is_end && !missing.is_empty() {
         for h in &missing {
-            let peers = comm_util.broadcast_request_for_block(h, Some(1)).await;
+            let peers = comm_util.request_lfs_block(h).await;
             block_requests.lock().await.record_sent(h, &peers);
         }
     }
@@ -686,6 +689,102 @@ mod tests {
             "the only requested block was saved, so the requester is finished"
         );
     }
+
+    /// A delayed duplicate is not a failed answer to every other outstanding request.
+    /// On the live chain, each duplicate used to trigger a full resend and generate
+    /// further duplicates, starving the ancestry walk behind its own reply traffic.
+    #[tokio::test]
+    async fn duplicate_delivery_does_not_resend_unrelated_outstanding_blocks() {
+        let blocks = chain(2);
+        let tip = &blocks[1];
+        let store = store().await;
+        let st = Arc::new(tokio::sync::Mutex::new(requested(tip.block_hash)));
+        let (request_tx, mut request_rx) = tokio::sync::mpsc::channel(2);
+        process_block(&st, &store, &NopLog, source(), &request_tx, tip)
+            .await
+            .unwrap();
+        assert_eq!(request_rx.try_recv(), Ok(false));
+        let before = {
+            let mut guard = st.lock().await;
+            *guard = guard.get_next(false).0;
+            guard.clone()
+        };
+        assert_eq!(before.d[&blocks[0].block_hash], ReqStatus::Requested);
+
+        process_block(&st, &store, &NopLog, source(), &request_tx, tip)
+            .await
+            .unwrap();
+        assert_eq!(
+            *st.lock().await,
+            before,
+            "a duplicate changes no walk state"
+        );
+        assert!(
+            request_rx.try_recv().is_err(),
+            "a duplicate must not trigger requests for the still-pending parent"
+        );
+    }
+
+    /// Continuous unsolicited traffic is not progress. It must neither create
+    /// requests nor postpone the bounded failure of a genuinely unserved fringe.
+    #[tokio::test]
+    async fn unsolicited_blocks_do_not_reset_the_idle_failure_bound() {
+        let blocks = chain(2);
+        let tip = blocks[1].block_hash;
+        let store = store().await;
+        let (incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel(64);
+        let noise = blocks[0].clone(); // not known until the unserved tip arrives
+        let spam = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(2));
+            loop {
+                interval.tick().await;
+                if incoming_tx.send(noise.clone()).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let transport = Arc::new(RecordingTransport::default());
+        let conf = RPConf {
+            local: peer("local"),
+            network_id: "testnet".to_string(),
+            bootstrap: None,
+            default_timeout: Duration::from_secs(10),
+            max_num_of_connections: 10,
+            clear_connections: ClearConnectionsConf {
+                num_of_connections_pinged: 10,
+            },
+        };
+        let connections = Arc::new(tokio::sync::RwLock::new(vec![peer("bootstrap")]));
+        let comm_util = CommUtil::new(transport.clone(), conf, connections, Arc::new(NopLog));
+        let fringe = FinalizedFringe {
+            hashes: vec![tip],
+            state_hash: StateHash::new([0; 32]),
+            ancestry: Vec::new(),
+        };
+        let outcome = tokio::time::timeout(
+            Duration::from_millis(500),
+            request_blocks(
+                &fringe,
+                &mut incoming_rx,
+                Duration::from_millis(20),
+                &store,
+                &comm_util,
+                &NopLog,
+                &no_requests(),
+            ),
+        )
+        .await;
+        spam.abort();
+        let error = outcome
+            .expect("unsolicited traffic must not keep an incomplete walk alive")
+            .expect_err("no peer supplied the fringe block");
+        assert!(error.contains("no block finished"), "{error}");
+        assert_eq!(
+            transport.broadcasts.lock().unwrap().len(),
+            MAX_IDLE_ROUNDS as usize,
+            "only the initial request and bounded idle retries are sent"
+        );
+    }
     fn peer(name: &str) -> PeerNode {
         PeerNode::from(
             NodeIdentifier::new(name.as_bytes().to_vec()),
@@ -767,6 +866,100 @@ mod tests {
         }
 
         async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+    }
+
+    /// The admitted bootstrap can answer; discovered peers accept requests but
+    /// cannot deliver replies to the joining node's advertised protocol port.
+    struct BootstrapOnlyTransport {
+        bootstrap: PeerNode,
+        blocks: BTreeMap<BlockHash, BlockMessage>,
+        incoming: tokio::sync::mpsc::Sender<BlockMessage>,
+        asked: std::sync::Mutex<Vec<PeerNode>>,
+    }
+
+    #[async_trait]
+    impl TransportLayer for BootstrapOnlyTransport {
+        async fn send(&self, peer: &PeerNode, msg: Protocol) -> CommErr<()> {
+            self.asked.lock().unwrap().push(peer.clone());
+            if peer.id == self.bootstrap.id {
+                if let Some(rchain_models::comm::protocol::protocol::Message::Packet(packet)) =
+                    msg.message
+                {
+                    if let Ok(request) = BlockRequestSerde.parse(&packet.content) {
+                        if let Some(block) = self.blocks.get(&request.hash) {
+                            chan::send(&self.incoming, block.clone()).await;
+                        }
+                    }
+                }
+            }
+            Ok(()) // transport acknowledgement does not establish reverse reachability
+        }
+
+        async fn broadcast(&self, peers: &[PeerNode], msg: Protocol) -> Vec<CommErr<()>> {
+            let mut outcomes = Vec::new();
+            for peer in peers {
+                outcomes.push(self.send(peer, msg.clone()).await);
+            }
+            outcomes
+        }
+
+        async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+    }
+
+    /// The fringe and state-page source is already known before discovery adds
+    /// it to the connection set. Randomly selecting other peers strands this
+    /// otherwise serviceable ancestry behind their unreachable reply paths.
+    #[tokio::test]
+    async fn an_admitted_bootstrap_serves_the_walk_without_reverse_reachability_to_other_peers() {
+        let blocks = chain(28);
+        let bootstrap = peer("bootstrap");
+        let store = store().await;
+        let (incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel(64);
+        let transport = Arc::new(BootstrapOnlyTransport {
+            bootstrap: bootstrap.clone(),
+            blocks: blocks.iter().map(|b| (b.block_hash, b.clone())).collect(),
+            incoming: incoming_tx,
+            asked: std::sync::Mutex::new(Vec::new()),
+        });
+        let conf = RPConf {
+            local: peer("local"),
+            network_id: "testnet".to_string(),
+            bootstrap: Some(bootstrap.clone()),
+            default_timeout: Duration::from_secs(10),
+            max_num_of_connections: 10,
+            clear_connections: ClearConnectionsConf {
+                num_of_connections_pinged: 10,
+            },
+        };
+        // Deliberately exclude the bootstrap: it has admitted the fringe, but
+        // discovery has not added it; the other peers cannot deliver replies.
+        let connections = Arc::new(tokio::sync::RwLock::new(vec![peer("unreachable")]));
+        let comm = CommUtil::new(transport.clone(), conf, connections, Arc::new(NopLog));
+        let fringe = FinalizedFringe {
+            hashes: vec![blocks.last().unwrap().block_hash],
+            state_hash: StateHash::new([0; 32]),
+            ancestry: Vec::new(),
+        };
+        let state = tokio::time::timeout(
+            Duration::from_secs(2),
+            request_blocks(
+                &fringe,
+                &mut incoming_rx,
+                Duration::from_millis(20),
+                &store,
+                &comm,
+                &NopLog,
+                &no_requests(),
+            ),
+        )
+        .await
+        .expect("a reachable source must not hang")
+        .expect("the authenticated bootstrap serves every required block");
+        assert!(state.is_finished());
+        assert_eq!(state.finished.len(), blocks.len());
+        let asked = transport.asked.lock().unwrap();
+        assert_eq!(asked.len(), blocks.len(), "one request per required block");
+        assert!(asked.iter().all(|p| p.id == bootstrap.id));
     }
 
     /// **U13's instrument (AUDIT C62's serving term): the LFS block walk advances on *responses*, not

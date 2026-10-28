@@ -1,0 +1,154 @@
+# Finite proof campaign for the existing draft #474; no production hosts.
+# Other branches skip these jobs. The nightly/manual devnet workflow is unchanged.
+name: Recovery replay draft evidence
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'casper/**'
+      - 'block-storage/**'
+      - 'node/**'
+      - 'models/**'
+      - 'shared/**'
+      - 'rspace/**'
+      - 'rholang/**'
+      - 'tools/capture-genesis-restart.sh'
+      - '.github/workflows/recovery-proof.yml'
+permissions:
+  contents: read
+concurrency:
+  group: recovery-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  native:
+    if: ${{ github.event.pull_request.user.login == 'aixaria0' && github.head_ref == 'fix/n457-live-fresh-join-20261028' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31
+      - name: Install compiler and native dependencies
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev libssl-dev pkg-config build-essential
+      - name: Record source and exercise independent recovery
+        run: |
+          set -euo pipefail
+          mkdir -p target/recovery-proof
+          git rev-parse HEAD > target/recovery-proof/source-sha.txt
+          cargo test --locked -p rchain-casper --test recovery_replay -- --nocapture 2>&1 | tee target/recovery-proof/replay.log
+          cargo test --locked -p rchain-node --test pinned_genesis -- --nocapture --test-threads=1 2>&1 | tee target/recovery-proof/pinned-genesis.log
+          tools/capture-genesis-restart.sh target/recovery-proof/genesis-repeats 5
+      - name: Build exact-source native observer binary
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          cargo build --locked --release -p rchain-node --bin rnode
+          cp target/release/rnode target/recovery-proof/rnode
+          (cd target/recovery-proof && sha256sum rnode > SHA256SUMS)
+          target/recovery-proof/rnode --version > target/recovery-proof/version.txt
+          grep -F "$(git rev-parse HEAD)" target/recovery-proof/version.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: recovery-native-${{ github.run_id }}
+          path: target/recovery-proof/
+          if-no-files-found: error
+          retention-days: 14
+  issue457-inbound:
+    if: ${{ github.event.pull_request.user.login == 'aixaria0' && github.head_ref == 'fix/n457-live-fresh-join-20261028' }}
+    name: Issue 457 asymmetric inbound reachability and recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_NODE_MEMORY: "2g"
+      DEVNET_THREAD_POOL_SIZE: "2"
+      # The joiner is a passive replica; the test does not require it to propose.
+      DEVNET_RESET_PASSIVE: "1"
+      DEVNET_PREFIX: n457reach
+      DEVNET_NETWORK: n457-reachability
+      DEVNET_GRPC_BASE: "55402"
+      DEVNET_HTTP_BASE: "55403"
+      DEVNET_ADMIN_BASE: "55405"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Validate the independent fault-injection predicates
+        run: |
+          set -euo pipefail
+          mkdir -p target/issue457
+          git rev-parse HEAD > target/issue457/source.txt
+          python3 -m unittest discover -s tests -p 'test_n457_asymmetric.py' -v 2>&1 | tee target/issue457/unit.log
+          command -v nsenter
+          command -v iptables
+      - name: Build pinned Docker node
+        run: |
+          set -euo pipefail
+          tools/devnet.sh build
+          docker image inspect rnode:local > target/issue457/image.json
+      - name: Run blocked-inbound and full-reachability controls
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          mkdir -p target/issue457/{blocked,open}
+          tools/devnet.sh up --validators 4 --fresh > target/issue457/start.log 2>&1
+          started=$?
+          if [ "$started" -ne 0 ]; then
+            echo "setup=$started" | tee target/issue457/verdicts.txt
+            exit "$started"
+          fi
+          # Run the fully reachable arm first, before the chain grows under
+          # continued auto-proposing during the negative reply-blackout window.
+          python3 tools/n457-mature-join-arm.py \
+            --min-height 28 --timeout 420 --out target/issue457/open \
+            > target/issue457/open/run.log 2>&1
+          open=$?
+          docker logs n457reach-validator-3 \
+            > target/issue457/open/joiner.log 2>&1 || true
+          if grep -Eq 'active-bonds leaf not found|block receiver state full' \
+              target/issue457/open/joiner.log; then
+            echo 'FAIL: successful join was followed by a state/receiver error' \
+              >> target/issue457/open/run.log
+            open=1
+          fi
+          # The next reset discards only the joiner's store and network
+          # namespace. Surviving validators remain on their original volumes.
+          python3 tools/n457-asymmetric-inbound.py \
+            --min-height 28 --mature-timeout 240 --negative-timeout 180 \
+            --out target/issue457/blocked \
+            > target/issue457/blocked/run.log 2>&1
+          blocked=$?
+          printf 'inbound_reply_loss=%s\nfull_reachability=%s\n' "$blocked" "$open" \
+            | tee target/issue457/verdicts.txt
+          if [ "$blocked" -ne 0 ] || [ "$open" -ne 0 ]; then
+            exit 1
+          fi
+      - name: Preserve source-pinned witness and node logs
+        if: always()
+        run: |
+          mkdir -p target/issue457
+          docker ps -a --filter "name=n457reach" > target/issue457/containers.txt || true
+          for node in n457reach-bootstrap n457reach-validator-1 n457reach-validator-2 n457reach-validator-3; do
+            docker logs "$node" > "target/issue457/$node.log" 2>&1 || true
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue457-asymmetric-${{ github.run_id }}
+          path: target/issue457/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove only the disposable fault-injection devnet
+        if: always()
+        run: |
+          tools/devnet.sh down -v || true

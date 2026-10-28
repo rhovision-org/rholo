@@ -146,3 +146,65 @@ fn populated_dag_restart_accepts_its_pin_and_refuses_a_different_pin() {
         std::fs::remove_dir_all(&dir).ok();
     });
 }
+
+/// A persisted DAG prefix must not bypass an interrupted recovery on restart.
+#[test]
+fn a_pending_recovery_marker_prevents_populated_restart_from_entering_running() {
+    test_runtime().block_on(async {
+        use rchain_block_storage::approved_store::{self, RECOVERY_PENDING_KEY};
+        use rchain_models::block::state_hash::StateHash;
+        use rchain_models::block_hash::BlockHash;
+        use rchain_models::casper::protocol::casper_message::FinalizedFringe;
+        use rchain_shared::store_manager::KeyValueStoreManager;
+        let dir = temp_dir("pending-recovery-restart");
+        let ports = free_ports(6);
+        let mut conf = deploy_conf(&dir, &ports);
+        conf.peers_discovery.port = ports[5] as i32;
+        {
+            let node = start(&conf, ports[4], ports[0]).await;
+            wait_for_log(&node, "Making a transition to Running state.").await;
+            node.request_stop();
+            tokio::time::timeout(Duration::from_secs(30), node.handle)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        }
+        // The original node is stopped. Write only the new crash-recovery marker;
+        // keep the accepted genesis and its populated DAG intact.
+        {
+            let manager = rchain_casper::storage::rnode_key_value_store_manager(&dir);
+            let approved = approved_store::create(&manager).await.unwrap();
+            approved
+                .put(&[(
+                    RECOVERY_PENDING_KEY,
+                    FinalizedFringe {
+                        hashes: vec![BlockHash::new([7; 32])],
+                        state_hash: StateHash::new([7; 32]),
+                        ancestry: Vec::new(),
+                    },
+                )])
+                .await
+                .unwrap();
+            drop(approved);
+            manager.shutdown().await;
+        }
+        let ports = free_ports(6);
+        let mut restart = deploy_conf(&dir, &ports);
+        restart.peers_discovery.port = ports[5] as i32;
+        let node = start(&restart, ports[4], ports[0]).await;
+        wait_for_log(&node, "Starting from bootstrap node, syncing LFS...").await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert!(
+            !node
+                .log
+                .messages()
+                .iter()
+                .any(|line| line.contains("Making a transition to Running state.")),
+            "a partial recovery must not be mistaken for an accepted persisted DAG"
+        );
+        node.request_stop();
+        let _ = tokio::time::timeout(Duration::from_secs(30), node.handle).await;
+        std::fs::remove_dir_all(dir).ok();
+    });
+}

@@ -29,7 +29,9 @@ pub const SHARD_ID_MARKER: &str = "shard-id";
 pub const STORE_FORMAT_MARKER: &str = "store-format";
 
 /// The store format this build writes. See [`STORE_FORMAT_MARKER`].
-pub const STORE_FORMAT_VERSION: u32 = 1;
+// Version 2 adds the recovery-pending key: a v1 binary would ignore it and
+// could enter Running over an interrupted publication. Downgrade must refuse.
+pub const STORE_FORMAT_VERSION: u32 = 2;
 
 /// The gateway's durable coordinator-record database ([`crate::gateway::ledger`]). Node-local: it
 /// is deliberately **not** part of a shard's content-addressed state, because a coordinator's votes

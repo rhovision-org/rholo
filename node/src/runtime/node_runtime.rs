@@ -2627,16 +2627,34 @@ async fn check_shard_data_dir(
 /// "something wrote this and it is not a version" is not a state to read a store from.
 fn check_store_format(dir: &std::path::Path) -> Result<(), String> {
     let marker = dir.join(STORE_FORMAT_MARKER);
-    let recorded = std::fs::read_to_string(&marker)
-        .ok()
-        .map(|v| v.trim().to_string());
-    let Some(recorded) = recorded else {
-        return std::fs::write(&marker, STORE_FORMAT_VERSION.to_string()).map_err(|e| {
+    let recorded = match std::fs::read_to_string(&marker) {
+        Ok(recorded) => Some(recorded.trim().to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(format!(
+                "cannot read store-format marker {}: {error}",
+                marker.display()
+            ))
+        }
+    };
+    let stamp = || -> Result<(), String> {
+        std::fs::write(&marker, STORE_FORMAT_VERSION.to_string()).map_err(|error| {
             format!(
-                "cannot write the store-format marker to {}: {e}",
+                "cannot write store-format marker {}: {error}",
                 marker.display()
             )
-        });
+        })?;
+        std::fs::File::open(&marker)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| format!("cannot sync store-format marker: {error}"))?;
+        #[cfg(unix)]
+        std::fs::File::open(dir)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| format!("cannot sync store-format directory: {error}"))?;
+        Ok(())
+    };
+    let Some(recorded) = recorded else {
+        return stamp();
     };
     let version: u32 = recorded.parse().map_err(|_| {
         format!(
@@ -2652,6 +2670,9 @@ fn check_store_format(dir: &std::path::Path) -> Result<(), String> {
              silently becomes an advance — start the newer build, or point this one at a copy",
             dir.display()
         ));
+    }
+    if version < STORE_FORMAT_VERSION {
+        stamp()?;
     }
     Ok(())
 }
@@ -3222,6 +3243,11 @@ mod tests {
         check_store_format(&dir).expect("its own version");
         std::fs::write(&marker, "0").unwrap();
         check_store_format(&dir).expect("an older store is the advance an upgrade is for");
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap(),
+            STORE_FORMAT_VERSION.to_string(),
+            "an upgrade must stamp the new semantics before it can write them"
+        );
 
         // Newer: refused, naming both numbers.
         let newer = STORE_FORMAT_VERSION + 1;

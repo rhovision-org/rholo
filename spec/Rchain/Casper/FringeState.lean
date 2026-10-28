@@ -22,9 +22,10 @@ suite refuted it (the genesis-branch claim was neither), and it was removed.
 invented; a finaliser's claim is, by definition, the state at the set it finalises; and a member's claim
 need not equal any state its block carries (that is the refuted pin, as a theorem).
 
-**What is not.** The joiner cannot recompute the merge that defines the state at a fringe, so the root
-remains an assumed input — AUDIT **C339**. This law records the exact relation the check would need; it
-does not supply the merge.
+**What this model does not supply.** It does not implement the merge. The runtime
+`engine::recovery::RecoveryReplay::verify` now recomputes metadata using the existing
+validator and checks this relation before publishing recovered history (C339).
+That Rust implementation is tested separately; no refinement proof is claimed here.
 -/
 
 namespace Rchain

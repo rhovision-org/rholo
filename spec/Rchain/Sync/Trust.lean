@@ -4,6 +4,14 @@ import Rchain.Casper.Stake
 /-!
 # Law 83 — the join's trust model: content-trustless, not finality-trustless
 
+**Scope after the runtime replay repair.** The definitions and theorems below model
+transfer-stage trust, before `engine::recovery::RecoveryReplay::verify`. That added Rust
+stage independently validates non-genesis signatures and recomputes fringe metadata,
+then compares all supplied claims before publication. Its semantics and finite tests
+are described in `docs/src/spec/trust-model.md`; this model is not a refinement proof
+of that stage. The residual enumeration below remains the transfer model's enumeration.
+Target finality and liveness are still assumptions after replay.
+
 **Why this file exists.** #457's repair (Law 81) makes the walk accept every verified answer; this law
 says what the joiner is *still* trusting after that. The join path downloads blocks by hash, imports a
 trie whose pages it checks, and adopts the bootstrap's `FinalizedFringe`. The trie pages are checked
@@ -32,13 +40,14 @@ makes the residue a checked enumeration rather than a paragraph, and
 `a_lying_ancestry_state_hash_changes_replay` shows why the fringe's state hash cannot be silently
 dropped: it is an input to `BlockMetadata`, which `close_block` folds into the epoch seed.
 
-**The fringe's state hash is residual, and a singleton pin was tried and refuted.** The served root is
+**At transfer, the fringe's state hash is residual, and a singleton pin was tried and refuted.** The served root is
 the state *at* the fringe — for the ordinary answer the latest member's `fringe_state_hash`, which is
 the state one fringe earlier than that block's own pre-state — not a field of the named block. A pin
 against the named block's pre- or post-state was implemented and the node's restore tests refuted it
 (the genesis-branch claim is neither), so the check was removed rather than kept as false assurance.
-What checks the root is indirect: the first block validated after the restore compares the runtime root
-with its `pre_state_hash`. That is AUDIT C339, and this law does not close it.
+Before the added replay stage, only the first subsequently validated block checked the root
+indirectly against its `pre_state_hash` (C339). The new runtime stage supplies the missing
+recomputation; this transfer theorem does not prove that implementation.
 -/
 
 namespace Rchain
