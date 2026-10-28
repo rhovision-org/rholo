@@ -10,58 +10,73 @@ joiner reads is checked against a hash, so two joiners with the same verified in
 differently — but the joiner does *not* verify which root is final, nor the signatures that finalised
 it.
 
-## The classification
+## Transfer and replay are separate checks
 
-| Input | Class | What the joiner does |
-|---|---|---|
-| The configured genesis block and state | **genesis-anchored** | Reads them from configuration; they are the root of trust |
-| The genesis `pos:trusted` set (`bond keys ∪ pos-multi-sig`) | **genesis-anchored** | Installed at genesis (`casper/src/genesis/mod.rs`); no later input extends it except a chain-authorised `trust` |
-| A downloaded block body | **verified** | Recomputes `Blake2b256` over the body and refuses a mismatch (`validate::block_hash`) |
-| An imported trie page | **verified** | Recomputes the node hash against its key, and the walk against the walk listing (Law 70) |
-| An ancestry row's `block_hash` | **verified** | Must be a block the walk downloaded; duplicates refused |
-| An ancestry row's `fringe` | **verified** | Must equal the fringe the finality gate derives from the block's justifications and bond map — the value a validating node derives |
-| Which root the bootstrap calls finalised | **residual** | Assumed; the joiner cannot see the quorum that finalised it |
-| The fringe's `state_hash` (root and each per-block `fringe_state_hash`) | **residual** | Assumed. It is the state at the fringe the served member finalises — one fringe earlier than the named block's pre-state — not a field of the block. **Law 85** proves the served value is always some member's claim and why a pin cannot work; a singleton pin was tried and refuted by the node tests (**C339**). The first block validated after the restore checks it indirectly against its `pre_state_hash` |
-| Liveness (the peer serves the blocks) | **residual** | Assumed; the walk's give-up rule bounds the wait, it does not produce an answer |
-| Wire signatures and quorum finality proofs | **residual** | Not checked on the join path |
+Law 83 (`spec/Rchain/Sync/Trust.lean`) models the original **transfer** boundary:
+content-addressed blocks and trie pages at a peer-selected root. Its enumeration
+of residual inputs is not a theorem about the added runtime replay stage.
 
-The residual is `spec/Rchain/Sync/Trust.lean`'s `the_residual_is_exactly_named`: of the nine input
-kinds the join consumes, the four that are neither anchored nor verified are exactly the ones listed.
-Adding a tenth without classifying it fails the Lean build.
+Before publishing recovered metadata, `engine::recovery::RecoveryReplay::verify`
+now builds an isolated DAG from the downloaded history, parents first. It checks
+block hashes, shard/format and non-genesis signatures, then calls the existing
+`multi_parent_casper::validate` for each non-genesis block. Each merge therefore
+reads locally validated parent metadata, never a peer's fringe-state claim.
+The first state anchor is the downloaded genesis: use `--expected-genesis-hash`
+to bind that block to an independently trusted network identity. Without a pin,
+the bootstrap's choice of genesis remains an assumed input.
 
-## The proved claim
+| Input | Runtime admission check |
+|---|---|
+| Genesis | Exactly one height-zero block with no parents; content hash and configured genesis pin when present |
+| Downloaded block | Hash/index/height, shard, format and non-genesis signature; normal block summary, replay and bonds checks |
+| Imported trie page | Existing content-addressed page/walk validation (Law 70) |
+| Supplied ancestry metadata | Membership and duplicate checks; supplied fringe and fringe-state must match locally recomputed metadata |
+| Missing ancestry metadata | Reconstructed by replay; no empty/zero metadata fallback |
+| Ordinary target root | Compared with the locally derived claim of the max `(height, hash)` target member, as Law 85 requires |
+| Explicit anchor or fresh-genesis target | Compared with the named block's post-state |
+| Target finality | **Still assumed** from the bootstrap/operator; no quorum certificate was added |
+| Liveness | **Still assumed**; existing bounded walk retries cannot manufacture an answer |
 
-`join_is_content_trustless`: if two joiners obtain the same verified block map and the same trie, then
-at the same claimed root they read the same value for every key and answer the same block lookup. The
-proof composes Law 70 (`import_reads_the_rooted_trie`, the trie pages) with `reads_determined`; block
-bodies are content-addressed, so a block map that two joiners agree on holds the same bodies.
+A singleton target is not generally its block's pre/post state. The ordinary,
+anchor and fresh-shard cases remain distinct. The refuted shortcut in Law 85 has
+not been restored.
 
-**Not claimed:** finality. The joiner trusts the bootstrap's choice of root. A proof-carrying fringe
-would have to carry the attestations that finalised it, and the join path does not read them; that is a
-protocol change, not a join-path check.
+## Publication and restart
 
-## The derivable half and the residual (C338, C339)
+Successful verification returns `VerifiedRecovery`, whose metadata is constructed
+only by replay. Publication accepts an empty destination or a matching verified
+prefix; it refuses incompatible existing metadata. State pages and raw blocks
+may already be on disk, but they are not evidence of an accepted DAG.
 
-The per-block `fringe` **is** derivable: it is what `liveness::calculate_finalization` produces for
-the block — the parent fringe when the gate does not advance, the next layer when it does — from the
-block's justifications and its own bond map. The join path runs the same gate and refuses a row that
-disagrees (`check_derived_fringe`). The fringe's **state** (the root and each per-block
-`fringe_state_hash`) is **not**: it names the state at a fringe, not a field of a block, and
-`close_block` folds it into the epoch seed. The joiner keeps the claim and logs it. That is **C339**,
-and it stays open until the join path recomputes the merge (or the wire carries a proof for it).
+The approved store's `RECOVERY_PENDING_KEY` is written/read back before DAG
+publication. A restart seeing this marker re-enters LFS even with a populated
+DAG. Completion requires writing and reading back the accepted fringe, deleting
+the pending marker and verifying its absence. An error remains a failed sync
+attempt and cannot notify `finished`. A crash between these steps conservatively
+leaves recovery pending. The actual active-bonds read is exercised before
+publication; the launch-time validity/allocation guards still run before Running.
 
-**The state is a claim, not a field** (Law 85). The ordinary answer takes the max member's
-`fringe_state_hash`, whose meaning is the state at the fringe **that member** finalises; the
-recovery-anchor and fresh-shard answers take a block's `post_state_hash` instead. A member is not a
-finaliser of the set it belongs to, and the two states differ by one fringe — which is precisely why a
-pin comparing the root with the named block's pre- or post-state was false. It was implemented, the
-node's restore tests refuted it, and it was removed rather than kept as false assurance. The law proves
-the served value is always a member's claim; it does not supply the merge that would let the joiner
-check it.
+Store format **2** records these semantics. The node stamps an older format before
+opening it under the new rules; a format-1 binary refuses a format-2 directory.
+Use a retained copy for rollback. This is not a claim of atomic multi-environment
+publication or completed hardware power-loss qualification. Existing non-pending
+populated stores are not retroactively replay-certified by changing the marker.
 
-The same reasoning applies to the ancestry's shape: a row for a block the walk did not download, or two
-rows for one block, is refused before anything is written. A peer that sends **no** ancestry rows is
-older, not hostile: the join keeps the pre-#139 per-block WARN fallback rather than refusing to sync.
+## Evidence and limits
+
+`casper/tests/recovery_replay.rs` constructs a signed history with real epoch
+transitions, replays it through a separate runtime with empty sidecars, checks
+forged metadata/target refusal, missing-history refusal, pin refusal and anchor
+semantics, then validates new work on the restored DAG. Node LFS restore tests
+exercise the actual transport; `node/tests/pinned_genesis.rs` covers both matching/
+mismatching restart pins and a pending marker over an existing populated DAG.
+Checkpoint tests inject write/read-back/delete faults.
+
+The added replay is O(history) and uses a staging DAG; it is not a succinct state
+proof or a scale result. Law 83's transfer theorem and Law 85's root relation
+remain unchanged; no new machine proof of the Rust replay/publication protocol is
+claimed. C339's exact-source acceptance is recorded in the findings register;
+previous passing live measurements from `f3eef292` do not certify later code.
 
 ## The bonding trust axis
 
@@ -84,7 +99,7 @@ membership moves. The Rust header at `rholang/src/native_state.rs` said the oppo
 
 - It does not certify a join. The in-process and devnet arms are finite witnesses; the live chain's
   replay remains the observation that counts.
-- It does not close C339.
+- It does not certify a release or retroactively certify a legacy populated store.
 - It does not claim the bootstrap is honest about liveness: a peer that will not serve blocks fails
   the walk after the give-up rule, which is a bounded failure, not a restored state.
 

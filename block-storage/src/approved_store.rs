@@ -14,8 +14,12 @@ use crate::dag::codecs::{ByteCodec, FringeCodec};
 /// A typed store from a single-byte key to a finalized fringe (port of `ApprovedStore[F]`).
 pub type ApprovedStore = Arc<dyn KeyValueTypedStore<u8, FinalizedFringe>>;
 
-/// The finalized-fringe store key (the single key written by the approved store).
+/// The accepted finalized-fringe store key.
 pub const FINALIZED_FRINGE_KEY: u8 = 42;
+
+/// An interrupted recovery must be resumed even when it published a DAG prefix.
+/// Removed only after the accepted checkpoint is persisted and read back.
+pub const RECOVERY_PENDING_KEY: u8 = 43;
 
 /// Open the approved store from a store manager (port of `approvedStore.create[F](kvm)`).
 pub async fn create(kvm: &dyn KeyValueStoreManager) -> Result<ApprovedStore, String> {

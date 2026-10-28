@@ -102,19 +102,20 @@ on the rows that are not reads.
 
 ## Check-off
 
-**Findings  TODO 1 · IN PROGRESS 1 · DONE 372** &nbsp;&nbsp;·&nbsp;&nbsp; **Coverage  all 89 T1 modules read**
+**Findings  TODO 0 · IN PROGRESS 2 · DONE 372** &nbsp;&nbsp;·&nbsp;&nbsp; **Coverage  all 89 T1 modules read**
 
 **Laws  168 of 374 findings name one** (ceiling 206; 206 done row(s) unclassified)
 
-Closed when both halves are zero. A **done** row is settled -- fixed, assessed faithful, a
-deliberate deviation, or refuted -- and names what holds it. A **todo** row names what would
-close it.
+**Both halves are closed.** A `done` row is settled -- fixed, assessed faithful, a
+deliberate deviation, or refuted -- and names what holds it where there is evidence to
+name. What that does *not* mean is stated under each half below.
 
-### TODO — findings (1)
+### Findings — closed
 
-| id | what | what closes it | account |
-|---|---|---|---|
-| `C339` | The fringe's state hashes (the finalized fringe's root and each per-block fringe_state_hash) are not derivable on the join path: they name the state at a fringe, not a field of a block, and the joiner does not recompute the merge. It keeps the bootstrap's claim and logs it. Law 85 states the relation: the ordinary answer serves the max member's claim, a member's claim is the state at the fringe it finalises (one fringe earlier than the set it belongs to), and the anchor and fresh-shard answers serve a block's post-state. A singleton pin against the named block's pre- or post-state was therefore false; it was implemented, refuted by the node's restore suite, and removed. close_block folds the claim into the epoch seed. | Recompute the fringe's state on the join path (or carry a proof for it) and refuse a claim that disagrees; until then the trust-model page names it as an assumed input, not a verified one. The refuted singleton pin is recorded in pass 141 and Law 83. | §141 |
+All 374 are settled: **310 name the evidence that holds them** and **64 do not** — the
+second number is the honest residual, and a column rather than an implication. A `done`
+row says the fix is in the tree or that the decision was taken; it does not say either is
+right. Read a row that matters at the § its account cites.
 
 ### T1 coverage — closed
 
@@ -123,11 +124,12 @@ verdict of `cleared`, 24 produced a finding, and 4 are `exempt` with a reason cl
 The twenty reads of the 2026-09-27 coverage pass are in the pass record, and two of them found
 defects this register had not recorded (C164, C165).
 
-### IN PROGRESS (1)
+### IN PROGRESS (2)
 
 | id | what | what closes it | account |
 |---|---|---|---|
 | `C301` | **The denominator the register is a fraction of has never been reviewed: every study node across the three passes is about running a node, and none is about the chain.** The wargame W-N1..N14, the acceptance worksheet U1..U10 and failure-hazop U11..U16 are transport, ingress, read, admin, keys, host, build, OCapN, validator, observability, upgrade/DR, DoS, entropy, clock, block production, attestation, finality, merge, sync, bonding, deploy pool, wire, storage, operator, reset, rewind, runtime root, refusal budget, checkpoint and reconciliation — all about operating a node, none about the contracts strangers run on it. `spec/review-ledger.tsv` marks all thirty system processes `T3 deferred`, so the whole contract layer (rho:io:http, rho:crypto:*, rho:gov:*, rho:qucalc:*, rho:rchain:pos, revVault, multiSigRevVault, rho:registry:*) was never deep-read, and the ledger's own roster-self row records that its machinery is gone and that no adversarial review of the ledger has run — while the ledger is the denominator every other count is a fraction of. `effect-scheduler` appears in no audit artifact at all. Nineteen read-class findings are filed in the evidence document, each labelled verified-by-reading or agent-reported, and none is armed. | the first arm is the A1 extractState chain: a genesis replay that looks up the AuthKey URI and reads the arm, which decides whether the confirmed leak is also a theft; then the other eighteen, ranked by consequence | §121 |
+| `C339` | The transfer path formerly retained the bootstrap fringe-state claims without recomputing their merges. RecoveryReplay now validates downloaded history in a staging DAG using the existing validator, compares supplied per-block claims and the Law 85 target root, probes active bonds, and publishes only locally derived metadata. A persistent pending marker prevents an interrupted publication from bypassing LFS on restart; checkpoint write/read-back/delete failures cannot signal completion. Store format 2 prevents a v1 reader ignoring that marker. No target-finality proof or retroactive certification of legacy populated stores is claimed. | Closes after the new exact-source replay and transport/restart controls pass and the mature-chain replay cost/compatibility is measured. Prior f3eef292 live positives do not certify the added replay path. Quorum finality remains the separately named Law 83 assumption. | §141 |
 
 ### DONE (372)
 
