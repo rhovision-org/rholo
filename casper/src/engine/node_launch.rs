@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rchain_block_storage::approved_store::{ApprovedStore, RECOVERY_PENDING_KEY};
+use rchain_block_storage::approved_store::ApprovedStore;
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
 use rchain_block_storage::syntax::{
@@ -38,7 +38,6 @@ use crate::conf::ShardSpec;
 use crate::engine::catchup::{self, CatchupWindow};
 use crate::engine::node_running::NodeRunning;
 use crate::engine::node_syncing::NodeSyncing;
-use crate::engine::recovery::RecoveryReplay;
 use crate::genesis::contracts::{ProofOfStake, Registry, Validator};
 use crate::genesis::Genesis;
 use crate::protocol::casper_message_protocol::FinalizedFringeSerde;
@@ -370,13 +369,7 @@ pub async fn apply<I: RSpaceImporter + Send + 'static, E: RSpaceExporter>(
         })
         .transpose()?;
     let repr = dag.get_representation().await;
-    let pending_recovery = approved_store
-        .get(&[RECOVERY_PENDING_KEY])
-        .await?
-        .into_iter()
-        .next()
-        .flatten();
-    if repr.dag_set.is_empty() && standalone && pending_recovery.is_none() {
+    if repr.dag_set.is_empty() && standalone {
         if expected_genesis_hash.is_some() {
             return Err(
                 "a pinned network genesis cannot be created by a standalone node".to_string(),
@@ -413,30 +406,20 @@ pub async fn apply<I: RSpaceImporter + Send + 'static, E: RSpaceExporter>(
             log.as_ref(),
         )
         .await?;
-    } else if repr.dag_set.is_empty() || pending_recovery.is_some() {
+    } else if repr.dag_set.is_empty() {
         log.info(source, "Starting from bootstrap node, syncing LFS...");
-        let engine = Arc::new(tokio::sync::Mutex::new(
-            NodeSyncing::new(
-                transport.clone(),
-                rp_conf.clone(),
-                block_store.clone(),
-                dag.clone(),
-                approved_store.clone(),
-                comm_util.clone(),
-                log.clone(),
-                validator_identity_opt.clone(),
-                trim_state,
-                importer,
-            )
-            .with_replay(RecoveryReplay {
-                runtime: runtime_manager.clone(),
-                shard_id: spec.shard_id.to_string(),
-                min_phlo_price: spec.genesis_block_data.min_phlo_price,
-                max_number_of_parents: spec.genesis_block_data.max_number_of_parents,
-                expected_genesis: expected_genesis_hash,
-                anchor: boot_anchor,
-            }),
-        ));
+        let engine = Arc::new(tokio::sync::Mutex::new(NodeSyncing::new(
+            transport.clone(),
+            rp_conf.clone(),
+            block_store.clone(),
+            dag.clone(),
+            approved_store.clone(),
+            comm_util.clone(),
+            log.clone(),
+            validator_identity_opt.clone(),
+            trim_state,
+            importer,
+        )));
         // **A named anchor replaces the fringe request** (C259). A peer with no finalised fringe answers
         // a `FinalizedFringeRequest` with **genesis** (`node_running.rs`), so a wiped joiner syncs to
         // block 0 and can never re-enter sync — which is the state a chain with frozen finality is in,
