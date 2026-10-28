@@ -160,11 +160,11 @@ impl RecoveryReplay {
             .filter(|s| s.len() == 1)
             .and_then(|s| s.first())
             .ok_or_else(|| "recovery requires exactly one height-zero genesis".to_string())?;
-        if self.expected_genesis.is_some_and(|pin| pin != *genesis) {
+        if let Some(pin) = self.expected_genesis.filter(|pin| pin != genesis) {
             return Err(format!(
                 "recovery genesis {} differs from pinned genesis {}",
                 genesis.to_hex(),
-                self.expected_genesis.unwrap().to_hex()
+                pin.to_hex()
             ));
         }
         let dag = staging_dag().await?;
