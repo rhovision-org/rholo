@@ -1,0 +1,165 @@
+{
+  "utc": "2026-10-29T20:20:53.531097+00:00",
+  "source": "3250f479ca9c511d16db877db4514c035c5b4c6e",
+  "status": {
+    "version": {
+      "api": "1",
+      "node": "rholo node 0.1.0 (3250f479ca9c511d16db877db4514c035c5b4c6e)"
+    },
+    "address": "f4c4ddfcb675cb4ec8dabbefc35436b99756b90a",
+    "networkId": "testnet",
+    "shardId": "/testnet",
+    "peers": 0,
+    "nodes": 0,
+    "minPhloPrice": 1,
+    "latestBlockNumber": 3127,
+    "autopropose": false,
+    "proposeOnDeploy": true,
+    "manualPropose": false,
+    "devMode": true,
+    "degraded": "normal",
+    "acceptsDeploys": true,
+    "pool": {
+      "deploys": 0,
+      "bytes": 0,
+      "maxDeploys": 10000,
+      "maxBytes": 67108864
+    }
+  },
+  "genesis": [
+    "c596bef4bb678b3ac0cdb931b5b6968653209ca40bc35b6fec0050254d479b26"
+  ],
+  "finalized": {
+    "version": 1,
+    "shardId": "/testnet",
+    "blockHash": "ec5a08ef2307dc9a4e44a75e3f123ac345776a7c8b7a7811859060a78021f941",
+    "blockNumber": 1759,
+    "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+    "seqNum": 1679,
+    "preStateHash": "1ed60ede95ca54a0c20843acf341b105655190f2727f0f4bf89b3e0bd382a299",
+    "postStateHash": "1ed60ede95ca54a0c20843acf341b105655190f2727f0f4bf89b3e0bd382a299",
+    "justifications": [
+      "1ad31d9005d959c2c37b746991552465ce89aa4ec3084b98ac07fdeb78eef3e6",
+      "2211aa16dd9cc14cc1ac963184d620222161a6816447a34f10a696f586d12eb6",
+      "26e2c9718ee17971612b007f0e2f86182b7702d27ac83e397212429ecc577dd7",
+      "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29"
+    ],
+    "bonds": [
+      {
+        "validator": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+        "stake": 250
+      },
+      {
+        "validator": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+        "stake": 250
+      },
+      {
+        "validator": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+        "stake": 250
+      },
+      {
+        "validator": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+        "stake": 250
+      }
+    ],
+    "sigAlgorithm": "secp256k1",
+    "sig": "3044022020bb1b25e375d3de7f5e8f68ac7dc47a8746eda011d76d3f528a2a17c3a67d500220758c69beb9a1b24b0516beecd7e0e647238998d11d2018e45f2fb5d80b9401a5",
+    "blockSize": "705",
+    "deployCount": 0,
+    "rejectedDeploys": [],
+    "timestamp": 1793226578174
+  },
+  "new_blocks": [
+    {
+      "version": 1,
+      "shardId": "/testnet",
+      "blockHash": "8ac21356349e01c5ee41490e95840535c35e7ea43bf4108cad80536907c333c2",
+      "blockNumber": 3122,
+      "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+      "seqNum": 3122,
+      "preStateHash": "70b0ed7af5afa5e0b659083bced75a2654f3959becfa7aa4e32a76339b0db8b4",
+      "postStateHash": "70b0ed7af5afa5e0b659083bced75a2654f3959becfa7aa4e32a76339b0db8b4",
+      "justifications": [
+        "0881c1a75e3f72e7e47dc050eb588ea06b4f186f0ee0afebd7625f1a05709a53",
+        "484d1f83fd0922633829f3eda4e8982bc3e4a1dc3c0a70351dca4e1dddb8d61d",
+        "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29",
+        "bd6aca86d2520be1016b5e8e402848e08c2860e6fa7c72713a66857334902e3c"
+      ],
+      "bonds": [
+        {
+          "validator": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+          "stake": 250
+        },
+        {
+          "validator": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+          "stake": 250
+        },
+        {
+          "validator": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+          "stake": 250
+        },
+        {
+          "validator": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+          "stake": 250
+        }
+      ],
+      "sigAlgorithm": "secp256k1",
+      "sig": "304402205a4892e859c8d57636a1636519fbe38586c5b1c596ea17521c97846a92a091f302206f4d38e5400ae542d25041b526ad502bf8a9a56ae1d6cec2bfe81321dbc92394",
+      "blockSize": "1180",
+      "deployCount": 2,
+      "rejectedDeploys": [],
+      "timestamp": 1793305128777
+    },
+    {
+      "version": 1,
+      "shardId": "/testnet",
+      "blockHash": "b5e3a7c49dda35f2785351d42cdd0cf0ae2e3750f940e5111af337000192cca3",
+      "blockNumber": 3123,
+      "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+      "seqNum": 3123,
+      "preStateHash": "70b0ed7af5afa5e0b659083bced75a2654f3959becfa7aa4e32a76339b0db8b4",
+      "postStateHash": "70b0ed7af5afa5e0b659083bced75a2654f3959becfa7aa4e32a76339b0db8b4",
+      "justifications": [
+        "484d1f83fd0922633829f3eda4e8982bc3e4a1dc3c0a70351dca4e1dddb8d61d",
+        "8ac21356349e01c5ee41490e95840535c35e7ea43bf4108cad80536907c333c2",
+        "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29",
+        "bd6aca86d2520be1016b5e8e402848e08c2860e6fa7c72713a66857334902e3c"
+      ],
+      "bonds": [
+        {
+          "validator": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+          "stake": 250
+        },
+        {
+          "validator": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+          "stake": 250
+        },
+        {
+          "validator": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+          "stake": 250
+        },
+        {
+          "validator": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+          "stake": 250
+        }
+      ],
+      "sigAlgorithm": "secp256k1",
+      "sig": "3044022031da5a95734ee4a016e6a0c5c0cdc486acad198c785c039668e71b81c23f6685022042b2cdfd33499b2b8eaca0f047c1c6d1788b2d6f27472e3251cc84b7a9ceb35d",
+      "blockSize": "705",
+      "deployCount": 0,
+      "rejectedDeploys": [],
+      "timestamp": 1793305164754
+    }
+  ],
+  "source_database_sha256": {
+    "deploypoolstorage/data.mdb": "39393466667d811aa0973afded85c85f14b0e8b658713bc5674c98525b88a4ff",
+    "dagstorage/data.mdb": "044005483feb6c0ddab68bc2e89681ec27b20aa70221bf91bcb092c388b03d04",
+    "reporting/data.mdb": "087915a56bb8878ca5ef63c133c52e970b55ec865894e6b8f41cc9899ea5daca",
+    "rspace/cold/data.mdb": "eeedc097d7f36cbf52a40fd6b248208e49920ca37950af6ec7bbe2b400de9e2e",
+    "rspace/history/data.mdb": "20daa5e84e6bd5578839bc16ea0d9488c13c03c4b16789b52f34aa2a54f49949",
+    "blockstorage/data.mdb": "a3bcfdccf6ad8f79c48e36b2450a01d1d58bbb11ab93961c4820980be8081286",
+    "eval/cold/data.mdb": "1255255aeae8f923f29f27111804abaf58fdb90c2382ddec1a2bc63df0002cb4",
+    "eval/history/data.mdb": "6b304b633ff556e4487103d101c4998a526bd0edb0026295e65c0b7e9bc8ac4b"
+  },
+  "properties": "MemoryCurrent=2815184896\nCPUUsageNSec=76504971000\nPrivateNetwork=yes\n"
+}

@@ -1,0 +1,12 @@
+{
+  "metadata_records": 9198,
+  "max_height": 3121,
+  "genesis": "c596bef4bb678b3ac0cdb931b5b6968653209ca40bc35b6fec0050254d479b26",
+  "source_data_mdb_sha256": "044005483feb6c0ddab68bc2e89681ec27b20aa70221bf91bcb092c388b03d04",
+  "compressed_sha256": "1f077932696f542f5c35ae6e6e40d4d51adae6461afdab05fb4b427983ea1b25",
+  "uncompressed_sha256": "80bc1e13b92e3eb17c5534f800356974a43dc066cf3d2c1cf42c8c0319d8f007",
+  "source_copy": "Closed /var/lib/rnode.prewipe-20261029T130125Z/dagstorage/data.mdb",
+  "method": "Copy the closed source database; open only the copy; export named block-metadata database; transfer only public metadata",
+  "snapshot_boundary": "Preserved pre-rebuild store; not a materialization or byte-identity proof of DigitalOcean snapshot 252064726",
+  "contents": "Public DAG metadata only; no private keys, tuple-space state, wallet files or deploy payloads"
+}

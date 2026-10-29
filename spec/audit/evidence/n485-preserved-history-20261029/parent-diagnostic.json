@@ -1,0 +1,364 @@
+{
+  "fixture_sha256": "1f077932696f542f5c35ae6e6e40d4d51adae6461afdab05fb4b427983ea1b25",
+  "metadata_records": 9198,
+  "max_height": 3121,
+  "genesis": [
+    "c596bef4bb678b3ac0cdb931b5b6968653209ca40bc35b6fec0050254d479b26"
+  ],
+  "boundary_height": 2063,
+  "boundary": [
+    {
+      "hash": "2caef0919f41de4f826adc2ee4a5a9db45777c7bcdbadb6477fe5980ea57e0a1",
+      "height": 2063,
+      "seq": 2063,
+      "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+      "failed": 0
+    },
+    {
+      "hash": "e98586968e3afd67c1c6b90e9ab131442a7f768e01a05ab412592908dea04c85",
+      "height": 2063,
+      "seq": 1698,
+      "sender": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+      "failed": 0
+    },
+    {
+      "hash": "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29",
+      "height": 1687,
+      "seq": 1677,
+      "sender": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+      "failed": 0
+    },
+    {
+      "hash": "484d1f83fd0922633829f3eda4e8982bc3e4a1dc3c0a70351dca4e1dddb8d61d",
+      "height": 2063,
+      "seq": 1682,
+      "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+      "failed": 0
+    }
+  ],
+  "reports": [
+    {
+      "self": {
+        "hash": "0881c1a75e3f72e7e47dc050eb588ea06b4f186f0ee0afebd7625f1a05709a53",
+        "height": 3121,
+        "seq": 3121,
+        "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+        "failed": 0
+      },
+      "has_advanced": true,
+      "before_parents": [
+        {
+          "hash": "0881c1a75e3f72e7e47dc050eb588ea06b4f186f0ee0afebd7625f1a05709a53",
+          "height": 3121,
+          "seq": 3121,
+          "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+          "failed": 0
+        },
+        {
+          "hash": "e98586968e3afd67c1c6b90e9ab131442a7f768e01a05ab412592908dea04c85",
+          "height": 2063,
+          "seq": 1698,
+          "sender": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+          "failed": 0
+        },
+        {
+          "hash": "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29",
+          "height": 1687,
+          "seq": 1677,
+          "sender": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+          "failed": 0
+        },
+        {
+          "hash": "484d1f83fd0922633829f3eda4e8982bc3e4a1dc3c0a70351dca4e1dddb8d61d",
+          "height": 2063,
+          "seq": 1682,
+          "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+          "failed": 0
+        }
+      ],
+      "after_parents": [
+        {
+          "hash": "0881c1a75e3f72e7e47dc050eb588ea06b4f186f0ee0afebd7625f1a05709a53",
+          "height": 3121,
+          "seq": 3121,
+          "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+          "failed": 0
+        },
+        {
+          "hash": "bd6aca86d2520be1016b5e8e402848e08c2860e6fa7c72713a66857334902e3c",
+          "height": 3079,
+          "seq": 2714,
+          "sender": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+          "failed": 0
+        },
+        {
+          "hash": "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29",
+          "height": 1687,
+          "seq": 1677,
+          "sender": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+          "failed": 0
+        },
+        {
+          "hash": "484d1f83fd0922633829f3eda4e8982bc3e4a1dc3c0a70351dca4e1dddb8d61d",
+          "height": 2063,
+          "seq": 1682,
+          "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+          "failed": 0
+        }
+      ],
+      "before_regressions": [
+        {
+          "selected": {
+            "hash": "e98586968e3afd67c1c6b90e9ab131442a7f768e01a05ab412592908dea04c85",
+            "height": 2063,
+            "seq": 1698,
+            "sender": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+            "failed": 0
+          },
+          "previous_self_parent": {
+            "hash": "043f249c4032de483e8d56e12e3f76904c31b381a994c5311d379a42c4a80519",
+            "height": 2064,
+            "seq": 1699,
+            "sender": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+            "failed": 0
+          }
+        }
+      ],
+      "after_regressions": []
+    },
+    {
+      "self": {
+        "hash": "bd6aca86d2520be1016b5e8e402848e08c2860e6fa7c72713a66857334902e3c",
+        "height": 3079,
+        "seq": 2714,
+        "sender": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+        "failed": 0
+      },
+      "has_advanced": true,
+      "before_parents": [
+        {
+          "hash": "2caef0919f41de4f826adc2ee4a5a9db45777c7bcdbadb6477fe5980ea57e0a1",
+          "height": 2063,
+          "seq": 2063,
+          "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+          "failed": 0
+        },
+        {
+          "hash": "bd6aca86d2520be1016b5e8e402848e08c2860e6fa7c72713a66857334902e3c",
+          "height": 3079,
+          "seq": 2714,
+          "sender": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+          "failed": 0
+        },
+        {
+          "hash": "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29",
+          "height": 1687,
+          "seq": 1677,
+          "sender": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+          "failed": 0
+        },
+        {
+          "hash": "484d1f83fd0922633829f3eda4e8982bc3e4a1dc3c0a70351dca4e1dddb8d61d",
+          "height": 2063,
+          "seq": 1682,
+          "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+          "failed": 0
+        }
+      ],
+      "after_parents": [
+        {
+          "hash": "0881c1a75e3f72e7e47dc050eb588ea06b4f186f0ee0afebd7625f1a05709a53",
+          "height": 3121,
+          "seq": 3121,
+          "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+          "failed": 0
+        },
+        {
+          "hash": "bd6aca86d2520be1016b5e8e402848e08c2860e6fa7c72713a66857334902e3c",
+          "height": 3079,
+          "seq": 2714,
+          "sender": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+          "failed": 0
+        },
+        {
+          "hash": "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29",
+          "height": 1687,
+          "seq": 1677,
+          "sender": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+          "failed": 0
+        },
+        {
+          "hash": "484d1f83fd0922633829f3eda4e8982bc3e4a1dc3c0a70351dca4e1dddb8d61d",
+          "height": 2063,
+          "seq": 1682,
+          "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+          "failed": 0
+        }
+      ],
+      "before_regressions": [
+        {
+          "selected": {
+            "hash": "2caef0919f41de4f826adc2ee4a5a9db45777c7bcdbadb6477fe5980ea57e0a1",
+            "height": 2063,
+            "seq": 2063,
+            "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+            "failed": 0
+          },
+          "previous_self_parent": {
+            "hash": "37dd55efac7f0ec3702b3c345cfc34e7b20364de7f09f2a63c769eb9a59e086f",
+            "height": 2064,
+            "seq": 2064,
+            "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+            "failed": 0
+          }
+        }
+      ],
+      "after_regressions": []
+    },
+    {
+      "self": {
+        "hash": "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29",
+        "height": 1687,
+        "seq": 1677,
+        "sender": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+        "failed": 0
+      },
+      "has_advanced": false,
+      "before_parents": [
+        {
+          "hash": "2caef0919f41de4f826adc2ee4a5a9db45777c7bcdbadb6477fe5980ea57e0a1",
+          "height": 2063,
+          "seq": 2063,
+          "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+          "failed": 0
+        },
+        {
+          "hash": "e98586968e3afd67c1c6b90e9ab131442a7f768e01a05ab412592908dea04c85",
+          "height": 2063,
+          "seq": 1698,
+          "sender": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+          "failed": 0
+        },
+        {
+          "hash": "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29",
+          "height": 1687,
+          "seq": 1677,
+          "sender": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+          "failed": 0
+        },
+        {
+          "hash": "484d1f83fd0922633829f3eda4e8982bc3e4a1dc3c0a70351dca4e1dddb8d61d",
+          "height": 2063,
+          "seq": 1682,
+          "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+          "failed": 0
+        }
+      ],
+      "after_parents": [
+        {
+          "hash": "2caef0919f41de4f826adc2ee4a5a9db45777c7bcdbadb6477fe5980ea57e0a1",
+          "height": 2063,
+          "seq": 2063,
+          "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+          "failed": 0
+        },
+        {
+          "hash": "e98586968e3afd67c1c6b90e9ab131442a7f768e01a05ab412592908dea04c85",
+          "height": 2063,
+          "seq": 1698,
+          "sender": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+          "failed": 0
+        },
+        {
+          "hash": "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29",
+          "height": 1687,
+          "seq": 1677,
+          "sender": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+          "failed": 0
+        },
+        {
+          "hash": "484d1f83fd0922633829f3eda4e8982bc3e4a1dc3c0a70351dca4e1dddb8d61d",
+          "height": 2063,
+          "seq": 1682,
+          "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+          "failed": 0
+        }
+      ],
+      "before_regressions": [],
+      "after_regressions": []
+    },
+    {
+      "self": {
+        "hash": "484d1f83fd0922633829f3eda4e8982bc3e4a1dc3c0a70351dca4e1dddb8d61d",
+        "height": 2063,
+        "seq": 1682,
+        "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+        "failed": 0
+      },
+      "has_advanced": false,
+      "before_parents": [
+        {
+          "hash": "2caef0919f41de4f826adc2ee4a5a9db45777c7bcdbadb6477fe5980ea57e0a1",
+          "height": 2063,
+          "seq": 2063,
+          "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+          "failed": 0
+        },
+        {
+          "hash": "e98586968e3afd67c1c6b90e9ab131442a7f768e01a05ab412592908dea04c85",
+          "height": 2063,
+          "seq": 1698,
+          "sender": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+          "failed": 0
+        },
+        {
+          "hash": "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29",
+          "height": 1687,
+          "seq": 1677,
+          "sender": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+          "failed": 0
+        },
+        {
+          "hash": "484d1f83fd0922633829f3eda4e8982bc3e4a1dc3c0a70351dca4e1dddb8d61d",
+          "height": 2063,
+          "seq": 1682,
+          "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+          "failed": 0
+        }
+      ],
+      "after_parents": [
+        {
+          "hash": "2caef0919f41de4f826adc2ee4a5a9db45777c7bcdbadb6477fe5980ea57e0a1",
+          "height": 2063,
+          "seq": 2063,
+          "sender": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+          "failed": 0
+        },
+        {
+          "hash": "e98586968e3afd67c1c6b90e9ab131442a7f768e01a05ab412592908dea04c85",
+          "height": 2063,
+          "seq": 1698,
+          "sender": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+          "failed": 0
+        },
+        {
+          "hash": "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29",
+          "height": 1687,
+          "seq": 1677,
+          "sender": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+          "failed": 0
+        },
+        {
+          "hash": "484d1f83fd0922633829f3eda4e8982bc3e4a1dc3c0a70351dca4e1dddb8d61d",
+          "height": 2063,
+          "seq": 1682,
+          "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+          "failed": 0
+        }
+      ],
+      "before_regressions": [],
+      "after_regressions": []
+    }
+  ],
+  "scope": "Independent diagnostic reconstruction; not a Rust validator execution or authentication of droplet snapshot 252064726"
+}

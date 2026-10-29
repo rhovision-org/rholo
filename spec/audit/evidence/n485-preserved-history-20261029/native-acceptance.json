@@ -1,0 +1,53 @@
+{
+  "utc": "2026-10-29T20:27:30.765956+00:00",
+  "cases": [
+    {
+      "label": "baseline-control",
+      "pid": "0"
+    },
+    {
+      "label": "candidate-restart",
+      "pid": "0"
+    }
+  ],
+  "baseline-3122": {
+    "regressions": 2,
+    "accepted": [],
+    "replay_running": [
+      "2026-10-29T20:08:27.775Z INFO  [casper.engine.NodeLaunch] Making a transition to Running state."
+    ]
+  },
+  "candidate-3122": {
+    "regressions": 0,
+    "accepted": [
+      "2026-10-29T20:18:59.175Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3122 (seq 3122)",
+      "2026-10-29T20:19:34.944Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3123 (seq 3123)",
+      "2026-10-29T20:19:54.580Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3124 (seq 3124)",
+      "2026-10-29T20:20:14.460Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3125 (seq 3125)",
+      "2026-10-29T20:20:34.466Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3126 (seq 3126)",
+      "2026-10-29T20:20:54.658Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3127 (seq 3127)"
+    ],
+    "replay_running": [
+      "2026-10-29T20:17:33.375Z INFO  [casper.engine.NodeLaunch] Making a transition to Running state."
+    ]
+  },
+  "baseline-control": {
+    "regressions": 2,
+    "accepted": [],
+    "replay_running": [
+      "2026-10-29T20:24:11.942Z INFO  [casper.engine.NodeLaunch] Making a transition to Running state."
+    ]
+  },
+  "candidate-restart": {
+    "regressions": 0,
+    "accepted": [
+      "2026-10-29T20:25:50.582Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3128 (seq 3128)",
+      "2026-10-29T20:26:26.462Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3129 (seq 3129)",
+      "2026-10-29T20:26:46.556Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3130 (seq 3130)",
+      "2026-10-29T20:27:06.766Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3131 (seq 3131)"
+    ],
+    "replay_running": [
+      "2026-10-29T20:24:12.062Z INFO  [casper.engine.NodeLaunch] Making a transition to Running state."
+    ]
+  }
+}

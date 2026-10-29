@@ -1,0 +1,155 @@
+{
+  "utc": "2026-10-29T20:24:43.804249+00:00",
+  "cases": [
+    {
+      "label": "baseline-control",
+      "pid": "98634",
+      "status": {
+        "version": {
+          "api": "1",
+          "node": "rholo node 0.1.0 (a5259969a7c5673ccdfc5dad97981d0a3607fcf0)"
+        },
+        "address": "bcc77666a196ff7ff4a2f13c37fd38bcb3e00878",
+        "networkId": "testnet",
+        "shardId": "/testnet",
+        "peers": 0,
+        "nodes": 0,
+        "minPhloPrice": 1,
+        "latestBlockNumber": 3122,
+        "autopropose": false,
+        "proposeOnDeploy": true,
+        "manualPropose": false,
+        "devMode": true,
+        "degraded": "normal",
+        "acceptsDeploys": true
+      },
+      "finalized": {
+        "blockInfo": {
+          "version": 1,
+          "shardId": "/testnet",
+          "blockHash": "ec5a08ef2307dc9a4e44a75e3f123ac345776a7c8b7a7811859060a78021f941",
+          "blockNumber": 1759,
+          "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+          "seqNum": 1679,
+          "preStateHash": "1ed60ede95ca54a0c20843acf341b105655190f2727f0f4bf89b3e0bd382a299",
+          "postStateHash": "1ed60ede95ca54a0c20843acf341b105655190f2727f0f4bf89b3e0bd382a299",
+          "justifications": [
+            "1ad31d9005d959c2c37b746991552465ce89aa4ec3084b98ac07fdeb78eef3e6",
+            "2211aa16dd9cc14cc1ac963184d620222161a6816447a34f10a696f586d12eb6",
+            "26e2c9718ee17971612b007f0e2f86182b7702d27ac83e397212429ecc577dd7",
+            "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29"
+          ],
+          "bonds": [
+            {
+              "validator": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+              "stake": 250
+            },
+            {
+              "validator": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+              "stake": 250
+            },
+            {
+              "validator": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+              "stake": 250
+            },
+            {
+              "validator": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+              "stake": 250
+            }
+          ],
+          "sigAlgorithm": "secp256k1",
+          "sig": "3044022020bb1b25e375d3de7f5e8f68ac7dc47a8746eda011d76d3f528a2a17c3a67d500220758c69beb9a1b24b0516beecd7e0e647238998d11d2018e45f2fb5d80b9401a5",
+          "blockSize": "705",
+          "deployCount": 0,
+          "rejectedDeploys": [],
+          "timestamp": 1793226578174
+        },
+        "deploys": []
+      },
+      "propose": {
+        "exit": 1,
+        "first_line": [
+          "Failure: Proposal failed: Must wait for more blocks from other validators (seqNum 3122)"
+        ]
+      }
+    },
+    {
+      "label": "candidate-restart",
+      "pid": "98639",
+      "status": {
+        "version": {
+          "api": "1",
+          "node": "rholo node 0.1.0 (3250f479ca9c511d16db877db4514c035c5b4c6e)"
+        },
+        "address": "f4c4ddfcb675cb4ec8dabbefc35436b99756b90a",
+        "networkId": "testnet",
+        "shardId": "/testnet",
+        "peers": 0,
+        "nodes": 0,
+        "minPhloPrice": 1,
+        "latestBlockNumber": 3128,
+        "autopropose": false,
+        "proposeOnDeploy": true,
+        "manualPropose": false,
+        "devMode": true,
+        "degraded": "normal",
+        "acceptsDeploys": true,
+        "pool": {
+          "deploys": 0,
+          "bytes": 0,
+          "maxDeploys": 10000,
+          "maxBytes": 67108864
+        }
+      },
+      "finalized": {
+        "blockInfo": {
+          "version": 1,
+          "shardId": "/testnet",
+          "blockHash": "ec5a08ef2307dc9a4e44a75e3f123ac345776a7c8b7a7811859060a78021f941",
+          "blockNumber": 1759,
+          "sender": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+          "seqNum": 1679,
+          "preStateHash": "1ed60ede95ca54a0c20843acf341b105655190f2727f0f4bf89b3e0bd382a299",
+          "postStateHash": "1ed60ede95ca54a0c20843acf341b105655190f2727f0f4bf89b3e0bd382a299",
+          "justifications": [
+            "1ad31d9005d959c2c37b746991552465ce89aa4ec3084b98ac07fdeb78eef3e6",
+            "2211aa16dd9cc14cc1ac963184d620222161a6816447a34f10a696f586d12eb6",
+            "26e2c9718ee17971612b007f0e2f86182b7702d27ac83e397212429ecc577dd7",
+            "a7106b6c028eb5f6e3dadfacb5fa8e5324ec1a8b171a5229aea48d24f0e1fe29"
+          ],
+          "bonds": [
+            {
+              "validator": "0410b8c59d04df768160eb97f8773db56a9e861f3b8c53ba4ef80a1d4f71bb2c6c9cc977b3c93d5cc3dbe9465fa7f501014be4238a5a74b2d2256f95321a0c3c73",
+              "stake": 250
+            },
+            {
+              "validator": "041ed2a25819ada35a65dbcce3b42c6a03a414ce6c13cd908aa169876294bf12100698876b4ea5dca09afe23ad7ce27f6bbe7ad0ec4330ca2759645dc4c8b31266",
+              "stake": 250
+            },
+            {
+              "validator": "04d7707c7d31abc15f961da732f759311a24d5ff7431af2a25f75abd82a188be5e367ccce681e444cc8b671e27ca544d2e4a824d21363667e76c1d4c937ca25b92",
+              "stake": 250
+            },
+            {
+              "validator": "04dce59b572da605b9eaa554deca8d364ef541a36ff4386d7ba49087d86866fd3c2d14db6b237aeee46cf732e8880420fe5af5734f01e8a715fc7f7c8da08b045c",
+              "stake": 250
+            }
+          ],
+          "sigAlgorithm": "secp256k1",
+          "sig": "3044022020bb1b25e375d3de7f5e8f68ac7dc47a8746eda011d76d3f528a2a17c3a67d500220758c69beb9a1b24b0516beecd7e0e647238998d11d2018e45f2fb5d80b9401a5",
+          "blockSize": "705",
+          "deployCount": 0,
+          "rejectedDeploys": [],
+          "timestamp": 1793226578174
+        },
+        "deploys": []
+      },
+      "propose": {
+        "exit": 1,
+        "first_line": [
+          "Failure: Proposal failed: Must wait for more blocks from other validators (seqNum 3128)"
+        ]
+      }
+    }
+  ]
+}
