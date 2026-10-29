@@ -1,0 +1,15 @@
+2026-10-29T20:23:17.854Z INFO  [resource-preflight] host resources: 15413 MiB available, cgroup v2, data dir 18549 MiB free, 0 rnode process(es), 1 CPU(s), 9204 persisted block(s)
+replay complete — starting listeners; the API answers once they are up
+2026-10-29T20:24:12.062Z INFO  [casper.engine.NodeLaunch] Making a transition to Running state.
+2026-10-29T20:25:50.582Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3128 (seq 3128)
+2026-10-29T20:26:26.462Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3129 (seq 3129)
+2026-10-29T20:26:46.556Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3130 (seq 3130)
+2026-10-29T20:27:06.766Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #3131 (seq 3131)
+2026-10-29T20:27:20.146Z INFO  [coop.rchain.node.Main] Shutdown complete.
+	User time (seconds): 70.48
+	System time (seconds): 13.66
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 4:07.24
+	Maximum resident set size (kbytes): 2867096
+	File system inputs: 0
+	File system outputs: 4040
+	Exit status: 0

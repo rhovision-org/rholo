@@ -1,0 +1,11 @@
+2026-10-29T20:31:08.338Z INFO  [resource-preflight] host resources: 15412 MiB available, cgroup v2, data dir 18514 MiB free, 0 rnode process(es), 1 CPU(s), 9208 persisted block(s)
+replay complete — starting listeners; the API answers once they are up
+2026-10-29T20:31:59.496Z INFO  [casper.engine.NodeLaunch] Making a transition to Running state.
+2026-10-29T20:33:06.583Z INFO  [coop.rchain.node.Main] Shutdown complete.
+	User time (seconds): 24.85
+	System time (seconds): 2.82
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:02.14
+	Maximum resident set size (kbytes): 2755308
+	File system inputs: 0
+	File system outputs: 576
+	Exit status: 0

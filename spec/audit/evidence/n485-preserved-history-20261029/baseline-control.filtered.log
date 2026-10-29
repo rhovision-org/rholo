@@ -1,0 +1,13 @@
+2026-10-29T20:23:17.842Z INFO  [resource-preflight] host resources: 15413 MiB available, cgroup v2, data dir 18549 MiB free, 0 rnode process(es), 1 CPU(s), 9198 persisted block(s)
+replay complete — starting listeners; the API answers once they are up
+2026-10-29T20:24:11.942Z INFO  [casper.engine.NodeLaunch] Making a transition to Running state.
+2026-10-29T20:25:11.376Z ERROR [casper.blocks.Proposer] Self-created block #3122 (seq 3122) failed validation: a justification regressed from its parent — node state accounting is inconsistent.
+2026-10-29T20:25:11.376Z ERROR [coop.rchain.node.instances.ProposerInstance] propose failed with an internal error: the node rejected its own block #3122 (seq 3122): a justification regressed from its parent. This is a node-side bug, not a problem with your request. — no block was produced, so the chain will not advance until this is fixed
+2026-10-29T20:27:17.887Z INFO  [coop.rchain.node.Main] Shutdown complete.
+	User time (seconds): 29.82
+	System time (seconds): 5.77
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 4:05.03
+	Maximum resident set size (kbytes): 2799280
+	File system inputs: 0
+	File system outputs: 768
+	Exit status: 0
