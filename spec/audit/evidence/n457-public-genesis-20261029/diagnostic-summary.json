@@ -315,8 +315,12 @@
     },
     {
       "name": "qualified-v2",
-      "retained_evidence": "/home/aria/tmp/rholo-recovery-probe-20261029/qualified-v2",
-      "status": "RUNNING"
+      "status": "COMPLETE",
+      "diagnostic_pass": false,
+      "local_services_and_firewall_unchanged": true,
+      "raw_report": "acceptance.json",
+      "last_epoch_boundary": 1390,
+      "termination": "host available memory safety floor"
     }
   ]
 }

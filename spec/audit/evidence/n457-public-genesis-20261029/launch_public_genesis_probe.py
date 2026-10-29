@@ -6,10 +6,27 @@ import json
 from pathlib import Path
 
 p = argparse.ArgumentParser(description=__doc__)
-p.add_argument("--name", required=True)
-p.add_argument("--port", type=int, required=True)
+p.add_argument("--name")
+p.add_argument("--port", type=int)
 p.add_argument("--timeout", type=int, default=3600)
+p.add_argument("--report-only", type=Path)
 cli = p.parse_args()
+
+def outcome(report):
+    cases = report.get("cases", [])
+    complete = (
+        len(cases) == 3
+        and [c.get("label") for c in cases] == ["fresh-1", "restart", "wrong-genesis"]
+        and all(c.get("pass") is True for c in cases)
+    )
+    return 0 if complete and report.get("diagnostic_pass") is True and report.get("local_services_and_firewall_unchanged") is True else 1
+
+if cli.report_only:
+    saved = json.loads(cli.report_only.read_text())
+    print(json.dumps({k: saved.get(k) for k in ("source_sha", "diagnostic_pass", "error", "local_services_and_firewall_unchanged")}))
+    raise SystemExit(outcome(saved))
+if not cli.name or cli.port is None:
+    p.error("--name and --port are required for a new experiment")
 root = Path("/home/aria/tmp/rholo-recovery-probe-20261029")
 cfg = json.loads((root / "public-genesis/manifest.json").read_text())
 spec = importlib.util.spec_from_file_location("proof", root / "live_acceptance_with_genesis.py")
@@ -42,3 +59,4 @@ finally:
     r["local_services_and_firewall_unchanged"] = r["safety_before"] == r["safety_after"]
     (a.out / "acceptance.json").write_text(json.dumps(r, indent=2) + "\n")
     print(json.dumps({k: v for k, v in r.items() if k not in ("cases", "safety_before", "safety_after")}), flush=True)
+raise SystemExit(outcome(r))

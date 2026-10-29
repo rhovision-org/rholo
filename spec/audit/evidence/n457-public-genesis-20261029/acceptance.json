@@ -1,0 +1,151 @@
+{
+  "source_sha": "6ff5947bea886ff3ed882a5af4ee5d408c5b6692",
+  "binary_sha256": "484c382cec31121466f314c1f1e7f8511337dfa2a3eadc71ba12bd4f654ddce1",
+  "scope": "Configured fresh-store diagnostic; four-validator acceptance BLOCKED",
+  "public_genesis_sha256": {
+    "bonds.txt": "bddd18b25c989faf955ea2e66597dc31be9ba516bbe6545ebaaab6b35eac8b70",
+    "wallets.txt": "a1fbc9921990c4f7dd92a15380d0f552b053d1c53852e611e3f630ccaf6fa00a"
+  },
+  "cases": [
+    {
+      "label": "fresh-1",
+      "command": [
+        "/home/aria/tmp/rholo-recovery-probe-20261029/rnode",
+        "--profile",
+        "docker",
+        "run",
+        "--dev-mode",
+        "--no-upnp",
+        "--network-id",
+        "testnet",
+        "--shard-name",
+        "testnet",
+        "--parent-shard-id",
+        "/",
+        "--host",
+        "127.0.0.1",
+        "--bootstrap",
+        "rnode://6b70152e0dfe887101428710a5c5a14c9933a3d6@127.0.0.1?protocol=40400&discovery=40404",
+        "--api-host",
+        "127.0.0.1",
+        "--data-dir",
+        "/home/aria/tmp/rholo-recovery-probe-20261029/qualified-v2/empty-store",
+        "--expected-genesis-hash",
+        "c596bef4bb678b3ac0cdb931b5b6968653209ca40bc35b6fec0050254d479b26",
+        "--thread-pool-size",
+        "2",
+        "--epoch-length",
+        "10",
+        "--quarantine-length",
+        "10",
+        "--bond-minimum",
+        "1",
+        "--bond-maximum",
+        "250",
+        "--bonds-file",
+        "/home/aria/tmp/rholo-recovery-probe-20261029/public-genesis/bonds.txt",
+        "--wallets-file",
+        "/home/aria/tmp/rholo-recovery-probe-20261029/public-genesis/wallets.txt",
+        "--pos-multi-sig-public-keys",
+        "042d721140c51d83d87503d86fa85e0c835c1b80dcb086251b7c59da497c6ed508625a5c0624741278af944e74f701e4d0f5c2b447b561a1e52f164e895c24b15d",
+        "--pos-multi-sig-quorum",
+        "1",
+        "--number-of-active-validators",
+        "4",
+        "--protocol-port",
+        "44400",
+        "--api-port-grpc-external",
+        "44401",
+        "--api-port-grpc-internal",
+        "44402",
+        "--api-port-http",
+        "44403",
+        "--discovery-port",
+        "44404",
+        "--api-port-admin-http",
+        "44405"
+      ],
+      "before": [
+        {
+          "api": "http://127.0.0.1:40403",
+          "tip": 2268,
+          "finalized_height": 1759,
+          "finalized_hash": "ec5a08ef2307dc9a4e44a75e3f123ac345776a7c8b7a7811859060a78021f941",
+          "genesis": [
+            "c596bef4bb678b3ac0cdb931b5b6968653209ca40bc35b6fec0050254d479b26"
+          ],
+          "version": "rholo node 0.1.0 (a5259969a7c5673ccdfc5dad97981d0a3607fcf0)",
+          "address": "6b70152e0dfe887101428710a5c5a14c9933a3d6"
+        }
+      ],
+      "initially_empty": true,
+      "started_utc": "2026-10-29T00:18:31.800871+00:00",
+      "port": 44400,
+      "max_rss_kib": 807216,
+      "min_available_kib": 699180,
+      "disposable_unit": "rholo-n457-qualified-v2-fresh-1.service",
+      "last_status": {
+        "version": {
+          "api": "1",
+          "node": "rholo node 0.1.0 (6ff5947bea886ff3ed882a5af4ee5d408c5b6692)"
+        },
+        "address": "59cf4eb280158e620bad940691c84b4a0f893036",
+        "networkId": "testnet",
+        "shardId": "/testnet",
+        "peers": 1,
+        "nodes": 1,
+        "minPhloPrice": 1,
+        "latestBlockNumber": 0,
+        "autopropose": false,
+        "proposeOnDeploy": false,
+        "manualPropose": true,
+        "devMode": true,
+        "degraded": "critical",
+        "acceptsDeploys": false
+      },
+      "error": "RuntimeError('host available memory crossed the safety floor')",
+      "exit_code": 0,
+      "elapsed_s": 3128.34,
+      "entered_running": false,
+      "restored_lfs": false,
+      "active_bonds_error": false,
+      "receiver_overflow": false,
+      "sync_failure": true,
+      "log_sha256": "94a73fc412ed47652c79a15cd58072582df5fd96deaca4c0448184bb88311398",
+      "deliveries_by_peer": {
+        "rnode://6b70152e0dfe887101428710a5c5a14c9933a3d6@164.90.140.144?protocol=40400&discovery=40404": 6806
+      },
+      "unneeded_deliveries": 0,
+      "idle_warnings": 0,
+      "wrong_pin_rejected": false,
+      "pass": false,
+      "after": [
+        {
+          "api": "http://127.0.0.1:40403",
+          "tip": 2360,
+          "finalized_height": 1759,
+          "finalized_hash": "ec5a08ef2307dc9a4e44a75e3f123ac345776a7c8b7a7811859060a78021f941",
+          "genesis": [
+            "c596bef4bb678b3ac0cdb931b5b6968653209ca40bc35b6fec0050254d479b26"
+          ],
+          "version": "rholo node 0.1.0 (a5259969a7c5673ccdfc5dad97981d0a3607fcf0)",
+          "address": "6b70152e0dfe887101428710a5c5a14c9933a3d6"
+        }
+      ]
+    }
+  ],
+  "safety_before": {
+    "local_validator_services": "MainPID=50198\nNRestarts=0\nExecMainStartTimestamp=Sun 2026-10-25 13:52:09 UTC\n\nMainPID=0\nNRestarts=0\nExecMainStartTimestamp=n/a",
+    "local_validator_services_exit": 0,
+    "local_firewall_sha256": "2de8a9a8e60c009396da6beaa1eb32e4cb5d566bc7bfbce057851612b6ed5f08",
+    "local_firewall_sha256_exit": 0
+  },
+  "diagnostic_pass": false,
+  "safety_after": {
+    "local_validator_services": "MainPID=50198\nNRestarts=0\nExecMainStartTimestamp=Sun 2026-10-25 13:52:09 UTC\n\nMainPID=0\nNRestarts=0\nExecMainStartTimestamp=n/a",
+    "local_validator_services_exit": 0,
+    "local_firewall_sha256": "2de8a9a8e60c009396da6beaa1eb32e4cb5d566bc7bfbce057851612b6ed5f08",
+    "local_firewall_sha256_exit": 0
+  },
+  "local_services_and_firewall_unchanged": true
+}

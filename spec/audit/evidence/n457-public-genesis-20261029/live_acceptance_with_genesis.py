@@ -104,7 +104,7 @@ def case(args, report, label, db, port, wrong=False):
                 ["sudo", "-n", "systemd-run", "--quiet", "--wait", "--pipe", "--collect",
                  "--unit=" + unit, "--uid=" + str(os.getuid()), "--gid=" + str(os.getgid()),
                  "--setenv=RUST_LOG=info", "--property=MemoryMax=768M", "--property=CPUQuota=100%",
-                 "--property=TasksMax=96", "--property=Nice=10", "--property=KillSignal=SIGINT",
+                 "--property=MemorySwapMax=256M", "--property=TasksMax=96", "--property=Nice=10", "--property=KillSignal=SIGINT",
                  "--property=TimeoutStopSec=15", "--property=RuntimeMaxSec=" + str(limit+20), "--"]
                 + command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             while time.monotonic() - started < limit:
