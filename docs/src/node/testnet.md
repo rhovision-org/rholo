@@ -599,14 +599,32 @@ are in [Operating the node](operating.md#block-production-modes).
 An observer is any node without a bonded key. It replicates the chain and can be started
 anywhere:
 
+For releases with independent recovery replay (including #474), obtain the network's
+canonical **public** `bonds.txt`, `wallets.txt` and genesis parameters from the operator.
+Keep those files outside the new, empty data directory. The signed genesis contains
+the block history, but native PoS descriptors and initial vault balances are also needed
+to reproduce its state when rebuilding missing sidecars. A genesis hash pin checks
+identity; it does not provide those inputs. Do not supply a validator private key or
+copy an existing chain database for this observer procedure.
+
 ```bash
-rnode --profile docker run --host <its-ip> --data-dir /var/lib/rnode \
-  --pos-multi-sig-public-keys <dave pubkey> --pos-multi-sig-quorum 1 \
-  --bootstrap rnode://<A's node id from /api/status>@164.90.140.144?protocol=40400&discovery=40404
+rnode --profile docker run --dev-mode --no-upnp \
+  --host "<its-ip>" --api-host 127.0.0.1 --data-dir "<new-empty-data-dir>" \
+  --network-id testnet --shard-name testnet --parent-shard-id / \
+  --bonds-file "<public-genesis-dir>/bonds.txt" \
+  --wallets-file "<public-genesis-dir>/wallets.txt" \
+  --pos-multi-sig-public-keys "<dave pubkey>" --pos-multi-sig-quorum 1 \
+  --epoch-length 10 --quarantine-length 10 \
+  --bond-minimum 1 --bond-maximum 250 --number-of-active-validators 4 \
+  --expected-genesis-hash "<independently-trusted-full-genesis-hash>" \
+  --bootstrap "rnode://<A's node id from /api/status>@164.90.140.144?protocol=40400&discovery=40404"
 ```
 
-(The multi-sig flags must match the genesis master's, or the joiner's own view of the genesis PoS
-spec will not match — see [Genesis](#genesis).)
+The public files, multisig and parameters must match the original genesis configuration,
+not a later validator set. Record their checksums with the binary/source identity. A
+`regenerated mergeable channels ... replay computed ... instead of ...` failure naming
+genesis is a reason to check these inputs; do not bypass the hash comparison. See
+[Genesis](#genesis) and `casper/src/genesis/mod.rs::genesis_descriptors_from_config`.
 
 The generalised procedure — prerequisites, the firewall rule below, the genesis ceremony, live
 admission and recovery — is [Running a node: testnet now, mainnet later](validator-observer-setup.md).
@@ -621,7 +639,11 @@ INFO [casper.engine.NodeSyncing] LFS state is successfully restored.
 INFO [casper.engine.NodeLaunch] Making a transition to Running state.
 ```
 
-A join takes about 15 seconds and ~19 MB, measured.
+The historical genesis-only join took about 15 seconds and ~19 MB. That measurement
+does not bound mature-chain recovery, which downloads ancestry and state roots and
+independently replays non-genesis history before entering Running.
+
+See the [source-pinned public-genesis recovery evidence](../../../spec/audit/evidence/n457-public-genesis-20261029/README.md) for the missing-input refusal and the limits of the current mature-history campaign.
 
 **Measured 2026-10-25: a joiner must be reachable from every validator, not only its bootstrap.**
 The earlier height-1 run only restored the approved genesis fringe. A subsequent fresh join
