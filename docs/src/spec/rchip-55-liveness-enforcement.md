@@ -4,16 +4,14 @@
 parameters, **default off**. Arming requires a new genesis. This RCHIP does **not** authorise mainnet
 arming; that waits on the live evidence in §7 and #428.
 
-**Owner:** @PatrickMockridge. **Reviewer and residual owner:** @aixaria0, who owns #149 and the
-unmodelled inactivity leak. RCHIP #46 (rotation/longevity/open enrollment) remains a separate,
-deferred economics row and is cross-referenced, not reused.
+**Owner:** @PatrickMockridge. The separate recovery and validator-lifecycle questions are tracked in #70/#39; reviewing this RCHIP does not transfer ownership of those topics. RCHIP #46 (rotation/longevity/open enrollment) remains a separate, deferred economics row and is cross-referenced, not reused.
 
 ## 1. The problem
 
 A bonded validator that stops keeps its bond, counts in the whole-bonded finality denominator for
 ever, and under the shipped `absence-slack = 0` is still paid for an epoch it was drawn for. A
 sub-quorum outage therefore freezes finality while the absent stake makes the quorum unreachable.
-`docs/src/node/validator-economics.md` and `TERMS.md` state the asymmetry; #149 owns it.
+`docs/src/node/validator-economics.md` and `TERMS.md` state the asymmetry; see #70/#39 for the separate liveness and validator-lifecycle discussion.
 
 ## 2. The decision
 
@@ -79,7 +77,7 @@ A four-validator devnet and then a live testnet must show: jail after two advanc
 bond unchanged; a >2/3 vote slash and permanent ejection with replay agreement; a partition that jails
 but does not slash without a vote; a stall that moves neither clock; a restart during jail that returns
 at expiry and renews while silent; the exact 2/3 boundary. The devnet harness and evidence contract
-are in `tests/liveness-enforcement.py` / `spec/audit/evidence/`; the live arm is owed.
+are still owed. The referenced `tests/liveness-enforcement.py` does not exist in this branch; neither the devnet harness nor the live arm has been demonstrated.
 
 ## 8. Known residuals
 
@@ -87,3 +85,9 @@ A >2/3 active stake can eject a dissenter after a jail (fixed policy, no unban);
 can be jailed on the finalising side; a proposer can present a stale reachable fringe; **nothing
 requires a boundary block to carry `CloseBlock`**, so the epoch transition (and this rule) is
 skippable until a validity rule lands; no live evidence yet.
+
+## 9. Voting-weight consistency at an epoch boundary
+
+The active-set stake snapshot, not the mutable bonded pool, supplies **both** the numerator and denominator for liveness slash votes. Delegation changes a pool entry immediately and its active weight only on the next epoch draw. Using the pool for one side of the inequality allows an active minority to acquire an artificial supermajority. The regression cases in `rholang/src/native_state.rs` exercise a real mid-epoch delegation and the strict two-thirds boundary.
+
+This safeguard does not restore finality once bonded participation is below the chain's finality quorum: jail and slash voting both require advancing boundaries. That recovery case remains a separate acceptance obligation.

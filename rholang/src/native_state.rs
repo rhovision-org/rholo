@@ -2498,6 +2498,10 @@ impl NativeSystemState {
             if !pool.contains_key(&target) {
                 continue;
             }
+            // Ballots are weighted by the epoch's active snapshot. Delegation changes
+            // the bonded pool immediately, but the active weights only at the next
+            // boundary. Reading the mutable pool here lets a single active voter
+            // inflate its voting weight mid-epoch and confiscate a jailed peer's bond.
             let for_stake: i128 = ballots
                 .iter()
                 .filter(|(key, in_favor)| {
@@ -2505,7 +2509,7 @@ impl NativeSystemState {
                 })
                 .map(|(key, _)| {
                     i128::from(i64::from(
-                        pool.get(&key.voter).copied().unwrap_or(NonNegI64::zero()),
+                        active.get(&key.voter).copied().unwrap_or(NonNegI64::zero()),
                     ))
                 })
                 .sum();
@@ -9084,6 +9088,72 @@ mod liveness_tests {
         assert!(
             native.liveness().await.unwrap().is_empty(),
             "a stalled chain must not jail"
+        );
+    }
+
+    /// A delegation updates the pool before the next active-set draw. Weighting a
+    /// slash ballot from that mutable pool lets one 10/30 active-stake voter buy a
+    /// 40/30 numerator and eject a jailed validator without a quorum.
+    #[tokio::test]
+    async fn a_delegation_cannot_buy_slash_voting_power_mid_epoch() {
+        let native = four(armed_params()).await;
+        jail_v4(&native).await;
+        let target = validator(4);
+        let voter = validator(1);
+        let delegator = validator(9);
+
+        // The extra bond is real: delegate debits the funder's vault and credits
+        // the PoS vault, but does not change the already-drawn active snapshot.
+        native.set_vault_balance(&vault_address_of(&delegator), nn(30));
+        native
+            .delegate(&delegator, &voter, nn(30))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(native.bonds().await.unwrap().get(&voter), Some(&nn(40)));
+        assert_eq!(native.active().await.unwrap().get(&voter), Some(&nn(10)));
+
+        native
+            .cast_vote(&voter, &target, true)
+            .await
+            .unwrap()
+            .unwrap();
+        boundary(&native, 40, &[(1, 40), (2, 40), (3, 40)]).await;
+        assert!(
+            native.bonds().await.unwrap().contains_key(&target),
+            "10/30 active stake cannot slash a validator even when its pool stake rises to 40"
+        );
+        assert!(
+            !native.banished().await.unwrap().contains(&target),
+            "a minority vote must never permanently ban the target"
+        );
+    }
+
+    /// The active snapshot's exact 2/3 boundary is not a supermajority, even
+    /// when a voter has more bonded principal than at the active-set draw.
+    #[tokio::test]
+    async fn two_of_three_active_votes_cannot_cross_strict_threshold_via_delegation() {
+        let native = four(armed_params()).await;
+        jail_v4(&native).await;
+        let target = validator(4);
+        let delegator = validator(9);
+        native.set_vault_balance(&vault_address_of(&delegator), nn(30));
+        native
+            .delegate(&delegator, &validator(1), nn(30))
+            .await
+            .unwrap()
+            .unwrap();
+        for voter in [validator(1), validator(2)] {
+            native
+                .cast_vote(&voter, &target, true)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        boundary(&native, 40, &[(1, 40), (2, 40), (3, 40)]).await;
+        assert!(
+            native.bonds().await.unwrap().contains_key(&target),
+            "20/30 active stake is exactly two thirds, not a passing slash vote"
         );
     }
 
