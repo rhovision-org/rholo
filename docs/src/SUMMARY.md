@@ -67,6 +67,7 @@
 - [Formal specification & audit](contributor/spec.md)
 - [Plan: post-quantum migration](contributor/post-quantum-plan.md)
 - [Design: the genesis-contract upgrade path (RCHIP #43)](contributor/genesis-contract-upgrade-path.md)
+- [Design: governance-set parameters (plan H2)](contributor/governance-parameters.md)
 
 # Part VI — QuCalc: native AI & governance
 
