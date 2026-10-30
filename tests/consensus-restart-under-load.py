@@ -19,6 +19,8 @@ The predicates live in `restart_under_load_controls.py` so they can be tested of
 only collects and feeds them.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 import importlib.util
 import json
 import re
@@ -61,8 +63,7 @@ def record(path, **event):
         f.write(json.dumps({"utc": time.time(), **event}) + "\n")
 
 
-def wait_ready(i, window, events):
-    deadline = time.monotonic() + window
+def wait_ready(i, deadline, events):
     last = None
     while time.monotonic() < deadline:
         try:
@@ -74,7 +75,7 @@ def wait_ready(i, window, events):
             last = repr(error)
         time.sleep(1)
     record(events, wait_ready=i, last=last)
-    raise RuntimeError(f"validator {i} did not become ready within {window}s")
+    raise RuntimeError(f"validator {i} did not become ready before the deadline")
 
 
 def deploy_on(i, term):
@@ -119,11 +120,30 @@ def agreement(validators):
     return identities
 
 
-def wait_agreement(validators, min_height, window, events):
-    deadline = time.monotonic() + window
+def observed_finality(validators, last, events):
+    """Reject regressions and finalized hash conflicts, even between final samples."""
+    identities = agreement(validators)
+    by_height = {}
+    for i, identity in enumerate(identities):
+        height, block_hash = identity
+        old = last.get(i)
+        if old is not None:
+            if height < old[0]:
+                raise RuntimeError(f"validator {i} finalized height regressed {old[0]} -> {height}")
+            if height == old[0] and block_hash != old[1]:
+                raise RuntimeError(f"validator {i} changed finalized hash at height {height}")
+        if height in by_height and by_height[height] != block_hash:
+            raise RuntimeError(f"conflicting finalized hashes at height {height}")
+        by_height[height] = block_hash
+        last[i] = identity
+    record(events, finalized=identities)
+    return identities
+
+
+def wait_agreement(validators, min_height, deadline, events, last):
     while time.monotonic() < deadline:
         try:
-            identities = agreement(validators)
+            identities = observed_finality(validators, last, events)
             verdict = controls.agreement_verdict(identities, min_height)
             if verdict is None:
                 return identities
@@ -131,60 +151,105 @@ def wait_agreement(validators, min_height, window, events):
         except (OSError, ValueError) as error:
             record(events, wait_agreement_error=repr(error))
         time.sleep(2)
-    raise RuntimeError(f"no agreement at height >= {min_height} within {window}s")
+    raise RuntimeError(f"no agreement at height >= {min_height} by the recovery deadline")
 
 
-def deploys_resolved(validators, deploy_ids):
-    for i in range(validators):
-        for deploy_id in deploy_ids:
-            status = drill.get(i, f"/api/v1/deploy-status/{deploy_id}")
-            if not controls.deploy_is_success(status):
-                return False
-    return True
+def wait_deploys_resolved(validators, submitted, deadline, events, last):
+    """Give accepted deployments until the same recovery deadline to resolve."""
+    unresolved = []
+    while time.monotonic() < deadline:
+        observed_finality(validators, last, events)
+        unresolved = []
+        for i in range(validators):
+            for deploy_id, _, _, _ in submitted:
+                try:
+                    status = drill.get(i, f"/api/v1/deploy-status/{deploy_id}")
+                except (OSError, ValueError) as error:
+                    unresolved.append((i, deploy_id, repr(error)))
+                    continue
+                if not controls.deploy_is_success(status):
+                    unresolved.append((i, deploy_id, status))
+        if not unresolved:
+            record(events, resolved=len(submitted), validators=validators)
+            return
+        record(events, unresolved_count=len(unresolved), example=unresolved[:3])
+        time.sleep(2)
+    raise RuntimeError(f"{len(unresolved)} deploy statuses unresolved by recovery deadline")
+
+
+def victim_for_cycle(cycle):
+    return 1 if cycle == 0 else 0  # non-master, then genesis master
 
 
 def run_cycle(args, victim, cycle, events):
+    for i in range(args.validators):
+        wait_ready(i, time.monotonic() + args.window, events)
     baseline = agreement(args.validators)
     verdict = controls.baseline_verdict(baseline)
     if verdict is not None:
         raise RuntimeError(f"pre-kill baseline is not agreed: {verdict}")
     base_height = baseline[0][0]
-    record(events, cycle=cycle, baseline=baseline)
+    last = dict(enumerate(baseline))
+    record(events, cycle=cycle, baseline=baseline, victim=victim, streams=4)
 
-    submitted = []
-    started = time.monotonic()
-    killed = False
-    deadline = started + args.window
-    stream = 0
-    while time.monotonic() < deadline:
-        if not killed and time.monotonic() - started >= 5:
-            node = node_name(victim)
-            before = docker("inspect", "-f", "{{.Id}}", node).stdout.strip()
-            pre_log_len = len(docker("logs", node).stdout + docker("logs", node).stderr)
-            docker("kill", "--signal", "KILL", node)
-            docker("start", node)
-            after = docker("inspect", "-f", "{{.Id}}", node).stdout.strip()
-            if before != after:
-                raise RuntimeError("the restarted container is not the same container")
-            record(events, cycle=cycle, killed=victim, at=time.time(), container=before)
-            killed = True
-            stream += 1
-        target = (victim + 1 + stream) % args.validators if killed else stream % args.validators
-        if target == victim and killed:
+    # Four independent CLI streams must be active when the SIGKILL occurs.
+    # Target the three surviving validators: a killed node is not a valid
+    # submission endpoint, and a refusal must never masquerade as an accepted write.
+    gate = Barrier(5)
+    stop_at = time.monotonic() + args.load_seconds
+
+    def submit_stream(stream):
+        gate.wait(timeout=15)
+        accepted = []
+        target = (victim + 1 + stream) % args.validators
+        if target == victim:
             target = (target + 1) % args.validators
-        marker = f"restart-under-load:{cycle}:{uuid.uuid4().hex}"
-        deploy_id = deploy_on(target, f'@"{marker}"!(1)')
-        submitted.append((deploy_id, marker, target))
-        record(events, cycle=cycle, deploy=deploy_id, marker=marker, target=target)
-        stream += 1
-        time.sleep(0.5)
+        while time.monotonic() < stop_at:
+            marker = f"restart-under-load:{cycle}:{stream}:{uuid.uuid4().hex}"
+            deploy_id = deploy_on(target, f'@"{marker}"!(1)')
+            accepted.append((deploy_id, marker, target, stream))
+            record(events, cycle=cycle, stream=stream, deploy=deploy_id,
+                   marker=marker, target=target)
+            time.sleep(0.2)
+        return accepted
 
-    wait_ready(victim, args.window, events)
-    identities = wait_agreement(args.validators, base_height + 3, args.window, events)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(submit_stream, stream) for stream in range(4)]
+        gate.wait(timeout=15)
+        time.sleep(5)
+        node = node_name(victim)
+        before = docker("inspect", "-f", "{{.Id}}", node)
+        if before.returncode or not before.stdout.strip():
+            raise RuntimeError(f"cannot inspect victim {victim}: {before.stderr}")
+        started_utc = time.time()
+        killed = docker("kill", "--signal", "KILL", node)
+        if killed.returncode:
+            raise RuntimeError(f"docker kill failed for victim {victim}: {killed.stderr}")
+        restarted = docker("start", node)
+        restarted_utc = time.time()
+        if restarted.returncode:
+            raise RuntimeError(f"docker start failed for victim {victim}: {restarted.stderr}")
+        after = docker("inspect", "-f", "{{.Id}}", node)
+        if after.returncode or before.stdout.strip() != after.stdout.strip():
+            raise RuntimeError("restart did not reuse the original container and store")
+        deadline = time.monotonic() + args.window
+        record(events, cycle=cycle, killed=victim, killed_at=started_utc, restarted_at=restarted_utc,
+               container=before.stdout.strip())
+        submitted = []
+        for future in futures:
+            submitted.extend(future.result(timeout=max(1, deadline - time.monotonic())))
+    counts = {stream: sum(1 for _, _, _, owner in submitted if owner == stream)
+              for stream in range(4)}
+    if any(count == 0 for count in counts.values()):
+        raise RuntimeError(f"a concurrent deploy stream submitted no accepted deploys: {counts}")
+    record(events, cycle=cycle, stream_counts=counts)
+
+    wait_ready(victim, deadline, events)
+    identities = wait_agreement(args.validators, base_height + 3, deadline, events, last)
     record(events, cycle=cycle, agreed=identities)
-
-    if not deploys_resolved(args.validators, [d for d, _, _ in submitted]):
-        raise RuntimeError("a deploy submitted in the window is not resolved on every validator")
+    wait_deploys_resolved(args.validators, submitted, deadline, events, last)
+    identities = wait_agreement(args.validators, base_height + 3, deadline, events, last)
+    record(events, cycle=cycle, final_agreement=identities)
 
     for i in range(args.validators):
         body = health(i)
@@ -192,11 +257,16 @@ def run_cycle(args, victim, cycle, events):
         if verdict is not None:
             raise RuntimeError(f"validator {i}: {verdict}")
         record(events, cycle=cycle, node=i, health=body)
+        all_logs = docker("logs", node_name(i))
+        if all_logs.returncode:
+            raise RuntimeError(f"cannot inspect validator {i} logs: {all_logs.stderr}")
+        if "block receiver state full" in all_logs.stdout + all_logs.stderr:
+            raise RuntimeError(f"validator {i} logged a receiver capacity refusal")
 
-    logs = docker("logs", node_name(victim)).stdout + docker("logs", node_name(victim)).stderr
-    if "block receiver state full" in logs:
-        raise RuntimeError("the victim logged a receiver capacity refusal")
-    if not controls.proposed_after_restart(logs[pre_log_len:]):
+    since = docker("logs", "--since", str(restarted_utc), node)
+    if since.returncode:
+        raise RuntimeError(f"cannot inspect post-restart proposal evidence: {since.stderr}")
+    if not controls.proposed_after_restart(since.stdout + since.stderr):
         raise RuntimeError("the victim did not propose after restart")
 
 
@@ -205,6 +275,7 @@ def main():
     parser.add_argument("--validators", type=int, default=4)
     parser.add_argument("--cycles", type=int, default=2)
     parser.add_argument("--window", type=int, default=240)
+    parser.add_argument("--load-seconds", type=int, default=20)
     parser.add_argument("--out", default="target/restart-under-load")
     args = parser.parse_args()
 
@@ -213,12 +284,14 @@ def main():
     events = out / "observations.jsonl"
     events.write_text("")
     # The container walk is only valid for the devnet naming.
+    if args.cycles != 2 or args.load_seconds < 8 or args.load_seconds >= args.window:
+        raise SystemExit("issue #522 requires two cycles and 8 <= load-seconds < window")
     if args.validators < 3:
         raise SystemExit("a restart-under-load arm needs at least three validators")
 
     try:
         for cycle in range(args.cycles):
-            victim = 1 + cycle % (args.validators - 1)
+            victim = victim_for_cycle(cycle)
             run_cycle(args, victim, cycle, events)
         result = {"verdict": "PASS", "cycles": args.cycles, "validators": args.validators}
     except Exception as error:  # noqa: BLE001 - the verdict is the output
