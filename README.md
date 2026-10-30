@@ -3,10 +3,14 @@
 Rholang's <!-- counts:laws -->89 laws<!-- counts:end --> are machine-checked in Lean 4 and Coq, and
 its authority cannot be forged — there is no syntax that writes a private name. Pre-testnet.
 
-> **Operator risk.** A validator is bonded and slashable for an invalid block or proven equivocation;
-an absent or stuck validator is not currently slashed, but it holds finality back and can still count in
-the quorum denominator. Read [`TERMS.md`](TERMS.md) and [validator risk, hardware and participation](docs/src/node/operator-risk.md)
-before bonding.
+> **Operator risk.** A validator is bonded and slashable for an invalid block or proven equivocation.
+> An absent or stuck validator is **not slashed automatically**, but it holds finality back, still
+> counts in the quorum denominator, and on a network that arms RCHIP #55 liveness enforcement it can be
+> **jailed after sustained absence and then slashed and permanently ejected by a stake-weighted vote
+> of strictly more than two thirds of the active stake**. The shipped genesis leaves that enforcement
+> off; a network that arms it prices absence. Read
+> [`TERMS.md` §1](TERMS.md#1-a-validator-is-a-bonded-slashable-role) and
+> [validator risk, hardware and participation](docs/src/node/operator-risk.md) before bonding.
 
 **Whole classes of defect are absent by construction**: no `unsafe` in any of the fourteen crates, so
 memory-safety bugs are unwritable rather than mitigated. An adversarial audit read this node and
