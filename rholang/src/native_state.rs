@@ -2487,8 +2487,10 @@ impl NativeSystemState {
         let mut ballots = self.slash_votes().await?;
         let mut banished = self.banished().await?;
 
-        // 1. Tally the windows that were already open. The denominator is the active stake at this
-        // boundary; a validator that left the pool drops its window without a slash.
+        // 1. Tally the windows that were already open. Both numerator and denominator must
+        // use the same epoch's active stake snapshot. The pool can grow through delegation
+        // mid-epoch, but those new funds must not amplify an already-active voter's ballot.
+        // A validator that left the pool drops its window without a slash.
         let total_active: i128 = active
             .values()
             .map(|stake| i128::from(i64::from(*stake)))
@@ -2505,7 +2507,7 @@ impl NativeSystemState {
                 })
                 .map(|(key, _)| {
                     i128::from(i64::from(
-                        pool.get(&key.voter).copied().unwrap_or(NonNegI64::zero()),
+                        active.get(&key.voter).copied().unwrap_or(NonNegI64::zero()),
                     ))
                 })
                 .sum();
@@ -9108,6 +9110,58 @@ mod liveness_tests {
             .unwrap()
             .get(&v4)
             .is_some_and(AbsenceRecord::is_jailed));
+    }
+
+    /// Delegation changes the bonded pool immediately, but the active voting weights only
+    /// change at an epoch boundary. A single voter cannot buy >2/3 of an old active set
+    /// during an open slash window by accepting new delegated stake.
+    #[tokio::test]
+    async fn new_delegation_cannot_amplify_a_slash_vote_mid_epoch() {
+        let native = four(armed_params()).await;
+        jail_v4(&native).await;
+        let voter = validator(1);
+        let target = validator(4);
+        let delegator = validator(5);
+
+        // The three surviving validators each have 10 active stake. Before the next
+        // boundary, 20 new units are delegated to one of them.
+        native.set_vault_balance(&vault_address_of(&delegator), nn(20));
+        native
+            .delegate(&delegator, &voter, nn(20))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            native.bonds().await.unwrap().get(&voter).copied(),
+            Some(nn(30))
+        );
+        assert_eq!(
+            native.active().await.unwrap().get(&voter).copied(),
+            Some(nn(10))
+        );
+
+        native
+            .cast_vote(&voter, &target, true)
+            .await
+            .unwrap()
+            .unwrap();
+        boundary(&native, 40, &[(1, 40), (2, 40), (3, 40)]).await;
+
+        // With the pool-weight bug, this one ballot is evaluated as 30/30 and
+        // slashes the absent validator. It is actually 10/30 active stake.
+        assert!(native.bonds().await.unwrap().contains_key(&target));
+        assert!(!native.banished().await.unwrap().contains(&target));
+
+        // At the next epoch, the new active snapshot includes the delegation.
+        // The original single voter is still below a strict supermajority:
+        // 30 of 50 current active stake, rather than the old 10 of 30.
+        boundary(&native, 50, &[(1, 50), (2, 50), (3, 50)]).await;
+        assert_eq!(
+            native.active().await.unwrap().get(&voter).copied(),
+            Some(nn(30))
+        );
+        assert!(native.bonds().await.unwrap().contains_key(&target));
+        assert!(!native.banished().await.unwrap().contains(&target));
     }
 
     #[tokio::test]
