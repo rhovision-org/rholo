@@ -177,6 +177,30 @@ def wait_deploys_resolved(validators, submitted, deadline, events, last):
     raise RuntimeError(f"{len(unresolved)} deploy statuses unresolved by recovery deadline")
 
 
+def wait_baseline(validators, deadline, events):
+    """Wait for the initial finalized block on *all* nodes before fault injection.
+
+    A newly booted node may temporarily answer HTTP 400 to last-finalized-block;
+    this is not a receiver-saturation outcome. The refusal is recorded, never
+    counted as a PASS, and cannot outlive the bounded startup window.
+    """
+    last = "no finalized observation"
+    while time.monotonic() < deadline:
+        try:
+            identities = agreement(validators)
+            verdict = controls.baseline_verdict(identities)
+            if verdict is None:
+                record(events, baseline_ready=identities)
+                return identities
+            last = verdict
+            record(events, baseline_wait=verdict, identities=identities)
+        except (OSError, ValueError) as error:
+            last = repr(error)
+            record(events, baseline_read_error=last)
+        time.sleep(2)
+    raise RuntimeError(f"initial finalized baseline unavailable before deadline: {last}")
+
+
 def victim_for_cycle(cycle):
     return 1 if cycle == 0 else 0  # non-master, then genesis master
 
@@ -184,10 +208,7 @@ def victim_for_cycle(cycle):
 def run_cycle(args, victim, cycle, events):
     for i in range(args.validators):
         wait_ready(i, time.monotonic() + args.window, events)
-    baseline = agreement(args.validators)
-    verdict = controls.baseline_verdict(baseline)
-    if verdict is not None:
-        raise RuntimeError(f"pre-kill baseline is not agreed: {verdict}")
+    baseline = wait_baseline(args.validators, time.monotonic() + args.window, events)
     base_height = baseline[0][0]
     last = dict(enumerate(baseline))
     record(events, cycle=cycle, baseline=baseline, victim=victim, streams=4)
