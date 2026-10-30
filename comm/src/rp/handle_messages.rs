@@ -10,7 +10,7 @@ use rchain_shared::log::{Log, LogSource};
 
 use crate::errors::CommError;
 use crate::peer_node::PeerNode;
-use crate::rp::connect::{add_conn, refresh_conn, remove_conn};
+use crate::rp::connect::{add_conn, remove_conn};
 use crate::rp::protocol_helper;
 use crate::rp::rp_conf::RPConf;
 use crate::transport::communication_response::CommunicationResponse;
