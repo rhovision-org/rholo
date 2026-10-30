@@ -203,7 +203,7 @@ pub async fn handle<T: TransportLayer + ?Sized>(
                         *conns = add_conn(&*conns, &[sender]);
                     }
                     CommunicationResponse::handled_without_message()
-                },
+                }
                 // The router task is gone, so this packet cannot be delivered *at all*. Answering
                 // "handled" would be the same lie one layer down, so say so instead.
                 Err(_) => {
@@ -395,7 +395,10 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<RoutingMessage>(2);
         let packet = protocol_helper::packet(&sender, &conf.network_id, Default::default());
         let result = handle(packet, &conf, &NoTransport, &conns, &tx, &NopLog).await;
-        assert!(matches!(result, CommunicationResponse::HandledWithoutMessage));
+        assert!(matches!(
+            result,
+            CommunicationResponse::HandledWithoutMessage
+        ));
         assert_eq!(rx.recv().await.expect("routed").peer.id, sender.id);
         assert_eq!(conns.read().await.len(), 1);
         assert_eq!(conns.read().await[0].id, sender.id);
@@ -411,8 +414,14 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<RoutingMessage>(2);
         let packet = protocol_helper::packet(&remote, &conf.network_id, Default::default());
         let _ = handle(packet, &conf, &NoTransport, &conns, &tx, &NopLog).await;
-        assert_eq!(rx.recv().await.expect("previous routing behavior").peer.id, remote.id);
-        assert!(conns.read().await.is_empty(), "out-of-class peer must not enter the table");
+        assert_eq!(
+            rx.recv().await.expect("previous routing behavior").peer.id,
+            remote.id
+        );
+        assert!(
+            conns.read().await.is_empty(),
+            "out-of-class peer must not enter the table"
+        );
     }
 
     /// The consumer has disappeared: a packet that was not routed cannot establish
