@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - verify/issue522-restart-load-20261031
+      - verify/issue522-peer-rejoin-20261031
 
 permissions:
   contents: read
