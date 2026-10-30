@@ -10,7 +10,7 @@ use rchain_shared::log::{Log, LogSource};
 
 use crate::errors::CommError;
 use crate::peer_node::PeerNode;
-use crate::rp::connect::{add_conn, refresh_conn, remove_conn};
+use crate::rp::connect::{add_conn, remove_conn};
 use crate::rp::protocol_helper;
 use crate::rp::rp_conf::RPConf;
 use crate::transport::communication_response::CommunicationResponse;
@@ -148,8 +148,14 @@ pub async fn handle<T: TransportLayer + ?Sized>(
     );
     match proto.message {
         Some(protocol::Message::Heartbeat(_)) => {
-            let mut conns = connections.write().await;
-            *conns = refresh_conn(&*conns, &sender);
+            // A receiver can restart while its peers still consider the old connection live.
+            // A certificate-verified, same-network heartbeat is fresh evidence of the sender:
+            // restore the connection just as an inbound handshake would, rather than only
+            // refreshing a record that was lost at restart.
+            if check_peer_on_same_network(conf, &sender) {
+                let mut conns = connections.write().await;
+                *conns = add_conn(&*conns, &[sender]);
+            }
             CommunicationResponse::handled_without_message()
         }
         Some(protocol::Message::ProtocolHandshake(_)) => {
@@ -181,12 +187,23 @@ pub async fn handle<T: TransportLayer + ?Sized>(
             // "taken into the pipeline", and that is what it still means.
             match routing_queue
                 .send(RoutingMessage {
-                    peer: sender,
+                    peer: sender.clone(),
                     packet,
                 })
                 .await
             {
-                Ok(()) => CommunicationResponse::handled_without_message(),
+                Ok(()) => {
+                    // A peer with an already-established outbound connection will not resend
+                    // a handshake when this node restarts. Its authenticated inbound packet
+                    // proves the same sender identity, and the routing queue accepted it.
+                    // Recover the *in-memory* connection without altering the transport
+                    // identity check, locality policy or the bounded peer-table capacity.
+                    if check_peer_on_same_network(conf, &sender) {
+                        let mut conns = connections.write().await;
+                        *conns = add_conn(&*conns, &[sender]);
+                    }
+                    CommunicationResponse::handled_without_message()
+                }
                 // The router task is gone, so this packet cannot be delivered *at all*. Answering
                 // "handled" would be the same lie one layer down, so say so instead.
                 Err(_) => {
@@ -364,6 +381,62 @@ mod tests {
             matches!(response, CommunicationResponse::HandledWithoutMessage),
             "a packet that was accepted into the pipeline is handled"
         );
+    }
+
+    /// After a bootstrap restart the connection table is empty, but the other
+    /// validators keep their established connection and send ordinary packets.
+    /// An accepted authenticated packet must restore the sender to the table.
+    #[tokio::test]
+    async fn an_authenticated_packet_relearns_a_peer_after_restart() {
+        let local = peer("bootstrap", "10.0.0.1");
+        let sender = peer("validator-1", "10.0.0.2");
+        let conf = conf_for(&local);
+        let conns = tokio::sync::RwLock::new(Vec::new());
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<RoutingMessage>(2);
+        let packet = protocol_helper::packet(&sender, &conf.network_id, Default::default());
+        let result = handle(packet, &conf, &NoTransport, &conns, &tx, &NopLog).await;
+        assert!(matches!(
+            result,
+            CommunicationResponse::HandledWithoutMessage
+        ));
+        assert_eq!(rx.recv().await.expect("routed").peer.id, sender.id);
+        assert_eq!(conns.read().await.len(), 1);
+        assert_eq!(conns.read().await[0].id, sender.id);
+    }
+
+    /// Prevent an out-of-class authenticated packet from becoming a broadcast target.
+    #[tokio::test]
+    async fn an_inbound_remote_class_packet_does_not_become_a_peer() {
+        let local = peer("bootstrap", "10.0.0.1");
+        let remote = peer("remote", "8.8.8.8");
+        let conf = conf_for(&local);
+        let conns = tokio::sync::RwLock::new(Vec::new());
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<RoutingMessage>(2);
+        let packet = protocol_helper::packet(&remote, &conf.network_id, Default::default());
+        let _ = handle(packet, &conf, &NoTransport, &conns, &tx, &NopLog).await;
+        assert_eq!(
+            rx.recv().await.expect("previous routing behavior").peer.id,
+            remote.id
+        );
+        assert!(
+            conns.read().await.is_empty(),
+            "out-of-class peer must not enter the table"
+        );
+    }
+
+    /// The consumer has disappeared: a packet that was not routed cannot establish
+    /// a connection. This preserves the original fail-closed backpressure contract.
+    #[tokio::test]
+    async fn a_closed_router_does_not_relearn_a_peer() {
+        let local = peer("bootstrap", "10.0.0.1");
+        let sender = peer("validator-1", "10.0.0.2");
+        let conf = conf_for(&local);
+        let conns = tokio::sync::RwLock::new(Vec::new());
+        let (tx, rx) = tokio::sync::mpsc::channel::<RoutingMessage>(1);
+        drop(rx);
+        let packet = protocol_helper::packet(&sender, &conf.network_id, Default::default());
+        let _ = handle(packet, &conf, &NoTransport, &conns, &tx, &NopLog).await;
+        assert!(conns.read().await.is_empty());
     }
 
     #[test]
