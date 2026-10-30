@@ -45,6 +45,7 @@ point at the `main` branch of the forks.
 | [`GovernanceCaseStudy.md`](https://github.com/rhovision-org/quantum-os/blob/main/GovernanceCaseStudy.md) | Multi-stakeholder governance case study. |
 | [`Group_Decisions_Demo.md`](https://github.com/rhovision-org/quantum-logical-framework/blob/main/Group_Decisions_Demo.md) | A worked multi-peer governance walkthrough — dyncap-signed envelopes plus a deterministic, joiner-local tally (the same split `gov.rho` implements). |
 | [`Collective_Optimization.md`](https://github.com/rhovision-org/quantum-os/blob/main/Collective_Optimization.md) | Chaining the decision tools into an annealing loop to *optimize*, not just decide. |
+| [RhoGov process orchestration](https://github.com/rhovision-org/rhogov/blob/main/docs/process-orchestration.md) | Multi-stakeholder councils over the rgov-core contracts and `rho:gov:*`: reusable components, trust gates that move a decision's phases on by themselves, process templates, and a hierarchy of councils for rholo's stakeholder groups. |
 
 ## Foundation
 

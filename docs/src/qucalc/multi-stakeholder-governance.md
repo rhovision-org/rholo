@@ -134,7 +134,9 @@ The specific stakeholders and roles vary by network and community.
 ## Implementation requirements
 
 - **Process orchestration framework** (Rholang + a human facilitator) — the decision phases above,
-  encoded as contracts in [`gov.rho`](../../../qucalc/rholang/gov.rho).
+  encoded as contracts in [`gov.rho`](../../../qucalc/rholang/gov.rho). Its design for councils,
+  with trust gates and process templates, is
+  [RhoGov process orchestration](https://github.com/rhovision-org/rhogov/blob/main/docs/process-orchestration.md).
 - **Sentiment gathering dialog interface** — proposals with pros and cons (à la *ConsiderIt*).
 - **Group estimate interface** — estimating impact, and thus voting power, of each stakeholder group
   (the median of individual estimates) — see `Group_Decisions.md` in the
