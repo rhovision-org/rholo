@@ -209,6 +209,13 @@ for x in b:
 # arrays here, so `blocks_at` still reads one list. Any failed window discards the whole snapshot: a
 # partial inventory would look valid and answer for heights it never fetched.
 RANGE_CHUNK=${RECONCILE_RANGE_CHUNK:-50}
+# The server caps the *inclusive* height span at 50. An invalid override must
+# fail before querying or applying a reconciliation plan, not create an
+# unbounded loop (0/negative) or silently fall back to slow live reads (>50).
+if ! [[ "$RANGE_CHUNK" =~ ^([1-9]|[1-4][0-9]|50)$ ]]; then
+  echo "ERROR: RECONCILE_RANGE_CHUNK must be an integer from 1 through 50" >&2
+  exit 2
+fi
 refresh_block_ranges() { # inclusive upper height for this phase
   [ -z "${RECONCILE_NO_CACHE:-}" ] && [ -n "${CACHE_DIR:-}" ] || return 0
   local upper="$1" n range_file pending lo hi ok
@@ -230,26 +237,33 @@ refresh_block_ranges() { # inclusive upper height for this phase
     done
     if [ "$ok" = "1" ] && python3 -c '
 import json,sys
-# Each window is its own array, so the file is a concatenation of arrays ([...][...]) rather than
-# one document. Decode them in sequence and merge.
+# Windows are ordered, inclusive and bounded to 50. An empty, out-of-window,
+# or missing response must never publish a partial but apparently valid cache.
+upper, chunk = (int(x) for x in sys.argv[1:])
 raw=sys.stdin.read()
 data=[]; dec=json.JSONDecoder(); i=0
 try:
-    while True:
+    for lo in range(0, upper+1, chunk):
+        hi=min(lo+chunk-1, upper)
         while i < len(raw) and raw[i].isspace(): i += 1
-        if i >= len(raw): break
         part, i = dec.raw_decode(raw, i)
-        if not isinstance(part, list): raise ValueError
+        if not isinstance(part, list) or not part: raise ValueError("empty or non-list window")
+        if any(not isinstance(b, dict) or type(b.get("blockNumber")) is not int
+               for b in part):
+            raise ValueError("invalid block element")
+        # Require an in-window witness; some API/fixture responses also include
+        # adjacent heights, which blocks_at filters by requested height.
+        if not any(lo <= b["blockNumber"] <= hi for b in part):
+            raise ValueError("no blocks for requested window")
         data.extend(part)
-    valid=bool(data) and all(isinstance(b,dict) and type(b.get("blockNumber")) is int for b in data)
+    if raw[i:].strip(): raise ValueError("unexpected extra window")
 except (ValueError,TypeError):
-    valid=False
-if not valid:
     sys.exit(1)
 # Emit ONE document, not the concatenation: `blocks_at` reads the cache with json.load.
 sys.stdout.write(json.dumps(data))
-' < "$pending" > "$pending.merged"; then
+' "$upper" "$RANGE_CHUNK" < "$pending" > "$pending.merged"; then
       mv -- "$pending.merged" "$range_file"
+      rm -f -- "$pending"
     else
       rm -f -- "$pending" "$pending.merged"
       echo "  NOTE: range snapshot unavailable or invalid for ${HOST[$n]}:${PORT[$n]}; using live per-height requests" >&2

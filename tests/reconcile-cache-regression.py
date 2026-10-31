@@ -134,7 +134,13 @@ MAXH=120
 api() {
   printf '%s %s\\n' "$1" "$3" >> "$API_LOG"
   lo=${3#/api/blocks/}; lo=${lo%%/*}
-  printf '[{"blockHash":"h%s","blockNumber":%s,"sender":"s","postStateHash":"p","deployCount":0,"rejectedDeploys":[]}]' "$lo" "$lo"
+  if [ "${RANGE_MODE:-}" = "empty-window" ] && [ "$lo" = "50" ]; then
+    printf '[]'
+    return 0
+  fi
+  height="$lo"
+  if [ "${RANGE_MODE:-}" = "wrong-height" ] && [ "$lo" = "50" ]; then height=0; fi
+  printf '[{"blockHash":"h%s","blockNumber":%s,"sender":"s","postStateHash":"p","deployCount":0,"rejectedDeploys":[]}]' "$lo" "$height"
   return 0
 }
 '''
@@ -155,6 +161,26 @@ api() {
             # and blocks_at must answer from the merged snapshot, not from a per-height request
             self.assertIn("h0 s p 0 []", result.stdout)
             self.assertIn("h50 s p 0 []", result.stdout)
+
+            # Bad operator override must fail immediately, not hang the loop or
+            # make a >50 request that falls back for the whole chain.
+            for value in ("0", "-1", "51", "not-a-number"):
+                bad_env = dict(env, RECONCILE_RANGE_CHUNK=value)
+                bad = subprocess.run(["bash", "-c", setup + helpers + code],
+                                     env=bad_env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(bad.returncode, 2, (value, bad.stdout, bad.stderr))
+                self.assertIn("RECONCILE_RANGE_CHUNK", bad.stderr)
+
+            # A successful HTTP response is insufficient if one window is
+            # empty or describes a block from outside the requested heights.
+            for mode in ("empty-window", "wrong-height"):
+                bad_env = dict(env, RANGE_MODE=mode)
+                bad = subprocess.run(["bash", "-c", setup + helpers + code],
+                                     env=bad_env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(bad.returncode, 0, bad.stdout + bad.stderr)
+                self.assertIn("using live per-height requests", bad.stderr,
+                              "a partial/out-of-window cache was silently accepted")
+                self.assertFalse((root / "blocks_A_1.json").exists())
 
     def test_invalid_list_elements_use_live_fallback(self):
         result, _ = self.run_case(phase="plan", mode="invalid-element")
