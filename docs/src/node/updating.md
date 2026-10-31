@@ -13,14 +13,15 @@ assumes, and [The public testnet](testnet.md) for the concrete hosts.
 
 | the new build… | what it is | what the operator does |
 |---|---|---|
-| changes `--version` only | **binary swap** — same genesis, same store marker | roll one validator at a time |
-| writes a **higher store-format marker** | one-way store change; a build refuses a store stamped by a newer marker | swap, and the store is now the rollback authority |
-| changes **gas charges** | the genesis post-state hash differs, so every pinned `--expected-genesis-hash` is stale | regenerate the pin and move the **whole network together** — see [Operating the node](operating.md) |
-| changes consensus-visible rules | a network split across builds refuses each other's blocks | it is a rebuild, not an update |
+| changes `--version` only, with identical genesis, store format **and** consensus rules | potentially compatible binary swap | verify old/new binary behavior and roll one validator at a time |
+| writes a **higher store-format marker** | possibly irreversible data migration | **do not swap a populated store** until the exact-format copy/rollback/restart acceptance in [#520](https://github.com/rhovision-org/rholo/issues/520) passes |
+| changes **gas charges** | may change genesis and replay state hashes | determine whether the chain requires a newly authorized genesis/activation; **never just regenerate a pin on an existing network** |
+| changes consensus-visible validity rules | old and new binaries may disagree on the same signed block | require an explicit coordinated activation and compatibility plan; whether a rebuild is needed depends on the transition |
 
-The rule of thumb: if `--version` differs and `store-format` and the genesis pin do not, it is a swap.
-Anything that moves the genesis hash or the rules is a rebuild and belongs with the genesis procedure,
-not here.
+A changed `--version`, unchanged store marker and matching genesis pin are **not sufficient**
+to establish binary compatibility. Compare the actual consensus, execution and state-format
+changes against the released build; route any non-equivalent revision through the appropriate
+release/upgrade decision before touching validators.
 
 ## Preflight — read-only, recorded
 
@@ -40,6 +41,13 @@ update that appeared to. Then confirm two things before touching anything:
 - **every validator in the network is on the same build** and reports the same genesis;
 - **the chain is quiet.** Never update under a block burst — a restart during one is what split this
   network 50/50 at height 128 ([#522](https://github.com/rhovision-org/rholo/issues/522)).
+- **a verified, offline-restorable rollback exists for each affected validator**: preserve
+  source/binary SHA-256, complete filesystem-consistent store and node-identity snapshots,
+  current `store-format`, genesis pin and effective systemd drop-ins. Test the restore on
+  disposable copies. Do not rely on a previous executable alone if the marker can advance.
+- **a store-format/consensus/genesis compatibility decision is recorded** for this exact
+  old/new pair. A green unit CI badge is not evidence of populated-store migration,
+  independent replay or safe coordinated rollout (see #520 and #428).
 
 ## Stage the artifact
 
@@ -98,16 +106,20 @@ An update is complete only when all of these hold:
 network that is not producing blocks cannot be distinguished from one that failed to return — so the
 deploy that proves the update is the one made *after* the update, not the restart itself.
 
-If the update moves the genesis hash or the rules, there is no "one at a time": the whole network moves
-together, and that is a rebuild.
+If the update changes genesis identity or consensus validity, **do not use this rolling-swap
+procedure**. Follow the separately reviewed network activation/genesis plan and its
+quorum, store and binary-compatibility gates; do not assume the transition is reversible.
 
 ## Rollback
 
 - **Rename, do not delete, the previous binary.** `/usr/local/bin/rnode-<old-sha8>` stays on disk until a
   restart-under-load cycle has passed on the new build. Only then remove it, so that the base unit's
   stale command cannot be selected by accident later.
-- **The store is the authority.** A build refuses a store stamped by a newer marker, so once the marker
-  has advanced the rollback path is the *pre-swap store copy*, not the old binary.
+- **The store is the authority.** A build refuses a store stamped by a newer marker. An
+  upgraded or partially migrated live store must never be passed to the old binary: restore
+  the *verified pre-swap snapshot* along with its old executable and exact config/identity,
+  or stop the rollout and escalate. Verify the original source-store hashes before restoration;
+  do not attempt an unreviewed in-place downgrade.
 - With the store intact, reverting the drop-in and `daemon-reload` restores the previous selection
   exactly.
 
