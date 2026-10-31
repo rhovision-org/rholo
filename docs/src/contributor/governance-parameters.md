@@ -19,9 +19,11 @@ a "last genesis" needs this path to exist first.
 
 ### 1. The record
 
-`pos:params` holds the committed parameter record: **a format byte, then the fields**. The format byte
-already exists — format 1 (ten fields) and format 2 (with the developer allocation's field at payload
-index 10) are on the wire — so a later format is a scheduled change, not a wire change.
+`pos:params` holds the committed parameter record: **a format byte, then the fields**. The supported
+layouts and legacy decode rules are defined in
+[`native_state.rs`](../../../rholang/src/native_state.rs). Adding a layout changes the encoder and
+decoder contract and needs its own activation and replay decision; it is not an ordinary value
+update through the proposed setter.
 
 The record is the *only* source of these values. Any consumer that reads a parameter from the node's
 configuration, or re-derives it from the genesis files, is a defect: two nodes with different configs
@@ -37,8 +39,9 @@ through the execution:
 - the runtime manager threads the same record into deploy execution;
 - proposing reads it from the block's pre-state too, so a proposer and a validator cannot disagree.
 
-Nothing reads the block's own post-state, a wall clock, or a configuration value. That is what makes a
-param set at height *H* visible at *H+1* and deterministic on replay.
+In this design no consumer reads the block's own post-state, a wall clock, or a configuration value. A
+set carried at height *H* is inert in *H* and becomes eligible no earlier than *H+1*, at its declared
+`effective_from` height. The choice of that height remains an open decision below.
 
 ### 3. The setter
 
@@ -80,20 +83,23 @@ the delta bound in one epoch. Two refused sets are better than a chain that has 
   definition*; that is a fork, and it must stay one.
 - **The genesis allocation.** Its address and amount are genesis content (Laws 78–79), decided by the
   ceremony, not by a later vote.
-- **The registry of blessed contracts.** Contract code changes through the upgrade path
-  (`genesis-contract-upgrade-path.md`), which has its own authorization and its own review.
+- **The contract registry.** The
+  [registry upgrade boundary](genesis-contract-upgrade-path.md) describes existing dictionary-backed
+  publication and aliasing. It does not establish replacement of native PoS/REV behavior or every
+  captured blessed-contract channel.
 
 ## Determinism, replay and cost
 
 - the record is consensus state, so replay reproduces it; the setter's cost is fixed and charged as a
   system deploy;
-- `effective_from` is part of the record, so a set carried by block *N* is inert in *N* and visible in
-  *N+1* — including on a node that replays the chain from genesis;
+- `effective_from` would be part of the committed pending change: a set carried by block *N* is
+  inert in *N* and visible at its declared height, no earlier than *N+1*, including on replay;
 - the post-state hash of every block before the activation height is unchanged.
 
 ## Falsifiers — the tests that must exist, and must fail without the mechanism
 
-1. **A set at height *H* applies at *H+1*, and not at *H*.**
+1. **A set carried at height *H* is inert in *H*, remains inert before `effective_from`, and applies
+   at the declared height.** Include both *H+1* and a later-height fixture.
 2. **Replay is identical:** a fresh node replaying from genesis reaches the same values and the same
    post-state hash at every height.
 3. **A set outside the validity interval is refused.**

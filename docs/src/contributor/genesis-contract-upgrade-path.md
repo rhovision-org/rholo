@@ -1,107 +1,94 @@
-# Upgrading a blessed contract without a new genesis (RCHIP #43)
+# Registry-based contract upgrades (RCHIP #43)
 
-**Status: functional alternative. No consensus change, no schedule row, no new system process, and no
-decisions deferred to you.** The mechanism is already installed by the genesis; what was missing was
-the procedure and the genesis-time check that keeps it usable.
+**Status: source-backed description of the existing dictionary primitives and their limits.**
+This page does not implement a genesis preflight or certify an upgrade of every blessed contract.
+Using the dictionary's existing public verbs is an ordinary deploy; replacing native system-process
+behavior or a contract held outside that dictionary requires its own compatibility decision.
 
-## The finding
+## What genesis installs
 
-`casper/src/genesis/resources/rgov/MasterDictionary.rho` is installed at genesis and already has
-everything an upgrade needs:
+[`MasterDictionary.rho`](../../../casper/src/genesis/resources/rgov/MasterDictionary.rho) publishes
+three facets. The genesis bootstrap looks up the rgov class values, publishes each under the ceremony
+identity's rooted path, and aliases short names such as `Directory`, `Inbox` and `Chat` to those paths.
+`Echo` and `Log` publish the Directory class under their own paths. `GetMe` and `SendThem` are
+published by the member-directory feature.
 
-| property | in the dictionary |
-|---|---|
-| names are **rooted** in the owner's identity (`<revAddr>/<path>`), derived from the deployer id | `pathOf`, root authority |
-| **versions are append-only** per path — `resolveAt(p, 3)` answers the same thing for ever | `appendVersion`, `resolveAt` |
-| a **governed alias tier** holds the short names, and the genesis **already aliases the blessed contracts** to their paths | `setAlias`, `seed_rgov_class_aliases` |
-| `resolveName` returns the newest version of the aliased path | `resolveName` |
-| a path can be closed to further versions | `setSealed` |
-| the root is rotatable **only by its holder** | `setRootAuthority` |
+The class lookup keys substituted by
+[`rgov.rs::master_dictionary_source`](../../../casper/src/genesis/rgov.rs) are constants. That is
+different from the dictionary's final alias targets: the embedded Rholang bootstrap publishes the
+looked-up values at rooted paths and then aliases the short names to those paths. The Rust function's
+older comment describing the alias targets themselves as constants is stale; the embedded contract
+and the deployed-dictionary tests are the relevant implementation.
 
-An upgrade is therefore **an ordinary deploy**: append a version to the aliased path. `resolveName`
-returns the newest; a client that pinned `resolveAt(p, v1)` keeps v1 for ever. Nothing in consensus
-changes — no header field, no new system process, no `SCHEDULE` row, and the genesis does not move.
+A new value published at an existing unsealed path becomes the result of a subsequent `resolve`.
+A client holding a previously resolved channel continues to hold that channel. This does not update
+existing instances, change a captured name, or migrate state through a pointer change.
 
-## The procedure
+## The public interface
 
-1. **Append.** The root holder signs a deploy that calls `appendVersion(<root>/rgov/<name>, <value>,
-   ret)`. `<value>` is the implementation's resolve URI — the code itself is a `.rho` published at a
-   path, so there is no artifact store and no attachment to invent.
+The constant facet keys come from `masterdict_resolve_uri`, `masterdict_publish_uri` and
+`masterdict_root_uri` in `rgov.rs`. A caller first resolves the appropriate key with
+`rho:registry:lookup`. Each facet receives three arguments: the verb, an argument list and a reply
+channel. These are message shapes, not a complete deploy template:
 
-2. **No alias change.** The alias points at the **path**, and `resolveName` returns the newest version
-   of that path, so appending *is* the cut-over. Re-point with `setAlias` only when moving the alias to
-   a *different* path — which is the operation that is deliberate and visible, and that never rewrites
-   what an earlier client already resolved.
-
-3. **Optional precondition, in the same deploy.** Because a deploy is atomic, a stale upgrade can
-   refuse itself: read `resolveName` (or `resolveAt`) first and abort unless it is the version the
-   deployer expects. This is a deploy-time guard, not a consensus rule, and it is the cheapest thing
-   that prevents a racing governance action from applying to a code base nobody reviewed.
-
-   ```rholang
-   // Sketch, not compiled here. <md> is the dictionary facet the genesis published; the root holder
-   // signs this deploy, so the rooted-path check inside the contract is the authorization.
-   new md, current, check, done in {
-     md!("resolveName", ["rgov.rev"], *current) |
-     for (@v <- current) {
-       if (v == 3) {          // the version this upgrade was reviewed against
-         md!("appendVersion", [<(root)/rgov/rev>, <newImpl>, *done])
-       } else {
-         Nil                  // a stale upgrade: do nothing, visibly
-       }
-     }
-   }
-   ```
-
-4. **State migration is the deploy's job.** The dictionary moves *pointers*, not data. If a fix needs a
-   tuple rewritten, the same deploy reads it through the old implementation and writes it through the
-   new one — and it is as safe as any other deploy, because it is one.
-
-## What this cannot do
-
-- **A client that captured the implementation channel is not upgraded.** It holds a name, not a
-  lookup. The fix is in the client (resolve per use), not in the chain — and it is the one real
-  constraint on this approach, so it belongs in the client guidance rather than in a design document.
-- **A sealed path cannot gain a version.** `setSealed` is permanent, so a blessed contract must not be
-  sealed while it might still need a fix.
-- **A contract installed outside the dictionary** — a bare name captured at genesis with no alias —
-  has nothing to move. That is a genesis-output defect, not a missing mechanism.
-- **It does not cover a change in the contract's *interface*.** A client calling a method that no
-  longer exists fails; that is a versioned-API problem, not a registry one.
-
-## The genesis-time check — this is the actual "last genesis" requirement
-
-Everything above works only if the genesis leaves the blessed contracts *reachable through the alias
-tier*. So before cutting the genesis, verify, per blessed contract:
-
-1. it is reachable by a short name through the alias tier;
-2. the alias points at a **path**, not at a constant or a captured channel;
-3. the path is **not sealed**;
-4. the root holder is an identity you can still sign with — or has been rotated to the governance
-   multi-sig with `setRootAuthority`, which is itself a deploy.
-
-Those four are checks on the genesis output. They are what turns "a fix later" into a deploy instead of
-a chain replacement, and they are cheaper than any mechanism.
-
-## Decisions deferred, with the default taken
-
-| decision | default taken now | why it can wait |
+| Facet | Verb and argument list | Result or authority boundary |
 |---|---|---|
-| **authorization** | the root holder — the same key the ceremony signs with — delegable later with `setRootAuthority` | rotation is a deploy, so naming governance as the long-term holder is not a prerequisite |
-| **per-contract vs batched** | both: several `appendVersion` calls in one deploy are atomic | it changes nothing about consensus or the wire |
-| **where the new source lives** | the path itself: `appendVersion` stores the resolve URI, the code is published at a path | there is no artifact store to design, and no size limit to negotiate |
-| **Rholang vs fixed migration** | the deploy | the dictionary imposes no migration shape, so there is nothing to choose until there is a migration to write |
+| read | `("resolve", [name], reply)` | Latest stored value; `Nil` for an unknown name. An alias to a constant URI can return that target instead of a versioned value. |
+| read | `("resolveAt", [path, index], reply)` | Stored value at that index, or `Nil`. Use the explicit rooted path to pin identity as well as version; an alias can be retargeted. |
+| read | `("versionsOf", [path], reply)` | Stored version list. `resolve` does not return a numeric version. |
+| read | `("targetOf", [name], reply)` | Alias target or known path, useful for checking whether a short name reaches the intended rooted path. |
+| read | `("sealed", [path], reply)` | Whether the path is closed to further publication. |
+| publish | `("publish", [id, path, value], reply)` | Appends and returns `("published", path, index)`; the caller identity must own the path prefix and the path must be unsealed. |
+| publish | `("seal", [id, path], reply)` | Permanently closes a path owned by the caller. |
+| publish | `("grant", [id, path], reply)` / `("revoke", [id, path], reply)` | Grants a path-scoped write capability or advances its revocation epoch. |
+| root | `("alias", [id, short, target], reply)` | Changes the short-name target only for the current alias-tier authority. |
+| root | `("setRootAuthority", [id, successor], reply)` | Rotates alias-tier authority; it does not rewrite ownership of existing rooted paths. |
 
-## Appendix — the consensus-gated design, which is not needed
+`resolveName`, `appendVersion` and `setAlias` are internal helpers, not public verbs. Calling those
+names through a published facet reaches its bad-verb refusal. `publish` stores a Rholang value; it
+does not load source code, compile a contract, or interpret a URI on the caller's behalf.
 
-If a contract ever has to be replaced *without* clients resolving — a blessed name captured at genesis
-with no alias — then the upgrade becomes a consensus change: a `SCHEDULE` row and a system deploy
-carrying `expected_version` and `expected_source_hash`, applied against the block's pre-state. That is
-a real mechanism (roughly what an earlier draft of this page specified), but it is the fallback, not the
-first step, and it does not have to be decided before the genesis.
+The caller's deployer identity is a bearer capability. Follow the contract's disclosure rule: pass it
+only to the trusted identity-checking facet that needs it, never publish it as the stored value or in
+diagnostics. Rooted-path ownership and alias-tier authority are separate checks.
 
-## What this page claims
+## Before replacing a dictionary-backed value
 
-That a blessed contract can be fixed **after** the genesis, on the running chain, as an ordinary
-deploy, with no fork — and that the requirement on the genesis is therefore a **check** that each
-blessed contract is aliased, unsealed and reachable, rather than a new mechanism.
+Record the alias target, explicit rooted path, current value and version list, seal state, authorized
+writer and alias authority. Verify that the replacement has actually been installed and is callable.
+Publishing a new version changes future dictionary lookups, while a client pinned to the explicit
+path and old index keeps the old stored value.
+
+A stale-upgrade guard must compare the reviewed value or history, not compare `resolve` with a numeric
+version. The public `publish` verb has no expected-version or expected-source-hash argument. Separate
+read and publish calls do not establish compare-and-append semantics; this page supplies no tested
+race-prevention mechanism. Concurrent upgrades require a demonstrated serialization or governance
+protocol before operational use.
+
+State migration is a separate program with its own replay, conservation, authorization and failure
+checks. Replacing a pointer supplies none of those guarantees. Rotating alias authority alone also
+does not transfer the ability to append under a previous owner's rooted namespace.
+
+## Existing evidence and remaining acceptance
+
+[`casper/tests/master_dictionary.rs`](../../../casper/tests/master_dictionary.rs) exercises the
+installed dictionary through public facets:
+
+- `the_genesis_alias_tier_resolves`: genesis names have alias targets and an unknown name is absent.
+- `publish_is_append_only_and_versions_are_pinned`: publication appends, latest lookup changes and an
+  explicit old version remains available.
+- `the_four_must_fail_cases`: foreign-namespace publication, unauthorized aliasing, bad verbs and bad
+  arity are refused.
+- `seal_closes_a_path_and_the_key_still_resolves`: a sealed path refuses another version and retains
+  its current value.
+- `a_granted_key_works_until_it_is_revoked`: revocation prevents a delegated append.
+
+These are dictionary tests. They do not establish an end-to-end replacement of every blessed
+contract, a state migration, root-authority handover, stale-upgrade serialization, or preservation of
+clients that captured a channel. An actual upgrade must supply those applicable witnesses on its
+source-pinned genesis and client set. Native REV/PoS behavior and consensus-rule changes remain under
+[the release gates](https://github.com/rhovision-org/rholo/issues/51).
+
+The remaining RCHIP #43 implementation and acceptance obligations are recorded in
+[the release gap matrix](../../../spec/audit/final-gap-matrix.md); this documentation does not close
+them or establish that the next genesis can be the last one.
