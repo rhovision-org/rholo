@@ -80,6 +80,10 @@ def envelopeCatalog : List EnvelopeRow :=
         "autoproposeTimerHaltEpisodes", "autoproposeHalt", "autoproposeTapSuppressed",
         "staleSnapshotSelfEquivocations", "finalityStall", "finalityStalled", "finalityStallEpisodes",
         "finalityCountersDurable",
+        -- The readiness gates `/health` uses to decide `ready`, carried beside the public core so
+        -- an operator can explain a readiness they can already see (2026-10-31).
+        "pipelineFaults", "pipelineFaultsOutstanding", "lastPipelineFault",
+        "orphanBodies", "orphanDetections", "proposalHalted", "proposalHaltReason",
         "resetMarker",
         "nonQuietMergeReports", "sync", "poisonRecoveries", "poisonRecoveriesScope",
         "unrestorableRecords", "unrestorableBlock",

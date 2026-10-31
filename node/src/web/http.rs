@@ -750,12 +750,49 @@ async fn api_health(State(state): State<HttpState>) -> Response {
         .collect();
     let blocked =
         !all_running || pipeline_faults_outstanding > 0 || proposal_isolated || orphan_bodies > 0;
+    // **A false `ready` names its cause.** The boolean is the verdict; the list is why, in a closed
+    // vocabulary (`node/src/diagnostics/health_contract.rs`). Without it a probe can only say
+    // "not ready" and its reader is back in the logs.
+    let ready_reasons = crate::diagnostics::health_contract::ready_reasons(
+        all_running,
+        pipeline_faults_outstanding,
+        proposal_isolated,
+        orphan_bodies,
+    );
+    // **Finalized height, so lag is measurable.** `height` is the latest round, not the finalized
+    // fence; a node that is producing but not finalizing looked identical to a healthy one on this
+    // route. `None` when the finality read fails — absent is not last-finalized-at-zero.
+    // The error is **named, not erased**: a `None` here means the finality read failed, which is a
+    // different answer from "the fence is at zero", and the diagnostic says which (the type-system
+    // gate's `silent` class, and the failure-mode worksheet's F-U8-01, are about exactly this).
+    let (finalized_height, finalized_height_error) =
+        match state.web_api.last_finalized_block().await {
+            Ok(block) => (Some(block.block_info.block_number), None),
+            Err(error) => (None, Some(error.0)),
+        };
     match state.web_api.status().await {
-        Ok(status) => (
+        Ok(status) => {
+            // **`latestBlockNumber` is one past the highest observed height**, not the tip height:
+            // `DagRepresentation::latest_block_number` returns `max(height_map) + 1`, and `0` on an
+            // empty DAG. `finalizedHeight` is a block's own number, so subtracting it from
+            // `latestBlockNumber` would report a lag of one on a fully finalised chain. The lag is
+            // computed from the observed height, with an explicit empty-DAG case.
+            let max_observed_height = if status.latest_block_number > 0 {
+                Some(status.latest_block_number - 1)
+            } else {
+                None
+            };
+            let finalized_lag = match (max_observed_height, finalized_height) {
+                (Some(max), Some(fence)) => Some(max - fence),
+                _ => None,
+            };
+            (
             StatusCode::OK,
             Json(json!({
+                "diagVersion": crate::diagnostics::health_contract::DIAG_VERSION,
                 "ok": !blocked,
                 "ready": !blocked,
+                "readyReasons": ready_reasons,
                 "phase": primary_phase.label(),
                 "nodePhase": primary_phase.label(),
                 "shardPhases": shard_phases,
@@ -768,13 +805,23 @@ async fn api_health(State(state): State<HttpState>) -> Response {
                 "proposalHaltReason": rchain_casper::blocks::proposer::proposer::proposal_isolation_reason(),
                 "degraded": status.degraded,
                 "acceptsDeploys": status.accepts_deploys,
+                // One past the highest observed height (`latestBlockNumber`'s own convention).
                 "height": status.latest_block_number,
+                // The observed tip height; null on an empty DAG, never -1.
+                "maxObservedHeight": max_observed_height,
+                "finalizedHeight": finalized_height,
+                // Why the fence is unknown, when it is. Null when the read answered.
+                "finalizedHeightError": finalized_height_error,
+                // `maxObservedHeight - finalizedHeight`. Zero when the tip is fully finalised; null
+                // when either side is unknown. A lag indicator, not a rate.
+                "finalizedLag": finalized_lag,
                 "pool": status.pool,
                 "finalityStalled": state.peer_liveness.finality_stall_sustained(),
                 "finalityStallEpisodes": state.peer_liveness.stall_episodes(),
             })),
-        )
-            .into_response(),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({"ok": false, "ready": false, "phase": "unavailable", "error": e.0})),
@@ -1503,6 +1550,13 @@ pub const OPENAPI_JSON: &str = r##"{
           "finalityStalled": { "type": "boolean", "description": "Whether this node is stalled right now: the derivation has been refused for longer than a round (twice the partition, in consecutive blocks), so the refusals are no longer the ordinary partial layers of a producing chain. This is the field to alarm on; finalityStall above is its diagnosis" },
           "finalityStallEpisodes": { "type": "integer", "format": "int64", "description": "Times this shard has entered a finality stall — the sustained state finalityStalled reports — monotone, so 'stalled now' is distinguishable from 'stalled and recovered'. Persisted, so it survives the restart an operator's alarm would otherwise be cleared by; read it with finalityCountersDurable, which is false when the store could not be reached and the count is this process's instead (W-N10-02)" },
           "finalityCountersDurable": { "type": "boolean", "description": "Whether finalityStallEpisodes, nonQuietMergeReports and unrestorableRecords are the *shard's* history (true) or this process's running totals (false). False means the shard's record could not be read or written, so a restarted node would otherwise read as one that never stalled (W-N10-02)" },
+          "pipelineFaults": { "type": "integer", "format": "int64", "description": "Pipeline faults since process start. Evidence, not a gate: read pipelineFaultsOutstanding for the current obligation" },
+          "pipelineFaultsOutstanding": { "type": "integer", "format": "int64", "description": "Blocks this process still owes a verdict for. Zero clears the readiness term; a fault is removed when its verdict settles, and a restart seeds the set from the durable disposition ledger (an unreadable ledger fails closed)" },
+          "lastPipelineFault": { "type": "string", "nullable": true, "description": "The last pipeline fault's block and stage, as the public route renders it; null until one fires" },
+          "orphanBodies": { "type": "integer", "format": "int64", "description": "Confirmed orphan bodies: a stored block body with no DAG owner, confirmed over three consecutive audit samples rather than one look. Non-zero withholds readiness" },
+          "orphanDetections": { "type": "integer", "format": "int64", "description": "Orphan detections, monotone — the history beside the current count" },
+          "proposalHalted": { "type": "boolean", "description": "The proposer is isolated from the chain it can finalize on; production needs an operator resume" },
+          "proposalHaltReason": { "type": "string", "nullable": true, "description": "The machine-readable isolation reason beside proposalHalted; null when the proposer is not isolated" },
           "resetMarker": { "type": "string", "nullable": true, "description": "The reset marker this node is standing under: the durable record a self-reset writes, rendered with its phase, anchor and height. Null when the node is not mid-reset. The marker is cleared only when the catch-up frontier passes its anchor, so one that stands while the height does not move says the repair is not converging (F-U12-02)" },
           "nonQuietMergeReports": { "type": "integer", "format": "int64", "description": "Merges whose report was not quiet: a chain dropped, or an invariant violated. The log carries the detail; this is the count the live incident would have moved. Persisted with the stall episodes above, so the merge history is the shard's rather than the process's (W-N10-02)" },
           "sync": { "type": "object", "nullable": true, "description": "The LFS sync task's own state while this node is in NodeSyncing — how many attempts it has started and why the last one failed. Null means the sync task has returned, which covers both a restored state and a node that never had to sync; it does NOT mean 'synced fine'", "properties": { "attempts": { "type": "integer", "format": "int64", "description": "Attempts the sync task has started" }, "attemptsScope": { "type": "string", "description": "Always 'SinceProcessStart': the count is the sync task's own and the task restarts with the process, so persisting it would claim a continuity it does not have (W-N10-02). The *scope* half of that row deliberately does not apply here — LFS sync is shard-blind, so a per-shard reading of it would be an invention" }, "lastFailure": { "type": "string", "nullable": true, "description": "The last named sync failure, verbatim; null while the attempt now running has not failed" } } },
@@ -2827,6 +2881,13 @@ mod tests {
             },
             autopropose_tap_suppressed: 0,
             stale_snapshot_self_equivocations: 0,
+            pipeline_faults: 0,
+            pipeline_faults_outstanding: 0,
+            last_pipeline_fault: None,
+            orphan_bodies: 0,
+            orphan_detections: 0,
+            proposal_halted: false,
+            proposal_halt_reason: None,
             finality_stall: None,
             finality_stalled: false,
             finality_stall_episodes: 0,
@@ -3498,6 +3559,192 @@ mod tests {
         assert_eq!(json["pool"]["maxDeploys"], 10_000);
         assert_eq!(json["finalityStalled"], false);
         assert_eq!(json["finalityStallEpisodes"], 0);
+        // **The key set is the contract.** A field added or renamed without the standard moving
+        // fails here rather than drifting in the docs (`node/src/diagnostics/health_contract.rs`).
+        let mut served: Vec<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        served.sort_unstable();
+        let mut declared = crate::diagnostics::health_contract::PUBLIC_HEALTH_KEYS.to_vec();
+        declared.sort_unstable();
+        assert_eq!(
+            served, declared,
+            "/health no longer matches the declared diagnostic contract"
+        );
+        assert_eq!(
+            json["diagVersion"],
+            crate::diagnostics::health_contract::DIAG_VERSION
+        );
+        // The fixture has no finalized block, and an unknown fence is null — not zero — with the
+        // read error named rather than erased.
+        assert!(json["readyReasons"].as_array().unwrap().is_empty());
+        assert!(json["finalizedHeight"].is_null());
+        assert!(json["finalizedLag"].is_null());
+        assert_eq!(json["finalizedHeightError"], "finalized block unavailable");
+        // `height` is one past the observed height; the observed height is its own field.
+        assert_eq!(json["height"], 4);
+        assert_eq!(json["maxObservedHeight"], 3);
+    }
+
+    /// **A `ready = false` names its cause** — the boolean is the verdict, `readyReasons` is why.
+    #[tokio::test]
+    async fn health_names_the_reason_it_is_not_ready() {
+        use tower::ServiceExt;
+        let mut s = state();
+        let primary = rchain_shared::refined::ShardId::try_from("/root".to_string()).unwrap();
+        let phase = NodePhaseCell::new();
+        phase.set_phase(NodePhase::Syncing);
+        s.shards = Arc::new(ShardRegistry {
+            primary: primary.clone(),
+            members: Vec::new(),
+            phases: BTreeMap::from([(primary, phase)]),
+        });
+        let reply = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ready"], false);
+        assert_eq!(
+            json["readyReasons"],
+            serde_json::json!(["shard_not_running"])
+        );
+    }
+
+    /// **The finalized fence is published, so lag is measurable.** `height` is the latest round; a
+    /// node producing but not finalizing used to look identical to a healthy one on this route.
+    #[tokio::test]
+    async fn health_publishes_the_finalized_fence_and_its_lag() {
+        use tower::ServiceExt;
+        let mut s = state();
+        s.web_api = Arc::new(MockWebApi {
+            status: {
+                let mut status = test_status();
+                status.latest_block_number = 1791;
+                status
+            },
+            pooled_deploys: PooledDeploys {
+                deploys: Vec::new(),
+            },
+            deploy_result: None,
+            finalized_block: Some(BlockInfo {
+                block_info: rchain_models::casper::protocol::deploy_service::LightBlockInfo {
+                    block_number: 1756,
+                    ..issue_487_block()
+                },
+                deploys: Vec::new(),
+            }),
+            finalized_result: None,
+        });
+        let reply = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        // `latestBlockNumber` is one past the highest height (`DagRepresentation`), so the observed
+        // tip is 1790 and the lag is 34 — not the 35 a naive `latest - finalized` reports.
+        assert_eq!(json["height"], 1791);
+        assert_eq!(json["maxObservedHeight"], 1790);
+        assert_eq!(json["finalizedHeight"], 1756);
+        assert_eq!(json["finalizedLag"], 34);
+        assert!(json["finalizedHeightError"].is_null());
+    }
+
+    /// **A fully finalised tip has lag zero**, not one: the off-by-one Aria caught in review.
+    #[tokio::test]
+    async fn health_reports_zero_lag_when_the_tip_is_finalized() {
+        use tower::ServiceExt;
+        let mut s = state();
+        s.web_api = Arc::new(MockWebApi {
+            status: {
+                let mut status = test_status();
+                status.latest_block_number = 1757; // one past the observed height 1756
+                status
+            },
+            pooled_deploys: PooledDeploys {
+                deploys: Vec::new(),
+            },
+            deploy_result: None,
+            finalized_block: Some(BlockInfo {
+                block_info: rchain_models::casper::protocol::deploy_service::LightBlockInfo {
+                    block_number: 1756,
+                    ..issue_487_block()
+                },
+                deploys: Vec::new(),
+            }),
+            finalized_result: None,
+        });
+        let reply = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["maxObservedHeight"], 1756);
+        assert_eq!(json["finalizedHeight"], 1756);
+        assert_eq!(json["finalizedLag"], 0);
+    }
+
+    /// **An empty DAG has no observed height** — null, not `-1`, and no lag to report.
+    #[tokio::test]
+    async fn health_reports_no_observed_height_on_an_empty_dag() {
+        use tower::ServiceExt;
+        let mut s = state();
+        s.web_api = Arc::new(MockWebApi {
+            status: {
+                let mut status = test_status();
+                status.latest_block_number = 0;
+                status
+            },
+            pooled_deploys: PooledDeploys {
+                deploys: Vec::new(),
+            },
+            deploy_result: None,
+            finalized_block: None,
+            finalized_result: None,
+        });
+        let reply = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["maxObservedHeight"].is_null());
+        assert!(json["finalizedLag"].is_null());
     }
 
     /// **The peer-liveness exception** (W-N3-01): `/health` may tell a peer that this validator is
