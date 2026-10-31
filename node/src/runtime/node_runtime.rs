@@ -1089,6 +1089,7 @@ fn wire_block_processing_observed(
             parts.block_disposition.clone(),
             parts.block_store.clone(),
             parts.dag.clone(),
+            comm_state.block_retriever.clone(),
             reoffer_state,
             processor_input_tx_disposition.clone(),
             disposition_log.clone(),
