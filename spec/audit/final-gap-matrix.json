@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_dev_sha": "0186933004152efb4d7e1d9bc1804786efd88b22",
+  "source_dev_sha": "ad77fb442de28df39ce913b79dde59973aae05b2",
   "observed_date": "2026-10-31",
   "tracker": "#51",
   "boundary": "44 overlapping tracker obligations, not 44 defects. Maintainer deferrals are recorded with source links; this matrix grants no release authorization.",
@@ -91,10 +91,11 @@
         "#49",
         "#51",
         "#380",
-        "#527"
+        "#527",
+        "#532"
       ],
       "existing_evidence": {
-        "source": "BigInt is on the pinned dev; the exact Decimal was removed by issue #527"
+        "source": "BigInt is on the pinned dev; the exact Decimal was removed by issue #527 and removed by PR #532"
       },
       "missing_proof": "Landed code does not establish a scanned archive or a uniform live validator rollout.",
       "smallest_corrective_action": "Preserve the BigInt landing evidence; do not carry a decimal obligation.",
@@ -848,5 +849,5 @@
     }
   ],
   "section6_inventory": "section6-gap-inventory.json",
-  "source_dev_base_sha": "d0fa65b12c9a6fbde386f7bde7bf31802f314fa4"
+  "source_dev_base_sha": "ad77fb442de28df39ce913b79dde59973aae05b2"
 }

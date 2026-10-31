@@ -15,7 +15,7 @@ spec.loader.exec_module(quiet)
 class QuietFinalityControls(unittest.TestCase):
     def healthy(self, **overrides):
         h = {"ready": True, "orphanBodies": 0, "pipelineFaults": 0,
-             "proposalHalted": False}
+             "pipelineFaultsOutstanding": 0, "proposalHalted": False}
         h.update({k: v for k, v in overrides.items() if k in h})
         o = {"unrestorableRecords": overrides.get("unrestorableRecords", 0),
              "resources": {"cgroupOomKills": overrides.get("cgroupOomKills", 0)}}
@@ -98,7 +98,7 @@ class QuietFinalityControls(unittest.TestCase):
         self.assertTrue(self.healthy())
         for key, value in [("ready", False), ("ready", None),
                            ("orphanBodies", None), ("orphanBodies", 1),
-                           ("pipelineFaults", 2), ("proposalHalted", True),
+                           ("pipelineFaultsOutstanding", 2), ("proposalHalted", True),
                            ("unrestorableRecords", 1),
                            ("unrestorableRecords", None), ("cgroupOomKills", 1),
                            ("cgroupOomKills", None)]:

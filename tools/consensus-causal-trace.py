@@ -164,19 +164,8 @@ def capture(run, get, node_name):
         node = node_name(i)
         try:
             capture_start = time.time()
-            status = get(i, "/api/v1/status/operator", admin=True)
-            height = status["latestBlockNumber"]
-            if type(height) is not int or not 0 <= height <= 256:
-                raise ValueError("capture height outside bounded 0..256 range")
-            # Height-range reads include accepted unfinalized blocks. Do not
-            # substitute a wallet/name read that now selects finalized state.
-            blocks = read_bounded_blocks(get, i, height)
-            index = index_blocks(blocks)
-            raw_blocks = {}
-            for key, block in sorted(index.items()):
-                raw = get(i, f"/api/v1/block/{key}/raw")
-                verify_raw(block, raw)
-                raw_blocks[key] = raw
+            # Container evidence first: an unreachable or partitioned node must
+            # still yield its log, its state and its binary identity.
             log = subprocess.run(["docker", "logs", node], text=True,
                                  capture_output=True, timeout=15)
             if log.returncode:
@@ -188,6 +177,23 @@ def capture(run, get, node_name):
                 text=True, timeout=10).strip().split()[0]
             state = subprocess.check_output(["docker", "inspect", "--format",
                                              "{{json .State}}", node], text=True, timeout=10)
+            manifest["nodes"][str(i)] = {"binary_sha256": binary,
+                                         "container_state": json.loads(state)}
+            status = get(i, "/api/v1/status/operator", admin=True)
+            height = status["latestBlockNumber"]
+            if type(height) is not int or not 0 <= height <= 256:
+                raise ValueError(
+                    f"CAPTURE_HEIGHT_REFUSED: latestBlockNumber={height} is outside the "
+                    "bounded 0..256 range; the drill verdict is unaffected")
+            # Height-range reads include accepted unfinalized blocks. Do not
+            # substitute a wallet/name read that now selects finalized state.
+            blocks = read_bounded_blocks(get, i, height)
+            index = index_blocks(blocks)
+            raw_blocks = {}
+            for key, block in sorted(index.items()):
+                raw = get(i, f"/api/v1/block/{key}/raw")
+                verify_raw(block, raw)
+                raw_blocks[key] = raw
             view = summarize(blocks)
             views[i] = view
             payload = {"node": i, "operator_status": status, "blocks": blocks,
@@ -196,7 +202,6 @@ def capture(run, get, node_name):
                        "operator_status_after": get(i, "/api/v1/status/operator", admin=True),
                        "attestation_decisions": decisions(text)}
             (out / f"node-{i}.json").write_text(json.dumps(payload, indent=2) + "\n")
-            manifest["nodes"][str(i)] = {"binary_sha256": binary, "container_state": json.loads(state)}
         except Exception as error:
             errors[str(i)] = f"{type(error).__name__}: {error}"
     comparison = compare(views)

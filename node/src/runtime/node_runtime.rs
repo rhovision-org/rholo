@@ -1087,6 +1087,7 @@ fn wire_block_processing_observed(
             parts.block_disposition.clone(),
             parts.block_store.clone(),
             parts.dag.clone(),
+            comm_state.block_retriever.clone(),
             reoffer_state,
             processor_input_tx_disposition.clone(),
             disposition_log.clone(),
@@ -2565,6 +2566,22 @@ pub async fn setup_shard(
     let block_disposition = open_block_disposition_store(&store_manager)
         .await
         .map_err(|e| format!("cannot open/migrate the block disposition ledger: {e}"))?;
+    // Seed the outstanding-fault latch from the migrated durable ledger before admission.
+    // Unknown ledger state must never be exposed as ready or willing to accept deploys.
+    match block_disposition.unsettled().await {
+        Ok(open) => rchain_casper::blocks::block_processor::seed_pipeline_faults(
+            open.into_iter().map(|(hash, _)| hash),
+        ),
+        Err(e) => {
+            rchain_casper::blocks::block_processor::mark_pipeline_fault_ledger_unreadable();
+            log.error(
+                LogSource::new("node.runtime.block_disposition"),
+                &format!(
+                    "block disposition ledger unreadable at startup; readiness fails closed: {e}"
+                ),
+            );
+        }
+    }
     let dag_kv = Arc::new(
         BlockDagKeyValueStorage::create(block_metadata_store, deploy_index, deploy_store)
             .await

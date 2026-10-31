@@ -730,7 +730,12 @@ async fn api_health(State(state): State<HttpState>) -> Response {
     // Law 86a pool capacity; `ready` is the answer to "can this node include work now?" and is the
     // field a deploy client should gate on. Readiness is **every shard's**: a node with one
     // serving and one syncing shard is not ready for node-level work.
+    // **The latch is a current obligation, not a lifetime count.** A block that
+    // faulted and was later settled no longer withholds readiness; the cumulative
+    // count stays published for evidence (Law 54a: read the view, not a history).
     let pipeline_faults = rchain_casper::blocks::block_processor::pipeline_faults();
+    let pipeline_faults_outstanding =
+        rchain_casper::blocks::block_processor::pipeline_faults_outstanding();
     let proposal_isolated = rchain_casper::blocks::proposer::proposer::proposal_isolated();
     // **Confirmed, not sampled**: `orphan_bodies` is zero until the periodic audit has seen the
     // same store/DAG gap for three consecutive samples, so an in-flight block does not flap this.
@@ -743,7 +748,8 @@ async fn api_health(State(state): State<HttpState>) -> Response {
         .iter()
         .map(|(id, cell)| (id.to_string(), cell.phase().label()))
         .collect();
-    let blocked = !all_running || pipeline_faults > 0 || proposal_isolated || orphan_bodies > 0;
+    let blocked =
+        !all_running || pipeline_faults_outstanding > 0 || proposal_isolated || orphan_bodies > 0;
     match state.web_api.status().await {
         Ok(status) => (
             StatusCode::OK,
@@ -754,6 +760,7 @@ async fn api_health(State(state): State<HttpState>) -> Response {
                 "nodePhase": primary_phase.label(),
                 "shardPhases": shard_phases,
                 "pipelineFaults": pipeline_faults,
+                "pipelineFaultsOutstanding": pipeline_faults_outstanding,
                 "orphanBodies": orphan_bodies,
                 "orphanDetections": rchain_casper::block_disposition::orphan_detections(),
                 "lastPipelineFault": rchain_casper::blocks::block_processor::last_pipeline_fault(),
@@ -800,7 +807,7 @@ async fn api_deploy(State(state): State<HttpState>, Json(req): Json<DeployReques
                 .into_response();
         }
     }
-    if rchain_casper::blocks::block_processor::pipeline_faults() > 0
+    if rchain_casper::blocks::block_processor::pipeline_faults_outstanding() > 0
         || rchain_casper::blocks::proposer::proposer::proposal_isolated()
         || rchain_casper::block_disposition::orphan_bodies() > 0
     {

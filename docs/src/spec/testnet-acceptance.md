@@ -2008,6 +2008,17 @@ before/after pair and §3.5 for the cause.
 | A2.4 | a **new validator bonds onto a running net** and produces | the bond never takes effect, or the new validator never proposes | a 4th validator is admitted, funded with `trust`, then `bond`s against the live net | `spec/audit/evidence/n220-join-results.md` | `9a75d45` (author's run; **read, not re-run** by this pass) | `rho:pos` bond state + the newcomer's producer key + the deploy's `is-finalized` | the bond lands in a boundary block, the newcomer produces, and its deploy's block finalises | ✅ **pass** (healthy joiner — see the caveat below) | CH-ACC-06 |
 | A2.5 | a validator can **leave safely**: `withdraw` → epoch boundary → quarantine → payout | stake is stuck, or the payout never lands | 3 validators 100/100/50, `--epoch-length 10 --quarantine-length 20` | `spec/audit/evidence/n220-leave-results.md` | `a077a87e4` | the active set (`/api/v1/pos` `activeValidators`) **and the withdrawing validator's vault**, each read with the block its datum was produced in, and each probe recording its own deploy's status | the withdrawal stages (`deadline=30 blocks_remaining=20`), the boundary deactivates it (**active 3 → 2**), the entry clears, and **the payout lands: vault `99998098` → `99998964`, +866, blocks 13 → 34** | ✅ **pass** (a rig run — see the note) | CH-U6-09 |
 
+**Note, 2026-10-31 — the isolated N8 arm's rejoin criterion.** The two-cycle partition/rejoin drill in
+`tests/consensus-partition-rejoin.py` now certifies **anchor retention**, not equality of moving
+last-finalized heads: every validator finalizes a fixed block one side had not finalized before the
+partition, on a K-sample dwell, with the marker readable at that block, a pairwise finalization check
+above it, and a healing window derived from the gap and the finality interval measured on the online
+nodes (floor 270 s, ceiling 600 s). The earlier exact-head criterion was not attainable on a producing
+chain — the online nodes themselves reported three distinct identities at one sample in run
+`41208692673`. This is a finite rig witness of the rejoin path, **not** criterion 2's live-net witness
+(A2.2), and it claims no universal safety. Evidence:
+[`spec/audit/evidence/rejoin-acceptance-20261031/`](../../../spec/audit/evidence/rejoin-acceptance-20261031/README.md).
+
 **A2.5 has now been run, and it passes — on a rig.** `n220-leave-run.sh` (tree `a077a87e4`) shows the whole
 leave: the `withdraw` stages with its own arithmetic (`deadline=30 blocks_remaining=20`), the epoch
 boundary deactivates the validator (`activeValidators` 3 → 2), the pending entry clears, and **the payout

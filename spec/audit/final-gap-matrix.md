@@ -1,6 +1,6 @@
 # Release gap matrix — 2026-10-31
 
-Upstream dev baseline: `d0fa65b12c9a6fbde386f7bde7bf31802f314fa4`. Authored register snapshot: `0186933004152efb4d7e1d9bc1804786efd88b22` (documentation-only child; `source_dev_sha` pins the snapshot and `source_dev_base_sha` records the baseline). #404, #373 (including #376), #391, #392 and #402 are merged. #379, #389 and #390 are also in its ancestry.
+Upstream baseline and register snapshot: `ad77fb442de28df39ce913b79dde59973aae05b2` (the #532 merge commit; `source_dev_sha` pins the snapshot and `source_dev_base_sha` records the same commit). #404, #373 (including #376), #391, #392, #402 and #532 are merged. #379, #389 and #390 are also in its ancestry.
 
 **Correction, 2026-10-31.** The built-in Decimal was removed before mainnet by issue #527. `A:bigint-decimal` now carries BigInt only, and `Release:decimal-genesis` is withdrawn by its recorded owner, because there is no decimal type left to gate.
 

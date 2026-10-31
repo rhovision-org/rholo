@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "tracker": "https://github.com/rhovision-org/rholo/issues/51",
-  "source_dev_sha": "0186933004152efb4d7e1d9bc1804786efd88b22",
+  "source_dev_sha": "ad77fb442de28df39ce913b79dde59973aae05b2",
   "observed_date": "2026-10-31",
   "closure_requested": false,
   "policy": "Every \u00a7A/\u00a7B and every \u00a76 consensus-changing row must be landed on dev or deferred with a named decision owner and a one-line reason. Release execution evidence remains separately accountable; a green test run alone is not closure.",
@@ -63,13 +63,14 @@
         "#380",
         "#373",
         "#391",
-        "#527"
+        "#527",
+        "#532"
       ],
       "evidence": {
         "pr": 389,
         "merge_commit": "666ddb75e2d2787f099e05f983e31fb9728e7ed6"
       },
-      "notes": "BigInt #49 is on the pinned dev. The exact Decimal (#389/#390) was removed before mainnet by issue #527; there is no decimal release obligation. This is landed code, not proof of a scanned archive or uniform live validator rollout."
+      "notes": "BigInt #49 is on the pinned dev. The exact Decimal (#389/#390) was removed before mainnet by issue #527; there is no decimal release obligation. This is landed code, not proof of a scanned archive or uniform live validator rollout. The removal itself is PR #532 (merge `ad77fb442`), which also carries the dated section 6 correction."
     },
     {
       "id": "A:double-mint",
@@ -573,5 +574,6 @@
   ],
   "close_clause_evidence": "https://github.com/rhovision-org/rholo/issues/51#issuecomment-6316299117",
   "deferral_decision_evidence": "https://github.com/rhovision-org/rholo/issues/51#issuecomment-6317072399",
-  "source_dev_base_sha": "d0fa65b12c9a6fbde386f7bde7bf31802f314fa4"
+  "source_dev_base_sha": "ad77fb442de28df39ce913b79dde59973aae05b2",
+  "acceptance_records": []
 }

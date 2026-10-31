@@ -590,7 +590,7 @@ impl BlockApi for BlockApiImpl {
                 self.phase.phase().label()
             ));
         }
-        if crate::blocks::block_processor::pipeline_faults() > 0 {
+        if crate::blocks::block_processor::pipeline_faults_outstanding() > 0 {
             return Err(
                 "Deploy refused: the block pipeline is blocked after a fault and is not ready to \
                  include work."

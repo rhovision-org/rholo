@@ -46,6 +46,7 @@ use rchain_shared::typed_store::{BytesCodec, Codec, KeyValueTypedStore};
 use tokio::sync::mpsc;
 
 use crate::blocks::block_receiver::{BlockReceiverState, ReofferClaim};
+use crate::blocks::block_retriever::BlockRetriever;
 use crate::engine::node_phase::NodePhaseCell;
 
 /// Where a pending body is in the pipeline. Diagnostic only: every pending row is equally
@@ -1147,6 +1148,22 @@ pub fn eligible_stored_pending(disposition: &BlockDisposition, now_ms: u64) -> b
     )
 }
 
+/// Identify any justifications absent from the local DAG. A child stored
+/// before a partition can outlive the peer announcements for its parents.
+/// Deduplicate these durable dependency obligations before requesting them.
+fn missing_justifications(
+    block: &BlockMessage,
+    contains: impl Fn(&BlockHash) -> bool,
+) -> Vec<BlockHash> {
+    let mut missing = std::collections::BTreeSet::new();
+    for hash in &block.justifications {
+        if !contains(hash) {
+            missing.insert(*hash);
+        }
+    }
+    missing.into_iter().collect()
+}
+
 /// **One re-offer sweep** (Law 88c), extracted so a test can drive it deterministically.
 ///
 /// For each eligible stored row: settle it if it is already in the DAG; otherwise load the body,
@@ -1158,6 +1175,7 @@ pub async fn reoffer_ready_stored_pending_once(
     ledger: &BlockDispositionStore,
     block_store: &BlockStore,
     dag: &Arc<dyn BlockDagStorage>,
+    retriever: Option<&BlockRetriever>,
     receiver_state: &tokio::sync::Mutex<BlockReceiverState<BlockHash>>,
     to_processor: &mpsc::Sender<BlockMessage>,
     now_ms: u64,
@@ -1203,11 +1221,16 @@ pub async fn reoffer_ready_stored_pending_once(
             );
             continue;
         };
-        if !block
-            .justifications
-            .iter()
-            .all(|parent| repr.contains(parent))
-        {
+        let missing = missing_justifications(&block, |parent| repr.contains(parent));
+        if !missing.is_empty() {
+            // A persistent child is a request for its ancestors. The original
+            // announcements might have been lost during a network partition.
+            // The retriever already bounds requests and their retry cadence.
+            if let Some(retriever) = retriever {
+                for parent in &missing {
+                    retriever.request_missing_dependency(parent).await;
+                }
+            }
             continue;
         }
         // The row moves in flight before the claim, so a claim that turns out `Owned` (the
@@ -1249,6 +1272,7 @@ pub async fn retry_ready_stored_pending(
     ledger: BlockDispositionStore,
     block_store: BlockStore,
     dag: Arc<dyn BlockDagStorage>,
+    retriever: Arc<BlockRetriever>,
     receiver_state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
     to_processor: mpsc::Sender<BlockMessage>,
     log: Arc<dyn Log>,
@@ -1301,6 +1325,7 @@ pub async fn retry_ready_stored_pending(
             &ledger,
             &block_store,
             &dag,
+            Some(retriever.as_ref()),
             &receiver_state,
             &to_processor,
             now_unix_millis(),
@@ -2454,6 +2479,19 @@ mod tests {
         assert_eq!(outcome.drain.still_pending, 0);
     }
 
+    #[test]
+    fn stored_pending_child_identifies_only_missing_parent_hashes() {
+        use std::collections::BTreeSet;
+        let mut block = sample_block(hash(90));
+        block.justifications = vec![hash(1), hash(2), hash(3), hash(2)];
+        let known: BTreeSet<_> = [hash(1), hash(3)].into_iter().collect();
+        assert_eq!(
+            missing_justifications(&block, |parent| known.contains(parent)),
+            vec![hash(2)],
+        );
+        assert!(missing_justifications(&block, |_| true).is_empty());
+    }
+
     // --- the runtime reader for stored pending bodies (Law 88c) ---
 
     /// **The overflow half.** The receiver's capacity refusal stores the body and writes the
@@ -2481,6 +2519,7 @@ mod tests {
             &ledger,
             &block_store,
             &dag,
+            None,
             &receiver,
             &tx,
             since,
@@ -2522,6 +2561,7 @@ mod tests {
             &ledger,
             &block_store,
             &dag,
+            None,
             &receiver,
             &tx,
             since,
@@ -2561,6 +2601,7 @@ mod tests {
                 &ledger,
                 &block_store,
                 &dag,
+                None,
                 &receiver,
                 &tx,
                 since,

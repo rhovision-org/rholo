@@ -230,6 +230,30 @@ class CloseoutTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.LedgerError, "explicit boolean"):
             self.inspect()
 
+    def test_acceptance_record_must_name_an_artifact_and_digests(self):
+        record = {"gate_id": "n8-partition-rejoin", "source_sha": "a" * 40,
+                  "binary_sha256": "b" * 64, "aggregate": "PASS",
+                  "artifact": "spec/audit/evidence/rejoin-acceptance-20261031/README.md"}
+        self.payload["acceptance_records"] = [record]
+        self.assertEqual(self.inspect()["result"], "TRACKER_MUST_REMAIN_OPEN")
+        for field, value in (("source_sha", "tbd"), ("binary_sha256", "tbd"),
+                             ("aggregate", "MAYBE"), ("artifact", "")):
+            with self.subTest(field=field):
+                bad = dict(record)
+                bad[field] = value
+                self.payload["acceptance_records"] = [bad]
+                with self.assertRaises(gate.LedgerError):
+                    self.inspect()
+
+    def test_a_pass_and_a_fail_at_one_digest_invalidate_the_gate(self):
+        base = {"gate_id": "n8-partition-rejoin", "source_sha": "a" * 40,
+                "binary_sha256": "b" * 64,
+                "artifact": "spec/audit/evidence/rejoin-acceptance-20261031/README.md"}
+        self.payload["acceptance_records"] = [{**base, "aggregate": "PASS"},
+                                              {**base, "aggregate": "FAIL"}]
+        with self.assertRaisesRegex(gate.LedgerError, "PASS/FAIL conflict"):
+            self.inspect()
+
 
 if __name__ == "__main__":
     unittest.main()

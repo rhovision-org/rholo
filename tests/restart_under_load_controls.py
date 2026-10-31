@@ -35,9 +35,13 @@ def deploy_is_success(status):
 
 
 def health_verdict(body):
-    """None iff the health body reports no fault, no orphan and no proposal halt."""
-    if body.get("pipelineFaults") != 0:
-        return "pipelineFaults is nonzero"
+    """None iff the health body reports no outstanding fault, no orphan and no proposal halt.
+
+    The gate reads `pipelineFaultsOutstanding` (the obligation) rather than the
+    lifetime `pipelineFaults` counter: a settled fault is history, not a block.
+    """
+    if body.get("pipelineFaultsOutstanding") != 0:
+        return "pipelineFaultsOutstanding is nonzero"
     if body.get("orphanBodies") != 0:
         return "orphanBodies is nonzero"
     if body.get("proposalHalted") is not False:
