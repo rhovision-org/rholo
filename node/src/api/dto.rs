@@ -220,6 +220,20 @@ pub struct ShardHealthDto {
     pub finality: FinalityHealthDto,
 }
 
+/// **The process-wide readiness gates**, read from the same cells `GET /health` reads and threaded
+/// into the operator DTO. A struct rather than seven parameters so the conversion stays a pure
+/// function of its inputs, and a new gate cannot be added to one surface and forgotten on the other.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PipelineGates {
+    pub pipeline_faults: u64,
+    pub pipeline_faults_outstanding: u64,
+    pub last_pipeline_fault: Option<String>,
+    pub orphan_bodies: u64,
+    pub orphan_detections: u64,
+    pub proposal_halted: bool,
+    pub proposal_halt_reason: Option<String>,
+}
+
 /// **What an operator's own surface may read, and nothing else does**: the operator half of the
 /// node's status.
 ///
@@ -267,6 +281,22 @@ pub struct OperatorStatus {
     /// does not count toward the timer halt; it is reported so a node that never recovers from the race
     /// is still visible.
     pub stale_snapshot_self_equivocations: u64,
+    /// **The process gates that decide `ready`** (`/health`'s four terms). They were published only
+    /// on the public route, so an operator reading the admin surface could see `degraded` and
+    /// `acceptsDeploys` but not the outstanding pipeline fault that withheld readiness. `pipelineFaults`
+    /// is the lifetime count (evidence); `pipelineFaultsOutstanding` is the current obligation.
+    pub pipeline_faults: u64,
+    pub pipeline_faults_outstanding: u64,
+    /// The last fault's block and stage, as the public route renders it. `None` until one fires.
+    pub last_pipeline_fault: Option<String>,
+    /// Confirmed orphan bodies (three consecutive audit samples, not a single look).
+    pub orphan_bodies: u64,
+    /// Orphan detections, monotone — the history beside the current count.
+    pub orphan_detections: u64,
+    /// The proposer is isolated from the chain it can finalize on; production needs an operator
+    /// resume. See `proposalHaltReason` for the machine-readable cause.
+    pub proposal_halted: bool,
+    pub proposal_halt_reason: Option<String>,
     /// C249's F-U10-01: **the gate's verdict on the last block this node validated**. The reason existed
     /// only on stderr — a node that had stopped advancing said so to whoever was reading the log, and to
     /// nothing a probe could ask. `None` when that derivation advanced.

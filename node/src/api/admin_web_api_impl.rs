@@ -77,6 +77,20 @@ impl AdminWebApi for AdminWebApiImpl {
         // else — plus the poisoned-lock count, read from `rspace` because the poisoning is a
         // storage-layer event and the count is process-wide (F-U9-03).
         let finality = self.block_api.finality_health().await;
+        // **The readiness gates, from the cells `/health` reads.** Published on the operator surface
+        // as well, so an operator can explain a `ready = false` they can already see from the public
+        // route. Reading them here rather than inside the conversion keeps that function pure.
+        let gates = super::dto::PipelineGates {
+            pipeline_faults: rchain_casper::blocks::block_processor::pipeline_faults(),
+            pipeline_faults_outstanding:
+                rchain_casper::blocks::block_processor::pipeline_faults_outstanding(),
+            last_pipeline_fault: rchain_casper::blocks::block_processor::last_pipeline_fault(),
+            orphan_bodies: rchain_casper::block_disposition::orphan_bodies(),
+            orphan_detections: rchain_casper::block_disposition::orphan_detections(),
+            proposal_halted: rchain_casper::blocks::proposer::proposer::proposal_isolated(),
+            proposal_halt_reason:
+                rchain_casper::blocks::proposer::proposer::proposal_isolation_reason(),
+        };
         // Law 69's other half: the sync task's own state, so a node latched in `NodeSyncing` says so on
         // this surface instead of only on stderr. `None` is the ordinary reading — the task has
         // returned — and it is not the same as a completed sync.
@@ -96,6 +110,7 @@ impl AdminWebApi for AdminWebApiImpl {
             &caps,
             &health,
             &finality,
+            &gates,
             sync.as_ref(),
             // F-U12-02: the durable reset marker, rendered. Read from the marker store's own cell — which
             // every writer writes — so it cannot go stale behind the store it reports.

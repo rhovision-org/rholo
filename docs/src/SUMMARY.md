@@ -92,6 +92,7 @@
 - [Testnet acceptance specification](spec/testnet-acceptance.md)
 - [The bounded adversary](spec/adversary.md)
 - [Failure-mode HAZOP and disposition](spec/failure-hazop.md)
+- [Node diagnostics](spec/node-diagnostics.md)
 - [Resource safety case](spec/resource-safety-case.md)
 - [RCHIP #55 — liveness enforcement](spec/rchip-55-liveness-enforcement.md)
 - [What a joining node trusts](spec/trust-model.md)

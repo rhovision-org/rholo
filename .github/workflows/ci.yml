@@ -264,6 +264,12 @@ jobs:
         # debt until the programme's units land, and `--require-evidence` is the completion gate.
         run: tools/check-resource-safety-case.sh --gate
 
+      - name: Node diagnostics standard gate
+        # The `/health` contract and its page cannot drift: every declared key must be in the
+        # standard's table with a regime, scope, freshness and invariant, and every table row must
+        # be a declared key. The route's own test compares the served JSON to the same list.
+        run: python3 tools/check-node-diagnostics.py --gate
+
       - name: Artefact-producing build paths are pin-locked and unparameterised
         # Two wargame rows name a gate rather than a test, and neither existed: `every build path
         # passes --locked` (the lock file is a promise the build has to keep) and `the shipped

@@ -6,6 +6,7 @@
 //! Rust).
 
 pub mod effects;
+pub mod health_contract;
 pub mod influxdb;
 pub mod model;
 pub mod prometheus_reporter;

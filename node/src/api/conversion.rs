@@ -17,8 +17,8 @@ use rchain_shared::base16;
 use super::dto::{
     DataAtNameResponse, DeployExecStatus as ApiDeployExecStatus, DeployPoolStatus, DeployRequest,
     ExploratoryDeployResponse, FinalityHealthDto, HaltStatusDto, NodeCapabilities, OperatorStatus,
-    PooledDeploy, ProposerHealthDto, PublicStatus, ResourceStatusDto, RhoDataResponse,
-    RhoExprWithBlock, ShardHealthDto, SignatureException, SyncStatus, VersionInfo,
+    PipelineGates, PooledDeploy, ProposerHealthDto, PublicStatus, ResourceStatusDto,
+    RhoDataResponse, RhoExprWithBlock, ShardHealthDto, SignatureException, SyncStatus, VersionInfo,
 };
 use super::rho_expr::{expr_from_par, RhoExpr};
 use crate::resources::admission::{effective_available_mb, threshold_mb};
@@ -106,6 +106,9 @@ pub fn to_operator_status(
     caps: &Capabilities,
     health: &ProposerHealth,
     finality: &FinalityHealth,
+    // The process gates `/health` uses to decide `ready`; the operator surface must carry the
+    // same seven values or it cannot explain a readiness it already publishes.
+    gates: &PipelineGates,
     sync: Option<&SyncHealth>,
     // F-U12-02: the reset marker's own reading, threaded in like `sync` rather than fetched here, so a
     // caller that has no store still maps a status deterministically.
@@ -133,6 +136,13 @@ pub fn to_operator_status(
         },
         autopropose_tap_suppressed: health.autopropose_tap_suppressed,
         stale_snapshot_self_equivocations: health.stale_snapshot_self_equivocations,
+        pipeline_faults: gates.pipeline_faults,
+        pipeline_faults_outstanding: gates.pipeline_faults_outstanding,
+        last_pipeline_fault: gates.last_pipeline_fault.clone(),
+        orphan_bodies: gates.orphan_bodies,
+        orphan_detections: gates.orphan_detections,
+        proposal_halted: gates.proposal_halted,
+        proposal_halt_reason: gates.proposal_halt_reason.clone(),
         finality_stall: finality.stall_reason.clone(),
         finality_stalled: finality.stall_sustained,
         finality_stall_episodes: finality.stall_episodes,
@@ -492,6 +502,7 @@ mod tests {
             &caps,
             &health,
             &finality,
+            &PipelineGates::default(),
             None,
             None,
             11,
@@ -626,6 +637,7 @@ mod tests {
             },
             &ProposerHealth::default(),
             &FinalityHealth::default(),
+            &PipelineGates::default(),
             Some(&sync),
             None,
             0,
@@ -699,6 +711,7 @@ mod tests {
             },
             &ProposerHealth::default(),
             &finality,
+            &PipelineGates::default(),
             None,
             None,
             0,
@@ -799,6 +812,7 @@ mod tests {
             &caps,
             &ProposerHealth::default(),
             &FinalityHealth::default(),
+            &PipelineGates::default(),
             None,
             None,
             0,
@@ -896,6 +910,14 @@ mod tests {
             "tasksPanicked",
             "tasksExited",
             "undeliveredSends",
+            // The readiness gates are process state, not a client's business.
+            "pipelineFaults",
+            "pipelineFaultsOutstanding",
+            "lastPipelineFault",
+            "orphanBodies",
+            "orphanDetections",
+            "proposalHalted",
+            "proposalHaltReason",
         ] {
             assert!(
                 !keys.contains(&forbidden),
@@ -909,6 +931,71 @@ mod tests {
                 "the public status must still carry {expected}: {keys:?}"
             );
         }
+    }
+
+    /// **The operator surface carries the gates `/health` uses to decide `ready`.** They were
+    /// public-route-only, so an operator could see `ready` but not what withheld it.
+    #[test]
+    fn the_operator_status_carries_every_readiness_gate() {
+        let status = Status {
+            version: CasperVersionInfo {
+                api: "1".to_string(),
+                node: "2".to_string(),
+            },
+            address: "addr".to_string(),
+            network_id: "testnet".to_string(),
+            shard_id: "root".to_string(),
+            peers: 0,
+            nodes: 0,
+            min_phlo_price: 0,
+            latest_block_number: 0,
+        };
+        let caps = Capabilities {
+            autopropose: false,
+            propose_on_deploy: false,
+            manual_propose: true,
+            admin_http: false,
+            dev_mode: false,
+            proposer: false,
+        };
+        let core = to_public_status(
+            &status,
+            &caps,
+            &ResourceSnapshot::default(),
+            &DeployPoolStats::default(),
+        );
+        let gates = PipelineGates {
+            pipeline_faults: 3,
+            pipeline_faults_outstanding: 1,
+            last_pipeline_fault: Some("missing justification".to_string()),
+            orphan_bodies: 2,
+            orphan_detections: 5,
+            proposal_halted: true,
+            proposal_halt_reason: Some("height gap".to_string()),
+        };
+        let api = to_operator_status(
+            core,
+            &caps,
+            &ProposerHealth::default(),
+            &FinalityHealth::default(),
+            &gates,
+            None,
+            None,
+            0,
+            0,
+            0,
+            0,
+            None,
+            &ResourceSnapshot::default(),
+        );
+        let json = serde_json::to_value(api).expect("serializes");
+        assert_eq!(json["pipelineFaults"], 3);
+        assert_eq!(json["pipelineFaultsOutstanding"], 1);
+        assert_eq!(json["lastPipelineFault"], "missing justification");
+        assert_eq!(json["orphanBodies"], 2);
+        assert_eq!(json["orphanDetections"], 5);
+        assert_eq!(json["proposalHalted"], true);
+        assert_eq!(json["proposalHaltReason"], "height gap");
     }
 
     #[test]
