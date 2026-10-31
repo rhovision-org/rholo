@@ -35,9 +35,14 @@ current view from a history.
    a fixed vocabulary (`ready_reasons`). Free text is a diagnosis beside the alarm, never the alarm.
 6. **Names carry units and lifetime.** `*_total` is monotone since process start; `*_episodes` is
    durable and monotone; `*_current` is a live view; `*_age_ms`/`*_at_ms` carry time.
-7. **The public surface is a subset.** Every public field is also on the operator surface; operator-
-   only state never reaches the public listener (tested twice: the key set, and a forbidden-key
-   list on `PublicStatus`).
+7. **`PublicStatus` is a subset; `/health` is a separate view.** Every field of
+   `GET /api/v1/status` is flattened into `GET /api/v1/status/operator`, and operator-only state
+   never reaches the public listener (tested twice: the key set, and a forbidden-key list on
+   `PublicStatus`). `GET /health` is a *readiness-shaped diagnostic view*, **not** a subset of the
+   operator envelope: the seven process gates (§4.2) appear on both, while `diagVersion`, `ready`,
+   `readyReasons`, `finalizedHeight`, `finalizedHeightError`, `finalizedLag` and the phase map are
+   health-only. The seam is stated rather than implied — the earlier draft of this page claimed a
+   superset that the implementation does not have.
 
 ## 3. The surface
 
@@ -74,20 +79,29 @@ Freshness is the maximum age at which the reading is still `known`.
 | `proposalHaltReason` | consensus | string? | G | S | at read | a closed code from the proposer's isolation reason |
 | `finalityStalled` | finality | bool | L | S | ≤1 s | sustained refusals, not one partial layer; the field to alarm on |
 | `finalityStallEpisodes` | finality | integer | C | S | at read | durable, monotone; read with `finalityCountersDurable` |
-| `height` | progress | integer | G | S | ≤1 s | the latest **round** (not finalized, not a block count) |
-| `finalizedHeight` | progress | integer? | G | S | ≤1 s | the finalized fence; **null means unknown, never zero**; read `finalizedHeightError` for why |
+| `height` | progress | integer | G | S | ≤1 s | **one past the highest observed height** (the DAG's `latestBlockNumber` convention); `0` on an empty DAG. Not the tip height — use `maxObservedHeight` to compare with a block number |
+| `maxObservedHeight` | progress | integer? | G | S | ≤1 s | the observed tip height, i.e. `height − 1` when `height > 0`; **null on an empty DAG, never `−1`** |
+| `finalizedHeight` | progress | integer? | G | S | ≤1 s | the finalized fence (a block's own number); **null means unknown, never zero**; read `finalizedHeightError` for why |
 | `finalizedHeightError` | progress | string? | G | S | ≤1 s | the read error when the fence is unknown; null when the read answered. An erased error is the `silent` class the type-system gate forbids |
-| `finalizedLag` | progress | integer? | G | S | ≤1 s | `height − finalizedHeight`; a lag indicator, not a rate |
+| `finalizedLag` | progress | integer? | G | S | ≤1 s | **`maxObservedHeight − finalizedHeight`** (equal units: both are block heights), so a fully finalised tip reads `0`; null when either side is unknown |
 | `degraded` | resource | string | G | H | ≤5 s | advisory word from the fallback machine; never a 503 |
 | `acceptsDeploys` | resource | bool | G | P | ≤1 s | pool capacity only (Law 86a) |
 | `pool` | resource | object | G | P | ≤1 s | depth and bounds, so `acceptsDeploys = false` is explainable |
 
-### 4.2 Operator additions
+### 4.2 Operator additions and the seam
 
-The operator surface carries everything public, plus `PipelineGates` (`pipelineFaults`,
-`pipelineFaultsOutstanding`, `lastPipelineFault`, `orphanBodies`, `orphanDetections`,
-`proposalHalted`, `proposalHaltReason`) and the operator-only state already defined by
-`OperatorStatus` (divergence, halt, reset marker, sync, resources, per-shard health).
+The operator surface carries **every `PublicStatus` field** (flattened), plus `PipelineGates`
+(`pipelineFaults`, `pipelineFaultsOutstanding`, `lastPipelineFault`, `orphanBodies`,
+`orphanDetections`, `proposalHalted`, `proposalHaltReason`) and the operator-only state already
+defined by `OperatorStatus` (divergence, halt, reset marker, sync, resources, per-shard health).
+
+It is **not** a superset of `/health`. The health page is a distinct view; only the seven gates
+overlap. The other health fields — `diagVersion`, `ok`, `ready`, `readyReasons`, `phase`,
+`nodePhase`, `shardPhases`, `height`, `maxObservedHeight`, `finalizedHeight`,
+`finalizedHeightError`, `finalizedLag`, `degraded`, `acceptsDeploys`, `pool`, `finalityStalled`,
+`finalityStallEpisodes` — are health-only, except `degraded`, `acceptsDeploys`, `pool` and
+`latestBlockNumber`, which reach the operator surface through `PublicStatus` under their own names.
+(Written 2026-10-31 after review: the first draft of this page claimed a superset.)
 
 ## 5. The gap register
 

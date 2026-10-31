@@ -771,7 +771,22 @@ async fn api_health(State(state): State<HttpState>) -> Response {
             Err(error) => (None, Some(error.0)),
         };
     match state.web_api.status().await {
-        Ok(status) => (
+        Ok(status) => {
+            // **`latestBlockNumber` is one past the highest observed height**, not the tip height:
+            // `DagRepresentation::latest_block_number` returns `max(height_map) + 1`, and `0` on an
+            // empty DAG. `finalizedHeight` is a block's own number, so subtracting it from
+            // `latestBlockNumber` would report a lag of one on a fully finalised chain. The lag is
+            // computed from the observed height, with an explicit empty-DAG case.
+            let max_observed_height = if status.latest_block_number > 0 {
+                Some(status.latest_block_number - 1)
+            } else {
+                None
+            };
+            let finalized_lag = match (max_observed_height, finalized_height) {
+                (Some(max), Some(fence)) => Some(max - fence),
+                _ => None,
+            };
+            (
             StatusCode::OK,
             Json(json!({
                 "diagVersion": crate::diagnostics::health_contract::DIAG_VERSION,
@@ -790,19 +805,23 @@ async fn api_health(State(state): State<HttpState>) -> Response {
                 "proposalHaltReason": rchain_casper::blocks::proposer::proposer::proposal_isolation_reason(),
                 "degraded": status.degraded,
                 "acceptsDeploys": status.accepts_deploys,
+                // One past the highest observed height (`latestBlockNumber`'s own convention).
                 "height": status.latest_block_number,
+                // The observed tip height; null on an empty DAG, never -1.
+                "maxObservedHeight": max_observed_height,
                 "finalizedHeight": finalized_height,
                 // Why the fence is unknown, when it is. Null when the read answered.
                 "finalizedHeightError": finalized_height_error,
-                // Heights are rounds in this node, so the difference is a round distance, not a
-                // block count; it is a lag indicator, not a rate. Null when the fence is unknown.
-                "finalizedLag": finalized_height.map(|f| status.latest_block_number - f),
+                // `maxObservedHeight - finalizedHeight`. Zero when the tip is fully finalised; null
+                // when either side is unknown. A lag indicator, not a rate.
+                "finalizedLag": finalized_lag,
                 "pool": status.pool,
                 "finalityStalled": state.peer_liveness.finality_stall_sustained(),
                 "finalityStallEpisodes": state.peer_liveness.stall_episodes(),
             })),
-        )
-            .into_response(),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({"ok": false, "ready": false, "phase": "unavailable", "error": e.0})),
@@ -3565,6 +3584,9 @@ mod tests {
         assert!(json["finalizedHeight"].is_null());
         assert!(json["finalizedLag"].is_null());
         assert_eq!(json["finalizedHeightError"], "finalized block unavailable");
+        // `height` is one past the observed height; the observed height is its own field.
+        assert_eq!(json["height"], 4);
+        assert_eq!(json["maxObservedHeight"], 3);
     }
 
     /// **A `ready = false` names its cause** — the boolean is the verdict, `readyReasons` is why.
@@ -3639,10 +3661,90 @@ mod tests {
             .await
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        // `latestBlockNumber` is one past the highest height (`DagRepresentation`), so the observed
+        // tip is 1790 and the lag is 34 — not the 35 a naive `latest - finalized` reports.
         assert_eq!(json["height"], 1791);
+        assert_eq!(json["maxObservedHeight"], 1790);
         assert_eq!(json["finalizedHeight"], 1756);
-        assert_eq!(json["finalizedLag"], 35);
+        assert_eq!(json["finalizedLag"], 34);
         assert!(json["finalizedHeightError"].is_null());
+    }
+
+    /// **A fully finalised tip has lag zero**, not one: the off-by-one Aria caught in review.
+    #[tokio::test]
+    async fn health_reports_zero_lag_when_the_tip_is_finalized() {
+        use tower::ServiceExt;
+        let mut s = state();
+        s.web_api = Arc::new(MockWebApi {
+            status: {
+                let mut status = test_status();
+                status.latest_block_number = 1757; // one past the observed height 1756
+                status
+            },
+            pooled_deploys: PooledDeploys {
+                deploys: Vec::new(),
+            },
+            deploy_result: None,
+            finalized_block: Some(BlockInfo {
+                block_info: rchain_models::casper::protocol::deploy_service::LightBlockInfo {
+                    block_number: 1756,
+                    ..issue_487_block()
+                },
+                deploys: Vec::new(),
+            }),
+            finalized_result: None,
+        });
+        let reply = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["maxObservedHeight"], 1756);
+        assert_eq!(json["finalizedHeight"], 1756);
+        assert_eq!(json["finalizedLag"], 0);
+    }
+
+    /// **An empty DAG has no observed height** — null, not `-1`, and no lag to report.
+    #[tokio::test]
+    async fn health_reports_no_observed_height_on_an_empty_dag() {
+        use tower::ServiceExt;
+        let mut s = state();
+        s.web_api = Arc::new(MockWebApi {
+            status: {
+                let mut status = test_status();
+                status.latest_block_number = 0;
+                status
+            },
+            pooled_deploys: PooledDeploys {
+                deploys: Vec::new(),
+            },
+            deploy_result: None,
+            finalized_block: None,
+            finalized_result: None,
+        });
+        let reply = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["maxObservedHeight"].is_null());
+        assert!(json["finalizedLag"].is_null());
     }
 
     /// **The peer-liveness exception** (W-N3-01): `/health` may tell a peer that this validator is

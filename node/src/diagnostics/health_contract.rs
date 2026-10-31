@@ -40,6 +40,7 @@ pub const PUBLIC_HEALTH_KEYS: &[&str] = &[
     "finalizedLag",
     "height",
     "lastPipelineFault",
+    "maxObservedHeight",
     "nodePhase",
     "ok",
     "orphanBodies",

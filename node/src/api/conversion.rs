@@ -996,6 +996,24 @@ mod tests {
         assert_eq!(json["orphanDetections"], 5);
         assert_eq!(json["proposalHalted"], true);
         assert_eq!(json["proposalHaltReason"], "height gap");
+        // **The seam is the opposite claim, and it is tested too.** The operator envelope is a
+        // superset of `PublicStatus`, not of `/health`: the health-only diagnostic fields are not
+        // here, and this asserts the documented difference rather than a superset that does not
+        // exist.
+        for health_only in [
+            "diagVersion",
+            "ready",
+            "readyReasons",
+            "finalizedHeight",
+            "finalizedHeightError",
+            "finalizedLag",
+            "maxObservedHeight",
+        ] {
+            assert!(
+                json.get(health_only).is_none(),
+                "the operator envelope is not a /health superset; {health_only} must not be here"
+            );
+        }
     }
 
     #[test]
