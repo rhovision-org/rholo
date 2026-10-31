@@ -233,6 +233,18 @@ class RejoinAgreementTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "FAIL_STALLED"):
             run.anchor_agreement(ANCHOR)
 
+    def test_a_stall_latch_does_not_fail_a_victim_that_is_still_progressing(self):
+        """Run 41225136080 arm 1: the rejoining victim held the latch while catching up."""
+        statuses = [healthy_status(i) for i in range(8)]
+        statuses[7]["finality_stalled"] = True
+        run = self.drill(statuses=statuses)
+        from unittest.mock import Mock
+        tips = iter(range(70, 200))
+        run.status_row = Mock(side_effect=lambda i: {**statuses[i], "tip": next(tips)})
+        values = self.settled(run)
+        self.assertIsNotNone(values[-1])   # the anchor is reached, not a stall verdict
+        self.assertGreater(len(run.healing_stall_signals), 1)
+
     def test_timeout_without_a_victim_read_is_inconclusive(self):
         run = self.drill()
         run.healing_samples = []
@@ -241,11 +253,20 @@ class RejoinAgreementTests(unittest.TestCase):
     def test_timeout_with_a_flat_victim_is_a_stall(self):
         run = self.drill()
         run.healing_samples = [{"victim_height": 45}] * 3
+        run.healing_poll_signals = [(45, 7, 0)] * 3
         self.assertEqual(run.classify_healing_timeout(), "FAIL_STALLED")
 
     def test_timeout_with_an_advancing_victim_is_slow_progress(self):
         run = self.drill()
         run.healing_samples = [{"victim_height": h} for h in (45, 46, 47)]
+        run.healing_poll_signals = [(h, 7, 0) for h in (45, 46, 47)]
+        self.assertEqual(run.classify_healing_timeout(), "INCONCLUSIVE_SLOW_PROGRESS")
+
+    def test_a_flat_reading_needs_three_polls_not_three_entries(self):
+        """`healing_samples` takes two entries per poll; a three-entry tail is 1.5 polls."""
+        run = self.drill()
+        run.healing_samples = [{"victim_height": 45}] * 6
+        run.healing_poll_signals = [(45, 7, 0)] * 2
         self.assertEqual(run.classify_healing_timeout(), "INCONCLUSIVE_SLOW_PROGRESS")
 
     def test_wait_for_healing_prefixes_the_timeout_with_its_class(self):
@@ -254,6 +275,7 @@ class RejoinAgreementTests(unittest.TestCase):
 
         def timeout(*args, **kwargs):
             run.healing_samples = [{"victim_height": 45}] * 3
+            run.healing_poll_signals = [(45, 7, 0)] * 3
             raise m.a.WaitTimeout("window closed")
 
         with patch.object(m.a.Drill, "wait", side_effect=timeout):
@@ -429,6 +451,19 @@ class HealingWindowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             m.online_validator_indices(8, 0)
 
+    def test_isolation_is_a_frozen_finalized_fence_not_a_frozen_tip(self):
+        """Run 41219535778 arm 2: a local proposal raises the tip, not finality."""
+        before = {"finalized_height": 25}
+        moving_tip = [{"latest": 34, "finalized_height": 25},
+                      {"latest": 35, "finalized_height": 25},
+                      {"latest": 35, "finalized_height": 25}]
+        self.assertTrue(m.finalized_fence_is_frozen(before, moving_tip))
+        self.assertFalse(m.finalized_fence_is_frozen(
+            before, moving_tip + [{"latest": 36, "finalized_height": 26}]))
+        self.assertFalse(m.finalized_fence_is_frozen(before, moving_tip[:2]))
+        self.assertFalse(m.finalized_fence_is_frozen(
+            before, [{"latest": 34, "finalized_height": 24}] * 3))
+
     def test_queued_pre_cut_blocks_must_finish_before_stable_dwell(self):
         from unittest.mock import patch
         observations=[{"tip": 32}, {"tip": 33}, {"tip": 34}]
@@ -477,6 +512,7 @@ class IncidentReplayTests(unittest.TestCase):
                    if p["latest"][-1] is not None]
         run = object.__new__(m.WorkloadDrill)
         run.healing_samples = samples
+        run.healing_poll_signals = [(x["victim_height"], 0, 0) for x in samples]
         self.assertEqual(run.classify_healing_timeout(), "INCONCLUSIVE_SLOW_PROGRESS")
         self.assertGreater(len({x["victim_height"] for x in samples}), 5)
 
