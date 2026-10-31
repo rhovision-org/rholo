@@ -12,10 +12,42 @@
   a laptop that sleeps is a fine node and a bad validator.
 - Sizing is an estimate from the code's storage envelope; there is no in-repo production benchmark.
 
+A validator is **bonded and slashable for invalid behaviour**; absence is not currently slashed, but it
+holds finality back. Read the [operator risk notice](operator-risk.md) and the [operator terms](https://github.com/rhovision-org/rholo/blob/dev/TERMS.md) before bonding.
+
 A validator is **storage-bound and uptime-bound**, not CPU-bound. The compute envelope is modest; the
 binding constraints are the synchronous-write storage layer (LMDB) and being online continuously. This
 page gives a grounded sizing estimate derived from the code's storage envelope and execution model —
 there is no in-repo production benchmark, so treat the numbers as an estimate, not a measurement.
+
+## The minimum is per validator; a host running two must size for both
+
+The 8 GB figure above is **per validator**. Memory is not partitioned by the node — every process on
+the host competes for the same `MemAvailable` — so a host that runs two validators needs the sum, and
+the cgroup must give each one its own share:
+
+| Host layout | Per-host RAM |
+|---|---|
+| one validator | **8 GB minimal**, 16–32 GB comfortable |
+| two validators (the current public testnet) | **16 GB minimal**, 32–64 GB comfortable |
+
+Until 2026-10-29, the public testnet ran **two validators on each `s-2vcpu-4gb` host** — about 2 GiB
+per validator. The operator's resize record
+now reports 16 GiB RAM on each host, with two validators retained: A has 2 vCPU / 25 GB disk and B
+has 4 vCPU / 80 GB disk. The nominal memory share reaches 8 GiB per validator; dedicated cgroup
+allocations are not established by that arithmetic. CPU and storage still fall short of the full
+per-validator profile above. The network remains **capacity-limited for qualification claims**;
+the memory resize alone does not establish application conformance or throughput. The admission changes in
+The admission contract keeps such a node serving — the pool is the
+throttle, pending work relays to peers, and memory bounds execution permits rather than ingress — but
+they do **not** make it a valid surface for application conformance, throughput claims, or a
+representative validator benchmark. A node protecting itself is not a substitute for the host meeting
+its own minimum.
+
+The earlier incident remains a historical measurement: at height 1688 the host had **547 MiB available**, two
+validators were `degraded: throttled`, and the old boolean gate refused every deploy and explore. The
+correct reading is not "the guard worked" but "the host is below the floor"; see
+[the public testnet](testnet.md) for the current declaration.
 
 This page answers **"how big a box"**. For **"how fast, and what stops it"** — the throughput ceiling,
 finality latency, merge cost and the Θ(N²) residency that sets a validator's time-to-ceiling — see
@@ -29,7 +61,7 @@ The LMDB environments are sized in `casper/src/storage.rs` (`rnode_db_mapping`):
 
 | Store | LMDB map size |
 |---|---|
-| `blockstorage` (blocks) | 1 TB |
+| `blockstorage` (blocks, and the block-disposition ledger) | 1 TB |
 | `dagstorage` (DAG / metadata / deploy index) | 100 GB |
 | `rspace/history` + `rspace/cold` (tuple-space trie) | 1 TB each |
 | `eval/history` + `eval/cold` (REPL eval store) | 1 TB each |
@@ -91,76 +123,39 @@ What this means for sizing:
   only grows with real traffic stays in the safe zone much longer. Steady-state production is cheap — the
   cost is all in start-up.
 
-**Correction, 2026-09-28: the per-block figures above are measurements, but the rule drawn from them is
-not linear, and the ceiling it implies is wrong at height.** Everything above is stated as a rate — "~0.25
-MB RSS and ~0.2 s per block" — which reads as a constant to multiply by a block count. It is not: the
-DAG's per-message ancestry sets are Θ(N²) in total, so the *marginal* cost of a block rises with how many
-blocks are already in the DAG. Three measured points, and they do not lie on a line:
+**Start-up cost is superlinear in chain length, so size for the height you intend to serve.** The
+figures above are a rate, not a constant to multiply by a block count. The DAG's per-message ancestry
+sets are Θ(N²) in total, so the marginal cost of a block rises with the chain already in the DAG. The
+measured points do not lie on a line: 131 produced blocks at ~0.02 MB per block, a fresh
+100–300-block devnet at 0.16–0.23 MB, and a pre-`b37410b2e` 3,200-block chain at ~1.8 GB peak and
+~17 minutes before the API opened. The 3,200-block row is a property of a tree this repository no
+longer builds: `b37410b2e` removed one of the two Θ(N²) terms — the metadata-index rebuild no longer
+clones `DagState` per block — and two pre-registered rounds could not reach the old ceiling (0 of 3
+crossed on either arm; the loaded rig peaked 647–689 MiB against a 3000 MiB threshold). It is kept as
+a bound, not a sizing point. The ancestry term remains, so expect start-up to worsen superlinearly and
+treat a few thousand blocks as where a small host stops fitting.
 
-| measured | per block, resident |
-|---|---|
-| 131 produced blocks (the table above) | ~0.02 MB |
-| 100–300 blocks, fresh devnet, 2026-09-28 (`tools/devnet-bench.py`) | 0.16–0.23 MB |
-| **3 200 blocks** ([#68](https://github.com/rhovision-org/rholo/issues/68)) | **~1.8 GB peak, ~17 minutes before the API opens** — *pre-`b37410b2e`, and **unreproduced** on this lineage; see below* |
-
-**Correction, 2026-09-29: the third row is an upper bound, not a measurement of the current build.**
-There were **two** Θ(N²) terms in the start-up path and one of them is gone: the metadata-index rebuild
-(`recreate_in_memory_state`) used to fold through `add_block_to_dag_state` — a full `DagState` clone per
-block — and now extends the index in place, which is what `b37410b2e` landed. The ancestry-set term above
-remains, and it is the one this page's rule is about, so the figure still bounds the cost from *above* —
-but the peak and the start-up time are both now unknown at 3,200 blocks.
-
-**Decision, 2026-10-01 (#154): the row is *unreproduced*, not re-measured — and the statement replaces the
-sizing point rather than waiting for one.** Two pre-registered rounds ran that day and neither reached the
-ceiling:
-
-| rig | crossing | widest merge scope | peak |
-|---|---|---|---|
-| no-load, both trees (`n127-directed-results.md`) | **0 of 3**, on the control *and* the fixed arm | **9 chains** | 49–66 MiB against a 3000 MiB threshold |
-| loaded, four bounded deploys + `stop 2` (`n127-loaded-results.md`) | **0 of 3**, on either arm | 161–174 chains after the fix, 29 pre-quotient | 647–689 MiB control vs 31–45 MiB fixed |
-
-The no-load rig cannot reach the ceiling because **the input it needs no longer occurs**: the 32–43 chain
-scopes the 1.8 GB figure was measured at were a DAG shape the proposer fix (#138) moved, and on this
-lineage the widest scope is 9 chains. The loaded rig does reach 161–174 chains — and still peaks 647–689 MiB,
-4–5× below the 3000 MiB threshold. The honest reading is therefore **not "the ramp is fixed" but "there is
-no ramp to be gone on this build"**, and the 3,200-block row is a property of a tree this repository no
-longer builds. It is kept above as history, marked as such, and **it is no longer a figure to size from.**
-
-What survives as advice is only what a host has to hold for a *start-up* on a chain of the height intended:
-the ancestry term is still Θ(N²) and still unbounded, so **expect start-up to get worse superlinearly and
-treat a few thousand blocks as the point where a small host stops fitting** — but the ~1.8 GB figure is not
-evidence for where that point is, because nobody has measured it since the tree changed.
-
-**The two statements are not in tension, and the difference is worth keeping straight.** The 2026-09-29
-correction's *upper bound* still stands: a term was removed, so the current cost is **at most** the old one.
-That is a ceiling on a number nobody has re-taken — it is not a sizing point, and "provision for 1.8 GB at
-3,200 blocks" reads a bound as a measurement. The row above is kept because it is the last thing anyone
-measured on this path; it is marked unreproduced because that is now all it is.
-
-**And one line of the list above is now stale: there *is* progress output.** A node indexing its store
-logs a line every 250 blocks (`casper/src/merging.rs`, commit `43a549e9c`), and a node speaks as it starts
-serving — but **readiness is still only implicit**: the API binds after replay completes, so a client sees
-connection-refused, which is indistinguishable from a crash. Bounding the rebuild is tracked as #68; the
-start-up cost is otherwise unbounded and this section is the only place it is written down.
-
-Tracked as [#60](https://github.com/rhovision-org/rholo/issues/60), which carries a
-self-contained reproduction (a memory-capped `systemd-run` unit) and separates what is measured from what
-is still unattributed.
+A node logs progress while it indexes (`casper/src/merging.rs`, one line every 250 blocks), but
+readiness is still implicit: the API binds after replay, so a client sees connection-refused, which is
+indistinguishable from a crash. A paired mature-history measurement of the metadata-index constructor
+is in `spec/audit/evidence/n480-startup-metadata-20261029/README.md`; it checks the reconstructed
+index and persisted metadata, not full replay, and does not qualify host capacity. The correction
+stack and the two rounds are in
+[Incident history](incident-history.md#start-up-replay-and-the-3200-block-correction).
 
 ### Resident memory is not only what the node holds — glibc's arenas
 
 glibc gives each thread its own malloc **arena**, and an arena keeps the high-water mark of what it has
 held; it is not returned to the OS. A node under fork load spreads allocation across its worker threads,
 so what the process retains is the *sum* of the per-thread peaks rather than any one peak. Measured on a
-3-validator devnet ([#117](https://github.com/rhovision-org/rholo/issues/117)), the anonymous
+3-validator devnet, the anonymous
 regions are **29 of exactly 32 MiB** — the worker **stacks** (`thread_stack_size(32 MiB)`), holding
 5.7 MiB of RSS between them — and **11 of exactly 64 MiB**, which *are* the arena heaps, while the main
 `[heap]` sat at 1.9 MiB and file-backed RSS at 26.8 MiB.
 
-**That paragraph used to read the same histogram backwards**, as "29 regions of exactly 64 MiB, one per
-worker thread, fully resident": a count taken from one size class and a size from another, with the
-residency inverted — 29 × 64 MiB is 1.86 GiB, more than the whole anonymous RSS of that run. It is
-corrected here because the audit of #117 says so — C176 of that audit's register, §27 of its pass record.
+The corrected reading matters: the 32 MiB regions are worker stacks, not arenas, and 29 × 64 MiB would
+be 1.86 GiB — more than the run's whole anonymous RSS. The earlier inversion and its correction are
+recorded in [Incident history](incident-history.md#devnet-memory-ceiling).
 
 **And what reaches the ceiling is held, not returned.** Read from inside the running node by the
 allocator's own accounting, `retained` was **0** in every one of ~1,700 samples across nine node-runs,
@@ -169,17 +164,13 @@ dies at its limit is dying of memory it still holds, not of a leak and not of pu
 the fix space is the code, and why the arena cap below is not the answer. The audit's §27 carries the
 instruments, and the one composition question they leave open.
 
-**Capping the arenas is unproven and is deliberately not shipped.** `MALLOC_ARENA_MAX=2` was tried, and
-the survival counts at a 4 GiB ceiling do not separate it from noise — nor are they reproducible from the
-artifacts: the earlier version of this paragraph quoted "1, 2 and 1 surviving nodes of three", of which
-one figure is on disk and the other two are not, while at the same setting an arm *carrying* the cap was
-the one that lost 2 of 3 nodes. Do not set it on the strength of this page. What is worth knowing is the
-mechanism — and its measurement limit: a probe intended to read the arena count directly could not sample
-the nodes that mattered, because a killed node's cgroup is gone and the peak then reads 0 (that audit's C176); a node
-cannot set the cap for itself, because `mallopt` and `malloc_trim` are `unsafe` and this
-crate graph is `#![forbid(unsafe_code)]`, so the only lever is a runtime environment variable — and
-whatever is done about it has to be measured against a reproduction whose run-to-run spread is first
-characterised, because single runs of this shape disagree with each other.
+**Capping the arenas is unproven and is deliberately not shipped.** `MALLOC_ARENA_MAX=2` was tried at a
+4 GiB ceiling, and the survival counts do not separate it from noise; single runs of this shape
+disagree with each other. Do not set it on the strength of this page. The mechanism is the useful
+part: a killed node's cgroup is gone, so a probe that samples only survivors reads a peak of 0, and a
+node cannot set the cap for itself because `mallopt` and `malloc_trim` are `unsafe` and the crate
+graph is `#![forbid(unsafe_code)]`. The only lever is a runtime environment variable, and any claim
+for it needs a reproduction whose run-to-run spread is characterised first.
 
 ### Network — low bandwidth, latency-sensitive
 
@@ -201,8 +192,9 @@ the RSpace trie + block store perform many small writes, so a spinning disk domi
 
 ## In practice
 
-Any modern general-purpose desktop or laptop with an NVMe SSD is enough to *run* a validator — the
-CPU/RAM needs are modest. Four caveats matter more than raw specs:
+Any modern general-purpose desktop or laptop with an NVMe SSD **and the per-validator floor above** is
+enough to *run* a validator — the CPU/RAM needs are modest, but the floor is per validator and a
+below-floor host is refused. An observer can be smaller. Four caveats matter more than raw specs:
 
 1. **Uptime, not horsepower.** A validator that sleeps, hibernates, or is shut down falls out of sync
    and stops proposing. That costs it nothing directly — this tree has **no inactivity leak**, so a
@@ -222,3 +214,16 @@ CPU/RAM needs are modest. Four caveats matter more than raw specs:
    exactly the wrong substrate for LMDB's many-small-writes pattern, and it may not expose the NVMe
    directly. A cheap always-on box running bare Linux is a better validator than a faster laptop in a
    container.
+
+## Ringfencing the node
+
+The numbers above are the sizing; the **boundary** is the operator's. A node cannot set its own cgroup
+limits, choose the kernel's OOM victim or prevent two validators sharing a host. See
+[Ringfencing a node](resource-ringfence.md) for the systemd/Docker memory, CPU, I/O and PID limits, the
+dedicated-NVMe data-directory rule and the cgroup signals to alert on. The node-side start-up preflight
+is shipped and documented there; memory-aware admission and fallback states are tracked in the
+[resource safety case](../spec/resource-safety-case.md) and HAZOP study node U17.
+
+---
+
+**Setting one up:** [Running a node: testnet now, mainnet later](validator-observer-setup.md).

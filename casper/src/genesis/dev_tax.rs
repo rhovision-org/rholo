@@ -42,6 +42,26 @@ use super::contracts::Vault;
 /// names the unit the allocation is stated in rather than leaving it implicit in a literal.
 pub const DROPS_PER_REV: i128 = 100_000_000;
 
+/// **The production genesis recipient, hard-coded in the repository.** The maintainer's custody
+/// decision, kept here rather than shipped as a config default: an empty `dev-tax-address` resolves to
+/// this address on a production node and to no allocation inside dev mode, so every production genesis
+/// (and every node replaying one) uses the same recipient while devnets and tests stay allocation-free.
+pub const PRODUCTION_DEV_TAX_ADDRESS: &str =
+    "11112aRbXppXw33soKBN3B7tPHpZ18foZvyBqr1tKS2vx3V7aVHsQq";
+
+/// **The address a genesis uses.** An explicit configuration wins (another network can name its own
+/// recipient); an empty one is [`PRODUCTION_DEV_TAX_ADDRESS`] outside dev mode and `""` — no
+/// allocation — inside it. Resolved once, before genesis creation and the replay descriptors read it.
+pub fn effective_address(configured: &str, dev_mode: bool) -> String {
+    if !configured.is_empty() {
+        configured.to_string()
+    } else if dev_mode {
+        String::new()
+    } else {
+        PRODUCTION_DEV_TAX_ADDRESS.to_string()
+    }
+}
+
 /// The floor of the allocation, in REV.
 pub const DEV_TAX_FLOOR_REV: i128 = 20_000_000;
 
@@ -422,5 +442,25 @@ mod tests {
             err.contains("dev-tax-vesting-blocks") && err.contains("--dev-mode"),
             "the refusal names the key and the escape: {err}"
         );
+    }
+
+    /// **The repository carries the production recipient; dev mode never inherits it.** An empty
+    /// configured address resolves to the constant outside dev mode and to no allocation inside it;
+    /// an explicit value wins in either mode (another network can name its own recipient).
+    #[test]
+    fn an_empty_address_resolves_to_the_production_recipient_outside_dev_mode_only() {
+        assert_eq!(
+            effective_address("", false),
+            PRODUCTION_DEV_TAX_ADDRESS,
+            "a production genesis whose config leaves the address empty uses the repo constant"
+        );
+        assert_eq!(
+            effective_address("", true),
+            "",
+            "a devnet must not inherit a real allocation"
+        );
+        let explicit = "11112VYAt8rUGNRRZX3eJdgagaAhtWTK8Js7F7X5iqddMVqyDTtYau";
+        assert_eq!(effective_address(explicit, false), explicit);
+        assert_eq!(effective_address(explicit, true), explicit);
     }
 }

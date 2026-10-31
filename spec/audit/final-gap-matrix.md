@@ -2,9 +2,9 @@
 
 Pinned upstream dev: 93d16d7d865ddade5a47b19dbffa86b954407f05. #404, #373 (including #376), #391, #392 and #402 are merged. #379, #389 and #390 are also in its ancestry.
 
-The machine-readable final-gap-matrix.json enumerates all 42 tracker/batch/release obligations with their invariant, source evidence, remaining proof, next action and acceptance. These obligations overlap; their count is not a defect count.
+The machine-readable final-gap-matrix.json enumerates all 44 tracker/batch/release obligations with their invariant, source evidence, remaining proof, next action and acceptance. These obligations overlap; their count is not a defect count.
 
-The section6-gap-inventory.json inventory covers all 90 §6 rows, including C334, the revised Decimal decision, the activation schedule, committed bounds, fundPot and C335. 43 rows are conservative category-A candidates. Source-row hashes, line locations and source links are checked against the pinned register. Classification and source coverage do not establish historical replay or independent sign-off.
+The section6-gap-inventory.json inventory covers all 92 §6 rows, including C334, the revised Decimal decision, the activation schedule, committed bounds, fundPot and C335. 45 rows are conservative category-A candidates. Source-row hashes, line locations and source links are checked against the pinned register. Classification and source coverage do not establish historical replay or independent sign-off.
 
 The [2026-10-21 close-clause decision](https://github.com/rhovision-org/rholo/issues/51#issuecomment-6316299117) accepts a named decision owner and one-line reason without a release name. The [maintainer's recorded owner decisions](https://github.com/rhovision-org/rholo/issues/51#issuecomment-6317072399) supply 12 deferral records (11 distinct proposal rows, including the staking-interface cross-reference). Landed implementation and outstanding release evidence remain distinct.
 
@@ -52,3 +52,5 @@ The [2026-10-21 close-clause decision](https://github.com/rhovision-org/rholo/is
 | Audit:merge-resolution-stage4 | EXPLICITLY DEFERRED | #127 stage 4 block carries merge resolution | Recorded owner: @PatrickMockridge; Author of #127 and its staged plan; this is a block-format change. |
 | Audit:inactivity-leak | EXPLICITLY DEFERRED | finality stake weights and full bonded-stake denominator | Recorded owner: @aixaria0; Next to the finality and liveness drills (#339/#341). |
 | Decision:developer-allocation | IMPLEMENTED / EVIDENCE INCOMPLETE | #388 is the merged canonical format-2 implementation; #371 closed as superseded; #372 governance terms remain separately deferred | Preserve #388 merge evidence and record any later #372 governance decision without conflating it with implementation selection. |
+| Audit:cost-tracks-work | IMPLEMENTED / EVIDENCE INCOMPLETE | The C345/C346 charges (`canonicalization_cost`, `union_cost`, `gov_censure_cost`; Law 91) are on dev in #514; the §6 row and inventory re-pin are recorded at this SHA | Run the pre-fork replay refusal, a populated-store upgrade and a second-binary replay, and regenerate every pinned genesis hash. |
+| Audit:cost-insert-and-tally | IMPLEMENTED / EVIDENCE INCOMPLETE | The C353/C354 charges (`set.add`'s canonicalisation, the tallies' option lists; Law 91a/91c) are on dev in #518 and the section 6 deviation row covers them | Regenerate every pinned genesis hash and exercise a pre-fork block at replay on two binaries before a network arms the change. |

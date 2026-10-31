@@ -45,8 +45,8 @@ use rchain_casper::reporting::{rho_reporter, ReportingCasper};
 use rchain_casper::runtime_manager::RuntimeManager;
 use rchain_casper::state::ProposerState;
 use rchain_casper::storage::{
-    rnode_key_value_store_manager, shard_data_dir, RESET_MARKER_DB, SHARD_ID_MARKER,
-    STORE_FORMAT_MARKER, STORE_FORMAT_VERSION,
+    rnode_key_value_store_manager, shard_data_dir, BLOCK_DISPOSITION_DB, RESET_MARKER_DB,
+    SHARD_ID_MARKER, STORE_FORMAT_MARKER, STORE_FORMAT_VERSION,
 };
 use rchain_casper::validator_identity::ValidatorIdentity;
 use rchain_comm::discovery::grpc_kademlia_rpc::GrpcKademliaRpc;
@@ -107,12 +107,18 @@ use crate::configuration::model::NodeConf;
 use crate::diagnostics::effects::MetricsRegistry;
 use crate::diagnostics::NewPrometheusReporter;
 use crate::instances::proposer_instance;
+use crate::resources::{CapacityBudget, ResourceGuard};
 use crate::runtime::shutdown::{stop_requested, SHUTDOWN_DRAIN_TIMEOUT};
 use crate::web::http::{
     acquire_admin_http_server, acquire_http_server, ShardRegistry, StatusProvider,
 };
+use crate::web::node_list::{NodeListConfig, NodeListProvider};
 use crate::web::pos_read::{PosReadApi, ShardPosRead};
 use crate::web::transaction::TransactionAPIImpl;
+use rchain_casper::block_disposition::{
+    BlockDisposition, BlockDispositionCodec, BlockDispositionStore,
+};
+use rchain_casper::engine::node_phase::NodePhaseCell;
 use rchain_casper::gateway::ledger::TxnLedger;
 use rchain_casper::gateway::{GatewayTxn, LocalShard, LocalShardDeployService};
 use rchain_ocapn::conn::Export;
@@ -456,11 +462,18 @@ pub struct NodeProgram {
     admin_web_api: Arc<dyn AdminWebApi>,
     /// The shards this node validates for, for the `GET /api/v1/shards` route.
     shards: Arc<ShardRegistry>,
+    /// The deploy hostlist (`GET /api/v1/nodes`), when `api-server.publish-node-list` is on.
+    node_list: Option<Arc<NodeListProvider>>,
     /// The on-node cross-shard 2PC coordinator, when this node is a multi-shard gateway.
     gateway: Option<Arc<GatewayTxn>>,
     block_report_api: Arc<BlockReportApi>,
     reporter: Arc<NewPrometheusReporter>,
     metrics: Arc<MetricsRegistry>,
+    /// One execution/explore budget shared by the HTTP listener and every proposer.
+    capacity_budget: Arc<CapacityBudget>,
+    /// The primary shard's finality cells, exposed on the public `/health` route as the peer-liveness
+    /// exception (only `finalityStalled`/`finalityStallEpisodes`; operator diagnosis stays off it).
+    peer_liveness: ShardHealth,
     host: String,
     port_http: Port,
     port_admin_http: Port,
@@ -502,6 +515,10 @@ pub struct NodeProgram {
     ocapn_chain: Vec<(Vec<u8>, Arc<dyn Export>)>,
     protocol_server: Option<ProtocolServer>,
     status_provider: Option<StatusProvider>,
+    /// The host-resource watchdog's sampled snapshot (A1). The status surfaces read it, and the
+    /// ingress gates (B34) evaluate their admission floor against it — one signal, so the answer a
+    /// client is refused with and the state an operator sees cannot come from two readings.
+    resources: Arc<ResourceGuard>,
     /// The primary shard's runtime manager. Exposed so an integration test can read the native
     /// state the running node actually installed (the developer-allocation leaf, the PoS params)
     /// without a second reader against the node's LMDB directory while it holds it.
@@ -522,9 +539,12 @@ impl NodeProgram {
             admin_web_api,
             faucet_enabled,
             shards,
+            node_list,
             block_report_api,
             reporter,
             metrics,
+            capacity_budget,
+            peer_liveness,
             host,
             port_http,
             port_admin_http,
@@ -548,6 +568,7 @@ impl NodeProgram {
             protocol_server,
             status_provider,
             gateway,
+            resources,
             primary_runtime: _,
         } = self;
 
@@ -603,9 +624,13 @@ impl NodeProgram {
                     shards,
                     status_provider,
                     pos_read.clone(),
+                    resources.clone(),
+                    capacity_budget,
+                    peer_liveness,
                     max_connection_idle,
                     enable_reporting,
                     faucet_enabled,
+                    node_list,
                     stop,
                 )
                 .await
@@ -763,6 +788,12 @@ pub struct ShardParts {
     pub spec: ShardSpec,
     pub block_store: BlockStore,
     pub dag: Arc<dyn BlockDagStorage>,
+    /// The durable record of every stored body this shard still owes an outcome (U19). Only
+    /// `Pending`/`Faulted` rows: accepted and refused blocks are the DAG metadata.
+    pub block_disposition: BlockDispositionStore,
+    /// **This shard's launch phase** (B47). Clone-shared with its `BlockApiImpl`, proposer, launch
+    /// and disposition loops; one cell per shard, so one shard's sync does not move another's.
+    pub phase: NodePhaseCell,
     pub runtime_manager: Arc<RuntimeManager>,
     pub approved_store: ApprovedStore,
     /// This shard's store manager, over its own data directory ([`shard_data_dir`]).
@@ -849,7 +880,7 @@ pub fn wire_block_processing(
     attest_on_new_blocks: Option<Arc<dyn Fn(&BlockMessage) + Send + Sync>>,
     health: ShardHealth,
 ) -> (mpsc::Sender<BlockMessage>, mpsc::Sender<BlockMessage>) {
-    wire_block_processing_observed(
+    let handles = wire_block_processing_observed(
         comm_state,
         parts,
         shard_id,
@@ -860,7 +891,17 @@ pub fn wire_block_processing(
         attest_on_new_blocks,
         None,
         health,
-    )
+    );
+    (handles.incoming_blocks, handles.validated_blocks)
+}
+
+/// The three senders the block pipeline exposes. The processor input is exposed because the
+/// start-up disposition audit runs **before** the shard reaches `Running` and must hand its
+/// re-offer to the already-spawned processor without going through the receiver.
+pub struct BlockProcessingHandles {
+    pub incoming_blocks: mpsc::Sender<BlockMessage>,
+    pub validated_blocks: mpsc::Sender<BlockMessage>,
+    pub processor_input: mpsc::Sender<BlockMessage>,
 }
 
 fn wire_block_processing_observed(
@@ -874,10 +915,13 @@ fn wire_block_processing_observed(
     attest_on_new_blocks: Option<Arc<dyn Fn(&BlockMessage) + Send + Sync>>,
     queue_metrics: Option<(Arc<MetricsRegistry>, usize)>,
     health: ShardHealth,
-) -> (mpsc::Sender<BlockMessage>, mpsc::Sender<BlockMessage>) {
+) -> BlockProcessingHandles {
     let (incoming_blocks_tx, incoming_blocks_rx) =
         mpsc::channel(rchain_casper::engine::node_running::MAX_PENDING_BLOCKS);
     let (validated_blocks_tx, validated_blocks_rx) = mpsc::channel(MAX_VALIDATED_BLOCKS);
+    // Refused-but-inserted blocks release waiting children through a separate stream: they are
+    // DAG entries with a verdict, not validation successes, so they must not fire the taps.
+    let (released_blocks_tx, released_blocks_rx) = mpsc::channel(MAX_VALIDATED_BLOCKS);
 
     // Tap the validated-blocks stream: for autopropose (propose on each validated block) and, when
     // `--attest-on-new-blocks` is on, for attestation (propose on each *remote* block).
@@ -914,16 +958,40 @@ fn wire_block_processing_observed(
     ));
     let put_to_incoming_queue: Arc<dyn Fn(BlockMessage) + Send + Sync> = Arc::new({
         let incoming_blocks_tx = incoming_blocks_tx.clone();
+        let log = log.clone();
         move |block| {
-            chan::try_send(&incoming_blocks_tx, block);
+            let hash = block.block_hash;
+            if !chan::try_send(&incoming_blocks_tx, block) {
+                // **A full re-injection is not a silent success** (F-U8-02's class). The
+                // receiver's `send_to_validate` treats this callback as infallible; without this
+                // line a stored parent can be dropped on the floor while its child waits.
+                log.warn(
+                    LogSource::new("node.runtime.block_processing"),
+                    &format!(
+                        "incoming queue full/closed while re-injecting stored block {}; the block \
+                         remains in the store and the receiver will retry it",
+                        hash.to_hex()
+                    ),
+                );
+            }
         }
     });
+    // A second handle for the stored-pending sweep: it claims the receiver's in-memory state
+    // under the same lock, so it cannot race a release.
+    let reoffer_state = receiver_state.clone();
+    // **The body and its pending row are one transaction** (C350), which needs the store manager
+    // rather than the two already-opened typed stores: the atomic write names both databases.
+    let body_writer =
+        rchain_casper::block_disposition::BodyDispositionWriter::new(parts.store_manager.clone());
     let validation_rx = block_receiver::apply_with_queue_observer(
         receiver_state,
         incoming_blocks_rx,
         validated_blocks_rx,
+        released_blocks_rx,
         shard_id.to_string(),
         parts.block_store.clone(),
+        parts.block_disposition.clone(),
+        body_writer,
         parts.dag.clone(),
         comm_state.block_retriever.clone(),
         put_to_incoming_queue,
@@ -937,6 +1005,12 @@ fn wire_block_processing_observed(
     // ahead of CPU-bound replay validation (R15).
     let (processor_input_tx, processor_input_rx) =
         mpsc::channel(rchain_casper::engine::node_running::MAX_PENDING_BLOCKS);
+    // A second handle for the disposition loops: the start-up audit re-offers bodies a crash left
+    // unsettled, and the retry loop re-offers faulted ones. Both write directly to the processor,
+    // bypassing the receiver — the block is already stored, and re-admitting it through
+    // `begin_stored` would be refused as a block the receiver has seen.
+    let processor_input_tx_disposition = processor_input_tx.clone();
+    let disposition_log = log.clone();
     let load_blocks = {
         let block_store = parts.block_store.clone();
         let log = log.clone();
@@ -989,11 +1063,13 @@ fn wire_block_processing_observed(
     let processor = block_processor::apply(
         processor_input_rx,
         validated_blocks_tx.clone(),
+        released_blocks_tx,
         shard_id.to_string(),
         min_phlo_price,
         max_number_of_parents,
         parts.dag.clone(),
         parts.block_store.clone(),
+        parts.block_disposition.clone(),
         parts.runtime_manager.clone(),
         comm_state.comm_util.clone(),
         block_index,
@@ -1002,7 +1078,43 @@ fn wire_block_processing_observed(
     );
     tokio::spawn(processor);
 
-    (incoming_blocks_tx, validated_blocks_tx)
+    // **The retry loop and the periodic audit** run for the life of the shard. The start-up
+    // re-offer is *not* spawned here: launch runs it before the shard reaches `Running` (unit 3),
+    // so a restarted node cannot report running with the ledger unsettled.
+    // Stored bodies skipped at boot or refused for receiver capacity must be re-offered when
+    // their parents arrive; faulted rows continue through the separate backoff loop (Law 88c).
+    tokio::spawn(
+        rchain_casper::block_disposition::retry_ready_stored_pending(
+            parts.phase.clone(),
+            parts.block_disposition.clone(),
+            parts.block_store.clone(),
+            parts.dag.clone(),
+            reoffer_state,
+            processor_input_tx_disposition.clone(),
+            disposition_log.clone(),
+        ),
+    );
+    tokio::spawn(rchain_casper::block_disposition::retry_faulted_blocks(
+        parts.phase.clone(),
+        parts.block_disposition.clone(),
+        parts.block_store.clone(),
+        processor_input_tx_disposition.clone(),
+        disposition_log.clone(),
+    ));
+    // A stored body the DAG never accounts for is loud even when no ledger row names it (a body
+    // written by a pre-ledger build). The audit is a count comparison, not a block scan.
+    tokio::spawn(rchain_casper::block_disposition::audit_stored_bodies(
+        parts.phase.clone(),
+        parts.block_store.clone(),
+        parts.dag.clone(),
+        disposition_log,
+    ));
+
+    BlockProcessingHandles {
+        incoming_blocks: incoming_blocks_tx,
+        validated_blocks: validated_blocks_tx,
+        processor_input: processor_input_tx_disposition,
+    }
 }
 
 /// Build the RSpace importer over the on-chain state stores (port of
@@ -1238,6 +1350,18 @@ pub async fn setup_node_program(
     // gauges) and by the HTTP server (whose `/metrics` publishes a snapshot of it).
     let metrics = Arc::new(MetricsRegistry::new());
 
+    // The host-resource watchdog (A1). A dedicated thread, started before any store is opened, so the
+    // signal is available to the status surface from the first request and is not carried by the tokio
+    // executor it is meant to protect. It only reads; admission and fallback states arrive later.
+    let resources = ResourceGuard::start(
+        conf.storage.data_dir.clone(),
+        std::time::Duration::from_secs(5),
+    )
+    .map_err(|e| format!("resource watchdog: {e}"))?;
+    // One permit budget for the whole node: HTTP exploits and the proposer must see the same
+    // execution/explore counters (C341).
+    let capacity_budget = Arc::new(CapacityBudget::new(resources.clone()));
+
     // Node-level resources, built once: the validator identity, and the REPL eval runtime (an
     // isolated `eval-*` store set, deliberately chain-independent — port of Scala's `evalStores`).
     let validator_opt: Option<ValidatorIdentity> = conf
@@ -1258,6 +1382,8 @@ pub async fn setup_node_program(
             id,
             &comm_state,
             &validator_opt,
+            resources.clone(),
+            capacity_budget.clone(),
             &log,
             metrics.clone(),
         )
@@ -1404,8 +1530,10 @@ pub async fn setup_node_program(
             primary_parts.transaction_api.clone(),
             faucet_deployer_key,
             primary_id.to_string(),
+            resources.clone(),
         )
-        .with_persistent_faucet_ledger(conf.storage.data_dir.join("faucet-ledger.json"))?,
+        .with_persistent_faucet_ledger(conf.storage.data_dir.join("faucet-ledger.json"))?
+        .with_node_list(conf.api_server.publish_node_list),
     );
     // The PoS read (AUDIT C148): the primary shard's live native state through the runtime manager
     // that owns it, plus the status API for the head's height — one definition of "latest block".
@@ -1413,7 +1541,8 @@ pub async fn setup_node_program(
         primary_parts.runtime_manager.clone(),
         web_api.clone(),
     ));
-    let admin_web_api: Arc<dyn AdminWebApi> = Arc::new(AdminWebApiImpl::new(routing.clone()));
+    let admin_web_api: Arc<dyn AdminWebApi> =
+        Arc::new(AdminWebApiImpl::new(routing.clone(), resources.clone()));
     let grpc_services = GrpcServices::build(
         routing.clone(),
         primary_parts.block_report_api.clone(),
@@ -1428,7 +1557,34 @@ pub async fn setup_node_program(
             .iter()
             .map(|(shard_id, rt)| (shard_id.clone(), rt.parts.block_api.clone()))
             .collect(),
+        phases: shards
+            .iter()
+            .map(|(shard_id, rt)| (shard_id.clone(), rt.parts.phase.clone()))
+            .collect(),
     });
+
+    // The deploy hostlist (Law 90). Built only when the operator opted in: the route publishes peer
+    // addresses, and a disabled node must answer 404 rather than an empty list.
+    let node_list = if conf.api_server.publish_node_list {
+        let shard_ids: Vec<String> = shards.keys().map(ToString::to_string).collect();
+        Some(NodeListProvider::new(
+            NodeListConfig {
+                probe_interval: conf.api_server.node_list_probe_interval,
+                probe_timeout: conf.api_server.node_list_probe_timeout,
+                max_entries: conf.api_server.node_list_max_entries,
+            },
+            comm_state.connections.clone(),
+            comm_state.rp_conf.clone(),
+            primary_parts.block_api.clone(),
+            shard_ids,
+            primary_id.to_string(),
+            u16::try_from(conf.api_server.port_http)
+                .map_err(|_| "api-server.port-http is not a valid port".to_string())?,
+            log.clone(),
+        )?)
+    } else {
+        None
+    };
 
     // The 2PC gateway (Laws 26–29): a node that is a member of several shards can drive a
     // cross-shard transaction itself. It exists only where it can act — more than one membership
@@ -1441,9 +1597,12 @@ pub async fn setup_node_program(
         pos_read,
         admin_web_api,
         shards: registry,
+        node_list,
         block_report_api: primary_parts.block_report_api.clone(),
         reporter: Arc::new(NewPrometheusReporter::new(prometheus_scrape_config())),
         metrics,
+        capacity_budget,
+        peer_liveness: primary.health.clone(),
         host: conf.api_server.host.clone(),
         port_http: Port::try_from(conf.api_server.port_http).map_err(|e| e.to_string())?,
         port_admin_http: Port::try_from(conf.api_server.port_admin_http)
@@ -1481,6 +1640,7 @@ pub async fn setup_node_program(
             discovery: comm_state.discovery.clone(),
         }),
         gateway,
+        resources,
         primary_runtime: primary_parts.runtime_manager.clone(),
     })
 }
@@ -1611,6 +1771,7 @@ fn listener_stopped(
 struct ShardRuntime {
     parts: ShardParts,
     peer_tx: mpsc::Sender<PeerMessage>,
+    health: ShardHealth,
 }
 
 /// A registry for the test call sites of [`setup_shard`].
@@ -1649,6 +1810,23 @@ async fn build_eval_runtime(data_dir: &std::path::Path) -> Result<Arc<RhoRuntime
 /// pushed by whatever can change it, which is why this is called from the autopropose tap and the
 /// autopropose timer rather than once from setup. A gauge pushed only at setup would read `0` for ever
 /// and look like a healthy node, which is the failure this exists to prevent.
+fn push_finality_health(metrics: &MetricsRegistry, source: &Source, health: &ShardHealth) {
+    metrics.set_gauge(
+        source,
+        "finality_stalled",
+        if health.finality_stall_sustained() {
+            1
+        } else {
+            0
+        },
+    );
+    metrics.set_gauge(
+        source,
+        "finality_stall_episodes",
+        i64::try_from(health.stall_episodes()).unwrap_or(i64::MAX),
+    );
+}
+
 fn push_proposer_health(metrics: &MetricsRegistry, source: &Source, health: &ProposeHealth) {
     let health: ProposerHealth = health.snapshot();
     metrics.set_gauge(
@@ -1678,6 +1856,8 @@ async fn setup_shard_runtime(
     id: &NodeIdentifier,
     comm_state: &CommState,
     validator_opt: &Option<ValidatorIdentity>,
+    resources: Arc<ResourceGuard>,
+    capacity_budget: Arc<CapacityBudget>,
     log: &Arc<dyn Log>,
     metrics: Arc<MetricsRegistry>,
 ) -> Result<ShardRuntime, String> {
@@ -1701,6 +1881,7 @@ async fn setup_shard_runtime(
         metrics.clone(),
         propose_health.clone(),
         shard_health.clone(),
+        log.as_ref(),
     )
     .await?;
     // LFS sync is shard-blind: the fringe exchange carries no shard id, so a multi-shard node could
@@ -1799,6 +1980,7 @@ async fn setup_shard_runtime(
                 let tap_metrics = metrics.clone();
                 let tap_source = health_source.clone();
                 let tap_health = propose_health.clone();
+                let tap_shard_health = shard_health.clone();
                 // The tap runs on every validated block; if the propose queue is full or the
                 // proposer stream is gone, the request is dropped — and nothing else would say so.
                 let tap: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
@@ -1810,6 +1992,7 @@ async fn setup_shard_runtime(
                     // enqueued — so hoisting it here is the same writes in the same order, with the
                     // guard now standing between them and the queue instead of around one of them.
                     push_proposer_health(&tap_metrics, &tap_source, &tap_health);
+                    push_finality_health(&tap_metrics, &tap_source, &tap_shard_health);
                     fire_autopropose_tap(&tap_health, || {
                         let (otx, _orx) = tokio::sync::oneshot::channel();
                         if let Err(e) = tap_tx.try_send((ProposeSource::Automatic, otx)) {
@@ -1836,6 +2019,7 @@ async fn setup_shard_runtime(
                 // halt readable — pushed at the tick *and* once more after the flag is set, because the
                 // tick that breaks is the last write this task will ever make.
                 let timer_metrics = metrics.clone();
+                let timer_shard_health = shard_health.clone();
                 let timer_source = health_source.clone();
                 let timer_health = propose_health.clone();
                 let timer_dag = parts.dag.clone();
@@ -1875,6 +2059,11 @@ async fn setup_shard_runtime(
                                 ),
                             }
                             push_proposer_health(&timer_metrics, &timer_source, &timer_health);
+                            push_finality_health(
+                                &timer_metrics,
+                                &timer_source,
+                                &timer_shard_health,
+                            );
                             timer_log.error(
                                 LogSource::new("coop.rchain.node.runtime.Setup"),
                                 &format!(
@@ -1973,7 +2162,7 @@ async fn setup_shard_runtime(
     };
 
     // Block receiver + processor streams (spawned internally).
-    let (incoming_blocks_tx, _validated_blocks_tx) = wire_block_processing_observed(
+    let handles = wire_block_processing_observed(
         comm_state,
         &parts,
         &shard_id,
@@ -1985,6 +2174,7 @@ async fn setup_shard_runtime(
         Some((metrics, index)),
         shard_health.clone(),
     );
+    let incoming_blocks_tx = handles.incoming_blocks;
 
     // This shard's slice of the peer-message stream (fed by the router).
     let (peer_tx, peer_message_rx) = mpsc::channel::<PeerMessage>(50);
@@ -1996,6 +2186,7 @@ async fn setup_shard_runtime(
         spec.clone(),
         !conf.protocol_client.disable_lfs,
         conf.casper.sync_anchor.clone(),
+        conf.casper.expected_genesis_hash.clone(),
         // F-U5-01's acting half (#320): the operator's switch, off unless they turned it on.
         conf.casper.self_reset,
         conf.protocol_server.disable_state_exporter,
@@ -2011,8 +2202,11 @@ async fn setup_shard_runtime(
         parts.block_store.clone(),
         parts.approved_store.clone(),
         parts.dag.clone(),
+        parts.block_disposition.clone(),
+        handles.processor_input,
         importer,
         exporter,
+        parts.phase.clone(),
         log.clone(),
     );
     let node_launch_log = log.clone();
@@ -2111,6 +2305,9 @@ async fn setup_shard_runtime(
             proposer_parts.queue_tx,
             proposer,
             proposer_parts.state,
+            resources.clone(),
+            capacity_budget.execution.clone(),
+            parts.phase.clone(),
             log.clone(),
         );
         tokio::spawn(async move {
@@ -2120,7 +2317,11 @@ async fn setup_shard_runtime(
         });
     }
 
-    Ok(ShardRuntime { parts, peer_tx })
+    Ok(ShardRuntime {
+        parts,
+        peer_tx,
+        health: shard_health,
+    })
 }
 
 /// **Fire the autopropose tap for one validated block, unless the timer is halted** (W-N4-08).
@@ -2159,6 +2360,125 @@ fn fire_autopropose_tap(health: &ProposeHealth, enqueue: impl FnOnce()) -> bool 
 /// ([`shard_data_dir`]): the primary shard keeps the data-directory root, every additional shard
 /// nests under `shard/…`. Node-level resources (the transport, the ports, the eval runtime, the
 /// validator identity) are assembled once by [`setup_node_program`], not here.
+/// **The pending-work relay** (Law 86e, issue #477). Opt in with
+/// `RNODE_DEPLOY_RELAY=1`; the API port defaults to the external gRPC port (40401) and can be
+/// overridden with `RNODE_DEPLOY_RELAY_PORT`. By default each peer's external deploy
+/// port is derived from its advertised protocol port (+1), so co-hosted validators
+/// on 40400/41400 receive on 40401/41401 respectively. After admission, the signed
+/// deploy is offered to each peer's deploy service for normal ingress validation.
+/// The sender keeps its own pool row (copy, not move), and a bounded seen set stops a relay
+/// from circulating. Off by default: a node whose peers do not expose the API port would spend
+/// a dial per deploy for nothing.
+/// The external deploy port follows the protocol port in the published testnet
+/// layout. A single fixed port for every peer sends co-hosted validators'
+/// deploys to the *other* validator on that host (40401 vs 41401).
+fn deploy_relay_port(protocol_port: u16, override_port: Option<u16>) -> Option<i32> {
+    override_port
+        .filter(|port| *port > 0)
+        .or_else(|| protocol_port.checked_add(1).filter(|port| *port > 0))
+        .map(i32::from)
+}
+
+fn deploy_relay_from_env(
+    connections: rchain_casper::protocol::comm_util::ConnectionsCell,
+) -> Option<rchain_casper::api::block_api_impl::RelayFunction> {
+    let flag = |name: &str| std::env::var(name).ok();
+    let enabled = flag("RNODE_DEPLOY_RELAY")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !enabled {
+        return None;
+    }
+    let override_port: Option<u16> = flag("RNODE_DEPLOY_RELAY_PORT")
+        .and_then(|v| v.parse().ok())
+        .filter(|port| *port > 0);
+    let fanout: usize = flag("RNODE_DEPLOY_RELAY_FANOUT")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(usize::MAX);
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(
+        std::collections::HashSet::<Vec<u8>>::new(),
+    ));
+    Some(std::sync::Arc::new(move |deploy: SignedDeployData| {
+        let connections = connections.clone();
+        let seen = seen.clone();
+        tokio::spawn(async move {
+            {
+                let mut seen = seen.lock().unpoison();
+                if !seen.insert(deploy.sig.clone()) {
+                    return;
+                }
+                if seen.len() > 100_000 {
+                    seen.clear();
+                    seen.insert(deploy.sig.clone());
+                }
+            }
+            let peers = connections.read().await.clone();
+            for peer in peers.into_iter().take(fanout) {
+                let host = peer.endpoint.host.clone();
+                let protocol_port = u16::from(peer.endpoint.tcp_port);
+                let Some(port) = deploy_relay_port(protocol_port, override_port) else {
+                    continue;
+                };
+                let Ok(client) = rchain_casper::protocol::client::GrpcDeployService::connect(
+                    &host,
+                    port,
+                    16 * 1024 * 1024,
+                )
+                .await
+                else {
+                    continue;
+                };
+                let _ =
+                    rchain_casper::protocol::client::DeployService::deploy(&client, &deploy).await;
+            }
+        });
+    }))
+}
+
+#[cfg(test)]
+mod deploy_relay_port_tests {
+    use super::deploy_relay_port;
+
+    #[test]
+    fn peer_specific_port_follows_each_validators_protocol_listener() {
+        assert_eq!(deploy_relay_port(40400, None), Some(40401));
+        assert_eq!(deploy_relay_port(41400, None), Some(41401));
+        assert_ne!(
+            deploy_relay_port(40400, None),
+            deploy_relay_port(41400, None)
+        );
+    }
+
+    #[test]
+    fn explicit_relay_port_remains_available_for_nonstandard_service_layouts() {
+        assert_eq!(deploy_relay_port(41400, Some(45001)), Some(45001));
+        assert_eq!(deploy_relay_port(40400, Some(45001)), Some(45001));
+        assert_eq!(deploy_relay_port(40400, Some(0)), Some(40401));
+        assert_eq!(deploy_relay_port(u16::MAX, None), None);
+    }
+}
+
+// **The cross-deploy batch switch** (Law 86c). Off by default: the sequential path is the
+// reference. `RNODE_CROSS_DEPLOY_BATCHING=1` turns it on; verification defaults on and refuses a
+// mismatch by falling back to the whole-block sequential run; `_MAX` caps the fork count.
+fn cross_deploy_batch_policy() -> rchain_casper::runtime_manager::BatchPolicy {
+    let flag = |name: &str| std::env::var(name).ok();
+    let enabled = flag("RNODE_CROSS_DEPLOY_BATCHING")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let verify = flag("RNODE_CROSS_DEPLOY_BATCH_VERIFY")
+        .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
+        .unwrap_or(true);
+    let max_batch = flag("RNODE_CROSS_DEPLOY_BATCH_MAX")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4);
+    rchain_casper::runtime_manager::BatchPolicy {
+        enabled,
+        verify,
+        max_batch,
+    }
+}
+
 pub async fn setup_shard(
     conf: &NodeConf,
     spec: &ShardSpec,
@@ -2170,6 +2490,7 @@ pub async fn setup_shard(
     metrics: Arc<MetricsRegistry>,
     propose_health: ProposeHealth,
     shard_health: ShardHealth,
+    log: &dyn Log,
 ) -> Result<ShardParts, String> {
     let data_dir = shard_data_dir(&conf.storage.data_dir, index, &spec.shard_id);
     let store_manager = rnode_key_value_store_manager(&data_dir);
@@ -2186,6 +2507,13 @@ pub async fn setup_shard(
         )
         .await?,
     );
+    // **Before the expensive metadata rebuild** (A2): the store's record count is cheap, and the
+    // start-up resource floor is decided here rather than after a replay that a small host cannot
+    // finish. A refusal returns a setup error; an observer's warnings are logged.
+    let chain_blocks = u64::try_from(block_metadata_kv.count().await.map_err(|e| e.to_string())?)
+        .map_err(|_| "the persisted block count does not fit u64".to_string())?;
+    let startup_facts = crate::resources::preflight::gather(&data_dir);
+    crate::resources::preflight::enforce(conf, &startup_facts, chain_blocks, log)?;
     let block_metadata_store = Arc::new(
         BlockMetadataStore::create(block_metadata_kv)
             .await
@@ -2234,6 +2562,18 @@ pub async fn setup_shard(
         )
         .await?,
     );
+    // **Every stored body this shard still owes an outcome** (U19). Written before dependency
+    // resolution and settled by the processor on either verdict; only faults survive.
+    let block_disposition_kv: Arc<dyn KeyValueTypedStore<BlockHash, BlockDisposition>> = Arc::new(
+        database(
+            &store_manager,
+            BLOCK_DISPOSITION_DB,
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockDispositionCodec),
+        )
+        .await?,
+    );
+    let block_disposition = BlockDispositionStore::from_store(block_disposition_kv);
     let dag_kv = Arc::new(
         BlockDagKeyValueStorage::create(block_metadata_store, deploy_index, deploy_store)
             .await
@@ -2331,7 +2671,8 @@ pub async fn setup_shard(
             effect_mode,
         )
         .with_genesis_pos(genesis_pos)
-        .with_genesis_vaults(genesis_vaults),
+        .with_genesis_vaults(genesis_vaults)
+        .with_batch_policy(cross_deploy_batch_policy()),
     );
 
     // The eval runtime for the Repl service is node-level (it holds no chain state), and the
@@ -2391,6 +2732,9 @@ pub async fn setup_shard(
         }
     });
 
+    // **This shard's phase cell**, created here so the API and every later consumer share it. A
+    // restart begins at `Starting`; only this shard's launch writes it.
+    let phase = NodePhaseCell::new();
     let block_api: Arc<dyn rchain_casper::api::block_api::BlockApi> = Arc::new(BlockApiImpl::new(
         block_dag_storage.clone(),
         block_store.clone(),
@@ -2412,6 +2756,8 @@ pub async fn setup_shard(
         std::collections::BTreeSet::new(),
         propose_health,
         shard_health,
+        phase.clone(),
+        deploy_relay_from_env(connections.clone()),
     ));
 
     let report_store: Arc<dyn KeyValueTypedStore<BlockHash, BlockEventInfo>> = Arc::new(
@@ -2447,6 +2793,27 @@ pub async fn setup_shard(
     // to a different shard must fail startup, not read as an empty chain.
     check_shard_data_dir(&data_dir, spec, block_dag_storage.as_ref(), &block_store).await?;
 
+    // **Repair the derived indexes before the backfill declares the deployer index complete** (B39,
+    // HAZOP F-U17-11). The audit is independent of the reset marker: an upgraded store may carry rows
+    // from a crash on an older build, or from a rewind whose empty metadata drop skipped the cleanup.
+    // A failure is logged and the shard runs: the rows make the proposer's replay guard skip a pooled
+    // deploy, which the next boot retries, rather than a reason to refuse to serve the shard.
+    match dag_kv.repair_derived_indexes().await {
+        Ok((0, 0)) => {}
+        Ok((deploy_rows, deployer_rows)) => log.warn(
+            LogSource::new("coop.rchain.node.runtime.DeployerIndex"),
+            &format!(
+                "{}: derived-index audit repaired {deploy_rows} deploy-index and {deployer_rows} \
+                 deployer-index row(s) naming a block this DAG does not hold",
+                spec.shard_id
+            ),
+        ),
+        Err(e) => log.warn(
+            LogSource::new("coop.rchain.node.runtime.DeployerIndex"),
+            &format!("{}: derived-index audit failed: {e}", spec.shard_id),
+        ),
+    }
+
     // A node upgraded onto an existing chain indexes the blocks it already holds, once, in the
     // background; until it finishes, `GET /api/v1/deployer` reports the height it has reached.
     {
@@ -2474,6 +2841,8 @@ pub async fn setup_shard(
         spec: spec.clone(),
         block_store,
         dag: block_dag_storage,
+        block_disposition,
+        phase,
         runtime_manager,
         approved_store,
         store_manager,
@@ -2570,16 +2939,34 @@ async fn check_shard_data_dir(
 /// "something wrote this and it is not a version" is not a state to read a store from.
 fn check_store_format(dir: &std::path::Path) -> Result<(), String> {
     let marker = dir.join(STORE_FORMAT_MARKER);
-    let recorded = std::fs::read_to_string(&marker)
-        .ok()
-        .map(|v| v.trim().to_string());
-    let Some(recorded) = recorded else {
-        return std::fs::write(&marker, STORE_FORMAT_VERSION.to_string()).map_err(|e| {
+    let recorded = match std::fs::read_to_string(&marker) {
+        Ok(recorded) => Some(recorded.trim().to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(format!(
+                "cannot read store-format marker {}: {error}",
+                marker.display()
+            ))
+        }
+    };
+    let stamp = || -> Result<(), String> {
+        std::fs::write(&marker, STORE_FORMAT_VERSION.to_string()).map_err(|error| {
             format!(
-                "cannot write the store-format marker to {}: {e}",
+                "cannot write store-format marker {}: {error}",
                 marker.display()
             )
-        });
+        })?;
+        std::fs::File::open(&marker)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| format!("cannot sync store-format marker: {error}"))?;
+        #[cfg(unix)]
+        std::fs::File::open(dir)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| format!("cannot sync store-format directory: {error}"))?;
+        Ok(())
+    };
+    let Some(recorded) = recorded else {
+        return stamp();
     };
     let version: u32 = recorded.parse().map_err(|_| {
         format!(
@@ -2596,13 +2983,44 @@ fn check_store_format(dir: &std::path::Path) -> Result<(), String> {
             dir.display()
         ));
     }
+    if version < STORE_FORMAT_VERSION {
+        stamp()?;
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rchain_block_storage::dag::finalizer::NoAdvance;
     use rchain_models::block_metadata::SlashSeverity;
+
+    #[test]
+    fn the_finality_liveness_gauges_are_pushed() {
+        let registry = MetricsRegistry::new();
+        let health = ShardHealth::new();
+        let reason = NoAdvance::Support {
+            supporting: 0,
+            total: 1,
+            full_partitions: 0,
+            candidates: 1,
+            partition: 1,
+        };
+        health.note_finality_stall(Some(&reason));
+        health.note_finality_stall(Some(&reason));
+        push_finality_health(&registry, &Source::base().sub("shard_0"), &health);
+        let snapshot = registry.snapshot();
+        let value = |name: &str| {
+            snapshot
+                .metrics
+                .gauges
+                .iter()
+                .find(|m| m.name == name)
+                .map(|m| m.value)
+        };
+        assert_eq!(value("rchain.shard_0.finality_stalled"), Some(1));
+        assert_eq!(value("rchain.shard_0.finality_stall_episodes"), Some(1));
+    }
 
     /// A block store whose every read fails, so a read error is observable as one.
     struct FailingBlockStore;
@@ -2759,6 +3177,7 @@ mod tests {
             metrics_for_test(),
             ProposeHealth::new(),
             ShardHealth::new(),
+            &rchain_shared::log::NopLog,
         )
         .await
         .expect("setup_shard should assemble");
@@ -2811,6 +3230,7 @@ mod tests {
             metrics_for_test(),
             ProposeHealth::new(),
             ShardHealth::new(),
+            &rchain_shared::log::NopLog,
         )
         .await
         .expect("primary shard");
@@ -2825,6 +3245,7 @@ mod tests {
             metrics_for_test(),
             ProposeHealth::new(),
             ShardHealth::new(),
+            &rchain_shared::log::NopLog,
         )
         .await
         .expect("child shard");
@@ -2867,6 +3288,7 @@ mod tests {
             metrics_for_test(),
             ProposeHealth::new(),
             ShardHealth::new(),
+            &rchain_shared::log::NopLog,
         )
         .await
         {
@@ -3044,6 +3466,7 @@ mod tests {
             metrics_for_test(),
             ProposeHealth::new(),
             ShardHealth::new(),
+            &rchain_shared::log::NopLog,
         )
         .await
         .expect("first assembly");
@@ -3089,6 +3512,7 @@ mod tests {
             metrics_for_test(),
             ProposeHealth::new(),
             ShardHealth::new(),
+            &rchain_shared::log::NopLog,
         )
         .await
         {
@@ -3159,6 +3583,11 @@ mod tests {
         check_store_format(&dir).expect("its own version");
         std::fs::write(&marker, "0").unwrap();
         check_store_format(&dir).expect("an older store is the advance an upgrade is for");
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap(),
+            STORE_FORMAT_VERSION.to_string(),
+            "an upgrade must stamp the new semantics before it can write them"
+        );
 
         // Newer: refused, naming both numbers.
         let newer = STORE_FORMAT_VERSION + 1;

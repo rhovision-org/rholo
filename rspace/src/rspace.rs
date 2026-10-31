@@ -649,6 +649,13 @@ where
     A: Clone + Serialize<A> + Send + Sync + 'static,
     K: Clone + Serialize<K> + Send + Sync + 'static,
 {
+    /// Fold the hot store and the native overlay into a new history root.
+    ///
+    /// **The root is recorded as known; `CURRENT_ROOT` does not move here** (law 80, B40, HAZOP
+    /// F-U17-10). A checkpoint is written for a *candidate* state — a replay, a play not yet accepted
+    /// — and publishing it was the defect: a block refused after its checkpoint left the durable
+    /// pointer naming a post-state no accepted block carried. The block's acceptance publishes the
+    /// root through `HistoryRepository::publish_if_known`.
     async fn create_checkpoint(&self) -> std::result::Result<Checkpoint, String> {
         let changes = self.current_store().changes().await;
         // **The overlay is not discarded until the fold that consumes it has succeeded** (law 74,
@@ -663,7 +670,7 @@ where
         let next_history = {
             let history = self.current_history();
             match history
-                .checkpoint_with_native(&changes, &native_changes)
+                .checkpoint_with_native_deferred(&changes, &native_changes)
                 .await
             {
                 Ok(next) => next,

@@ -8,7 +8,7 @@ use rchain_shared::lock::Unpoison;
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -153,7 +153,11 @@ pub struct Proposer {
     check_active_validator:
         Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<Result<bool, String>> + Send + Sync>,
     create_block: Arc<
-        dyn Fn(&ValidatorIdentity, ProposeSource) -> BoxFuture<Result<BlockCreatorResult, String>>
+        dyn Fn(
+                &ValidatorIdentity,
+                ProposeSource,
+                Option<usize>,
+            ) -> BoxFuture<Result<BlockCreatorResult, String>>
             + Send
             + Sync,
     >,
@@ -172,6 +176,9 @@ pub struct Proposer {
     /// broadcast, no refusal anywhere, no slash). `validate_block` stores the real block's body and
     /// nothing validates the twin, so the twin needs its own write.
     block_store: BlockStore,
+    /// The largest execution batch this proposer may run: 1 when cross-deploy batching is off,
+    /// otherwise the configured max. The node acquires at most this many execution permits.
+    batch_cap: usize,
 }
 
 impl Proposer {
@@ -185,6 +192,7 @@ impl Proposer {
             dyn Fn(
                     &ValidatorIdentity,
                     ProposeSource,
+                    Option<usize>,
                 ) -> BoxFuture<Result<BlockCreatorResult, String>>
                 + Send
                 + Sync,
@@ -212,12 +220,24 @@ impl Proposer {
             stale_snapshot_equivocations,
             equivocation_injection,
             block_store,
+            batch_cap: 1,
         }
+    }
+
+    /// Set the execution batch cap (a node builder; `new` defaults to 1).
+    pub fn with_batch_cap(mut self, cap: usize) -> Self {
+        self.batch_cap = cap.max(1);
+        self
+    }
+
+    pub fn batch_cap(&self) -> usize {
+        self.batch_cap
     }
 
     async fn do_propose(
         &self,
         source: ProposeSource,
+        batch_limit: Option<usize>,
     ) -> Result<(ProposeResult, Option<BlockMessage>), String> {
         // A DAG that cannot be read is an error, not `NotBonded` (AUDIT C67): the oracle's
         // `lookupUnsafe` raises, and reporting "not bonded" would stop this node proposing on a wrong
@@ -250,7 +270,13 @@ impl Proposer {
             Err(e) => return Err(format!("cannot decide whether this node is bonded: {e}")),
         }
 
-        match (self.create_block)(&self.validator, source).await? {
+        match (self.create_block)(&self.validator, source, batch_limit).await? {
+            BlockCreatorResult::AwaitingFinality => Ok((
+                ProposeResult {
+                    propose_status: ProposeStatus::AwaitingFinality,
+                },
+                None,
+            )),
             BlockCreatorResult::NoNewDeploys => Ok((
                 ProposeResult {
                     propose_status: ProposeStatus::NoNewDeploys,
@@ -263,6 +289,16 @@ impl Proposer {
             BlockCreatorResult::AlreadyProposedThisRound => Ok((
                 ProposeResult {
                     propose_status: ProposeStatus::NotEnoughNewBlocks,
+                },
+                None,
+            )),
+            // **No private chain.** A node that has fallen more than the policy bound behind
+            // finality must not keep extending a chain no peer has accepted. The status is the one
+            // that already existed but had no producer; the node-level gate turns it into a halt
+            // of propose *and* attest, with an operator resume.
+            BlockCreatorResult::TooFarAheadOfLastFinalized => Ok((
+                ProposeResult {
+                    propose_status: ProposeStatus::TooFarAheadOfLastFinalized,
                 },
                 None,
             )),
@@ -419,6 +455,17 @@ impl Proposer {
         source: ProposeSource,
         propose_id: tokio::sync::oneshot::Sender<ProposerResult>,
     ) -> Result<(ProposeResult, Option<BlockMessage>), String> {
+        self.propose_with_limit(source, propose_id, None).await
+    }
+
+    /// Propose with an explicit execution-batch cap. `None` keeps the runtime's configured policy;
+    /// the node passes the number of execution permits it acquired.
+    pub async fn propose_with_limit(
+        &self,
+        source: ProposeSource,
+        propose_id: tokio::sync::oneshot::Sender<ProposerResult>,
+        batch_limit: Option<usize>,
+    ) -> Result<(ProposeResult, Option<BlockMessage>), String> {
         let validator = Validator::from_slice(self.validator.public_key.bytes());
         let next_seq = (self.get_latest_seq_number)(validator).await + 1;
 
@@ -429,9 +476,9 @@ impl Proposer {
                     seq_number: next_seq,
                 },
             );
-            self.do_propose(source).await
+            self.do_propose(source, batch_limit).await
         } else {
-            let result = self.do_propose(source).await;
+            let result = self.do_propose(source, batch_limit).await;
             let proposer_result = match &result {
                 Ok((result, Some(block))) => ProposerResult::Success {
                     status: result.propose_status.clone(),
@@ -514,6 +561,7 @@ impl Proposer {
             dyn Fn(
                     &ValidatorIdentity,
                     ProposeSource,
+                    Option<usize>,
                 ) -> BoxFuture<Result<BlockCreatorResult, String>>
                 + Send
                 + Sync,
@@ -533,40 +581,48 @@ impl Proposer {
             // The first blocked observation is process-local monotonic time. None means the
             // round is healthy; restarts begin a fresh observation, never import a timer.
             let blocked_since: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
-            Arc::new(move |vi: &ValidatorIdentity, source: ProposeSource| {
-                let runtime = runtime.clone();
-                let dag = dag.clone();
-                let block_store = block_store.clone();
-                let block_index = block_index.clone();
-                let vi = vi.clone();
-                let shard_id = shard_id.clone();
-                let blocked_since_advance = blocked_since_advance.clone();
-                let blocked_since = blocked_since.clone();
-                let dummy_deploy_opt = dummy_deploy_opt.clone();
-                let log = log.clone();
-                let health = health.clone();
-                let max_number_of_parents = max_number_of_parents;
-                Box::pin(async move {
-                    create_block(
-                        runtime.as_ref(),
-                        dag.as_ref(),
-                        &block_store,
-                        block_index.as_ref(),
-                        &vi,
-                        &shard_id,
-                        min_phlo_price,
-                        &log,
-                        max_number_of_parents,
-                        epoch_length,
-                        dummy_deploy_opt.as_ref(),
-                        &blocked_since_advance,
-                        &blocked_since,
-                        source,
-                        &health,
-                    )
-                    .await
-                })
-            })
+            // Independent monotonic retry for a quiet chain with unfinalized work.
+            // It belongs to this shard/proposer, not a process-global clock.
+            let quiet_retry_since: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+            Arc::new(
+                move |vi: &ValidatorIdentity, source: ProposeSource, batch_limit: Option<usize>| {
+                    let runtime = runtime.clone();
+                    let dag = dag.clone();
+                    let block_store = block_store.clone();
+                    let block_index = block_index.clone();
+                    let vi = vi.clone();
+                    let shard_id = shard_id.clone();
+                    let blocked_since_advance = blocked_since_advance.clone();
+                    let blocked_since = blocked_since.clone();
+                    let quiet_retry_since = quiet_retry_since.clone();
+                    let dummy_deploy_opt = dummy_deploy_opt.clone();
+                    let log = log.clone();
+                    let health = health.clone();
+                    let max_number_of_parents = max_number_of_parents;
+                    Box::pin(async move {
+                        create_block(
+                            runtime.as_ref(),
+                            dag.as_ref(),
+                            &block_store,
+                            block_index.as_ref(),
+                            &vi,
+                            &shard_id,
+                            min_phlo_price,
+                            &log,
+                            max_number_of_parents,
+                            epoch_length,
+                            dummy_deploy_opt.as_ref(),
+                            &blocked_since_advance,
+                            &blocked_since,
+                            &quiet_retry_since,
+                            source,
+                            &health,
+                            batch_limit,
+                        )
+                        .await
+                    })
+                },
+            )
         };
 
         let validate_block: Arc<
@@ -605,6 +661,8 @@ impl Proposer {
                     .await
                     {
                         Ok(meta) => {
+                            let accepted_post = block.post_state_hash;
+                            let accepted_height = meta.block_num;
                             // Persist the block body BEFORE recording it in the DAG. `insert`
                             // writes the deploy index + DAG state but not the full block, so a
                             // read landing between the two would otherwise hit "missing block".
@@ -625,6 +683,16 @@ impl Proposer {
                                     ))
                                 }
                             })?;
+                            // **The block is accepted: publish its state** (law 80, B40). The
+                            // checkpoint recorded the root as known; this moves `CURRENT_ROOT`.
+                            crate::blocks::block_processor::publish_accepted_root(
+                                dag.as_ref(),
+                                runtime.as_ref(),
+                                accepted_height,
+                                accepted_post,
+                                &log,
+                            )
+                            .await;
                             Ok(())
                         }
                         Err(err) => Err(err),
@@ -633,6 +701,12 @@ impl Proposer {
             })
         };
 
+        let batch = runtime.batch_policy();
+        let batch_cap = if batch.enabled {
+            batch.max_batch.max(1)
+        } else {
+            1
+        };
         Proposer::new(
             get_latest_seq_number,
             check_active_validator,
@@ -646,6 +720,7 @@ impl Proposer {
             equivocation_injection,
             block_store,
         )
+        .with_batch_cap(batch_cap)
     }
 }
 
@@ -818,6 +893,70 @@ async fn report_nothing_to_include(
 /// elapsed blocked time may authorise escape; the attempt count remains diagnostic telemetry.
 pub const ROUND_STALL_ESCAPE: Duration = Duration::from_secs(15);
 
+/// **How far above the last finalized block a validator may propose.**
+///
+/// This is the isolation bound the proposer never had: `TooFarAheadOfLastFinalized` existed as a
+/// status variant but no code produced it, so a validator whose peers had stopped accepting its
+/// blocks could extend a private chain indefinitely. Thirty-two heights is policy, not a measured
+/// optimum — a healthy four-validator net trails finality by a handful of heights — and it is
+/// deliberately a height gap, not a wall-clock stall: finality-stall counters fire on a healthy
+/// net (see `ShardHealth`'s own episodes), while a tip 32 blocks beyond the last finalized block
+/// is unambiguously a node that cannot get its own chain accepted.
+pub const MAX_PROPOSAL_FINALITY_LAG: i64 = 32;
+
+/// The height-gap half of the isolation gate, as a pure predicate so the boundary (`== bound`
+/// passes, `bound + 1` refuses) is testable without a DAG.
+pub fn within_proposal_finality_bound(tip_height: i64, finalized_height: i64) -> bool {
+    tip_height.saturating_sub(finalized_height) <= MAX_PROPOSAL_FINALITY_LAG
+}
+
+/// **The height the gate measures from when the view has no finalised block** (C351).
+///
+/// `last_finalized_block_hash()` is `None` on a view with no fringe, and the gate used to be wrapped
+/// in `if let Some(finalized)`, so *both* the bound and the isolation latch were skipped entirely —
+/// the shape the Lean model refuses with `a_gate_without_the_bound_admits_a_private_chain`. A node
+/// that early in a chain has no safe state to name, and "no anchor" is not "no bound": genesis is
+/// the floor, which is the same answer `RewindPlan` already gives (`block-storage/src/dag/
+/// representation.rs::rewind_plan`), and it is what the model's `finalizedFloor` states.
+pub fn finalized_floor(finalized: Option<BlockHeight>) -> BlockHeight {
+    finalized.unwrap_or_else(BlockHeight::zero)
+}
+
+/// The gate's decision, as a pure function so the **no-finality arm** is testable without a DAG.
+///
+/// This is the property C351 is about: `proposal_is_within_bound(n, None)` is `false` beyond the
+/// bound. The gate this replaced could be written `finalized.is_some_and(|f| within(n, f))`, which
+/// answers `true` for `None` — no bound at all — and that is the falsifier the test exhibits.
+pub fn proposal_is_within_bound(
+    next_block_num: BlockHeight,
+    finalized: Option<BlockHeight>,
+) -> bool {
+    within_proposal_finality_bound(
+        i64::from(next_block_num),
+        i64::from(finalized_floor(finalized)),
+    )
+}
+
+/// Set when the height-gap gate refuses a proposal. It is a process-local fail-safe latch: it
+/// stops proposing and attesting and tells a peer/operator why; a restart (or an explicit
+/// operator resume) is the recovery. No proposal path may clear it just because one later tick
+/// looks closer to finality — the node has already shown it cannot get its chain accepted.
+static PROPOSAL_ISOLATED: AtomicBool = AtomicBool::new(false);
+static PROPOSAL_ISOLATION_REASON: Mutex<Option<String>> = Mutex::new(None);
+
+pub fn proposal_isolated() -> bool {
+    PROPOSAL_ISOLATED.load(Ordering::Relaxed)
+}
+
+pub fn proposal_isolation_reason() -> Option<String> {
+    PROPOSAL_ISOLATION_REASON.lock().unpoison().clone()
+}
+
+pub fn clear_proposal_isolation() {
+    PROPOSAL_ISOLATED.store(false, Ordering::Relaxed);
+    *PROPOSAL_ISOLATION_REASON.lock().unpoison() = None;
+}
+
 /// Elapsed time since this process first observed the blocked round. A host wall-clock
 /// correction cannot advance or delay this timer. The first sighting always returns zero;
 /// a clock value before the stored sighting also returns zero (defensive test case).
@@ -842,6 +981,34 @@ fn round_escape_owed(stalled_ms: i64) -> bool {
     stalled_ms >= ROUND_STALL_ESCAPE.as_millis() as i64
 }
 
+/// **The pacing rule as a pure function** (Law 51d), so the conformance corpus can tie the model
+/// to the node. Given the first blocked sighting (if any) and `now`, returns `(escape?, new
+/// sighting)`: `None` starts the clock; a full interval returns `true` and **consumes** the permit
+/// by moving the sighting to `now`; anything else returns `false` and leaves the sighting alone.
+/// The mutex form below is this function's one implementation — a banked permit would make a
+/// still-open round escape on every tick after the first interval.
+pub fn take_escape_permit(first_ms: Option<u64>, now_ms: u64) -> (bool, Option<u64>) {
+    let bound = ROUND_STALL_ESCAPE.as_millis() as u64;
+    match first_ms {
+        None => (false, Some(now_ms)),
+        Some(first) if now_ms.saturating_sub(first) >= bound => (true, Some(now_ms)),
+        Some(first) => (false, Some(first)),
+    }
+}
+
+/// Consume one escape permit after a full monotonic stall interval.
+/// A still-open round must wait another interval before escaping again;
+/// otherwise a fast producer can exhaust the finality-lag bound while its
+/// peers are still assembling the next shared justification layer.
+fn take_round_escape(since: &Mutex<Option<Instant>>, now: Instant) -> Option<i64> {
+    let elapsed = stall_ms_since(since, now);
+    if !round_escape_owed(elapsed) {
+        return None;
+    }
+    *since.lock().unpoison() = Some(now);
+    Some(elapsed)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn create_block<'a, F, Fut>(
     runtime: &'a RuntimeManager,
@@ -857,13 +1024,22 @@ async fn create_block<'a, F, Fut>(
     dummy_deploy_opt: Option<&(PrivateKey, String)>,
     blocked_since_advance: &std::sync::atomic::AtomicI64,
     blocked_since: &Mutex<Option<Instant>>,
+    quiet_retry_since: &Mutex<Option<Instant>>,
     source: ProposeSource,
     health: &ShardHealth,
+    batch_limit: Option<usize>,
 ) -> Result<BlockCreatorResult, String>
 where
     F: Fn(BlockHash) -> Fut + Sync,
     Fut: Future<Output = Result<Arc<BlockIndex>, String>>,
 {
+    // The isolation latch is a fail-safe, not a per-tick verdict: once set, this process does
+    // not propose again until an operator repairs/restarts (or calls the resume hook). Check it
+    // before the parent merge so a latched node does no proposal work at all.
+    if proposal_isolated() {
+        return Ok(BlockCreatorResult::TooFarAheadOfLastFinalized);
+    }
+
     let creators_validator_for_parents =
         Validator::from_slice(validator_identity.public_key.bytes());
 
@@ -905,10 +1081,9 @@ where
         {
             let waited =
                 blocked_since_advance.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            let stalled_ms = stall_ms_since(blocked_since, Instant::now());
-            if !round_escape_owed(stalled_ms) {
+            let Some(stalled_ms) = take_round_escape(blocked_since, Instant::now()) else {
                 return Ok(BlockCreatorResult::AlreadyProposedThisRound);
-            }
+            };
             log.warn(
                 LogSource::new("casper.blocks.Proposer"),
                 &format!(
@@ -946,6 +1121,40 @@ where
         .iter()
         .map(|m| m.block_hash)
         .collect();
+
+    // **The private-chain bound.** A node whose tip is this far beyond its own last finalized
+    // block has no evidence that any peer accepts its chain; continuing to propose is how A ran
+    // 267 heights against finality 3. Return the pre-existing status variant and leave the block
+    // uncreated. The node-level gate turns this into a propose-and-attest halt with an operator
+    // resume; the proposer alone at least stops extending the chain.
+    let last_finalized_height = {
+        let repr = dag.get_representation().await;
+        repr.last_finalized_block_hash()
+            .and_then(|hash| repr.block_height_of(&hash))
+    };
+    // **The gate is total** (C351): a view with no finalised block measures from genesis rather than
+    // skipping the bound and the latch. Before this, `if let Some(finalized)` made "no anchor" mean
+    // "no bound", which is `Disposition.a_gate_without_the_bound_admits_a_private_chain`.
+    let finalized = finalized_floor(last_finalized_height);
+    let gap = i64::from(next_block_num) - i64::from(finalized);
+    if !proposal_is_within_bound(next_block_num, last_finalized_height) {
+        let reason = format!(
+            "tip {} is {gap} heights beyond last finalized {} (bound {MAX_PROPOSAL_FINALITY_LAG})",
+            i64::from(next_block_num),
+            i64::from(finalized)
+        );
+        PROPOSAL_ISOLATED.store(true, Ordering::Relaxed);
+        *PROPOSAL_ISOLATION_REASON.lock().unpoison() = Some(reason.clone());
+        log.warn(
+            LogSource::new("casper.blocks.Proposer"),
+            &format!(
+                "refusing to propose at height {}: {reason}; this node cannot show that its chain \
+                 is accepted",
+                i64::from(next_block_num)
+            ),
+        );
+        return Ok(BlockCreatorResult::TooFarAheadOfLastFinalized);
+    }
 
     // **The proposer's half of #153's bound.** A justification set wider than the protocol allows is
     // refused by every validator (`validate::justification_count`), so emitting one would be a block
@@ -1113,13 +1322,32 @@ where
     // decides the attestation horizon below.
     conflict_set.sort();
 
-    let has_deploys =
-        |b: &BlockMessage| !b.state.system_deploys.is_empty() || !b.state.deploys.is_empty();
+    // A merge can publish a rejection without executing a new deploy. Keep
+    // attesting until that decision is covered by the published fringe.
+    // Subtract decisions already in its causal past so repeated rejection
+    // ledgers on empty attestations cannot keep a quiet chain running.
+    let mut finalized_rejections = None;
 
     let mut oldest_unfinalized: Option<BlockHeight> = None;
     for (height, h) in &conflict_set {
         if let Some(b) = get_block(block_store, h).await? {
-            if has_deploys(&b) {
+            if b.state.system_deploys.is_empty()
+                && b.state.deploys.is_empty()
+                && !b.rejected_deploys.is_empty()
+                && finalized_rejections.is_none()
+            {
+                let mut covered = BTreeSet::new();
+                for h in fringe_seen.iter().chain(pre_state.prev_fringe.iter()) {
+                    if let Some(finalized) = get_block(block_store, h).await? {
+                        covered.extend(finalized.rejected_deploys);
+                    }
+                }
+                finalized_rejections = Some(covered);
+            }
+            if block_needs_finalization(
+                &b,
+                finalized_rejections.as_ref().unwrap_or(&BTreeSet::new()),
+            ) {
                 oldest_unfinalized = Some(*height);
                 break;
             }
@@ -1199,6 +1427,17 @@ where
         attestation_reaches_supermajority(attestation_stake, own_stake, pre_state_bonds_stake);
 
     let cadence = cadence_due(&seen_heights, &creators_validator, tip);
+    // A stalled chain can keep a tip at the same height indefinitely. Height-based
+    // cadence alone then never becomes due, while the bounded deploy horizon has
+    // already expired. With >2/3 of the *whole bonded stake* still reachable,
+    // retry at most once per monotonic interval to supply the missing attestation.
+    // This is a local proposal schedule, not a change to finality or quorum rules.
+    let quiet_retry = quiet_finality_retry_due(
+        quiet_retry_since,
+        Instant::now(),
+        !nothing_to_finalize && !new_state_transition && quorum_reachable,
+        source == ProposeSource::Automatic,
+    );
     // Only a proposal the node raised on its own is paced (C171): the storm is a node reacting to remote
     // blocks, and a caller's explicit propose is not a reaction.
     let paced = source == ProposeSource::Automatic;
@@ -1206,7 +1445,7 @@ where
         nothing_to_finalize,
         new_state_transition,
         quorum_reachable,
-        cadence,
+        cadence || quiet_retry,
         paced,
     );
     // **Why this node did or did not attest, in its own log** (#213's diagnostic). Without it a validator
@@ -1216,7 +1455,7 @@ where
         nothing_to_finalize,
         new_state_transition,
         quorum_reachable,
-        cadence_due: cadence,
+        cadence_due: cadence || quiet_retry,
         paced,
         round_senders: pre_state.justifications.iter().map(|m| &m.sender).collect(),
         blocked_attempts: blocked_since_advance.load(std::sync::atomic::Ordering::Relaxed),
@@ -1276,6 +1515,20 @@ where
         }
     }
 
+    // A suppressed attestation with outstanding work is not an idle proposer.
+    // Without this distinction the stream receives NoNewDeploys and never wakes
+    // the monotonic quiet-finality timer on a no-autopropose network.
+    if deploys.is_empty()
+        && to_slash.is_empty()
+        && !change_epoch
+        && suppress_attestation
+        && !nothing_to_finalize
+        && quorum_reachable
+        && paced
+    {
+        return Ok(BlockCreatorResult::AwaitingFinality);
+    }
+
     BlockCreator {
         id: validator_identity.clone(),
         shard_id: shard_id.to_string(),
@@ -1288,6 +1541,7 @@ where
         &to_slash,
         change_epoch,
         suppress_attestation,
+        batch_limit,
     )
     .await
 }
@@ -1295,6 +1549,43 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The private-chain boundary is inclusive at the bound and refuses one height beyond it.**
+    /// `TooFarAheadOfLastFinalized` existed without a producer; this pins the arithmetic the
+    /// `create_block` gate now uses.
+    #[test]
+    fn the_proposal_finality_bound_passes_at_the_bound_and_refuses_beyond_it() {
+        assert!(within_proposal_finality_bound(MAX_PROPOSAL_FINALITY_LAG, 0));
+        assert!(!within_proposal_finality_bound(
+            MAX_PROPOSAL_FINALITY_LAG + 1,
+            0
+        ));
+        assert!(within_proposal_finality_bound(4, 0));
+    }
+
+    /// **A view with no finalised block is still bounded** (C351). The gate used to be wrapped in
+    /// `if let Some(finalized)`, so `None` skipped the bound *and* the isolation latch: a node whose
+    /// fringe had not formed could extend a private chain without limit — the Lean model's own
+    /// `Disposition.a_gate_without_the_bound_admits_a_private_chain`. Genesis is the floor, the same
+    /// answer `rewind_plan` gives, so the no-anchor arm refuses exactly where the anchored arm does.
+    #[test]
+    fn a_view_without_a_finalized_block_still_trips_the_bound() {
+        let height = |v: i64| BlockHeight::try_from(v).expect("non-negative");
+        let bound_plus_one = height(MAX_PROPOSAL_FINALITY_LAG + 1);
+        // The floor is genesis, and it is a floor rather than a sentinel: an anchor is passed through.
+        assert_eq!(finalized_floor(None), BlockHeight::zero());
+        assert_eq!(finalized_floor(Some(height(0))), BlockHeight::zero());
+        assert_eq!(finalized_floor(Some(height(7))), height(7));
+        // The falsifier: `finalized.is_some_and(|f| within(n, f))` answers `true` here.
+        assert!(!proposal_is_within_bound(bound_plus_one, None));
+        assert!(!proposal_is_within_bound(bound_plus_one, Some(height(0))));
+        // And the arm still admits a tip at the bound, so the gate did not become a refuse-all.
+        assert!(proposal_is_within_bound(
+            height(MAX_PROPOSAL_FINALITY_LAG),
+            None
+        ));
+        assert!(proposal_is_within_bound(height(1), None));
+    }
 
     /// The clock begins at the first blocked observation, and resetting the round
     /// discards the observation. Wall time is deliberately absent from this API.
@@ -1321,6 +1612,115 @@ mod tests {
         )));
         *since.lock().unpoison() = None;
         assert_eq!(stall_ms_since(&since, first + Duration::from_secs(60)), 0);
+    }
+
+    #[test]
+    fn round_escape_permit_is_consumed_even_when_the_round_stays_open() {
+        let since = Mutex::new(None);
+        let t = Instant::now();
+        assert_eq!(take_round_escape(&since, t), None);
+        assert_eq!(
+            take_round_escape(&since, t + ROUND_STALL_ESCAPE),
+            Some(15_000)
+        );
+        // The archived failure took many escapes inside one interval.
+        // Both a duplicate tick and a burst after it must now wait.
+        for ms in [0, 1, 100, 967, 3_388, 14_999] {
+            assert_eq!(
+                take_round_escape(&since, t + ROUND_STALL_ESCAPE + Duration::from_millis(ms)),
+                None
+            );
+        }
+        assert_eq!(
+            take_round_escape(&since, t + ROUND_STALL_ESCAPE * 2),
+            Some(15_000)
+        );
+        assert_eq!(take_round_escape(&since, t + ROUND_STALL_ESCAPE * 2), None);
+        // Closing the round starts a fresh observation, never an old permit.
+        *since.lock().unpoison() = None;
+        assert_eq!(take_round_escape(&since, t + ROUND_STALL_ESCAPE * 10), None);
+        assert_eq!(
+            take_round_escape(&since, t + ROUND_STALL_ESCAPE * 11),
+            Some(15_000)
+        );
+    }
+
+    #[test]
+    fn late_escape_and_repeated_ticks_do_not_bank_unused_permits() {
+        let since = Mutex::new(None);
+        let t = Instant::now();
+        assert_eq!(take_round_escape(&since, t), None);
+        assert_eq!(
+            take_round_escape(&since, t + Duration::from_secs(90)),
+            Some(90_000)
+        );
+        for ms in 0..15_000 {
+            assert_eq!(
+                take_round_escape(&since, t + Duration::from_millis(90_000 + ms)),
+                None
+            );
+        }
+        assert_eq!(
+            take_round_escape(&since, t + Duration::from_secs(105)),
+            Some(15_000)
+        );
+    }
+
+    #[test]
+    fn quiet_chain_retry_is_bounded_without_weakening_quorum() {
+        let since = Mutex::new(None);
+        let t = Instant::now();
+        assert!(!quiet_finality_retry_due(&since, t, true, true));
+        assert!(!quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE - Duration::from_millis(1),
+            true,
+            true
+        ));
+        assert!(quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE,
+            true,
+            true
+        ));
+        assert!(!quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE + Duration::from_millis(1),
+            true,
+            true
+        ));
+        assert!(quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE * 2,
+            true,
+            true
+        ));
+        // A lost quorum must not use a retry to mint a different finality rule.
+        assert!(!quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE * 3,
+            false,
+            true
+        ));
+        assert!(!quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE * 4,
+            true,
+            true
+        ));
+        assert!(quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE * 5,
+            true,
+            true
+        ));
+        // Explicit proposals have their own ingress and cannot arm the timer.
+        assert!(!quiet_finality_retry_due(
+            &since,
+            t + ROUND_STALL_ESCAPE * 6,
+            true,
+            false
+        ));
     }
 
     /// A host-clock correction must not appear in the elapsed calculation. This
@@ -1874,10 +2274,11 @@ mod tests {
             dyn Fn(
                     &ValidatorIdentity,
                     ProposeSource,
+                    Option<usize>,
                 ) -> BoxFuture<Result<BlockCreatorResult, String>>
                 + Send
                 + Sync,
-        > = Arc::new(move |_v, _source| {
+        > = Arc::new(move |_v, _source, _limit| {
             let create = create.clone();
             Box::pin(async move { Ok(create) })
         });
@@ -1921,10 +2322,13 @@ mod tests {
             dyn Fn(
                     &ValidatorIdentity,
                     ProposeSource,
+                    Option<usize>,
                 ) -> BoxFuture<Result<BlockCreatorResult, String>>
                 + Send
                 + Sync,
-        > = Arc::new(|_v, _source| Box::pin(async { Ok(BlockCreatorResult::Created(block())) }));
+        > = Arc::new(|_v, _source, _limit| {
+            Box::pin(async { Ok(BlockCreatorResult::Created(block())) })
+        });
         let validate: Arc<
             dyn Fn(&BlockMessage) -> BoxFuture<Result<(), ValidateError>> + Send + Sync,
         > = Arc::new(move |b| {
@@ -2094,10 +2498,13 @@ mod tests {
             dyn Fn(
                     &ValidatorIdentity,
                     ProposeSource,
+                    Option<usize>,
                 ) -> BoxFuture<Result<BlockCreatorResult, String>>
                 + Send
                 + Sync,
-        > = Arc::new(|_v, _source| Box::pin(async { Ok(BlockCreatorResult::Created(block())) }));
+        > = Arc::new(|_v, _source, _limit| {
+            Box::pin(async { Ok(BlockCreatorResult::Created(block())) })
+        });
         let validate: Arc<
             dyn Fn(&BlockMessage) -> BoxFuture<Result<(), ValidateError>> + Send + Sync,
         > = Arc::new(|_b| Box::pin(async { Err(ValidateError::SelfEquivocation) }));
@@ -2180,6 +2587,39 @@ fn moving_attestation_stake(live_bonds: &BTreeMap<Validator, NonNegI64>, own: &V
         .sum()
 }
 
+/// Retry an outstanding finality obligation when the DAG's height stops moving.
+///
+/// Once the three-window attestation horizon expires, a quorum can be alive but
+/// unable to close the fringe: the tip stays fixed, and height-only cadence can
+/// never become due. This is a per-proposer monotonic *scheduling* hint. It is
+/// never used in the finality algorithm or in the bonded-stake denominator.
+/// The caller must require an actual unfinalized transition and reachable quorum.
+/// Re-entering a prompt/deploy-bearing round clears the timer so it never
+/// accidentally licenses an attestation to an idle chain.
+fn quiet_finality_retry_due(
+    since: &Mutex<Option<Instant>>,
+    now: Instant,
+    pending_and_reachable: bool,
+    automatic: bool,
+) -> bool {
+    let mut slot = since.lock().unpoison();
+    if !pending_and_reachable || !automatic {
+        *slot = None;
+        return false;
+    }
+    match *slot {
+        None => {
+            *slot = Some(now);
+            false
+        }
+        Some(first) if now.saturating_duration_since(first) >= ROUND_STALL_ESCAPE => {
+            *slot = Some(now);
+            true
+        }
+        Some(_) => false,
+    }
+}
+
 /// Whether this node has been quiet long enough to speak again, read from the height of its own latest
 /// message among the senders' `latest` heights — so the pace bound needs no new state, no counter, and no
 /// persistence.
@@ -2205,7 +2645,18 @@ fn cadence_due(
 /// this many heights after the deploy, instead of every validator attesting at every height for ever.
 const ATTESTATION_HORIZON: i64 = 3 * liveness::LIVENESS_WINDOW;
 
-/// The guard's two inputs, from the **oldest deploy-bearing block this node has seen that the fringe it is
+/// Whether a block carries execution work or a rejection decision not yet
+/// covered by the published fringe. A merge-only decision also needs finality.
+fn block_needs_finalization(
+    block: &BlockMessage,
+    finalized_rejections: &BTreeSet<Vec<u8>>,
+) -> bool {
+    !block.state.system_deploys.is_empty()
+        || !block.state.deploys.is_empty()
+        || !block.rejected_deploys.is_subset(finalized_rejections)
+}
+
+/// The guard's two inputs, from the **oldest work-bearing block this node has seen that the fringe it is
 /// building on does not yet cover** (`None`: there is none).
 ///
 /// - `nothing_to_finalize`: there is no such block.
@@ -2725,6 +3176,36 @@ mod equivocation_injection_tests {
         id.sign_block(&base).expect("signing with a real key")
     }
 
+    #[test]
+    fn merge_only_rejections_need_finality_until_the_fringe_covers_them() {
+        let mut merged = block(&identity());
+        let a = vec![0xa1];
+        let b = vec![0xb2];
+        merged.rejected_deploys = [a.clone(), b.clone()].into_iter().collect();
+        // Differential witness for the former deploy-only guard.
+        assert!(merged.state.deploys.is_empty() && merged.state.system_deploys.is_empty());
+        assert!(super::block_needs_finalization(
+            &merged,
+            &Default::default()
+        ));
+        for covered in [a.clone(), b.clone()] {
+            let partial = [covered].into_iter().collect();
+            assert!(super::block_needs_finalization(&merged, &partial));
+        }
+        // A repeated ledger is not fresh work after finalization.
+        assert!(!super::block_needs_finalization(
+            &merged,
+            &merged.rejected_deploys
+        ));
+        let superset = [a, b, vec![0xc3]].into_iter().collect();
+        assert!(!super::block_needs_finalization(&merged, &superset));
+        merged.rejected_deploys.clear();
+        assert!(!super::block_needs_finalization(
+            &merged,
+            &Default::default()
+        ));
+    }
+
     /// **The twin is the same block in every way the protocol reads, and a different block in the one
     /// way that makes it an equivocation.**
     ///
@@ -2815,12 +3296,13 @@ mod equivocation_injection_tests {
             dyn Fn(
                     &ValidatorIdentity,
                     super::ProposeSource,
+                    Option<usize>,
                 ) -> super::BoxFuture<Result<super::BlockCreatorResult, String>>
                 + Send
                 + Sync,
         > = {
             let created = created.clone();
-            Arc::new(move |_v, _s| {
+            Arc::new(move |_v, _s, _limit| {
                 let created = created.clone();
                 Box::pin(async move { Ok(super::BlockCreatorResult::Created(created)) })
             })

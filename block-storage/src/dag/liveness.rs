@@ -92,35 +92,7 @@ where
 /// from a minority or replace the denominator with the observed senders.
 /// This is a deterministic function of the same justifications/bonds that the
 /// block creator and validator already share, with no wall-clock input.
-pub fn quorum_supported_height<S>(
-    bonds: &BTreeMap<S, NonNegI64>,
-    latest: &BTreeMap<S, BlockHeight>,
-) -> BlockHeight
-where
-    S: Ord,
-{
-    let total: i128 = bonds
-        .values()
-        .map(|stake| i128::from(i64::from(*stake)))
-        .sum();
-    let mut at_height: Vec<(BlockHeight, i128)> = bonds
-        .iter()
-        .filter_map(|(sender, stake)| {
-            latest
-                .get(sender)
-                .map(|height| (*height, i128::from(i64::from(*stake))))
-        })
-        .collect();
-    at_height.sort_unstable_by(|a, b| b.0.cmp(&a.0));
-    let mut supporting = 0i128;
-    for (height, stake) in at_height {
-        supporting += stake;
-        if rchain_sdk::consensus::is_super_majority(supporting, total) {
-            return height;
-        }
-    }
-    BlockHeight::zero()
-}
+pub use rchain_sdk::consensus::quorum_supported_height;
 
 /// The bonded stake whose latest message is within `window` heights of the tip.
 ///

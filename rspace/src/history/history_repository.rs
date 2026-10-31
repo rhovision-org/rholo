@@ -271,10 +271,60 @@ impl<C, P, A, K> HistoryRepository<C, P, A, K> {
         self.do_checkpoint_with_native(trie_actions, &[]).await
     }
 
+    /// **The candidate-state checkpoint**: the same fold and the same cold writes as
+    /// [`Self::checkpoint_with_native`], but the new root is recorded as **known** and `CURRENT_ROOT`
+    /// is not moved (law 80, B40, HAZOP F-U17-10). A replay or a play that has not yet been accepted
+    /// must not publish the post-state it computed; the acceptance step calls
+    /// [`Self::publish_if_known`] once the block is in the DAG.
+    pub async fn checkpoint_with_native_deferred(
+        &self,
+        actions: &[HotStoreAction<C, P, A, K>],
+        native_actions: &[NativeStoreAction],
+    ) -> Result<Arc<Self>, String>
+    where
+        C: Serialize<C> + Clone,
+        P: Serialize<P> + Clone,
+        A: Serialize<A> + Clone,
+        K: Serialize<K> + Clone,
+    {
+        let trie_actions: Vec<HotStoreTrieAction<C, P, A, K>> =
+            actions.iter().map(transform).collect();
+        self.do_checkpoint_native_impl(&trie_actions, native_actions, false)
+            .await
+    }
+
+    /// Move `CURRENT_ROOT` to `root` if the store already knows it (law 80, B40). Returns whether the
+    /// pointer moved; `Ok(false)` means no checkpoint recorded that state, so it is not publishable.
+    pub async fn publish_if_known(&self, root: Blake2b256Hash) -> Result<bool, String> {
+        self.roots_repository.publish_if_known(root).await
+    }
+
+    /// The durable `CURRENT_ROOT`, read without recording the empty root — the pointer law 80 is
+    /// about, as distinct from [`Self::root`] (the in-memory history's root).
+    pub async fn published_root(&self) -> Result<Option<Blake2b256Hash>, String> {
+        self.roots_repository.published_root().await
+    }
+
     pub async fn do_checkpoint_with_native(
         &self,
         trie_actions: &[HotStoreTrieAction<C, P, A, K>],
         native_actions: &[NativeStoreAction],
+    ) -> Result<Arc<Self>, String>
+    where
+        C: Serialize<C> + Clone,
+        P: Serialize<P> + Clone,
+        A: Serialize<A> + Clone,
+        K: Serialize<K> + Clone,
+    {
+        self.do_checkpoint_native_impl(trie_actions, native_actions, true)
+            .await
+    }
+
+    async fn do_checkpoint_native_impl(
+        &self,
+        trie_actions: &[HotStoreTrieAction<C, P, A, K>],
+        native_actions: &[NativeStoreAction],
+        publish: bool,
     ) -> Result<Arc<Self>, String>
     where
         C: Serialize<C> + Clone,
@@ -312,9 +362,16 @@ impl<C, P, A, K> HistoryRepository<C, P, A, K> {
             self.leaf_store.put(&absent).await?;
         }
 
-        // Apply radix-history actions and commit the new root.
+        // Apply radix-history actions and record the new root. A candidate checkpoint records it as
+        // known only; the acceptance step publishes it (law 80, B40).
         let new_history = self.current_history.process(&history_actions).await?;
-        self.roots_repository.commit(new_history.root()).await?;
+        if publish {
+            self.roots_repository.commit(new_history.root()).await?;
+        } else {
+            self.roots_repository
+                .commit_deferred(new_history.root())
+                .await?;
+        }
 
         Ok(Arc::new(HistoryRepository {
             current_history: new_history,

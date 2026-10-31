@@ -149,6 +149,18 @@ concrete, auditable ways:
    round size comfortably sub-second. Recorded here because a call the reference accepts is now
    refused, and because a call that used to fit under its phlo limit may now run out.
 
+   **The charge was a square for cubic work, until the October re-audit's C346 (2026-10-30).**
+   `censure` iterates a decreasing fixed point — at most `U + 1` rounds — and each round asks, of
+   every member, how many censurers clear a level over the whole universe, so the work is Θ(U³) and
+   the charge is now `(U+1)³`. The other three handlers fold in one pass and keep the squared charge;
+   their work shape is unmeasured, and that is the row's recorded residual rather than a claim they
+   are quadratic. **The bound stayed at 512 because the cubic path was then measured at it** — 33 ms
+   for a 512-member levels map and 1–5 ms for the three mixed shapes, in release
+   (`rholang/tests/gas_amplification.rs`; evidence in
+   `spec/audit/evidence/c345-c352-remediation-20261030/`) — which is the measurement the previous
+   paragraph said was outstanding. A `censure` at the bound now costs `(512+1)³` = 1.35e8 phlo, the
+   same order as the time it buys under the table's one-phlo-per-operation calibration.
+
 10. **`--` and `.diff` are charged for the product of their operands, not one of them.** The Scala
    charges `3 · |right|` while the work is `left.iter().filter(|p| !right.contains(p))` — a linear
    scan per element, so `|left| · |right|`. Charging one factor for a product is the sublinear-charge
@@ -329,6 +341,20 @@ concrete, auditable ways:
    else, so replacing the writer touches `close_block` step 5 and no consumer, no law, and no test of
    the draw. That separability is why the seed is a state leaf rather than a value threaded through the
    deploy, and it is the shape the next pass should take.
+
+13. **The collection conversions and unions are charged for what they canonicalise** (the October
+   re-audit's C345, 2026-10-30). `toSet`/`toMap` charged **nothing** for a sort, `set` a flat three,
+   `keys` a flat ten, and `++`/`.union` charged the **right operand only** — so `bigSet ++ Set()` was
+   free while it still rebuilt `bigSet`. Measured in release: `[N ints].toSet()` cost **18 phlo at
+   N = 500 and at N = 40 000** while wall time grew from 7 ms to 724 ms. The charge is now
+   `canonicalization_cost(n) = 3n`, taken from the operand size **before** the work (the same
+   output-bound shape as `replace` in item 11), and a union is charged the sum of both operands, which
+   is what makes it symmetric. **The charge is linear for `O(n log n)` work**, and that is stated
+   rather than glossed: a phlo buys work bounded by `charge · log charge` — bounded, which is the
+   defect answered, but not an exact comparison count. A collection **literal** stays uncharged: its
+   bytes were charged at parse and the create path is not attacker-sized. The property is **Law 91a**
+   (`spec/Rchain/Cost.lean`), with `rightOnlyUnionCost_is_not_symmetric` keeping the old formula so the
+   symmetry statement has a model that fails it.
 
 The honest caveat is in §5: the port is not yet *done* surpassing Scala. Several Scala behaviors were
 initially carried over faithfully (the "deferred" surface, the panic-vs-exception sites) precisely

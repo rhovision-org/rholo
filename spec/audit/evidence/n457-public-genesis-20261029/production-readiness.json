@@ -1,0 +1,13 @@
+{
+  "utc": "2026-10-29T01:01:29.210021+00:00",
+  "original_validator_status": {
+    "latestBlockNumber": 2343,
+    "degraded": "normal",
+    "acceptsDeploys": true,
+    "version": {
+      "api": "1",
+      "node": "rholo node 0.1.0 (a5259969a7c5673ccdfc5dad97981d0a3607fcf0)"
+    }
+  },
+  "observer_stopped": false
+}

@@ -37,6 +37,33 @@ pub fn parse(path: &Path) -> Result<BTreeMap<PublicKey, NonNegI64>, String> {
     Ok(bonds)
 }
 
+/// **The genesis ceremony's identity: the first bond in the file** (issue #456, Law 84).
+///
+/// `parse` returns a `BTreeMap`, which is sorted by public key and therefore cannot answer "which
+/// bond is first"; the file's order is the input. The ceremony is deterministic only if this key —
+/// not each node's local validator key — signs the blessed deploys and fills the block's `sender`,
+/// because both enter the block hash. The caller refuses when its own key is not this one.
+pub fn first_bond(path: &Path) -> Result<PublicKey, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("FAILED PARSING BONDS FILE: {}\n{}", path.display(), e))?;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (pk_str, _) = line.split_once(' ').ok_or_else(|| {
+            format!("INVALID LINE FORMAT: `<public_key> <stake>`, actual: `{line}`")
+        })?;
+        let pk_bytes =
+            base16::decode(pk_str).ok_or_else(|| format!("INVALID PUBLIC KEY: `{pk_str}`"))?;
+        return Ok(PublicKey::new(pk_bytes));
+    }
+    Err(format!(
+        "the bonds file {} names no bond; a genesis needs at least one",
+        path.display()
+    ))
+}
+
 /// Parse a bonds file, generating a fresh validator set if the file does not exist (port of
 /// `BondsParser.parse(path, autogenShardSize)`).
 pub fn parse_or_generate(

@@ -20,9 +20,14 @@
 //!   `number_of_active_validators` from the pool (0 = unlimited), redrawn at each epoch boundary
 //!   from the seeded rule in `select_active`. Consensus (supermajority, finality fringe, bond
 //!   queries) reads this set.
-//! * **withdrawing** — a withdrawal immediately deactivates the validator; the stake is escrowed
-//!   until the quarantine deadline ([`pos_withdrawers_key`]) and refunded by `close_block`.
-//! * **removed** — `slash`/`untrust` remove the validator and confiscate the stake to the Coop vault.
+//! * **withdrawing** — a withdrawal **stages** a quarantine request
+//!   ([`pos_pending_withdrawers_key`]); the validator stays bonded and active, still earning, until
+//!   the boundary after the quarantine escrows the bond ([`pos_withdrawers_key`]), and a later
+//!   boundary pays the bond plus its committed rewards.
+//! * **removed** — a *justified* `slash` removes the validator from every PoS ledger and sends the
+//!   tiered share to the Coop vault. **`untrust` only revokes admission and never confiscates a
+//!   bond** (AUDIT C111): an untrusted validator keeps its stake, stays in the active set until the
+//!   next boundary re-selects, and can withdraw. Admission is not membership.
 //!
 //! # The staking vault
 //!
@@ -50,6 +55,11 @@ use rchain_rspace::native_store::{
     PREFIX_TXN, PREFIX_VAULT, PREFIX_VAULT_AUTH, PREFIX_VAULT_NAME,
 };
 
+use crate::pos_liveness::{
+    decode_absence, decode_anchor, decode_ballots, decode_validator_set, decode_vote_windows,
+    encode_absence, encode_anchor, encode_ballots, encode_validator_set, encode_vote_windows,
+    AbsenceRecord, Anchor, BallotKey, VoteWindow,
+};
 use crate::util::rev_address::RevAddress;
 
 /// A public key / validator key is 65 uncompressed secp256k1 bytes.
@@ -75,12 +85,18 @@ const TRUSTED_ENTRY_LEN: usize = VALIDATOR_LEN;
 /// **Format 2 appends the developer allocation's vesting term** (Law 79) at payload index 10, after the
 /// committed validity bounds #376 placed at indices 8 and 9. Append-only: indices 0–9 are format 1's
 /// fields in format 1's order.
-const PARAMS_FORMAT: u8 = 2;
+const PARAMS_FORMAT: u8 = 3;
+/// The format a record without liveness fields still writes, and the only other versioned format this
+/// node reads. A zeroed liveness config **encodes as format 2 byte-for-byte**, so an old chain's
+/// params leaf and genesis post-state hash are unchanged by a binary that knows format 3.
+const PARAMS_FORMAT_LEGACY: u8 = 2;
 /// The number of fields in a format-[`PARAMS_FORMAT`] record.
-const PARAMS_FIELDS: usize = 11;
+const PARAMS_FIELDS: usize = 16;
 /// The length of a current record: the format byte and [`PARAMS_FIELDS`] fields. It is one more than a
 /// multiple of eight, which is what tells it from an unversioned record (always a multiple of eight).
 const PARAMS_LEN: usize = 1 + PARAMS_FIELDS * 8;
+/// A format-2 record: the format byte and the eleven fields before liveness enforcement.
+const PARAMS_LEN_V2: usize = 1 + 11 * 8;
 /// The length of a record that carries the participation grace (the eighth field). The grace is the one
 /// field whose absence is not zero, so the decoder has to know where it ends, not only where the record
 /// does — an eight-field record carries it, a seven-field one does not. Eight fields is also the longest
@@ -134,6 +150,34 @@ pub fn pos_committed_key() -> Blake2b256Hash {
 // the participation now comes from the last finalised fringe, which every node derives from the DAG, so
 // the leaf was a consensus-visible write that nothing read. Its key is not reused — a leaf that came
 // back under the same name would be read by nothing and trusted by assumption.
+
+/// Leaf key for liveness enforcement's per-validator absence/jail counters (`pos:liveness`).
+///
+/// Written only at an advancing epoch boundary and only when the mechanism is armed; a zeroed
+/// liveness config never creates it, so an old chain's state is unchanged.
+pub fn pos_liveness_key() -> Blake2b256Hash {
+    Blake2b256Hash::create(b"pos:liveness")
+}
+
+/// Leaf key for the liveness anchor: the last boundary at which finality actually advanced.
+pub fn pos_liveness_anchor_key() -> Blake2b256Hash {
+    Blake2b256Hash::create(b"pos:liveness-anchor")
+}
+
+/// Leaf key for open slash-vote windows (`validator → window`).
+pub fn pos_vote_windows_key() -> Blake2b256Hash {
+    Blake2b256Hash::create(b"pos:vote-windows")
+}
+
+/// Leaf key for ballots in open slash votes (`(target, voter) → in favour`).
+pub fn pos_slash_votes_key() -> Blake2b256Hash {
+    Blake2b256Hash::create(b"pos:slash-votes")
+}
+
+/// Leaf key for validators permanently ejected by a passing slash vote (`pos:banished`).
+pub fn pos_banished_key() -> Blake2b256Hash {
+    Blake2b256Hash::create(b"pos:banished")
+}
 
 /// Leaf key for the immutable PoS parameters.
 pub fn pos_params_key() -> Blake2b256Hash {
@@ -660,6 +704,23 @@ pub struct PosParams {
     /// has no allocation to vest — and the allocation cannot exist without an address, so a chain that
     /// predates the field has no vesting account to release from.
     pub dev_tax_vesting_blocks: NonNegI64,
+    /// **Liveness enforcement's absence threshold** (RCHIP #55, Law 89), in heights: a validator
+    /// whose latest finalised message is more than this far behind the quorum-supported tip counts
+    /// as absent for the boundary. `0` disables the mechanism (all five liveness fields zero is the
+    /// pre-change rule and encodes as format 2).
+    pub liveness_absence_threshold: i64,
+    /// Consecutive **advancing** boundaries absent before a jail; `0` disables. When enabled it must
+    /// be at least two: one missed boundary is not sustained absence.
+    pub liveness_jail_after_boundaries: i64,
+    /// Advancing boundaries a jail lasts. The bond is untouched; only active-set membership and
+    /// income are affected.
+    pub liveness_jail_epochs: i64,
+    /// Advancing boundaries a slash vote stays open; `0` disables voting.
+    pub liveness_vote_window: i64,
+    /// The tier a passing vote applies, as `SlashSeverity::to_code` (1 Malicious, 2 Misdemeanour,
+    /// 3 HonestMistake); `0` when voting is disabled. A vote is the **only** path from liveness to
+    /// a bond.
+    pub liveness_slash_severity: i64,
 }
 
 impl Default for PosParams {
@@ -679,16 +740,31 @@ impl Default for PosParams {
             min_phlo_price: NonNegI64::zero(),
             max_number_of_parents: 0,
             dev_tax_vesting_blocks: NonNegI64::zero(),
+            liveness_absence_threshold: 0,
+            liveness_jail_after_boundaries: 0,
+            liveness_jail_epochs: 0,
+            liveness_vote_window: 0,
+            liveness_slash_severity: 0,
         }
     }
 }
 
 impl PosParams {
-    /// Encode as the format byte [`PARAMS_FORMAT`] and eleven little-endian `i64`s (inverse:
-    /// [`decode_params`]).
+    /// Encode the parameters (inverse: [`decode_params`]).
+    ///
+    /// **A zeroed liveness config writes format 2, byte-for-byte.** That is what lets a binary that
+    /// knows liveness enforcement replay an old genesis to the same post-state hash: the only
+    /// difference a new chain can carry is the five fields, and when they are all zero there is no
+    /// difference to encode.
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(PARAMS_LEN);
-        out.push(PARAMS_FORMAT);
+        let enabled = self.liveness_configured();
+        let tag = if enabled {
+            PARAMS_FORMAT
+        } else {
+            PARAMS_FORMAT_LEGACY
+        };
+        let mut out = Vec::with_capacity(if enabled { PARAMS_LEN } else { PARAMS_LEN_V2 });
+        out.push(tag);
         out.extend_from_slice(&i64::from(self.minimum_bond).to_le_bytes());
         out.extend_from_slice(&i64::from(self.maximum_bond).to_le_bytes());
         out.extend_from_slice(&self.epoch_length.to_le_bytes());
@@ -700,7 +776,70 @@ impl PosParams {
         out.extend_from_slice(&i64::from(self.min_phlo_price).to_le_bytes());
         out.extend_from_slice(&self.max_number_of_parents.to_le_bytes());
         out.extend_from_slice(&i64::from(self.dev_tax_vesting_blocks).to_le_bytes());
+        if enabled {
+            out.extend_from_slice(&self.liveness_absence_threshold.to_le_bytes());
+            out.extend_from_slice(&self.liveness_jail_after_boundaries.to_le_bytes());
+            out.extend_from_slice(&self.liveness_jail_epochs.to_le_bytes());
+            out.extend_from_slice(&self.liveness_vote_window.to_le_bytes());
+            out.extend_from_slice(&self.liveness_slash_severity.to_le_bytes());
+        }
         out
+    }
+
+    /// Whether any liveness field is set. All-zero is the pre-change rule and the format-2 wire.
+    pub fn liveness_configured(&self) -> bool {
+        self.liveness_absence_threshold != 0
+            || self.liveness_jail_after_boundaries != 0
+            || self.liveness_jail_epochs != 0
+            || self.liveness_vote_window != 0
+            || self.liveness_slash_severity != 0
+    }
+
+    /// **A liveness config is either wholly off or coherent.** Refused rather than clamped: a
+    /// half-configured chain is a rule nobody decided (a jail with no threshold, a vote with no
+    /// severity, a window that can outlive the withdrawal escrow).
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.liveness_configured() {
+            return Ok(());
+        }
+        if self.liveness_absence_threshold < 1 {
+            return Err("liveness absence threshold must be at least 1 when enabled".to_string());
+        }
+        if self.liveness_jail_after_boundaries < 2 {
+            return Err(
+                "liveness jail-after must be at least 2 boundaries: one lapse is not sustained                  absence"
+                    .to_string(),
+            );
+        }
+        if self.liveness_jail_epochs < 1 {
+            return Err("liveness jail-epochs must be at least 1".to_string());
+        }
+        if self.liveness_vote_window < 0 || self.liveness_vote_window > self.liveness_jail_epochs {
+            return Err(format!(
+                "liveness vote-window {} must be between 0 and the jail term {}",
+                self.liveness_vote_window, self.liveness_jail_epochs
+            ));
+        }
+        if self.liveness_vote_window > 0 {
+            if !(1..=3).contains(&self.liveness_slash_severity) {
+                return Err(format!(
+                    "liveness slash severity {} is not a SlashSeverity code (1..=3)",
+                    self.liveness_slash_severity
+                ));
+            }
+            let window_blocks = self
+                .liveness_vote_window
+                .saturating_mul(epoch_divisor(self));
+            if window_blocks > self.quarantine_length {
+                return Err(format!(
+                    "liveness vote window is {window_blocks} blocks, longer than the withdrawal                      quarantine {}: a bond could be paid before the vote tallies",
+                    self.quarantine_length
+                ));
+            }
+        } else if self.liveness_slash_severity != 0 {
+            return Err("liveness slash severity is set while the vote window is zero".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -719,19 +858,14 @@ impl PosParams {
 /// [`SlashSeverity::Unspecified`]: rchain_models::block_metadata::SlashSeverity::Unspecified
 pub fn decode_params(record: &[u8]) -> Result<PosParams, String> {
     let bytes = if record.len() % 8 == 1 {
-        if record[0] != PARAMS_FORMAT {
-            return Err(format!(
-                "params record is format {}, and this node reads format {PARAMS_FORMAT}",
-                record[0]
-            ));
+        match (record[0], record.len()) {
+            (PARAMS_FORMAT, PARAMS_LEN) | (PARAMS_FORMAT_LEGACY, PARAMS_LEN_V2) => &record[1..],
+            (tag, len) => {
+                return Err(format!(
+                    "params record is format {tag} with {len} bytes; this node reads format                      {PARAMS_FORMAT} ({PARAMS_LEN} bytes) or legacy {PARAMS_FORMAT_LEGACY}                      ({PARAMS_LEN_V2} bytes)"
+                ))
+            }
         }
-        if record.len() != PARAMS_LEN {
-            return Err(format!(
-                "params record of format {PARAMS_FORMAT} has {} bytes, not {PARAMS_LEN}",
-                record.len()
-            ));
-        }
-        &record[1..]
     } else if record.len() % 8 != 0
         || record.len() < PARAMS_LEN_ORIGINAL
         || record.len() > PARAMS_LEN_WITH_GRACE
@@ -778,7 +912,7 @@ pub fn decode_params(record: &[u8]) -> Result<PosParams, String> {
     // The two bond bounds are refused rather than clamped (the deferred item 1d): a stored negative
     // is not a value this protocol can mean, and clamping it would silently turn a corrupted or
     // malicious params leaf into "no minimum", which is the permissive reading of the same bytes.
-    Ok(PosParams {
+    let params = PosParams {
         minimum_bond: NonNegI64::try_from(read(0))
             .map_err(|e| format!("minimum_bond is not a valid accept threshold: {e}"))?,
         maximum_bond: NonNegI64::try_from(read(1))
@@ -797,7 +931,14 @@ pub fn decode_params(record: &[u8]) -> Result<PosParams, String> {
         min_phlo_price: NonNegI64::try_from(read(8))
             .map_err(|e| format!("min_phlo_price is not a valid fee floor: {e}"))?,
         max_number_of_parents: read(9),
-    })
+        liveness_absence_threshold: read(11),
+        liveness_jail_after_boundaries: read(12),
+        liveness_jail_epochs: read(13),
+        liveness_vote_window: read(14),
+        liveness_slash_severity: read(15),
+    };
+    params.validate()?;
+    Ok(params)
 }
 
 /// The genesis PoS descriptors: the initial bond pool, the initial trusted stakeholder set, and the
@@ -819,6 +960,14 @@ pub struct PosGenesis {
     /// path and not the other. The amount lands in the **vesting** account, not in a vault — it is not
     /// spendable until it vests.
     pub dev_vesting: Option<(String, NonNegI64)>,
+}
+
+/// What a boundary's liveness prelude changed. The `jailed` set is the one the active-set draw
+/// excludes; `slashed` is for the boundary log and for tests. The bond is never in either.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LivenessOutcome {
+    pub jailed: BTreeSet<Validator>,
+    pub slashed: Vec<Validator>,
 }
 
 impl PosGenesis {
@@ -883,11 +1032,27 @@ pub fn select_active<V>(
     params: &PosParams,
     seed: &EpochSeed,
 ) -> BTreeMap<Validator, NonNegI64> {
+    select_active_excluding(pool, withdrawers, &BTreeSet::new(), params, seed)
+}
+
+/// **The active-set draw minus the jailed validators.** A jailed validator keeps its bond and its
+/// place in the pool; it is only not *drawn* while the jail runs. Keeping this as a separate function
+/// (rather than changing `select_active`) keeps every genesis/test caller on the pre-change,
+/// byte-identical path.
+pub fn select_active_excluding<V>(
+    pool: &BTreeMap<Validator, NonNegI64>,
+    withdrawers: &BTreeMap<Validator, V>,
+    jailed: &BTreeSet<Validator>,
+    params: &PosParams,
+    seed: &EpochSeed,
+) -> BTreeMap<Validator, NonNegI64> {
     // Eligible candidates, in the `BTreeMap`'s key order — the canonical container order, which is
-    // what makes the draw a function of `(pool, seed)` and nothing else.
+    // what makes the draw a function of `(pool, seed, jailed)` and nothing else.
     let candidates: Vec<(&Validator, NonNegI64)> = pool
         .iter()
-        .filter(|(v, stake)| i64::from(**stake) > 0 && !withdrawers.contains_key(*v))
+        .filter(|(v, stake)| {
+            i64::from(**stake) > 0 && !withdrawers.contains_key(*v) && !jailed.contains(*v)
+        })
         .map(|(v, stake)| (v, *stake))
         .collect();
     // `number_of_active_validators` of `0` means unlimited, and a cap that does not bite is not a
@@ -1070,19 +1235,40 @@ fn scaled_by_weight(reward: NonNegI64, weight: i64) -> NonNegI64 {
 /// `knee == 0` disables the rule entirely, which is `Pos.rhox`'s behaviour: in the contract absence
 /// costs nothing and an absent validator is paid for being drawn. `grace == knee` is a binary threshold
 /// rule; `grace < knee` is the graded one.
+/// The tier a stored liveness vote applies. `0` (voting disabled) has no tier; the genesis
+/// validator refuses a voting window without one.
+fn liveness_slash_severity(code: i64) -> Option<SlashSeverity> {
+    match code {
+        1 => Some(SlashSeverity::Malicious),
+        2 => Some(SlashSeverity::Misdemeanour),
+        3 => Some(SlashSeverity::HonestMistake),
+        _ => None,
+    }
+}
+
 pub(crate) fn apply_weight(
     rewards: BTreeMap<Validator, NonNegI64>,
     participation: &BTreeMap<Validator, BlockHeight>,
     boundary: i64,
     grace: i64,
     knee: i64,
+    jailed: &BTreeSet<Validator>,
 ) -> BTreeMap<Validator, NonNegI64> {
-    if knee <= 0 {
+    if knee <= 0 && jailed.is_empty() {
         return rewards;
     }
     rewards
         .into_iter()
         .map(|(validator, reward)| {
+            // **A jailed validator earns nothing for the epoch that just ended.** The withheld
+            // share stays in the staking vault (the sum of rewards is below the pot), exactly as the
+            // absence rule's withheld share does; it is not redistributed to the other validators.
+            if jailed.contains(&validator) {
+                return (validator, NonNegI64::zero());
+            }
+            if knee <= 0 {
+                return (validator, reward);
+            }
             let behind = participation
                 .get(&validator)
                 .map(|h| boundary.saturating_sub(i64::from(*h)));
@@ -1202,6 +1388,86 @@ impl NativeSystemState {
     /// The active-validator set (the consensus validator set).
     pub async fn active_validators(&self) -> Result<BTreeSet<Validator>, String> {
         Ok(self.active().await?.into_keys().collect())
+    }
+
+    /// Read the liveness counters/jails. Absent reads as empty (the mechanism is off).
+    pub async fn liveness(&self) -> Result<BTreeMap<Validator, AbsenceRecord>, String> {
+        match self.store.get(PREFIX_POS, &pos_liveness_key()).await? {
+            Some(bytes) => decode_absence(&bytes),
+            None => Ok(BTreeMap::new()),
+        }
+    }
+
+    /// Write the liveness counters/jails; an empty map clears the leaf.
+    pub async fn set_liveness(
+        &self,
+        records: &BTreeMap<Validator, AbsenceRecord>,
+    ) -> Result<(), String> {
+        let value = (!records.is_empty()).then(|| encode_absence(records));
+        self.store_optional_pos_leaf(pos_liveness_key(), value)
+            .await
+    }
+
+    /// The last boundary at which finality advanced, or `None` before the first.
+    pub async fn liveness_anchor(&self) -> Result<Option<Anchor>, String> {
+        match self
+            .store
+            .get(PREFIX_POS, &pos_liveness_anchor_key())
+            .await?
+        {
+            Some(bytes) => decode_anchor(&bytes).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    pub fn set_liveness_anchor(&self, anchor: &Anchor) {
+        self.store
+            .put(PREFIX_POS, pos_liveness_anchor_key(), encode_anchor(anchor));
+    }
+
+    /// The open slash-vote windows.
+    pub async fn vote_windows(&self) -> Result<BTreeMap<Validator, VoteWindow>, String> {
+        match self.store.get(PREFIX_POS, &pos_vote_windows_key()).await? {
+            Some(bytes) => decode_vote_windows(&bytes),
+            None => Ok(BTreeMap::new()),
+        }
+    }
+
+    pub async fn set_vote_windows(
+        &self,
+        windows: &BTreeMap<Validator, VoteWindow>,
+    ) -> Result<(), String> {
+        let value = (!windows.is_empty()).then(|| encode_vote_windows(windows));
+        self.store_optional_pos_leaf(pos_vote_windows_key(), value)
+            .await
+    }
+
+    /// The ballots in the open votes.
+    pub async fn slash_votes(&self) -> Result<BTreeMap<BallotKey, bool>, String> {
+        match self.store.get(PREFIX_POS, &pos_slash_votes_key()).await? {
+            Some(bytes) => decode_ballots(&bytes),
+            None => Ok(BTreeMap::new()),
+        }
+    }
+
+    pub async fn set_slash_votes(&self, ballots: &BTreeMap<BallotKey, bool>) -> Result<(), String> {
+        let value = (!ballots.is_empty()).then(|| encode_ballots(ballots));
+        self.store_optional_pos_leaf(pos_slash_votes_key(), value)
+            .await
+    }
+
+    /// The permanently banished validators (a passing vote is the only writer).
+    pub async fn banished(&self) -> Result<BTreeSet<Validator>, String> {
+        match self.store.get(PREFIX_POS, &pos_banished_key()).await? {
+            Some(bytes) => decode_validator_set(&bytes),
+            None => Ok(BTreeSet::new()),
+        }
+    }
+
+    pub async fn set_banished(&self, banished: &BTreeSet<Validator>) -> Result<(), String> {
+        let value = (!banished.is_empty()).then(|| encode_validator_set(banished));
+        self.store_optional_pos_leaf(pos_banished_key(), value)
+            .await
     }
 
     /// Read the trusted stakeholder set.
@@ -1529,6 +1795,11 @@ impl NativeSystemState {
         amount: NonNegI64,
         block_number: i64,
     ) -> Result<Result<(), String>, String> {
+        if self.banished().await?.contains(validator) {
+            return Ok(Err(
+                "this validator was permanently ejected by a passing liveness vote".to_string(),
+            ));
+        }
         let mut pool = self.bonds().await?;
         let active = self.active().await?;
         if pool.contains_key(validator) || active.contains_key(validator) {
@@ -1701,6 +1972,12 @@ impl NativeSystemState {
             return Ok(Ok(()));
         }
 
+        let active_for_epoch = self.active().await?;
+        let liveness = self
+            .apply_liveness_prelude(block_number, fringe_state_hash, participation, &params)
+            .await?;
+        // Read the ledgers **after** the prelude: a passing vote has already run `slash`, and these
+        // are the post-slash maps the rest of the boundary must use.
         let mut pool = self.bonds().await?;
         let mut withdrawers = self.withdrawers().await?;
         let mut pending = self.pending_withdrawers().await?;
@@ -1725,12 +2002,20 @@ impl NativeSystemState {
         // validator's reading back together and singles nobody out. This is the same move step 5 below
         // makes for the epoch seed, and for the same reason.
         let rewards = apply_weight(
-            self.epoch_rewards(&pool, &withdrawers, &committed, &delegated_rewards, &params)
-                .await?,
+            self.epoch_rewards(
+                &active_for_epoch,
+                &pool,
+                &withdrawers,
+                &committed,
+                &delegated_rewards,
+                &params,
+            )
+            .await?,
             participation,
             block_number,
             i64::from(params.participation_grace),
             i64::from(params.absence_slack),
+            &liveness.jailed,
         );
         // **The split** (law 57, #193). Each drawn validator's share is divided across its own stake
         // and its delegations; the delegators' parts are credited to `pos:delegated_rewards` and the
@@ -1969,7 +2254,7 @@ impl NativeSystemState {
         // seed yet is a genesis-installed one before its first boundary, and falls back to the
         // genesis constant.
         let seed = self.epoch_seed().await?.unwrap_or_else(genesis_epoch_seed);
-        let active = select_active(&pool, &withdrawers, &params, &seed);
+        let active = select_active_excluding(&pool, &withdrawers, &liveness.jailed, &params, &seed);
         self.set_bonds(&pool);
         self.set_withdrawers(&withdrawers);
         self.set_pending_withdrawers(&pending);
@@ -2107,13 +2392,13 @@ impl NativeSystemState {
     /// step 4) and a validator whose withdrawal was staged this epoch earn its last reward here.
     async fn epoch_rewards(
         &self,
+        active: &BTreeMap<Validator, NonNegI64>,
         pool: &BTreeMap<Validator, NonNegI64>,
         withdrawers: &BTreeMap<Validator, Withdrawal>,
         committed: &BTreeMap<Validator, NonNegI64>,
         delegated_rewards: &BTreeMap<DelegationKey, NonNegI64>,
         params: &PosParams,
     ) -> Result<BTreeMap<Validator, NonNegI64>, String> {
-        let active = self.active().await?;
         // **The per-validator share is computed on the aggregate**, which is what makes a delegation
         // count in the draw and in the pot's division alike; the *split* of that share across the
         // key's owner and its delegators is the caller's step, not this one. Delegated stake therefore
@@ -2149,6 +2434,233 @@ impl NativeSystemState {
             );
         }
         Ok(rewards)
+    }
+
+    /// **The liveness prelude**: tally open votes, update absence counters, impose/expire jails and
+    /// open vote windows, at one advancing boundary. It writes only when the mechanism is armed; a
+    /// disabled chain returns without touching a leaf.
+    ///
+    /// It runs **before** the normal boundary steps read the pool and ledgers, because a passing
+    /// vote calls [`Self::slash`] and a later read of stale maps would resurrect the offender.
+    /// `participation` is the receiver-derived finalised-fringe map; `fringe_state_hash` is the same
+    /// boundary's finalised fringe. No wall-clock or proposer-chosen input enters the rule.
+    async fn apply_liveness_prelude(
+        &self,
+        block_number: i64,
+        fringe_state_hash: Blake2b256Hash,
+        participation: &BTreeMap<Validator, BlockHeight>,
+        params: &PosParams,
+    ) -> Result<LivenessOutcome, String> {
+        let mut outcome = LivenessOutcome::default();
+        if params.liveness_jail_after_boundaries == 0 {
+            return Ok(outcome);
+        }
+        if participation.is_empty() {
+            // No finalised evidence at this boundary. Do not jail everyone on an empty/young fringe.
+            return Ok(outcome);
+        }
+        let mut active = self.active().await?;
+        let tip = crate::pos_liveness::quorum_tip(&active, participation);
+        if tip == 0 {
+            return Ok(outcome);
+        }
+        let Some(anchor) = self.liveness_anchor().await? else {
+            // The first armed boundary establishes the comparison point; it judges nobody.
+            self.set_liveness_anchor(&Anchor {
+                fringe_state_hash: *fringe_state_hash.as_bytes(),
+                quorum_tip: tip,
+            });
+            return Ok(outcome);
+        };
+        if tip <= anchor.quorum_tip {
+            // A changed fringe with an unchanged quorum tip is not progress: the clocks freeze.
+            eprintln!(
+                "[pos] boundary {block_number}: liveness clocks frozen (quorum tip {tip} did not \
+                 advance past {})",
+                anchor.quorum_tip
+            );
+            return Ok(outcome);
+        }
+
+        let mut pool = self.bonds().await?;
+        let mut windows = self.vote_windows().await?;
+        let mut ballots = self.slash_votes().await?;
+        let mut banished = self.banished().await?;
+
+        // 1. Tally the windows that were already open. The denominator is the active stake at this
+        // boundary; a validator that left the pool drops its window without a slash.
+        let total_active: i128 = active
+            .values()
+            .map(|stake| i128::from(i64::from(*stake)))
+            .sum();
+        let mut passing = Vec::new();
+        for target in windows.keys().copied().collect::<Vec<_>>() {
+            if !pool.contains_key(&target) {
+                continue;
+            }
+            // Ballots are weighted by the epoch's active snapshot. Delegation changes
+            // the bonded pool immediately, but the active weights only at the next
+            // boundary. Reading the mutable pool here lets a single active voter
+            // inflate its voting weight mid-epoch and confiscate a jailed peer's bond.
+            let for_stake: i128 = ballots
+                .iter()
+                .filter(|(key, in_favor)| {
+                    key.target == target && **in_favor && active.contains_key(&key.voter)
+                })
+                .map(|(key, _)| {
+                    i128::from(i64::from(
+                        active.get(&key.voter).copied().unwrap_or(NonNegI64::zero()),
+                    ))
+                })
+                .sum();
+            if crate::pos_liveness::passes_vote(for_stake, total_active) {
+                passing.push(target);
+            }
+        }
+        if let Some(severity) = liveness_slash_severity(params.liveness_slash_severity) {
+            for target in passing {
+                match self.slash(&target, severity).await? {
+                    Ok(()) => {
+                        banished.insert(target);
+                        windows.remove(&target);
+                        ballots.retain(|key, _| key.target != target);
+                        outcome.slashed.push(target);
+                        eprintln!(
+                            "[pos] boundary {block_number}: slash vote passed for {target:?}"
+                        );
+                    }
+                    Err(e) => eprintln!(
+                        "[pos] boundary {block_number}: vote target {target:?} could not be \
+                         slashed: {e}"
+                    ),
+                }
+            }
+        }
+        if !outcome.slashed.is_empty() {
+            // `slash` rewrote the ledgers; read the post-slash state before counting.
+            active = self.active().await?;
+            pool = self.bonds().await?;
+        }
+        for target in windows.keys().copied().collect::<Vec<_>>() {
+            if !pool.contains_key(&target) {
+                windows.remove(&target);
+                ballots.retain(|key, _| key.target != target);
+            }
+        }
+
+        // 2. Count presence for the validators that served this epoch. A validator not in the old
+        // active set is not asked to have spoken; a jailed validator is handled by expiry below.
+        let threshold = params.liveness_absence_threshold;
+        let jail_after = params.liveness_jail_after_boundaries;
+        let jail_epochs = params.liveness_jail_epochs;
+        let mut records = self.liveness().await?;
+        for validator in active.keys() {
+            let absent = crate::pos_liveness::is_absent(participation, tip, threshold, validator);
+            let record = records.entry(*validator).or_default();
+            if absent {
+                record.absent_boundaries = record.absent_boundaries.saturating_add(1);
+            } else {
+                record.absent_boundaries = 0;
+            }
+            if !record.is_jailed() && record.absent_boundaries >= jail_after {
+                record.absent_boundaries = 0;
+                record.jail_remaining = jail_epochs;
+                outcome.jailed.insert(*validator);
+                if params.liveness_vote_window > 0 {
+                    windows.insert(
+                        *validator,
+                        VoteWindow {
+                            opened_at: block_number,
+                            remaining: params.liveness_vote_window,
+                        },
+                    );
+                }
+                eprintln!(
+                    "[pos] boundary {block_number}: jailed {validator:?} for {jail_epochs} \
+                     boundaries (sustained absence)"
+                );
+            }
+        }
+
+        // 3. Expire or renew the jails that were already running. One message releases a jail;
+        // continued silence renews it. A jail imposed in step 2 is not decremented on its own
+        // boundary.
+        let expiring: Vec<Validator> = records
+            .iter()
+            .filter(|(validator, record)| {
+                record.is_jailed() && !outcome.jailed.contains(*validator)
+            })
+            .map(|(validator, _)| *validator)
+            .collect();
+        for validator in expiring {
+            let Some(record) = records.get_mut(&validator) else {
+                continue;
+            };
+            record.jail_remaining = record.jail_remaining.saturating_sub(1);
+            if record.jail_remaining > 0 {
+                continue;
+            }
+            let absent = crate::pos_liveness::is_absent(participation, tip, threshold, &validator);
+            if absent {
+                record.jail_remaining = jail_epochs;
+                if params.liveness_vote_window > 0 && !windows.contains_key(&validator) {
+                    windows.insert(
+                        validator,
+                        VoteWindow {
+                            opened_at: block_number,
+                            remaining: params.liveness_vote_window,
+                        },
+                    );
+                }
+                eprintln!(
+                    "[pos] boundary {block_number}: renewed the jail on {validator:?} — still absent"
+                );
+            } else {
+                records.remove(&validator);
+                windows.remove(&validator);
+                ballots.retain(|key, _| key.target != validator);
+                eprintln!("[pos] boundary {block_number}: released {validator:?} — it spoke again");
+            }
+        }
+
+        // 4. Age the windows that were not opened on this boundary and close the ones with no
+        // target or no time left.
+        for validator in windows.keys().copied().collect::<Vec<_>>() {
+            let Some(window) = windows.get_mut(&validator) else {
+                continue;
+            };
+            if window.opened_at != block_number {
+                window.remaining = window.remaining.saturating_sub(1);
+            }
+            let target_jailed = records
+                .get(&validator)
+                .is_some_and(AbsenceRecord::is_jailed);
+            if window.remaining == 0 || !target_jailed || !pool.contains_key(&validator) {
+                windows.remove(&validator);
+                ballots.retain(|key, _| key.target != validator);
+            }
+        }
+
+        // 5. A record is only meaningful for a validator that served this epoch or is still jailed.
+        records.retain(|validator, record| {
+            pool.contains_key(validator)
+                && (record.is_jailed()
+                    || (active.contains_key(validator) && record.absent_boundaries > 0))
+        });
+        outcome.jailed = records
+            .iter()
+            .filter(|(_, record)| record.is_jailed())
+            .map(|(validator, _)| *validator)
+            .collect();
+        self.set_liveness(&records).await?;
+        self.set_vote_windows(&windows).await?;
+        self.set_slash_votes(&ballots).await?;
+        self.set_banished(&banished).await?;
+        self.set_liveness_anchor(&Anchor {
+            fringe_state_hash: *fringe_state_hash.as_bytes(),
+            quorum_tip: tip,
+        });
+        Ok(outcome)
     }
 
     /// Remove a validator and confiscate its stake to the Coop slashing vault (port of the PoS
@@ -2351,6 +2863,22 @@ impl NativeSystemState {
         // a claim at the epoch boundary instead of joining the active set. Found by the PoS review, which
         // measured the stale entry surviving slash in 9/9 configurations.
         self.set_pending_withdrawers(&pending);
+        // **A removed validator has no liveness state.** Clear its counters, its open slash vote and
+        // any ballots it cast; `pos:banished` is the vote path's own record and is deliberately left.
+        let mut records = self.liveness().await?;
+        if records.remove(validator).is_some() {
+            self.set_liveness(&records).await?;
+        }
+        let mut windows = self.vote_windows().await?;
+        if windows.remove(validator).is_some() {
+            self.set_vote_windows(&windows).await?;
+        }
+        let mut ballots = self.slash_votes().await?;
+        let before = ballots.len();
+        ballots.retain(|key, _| key.target != *validator && key.voter != *validator);
+        if ballots.len() != before {
+            self.set_slash_votes(&ballots).await?;
+        }
         Ok(Ok(()))
     }
 
@@ -2409,6 +2937,73 @@ impl NativeSystemState {
         }
         trusted.remove(target);
         self.set_trusted(&trusted);
+        Ok(Ok(()))
+    }
+
+    /// **Cast a ballot in an open slash vote** (RCHIP #55, Law 89). A vote is open only for a
+    /// validator the automatic jail has already removed from the active set; an active validator
+    /// with its bond intact cannot be targeted. The caller must be in the active set; its weight is
+    /// its pool bond, read at the tally.
+    pub async fn cast_vote(
+        &self,
+        voter: &Validator,
+        target: &Validator,
+        in_favor: bool,
+    ) -> Result<Result<(), String>, String> {
+        let params = self.params().await?;
+        if params.liveness_jail_after_boundaries == 0 || params.liveness_vote_window == 0 {
+            return Ok(Err(
+                "liveness voting is not enabled on this chain".to_string()
+            ));
+        }
+        if self.banished().await?.contains(voter) {
+            return Ok(Err("a banished validator cannot vote".to_string()));
+        }
+        if !self.active().await?.contains_key(voter) {
+            return Ok(Err("only an active validator can vote".to_string()));
+        }
+        if !self.bonds().await?.contains_key(target) {
+            return Ok(Err("the vote target is not a bonded validator".to_string()));
+        }
+        let jailed = self
+            .liveness()
+            .await?
+            .get(target)
+            .is_some_and(AbsenceRecord::is_jailed);
+        if !jailed {
+            return Ok(Err(
+                "the vote target is not jailed; a vote cannot start against an active validator"
+                    .to_string(),
+            ));
+        }
+        if !self.vote_windows().await?.contains_key(target) {
+            return Ok(Err("no vote window is open for the target".to_string()));
+        }
+        let mut ballots = self.slash_votes().await?;
+        ballots.insert(
+            BallotKey {
+                target: *target,
+                voter: *voter,
+            },
+            in_favor,
+        );
+        self.set_slash_votes(&ballots).await?;
+        Ok(Ok(()))
+    }
+
+    /// Withdraw a ballot. Absent is `Ok`: a retraction that finds nothing has already had the effect
+    /// it asked for.
+    pub async fn retract_vote(
+        &self,
+        voter: &Validator,
+        target: &Validator,
+    ) -> Result<Result<(), String>, String> {
+        let mut ballots = self.slash_votes().await?;
+        ballots.remove(&BallotKey {
+            target: *target,
+            voter: *voter,
+        });
+        self.set_slash_votes(&ballots).await?;
         Ok(Ok(()))
     }
 
@@ -3071,6 +3666,44 @@ mod tests {
         assert_eq!(decode_bonds(&encoded).unwrap(), bonds);
     }
 
+    /// A liveness config is all-or-nothing: a half-configured rule is refused at decode and at
+    /// genesis, not clamped into a rule nobody chose.
+    #[test]
+    fn an_inconsistent_liveness_config_is_refused() {
+        let base = PosParams {
+            epoch_length: 10,
+            quarantine_length: 50,
+            liveness_absence_threshold: 10,
+            liveness_jail_after_boundaries: 2,
+            liveness_jail_epochs: 5,
+            liveness_vote_window: 3,
+            liveness_slash_severity: 2,
+            ..PosParams::default()
+        };
+        base.validate().expect("a coherent config");
+        let mut one_lapse = base;
+        one_lapse.liveness_jail_after_boundaries = 1;
+        assert!(
+            one_lapse.validate().is_err(),
+            "one lapse is not sustained absence"
+        );
+        let mut long_vote = base;
+        long_vote.liveness_vote_window = 6;
+        assert!(
+            long_vote.validate().is_err(),
+            "a vote cannot outlive the jail"
+        );
+        let mut no_severity = base;
+        no_severity.liveness_slash_severity = 0;
+        assert!(no_severity.validate().is_err(), "voting needs a severity");
+        let mut long_escrow = base;
+        long_escrow.quarantine_length = 20;
+        assert!(
+            long_escrow.validate().is_err(),
+            "a window longer than the withdrawal quarantine could outlive the bond"
+        );
+    }
+
     #[test]
     fn decode_bonds_rejects_trailing_bytes() {
         assert!(decode_bonds(&[0u8; 3]).is_err());
@@ -3089,7 +3722,7 @@ mod tests {
             minimum_bond: NonNegI64::try_from(1).unwrap(),
             maximum_bond: NonNegI64::try_from(100).unwrap(),
             epoch_length: 11,
-            quarantine_length: 5,
+            quarantine_length: 50,
             number_of_active_validators: 3,
             executor_share: NonNegI64::try_from(2500).unwrap(),
             absence_slack: NonNegI64::try_from(7).unwrap(),
@@ -3097,19 +3730,43 @@ mod tests {
             min_phlo_price: NonNegI64::try_from(19).unwrap(),
             max_number_of_parents: 255,
             dev_tax_vesting_blocks: NonNegI64::try_from(23).unwrap(),
+            liveness_absence_threshold: 0,
+            liveness_jail_after_boundaries: 0,
+            liveness_jail_epochs: 0,
+            liveness_vote_window: 0,
+            liveness_slash_severity: 0,
         };
-        let wire: Vec<u8> = [1i64, 100, 11, 5, 3, 2500, 7, 13, 19, 255, 23]
+        let wire: Vec<u8> = [1i64, 100, 11, 50, 3, 2500, 7, 13, 19, 255, 23]
             .into_iter()
             .flat_map(i64::to_le_bytes)
             .collect();
         let mut tagged = vec![2];
         tagged.extend_from_slice(&wire);
-        assert_eq!(PARAMS_FORMAT, 2);
-        assert_eq!(PARAMS_FIELDS, 11);
-        assert_eq!(PARAMS_LEN, 89);
+        assert_eq!(PARAMS_FORMAT, 3);
+        assert_eq!(PARAMS_FORMAT_LEGACY, 2);
+        assert_eq!(PARAMS_FIELDS, 16);
+        assert_eq!(PARAMS_LEN, 129);
+        assert_eq!(PARAMS_LEN_V2, 89);
         assert_eq!(PARAMS_LEN_WITH_GRACE, 64);
+        // **A zeroed liveness config is the format-2 record, byte-for-byte.**
+        assert!(!params.liveness_configured());
         assert_eq!(params.encode(), tagged);
         assert_eq!(decode_params(&tagged).unwrap(), params);
+
+        let enabled = PosParams {
+            liveness_absence_threshold: 11,
+            liveness_jail_after_boundaries: 2,
+            liveness_jail_epochs: 5,
+            liveness_vote_window: 3,
+            liveness_slash_severity: 2,
+            ..params
+        };
+        enabled.validate().expect("a coherent liveness config");
+        let tagged_v3 = enabled.encode();
+        assert_eq!(tagged_v3[0], PARAMS_FORMAT);
+        assert_eq!(tagged_v3.len(), PARAMS_LEN);
+        assert_eq!(decode_params(&tagged_v3).unwrap(), enabled);
+        assert!(decode_params(&tagged_v3[..tagged_v3.len() - 1]).is_err());
 
         // These are prefixes of a fixed wire vector, not of the encoder under test.
         for fields in 5..=8 {
@@ -3167,7 +3824,7 @@ mod tests {
             minimum_bond: NonNegI64::try_from(1).unwrap(),
             maximum_bond: NonNegI64::try_from(1000).unwrap(),
             epoch_length: 10,
-            quarantine_length: 5,
+            quarantine_length: 50,
             number_of_active_validators: 3,
             executor_share: NonNegI64::try_from(2500).unwrap(),
             absence_slack: NonNegI64::try_from(7).unwrap(),
@@ -3175,6 +3832,11 @@ mod tests {
             min_phlo_price: NonNegI64::try_from(19).unwrap(),
             max_number_of_parents: 255,
             dev_tax_vesting_blocks: NonNegI64::try_from(11).unwrap(),
+            liveness_absence_threshold: 17,
+            liveness_jail_after_boundaries: 3,
+            liveness_jail_epochs: 9,
+            liveness_vote_window: 4,
+            liveness_slash_severity: 1,
         };
         assert_eq!(
             params.encode().len(),
@@ -3208,6 +3870,11 @@ mod tests {
             min_phlo_price: NonNegI64::try_from(1).unwrap(),
             max_number_of_parents: 255,
             dev_tax_vesting_blocks: NonNegI64::zero(),
+            liveness_absence_threshold: 0,
+            liveness_jail_after_boundaries: 0,
+            liveness_jail_epochs: 0,
+            liveness_vote_window: 0,
+            liveness_slash_severity: 0,
         };
         // The unversioned forms every earlier chain wrote: the current fields, without the format byte,
         // cut at each length that ever shipped.
@@ -3249,8 +3916,7 @@ mod tests {
                 participation_grace: NonNegI64::try_from(7).unwrap(),
                 min_phlo_price: NonNegI64::zero(),
                 max_number_of_parents: 0,
-                ..current.clone()
-            },
+                ..current.clone()        },
             "a record without the grace reads the binary rule — the knee — and not a ramp from zero"
         );
         // **The eight-field record is every chain built before the fee floor and the parent bound were
@@ -3338,6 +4004,11 @@ mod tests {
             min_phlo_price: NonNegI64::zero(),
             max_number_of_parents: 0,
             dev_tax_vesting_blocks: NonNegI64::zero(),
+            liveness_absence_threshold: 0,
+            liveness_jail_after_boundaries: 0,
+            liveness_jail_epochs: 0,
+            liveness_vote_window: 0,
+            liveness_slash_severity: 0,
         };
         assert!(
             decode_params(&params.encode()).is_ok(),
@@ -4829,6 +5500,47 @@ mod tests {
             ),
             60,
             "the validator keeps what it did not bond, so it can still withdraw the stake"
+        );
+    }
+
+    /// **Law 82: untrust does not deactivate.** Trust is an admission list, not the consensus set: a
+    /// validator that is already active when it is untrusted stays in `pos:active` — and keeps its
+    /// bond — until a boundary re-selects. The old module header said the opposite ("`untrust`
+    /// removes the validator and confiscates the stake"); the code and AUDIT C111 say this, and the
+    /// stale prose was the defect.
+    #[tokio::test]
+    async fn untrust_does_not_change_the_active_set() {
+        let native = native_with(&[validator(1), validator(2)], PosParams::default(), &[]).await;
+        let v = validator(1);
+        fund(&native, &v, 100).await;
+        native
+            .bond(&v, NonNegI64::try_from(40).unwrap(), 0)
+            .await
+            .unwrap()
+            .unwrap();
+        native
+            .close_block(1, fringe_state(1), &BTreeMap::new())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            native.active().await.unwrap().contains_key(&v),
+            "the fixture is only meaningful if the validator is active before the revocation"
+        );
+
+        native.untrust(&validator(2), &v).await.unwrap().unwrap();
+
+        assert!(
+            !native.trusted().await.unwrap().contains(&v),
+            "admission is revoked"
+        );
+        assert!(
+            native.active().await.unwrap().contains_key(&v),
+            "…and consensus membership is not: `phaseOf` reads the stake ledgers before admission"
+        );
+        assert!(
+            native.bonds().await.unwrap().contains_key(&v),
+            "…nor is the bond touched"
         );
     }
 
@@ -6464,7 +7176,7 @@ impl NativeSystemState {
     /// The `get` before the `delete` is deliberate: a delete of a key that is not there would still be
     /// a store action, and the point of this function is that it changes nothing when there is nothing
     /// to change.
-    async fn store_delegation_leaf(
+    async fn store_optional_pos_leaf(
         &self,
         key: Blake2b256Hash,
         value: Option<Vec<u8>>,
@@ -6498,7 +7210,7 @@ impl NativeSystemState {
         ledger: &BTreeMap<DelegationKey, NonNegI64>,
     ) -> Result<(), String> {
         let value = (!ledger.is_empty()).then(|| encode_delegations(ledger));
-        self.store_delegation_leaf(pos_delegations_key(), value)
+        self.store_optional_pos_leaf(pos_delegations_key(), value)
             .await
     }
 
@@ -6520,7 +7232,7 @@ impl NativeSystemState {
         pending: &BTreeMap<DelegationKey, i64>,
     ) -> Result<(), String> {
         let value = (!pending.is_empty()).then(|| encode_pending_delegations(pending));
-        self.store_delegation_leaf(pos_pending_delegations_key(), value)
+        self.store_optional_pos_leaf(pos_pending_delegations_key(), value)
             .await
     }
 
@@ -6544,7 +7256,7 @@ impl NativeSystemState {
         claims: &BTreeMap<DelegationKey, DelegationClaim>,
     ) -> Result<(), String> {
         let value = (!claims.is_empty()).then(|| encode_delegation_claims(claims));
-        self.store_delegation_leaf(pos_delegation_claims_key(), value)
+        self.store_optional_pos_leaf(pos_delegation_claims_key(), value)
             .await
     }
 
@@ -6568,7 +7280,7 @@ impl NativeSystemState {
         rewards: &BTreeMap<DelegationKey, NonNegI64>,
     ) -> Result<(), String> {
         let value = (!rewards.is_empty()).then(|| encode_delegated_rewards(rewards));
-        self.store_delegation_leaf(pos_delegated_rewards_key(), value)
+        self.store_optional_pos_leaf(pos_delegated_rewards_key(), value)
             .await
     }
 
@@ -6609,6 +7321,22 @@ impl NativeSystemState {
             return Ok(Err(
                 "A key cannot delegate to itself: its own stake and the delegation would be the \
                  same money counted as two parties."
+                    .to_string(),
+            ));
+        }
+        // **A jailed operator is not an operator anyone should be buying into.** Its absence is
+        // already being priced; admit no new principal behind it while a jail or an open slash vote
+        // runs. Existing delegations are untouched — a jail moves no stake.
+        if self
+            .liveness()
+            .await?
+            .get(operator)
+            .is_some_and(AbsenceRecord::is_jailed)
+            || self.vote_windows().await?.contains_key(operator)
+        {
+            return Ok(Err(
+                "the operator is jailed for sustained absence or has an open slash vote; no new \
+                 delegation is admitted while it runs"
                     .to_string(),
             ));
         }
@@ -8215,5 +8943,342 @@ mod ertp_tests {
             claims <= held,
             "the float must never exceed the reserve: {claims} claimed vs {held} held"
         );
+    }
+}
+
+#[cfg(test)]
+mod liveness_tests {
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn validator(byte: u8) -> Validator {
+        Validator::from_slice(&[byte; 65])
+    }
+
+    fn nn(value: i64) -> NonNegI64 {
+        NonNegI64::try_from(value).expect("a non-negative test amount")
+    }
+
+    fn fringe(byte: u8) -> Blake2b256Hash {
+        Blake2b256Hash::create(&[byte])
+    }
+
+    fn armed_params() -> PosParams {
+        PosParams {
+            minimum_bond: nn(1),
+            maximum_bond: nn(1000),
+            epoch_length: 10,
+            quarantine_length: 50,
+            number_of_active_validators: 0,
+            executor_share: nn(0),
+            absence_slack: nn(0),
+            participation_grace: nn(0),
+            min_phlo_price: nn(0),
+            max_number_of_parents: 0,
+            dev_tax_vesting_blocks: nn(0),
+            liveness_absence_threshold: 10,
+            liveness_jail_after_boundaries: 2,
+            liveness_jail_epochs: 5,
+            liveness_vote_window: 3,
+            liveness_slash_severity: 2,
+        }
+    }
+
+    fn vault_address_of(validator: &Validator) -> String {
+        RevAddress::from_public_key(&PublicKey::new(validator.as_bytes().to_vec()))
+            .expect("a test key is a valid public key")
+            .to_base58()
+    }
+
+    async fn four(params: PosParams) -> NativeSystemState {
+        let native = NativeSystemState::new(Arc::new(InMemNativeStore::empty()));
+        let bonds: BTreeMap<Validator, NonNegI64> =
+            (1..=4).map(|b| (validator(b), nn(10))).collect();
+        native
+            .install_genesis(&PosGenesis {
+                bonds,
+                trusted: (1..=4).map(validator).collect(),
+                params,
+                dev_vesting: None,
+            })
+            .unwrap();
+        native
+    }
+
+    fn present(heights: &[(u8, i64)]) -> BTreeMap<Validator, BlockHeight> {
+        heights
+            .iter()
+            .map(|(b, h)| (validator(*b), BlockHeight::try_from(*h).expect("height")))
+            .collect()
+    }
+
+    async fn boundary(native: &NativeSystemState, block_number: i64, participation: &[(u8, i64)]) {
+        native
+            .close_block(
+                block_number,
+                fringe(block_number as u8),
+                &present(participation),
+            )
+            .await
+            .expect("store")
+            .expect("contract");
+    }
+
+    /// Anchor at 10, then two advancing boundaries with v4 absent: the jail is imposed, the bond is
+    /// untouched and v4 is no longer drawn.
+    async fn jail_v4(native: &NativeSystemState) {
+        boundary(native, 10, &[(1, 10), (2, 10), (3, 10), (4, 10)]).await;
+        boundary(native, 20, &[(1, 20), (2, 20), (3, 20)]).await;
+        boundary(native, 30, &[(1, 30), (2, 30), (3, 30)]).await;
+    }
+
+    #[tokio::test]
+    async fn a_sustained_absence_jails_without_touching_the_bond() {
+        let native = four(armed_params()).await;
+        jail_v4(&native).await;
+        let v4 = validator(4);
+        let record = native
+            .liveness()
+            .await
+            .unwrap()
+            .get(&v4)
+            .copied()
+            .expect("v4 has a liveness record");
+        assert!(record.is_jailed());
+        assert_eq!(record.jail_remaining, 5);
+        assert_eq!(
+            native.bonds().await.unwrap().get(&v4).copied(),
+            Some(nn(10)),
+            "jail must not touch the bond"
+        );
+        assert!(
+            !native.active_validators().await.unwrap().contains(&v4),
+            "a jailed validator is not drawn"
+        );
+        let committed = native.committed_rewards().await.unwrap();
+        assert_eq!(
+            committed.get(&v4).copied().unwrap_or(nn(0)),
+            nn(0),
+            "a jailed validator earns nothing for the epoch it missed"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_boundary_omission_does_not_jail() {
+        let native = four(armed_params()).await;
+        boundary(&native, 10, &[(1, 10), (2, 10), (3, 10), (4, 10)]).await;
+        boundary(&native, 20, &[(1, 20), (2, 20), (3, 20)]).await;
+        boundary(&native, 30, &[(1, 30), (2, 30), (3, 30), (4, 30)]).await;
+        boundary(&native, 40, &[(1, 40), (2, 40), (3, 40)]).await;
+        boundary(&native, 50, &[(1, 50), (2, 50), (3, 50), (4, 50)]).await;
+        assert!(
+            !native.liveness().await.unwrap().contains_key(&validator(4)),
+            "a one-boundary lapse is not sustained absence"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stall_freezes_the_jail_clock() {
+        let native = four(armed_params()).await;
+        boundary(&native, 10, &[(1, 10), (2, 10), (3, 10), (4, 10)]).await;
+        // Nobody has a message: no evidence, no counters.
+        boundary(&native, 20, &[]).await;
+        // The quorum tip has not advanced past the anchor.
+        boundary(&native, 30, &[(1, 10), (2, 10), (3, 10), (4, 10)]).await;
+        assert!(
+            native.liveness().await.unwrap().is_empty(),
+            "a stalled chain must not jail"
+        );
+    }
+
+    /// A delegation updates the pool before the next active-set draw. Weighting a
+    /// slash ballot from that mutable pool lets one 10/30 active-stake voter buy a
+    /// 40/30 numerator and eject a jailed validator without a quorum.
+    #[tokio::test]
+    async fn a_delegation_cannot_buy_slash_voting_power_mid_epoch() {
+        let native = four(armed_params()).await;
+        jail_v4(&native).await;
+        let target = validator(4);
+        let voter = validator(1);
+        let delegator = validator(9);
+
+        // The extra bond is real: delegate debits the funder's vault and credits
+        // the PoS vault, but does not change the already-drawn active snapshot.
+        native.set_vault_balance(&vault_address_of(&delegator), nn(30));
+        native
+            .delegate(&delegator, &voter, nn(30))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(native.bonds().await.unwrap().get(&voter), Some(&nn(40)));
+        assert_eq!(native.active().await.unwrap().get(&voter), Some(&nn(10)));
+
+        native
+            .cast_vote(&voter, &target, true)
+            .await
+            .unwrap()
+            .unwrap();
+        boundary(&native, 40, &[(1, 40), (2, 40), (3, 40)]).await;
+        assert!(
+            native.bonds().await.unwrap().contains_key(&target),
+            "10/30 active stake cannot slash a validator even when its pool stake rises to 40"
+        );
+        assert!(
+            !native.banished().await.unwrap().contains(&target),
+            "a minority vote must never permanently ban the target"
+        );
+    }
+
+    /// The active snapshot's exact 2/3 boundary is not a supermajority, even
+    /// when a voter has more bonded principal than at the active-set draw.
+    #[tokio::test]
+    async fn two_of_three_active_votes_cannot_cross_strict_threshold_via_delegation() {
+        let native = four(armed_params()).await;
+        jail_v4(&native).await;
+        let target = validator(4);
+        let delegator = validator(9);
+        native.set_vault_balance(&vault_address_of(&delegator), nn(30));
+        native
+            .delegate(&delegator, &validator(1), nn(30))
+            .await
+            .unwrap()
+            .unwrap();
+        for voter in [validator(1), validator(2)] {
+            native
+                .cast_vote(&voter, &target, true)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        boundary(&native, 40, &[(1, 40), (2, 40), (3, 40)]).await;
+        assert!(
+            native.bonds().await.unwrap().contains_key(&target),
+            "20/30 active stake is exactly two thirds, not a passing slash vote"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_vote_below_two_thirds_does_not_slash() {
+        let native = four(armed_params()).await;
+        jail_v4(&native).await;
+        let v4 = validator(4);
+        native
+            .cast_vote(&validator(1), &v4, true)
+            .await
+            .unwrap()
+            .unwrap();
+        boundary(&native, 40, &[(1, 40), (2, 40), (3, 40)]).await;
+        assert!(
+            native.bonds().await.unwrap().contains_key(&v4),
+            "one third of the active stake must not slash"
+        );
+        assert!(native
+            .liveness()
+            .await
+            .unwrap()
+            .get(&v4)
+            .is_some_and(AbsenceRecord::is_jailed));
+    }
+
+    #[tokio::test]
+    async fn a_passing_vote_slashes_and_permanently_ejects() {
+        let native = four(armed_params()).await;
+        jail_v4(&native).await;
+        let v4 = validator(4);
+        for voter in 1..=3 {
+            native
+                .cast_vote(&validator(voter), &v4, true)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        boundary(&native, 40, &[(1, 40), (2, 40), (3, 40)]).await;
+        assert!(!native.bonds().await.unwrap().contains_key(&v4));
+        assert!(!native.active_validators().await.unwrap().contains(&v4));
+        assert!(native.banished().await.unwrap().contains(&v4));
+        assert!(
+            !native.liveness().await.unwrap().contains_key(&v4),
+            "a removed validator has no liveness record"
+        );
+        assert!(
+            i64::from(native.coop_balance().await.unwrap()) > 0,
+            "the configured tier's share reached the Coop vault"
+        );
+        // The ban is permanent in this pass: the key cannot bond again.
+        assert!(native.banished().await.unwrap().contains(&v4));
+    }
+
+    #[tokio::test]
+    async fn a_banished_validator_cannot_rebond() {
+        let native = four(armed_params()).await;
+        let v4 = validator(4);
+        native.set_banished(&BTreeSet::from([v4])).await.unwrap();
+        // A banished key is refused before the bond's own checks: no vault balance is needed.
+        native.set_vault_balance(&vault_address_of(&v4), nn(100));
+        let reason = native.bond(&v4, nn(10), 11).await.unwrap();
+        assert!(reason.is_err(), "a banished validator must not rebond");
+    }
+
+    #[tokio::test]
+    async fn a_vote_cannot_open_against_an_active_validator() {
+        let native = four(armed_params()).await;
+        boundary(&native, 10, &[(1, 10), (2, 10), (3, 10), (4, 10)]).await;
+        let reason = native
+            .cast_vote(&validator(1), &validator(2), true)
+            .await
+            .unwrap();
+        assert!(reason.is_err(), "an active validator cannot be voted out");
+    }
+
+    #[tokio::test]
+    async fn a_jailed_validator_returns_after_the_term() {
+        let native = four(armed_params()).await;
+        jail_v4(&native).await;
+        let v4 = validator(4);
+        for block in [40i64, 50, 60, 70, 80] {
+            boundary(
+                &native,
+                block,
+                &[(1, block), (2, block), (3, block), (4, block)],
+            )
+            .await;
+        }
+        assert!(
+            !native.liveness().await.unwrap().contains_key(&v4),
+            "a returning validator is released when the jail expires"
+        );
+        assert!(native.active_validators().await.unwrap().contains(&v4));
+        assert_eq!(
+            native.bonds().await.unwrap().get(&v4).copied(),
+            Some(nn(10))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_still_absent_validator_is_renewed() {
+        let native = four(armed_params()).await;
+        jail_v4(&native).await;
+        let v4 = validator(4);
+        for block in [40i64, 50, 60, 70, 80] {
+            boundary(&native, block, &[(1, block), (2, block), (3, block)]).await;
+        }
+        let record = native
+            .liveness()
+            .await
+            .unwrap()
+            .get(&v4)
+            .copied()
+            .expect("still jailed");
+        assert!(record.is_jailed(), "continued silence renews the jail");
+        assert_eq!(record.jail_remaining, 5);
+    }
+
+    #[tokio::test]
+    async fn a_disabled_liveness_boundary_writes_no_liveness_leaves() {
+        let native = four(PosParams::default()).await;
+        boundary(&native, 1, &[(1, 1), (2, 1), (3, 1), (4, 1)]).await;
+        assert!(native.liveness().await.unwrap().is_empty());
+        assert!(native.liveness_anchor().await.unwrap().is_none());
+        assert!(native.vote_windows().await.unwrap().is_empty());
     }
 }

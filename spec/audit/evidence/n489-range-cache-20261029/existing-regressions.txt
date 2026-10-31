@@ -1,0 +1,35 @@
+PASS a lagging validator neither vetoes nor drags (exit 0)
+PASS the laggard is named, not silently dropped (exit 0)
+PASS four validators in lockstep still compute (exit 0)
+PASS two endpoints attesting as one validator (exit 4)
+PASS an attesting key the bond set does not bond (exit 4)
+PASS the nodes disagree on the pool (exit 4)
+PASS no strict supermajority (exit 4)
+PASS exactly two thirds is not a supermajority (exit 4)
+PASS the meet descends when the subset diverged (exit 0)
+PASS a proven equivocator leaves numerator and denominator (exit 0)
+PASS the proof is named, and the pool it shrinks (exit 0)
+PASS the equivocator's attestation does not set the meet (exit 0)
+PASS the operator names the anchor (exit 0)
+PASS the operator names an anchor nobody holds (exit 4)
+PASS equal sets different order
+PASS extra sibling block
+PASS different second block
+PASS missing height
+PASS height nobody has produced
+PASS section 2 reports an equivocation and consumes nothing
+PASS section 4 counts a block once and names the nodes that served it
+PASS section 4 refuses when two nodes disagree — a different deploy count
+PASS section 4 refuses when two nodes disagree — a different sender
+PASS section 4 refuses when two nodes disagree — a different rejected set
+PASS finality unavailable everywhere (exit 9)
+PASS finalized at the anchor, not past it (exit 9)
+PASS two finalized blocks at one height (exit 9)
+PASS finalized block absent from a node that reached its height (exit 9)
+PASS a taller node missing a shorter node's finalized block (exit 9)
+PASS advanced, differing heights, each in the common DAG (exit 0)
+PASS the survivor's blocks above the point are refused (exit 9)
+PASS the refusal names the blocks' heights (exit 9)
+PASS a survivor at the point is not refused (exit 0)
+PASS the acknowledgement adopts and says so (exit 0)
+PASS the copy loop moves an absent source aside and prints the manifest

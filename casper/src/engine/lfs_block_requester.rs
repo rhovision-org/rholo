@@ -14,11 +14,12 @@
 //! sits in `NodeSyncing` for good **with a serving API and no error line**.
 
 use rchain_shared::chan;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use rchain_block_storage::block_store::BlockStore;
+use rchain_comm::peer_node::{NodeIdentifier, PeerNode};
 use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, FinalizedFringe};
 use rchain_shared::log::{Log, LogSource};
@@ -52,6 +53,49 @@ type St = LfsState<BlockHash>;
 /// provisional number.
 pub const MAX_IDLE_ROUNDS: u32 = 3;
 
+/// **The per-hash request log** (#457's attribution, after review). A connected peer is not
+/// necessarily asked — `request_next` broadcasts to a random subset (the walk uses `Some(1)`) — and a
+/// `BlockMessage` is not necessarily an answer (it may be gossip for another hash). So the give-up
+/// diagnostic reports what was *observed*: for each outstanding hash, the peers it was actually
+/// requested from that never delivered **that hash**.
+#[derive(Default)]
+pub struct BlockRequestLog {
+    /// The peers each hash was requested from, keyed by peer id and kept for display.
+    sent: BTreeMap<BlockHash, BTreeMap<NodeIdentifier, PeerNode>>,
+    /// The peers that delivered each hash.
+    answered: BTreeMap<BlockHash, BTreeSet<NodeIdentifier>>,
+}
+
+impl BlockRequestLog {
+    pub(crate) fn record_sent(&mut self, hash: &BlockHash, peers: &[PeerNode]) {
+        self.sent
+            .entry(*hash)
+            .or_default()
+            .extend(peers.iter().map(|p| (p.id.clone(), p.clone())));
+    }
+
+    pub(crate) fn record_answer(&mut self, hash: &BlockHash, peer: &NodeIdentifier) {
+        self.answered.entry(*hash).or_default().insert(peer.clone());
+    }
+
+    /// The peers `hash` was requested from that never delivered it, named. An answer for a
+    /// **different** hash does not clear this one, and a connected-but-unselected peer never appears.
+    pub(crate) fn unanswered(&self, hash: &BlockHash) -> Vec<String> {
+        self.sent
+            .get(hash)
+            .into_iter()
+            .flat_map(|peers| peers.iter())
+            .filter(|(id, _)| {
+                !self
+                    .answered
+                    .get(hash)
+                    .is_some_and(|answered| answered.contains(*id))
+            })
+            .map(|(_, peer)| peer.to_string())
+            .collect()
+    }
+}
+
 /// Validate a received block and, if accepted, request its justifications. Returns whether the
 /// block was requested and its hash valid (port of `validateReceivedBlock`).
 ///
@@ -70,42 +114,60 @@ async fn validate_received_block(
     source: LogSource,
 ) -> bool {
     let block_number = i64::from(block.block_number);
+
+    // **#457: check what the walk owes, then check the body, and only then consume the key.**
+    //
+    // The order used to be `received` → `validate::block_hash`: a body that failed the check had
+    // already moved the key to `Received`, and `get_next` never selected `Received` again, so the key
+    // was stranded and `is_finished` (which requires `d` empty) could never hold. Nothing about a
+    // block is known until its content hash is re-derived, so nothing is written until then.
+    let known_status = {
+        let guard = st.lock().await;
+        guard.d.get(&block.block_hash).copied()
+    };
+    let Some(status) = known_status else {
+        log.warn(
+            source,
+            &format!(
+                "Received block #{} with hash {} that the walk does not need; dropped.",
+                block.block_number,
+                block.block_hash.to_hex()
+            ),
+        );
+        return false;
+    };
+    if !validate::block_hash(block) {
+        log.warn(
+            source,
+            &format!(
+                "Received block #{} with a hash that does not match its content: claimed {}, \
+                 recomputed {}. Key left {:?}; it will be re-requested rather than consumed.",
+                block.block_number,
+                block.block_hash.to_hex(),
+                crate::proto_util::hash_block(block).to_hex(),
+                status
+            ),
+        );
+        return false;
+    }
+
     let info = {
         let mut guard = st.lock().await;
         let (new_state, info) = guard.received(&block.block_hash, block_number);
         *guard = new_state;
         info
     };
-    let ReceiveInfo {
-        requested,
-        last_latest,
-        ..
-    } = info;
-
-    let block_hash_is_valid = requested && validate::block_hash(block);
-    if requested && !block_hash_is_valid {
-        log.warn(
-            source,
-            &format!(
-                "Received block #{} with invalid hash. Ignored block.",
-                block.block_number
-            ),
-        );
+    let ReceiveInfo { last_latest, .. } = info;
+    if last_latest {
+        log.info(source, "Latest blocks downloaded.");
     }
-
-    if block_hash_is_valid {
-        if last_latest {
-            log.info(source, "Latest blocks downloaded.");
-        }
-        // Always request the block's justifications: `dag.insert` requires every justification to
-        // be present in the message map, so the requester must reconstruct the full ancestry chain
-        // down to the genesis block (a syncing node's DAG is always empty).
-        let justifications: BTreeSet<BlockHash> = block.justifications.iter().copied().collect();
-        let mut guard = st.lock().await;
-        *guard = guard.add(&justifications);
-        return requested;
-    }
-    false
+    // Always request the block's justifications: `dag.insert` requires every justification to be
+    // present in the message map, so the requester must reconstruct the full ancestry chain down
+    // to the genesis block (a syncing node's DAG is always empty).
+    let justifications: BTreeSet<BlockHash> = block.justifications.iter().copied().collect();
+    let mut guard = st.lock().await;
+    *guard = guard.add(&justifications);
+    true
 }
 
 /// Save a received block to the store and mark it done (port of `saveBlock`).
@@ -150,9 +212,13 @@ async fn process_block(
     let is_valid = validate_received_block(st, block, log, source).await;
     if is_valid {
         save_block(st, block_store, block).await?;
+        // Only a completed block can expose new ancestry. A delayed duplicate or
+        // an unsolicited/invalid body must not resend every outstanding hash:
+        // those replies create more duplicates and reset the idle failure timer.
+        // Owed keys with invalid bodies remain outstanding for the bounded idle
+        // retry; refusing a body never advances or completes the walk.
+        chan::send(request_tx, false).await;
     }
-    // Trigger the request queue (without resending already-requested blocks).
-    chan::send(request_tx, false).await;
     Ok(())
 }
 
@@ -164,6 +230,7 @@ async fn request_next(
     block_store: &BlockStore,
     comm_util: &CommUtil,
     resend: bool,
+    block_requests: &Arc<tokio::sync::Mutex<BlockRequestLog>>,
 ) -> Result<(), String> {
     let is_end = { st.lock().await.is_finished() };
     let hashes = {
@@ -194,7 +261,8 @@ async fn request_next(
     }
     if !is_end && !missing.is_empty() {
         for h in &missing {
-            comm_util.broadcast_request_for_block(h, Some(1)).await;
+            let peers = comm_util.request_lfs_block(h).await;
+            block_requests.lock().await.record_sent(h, &peers);
         }
     }
     Ok(())
@@ -211,6 +279,7 @@ pub async fn request_blocks(
     block_store: &BlockStore,
     comm_util: &CommUtil,
     log: &dyn Log,
+    block_requests: &Arc<tokio::sync::Mutex<BlockRequestLog>>,
 ) -> Result<St, String> {
     let source = LogSource::new("casper.engine.LfsBlockRequester");
 
@@ -246,18 +315,55 @@ pub async fn request_blocks(
                     // An idle round: a whole resend interval with no block response. Whether it is
                     // *stuck* is a different question from whether it is *quiet*, and `finished` is
                     // the measure that answers it.
-                    let (finished, outstanding) = {
+                    let (finished, (init, requested, received), sample) = {
                         let guard = st.lock().await;
-                        (guard.finished.len(), guard.d.len())
+                        let sample: Vec<String> = guard
+                            .d
+                            .iter()
+                            .take(8)
+                            .map(|(k, s)| format!("{}={s:?}", k.to_hex()))
+                            .collect();
+                        (guard.finished.len(), guard.outstanding_breakdown(), sample)
                     };
                     if finished == last_finished {
                         idle_rounds += 1;
                         if idle_rounds >= MAX_IDLE_ROUNDS {
+                            let (outstanding_hashes, connected) = {
+                                let guard = st.lock().await;
+                                (
+                                    guard.d.keys().copied().take(8).collect::<Vec<_>>(),
+                                    guard.d.len(),
+                                )
+                            };
+                            let log = block_requests.lock().await;
+                            let attributed: Vec<String> = outstanding_hashes
+                                .iter()
+                                .filter_map(|hash| {
+                                    let silent = log.unanswered(hash);
+                                    (!silent.is_empty()).then(|| {
+                                        format!("{}: [{}]", hash.to_hex(), silent.join(", "))
+                                    })
+                                })
+                                .collect();
+                            let attribution = if attributed.is_empty() {
+                                "no recorded request to a peer is unanswered".to_string()
+                            } else {
+                                attributed.join("; ")
+                            };
+                            let peers = comm_util.connected_peers().await.len();
                             return Err(format!(
                                 "no block finished in {idle_rounds} consecutive idle rounds of \
-                                 {request_timeout:?} ({finished} block(s) finished, {outstanding} \
-                                 key(s) still outstanding): the fringe names state no peer is \
-                                 serving, so the walk cannot reach it"
+                                 {request_timeout:?} ({finished} block(s) finished; outstanding: \
+                                 {init} init, {requested} requested, {received} received; \
+                                 first outstanding: [{}]; {connected} outstanding hash(es), \
+                                 {peers} connected peer(s)). For the outstanding hashes, no block \
+                                 was received from the peers they were requested from: [{attribution}]. \
+                                 The fringe names state no peer is serving, every answer is being \
+                                 refused, or the peers cannot answer this node: a joiner whose \
+                                 protocol and discovery ports admit only its bootstrap gets \
+                                 exactly this — they gossip to it and cannot dial in \
+                                 (#457/#458)",
+                                sample.join(", ")
                             ));
                         }
                     } else {
@@ -274,7 +380,15 @@ pub async fn request_blocks(
                     true
                 }
             };
-            request_next(&st, &response_hash_tx, block_store, comm_util, resend).await?;
+            request_next(
+                &st,
+                &response_hash_tx,
+                block_store,
+                comm_util,
+                resend,
+                block_requests,
+            )
+            .await?;
             if st.lock().await.is_finished() {
                 return Ok(());
             }
@@ -366,8 +480,49 @@ mod tests {
     use rchain_shared::refined::{BlockHeight, SeqNum};
     use std::time::{Duration, Instant};
 
+    use crate::engine::ReqStatus;
     use crate::protocol::casper_message_protocol::BlockRequestSerde;
     use crate::protocol::comm_util::{CommUtil, ConnectionsCell};
+
+    fn no_requests() -> Arc<tokio::sync::Mutex<BlockRequestLog>> {
+        Arc::new(tokio::sync::Mutex::new(BlockRequestLog::default()))
+    }
+
+    /// #457's attribution, after review: the error names the peers a **hash** was requested from
+    /// that never delivered it. An unselected connected peer is never blamed, and an answer for a
+    /// different hash (gossip) does not clear the request.
+    #[test]
+    fn the_request_log_names_only_requested_peers_that_did_not_deliver_the_hash() {
+        let mut log = BlockRequestLog::default();
+        let a = peer("validator-1");
+        let b = peer("validator-2");
+        let unselected = peer("validator-3");
+        let requested = BlockHash::new([1u8; 32]);
+        let gossip = BlockHash::new([2u8; 32]);
+
+        // The walk requests `requested` from A and B (it broadcasts to a subset, not the connection set).
+        log.record_sent(&requested, &[a.clone(), b.clone()]);
+        log.record_answer(&requested, &a.id);
+        // A block for another hash is not an answer to this request.
+        log.record_answer(&gossip, &b.id);
+
+        let silent = log.unanswered(&requested);
+        assert_eq!(silent, vec![b.to_string()], "only B is named");
+        assert!(
+            !silent.iter().any(|s| s == &a.to_string()),
+            "A delivered the hash"
+        );
+        assert!(
+            !silent.iter().any(|s| s == &unselected.to_string()),
+            "a connected peer that was never asked must not be blamed: {silent:?}"
+        );
+
+        log.record_answer(&requested, &b.id);
+        assert!(
+            log.unanswered(&requested).is_empty(),
+            "a delivery from B clears the hash"
+        );
+    }
 
     fn source() -> LogSource {
         LogSource::new("casper.engine.LfsBlockRequester.test")
@@ -414,9 +569,9 @@ mod tests {
         ))
     }
 
-    /// The state a node is in once it has *asked* for `hash`: `received` only reports
-    /// `requested: true` for a key in `Requested` status, so a fixture that skipped this step would
-    /// test the rejection path by accident (see the resend test).
+    /// The state a node is in once it has *asked* for `hash`. The request status no longer gates
+    /// acceptance (#457 — `known` does), but a fixture that skipped the request would exercise the
+    /// early-answer path rather than the requested one.
     fn requested(hash: BlockHash) -> St {
         let seeded = St::new([hash].into_iter().collect(), BTreeSet::new());
         seeded.get_next(false).0
@@ -435,18 +590,17 @@ mod tests {
         assert!(!validate_received_block(&st, &valid_block(&[]), &NopLog, source()).await);
     }
 
-    /// A requested block whose hash does not match its content is rejected: the requester
-    /// re-derives the hash rather than trusting the message, so a peer cannot substitute a
-    /// different block for the one requested. Its justifications are not added either.
+    /// A requested block whose hash does not match its content is rejected: the requester re-derives
+    /// the hash rather than trusting the message, so a peer cannot substitute a different block for
+    /// the one requested. Its justifications are not added either.
     ///
-    /// The rejected key is nonetheless marked `Received` — faithful to `LfsBlockRequester
-    /// .validateReceivedBlock`, which calls `st.received` before it checks the hash — and **nothing
-    /// re-requests it**: `get_next(resend)` only re-requests `Init` or `Requested` keys, and this
-    /// one is now `Received`. So a peer that answers a request with a forged block stalls the sync
-    /// for that key in *both* implementations. Pinned as the latent liveness wart it is (AUDIT
-    /// §16): if a guard is ever added, this test fails and is updated deliberately.
+    /// **The key is not consumed** (#457). `validate_received_block` used to call `st.received`
+    /// *before* checking the hash, so a forged body moved the key to `Received`; `get_next(resend)`
+    /// only re-requested `Init`/`Requested`, so nothing ever asked for it again and `is_finished`
+    /// (which requires `d` empty) could never hold. One forged answer stalled the whole walk. The
+    /// state is now untouched on rejection and the resend path re-asks the key.
     #[tokio::test]
-    async fn a_requested_block_with_a_forged_hash_is_rejected() {
+    async fn a_forged_body_does_not_consume_the_key_and_is_re_requested() {
         let forged = block(&[]);
         let st = Arc::new(tokio::sync::Mutex::new(requested(forged.block_hash)));
 
@@ -455,18 +609,39 @@ mod tests {
             "a hash that does not match the content must not be accepted"
         );
         let guard = st.lock().await;
-        assert!(
-            guard.get_next(false).1.is_empty(),
-            "a rejected block must not be requested again in the normal path"
+        assert_eq!(
+            guard.d.get(&forged.block_hash),
+            Some(&ReqStatus::Requested),
+            "the key is left as it was, not consumed to `Received`"
         );
         assert!(
-            guard.get_next(true).1.is_empty(),
-            "…nor by the resend path, which only re-requests `Requested` keys"
+            guard.get_next(true).1.contains(&forged.block_hash),
+            "…and the resend path asks for it again"
         );
         assert!(
             !guard.is_finished(),
-            "…and the key is not `done`, so the requester cannot report finished either"
+            "…the key is still outstanding, as it should be"
         );
+    }
+
+    /// #457 at the requester's edge: an answer for a key the walk still owes is accepted even when
+    /// its request turn has not fired. The content hash is the verification; the request slot is
+    /// scheduling.
+    #[tokio::test]
+    async fn a_known_needed_block_is_accepted_before_its_request_is_sent() {
+        let answer = valid_block(&[]);
+        let st = Arc::new(tokio::sync::Mutex::new(St::new(
+            [answer.block_hash].into_iter().collect(),
+            BTreeSet::new(),
+        )));
+
+        assert!(
+            validate_received_block(&st, &answer, &NopLog, source()).await,
+            "the walk owed this key, so the verified answer is the walk's"
+        );
+        let guard = st.lock().await;
+        assert_eq!(guard.d.get(&answer.block_hash), Some(&ReqStatus::Received));
+        assert!(!guard.is_finished());
     }
 
     /// An accepted block contributes its **justifications** to the download set — that is how the
@@ -512,6 +687,102 @@ mod tests {
         assert!(
             st.lock().await.is_finished(),
             "the only requested block was saved, so the requester is finished"
+        );
+    }
+
+    /// A delayed duplicate is not a failed answer to every other outstanding request.
+    /// On the live chain, each duplicate used to trigger a full resend and generate
+    /// further duplicates, starving the ancestry walk behind its own reply traffic.
+    #[tokio::test]
+    async fn duplicate_delivery_does_not_resend_unrelated_outstanding_blocks() {
+        let blocks = chain(2);
+        let tip = &blocks[1];
+        let store = store().await;
+        let st = Arc::new(tokio::sync::Mutex::new(requested(tip.block_hash)));
+        let (request_tx, mut request_rx) = tokio::sync::mpsc::channel(2);
+        process_block(&st, &store, &NopLog, source(), &request_tx, tip)
+            .await
+            .unwrap();
+        assert_eq!(request_rx.try_recv(), Ok(false));
+        let before = {
+            let mut guard = st.lock().await;
+            *guard = guard.get_next(false).0;
+            guard.clone()
+        };
+        assert_eq!(before.d[&blocks[0].block_hash], ReqStatus::Requested);
+
+        process_block(&st, &store, &NopLog, source(), &request_tx, tip)
+            .await
+            .unwrap();
+        assert_eq!(
+            *st.lock().await,
+            before,
+            "a duplicate changes no walk state"
+        );
+        assert!(
+            request_rx.try_recv().is_err(),
+            "a duplicate must not trigger requests for the still-pending parent"
+        );
+    }
+
+    /// Continuous unsolicited traffic is not progress. It must neither create
+    /// requests nor postpone the bounded failure of a genuinely unserved fringe.
+    #[tokio::test]
+    async fn unsolicited_blocks_do_not_reset_the_idle_failure_bound() {
+        let blocks = chain(2);
+        let tip = blocks[1].block_hash;
+        let store = store().await;
+        let (incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel(64);
+        let noise = blocks[0].clone(); // not known until the unserved tip arrives
+        let spam = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(2));
+            loop {
+                interval.tick().await;
+                if incoming_tx.send(noise.clone()).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let transport = Arc::new(RecordingTransport::default());
+        let conf = RPConf {
+            local: peer("local"),
+            network_id: "testnet".to_string(),
+            bootstrap: None,
+            default_timeout: Duration::from_secs(10),
+            max_num_of_connections: 10,
+            clear_connections: ClearConnectionsConf {
+                num_of_connections_pinged: 10,
+            },
+        };
+        let connections = Arc::new(tokio::sync::RwLock::new(vec![peer("bootstrap")]));
+        let comm_util = CommUtil::new(transport.clone(), conf, connections, Arc::new(NopLog));
+        let fringe = FinalizedFringe {
+            hashes: vec![tip],
+            state_hash: StateHash::new([0; 32]),
+            ancestry: Vec::new(),
+        };
+        let outcome = tokio::time::timeout(
+            Duration::from_millis(500),
+            request_blocks(
+                &fringe,
+                &mut incoming_rx,
+                Duration::from_millis(20),
+                &store,
+                &comm_util,
+                &NopLog,
+                &no_requests(),
+            ),
+        )
+        .await;
+        spam.abort();
+        let error = outcome
+            .expect("unsolicited traffic must not keep an incomplete walk alive")
+            .expect_err("no peer supplied the fringe block");
+        assert!(error.contains("no block finished"), "{error}");
+        assert_eq!(
+            transport.broadcasts.lock().unwrap().len(),
+            MAX_IDLE_ROUNDS as usize,
+            "only the initial request and bounded idle retries are sent"
         );
     }
     fn peer(name: &str) -> PeerNode {
@@ -597,6 +868,100 @@ mod tests {
         async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
     }
 
+    /// The admitted bootstrap can answer; discovered peers accept requests but
+    /// cannot deliver replies to the joining node's advertised protocol port.
+    struct BootstrapOnlyTransport {
+        bootstrap: PeerNode,
+        blocks: BTreeMap<BlockHash, BlockMessage>,
+        incoming: tokio::sync::mpsc::Sender<BlockMessage>,
+        asked: std::sync::Mutex<Vec<PeerNode>>,
+    }
+
+    #[async_trait]
+    impl TransportLayer for BootstrapOnlyTransport {
+        async fn send(&self, peer: &PeerNode, msg: Protocol) -> CommErr<()> {
+            self.asked.lock().unwrap().push(peer.clone());
+            if peer.id == self.bootstrap.id {
+                if let Some(rchain_models::comm::protocol::protocol::Message::Packet(packet)) =
+                    msg.message
+                {
+                    if let Ok(request) = BlockRequestSerde.parse(&packet.content) {
+                        if let Some(block) = self.blocks.get(&request.hash) {
+                            chan::send(&self.incoming, block.clone()).await;
+                        }
+                    }
+                }
+            }
+            Ok(()) // transport acknowledgement does not establish reverse reachability
+        }
+
+        async fn broadcast(&self, peers: &[PeerNode], msg: Protocol) -> Vec<CommErr<()>> {
+            let mut outcomes = Vec::new();
+            for peer in peers {
+                outcomes.push(self.send(peer, msg.clone()).await);
+            }
+            outcomes
+        }
+
+        async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+    }
+
+    /// The fringe and state-page source is already known before discovery adds
+    /// it to the connection set. Randomly selecting other peers strands this
+    /// otherwise serviceable ancestry behind their unreachable reply paths.
+    #[tokio::test]
+    async fn an_admitted_bootstrap_serves_the_walk_without_reverse_reachability_to_other_peers() {
+        let blocks = chain(28);
+        let bootstrap = peer("bootstrap");
+        let store = store().await;
+        let (incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel(64);
+        let transport = Arc::new(BootstrapOnlyTransport {
+            bootstrap: bootstrap.clone(),
+            blocks: blocks.iter().map(|b| (b.block_hash, b.clone())).collect(),
+            incoming: incoming_tx,
+            asked: std::sync::Mutex::new(Vec::new()),
+        });
+        let conf = RPConf {
+            local: peer("local"),
+            network_id: "testnet".to_string(),
+            bootstrap: Some(bootstrap.clone()),
+            default_timeout: Duration::from_secs(10),
+            max_num_of_connections: 10,
+            clear_connections: ClearConnectionsConf {
+                num_of_connections_pinged: 10,
+            },
+        };
+        // Deliberately exclude the bootstrap: it has admitted the fringe, but
+        // discovery has not added it; the other peers cannot deliver replies.
+        let connections = Arc::new(tokio::sync::RwLock::new(vec![peer("unreachable")]));
+        let comm = CommUtil::new(transport.clone(), conf, connections, Arc::new(NopLog));
+        let fringe = FinalizedFringe {
+            hashes: vec![blocks.last().unwrap().block_hash],
+            state_hash: StateHash::new([0; 32]),
+            ancestry: Vec::new(),
+        };
+        let state = tokio::time::timeout(
+            Duration::from_secs(2),
+            request_blocks(
+                &fringe,
+                &mut incoming_rx,
+                Duration::from_millis(20),
+                &store,
+                &comm,
+                &NopLog,
+                &no_requests(),
+            ),
+        )
+        .await
+        .expect("a reachable source must not hang")
+        .expect("the authenticated bootstrap serves every required block");
+        assert!(state.is_finished());
+        assert_eq!(state.finished.len(), blocks.len());
+        let asked = transport.asked.lock().unwrap();
+        assert_eq!(asked.len(), blocks.len(), "one request per required block");
+        assert!(asked.iter().all(|p| p.id == bootstrap.id));
+    }
+
     /// **U13's instrument (AUDIT C62's serving term): the LFS block walk advances on *responses*, not
     /// on the idle resend.**
     ///
@@ -652,6 +1017,7 @@ mod tests {
             &store,
             &comm_util,
             &NopLog,
+            &no_requests(),
         )
         .await
         .expect("a healthy store");
@@ -757,6 +1123,7 @@ mod tests {
             &store,
             &comm_util,
             &NopLog,
+            &no_requests(),
         )
         .await
         .expect("a healthy store");
@@ -881,6 +1248,7 @@ mod tests {
             &failing,
             &comm_util,
             &NopLog,
+            &no_requests(),
         )
         .await;
 
@@ -934,6 +1302,7 @@ mod tests {
                 &failing,
                 &comm_util,
                 &NopLog,
+                &no_requests(),
             ),
         )
         .await;
@@ -995,6 +1364,7 @@ mod tests {
             &store,
             &comm_util,
             &NopLog,
+            &no_requests(),
         )
         .await
         .expect("an empty fringe is not an error for this function");
@@ -1126,6 +1496,7 @@ mod tests {
                 &store,
                 &comm_util,
                 &NopLog,
+                &no_requests(),
             ),
         )
         .await;
@@ -1146,6 +1517,16 @@ mod tests {
         assert!(
             err.contains("no block finished"),
             "the failure must name the silence, not the fringe: {err}"
+        );
+        assert!(
+            err.contains("outstanding:"),
+            "the failure must report the status breakdown (#457): a count alone did not say whether \
+             keys were init, requested or stranded as received: {err}"
+        );
+        assert!(
+            err.contains("no block was received from the peers they were requested from"),
+            "the failure must attribute the missing hash to the peers it was requested from, not to \
+             the whole connection set: {err}"
         );
         assert!(
             transport
@@ -1219,6 +1600,7 @@ mod tests {
                 &store,
                 &comm_util,
                 &NopLog,
+                &no_requests(),
             ),
         )
         .await
@@ -1236,6 +1618,77 @@ mod tests {
             state.finished.len(),
             N,
             "and it completed every block of the chain"
+        );
+    }
+
+    /// **The mature-chain join #457 needs, in the tree.** The live walk stopped at 3 finished of 28
+    /// blocks against a bootstrap that *was* answering; the unit tests around this one use chains of
+    /// one to three blocks, so nothing exercised the shape the defect appeared in. This serves a
+    /// 28-block chain whose every block justifies its parent — the topology the requester grows the
+    /// request set along — and requires the walk to finish every block.
+    #[tokio::test]
+    async fn a_mature_chain_join_completes() {
+        const REQUEST_TIMEOUT: Duration = Duration::from_millis(100);
+        const N: usize = 28;
+        const HARNESS_BOUND: Duration = Duration::from_secs(10);
+
+        let blocks = chain(N);
+        let tip = blocks.last().expect("a non-empty chain").block_hash;
+        let by_hash: BTreeMap<BlockHash, BlockMessage> =
+            blocks.iter().map(|b| (b.block_hash, b.clone())).collect();
+        let store = store().await;
+        let (incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel(64);
+        let transport = Arc::new(SlowServingTransport {
+            blocks: by_hash,
+            incoming: incoming_tx,
+            after: 1,
+            asked: std::sync::Mutex::new(BTreeMap::new()),
+        });
+        let connections: ConnectionsCell =
+            Arc::new(tokio::sync::RwLock::new(vec![peer("bootstrap")]));
+        let conf = RPConf {
+            local: peer("local"),
+            network_id: "testnet".to_string(),
+            bootstrap: None,
+            default_timeout: Duration::from_secs(10),
+            max_num_of_connections: 10,
+            clear_connections: ClearConnectionsConf {
+                num_of_connections_pinged: 10,
+            },
+        };
+        let comm_util = CommUtil::new(transport, conf, connections, Arc::new(NopLog));
+        let fringe = FinalizedFringe {
+            hashes: vec![tip],
+            state_hash: StateHash::new([0u8; 32]),
+            ancestry: Vec::new(),
+        };
+
+        let state = tokio::time::timeout(
+            HARNESS_BOUND,
+            request_blocks(
+                &fringe,
+                &mut incoming_rx,
+                REQUEST_TIMEOUT,
+                &store,
+                &comm_util,
+                &NopLog,
+                &no_requests(),
+            ),
+        )
+        .await
+        .expect("a served mature chain must finish inside the harness bound")
+        .expect("every block of the chain is served, so the walk must not fail");
+
+        assert!(state.is_finished(), "the walk reached the fringe");
+        assert_eq!(
+            state.finished.len(),
+            N,
+            "every block of the chain completed"
+        );
+        assert_eq!(
+            state.outstanding_breakdown(),
+            (0, 0, 0),
+            "and nothing was left outstanding — the stranded-key shape that stopped the live join"
         );
     }
 }

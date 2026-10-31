@@ -9,6 +9,7 @@ pub mod configuration;
 pub mod diagnostics;
 pub mod effects;
 pub mod instances;
+pub mod resources;
 pub mod runtime;
 pub mod state;
 pub mod web;

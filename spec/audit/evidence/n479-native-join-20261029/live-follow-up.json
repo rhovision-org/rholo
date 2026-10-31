@@ -1,0 +1,122 @@
+{
+  "utc": "2026-10-29T16:55:13.285083+00:00",
+  "scope": "read-only follow-up, private lab already stopped",
+  "nodes": [
+    {
+      "api": "http://127.0.0.1:40403",
+      "height": 76,
+      "final": {
+        "blockHash": "b4a6591cfd46803be1876517efb2dd079684047e58841f65a7bf8383d083727a",
+        "blockNumber": 3
+      },
+      "pool": {
+        "deploys": 0,
+        "bytes": 0,
+        "maxDeploys": 10000,
+        "maxBytes": 67108864
+      },
+      "degraded": "normal",
+      "finalized_height_sets": {
+        "2": [
+          "2d210fa7ffeb4eeb2625f135895861531e21a40baf45b0e723b76cf8695c8bf2",
+          "4ee668f84843390ae6fb4e9f7d69161640a3d0805124bb479edc67ff1562a04b",
+          "655c08c6be4f04f2434876b195500651df32792ee066f9d598ccab3e2a6ffbef",
+          "bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909"
+        ],
+        "3": [
+          "277a8d0bd02ce2a375b37fd85df640e4dd5ee22713f09ff714c9c65165969c3c",
+          "3b91994473abda5da206efc9dbf45948943b9865ab5843d1d356c6e09b7f4f22",
+          "b4a6591cfd46803be1876517efb2dd079684047e58841f65a7bf8383d083727a",
+          "d89461d0f81889fbc8756cd55b738ee042446072bd8879dc68b2ea65119374a5"
+        ]
+      }
+    },
+    {
+      "api": "http://127.0.0.1:41403",
+      "height": 6,
+      "final": {
+        "blockHash": "bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909",
+        "blockNumber": 2
+      },
+      "pool": {
+        "deploys": 0,
+        "bytes": 0,
+        "maxDeploys": 10000,
+        "maxBytes": 67108864
+      },
+      "degraded": "normal",
+      "finalized_height_sets": {
+        "2": [
+          "2d210fa7ffeb4eeb2625f135895861531e21a40baf45b0e723b76cf8695c8bf2",
+          "4ee668f84843390ae6fb4e9f7d69161640a3d0805124bb479edc67ff1562a04b",
+          "655c08c6be4f04f2434876b195500651df32792ee066f9d598ccab3e2a6ffbef",
+          "bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909"
+        ],
+        "3": [
+          "277a8d0bd02ce2a375b37fd85df640e4dd5ee22713f09ff714c9c65165969c3c",
+          "3b91994473abda5da206efc9dbf45948943b9865ab5843d1d356c6e09b7f4f22",
+          "b4a6591cfd46803be1876517efb2dd079684047e58841f65a7bf8383d083727a",
+          "d89461d0f81889fbc8756cd55b738ee042446072bd8879dc68b2ea65119374a5"
+        ]
+      }
+    },
+    {
+      "api": "http://167.99.43.214:40403",
+      "height": 6,
+      "final": {
+        "blockHash": "bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909",
+        "blockNumber": 2
+      },
+      "pool": {
+        "deploys": 0,
+        "bytes": 0,
+        "maxDeploys": 10000,
+        "maxBytes": 67108864
+      },
+      "degraded": "normal",
+      "finalized_height_sets": {
+        "2": [
+          "2d210fa7ffeb4eeb2625f135895861531e21a40baf45b0e723b76cf8695c8bf2",
+          "4ee668f84843390ae6fb4e9f7d69161640a3d0805124bb479edc67ff1562a04b",
+          "655c08c6be4f04f2434876b195500651df32792ee066f9d598ccab3e2a6ffbef",
+          "bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909"
+        ],
+        "3": [
+          "277a8d0bd02ce2a375b37fd85df640e4dd5ee22713f09ff714c9c65165969c3c",
+          "3b91994473abda5da206efc9dbf45948943b9865ab5843d1d356c6e09b7f4f22",
+          "b4a6591cfd46803be1876517efb2dd079684047e58841f65a7bf8383d083727a",
+          "d89461d0f81889fbc8756cd55b738ee042446072bd8879dc68b2ea65119374a5"
+        ]
+      }
+    },
+    {
+      "api": "http://167.99.43.214:41403",
+      "height": 6,
+      "final": {
+        "blockHash": "bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909",
+        "blockNumber": 2
+      },
+      "pool": {
+        "deploys": 0,
+        "bytes": 0,
+        "maxDeploys": 10000,
+        "maxBytes": 67108864
+      },
+      "degraded": "normal",
+      "finalized_height_sets": {
+        "2": [
+          "2d210fa7ffeb4eeb2625f135895861531e21a40baf45b0e723b76cf8695c8bf2",
+          "4ee668f84843390ae6fb4e9f7d69161640a3d0805124bb479edc67ff1562a04b",
+          "655c08c6be4f04f2434876b195500651df32792ee066f9d598ccab3e2a6ffbef",
+          "bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909"
+        ],
+        "3": [
+          "277a8d0bd02ce2a375b37fd85df640e4dd5ee22713f09ff714c9c65165969c3c",
+          "3b91994473abda5da206efc9dbf45948943b9865ab5843d1d356c6e09b7f4f22",
+          "b4a6591cfd46803be1876517efb2dd079684047e58841f65a7bf8383d083727a",
+          "d89461d0f81889fbc8756cd55b738ee042446072bd8879dc68b2ea65119374a5"
+        ]
+      }
+    }
+  ]
+}

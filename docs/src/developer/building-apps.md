@@ -150,7 +150,7 @@ signature must cover it.
     "phloPrice": 1,
     "phloLimit": 1000000,
     "validAfterBlockNumber": -1,
-    "shardId": "root",
+    "shardId": "/root",
     "attachments": ["deadbeef", "0102030405"]
   },
   "deployer": "<base16 secp256k1 public key>",
@@ -167,6 +167,34 @@ protobuf, so existing signatures and deploy ids stay valid. Note that a node **w
 version ignores the new protobuf field, so it would evaluate such a deploy *without* its attachments
 and diverge — every validator must be on this version before attachments are used (a coordinated
 upgrade; no genesis reset).
+
+### Finality is not execution success (#487)
+
+`acceptsDeploys` in `GET /api/v1/status` answers only whether the *local pool has space*. It
+does not imply that the network can finalize. A successful `POST /api/v1/deploy` is a submission
+receipt, and `ProcessedWithSuccess` means execution/inclusion, **not settlement**.
+
+Use `GET /api/v1/finality-observation` for a sampled node-local
+`latestBlockNumber`, `finalizedBlockNumber`, `finalizedBlockHash`,
+`observedFinalityLag` and `observedAtUnixMs`. The `availability` field is intentionally
+`unknown`: one node's frontier and peer count cannot prove live bonded quorum. Missing
+readings return HTTP 503 with nullable fields. Observations can be stale; callers must
+check timestamps and repeat sampling across validators before making network claims.
+
+For a specific signed deploy, poll
+`GET /api/v1/deploy-settlement/{deploy_signature}`. Its `stage` is one of
+`notProcessed`, `includedUnfinalized`, `finalityUnknown`,
+`finalizedSuccess`, `finalizedError`. Only `finalizedSuccess` sets
+`settlementConfirmed=true`. A failed block-finality lookup yields
+`finalityUnknown`, never success. All statements are explicitly node-local;
+applications requiring independent confirmation should compare finalized hashes and
+verify bonded-validator finality attestations across multiple nodes.
+
+gRPC clients can make the corresponding separate queries through the existing
+`DeployService` methods: `findDeploy` / deploy status to establish inclusion,
+then `isFinalized` for that *inclusion block*, and `lastFinalizedBlock` for a
+frontier observation. The existing gRPC `Status` does **not** become a quorum signal.
+These reads do not change admission, consensus rules, pool bounds, or retries.
 
 ### 3.2 Read responses
 
@@ -270,6 +298,8 @@ curl -s http://localhost:40403/api/v1/capabilities
   "manualPropose": false,
   "adminHttp": true,
   "devMode": true,
+  "proposer": true,
+  "nodeList": false,
   "faucet": true,
   "faucetRemaining": 999970000000
 }
@@ -281,22 +311,81 @@ Semantics:
 |---|---|
 | `autopropose` | `--autopropose` — blocks are produced continuously on a timer. |
 | `proposeOnDeploy` | `--propose-on-deploy` — a block is proposed immediately after each deploy. |
-| `manualPropose` | `!autopropose && !proposeOnDeploy` — an app must call `POST /api/v1/propose` to make blocks. |
+| `manualPropose` | `!autopropose && !proposeOnDeploy` — **a mode**, not an identity: an observer with neither flag reports `true` too. |
+| `proposer` | **this node holds a validator identity and can propose at all.** An unkeyed observer reports `false`, whatever its mode. |
 | `adminHttp` | the admin HTTP surface (`POST /api/v1/propose` on `40405`) is published and CORS-enabled (`--admin` + `--api-enable-devnet-cors`). |
 | `devMode` | `--dev-mode`. |
+| `nodeList` | `GET /api/v1/nodes` is mounted (`--api-publish-node-list`). |
 | `faucet` | the `/api/v1/faucet` endpoint is available and has enough remaining budget for another drip. |
 | `faucetRemaining` | remaining faucet allocation in REV drops; clients can stop offering a dry faucet. |
 
 Recommended gating:
 
-- show the **PROPOSE** button only when `manualPropose` is `true` (otherwise blocks are already
-  produced automatically, and `propose` is redundant).
+- show the **PROPOSE** button only when `manualPropose && proposer` — otherwise blocks are produced
+  automatically, and on an observer `propose` could not produce one anyway.
 - show the **FAUCET** button only when `faucet` is `true`.
+- treat a node with `proposer: false` as read-only for writes: it can pool a deploy, but nothing on
+  it will include the deploy unless the deploy relay is enabled.
 
 On a default `tools/devnet.sh up` (`--autopropose --propose-on-deploy --admin --deployer-key`) this
-reports `autopropose:true, proposeOnDeploy:true, manualPropose:false, adminHttp:true, devMode:true,
-faucet:true`. On the bare topology (`up --nodes 3`) it reports `autopropose:false,
-proposeOnDeploy:false, manualPropose:true`.
+reports `autopropose:true, proposeOnDeploy:true, manualPropose:false, proposer:true,
+adminHttp:true, devMode:true, nodeList:false, faucet:true`. On the bare topology (`up --nodes 3`) the
+bootstrap reports `autopropose:false, proposeOnDeploy:false, manualPropose:true, proposer:true`,
+and an observer reports the same mode fields with `proposer:false`.
+
+### 3.5b Discover deploy-capable nodes
+
+A node that opted in (`--api-publish-node-list`) answers `GET /api/v1/nodes` (public `40403`) with
+the peers it has probed and found deploy-capable. A wallet can use this to spread **distinct**
+deploys over several nodes instead of sending everything to one hardcoded endpoint:
+
+```sh
+curl -s http://localhost:40403/api/v1/nodes
+```
+
+```json
+{
+  "networkId": "testnet",
+  "primaryShard": "/root",
+  "generatedAt": 1761868800123,
+  "ownLatestBlockNumber": 128,
+  "nodes": [
+    {
+      "nodeId": "de6eed5d…",
+      "httpUrl": "http://203.0.113.10:40403",
+      "networkId": "testnet",
+      "shardId": "/root",
+      "nodeVersion": "0.4.x",
+      "latestBlockNumber": 127,
+      "proposer": true,
+      "acceptsDeploys": true,
+      "self": false
+    }
+  ]
+}
+```
+
+An entry exists only because the serving node **probed** it: the peer's `rnode://` protocol port
+plus 3, over HTTP, answered `/api/v1/status`, named the peer's own node id, reported the same
+`networkId` and a shard this node is a member of, and reported `proposer: true`. An observer is never
+listed; neither is a peer that did not answer. The entries after `self` are ordered by `nodeId`;
+`self` is the first entry when the serving node is itself a proposer.
+
+Rules for a client:
+
+- **404 means the node does not publish a hostlist** — keep using the node you know.
+- Treat every field as **advisory**. A peer reports its own `proposer`, height and pool state over
+  plain HTTP, so it can lie and an on-path observer can forge a well-formed answer. Verify an entry
+  with `GET {httpUrl}/api/v1/status` before relying on it.
+- Send **each distinct deploy to one node**, chosen round-robin. Never re-submit the same signed
+  deploy to a second node: a signed deploy is already a transaction, and a retry after an ambiguous
+  failure can be included twice if two proposers select it from their own pools.
+- Take `validAfterBlockNumber` from the **lowest** `latestBlockNumber` among your targets, and
+  `phloPrice` at least the **highest** `minPhloPrice`, so no target refuses on height or price.
+  Prefer entries with `acceptsDeploys: true`, which is the pool's capacity at the last probe — still
+  handle a 429.
+- A node is listed only if its HTTP port is reachable at `protocol + 3`; a node behind a reverse
+  proxy on 443, or on a non-standard port layout, is not discoverable this way.
 
 ### 3.6 List pending (pooled) deploys
 

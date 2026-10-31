@@ -13,7 +13,7 @@
 # `shared/src/lmdb.rs` and `rspace/src/state/exporters.rs` are silently skipped without it, which is
 # how they escaped local runs while CI (`--all-features`) still exercised them.
 
-.PHONY: test test-unit test-integration test-multinode test-all check-register check-lean coverage coverage-ledger bench-scheduler bench-smoke spec deep status check
+.PHONY: test test-unit test-integration test-multinode test-all check-register check-lean check-docs coverage coverage-ledger bench-scheduler bench-smoke spec deep status check
 
 test: test-all
 
@@ -66,6 +66,15 @@ check-register:
 	tools/check-review-ledger.sh --gate
 	tools/check-hazop-worksheet.sh --gate
 	tools/check-spawn-observability.sh --gate
+
+# The book's own gates, plus the artifact record and the law-count spans. `mdbook build` is here so a
+# page that mdbook cannot render fails locally before it reaches CI; the link check resolves relative
+# links and `#fragment`s, which mdbook renders as dead anchors without an error.
+check-docs:
+	tools/check-docs-links.sh --gate
+	tools/recount-artifact.sh --check
+	tools/emit-lean-counts.sh --check
+	mdbook build docs
 
 # The formal gate: build the Lean and Coq specifications, refuse a stale or un-consumed conformance
 # corpus, and check the Rust 1:1 against it. `spec` (below) is only the Lean half — this is what CI

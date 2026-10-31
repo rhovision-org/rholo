@@ -1,0 +1,2 @@
+arm477-validator-1 34.82MiB / 320MiB 10.88%
+arm477-bootstrap 40.84MiB / 4GiB 1.00%

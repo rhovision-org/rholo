@@ -1,5 +1,8 @@
 # ERTP: brands, issuers, purses and payments
 
+**Technical reference** for the native ledger. The how-to, with worked examples, is
+[Tokens in Rholang: ERTP](../developer/ertp.md).
+
 **ERTP** is the token standard Agoric's stack uses. A token is not a balance in a table — it is a set
 of capabilities: a **brand** that identifies the asset, a **mint** that creates it, an **issuer** that
 answers how much a holder contains, a **purse** that holds it, and a **payment** for moving it. An
@@ -105,7 +108,7 @@ visible: an `add` whose sum would overflow replies `(false, …)`.
 The balance readers reply a **bare `Int`**, not an amount: `getCurrentAmount`, `getAmountOf` and
 `deposit` all answer `(true, n)`. The pair-shaped replies are `amountMath`'s constructors and
 arithmetic (`make`, `add`, `subtract`), which answer `(true, (brand, n))`. This is a divergence from
-Agoric's ERTP and it is worth knowing when you port a client.
+Agoric's ERTP. The full reply-shape table is in [the API](../developer/ertp.md#the-api).
 
 ## See also
 

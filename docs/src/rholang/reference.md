@@ -100,7 +100,7 @@ already behave. Negative decimals are written `-1.5d`; the minus is the ordinary
 | `rho:attachment:N` | the *N*-th (1-based) binary attachment of the deploy, as a `ByteArray` (RCHIP #39) |
 | `rho:rchain:revVault` | the REV vault contract |
 | `rho:rchain:pos` | the proof-of-stake contract |
-| `rho:block:data` | the current block's number, sender and informational timestamp |
+| `rho:block:data` | the current block's number, sender and informational timestamp (the proposer's wall clock, unverified — validators never judge it) |
 | `rho:io:http` | the deterministic HTTP-result oracle: `record` (first writer wins), `get`, `check`, `height` |
 | `rho:txn` | the cross-shard two-phase-commit participant (`prepare` / `commit` / `abort`) |
 | `rho:crypto:blake2b256Hash` / `keccak256Hash` | hashing |

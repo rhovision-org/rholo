@@ -967,22 +967,45 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                         );
                         return;
                     }
-                    if self.incoming_blocks.try_send(b.clone()).is_err() {
-                        self.log.warn(
-                            self.log_source,
-                            &format!(
-                                "Block ingress queue full or closed; dropping block {} from {peer}",
-                                b.block_hash.to_hex()
-                            ),
-                        );
-                    } else {
-                        self.log.debug(
-                            self.log_source,
-                            &format!(
-                                "Incoming BlockMessage #{} from {}",
-                                b.block_number, peer.endpoint.host
-                            ),
-                        );
+                    match self.incoming_blocks.try_send(b.clone()) {
+                        Ok(()) => {
+                            self.log.debug(
+                                self.log_source,
+                                &format!(
+                                    "Incoming BlockMessage #{} from {}",
+                                    b.block_number, peer.endpoint.host
+                                ),
+                            );
+                        }
+                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                            // **No silent loss** (F-U8-02): the retriever already knows how to ask a
+                            // peer for a hash again, and the block stays unacknowledged until it is
+                            // queued. Re-admit it instead of dropping it.
+                            self.log.warn(
+                                self.log_source,
+                                &format!(
+                                    "Block ingress queue full; re-requesting block {} from {peer}",
+                                    b.block_hash.to_hex()
+                                ),
+                            );
+                            let _ = self
+                                .block_retriever
+                                .admit_hash(
+                                    &b.block_hash,
+                                    Some(peer),
+                                    AdmitHashReason::BlockReceived,
+                                )
+                                .await;
+                        }
+                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                            self.log.warn(
+                                self.log_source,
+                                &format!(
+                                    "Block ingress queue closed; dropping block {} from {peer}",
+                                    b.block_hash.to_hex()
+                                ),
+                            );
+                        }
                     }
                 }
             }
@@ -1057,14 +1080,34 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                             }
                         };
                         if let Some(block) = stored {
-                            if self.incoming_blocks.try_send(block).is_err() {
-                                self.log.warn(
-                                    self.log_source,
-                                    &format!(
-                                        "Block ingress queue full or closed; dropping block {} from {peer}",
-                                        hash.to_hex()
-                                    ),
-                                );
+                            match self.incoming_blocks.try_send(block) {
+                                Ok(()) => {}
+                                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                    self.log.warn(
+                                        self.log_source,
+                                        &format!(
+                                            "Block ingress queue full; re-requesting block {} from {peer}",
+                                            hash.to_hex()
+                                        ),
+                                    );
+                                    let _ = self
+                                        .block_retriever
+                                        .admit_hash(
+                                            &hash,
+                                            Some(peer),
+                                            AdmitHashReason::BlockReceived,
+                                        )
+                                        .await;
+                                }
+                                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                    self.log.warn(
+                                        self.log_source,
+                                        &format!(
+                                            "Block ingress queue closed; dropping block {} from {peer}",
+                                            hash.to_hex()
+                                        ),
+                                    );
+                                }
                             }
                         }
                     }
@@ -1825,6 +1868,57 @@ mod tests {
             .try_recv()
             .expect("with the window released the gap block is ordinary ingress again");
         assert_eq!(taken.block_hash, far.block_hash);
+    }
+
+    /// **F-U8-02: a full ingress queue re-requests instead of dropping.** With a one-slot queue, the
+    /// second unseen block cannot be pended; the handler must hand its hash back to the retriever,
+    /// which asks the peer for it. The test observes that request on the mock transport.
+    #[tokio::test]
+    async fn a_full_ingress_queue_re_requests_the_block() {
+        let local = peer("src", 40400);
+        let remote = peer("peer", 40400);
+        let transport = Arc::new(MockTransport::default());
+        let connections: ConnectionsCell = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+        let comm_util = Arc::new(CommUtil::new(
+            transport.clone(),
+            conf(&local),
+            connections,
+            Arc::new(NopLog),
+        ));
+        let retriever = Arc::new(BlockRetriever::new(comm_util, Arc::new(NopLog)));
+        let store = block_store(vec![]).await;
+        let (incoming_tx, _incoming_rx) = tokio::sync::mpsc::channel(1);
+        let (block_range_tx, _block_range_rx) = tokio::sync::mpsc::channel(4);
+        let block_range_tx = Arc::new(tokio::sync::Mutex::new(block_range_tx));
+        let running = NodeRunning::new(
+            transport.clone(),
+            conf(&local),
+            store,
+            build_dag().await,
+            retriever,
+            Arc::new(NopLog),
+            None,
+            incoming_tx,
+            MockExporter,
+            false,
+            Arc::new(CatchupWindow::new(crate::engine::catchup::WINDOW_HEIGHTS)),
+            block_range_tx,
+        );
+
+        let first = block(hash(11));
+        let second = block(hash(12));
+        running
+            .handle(&remote, &CasperMessage::BlockMessage(first.clone()))
+            .await;
+        // Leave the one slot occupied: the second block must take the re-request path.
+        running
+            .handle(&remote, &CasperMessage::BlockMessage(second.clone()))
+            .await;
+        let sends = transport.sends.lock().unwrap();
+        assert!(
+            sends.iter().any(|(peer, _)| *peer == remote),
+            "a full queue must ask the peer to re-offer the block: {sends:?}"
+        );
     }
 
     /// **`NodeRunning::handle`'s dispatch, and the hand-offs it owns.** Every arm calls a free handler

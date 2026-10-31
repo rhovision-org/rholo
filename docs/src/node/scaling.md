@@ -30,38 +30,25 @@ So the chain's deploy ceiling is exactly:
 
 and the block rate is what the rest of this page is about.
 
-| Cadence | Measured block rate | Where |
+| Cadence | Rate as measured | Where |
 |---|---|---|
 | `--autopropose` timer (default interval 2 s, `AUTOPROPOSE_INTERVAL` in `node/src/runtime/node_runtime.rs`) | 0.5 blocks/s (**derived** — the timer's period) | — |
 | all-live three-validator devnet | **12–16 heights/min** (~1 height per 4–5 s) — *a height rate, not blocks* | `spec/audit/evidence/n127-campaign-results.md` |
-| the fixed proposer (`de4e9af02`) | **~38** — *units and provenance unverified; see below* | `spec/audit/evidence/n127-proposer-fix-results.md` |
-| attestation storm (a defect, not a capability) | ~4 blocks/s, of mostly *empty* blocks | `docs/src/node/testnet.md` |
+| the fixed proposer | **~38 heights/min** — *derived; provenance in the pass record* | `spec/audit/evidence/n127-proposer-fix-results.md` |
+| attestation storm (a defect, not a capability) | ~4 blocks/s, of mostly *empty* blocks | [Incident history](incident-history.md#the-attestation-storm) |
 
-**Correction, 2026-10-01. Two rows above do not say what the column claims, and the derived band below
-rests on them.**
-
-- The **12–16** row is a **height** rate. `n127-campaign-results.md` computes it as *height at T+119 s ÷
-  119 × 60* and reads its own 4.4 s interval as "one block per 4–5 s". A block's number is derived from its
-  justification set — `casper/src/validate.rs:232-253` requires `max(justification height) + 1`, so every
-  validator in a round derives the same one — so **several blocks share a height** and this row understates
-  the block rate. The exact factor is not recoverable from the artifact: that series records
-  `latestBlockNumber` only, with no block-level rows.
-- The **~38** row is **the same substitution on another table**. `passes.md` §36 derives it as *height at
-  T+120 s ÷ 120 × 60* — the fixed arm's 76 gives 38.0 — so it is a height rate too, and the *figure* is in no
-  artifact: `n127-proposer-fix-results.md` carries the heights it is computed from, not a rate. *(This
-  bullet first said "no artifact at all", which was too strong; corrected 2026-10-01 when the derivation was
-  found in the register.)*
+**Read the column as a height rate, not a block rate.** A block's number is derived from its
+justification set — `casper/src/validate.rs:232-253` requires `max(justification height) + 1` — so
+every validator in a round derives the same height and **several blocks share a height**. The two
+measured rows record `latestBlockNumber` only, so they understate blocks by a factor the artifact
+cannot recover; the ~38 row is the same substitution on another table (height at T+120 s ÷ 120 × 60).
+The derived band of 60–160 deploys/s inherits both errors and is an order of magnitude only; the 2 s
+timer row is the only constant. The fixed-proposer number is 2.5–3× the pre-fix one, so treat it as a
+direction rather than a current capability.
 
 The default node config is neither continuous nor on-deploy: `autopropose = false` and
 `propose-on-deploy = false`, with `attest-on-new-blocks = true` supplying the liveness trigger. The
 public testnet runs deliberately idle — blocks appear when a deploy arrives.
-
-**Applying the ceiling:** reading the table at face value — 12–38 per minute — a single shard sustains
-roughly **60–160 deploys per second** (derived), and the 2 s timer gives ~128. **That band inherits the
-correction above**: it is arithmetic on a height rate and an unverified figure, so treat it as an order of
-magnitude until it is re-derived from a sampler that counts blocks rather than heights. Note that only the *timer* row is a constant; the two measured rows are what the node actually
-achieved on small hosts, and the fixed-proposer number is 2.5–3× the pre-fix one, so this band has
-already moved once.
 
 ## Finality is a fringe estimate, not a block depth
 
@@ -109,7 +96,7 @@ subsets turns 40 chains from `2^21` states / 34.6 s into **60 states / 0.7 ms**
 `resolve_conflict_set` unions each key's dependencies into its conflict set and the resulting relation
 is *directed*, not symmetric — every one of nine node-runs on the frozen reproduction showed
 asymmetric pairs. So the node runs on the dedup alone and is one wider fork from the same ceiling.
-This is tracked as **C178** in [`spec/AUDIT.md`](../../../spec/AUDIT.md), and it is the single largest
+This is recorded as a known merge-scaling residue in [`spec/AUDIT.md`](../../../spec/AUDIT.md), and it is the single largest
 determinant of whether block time stays flat as the DAG widens.
 
 ## Residency is the structural limit
@@ -129,7 +116,7 @@ sooner.
 
 **This is a decision, not an oversight.** Bounding it means designing pruning of finalized ancestry
 into the DAG and its liveness rules — a change to the rules the finalizer depends on, not a patch — and
-the recorded decision (2026-09-28) was to **accept and record the rate rather than bound it**, so that
+the recorded decision is to **accept and record the rate rather than bound it**, so that
 an operator can size for it and a later pass can revisit with a number. The parked design is a dense
 bitset over a hash→index table, which reduces the representation ~32× but does **not** change the
 asymptotics. Law 15 pins `seen`'s *value*, not its representation, so the representation is free to
@@ -164,7 +151,7 @@ make any single shard faster.
 | Block rate | 12–38 per minute — **one row a height rate, one unverified** (see the correction above) | **Mixed** — the 2 s timer is a constant; the rest is the proposer and the merge |
 | Single-shard deploys/s | ~60–160 | **Derived** from the two above |
 | Finality | gap 3–4 blocks | **Measured**, best case observed |
-| Merge cost | up to ~2M states/merge | **Structural** — the directed case is unsolved (C178) |
+| Merge cost | up to ~2M states/merge | **Structural** — the directed case is unsolved |
 | DAG residency | Θ(N²) | **Structural** — accepted and recorded, not bounded |
 | Start-up replay | ~0.2 s, ~0.25 MB per block | **Measured**, and superlinear in practice (see [hardware requirements](validator-requirements.md)) |
 | On-chain concurrency | not enabled | **Policy** — implemented, hard-rejected on block paths |
@@ -181,7 +168,7 @@ Ranked by leverage against cost, honestly:
 2. **Checkpoint the start-up path.** Replay is from genesis every time. Every long-running chain solves
    this with snapshots; it is independent of the consensus work and turns an O(N) restart into
    O(recent).
-3. **C178's directed case.** Output-sensitive enumeration of the terminal states of a digraph. The
+3. **The directed case.** Output-sensitive enumeration of the terminal states of a digraph. The
    symmetric rewrite is already 1000× faster; this is what makes it apply to the node's real input.
 4. **Ancestry pruning.** The structural one. Changes the class of the node from "restart it daily" to
    "leave it running", and it touches the liveness rules, which is why it is deferred.
@@ -190,7 +177,16 @@ Ranked by leverage against cost, honestly:
 6. **The on-chain speculation extension.** The design's actual thesis. Largest payoff, and it is
    specified rather than implemented.
 
-One non-lever worth naming: **the fee schedule does not track work.** A 229 KB deploy was measured
-buying roughly 98 CPU-seconds for 13 phlo ([Security audit](security-audit.md), since bounded). Until
-gas is cost-linked, "contract throughput" is not a single number — it is whatever the mispricing
-admits, which matters more for the credibility of an estimate than for its magnitude.
+One non-lever worth naming: **the fee schedule tracks work only part of the way.** A 229 KB deploy was
+measured buying roughly 98 CPU-seconds for 13 phlo ([Security audit](security-audit.md) §9, as measured
+in September; the union instance is since bounded). The October re-audit found the *class* still live in
+the collection conversions — a sort for a flat 18 phlo — and the same remediated it: `toSet`, `toMap`,
+`set`, `keys` and the set/map unions now charge three phlo per element of the output they build, in both
+operands for a union (Law 91a); the register that followed found two more of the same class (`set.add`,
+the tallies' option lists — Law 91c) and now makes an arm that declares no charge a build failure
+([the cost model](../formal/cost-model.md)). **What remains is the shape of the charge, not a flat one**:
+it is linear for `O(n log n)` work, so a phlo buys work bounded by `charge · log charge` — bounded, but
+not an exact comparison count — and a collection *literal* is still uncharged because its bytes were
+charged at parse. Until gas is cost-linked all the way down, "contract throughput" is not a single
+number, it is whatever the remaining mispricing admits, which matters more for the credibility of an
+estimate than for its magnitude.

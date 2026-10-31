@@ -29,11 +29,11 @@ class CloseoutTests(unittest.TestCase):
         self.assertEqual(out["result"], "TRACKER_MUST_REMAIN_OPEN")
         self.assertFalse(out["closure_requested"])
         self.assertGreater(out["unresolved"], 0)
-        self.assertEqual(out["merged"], 11)
+        self.assertEqual(out["merged"], 13)
 
     def test_jim_20261021_deferrals_are_source_attributed(self):
         out = self.inspect()
-        self.assertEqual(out["merged"], 11)
+        self.assertEqual(out["merged"], 13)
         self.assertEqual(out["deferred"], 12)
         for item in self.payload["items"]:
             if item["status"] == "deferred":

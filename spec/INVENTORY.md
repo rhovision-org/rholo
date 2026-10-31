@@ -5,6 +5,16 @@ source-of-truth location, its Lean formalization, and its Rust type realization;
 walkthrough of each law → the concrete Rust file/type/function that carries it (and the test that
 gates it) is in [`../docs/src/contributor/laws-to-rust.md`](../docs/src/contributor/laws-to-rust.md).
 
+**Scope note.** This long-form table ends at **Law 77**. The register
+([`LAWS.md`](LAWS.md), emitted from `Rchain/Laws.lean` and refused stale by the gate) is the authority
+for **Laws 1–91**: rows 78–91 — the developer allocation and its vesting, root publication, the
+verified-answer join, the validator lifecycle, the trust model, the genesis anchor, the fringe state,
+admission/concurrency (86), the decimal value algebra (87), block disposition (88), PoS liveness
+enforcement (89), the published node hostlist (90), and the collection/censure charge magnitudes
+(91) — are in the register and read in
+[`../docs/src/formal/laws.md`](../docs/src/formal/laws.md).
+Backfilling them here is open work; where this page and the register disagree, the register is right.
+
 **Type system.** The port's own type discipline — the ρ-calculus embedded as the base sort of a
 Calculus of Constructions, with no silent partiality — is specified in [`TYPE-SYSTEM.md`](TYPE-SYSTEM.md),
 guided by `Rchain/Rho.lean` and `Rchain/Ty.lean`. It is **not** a new law and does not pre-empt Laws
@@ -51,9 +61,10 @@ register is right.
 - **Phase N** — to be formalized and proven in phase N (1 = execution core, 2 = RSpace, 3 = Rosette,
   4 = Casper, 5 = crypto/storage)
 - **axiom** — postulated (cryptographic primitive), not proven, by design
-- **residual axiom** — a proof obligation currently declared `axiom` (not by design), e.g. the
-  comparator lawfulness in Law 1 (the 4 the register counts: `cmpExpr`'s `eq_iff` and `swap`, and the
-  `cmpPar`/`cmpExpr` `lt_trans` laws)
+- **residual axiom** — a proof obligation currently declared `axiom` (not by design). The register's
+  <!-- counts:axioms -->10 axioms<!-- counts:end --> are nine cryptographic primitives (Law 19, by
+  design) and one residual: `hashHashes`, which Law 7 rests on. Law 1's comparator lawfulness is no
+  longer residual — it is proved (the row records the four that became theorems on 2026-09-24)
 - **open** — recorded question, not yet formalizable
 
 ## Laws

@@ -100,9 +100,11 @@ pub async fn rewind_and_purge(
 ///   would throw those away. The marker is only telling the caller where to catch up from.
 ///
 /// **The repair is total over the record's effects** (law 72, `spec/Rchain/Durability.lean`): the
-/// completion is written only once the runtime root has moved, so a `Rewinding` a boot can find is one
-/// whose root may not have — and a guard that repaired only the two stores would hand a node to the
-/// catch-up walk with the runtime still rooted at the state the rewind dropped.
+/// completion is written only once every effect has returned — the rewind, the purge, the runtime root
+/// **and the derived-index cleanup** (B39, HAZOP F-U17-11). A `Rewinding` a boot can find is one whose
+/// root or indexes may not have moved, and a guard that repaired only the two stores would hand a node
+/// to the catch-up walk with the runtime still rooted at the state the rewind dropped, or with a deploy
+/// index still telling the proposer that a pooled deploy was already included.
 ///
 /// The marker is **not** cleared here. It is cleared when the node's frontier passes the anchor (the
 /// catch-up walk's own end), and that is the honest condition: until then, a crash must land back in
@@ -133,13 +135,19 @@ pub async fn resume_after_reset(
                 anchor_block.post_state_hash.as_bytes(),
             ))
             .await?;
+        // **The fourth effect, before the record says the stores agree** (B39). A crash that left the
+        // metadata drop applied and the index cleanup not is exactly the state this call repairs; it
+        // derives the stale rows from what survives, so it does not depend on this boot's rewind having
+        // dropped anything.
+        let (deploy_rows, deployer_rows) = dag.repair_derived_indexes().await?;
         log.warn(
             source,
             &format!(
                 "this node was rewinding to {} (height {}) when it stopped, part-way through the \
                  reset's durable effects: re-applied the rewind ({} block(s)), removed {purged} body(ies) \
-                 the DAG does not hold, and reset the runtime to the anchor's state — the three effects \
-                 the completion record brackets (law 72, #320, C274)",
+                 the DAG does not hold, reset the runtime to the anchor's state, and repaired \
+                 {deploy_rows} deploy-index and {deployer_rows} deployer-index row(s) — the four effects \
+                 the completion record brackets (law 72, #320, C274, B39)",
                 marker.anchor.to_hex(),
                 i64::from(marker.height),
                 dropped.len(),
@@ -233,8 +241,9 @@ async fn anchor_body(block_store: &BlockStore, anchor: BlockHash) -> Result<Bloc
 /// of the order: a body whose block the DAG does not hold is a body that can be neither replayed nor
 /// served.
 ///
-/// **What it costs, and what it may take with it.** The store is enumerated, so this is O(bodies) — and
-/// it is paid **only when a marker is present**, a rare and deliberate state, not on any ordinary boot.
+/// **What it costs, and what it may take with it.** The store's **keys** are enumerated (no body is
+/// decoded), so this is O(bodies) in key bytes — and it is paid **only when a marker is present**, a
+/// rare and deliberate state, not on any ordinary boot.
 /// It may also remove a body that was legitimately in flight (the receiver stores a body before it
 /// inserts the block), which is harmless: the reset puts the node behind its peers on purpose and the
 /// catch-up walk re-fetches what it needs.
@@ -242,12 +251,11 @@ async fn purge_orphan_bodies(
     dag: &Arc<dyn BlockDagStorage>,
     block_store: &BlockStore,
 ) -> Result<usize, String> {
-    let bodies = block_store.to_map().await?;
+    let keys = block_store.keys().await?;
     let repr = dag.get_representation().await;
-    let orphans: Vec<BlockHash> = bodies
-        .keys()
+    let orphans: Vec<BlockHash> = keys
+        .into_iter()
         .filter(|hash| !repr.contains(hash))
-        .copied()
         .collect();
     if orphans.is_empty() {
         return Ok(0);

@@ -3,7 +3,7 @@
 //! Mirrors `block-storage/src/main/scala/coop/rchain/blockstorage/dag/BlockDagStorage.scala`. The
 //! concrete `BlockDagKeyValueStorage` is casper-owned in Scala, so only the trait is ported here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -173,6 +173,21 @@ pub struct HealthCounters {
 /// The health counters' one key, a literal for the same reason as the other two.
 pub const HEALTH_COUNTERS_KEY: &[u8] = b"shard-health-counters";
 
+/// **The one-time legacy body scan's completion record** (U19/F-U19-07). A literal in the same
+/// durable-records store as the reset/halt/health keys; a value of [`LEGACY_BODY_SCAN_VERSION`]
+/// means "this store has been walked for bodies with no disposition row". Written only after the
+/// walk, so a crash before it rescans on the next boot.
+pub const LEGACY_BODY_SCAN_KEY: &[u8] = b"legacy-body-scan";
+
+/// The scan's meaning. Bump this if a later scan must run again on a store already marked.
+///
+/// **Version 2 is the move to the block-storage environment** (C350). The ledger's rows moved with
+/// `STORE_FORMAT_VERSION` 4, so an upgraded node opens an empty ledger over a populated body store;
+/// the scan adopts every body the DAG does not hold — exactly the unsettled set — and writes the new
+/// marker. What is lost is a `Faulted` row on an unsettled body: it comes back as `Pending` with its
+/// attempt count reset, which retries a body that had failed rather than dropping one.
+pub const LEGACY_BODY_SCAN_VERSION: u8 = 2;
+
 impl HealthCounters {
     /// Three big-endian u64s, 24 bytes. Fixed width, so a decode cannot be ambiguous and a truncated
     /// value is refused rather than guessed at — the codec property [`ResetMarker`]'s and
@@ -326,6 +341,20 @@ pub trait BlockDagStorage: Send + Sync {
         Err("this DAG storage cannot rewind (no `drop_above` impl)".to_string())
     }
 
+    /// **Remove derived-index rows that point at a block this DAG does not hold** (B39, HAZOP
+    /// F-U17-11): the deploy index and the deployer index, returning how many rows each lost.
+    ///
+    /// The repair's subject is the **surviving block set**, not the list a particular rewind happened
+    /// to drop. A crash between dropping metadata and cleaning the indexes leaves rows pointing at
+    /// blocks that are gone; a later rewind that drops nothing must still remove them, and so must
+    /// boot on an upgraded store. The rule is idempotent: a second call finds nothing to remove.
+    ///
+    /// The default answers `(0, 0)`, which is honest for a backend that keeps no derived indexes —
+    /// unlike the refusing defaults above, there is nothing here that a no-op could leave believed.
+    async fn repair_derived_indexes(&self) -> Result<(usize, usize), String> {
+        Ok((0, 0))
+    }
+
     /// **Record that this node is rewinding to `marker.anchor`, and that it has finished** (see
     /// [`ResetMarker`]) — the write that lets a restart repair a reset that crashed half-way.
     ///
@@ -347,6 +376,19 @@ pub trait BlockDagStorage: Send + Sync {
     /// same reason the read answers `None`: a backend with no marker has nothing to clear.
     async fn clear_reset_marker(&self) -> Result<(), String> {
         Ok(())
+    }
+
+    /// **Has this store been walked for pre-ledger bodies?** The default answers *no*: a backend
+    /// with no durable-records store cannot record the scan, and the scan must not run with nowhere
+    /// to write its marker.
+    async fn read_legacy_body_scan_marker(&self) -> Result<Option<u8>, String> {
+        Ok(None)
+    }
+
+    /// Record that the legacy body scan completed. The default refuses, like `write_reset_marker`:
+    /// a backend that cannot record it must not look like one that did.
+    async fn write_legacy_body_scan_marker(&self, _version: u8) -> Result<(), String> {
+        Err("this DAG storage cannot record a legacy body scan".to_string())
     }
 
     /// **Record that this shard's autopropose timer has halted** (see [`HaltRecord`]) — the write that
@@ -427,6 +469,20 @@ pub trait BlockDagStorage: Send + Sync {
         Ok(DeployPermit::default())
     }
 
+    /// **Hold `deploy_id` for this admission, before its term is parsed** (B36, W-N2-05's other half).
+    ///
+    /// `admit_deploy` bounds the *submitter*; this bounds the *work*. A byte-identical resubmission is
+    /// one deploy the pool stores once, but without a reservation the second caller parses the term
+    /// again — and two concurrent submissions of the same deploy can both do so, because a store read
+    /// before the parse cannot reserve anything. The returned permit removes the id when it drops; the
+    /// deploy's own row is the durable record from then on.
+    ///
+    /// The default reserves nothing, which is honest for a backend that keeps no pool: there is
+    /// nothing for a fixture without a deploy store to duplicate.
+    async fn reserve_deploy_id(&self, _deploy_id: &DeployId) -> Result<DeployIdPermit, String> {
+        Ok(DeployIdPermit::default())
+    }
+
     /// Store a deploy that was admitted, handing over the place [`Self::admit_deploy`] reserved.
     ///
     /// The default is the whole of `add_deploy`, which is the pre-split behaviour: a storage that does
@@ -442,6 +498,14 @@ pub trait BlockDagStorage: Send + Sync {
     async fn pooled_deploys(&self) -> Result<BTreeMap<DeployId, SignedDeployData>, String>;
 
     async fn contains_deploy_in_pool(&self, deploy_id: &DeployId) -> Result<bool, String>;
+
+    /// The pool's current count and term bytes, for the status surface's capacity answer. A storage
+    /// that does not track a pool returns the default (an empty, unbounded-looking pool), which is
+    /// what a stub API means by "not the thing that is full". Law 86a: admission depends on the pool's
+    /// bounds, and the status surface must read the same bounds.
+    async fn deploy_pool_stats(&self) -> Result<(usize, usize), String> {
+        Ok((0, 0))
+    }
 }
 
 /// A reservation of the submitter's place in the deploy pool, from admission until the deploy is
@@ -493,6 +557,36 @@ impl Drop for DeployPermit {
         }
         if let Some((share, deployer)) = &self.share {
             release_deployer_share(share, deployer);
+        }
+    }
+}
+
+/// A claim on one deploy id from admission until the deploy is stored — or until it is dropped, which
+/// releases the id so a failed parse or a failed commit does not lock it out.
+///
+/// Opaque like [`DeployPermit`], and for the same reason: the caller that parses the term has no use
+/// for the set it holds, only for the guarantee that nobody else is parsing the same deploy.
+#[derive(Default)]
+pub struct DeployIdPermit {
+    reservation: Option<(Arc<std::sync::Mutex<HashSet<DeployId>>>, DeployId)>,
+}
+
+impl DeployIdPermit {
+    /// A permit that holds `deploy_id` in the storage's in-flight set.
+    pub fn holding(
+        reservations: Arc<std::sync::Mutex<HashSet<DeployId>>>,
+        deploy_id: DeployId,
+    ) -> Self {
+        DeployIdPermit {
+            reservation: Some((reservations, deploy_id)),
+        }
+    }
+}
+
+impl Drop for DeployIdPermit {
+    fn drop(&mut self) {
+        if let Some((reservations, deploy_id)) = &self.reservation {
+            reservations.lock().unpoison().remove(deploy_id);
         }
     }
 }
@@ -624,5 +718,8 @@ mod tests {
         // All three records share one store, so their keys must all differ.
         assert_ne!(HEALTH_COUNTERS_KEY, RESET_MARKER_KEY);
         assert_ne!(HEALTH_COUNTERS_KEY, HALT_RECORD_KEY);
+        assert_ne!(LEGACY_BODY_SCAN_KEY, RESET_MARKER_KEY);
+        assert_ne!(LEGACY_BODY_SCAN_KEY, HALT_RECORD_KEY);
+        assert_ne!(LEGACY_BODY_SCAN_KEY, HEALTH_COUNTERS_KEY);
     }
 }

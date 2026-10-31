@@ -10,9 +10,8 @@ no deployer wallet, no deploy helpers) — see [Operating the node](operating.md
 ## Growth, and the measurement volumes
 
 **Autopropose mints a block every 2 s with no ceiling, deliberately.** On a local testnet the chain
-length is the variable being varied — the 2026-09-24 performance measurements were made against a
-5,844-block chain that existed only because a devnet had been left running — so the timer is documented
-rather than capped (`node/src/runtime/node_runtime.rs`, `AUTOPROPOSE_INTERVAL`). The practical
+length is the variable being varied — a long measurement chain exists only because a devnet was left
+running — so the timer is documented rather than capped (`node/src/runtime/node_runtime.rs`, `AUTOPROPOSE_INTERVAL`). The practical
 consequence is that a devnet left up grows ~1,800 blocks an hour, and the cost of that growth is on
 `/metrics` rather than hidden: the DAG publishes its own gauges (`rchain_dag_messages`,
 `rchain_dag_seen_entries`, `rchain_dag_fringe_states`, `rchain_dag_index_entries`,
@@ -28,7 +27,7 @@ Volumes, and what each is for:
 | `perfsync-validator-{1,2}-data` | created by `DEVNET_PREFIX=perfsync up …` for the fresh-peer measurement; **disposable** — `DEVNET_PREFIX=perfsync tools/devnet.sh down -v` removes them and their network |
 
 `up` prints which volumes it is reusing every time, because reusing an accumulated chain silently is how
-one measurement was once mistaken for a hang (AUDIT C55).
+one measurement is mistaken for a hang.
 
 > **Security.** The validator and deployer keys baked into the script are throwaway dev keys for a
 > *local* testnet only. Never reuse them for anything with real value.
@@ -40,14 +39,12 @@ one measurement was once mistaken for a hang (AUDIT C55).
 
 Every container `up` starts is given a **4 GiB memory ceiling with swap off** (`DEVNET_NODE_MEMORY`
 overrides the size, an empty value opts out). The ceiling is there so a node that runs away is
-OOM-killed inside its own cgroup instead of dragging the host into swap thrash — which is how one
-machine froze on 2026-09-29 while a devnet ran beside two other heavy jobs. Note that it **does** bind
-under load: measured with `4g`, two of three nodes were OOM-killed (exit 137) seventeen seconds into a
-four-way deploy storm at height ~13, the image being ~132 MiB and a node mid-storm being nothing like
-it. The host was unharmed. So a measurement that needs its nodes to *survive* a storm should raise
-`DEVNET_NODE_MEMORY`, lower the storm's concurrency, or record the OOM kill as a result. CPU is left
-uncapped deliberately: the block timing a measurement observes is the thing under test (issue #105's
-storm is a latency phenomenon).
+OOM-killed inside its own cgroup instead of dragging the host into swap. It **does** bind under load:
+at `4g` a four-way deploy storm can OOM-kill nodes (exit 137) while the image sits at ~132 MiB and a
+node mid-storm is nothing like it. So a measurement that needs its nodes to *survive* a storm should
+raise `DEVNET_NODE_MEMORY`, lower the storm's concurrency, or record the OOM kill as a result. CPU is
+left uncapped deliberately: the block timing a measurement observes is the thing under test, and a
+storm's rate is a latency phenomenon rather than a capability.
 
 `DEVNET_NODE_ENV` passes extra container environment as comma-separated `KEY=VALUE` pairs — the
 allocator knobs (`MALLOC_ARENA_MAX`, `MALLOC_TRIM_THRESHOLD_`) are what it exists for, since a node's
@@ -75,8 +72,7 @@ tools/devnet.sh down [-v]                    stop the devnet (+ drop volumes)
 `stop <node>` is the one-validator death of a liveness measurement — `2` resolves to
 `devnet-validator-2`, and `start` brings the same validator back with its chain, which is the other
 half of the question (a silent validator that returns). It exists because `down` removes the whole
-network and takes no node name, so "kill one validator" had no supported command
-([#70](https://github.com/rhovision-org/rholo/issues/70)).
+network and takes no node name, so "kill one validator" had no supported command.
 
 **Autopropose and friends are `up` flags, not build flags** — set them per run:
 
@@ -89,9 +85,9 @@ tools/devnet.sh up --validators 1 --no-propose-on-deploy
 
 **`--no-autopropose` does not make a multi-validator net quiet.** The dummy-`Nil` injector goes away,
 but attestation is still on by default, and each attestation is itself a remote block for the peers,
-which attest in turn: three validators produced **126 blocks in about three minutes** from four deploys
-with autopropose off (2026-09-29, [#70](https://github.com/rhovision-org/rholo/issues/70);
-AUDIT C171). On one validator there is nobody to attest to, so the flag does buy quiet there.
+which attest in turn, so a three-validator net stays busy with autopropose off. On one validator there
+is nobody to attest to, so the flag does buy quiet there. The measured storm is in
+[Incident history](incident-history.md#the-attestation-storm).
 
 `--admin` (default on) publishes the admin HTTP port `40405`, which exposes only `POST /api/v1/propose`
 (*force a block*) — deploys always go through the public `40403` surface or the deploy gRPC, never
@@ -147,18 +143,13 @@ inputs simplified (theory in [Consensus (Casper)](consensus.md)):
   the strict `> 2/3` threshold requires *all* validators to attest before a block finalizes (2 of 3 is
   exactly 2/3, not a supermajority). Production's uneven stakes let a proper subset reach `> 2/3` — but
   see the next bullet: the threshold is not the binding constraint on a net where someone is silent.
-- **A validator that stops producing used to cap finality, whatever the survivors held.** Until
-  2026-09-29 the full-partition filter required a message seen by every validator of the **whole bonded
-  set** (`all_bonded`, `block-storage/src/dag/finalizer.rs`), so one absent validator stopped the fringe
-  from advancing: measured on `--stakes 100,100,50`, the two survivors at **80 %** of the active set did
-  not resume finality (finality stayed at 8 while the height ran to 126). The partition is now the
-  **live weight set** (`block-storage/src/dag/liveness.rs`) while the quorum stays the whole bonded set,
-  so the survivors can finalise and a minority still cannot
-  ([#70](https://github.com/rhovision-org/rholo/issues/70)).
+- **A validator that stops producing does not cap finality.** The partition is the **live weight set**
+  (`block-storage/src/dag/liveness.rs`) while the quorum stays the whole bonded set, so survivors can
+  finalise and a minority still cannot. The measurement that changed this is in
+  [Incident history](incident-history.md#finality-and-the-live-weight-set).
 - **A joiner can stall permanently on `missing justification`.** A block can be in the DAG's in-memory
   index before the store that index is built from holds it, so it is queued for validation, fails to
   resolve a justification, and is dropped with nothing to re-queue it; only a restart recovers.
-  [#103](https://github.com/rhovision-org/rholo/issues/103), observed on this devnet.
 - **Dummy `Nil` deploys** stand in for real user traffic, and **autopropose is a tight loop** (no
   backoff), so the block rate is unbounded rather than a production cadence.
 - **Single shard** (`root`); **no Byzantine behavior** (all validators honest — the slash path exists
@@ -206,7 +197,7 @@ What is installed, and by whom:
 The last three are signed by **the genesis ceremony's key** — the bootstrap validator's own key on a
 devnet — written into the node's own data volume as a file and passed as
 `--validator-private-key-path`, not as hex on the command line, where `docker inspect` returns it to
-anyone who can talk to the daemon (W-N6-06)). They must share one key, because the template publishes its admin
+anyone who can talk to the daemon. They must share one key, because the template publishes its admin
 capability for its own deployer and the feature's registration reads it back. The consequence worth
 knowing: that validator also holds the `MasterContractAdmin` locker, so `newMemberDirectory` (which
 requires it) is callable by that key and not by others. See "Ceiling of this arrangement" in
@@ -218,8 +209,7 @@ Two things worth knowing when you exercise this by hand:
   `rho:io:stdout` works — stdout takes a list as one datum and is persistent, and the genesis run
   prints the feature's multi-element lines on it in a row — but a *drain* (`for (@_ <= logCh) { Nil }`)
   throws the trace away, and a lost trace is what makes a stall indistinguishable from a broken
-  client. (An earlier revision of this file claimed stdout *errors* on multi-element lines. It does
-  not; see AUDIT C21.)
+  client.
 - **`rho:rchain:deployerId` must be a real public key** for anything that derives a REV address from
   it (`getMe` does). A placeholder byte array makes `RevAddress!("fromPublicKey", …)` match nothing
   and the call stalls.
@@ -250,10 +240,10 @@ new rl(`rho:registry:lookup`), deployerId(`rho:rchain:deployerId`), out(`rho:io:
 ```
 
 All four stages pass on a fresh devnet: `getMe` answers, and for a deployer that had none it creates
-the member's inbox and dictionary on the way. The stall that used to sit between stages 3 and 4 was
-AUDIT C21 (an `if` that was not the first term of its `par` reduced to nothing), not the genesis
-installation nor the feature's flow. `spec/GENESIS.md` carries the resolved state; the check that a
-stall is *over* is `@[*deployerId, "inbox"]` and `@[*deployerId, "dictionary"]` being non-empty after
+the member's inbox and dictionary on the way. The historical stall between stages 3 and 4 is in
+[Incident history](incident-history.md#the-governance-handshake); it was not the genesis installation
+nor the feature's flow. `spec/GENESIS.md` carries the resolved state; the check that a stall is *over*
+is `@[*deployerId, "inbox"]` and `@[*deployerId, "dictionary"]` being non-empty after
 `newInbox`.
 
 ## The consumer's call order
@@ -278,3 +268,7 @@ so a browser can reach them directly.
 The host maps each node's deploy gRPC port to `40402 + 1000·i`, its public HTTP port to
 `40403 + 1000·i`, and its admin HTTP port to `40405 + 1000·i` — the bootstrap is `i = 0`, so it
 publishes `40402`/`40403`/`40405` directly.
+
+---
+
+**Running a real network:** [Running a node: testnet now, mainnet later](validator-observer-setup.md).

@@ -1,0 +1,15 @@
+recovery	pace	-	0	false	0
+recovery	pace	0	14999	false	0
+recovery	pace	0	15000	true	15000
+recovery	pace	0	15001	true	15001
+recovery	pace	0	30000	true	30000
+recovery	pace	15000	15001	false	15000
+recovery	pace	15000	30000	true	30000
+recovery	eligible	stored	0	59999	false
+recovery	eligible	stored	0	60000	true
+recovery	eligible	validating	0	60000	false
+recovery	eligible	retry	0	60000	false
+recovery	classify	true	true	regression
+recovery	classify	true	false	pass
+recovery	classify	false	true	unresolved
+recovery	classify	false	false	unresolved

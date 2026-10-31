@@ -68,6 +68,11 @@ dhat-heap = ["dep:dhat"]
 # opt-in that does not need an out-of-workspace manifest.
 jemalloc-profiling = ["tikv-jemallocator/profiling"]
 
+[target.'cfg(unix)'.dependencies]
+# `statvfs` for the data-directory free-space fact (A1). Safe API; the crate graph stays
+# `#![forbid(unsafe_code)]`. `nix` was already in the lock via `rustyline`.
+nix = { version = "0.31", features = ["fs"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # The node's allocator on Linux: jemalloc, with the background purge thread configured in `src/main.rs`.
 # See the comment on the `#[global_allocator]` there — this is the bound on #117, where glibc's per-thread

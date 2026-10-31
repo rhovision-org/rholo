@@ -1,0 +1,62 @@
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/feature+node-hostlist/rholang)
+    Finished `release` profile [optimized] target(s) in 18.13s
+     Running tests/gas_amplification.rs (target/release/deps/gas_amplification-86690bff6be18acb)
+
+running 7 tests
+test a_conversion_charges_its_output ... case,n,plain_phlo,converted_phlo,delta_phlo,plain_ms,converted_ms
+toSet,500,8875,10393,1518,10,6
+toSet,1000,17875,20893,3018,9,11
+toSet,2000,36875,42893,6018,19,23
+toSet,4000,74879,86897,12018,42,45
+toSet,10000,192495,222513,30018,102,122
+toSet,20000,412495,472513,60018,237,343
+toSet,40000,852495,972513,120018,512,602
+ok
+test a_map_conversion_charges_its_output ... case,n,plain_phlo,converted_phlo,delta_phlo,plain_ms,converted_ms
+toMap,500,25637,22155,-3482,16,29
+toMap,1000,51641,44655,-6986,33,32
+toMap,2000,105641,91659,-13982,69,66
+toMap,4000,213641,185659,-27982,175,155
+toMap,10000,544873,474891,-69982,589,581
+ok
+test censure_is_cubic_in_the_universe ... members,512,512,0,0,26
+balanced,512,171,170,171,5
+censure-heavy,512,86,340,86,1
+voucher-heavy,512,86,86,340,1
+ok
+test keys_charges_its_output ... case,n,baseline_phlo,keys_phlo,delta_phlo,baseline_ms,keys_ms
+keys,500,22155,14800,-7355,16,18
+keys,1000,44655,29800,-14855,32,34
+keys,2000,91659,61800,-29859,67,71
+keys,4000,185659,125804,-59855,170,159
+keys,10000,474891,321420,-153471,632,608
+ok
+test set_charges_its_output ... case,n,baseline_phlo,set_phlo,delta_phlo,baseline_ms,set_ms
+set,500,22155,23677,1522,27,29
+set,1000,44655,47677,3022,35,44
+set,2000,91659,97681,6022,92,96
+set,4000,185659,197681,12022,193,230
+set,10000,474891,504913,30022,667,799
+ok
+test the_other_governance_folds_are_measured ... case,members,charged_phlo,ms
+trust_levels,128,16641,0
+trust_levels,256,66049,0
+trust_levels,511,262144,0
+resolve_weights,128,16641,3
+resolve_weights,256,66049,14
+resolve_weights,511,262144,42
+tally_ranked,16x8,1024,0
+tally_ranked,64x16,16384,0
+tally_ranked,128x64,65536,0
+tally_ranked,100x1000,40000,4
+tally_ranked,100x4000,40000,21
+tally_approval,128x64,65536,0
+tally_approval,128x4000,65536,68
+ok
+test the_union_charge_tracks_its_work ... case,n,plain_phlo,union_phlo,delta_phlo,plain_ms,union_ms
+union,1000,17875,33824,15949,7,35
+union,5000,93879,177828,83949,40,108
+union,10000,192495,361444,168949,81,239
+ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.85s

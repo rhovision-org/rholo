@@ -53,9 +53,13 @@ spec/
     Concurrent.lean    concurrency-model soundness theorems
     Tree.lean          tree-model confluence up to `StrCongT`
     RSpace/            Laws 7–11: Join/Comm/Merge/Merkle (7–10 proven, 11 vacuous)
-    Casper/            Laws 14–18: Stake/Fringe/Validate (14a/15/16/18 proven, 14b decided)
+    Casper/            Laws 14b, 15, 16, 18, 52–54, 58, 66–68, 82, 85: the fringe, the DAG,
+                       block/merge/storage validation, the finality gate's partition and its
+                       forward dual, the validator lifecycle, the record and the fringe state
     Crypto/            Law 19: Random/Spec (axiomatized by design)
-  INVENTORY.md         the law catalog (Laws 1–71): source-of-truth → theorem → Rust test
+  INVENTORY.md         the law catalog (Laws 1–77; the register covers 1–91): source-of-truth → theorem → Rust test
+  cost-register.tsv    the cost register: every priced operation, the shape of its charge, and its residual
+  COST.md              the rendered register (emitted from the TSV; refused stale)
   STYLE.md             conventions of this tree: naming, measured options, what is deliberately absent
 ```
 
@@ -67,8 +71,8 @@ Laws 12–13 (Rosette) are **orphaned**: the `rosette`/`roscala` VM is out of sc
 **Per-law status lives in one place.** [`LAWS.md`](LAWS.md) is emitted from `Rchain/Laws.lean` and the
 gate refuses a stale copy: each row says what a law's proof is worth — `proved-tied` (proved *and* tied
 to the running node by a conformance corpus), `proved-model` (proved about the Lean model), `owed`,
-`open`, `orphaned`, `vacuous`, or `axiomatized by design` — together with the axioms it rests on and the
-declarations that would falsify it.
+`open`, `orphaned`, `vacuous`, `retired` (no rule of that shape in the port), or `axiomatized by design` —
+together with the axioms it rests on and the declarations that would falsify it.
 
 This section used to restate that per law, and it is a fair example of why it should not: by the time it
 was replaced it had Law 1 resting on thirty element-comparator axioms (the register counts four),

@@ -87,22 +87,22 @@ Scala's shape), so the Rust tree's own, re-measured LOC is in the table at the e
 
 Total in-scope (non-orphaned): roughly **200–220 person-days**.
 
-### The Rust tree, re-measured (2026-10-14)
+### The Rust tree, re-measured (<!-- recount:date -->2026-10-30<!-- recount:end -->)
 
 `for c in sdk shared crypto graphz models block-storage comm rspace rholang casper node ocapn qucalc rspace-bench; do git ls-files "$c/*.rs" | xargs wc -l | tail -1; done`, plus the whole workspace (`git ls-files '*.rs' | xargs wc -l`):
 
 | Crate | Rust LOC | Crate | Rust LOC |
 |---|---|---|---|
-| `sdk` | 3,001 | `rholang` | 37,971 |
-| `shared` | 4,642 | `casper` | 61,674 |
-| `crypto` | 4,744 | `node` | 35,008 |
-| `graphz` | 837 | `ocapn` | 11,793 |
-| `models` | 11,964 | `rspace-bench` | 495 |
-| `block-storage` | 4,493 | `qucalc` | 1,087 |
-| `comm` | 9,017 | *(workspace-level)* | 281 |
-| `rspace` | 16,166 | **total** | **203,173 over 474 files** |
+| `sdk` | <!-- recount:crate:sdk-lines -->3,111<!-- recount:end --> | `rholang` | <!-- recount:crate:rholang-lines -->41,610<!-- recount:end --> |
+| `shared` | <!-- recount:crate:shared-lines -->4,864<!-- recount:end --> | `casper` | <!-- recount:crate:casper-lines -->74,600<!-- recount:end --> |
+| `crypto` | <!-- recount:crate:crypto-lines -->4,744<!-- recount:end --> | `node` | <!-- recount:crate:node-lines -->43,424<!-- recount:end --> |
+| `graphz` | <!-- recount:crate:graphz-lines -->837<!-- recount:end --> | `ocapn` | <!-- recount:crate:ocapn-lines -->12,019<!-- recount:end --> |
+| `models` | <!-- recount:crate:models-lines -->13,187<!-- recount:end --> | `rspace-bench` | <!-- recount:crate:rspace-bench-lines -->495<!-- recount:end --> |
+| `block-storage` | <!-- recount:crate:block-storage-lines -->5,073<!-- recount:end --> | `qucalc` | <!-- recount:crate:qucalc-lines -->1,087<!-- recount:end --> |
+| `comm` | <!-- recount:crate:comm-lines -->9,206<!-- recount:end --> | *(workspace-level)* | <!-- recount:workspace-lines -->281<!-- recount:end --> |
+| `rspace` | <!-- recount:crate:rspace-lines -->16,506<!-- recount:end --> | **total** | **<!-- recount:rs-lines -->231,044<!-- recount:end --> over <!-- recount:rs-files -->513<!-- recount:end --> files** |
 
-`casper` is the largest crate at 61,674 lines — well past the 9,916 the port was scoped against — because it now carries the node's consensus, merge, gateway and sync-engine code as native Rust.
+`casper` is the largest crate at <!-- recount:crate:casper-lines -->74,600<!-- recount:end --> lines — well past the 9,916 the port was scoped against — because it now carries the node's consensus, merge, gateway and sync-engine code as native Rust.
 
 ### Rewrite order (bottom-up)
 

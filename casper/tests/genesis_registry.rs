@@ -138,6 +138,12 @@ fn proof_of_stake() -> ProofOfStake {
         pos_multi_sig_quorum: 1,
         pos_vault_pub_key: String::new(),
         dev_tax_vesting_blocks: NonNegI64::zero(),
+
+        liveness_absence_threshold: 0,
+        liveness_jail_after_boundaries: 0,
+        liveness_jail_epochs: 0,
+        liveness_vote_window: 0,
+        liveness_slash_severity: 0,
     }
 }
 

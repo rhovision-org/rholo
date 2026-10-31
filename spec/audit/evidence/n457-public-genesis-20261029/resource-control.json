@@ -1,0 +1,18 @@
+{
+  "unit": "rholo-n457-qualified-v2-fresh-1.service",
+  "utc": "2026-10-29T00:48:47.313646+00:00",
+  "before_swap_max": "max",
+  "command": [
+    "sudo",
+    "-n",
+    "systemctl",
+    "set-property",
+    "--runtime",
+    "rholo-n457-qualified-v2-fresh-1.service",
+    "MemorySwapMax=256M"
+  ],
+  "exit_code": 0,
+  "after_swap_max": "268435456",
+  "memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\n",
+  "current_swap": "0"
+}

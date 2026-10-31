@@ -7,8 +7,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use rchain_block_storage::dag::dag_storage::{
-    BlockDagStorage, DeployId, DeployPermit, DeployerLookup, HaltRecord, HealthCounters,
-    ResetMarker, HALT_RECORD_KEY, HEALTH_COUNTERS_KEY, RESET_MARKER_KEY,
+    BlockDagStorage, DeployId, DeployIdPermit, DeployPermit, DeployerLookup, HaltRecord,
+    HealthCounters, ResetMarker, HALT_RECORD_KEY, HEALTH_COUNTERS_KEY, LEGACY_BODY_SCAN_KEY,
+    RESET_MARKER_KEY,
 };
 
 use rchain_block_storage::dag::finalizer::Message;
@@ -28,6 +29,7 @@ use rchain_shared::typed_store::KeyValueTypedStore;
 
 use crate::block_metadata_store::BlockMetadataStore;
 use crate::merging::BlockIndex;
+use crate::pool::{self, PoolError, PoolLimits};
 
 /// Upper bound on the number of distinct deploys held in the pending pool. Reached by the
 /// `add_deploy` chokepoint so a remote flood cannot exhaust the deploy store (documented Scala
@@ -65,6 +67,20 @@ pub const MAX_TRACKED_DEPLOYERS: usize = 4_096;
 /// lockout, which is the shape this is most likely to be wrong in.
 pub const MAX_POOLED_DEPLOYS_PER_DEPLOYER: usize = 1_000;
 
+/// **The pool's term-byte budget** (B36, the same row as the count bound above).
+///
+/// The count bound treats a 1 KiB deploy and a 64 KiB deploy as one place each; the host pays for
+/// bytes. Ten thousand maximal terms is 640 MiB — more than the 1 GiB host this programme's top event
+/// names should ever spend on a pending pool at once — and the ingress is unauthenticated, so the
+/// count alone lets a caller choose the pool's memory by sending large terms. 64 MiB is reached only
+/// when the average pooled term is above ~6.4 KiB, well above ordinary traffic, so the byte bound
+/// bites on the shape the attack uses and not on volume alone.
+///
+/// Term bytes are the proxy, and the bound says so: they are the work the ingress asks the node to
+/// hold and parse. The stored row, the signature and the pool's index carry a bounded overhead on
+/// top of the term, so this is not an RSS figure.
+pub const MAX_POOLED_DEPLOY_BYTES: usize = 64 * 1024 * 1024;
+
 /// Build a `Message` from a `BlockMetadata` given the current message map (port of
 /// `BlockDagKeyValueStorage.messageFromBlockMetadata`). Returns `None` when a justification is
 /// absent from `msg_map` (the Scala `Map.apply` throws).
@@ -89,18 +105,23 @@ pub fn message_from_block_metadata(
     })
 }
 
-/// Count a deploy store by deployer — the starting point for [`MAX_POOLED_DEPLOYS_PER_DEPLOYER`].
+/// Count a deploy store by deployer and total its term bytes — the starting point for
+/// [`MAX_POOLED_DEPLOYS_PER_DEPLOYER`] and [`MAX_POOLED_DEPLOY_BYTES`].
 ///
 /// A node that restarts with deploys already pooled has to start from what is stored rather than
-/// from zero, or every deployer's share would be handed out a second time on top of what it holds.
-async fn pooled_by_deployer(
+/// from zero, or every deployer's share would be handed out a second time on top of what it holds —
+/// and the byte budget would admit a full pool's worth again on top of the bytes already there. One
+/// pass, because the two are read from the same rows and a second scan would be the same work twice.
+async fn pooled_accounting(
     deploy_store: &Arc<dyn KeyValueTypedStore<DeployId, SignedDeployData>>,
-) -> Result<std::collections::HashMap<Vec<u8>, usize>, String> {
+) -> Result<(std::collections::HashMap<Vec<u8>, usize>, usize), String> {
     let mut counts: std::collections::HashMap<Vec<u8>, usize> = std::collections::HashMap::new();
+    let mut term_bytes = 0usize;
     for deploy in deploy_store.to_map().await?.into_values() {
         *counts.entry(deploy.deployer).or_insert(0) += 1;
+        term_bytes = term_bytes.saturating_add(deploy.data.term.len());
     }
-    Ok(counts)
+    Ok((counts, term_bytes))
 }
 
 /// Return one place to `deployer`'s share, dropping the entry at zero.
@@ -145,6 +166,18 @@ pub struct BlockDagKeyValueStorage {
     /// map cannot grow past the number of deployers currently holding a slot — which is bounded by
     /// the pool itself, not by the caller.
     pooled_by_deployer: Arc<std::sync::Mutex<std::collections::HashMap<Vec<u8>, usize>>>,
+    /// **The pool's term bytes in use** (see [`MAX_POOLED_DEPLOY_BYTES`]).
+    ///
+    /// Rebuilt from the store at boot and charged where a deploy is stored, returned at both places
+    /// one leaves the pool — the same three points as the per-deployer share, because a byte bound
+    /// that misses a return is a pool that fills and never drains.
+    pooled_term_bytes: Arc<std::sync::atomic::AtomicUsize>,
+    /// **Deploy ids being admitted right now** (see [`BlockDagStorage::reserve_deploy_id`]).
+    ///
+    /// In memory only: the durable record of a pooled deploy is its own row, and a restart rebuilds
+    /// the pool's accounting from the store. Two callers that both hold a reservation cannot both
+    /// reach the parse, which is the work this exists to refuse.
+    deploy_reservations: Arc<std::sync::Mutex<std::collections::HashSet<DeployId>>>,
     block_metadata_store: Arc<BlockMetadataStore>,
     deploy_index: Arc<dyn KeyValueTypedStore<DeployId, BlockHash>>,
     deploy_store: Arc<dyn KeyValueTypedStore<DeployId, SignedDeployData>>,
@@ -159,6 +192,11 @@ pub struct BlockDagKeyValueStorage {
     /// restart forgets: the *evidence* is what has to be checkable, and it is checked by the receiver
     /// against its own DAG, not against a store this node happens to keep.
     equivocations: tokio::sync::Mutex<BTreeMap<Validator, Vec<u8>>>,
+    /// **Insert reservations** (F-U9-01): a block hash and a `(sender, seq_num)` key are reserved
+    /// while the slow store writes run outside `self.lock`. The H-1 gate and the duplicate check
+    /// therefore stay atomic without holding the global insertion lock across LMDB I/O.
+    insert_hashes: std::sync::Mutex<BTreeSet<BlockHash>>,
+    insert_equivocations: std::sync::Mutex<BTreeSet<(Validator, SeqNum)>>,
     /// **Deployer public key (hashed) → a block containing a deploy it signed** (the first one this node
     /// inserted). Attached by [`Self::with_deployer_index`]; `None` in tests and tools that never
     /// ask, and then `lookup_by_deployer` refuses. Serves the wallet's quantum key-hygiene check
@@ -175,7 +213,8 @@ pub struct BlockDagKeyValueStorage {
     /// **The shard's durable records** — the store a reset writes itself into (F-U5-01, register C274),
     /// the one an autopropose halt writes itself into (W-N10-01, F-U10-02), and the one this shard's
     /// monotone health counters write into (W-N10-02). One store, one reserved key each:
-    /// [`RESET_MARKER_KEY`], [`HALT_RECORD_KEY`] and [`HEALTH_COUNTERS_KEY`], all literals so none can
+    /// [`RESET_MARKER_KEY`], [`HALT_RECORD_KEY`], [`HEALTH_COUNTERS_KEY`] and
+    /// [`LEGACY_BODY_SCAN_KEY`], all literals so none can
     /// collide with a block entry or with the others.
     ///
     /// Attached by [`Self::with_reset_marker`], whose name records which record needed it first; `None`
@@ -185,6 +224,22 @@ pub struct BlockDagKeyValueStorage {
     /// [`HaltRecord`] for why this one is not, and [`HealthCounters`] for why its three counters are
     /// persisted on a transition rather than on every observation.
     reset_marker: Option<Arc<dyn KeyValueTypedStore<Vec<u8>, Vec<u8>>>>,
+}
+
+/// A reservation removed on every exit path (F-U9-01). The hashes/equivocations cells are `std`
+/// mutexes because `Drop` cannot await; they only cover the short reservation critical section.
+struct InsertReservation<'a> {
+    hashes: &'a std::sync::Mutex<BTreeSet<BlockHash>>,
+    equivocations: &'a std::sync::Mutex<BTreeSet<(Validator, SeqNum)>>,
+    hash: BlockHash,
+    key: (Validator, SeqNum),
+}
+
+impl Drop for InsertReservation<'_> {
+    fn drop(&mut self) {
+        self.hashes.lock().unpoison().remove(&self.hash);
+        self.equivocations.lock().unpoison().remove(&self.key);
+    }
 }
 
 /// The deployer index's one non-key entry: the `indexed_from` height, big-endian `i64`. Deployer
@@ -246,6 +301,11 @@ impl BlockDagKeyValueStorage {
         deploy_store: Arc<dyn KeyValueTypedStore<DeployId, SignedDeployData>>,
     ) -> Result<Self, String> {
         let representation = Self::rebuild_representation(&block_metadata_store).await?;
+        // **A restarted node's pool is not empty**, and both the share and the byte budget have to
+        // start from what is actually stored rather than from zero — a node that comes back with a
+        // full pool would otherwise admit a fresh ten thousand deploys per deployer, and 64 MiB of
+        // terms, on top of what it holds.
+        let (pooled_by_deployer, pooled_term_bytes) = pooled_accounting(&deploy_store).await?;
         Ok(BlockDagKeyValueStorage {
             representation: tokio::sync::RwLock::new(Arc::new(representation)),
             lock: tokio::sync::Mutex::new(()),
@@ -254,17 +314,16 @@ impl BlockDagKeyValueStorage {
                 MAX_DEPLOYS_PER_DEPLOYER_PER_SEC,
                 MAX_TRACKED_DEPLOYERS,
             ),
-            // **A restarted node's pool is not empty**, and the share has to start from what is
-            // actually stored rather than from zero — a node that comes back with a full pool would
-            // otherwise admit a fresh ten thousand deploys per deployer on top of what it holds.
-            pooled_by_deployer: Arc::new(std::sync::Mutex::new(
-                pooled_by_deployer(&deploy_store).await?,
-            )),
+            pooled_by_deployer: Arc::new(std::sync::Mutex::new(pooled_by_deployer)),
+            pooled_term_bytes: Arc::new(std::sync::atomic::AtomicUsize::new(pooled_term_bytes)),
+            deploy_reservations: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             block_metadata_store,
             deploy_index,
             deploy_store,
             metrics: Arc::new(MetricsNop),
             equivocations: tokio::sync::Mutex::new(BTreeMap::new()),
+            insert_hashes: std::sync::Mutex::new(BTreeSet::new()),
+            insert_equivocations: std::sync::Mutex::new(BTreeSet::new()),
             deployer_index: None,
             deployer_indexed_from: AtomicI64::new(0),
             merge_divergence_injection: 0,
@@ -370,17 +429,24 @@ impl BlockDagKeyValueStorage {
     /// rewind takes them whole. What this pass fixes is the *survivor* — the anchor, whose finalisers
     /// were the blocks just dropped.
     ///
+    /// **The derived indexes are repaired against what survives, not against what this call dropped**
+    /// (B39, HAZOP F-U17-11). `dropped` is only what *this* call removed: a crash that dropped metadata
+    /// and died before the cleanup leaves rows behind, and a later rewind that drops nothing — or a boot
+    /// with no rewind at all — must still remove them. A stale deploy-index row is not inert: the
+    /// proposer's replay guard (`casper/src/blocks/proposer/proposer.rs:697`) treats "in the DAG" as
+    /// "already included" and silently skips the pooled deploy. The repair is idempotent, so it runs on
+    /// every rewind rather than behind a "did the drop return anything" branch.
+    ///
     /// **What this does not drop, stated rather than implied.** The block *messages* live in
     /// `BlockStore`, which this type does not own, so the bodies stay on disk. `deployer_indexed_from`
     /// also stays as it is: its claim is "complete from this height **up to the tip**", and with the tip
-    /// now at the anchor that claim is still true of the shorter chain.
+    /// now at the anchor that claim is still true of the shorter chain. The deploy-pool accounting
+    /// (`pooled_by_deployer`, `pooled_term_bytes`) is not touched: the pool holds only *un-included*
+    /// deploys, and a deploy that was included had its share returned when it left the pool.
     pub async fn drop_above(&self, height: BlockHeight) -> Result<Vec<BlockHash>, String> {
         let _guard = self.lock.lock().await;
 
         let dropped = self.block_metadata_store.drop_above(height).await?;
-        if dropped.is_empty() {
-            return Ok(dropped);
-        }
 
         // Clear the survivours' orphaned marks (see the doc above). One pass over what the store now
         // holds: the fringes a surviving block *declares* are the names that are still resolvable, and
@@ -421,28 +487,73 @@ impl BlockDagKeyValueStorage {
         let rebuilt = Self::rebuild_representation(&self.block_metadata_store).await?;
         *self.representation.write().await = Arc::new(rebuilt);
 
-        let gone: BTreeSet<Vec<u8>> = dropped.iter().map(|h| h.as_bytes().to_vec()).collect();
+        let surviving_set: BTreeSet<Vec<u8>> =
+            surviving.iter().map(|h| h.as_bytes().to_vec()).collect();
+        let (deploy_rows, deployer_rows) = self.repair_derived_index_rows(&surviving_set).await?;
+        if deploy_rows + deployer_rows > 0 {
+            eprintln!(
+                "[rewind] repaired {} deploy-index and {} deployer-index row(s) that named a block \
+                 this DAG no longer holds",
+                deploy_rows, deployer_rows
+            );
+        }
+        Ok(dropped)
+    }
+
+    /// The hashes this DAG currently holds, as bytes — the survivor set both the rewind's orphan-mark
+    /// pass and its derived-index repair are judged against.
+    async fn surviving_block_hashes(&self) -> BTreeSet<Vec<u8>> {
+        self.block_metadata_store
+            .dag_set()
+            .await
+            .iter()
+            .map(|h| h.as_bytes().to_vec())
+            .collect()
+    }
+
+    /// Remove every derived-index row whose block is not in `surviving`, returning
+    /// `(deploy rows removed, deployer rows removed)`.
+    ///
+    /// Idempotent: a second call with the same survivor set removes nothing. It derives the stale rows
+    /// from the **survivors**, not from a dropped list, which is what lets it repair a state an earlier
+    /// crash left behind (`drop_above`'s early return was the shape that skipped this).
+    async fn repair_derived_index_rows(
+        &self,
+        surviving: &BTreeSet<Vec<u8>>,
+    ) -> Result<(usize, usize), String> {
         let deploys = self.deploy_index.to_map().await?;
         let stale: Vec<DeployId> = deploys
             .into_iter()
-            .filter(|(_, hash)| gone.contains(hash.as_bytes().as_slice()))
+            .filter(|(_, hash)| !surviving.contains(hash.as_bytes().as_slice()))
             .map(|(id, _)| id)
             .collect();
+        let deploy_rows = stale.len();
         if !stale.is_empty() {
             self.deploy_index.delete(&stale).await?;
         }
+        let mut deployer_rows = 0usize;
         if let Some(index) = &self.deployer_index {
             let entries = index.to_map().await?;
+            // The store carries the backfill cursor and its count beside the rows. They are not
+            // derived-index rows: the cursor's claim ("complete from this height up to the tip") is
+            // still true of a shorter chain after a rewind, and removing it would make the node
+            // re-backfill from scratch. The 8-byte values could never equal a 32-byte block hash, so
+            // filtering by value alone would already spare them — naming them says why.
             let stale: Vec<Vec<u8>> = entries
                 .into_iter()
-                .filter(|(_, value)| gone.contains(value))
+                .filter(|(key, value)| {
+                    key.as_slice() != DEPLOYER_INDEXED_FROM_KEY
+                        && key.as_slice() != DEPLOYER_INDEX_COUNT_KEY
+                        && !surviving.contains(value)
+                })
                 .map(|(key, _)| key)
                 .collect();
+            deployer_rows = stale.len();
             if !stale.is_empty() {
                 index.delete(&stale).await?;
             }
         }
-        Ok(dropped)
+        Ok((deploy_rows, deployer_rows))
     }
 
     /// Attach the deployer index. From here on every inserted block is indexed. A store that has
@@ -902,7 +1013,13 @@ impl BlockDagKeyValueStorage {
             .collect();
         if !expired.is_empty() {
             let ids: Vec<DeployId> = expired.iter().map(|(id, _)| id.clone()).collect();
+            let expired_bytes: usize = expired
+                .iter()
+                .filter_map(|(id, _)| pooled.get(id))
+                .map(|d| d.data.term.len())
+                .sum();
             self.deploy_store.delete(&ids).await?;
+            self.return_pooled_bytes(expired_bytes);
             // Return each deployer's share of the pool. An expired deploy has left it, so holding
             // the share would lock its deployer out for a deploy the node no longer has.
             for (_, deployer) in &expired {
@@ -910,6 +1027,26 @@ impl BlockDagKeyValueStorage {
             }
         }
         Ok(())
+    }
+
+    /// Return `bytes` to the pool's term budget, saturating at zero.
+    ///
+    /// Two removal paths can see the same deploy, exactly as they can for the per-deployer share; a
+    /// second return must leave the budget at zero rather than wrap it to a huge number, which would
+    /// refuse every subsequent deploy on a node that had done nothing wrong.
+    fn return_pooled_bytes(&self, bytes: usize) {
+        let _ = self.pooled_term_bytes.fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |in_use| Some(in_use.saturating_sub(bytes)),
+        );
+    }
+
+    /// The pool's term bytes in use — the reading a status or metrics surface publishes, and the
+    /// value a test asserts did not move when a duplicate was refused.
+    pub fn pooled_term_bytes(&self) -> usize {
+        self.pooled_term_bytes
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -983,6 +1120,15 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         BlockDagKeyValueStorage::drop_above(self, height).await
     }
 
+    /// **The forward, for the same reason as `drop_above`'s.** The boot guard and the reset bracket hold
+    /// the DAG as `&dyn BlockDagStorage`; the trait's default answers `(0, 0)` (honest for a backend
+    /// with no indexes), and without this forward a `dyn` caller would repair nothing on the one storage
+    /// that has rows to repair.
+    async fn repair_derived_indexes(&self) -> Result<(usize, usize), String> {
+        let surviving = self.surviving_block_hashes().await;
+        self.repair_derived_index_rows(&surviving).await
+    }
+
     /// **The reset's record, from the storage that can keep one** (F-U5-01, register C274). Three
     /// forwards rather than three defaults: the default write *refuses*, so a `dyn BlockDagStorage`
     /// caller that kept the default would make every reset fail on exactly the node that needed one —
@@ -1021,6 +1167,34 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         let marker = raw.map(|bytes| ResetMarker::decode(&bytes)).transpose()?;
         crate::interpreter_util::note_reset_marker(marker.clone());
         Ok(marker)
+    }
+
+    async fn read_legacy_body_scan_marker(&self) -> Result<Option<u8>, String> {
+        let Some(store) = &self.reset_marker else {
+            return Ok(None);
+        };
+        let raw = store
+            .get(&[LEGACY_BODY_SCAN_KEY.to_vec()])
+            .await
+            .map_err(|e| format!("legacy scan marker read: {e}"))?;
+        match raw.into_iter().next().flatten() {
+            None => Ok(None),
+            Some(bytes) => bytes
+                .first()
+                .copied()
+                .map(Some)
+                .ok_or_else(|| "legacy scan marker is empty".to_string()),
+        }
+    }
+
+    async fn write_legacy_body_scan_marker(&self, version: u8) -> Result<(), String> {
+        let Some(store) = &self.reset_marker else {
+            return Err("this shard has no durable-records store for the legacy scan".to_string());
+        };
+        store
+            .put(&[(LEGACY_BODY_SCAN_KEY.to_vec(), vec![version])])
+            .await
+            .map_err(|e| format!("legacy scan marker write: {e}"))
     }
 
     async fn clear_reset_marker(&self) -> Result<(), String> {
@@ -1135,77 +1309,126 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         block_metadata: BlockMetadata,
         block: BlockMessage,
     ) -> Result<(), String> {
-        let _guard = self.lock.lock().await;
-        if self
+        // The idempotence check is a store read and does not need the global insertion lock; the
+        // pending-hash reservation below covers a same-hash insert already in flight (F-U9-01).
+        //
+        // **Metadata alone is not a committed insert.** The store write happens before the
+        // representation commit; a failure in the deploy index, pool release, fringe marks or
+        // representation leaves the metadata row behind, and the old `contains` early-return
+        // then answered `Ok(())` on every retry while `dag.contains` stayed false. Requiring the
+        // representation as well makes the retry **complete** the missing steps instead of
+        // short-circuiting the repair.
+        let metadata_known = self
             .block_metadata_store
             .contains(&block_metadata.block_hash)
-            .await
+            .await;
+        if metadata_known
+            && self
+                .representation
+                .read()
+                .await
+                .contains(&block_metadata.block_hash)
         {
             return Ok(());
         }
 
-        // H-1: equivocation detection — a second, distinct block by the same sender reusing a
-        // `seq_num`. Reject it before any partial write so an equivocating validator can neither
-        // enter the DAG nor stall finalization.
-        {
-            let repr = self.representation.read().await;
-            let equivocating = repr.dag_message_state.msg_map.values().any(|m| {
-                m.sender == block_metadata.sender && m.sender_seq == block_metadata.seq_num
-            });
-            if equivocating {
-                // **Record the refused block's header before refusing it** (AUDIT C200). This is the
-                // only copy of the offence that will ever exist — the gate returns before any write —
-                // and it is what a proposer attaches as evidence so that every other node can check the
-                // offence against its own DAG. The header and not the block: the payload lands in a
-                // block's *state*, and a refused block's size is whatever its sender chose. A second
-                // offence by the same sender replaces the first — one piece of evidence takes the bond,
-                // and holding more would be unbounded.
-                self.equivocations.lock().await.insert(
+        let (reservation, fringe_diff, fringe_hash) = {
+            let _guard = self.lock.lock().await;
+
+            // H-1: equivocation detection — a second, distinct block by the same sender reusing a
+            // `seq_num`. Reject it before any partial write so an equivocating validator can neither
+            // enter the DAG nor stall finalization.
+            {
+                let repr = self.representation.read().await;
+                let equivocating = repr.dag_message_state.msg_map.values().any(|m| {
+                    m.sender == block_metadata.sender && m.sender_seq == block_metadata.seq_num
+                });
+                if equivocating {
+                    // **Record the refused block's header before refusing it** (AUDIT C200). This is the
+                    // only copy of the offence that will ever exist — the gate returns before any write —
+                    // and it is what a proposer attaches as evidence so that every other node can check the
+                    // offence against its own DAG. The header and not the block: the payload lands in a
+                    // block's *state*, and a refused block's size is whatever its sender chose. A second
+                    // offence by the same sender replaces the first — one piece of evidence takes the bond,
+                    // and holding more would be unbounded.
+                    self.equivocations.lock().await.insert(
                     block_metadata.sender,
                     rchain_models::casper::protocol::casper_message::EquivocationEvidence::from_block(
                         &block,
                     )
                     .encode(),
                 );
-                return Err(format!(
+                    return Err(format!(
                     "{EQUIVOCATION_PREFIX}: sender produced two blocks with the same sequence number"
                 ));
+                }
             }
-        }
 
-        // The fringe a block belongs to — the key its `member_of_fringe` mark uses, and the name the
-        // readers find a fringe's blocks by (Law 66/68; C250's residue, C270).
-        let fringe_hash = rchain_models::block_metadata::fringe_hash_of(&block_metadata.fringe);
+            // Reserve the block hash and the `(sender, seq_num)` claim while the store writes below run
+            // outside `self.lock`. A second insert of the same hash is already in flight; a second claim
+            // by the same sender is an equivocation, exactly as the H-1 gate above.
+            let key = (block_metadata.sender, block_metadata.seq_num);
+            {
+                let mut hashes = self.insert_hashes.lock().unpoison();
+                if !hashes.insert(block_metadata.block_hash) {
+                    return Ok(());
+                }
+            }
+            {
+                let mut claims = self.insert_equivocations.lock().unpoison();
+                if !claims.insert(key) {
+                    self.insert_hashes
+                        .lock()
+                        .unpoison()
+                        .remove(&block_metadata.block_hash);
+                    return Err(format!(
+                    "{EQUIVOCATION_PREFIX}: sender produced two blocks with the same sequence number"
+                ));
+                }
+            }
+            let reservation = InsertReservation {
+                hashes: &self.insert_hashes,
+                equivocations: &self.insert_equivocations,
+                hash: block_metadata.block_hash,
+                key,
+            };
 
-        // One read of the representation, and the guard is a *block expression* rather than a
-        // binding: everything below is synchronous, so the copy this used to take
-        // (`dag_message_state.clone()`, Θ(N²) in the messages' `seen` sets, once per block) bought
-        // nothing except releasing the lock — and a binding left in scope would hold the read lock
-        // across the metadata write at the end of this function, making that write wait on itself.
-        // The borrow checker cannot catch a stale guard; the block can.
-        let fringe_diff: BTreeSet<BlockHash> = {
-            let repr = self.representation.read().await;
-            let msg_map = &repr.dag_message_state.msg_map;
-            let mut justifications: BTreeSet<Message<BlockHash, Validator>> = BTreeSet::new();
-            for j in &block_metadata.justifications {
-                let msg = msg_map
-                    .get(j)
-                    .ok_or_else(|| "justification not present in message map".to_string())?;
-                justifications.insert(msg.clone());
-            }
-            let prev_fringe = message_map::latest_fringe(msg_map, &justifications);
-            let mut fringe_seen: BTreeSet<BlockHash> = BTreeSet::new();
-            for f in &block_metadata.fringe {
-                let msg = msg_map
-                    .get(f)
-                    .ok_or_else(|| "fringe block not present in message map".to_string())?;
-                fringe_seen.extend(msg.seen.iter().copied());
-            }
-            let prev_seen: BTreeSet<BlockHash> = prev_fringe
-                .iter()
-                .flat_map(|m| m.seen.iter().copied())
-                .collect();
-            fringe_seen.difference(&prev_seen).copied().collect()
+            // The fringe a block belongs to — the key its `member_of_fringe` mark uses, and the name the
+            // readers find a fringe's blocks by (Law 66/68; C250's residue, C270).
+            let fringe_hash = rchain_models::block_metadata::fringe_hash_of(&block_metadata.fringe);
+
+            // One read of the representation, and the guard is a *block expression* rather than a
+            // binding: everything below is synchronous, so the copy this used to take
+            // (`dag_message_state.clone()`, Θ(N²) in the messages' `seen` sets, once per block) bought
+            // nothing except releasing the lock — and a binding left in scope would hold the read lock
+            // across the metadata write at the end of this function, making that write wait on itself.
+            // The borrow checker cannot catch a stale guard; the block can.
+            let fringe_diff: BTreeSet<BlockHash> = {
+                let repr = self.representation.read().await;
+                let msg_map = &repr.dag_message_state.msg_map;
+                let mut justifications: BTreeSet<Message<BlockHash, Validator>> = BTreeSet::new();
+                for j in &block_metadata.justifications {
+                    let msg = msg_map
+                        .get(j)
+                        .ok_or_else(|| "justification not present in message map".to_string())?;
+                    justifications.insert(msg.clone());
+                }
+                let prev_fringe = message_map::latest_fringe(msg_map, &justifications);
+                let mut fringe_seen: BTreeSet<BlockHash> = BTreeSet::new();
+                for f in &block_metadata.fringe {
+                    let msg = msg_map
+                        .get(f)
+                        .ok_or_else(|| "fringe block not present in message map".to_string())?;
+                    fringe_seen.extend(msg.seen.iter().copied());
+                }
+                let prev_seen: BTreeSet<BlockHash> = prev_fringe
+                    .iter()
+                    .flat_map(|m| m.seen.iter().copied())
+                    .collect();
+                fringe_seen.difference(&prev_seen).copied().collect()
+            };
+
+            (reservation, fringe_diff, fringe_hash)
         };
 
         // **The `fringe-data` record is not written any more.** `insert` used to build a `FringeData`
@@ -1276,6 +1499,11 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
                 .flatten()
                 .map(|d| d.deployer.clone())
                 .collect();
+            let released_bytes: usize = pooled_here
+                .iter()
+                .flatten()
+                .map(|d| d.data.term.len())
+                .sum();
 
             let pairs: Vec<(DeployId, BlockHash)> = deploy_hashes
                 .iter()
@@ -1283,7 +1511,9 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
                 .collect();
             self.deploy_index.put(&pairs).await?;
             self.deploy_store.delete(&deploy_hashes).await?;
-            // The deploy has left the pool, so its share of it goes with it.
+            // The deploy has left the pool, so its share of it goes with it — both the deployer's
+            // places and the term bytes, at the same moment the rows are deleted.
+            self.return_pooled_bytes(released_bytes);
             for deployer in &released {
                 release_deployer_slot(&self.pooled_by_deployer, deployer);
             }
@@ -1299,60 +1529,64 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
             self.block_metadata_store.add(updated).await?;
         }
 
-        // Update the in-memory DAG representation.
-        let dag_set = self.block_metadata_store.dag_set().await;
-        let child_map = self.block_metadata_store.child_map_data().await;
-        let height_map = self.block_metadata_store.height_map().await;
+        // Update the in-memory DAG representation. The global insert lock is reacquired only for the
+        // representation commit; the store writes above run outside it (F-U9-01).
         let mut prune_cache_ids: Vec<BlockHash> = Vec::new();
         let latest_block_number: i64;
         {
-            // The guard is bound so that `Arc::make_mut` has somewhere to borrow the `&mut` from; it
-            // is dropped at the end of this block, before the awaits below. `make_mut` copies only
-            // when a reader still holds a snapshot, and this function is serialized by `self.lock`,
-            // so that is at most one copy per insert — where every reader used to pay one.
-            let mut guard = self.representation.write().await;
-            let repr = Arc::make_mut(&mut *guard);
-            let msg = message_from_block_metadata(&block_metadata, &repr.dag_message_state.msg_map)
-                .ok_or_else(|| "justification not present in message map".to_string())?;
-            // H-2: a validation-failed block is recorded in the map (for `neglectedInvalidBlock`
-            // and justification-regression) but must not become the sender's latest message.
-            if block_metadata.validation_failed {
-                repr.dag_message_state.insert_msg_without_latest_mut(&msg);
-            } else {
-                repr.dag_message_state.insert_msg_mut(&msg);
-            }
-            repr.dag_set = dag_set;
-            repr.child_map = child_map;
-            repr.height_map = height_map;
+            let _guard = self.lock.lock().await;
+            let dag_set = self.block_metadata_store.dag_set().await;
+            let child_map = self.block_metadata_store.child_map_data().await;
+            let height_map = self.block_metadata_store.height_map().await;
+            {
+                // The guard is bound so that `Arc::make_mut` has somewhere to borrow the `&mut` from;
+                // it is dropped at the end of this block, before the awaits below.
+                let mut guard = self.representation.write().await;
+                let repr = Arc::make_mut(&mut *guard);
+                let msg =
+                    message_from_block_metadata(&block_metadata, &repr.dag_message_state.msg_map)
+                        .ok_or_else(|| "justification not present in message map".to_string())?;
+                // H-2: a validation-failed block is recorded in the map (for `neglectedInvalidBlock`
+                // and justification-regression) but must not become the sender's latest message.
+                if block_metadata.validation_failed {
+                    repr.dag_message_state.insert_msg_without_latest_mut(&msg);
+                } else {
+                    repr.dag_message_state.insert_msg_mut(&msg);
+                }
+                repr.dag_set = dag_set;
+                repr.child_map = child_map;
+                repr.height_map = height_map;
 
-            // H-4: when finalization advanced, collect the block-index cache entries prunable
-            // below the newly-finalized fringe.
-            if !fringe_diff.is_empty() {
-                let msg_map = &repr.dag_message_state.msg_map;
-                let latest_msgs: BTreeSet<_> = repr
-                    .dag_message_state
-                    .latest_msgs
-                    .values()
-                    .cloned()
-                    .collect();
-                let lowest = message_map::lowest_fringe(msg_map, &latest_msgs);
-                let lowest_ids: BTreeSet<BlockHash> = lowest.iter().map(|m| m.id).collect();
-                let prunable = message_map::prune_fringe(msg_map, &lowest_ids, &repr.child_map);
-                prune_cache_ids = prunable.iter().map(|m| m.id).collect();
+                // H-4: when finalization advanced, collect the block-index cache entries prunable
+                // below the newly-finalized fringe.
+                if !fringe_diff.is_empty() {
+                    let msg_map = &repr.dag_message_state.msg_map;
+                    let latest_msgs: BTreeSet<_> = repr
+                        .dag_message_state
+                        .latest_msgs
+                        .values()
+                        .cloned()
+                        .collect();
+                    let lowest = message_map::lowest_fringe(msg_map, &latest_msgs);
+                    let lowest_ids: BTreeSet<BlockHash> = lowest.iter().map(|m| m.id).collect();
+                    let prunable = message_map::prune_fringe(msg_map, &lowest_ids, &repr.child_map);
+                    prune_cache_ids = prunable.iter().map(|m| m.id).collect();
+                }
+                latest_block_number = repr.latest_block_number();
+                // Published here, from the representation the write guard already holds — a second
+                // read lock would deadlock against the guard this block is inside of.
+                self.set_gauges(
+                    repr.message_count(),
+                    repr.seen_entries(),
+                    repr.index_entries(),
+                    repr.logical_bytes(),
+                );
+                self.set_merge_shape_gauges();
+                self.set_soft_checkpoint_gauges();
+                self.set_read_path_gauges();
             }
-            latest_block_number = repr.latest_block_number();
-            // Published here, from the representation the write guard already holds — a second read
-            // lock would deadlock against the guard this block is inside of.
-            self.set_gauges(
-                repr.message_count(),
-                repr.seen_entries(),
-                repr.index_entries(),
-                repr.logical_bytes(),
-            );
-            self.set_merge_shape_gauges();
-            self.set_soft_checkpoint_gauges();
-            self.set_read_path_gauges();
         }
+        drop(reservation);
 
         BlockIndex::prune_cache(&prune_cache_ids);
         self.expire_deploys(latest_block_number).await?;
@@ -1390,14 +1624,19 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
             .add(block_metadata.clone())
             .await?;
 
+        // **Read the store before taking the representation write guard.** The store has just
+        // applied its contiguity rule, so this is the post-add map; the whole body is serialized by
+        // `self.lock`, so no insert/update can interleave between the read and the write. Holding the
+        // write guard across this LMDB read serialized every representation reader behind a disk
+        // operation (F-U9-02).
+        let height_map = self.block_metadata_store.height_map().await;
+
         let mut guard = self.representation.write().await;
         let repr = Arc::make_mut(&mut *guard);
         let msg = message_from_block_metadata(&block_metadata, &repr.dag_message_state.msg_map)
             .ok_or_else(|| "justification not present in message map".to_string())?;
         repr.dag_message_state.promote_msg_mut(&msg);
-        // Re-read rather than patch: the store has just applied its own contiguity rule, and reading
-        // back is what makes this and `insert` agree by construction rather than by two implementations.
-        repr.height_map = self.block_metadata_store.height_map().await;
+        repr.height_map = height_map;
         Ok(())
     }
 
@@ -1470,24 +1709,30 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
     /// read and the write and the bound is therefore exact. Making the early check the only one would
     /// reintroduce the C113 overshoot the lock exists to close.
     async fn admit_deploy(&self, deployer: &[u8]) -> Result<DeployPermit, String> {
-        if !self.deploy_rate.allow(deployer) {
-            return Err("deploy rate limit exceeded for this deployer".to_string());
+        let limits = PoolLimits {
+            max_deploys: MAX_POOLED_DEPLOYS,
+            max_bytes: MAX_POOLED_DEPLOY_BYTES,
+            per_deployer: MAX_POOLED_DEPLOYS_PER_DEPLOYER,
+        };
+        let rate_ok = self.deploy_rate.allow(deployer);
+        let count = self.deploy_store.count().await?;
+        // **The policy is shared with the conformance corpus** (`casper/src/pool.rs`): a free slot
+        // admits, and each real bound refuses by name. The count here is an early read; the exact
+        // count is re-checked under the admission lock in `commit_deploy`.
+        let held = {
+            let pooled = self.pooled_by_deployer.lock().unpoison();
+            pooled.get(deployer).copied().unwrap_or(0)
+        };
+        if let Err(e) = pool::check_admission(&limits, count, held, rate_ok) {
+            return Err(e.to_string());
         }
 
-        // The check and the claim are one operation under the map's own lock, so two concurrent
-        // admits for one deployer cannot both see the last place.
+        // The claim is one operation under the map's own lock, so two concurrent admits for one
+        // deployer cannot both see the last place.
         {
             let mut pooled = self.pooled_by_deployer.lock().unpoison();
             let held = pooled.get(deployer).copied().unwrap_or(0);
-            if held >= MAX_POOLED_DEPLOYS_PER_DEPLOYER {
-                return Err("this deployer holds its share of the deploy pool".to_string());
-            }
             pooled.insert(deployer.to_vec(), held + 1);
-        }
-
-        if self.deploy_store.count().await? >= MAX_POOLED_DEPLOYS {
-            release_deployer_slot(&self.pooled_by_deployer, deployer);
-            return Err("deploy pool is full".to_string());
         }
         Ok(DeployPermit::holding(
             self.pooled_by_deployer.clone(),
@@ -1511,19 +1756,80 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         deploy: SignedDeployData,
     ) -> Result<(), String> {
         let _admitted = self.deploy_admission.lock().await;
-        if self.deploy_store.count().await? >= MAX_POOLED_DEPLOYS {
-            return Err("deploy pool is full".to_string());
+        // **A duplicate is refused, not overwritten** (B36, W-N2-05). The early reservation in
+        // `multi_parent_casper::deploy` keeps a resubmission from reaching the parse, but
+        // `add_deploy` is also a direct ingress: without this check the duplicate's `put` overwrote
+        // its own row while `permit.commit()` kept the second per-deployer place and the second term
+        // bytes, and the single eventual release returned one of each — a permanent lockout of the
+        // deployer's share and a byte budget that never drains.
+        let limits = PoolLimits {
+            max_deploys: MAX_POOLED_DEPLOYS,
+            max_bytes: MAX_POOLED_DEPLOY_BYTES,
+            per_deployer: MAX_POOLED_DEPLOYS_PER_DEPLOYER,
+        };
+        let duplicate = self.contains_deploy_in_pool(&deploy.sig).await?;
+        let count = self.deploy_store.count().await?;
+        let term_bytes = deploy.data.term.len();
+        let in_use = self
+            .pooled_term_bytes
+            .load(std::sync::atomic::Ordering::Relaxed);
+        match pool::check_commit(&limits, count, in_use, term_bytes, duplicate) {
+            Ok(()) => {}
+            Err(PoolError::Duplicate) => {
+                return Err(format!(
+                    "deploy {} is already in the pool",
+                    rchain_shared::base16::encode(&deploy.sig)
+                ))
+            }
+            Err(PoolError::ByteFull) => {
+                return Err(format!(
+                    "deploy pool is full: {in_use} of {MAX_POOLED_DEPLOY_BYTES} term bytes in use"
+                ))
+            }
+            Err(e) => return Err(e.to_string()),
         }
         self.deploy_store
             .put(&[(deploy.sig.clone(), deploy)])
             .await?;
+        self.pooled_term_bytes
+            .fetch_add(term_bytes, std::sync::atomic::Ordering::Relaxed);
         // The place is the stored deploy's now: dropping the permit must not return it.
         permit.commit();
         Ok(())
     }
 
+    async fn reserve_deploy_id(&self, deploy_id: &DeployId) -> Result<DeployIdPermit, String> {
+        // The store first: a deploy that is already pooled is a duplicate whatever is in flight.
+        if self.contains_deploy_in_pool(deploy_id).await? {
+            return Err(format!(
+                "deploy {} is already in the pool",
+                rchain_shared::base16::encode(deploy_id)
+            ));
+        }
+        let mut reservations = self.deploy_reservations.lock().unpoison();
+        if !reservations.insert(deploy_id.clone()) {
+            return Err(format!(
+                "deploy {} is already being admitted",
+                rchain_shared::base16::encode(deploy_id)
+            ));
+        }
+        drop(reservations);
+        Ok(DeployIdPermit::holding(
+            self.deploy_reservations.clone(),
+            deploy_id.clone(),
+        ))
+    }
+
     async fn pooled_deploys(&self) -> Result<BTreeMap<DeployId, SignedDeployData>, String> {
         self.deploy_store.to_map().await
+    }
+
+    async fn deploy_pool_stats(&self) -> Result<(usize, usize), String> {
+        Ok((
+            self.deploy_store.count().await?,
+            self.pooled_term_bytes
+                .load(std::sync::atomic::Ordering::Relaxed),
+        ))
     }
 
     async fn contains_deploy_in_pool(&self, deploy_id: &DeployId) -> Result<bool, String> {
@@ -1535,6 +1841,7 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::multi_parent_casper::MAX_DEPLOY_TERM_BYTES;
     use rchain_block_storage::dag::codecs::{
         BlockHashCodec, BlockMetadataCodec, SignedDeployDataCodec,
     };
@@ -1983,6 +2290,7 @@ mod tests {
         let signed = deploy_with_id(7);
         storage.add_deploy(signed.clone()).await.unwrap();
         assert!(storage.contains_deploy_in_pool(&signed.sig).await.unwrap());
+        assert_eq!(storage.pooled_term_bytes(), signed.data.term.len());
 
         let processed = rchain_models::casper::protocol::casper_message::ProcessedDeploy {
             deploy: signed.clone(),
@@ -2005,6 +2313,134 @@ mod tests {
             Some(block_hash)
         );
         assert!(storage.pooled_deploys().await.unwrap().is_empty());
+        assert_eq!(
+            storage.pooled_term_bytes(),
+            0,
+            "the included deploy's term bytes leave the budget with its row"
+        );
+    }
+
+    /// **A rewind repairs the derived indexes against the surviving block set, not the dropped list**
+    /// (B39, HAZOP F-U17-11).
+    ///
+    /// A crash between the metadata drop and the index cleanup leaves a row naming a block the DAG no
+    /// longer holds. The row is not inert: the proposer's replay guard (`select_deploys`) reads
+    /// `lookup_by_deploy_id`, treats "in the DAG" as "already included", and silently skips the pooled
+    /// deploy. The repair must remove it even when the rewind itself drops nothing — which is the shape
+    /// the old early return missed.
+    ///
+    /// Falsifier: keep the early return and the second call removes nothing; the deploy stays
+    /// unselectable.
+    #[tokio::test]
+    async fn repair_removes_stale_entries_and_releases_the_pool_slot() {
+        let storage = build_storage_over_unshared(empty_metadata_store().await).await;
+        let deploy = deploy_by(0, 7);
+        storage.add_deploy(deploy.clone()).await.unwrap();
+        storage
+            .deploy_index
+            .put(&[(deploy.sig.clone(), hash(42))])
+            .await
+            .unwrap();
+        assert_eq!(
+            storage.lookup_by_deploy_id(&deploy.sig).await.unwrap(),
+            Some(hash(42)),
+            "the fixture is the row a crash after the metadata drop leaves"
+        );
+
+        let dropped = storage
+            .drop_above(BlockHeight::try_from(0).unwrap())
+            .await
+            .unwrap();
+        assert!(dropped.is_empty(), "nothing is above the anchor");
+        assert_eq!(
+            storage.lookup_by_deploy_id(&deploy.sig).await.unwrap(),
+            None,
+            "the stale row is gone, so the replay guard no longer skips the pooled deploy"
+        );
+        assert!(
+            storage
+                .pooled_deploys()
+                .await
+                .unwrap()
+                .contains_key(&deploy.sig),
+            "the deploy was never included, so its pool place is still its own"
+        );
+        assert_eq!(
+            storage.repair_derived_indexes().await.unwrap(),
+            (0, 0),
+            "the repair is idempotent"
+        );
+    }
+
+    /// **The crash the early return left behind**: metadata dropped directly (the pre-fix shape — the
+    /// derived cleanup never ran), so the index still names a block the DAG does not hold. The audit
+    /// removes it, which is what the reset bracket's `Rewinding` branch and the boot hook call.
+    #[tokio::test]
+    async fn a_crash_before_the_index_cleanup_is_repaired_by_the_audit() {
+        let storage = build_storage_over_unshared(empty_metadata_store().await).await;
+        let deploy = deploy_by(0, 11);
+        storage.add_deploy(deploy.clone()).await.unwrap();
+        let h = hash(3);
+        let processed = rchain_models::casper::protocol::casper_message::ProcessedDeploy {
+            deploy: deploy.clone(),
+            cost: rchain_models::casper::protocol::casper_message::PCost { cost: 0 },
+            deploy_log: vec![],
+            is_failed: false,
+            system_deploy_error: None,
+        };
+        let mut b = block(h);
+        b.state.deploys = vec![processed];
+        storage.insert(meta(h, &[], 3), b).await.unwrap();
+        assert_eq!(
+            storage.lookup_by_deploy_id(&deploy.sig).await.unwrap(),
+            Some(h)
+        );
+
+        // The crash window: the metadata drop ran, the index cleanup did not.
+        let dropped = storage
+            .block_metadata_store
+            .drop_above(BlockHeight::try_from(0).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(dropped, vec![h]);
+        assert_eq!(
+            storage.lookup_by_deploy_id(&deploy.sig).await.unwrap(),
+            Some(h),
+            "the stale row is the crash's residue"
+        );
+        assert_eq!(storage.repair_derived_indexes().await.unwrap(), (1, 0));
+        assert_eq!(
+            storage.lookup_by_deploy_id(&deploy.sig).await.unwrap(),
+            None,
+            "the audit repairs the row the crash left"
+        );
+    }
+
+    /// The audit's subject is the surviving set: a row for a block this DAG never held is removed, and
+    /// the deployer index is repaired by the same rule.
+    #[tokio::test]
+    async fn a_rewind_derives_cleanup_from_survivors_not_the_dropped_list() {
+        let deployer_index: Arc<dyn KeyValueTypedStore<Vec<u8>, Vec<u8>>> = Arc::new(
+            KeyValueTypedStoreCodec::new(in_memory(), Arc::new(BytesCodec), Arc::new(BytesCodec)),
+        );
+        let seed = deployer_index.clone();
+        let storage = build_storage_over_unshared(empty_metadata_store().await)
+            .await
+            .with_deployer_index(deployer_index)
+            .await
+            .expect("the deployer index attaches");
+        let deploy = deploy_by(1, 9);
+        storage
+            .deploy_index
+            .put(&[(deploy.sig.clone(), hash(77))])
+            .await
+            .unwrap();
+        seed.put(&[(vec![9u8], hash(77).as_bytes().to_vec())])
+            .await
+            .unwrap();
+
+        assert_eq!(storage.repair_derived_indexes().await.unwrap(), (1, 1));
+        assert_eq!(storage.repair_derived_indexes().await.unwrap(), (0, 0));
     }
 
     fn deploy_with_id(id: usize) -> SignedDeployData {
@@ -2304,7 +2740,11 @@ mod tests {
             .await
             .expect("the first deploy is inside the rate");
 
-        let err = crate::multi_parent_casper::deploy(&storage, &deploy_saying(0, "((("))
+        // A *different* deploy: same key, different id, so the duplicate reservation does not answer
+        // and the rate bound is what refuses it (B36's reservation would otherwise mask this test).
+        let mut second = deploy_by(0, 1);
+        second.data.term = "(((".to_string();
+        let err = crate::multi_parent_casper::deploy(&storage, &second)
             .await
             .expect_err("the second is over the rate");
         assert!(
@@ -2317,6 +2757,78 @@ mod tests {
             "and the term must never have been parsed: {}",
             err.0
         );
+    }
+
+    /// **The pool's byte budget is exact and refuses before the store** (B36).
+    ///
+    /// The count bound treats a 1 KiB deploy and a 64 KiB deploy alike; the host does not. Filling
+    /// the budget with maximal terms — each one *inside* the term bound, so nothing here is refused
+    /// for size — leaves exactly [`MAX_POOLED_DEPLOY_BYTES`], and the next byte is refused. Two
+    /// deployers are used because one may hold at most `MAX_POOLED_DEPLOYS_PER_DEPLOYER` places, and
+    /// 64 MiB of maximal terms is 1,024 deploys: fewer than the pool's count bound, which is the
+    /// point of having a second bound.
+    ///
+    /// Falsifier: remove the byte check in `commit_deploy` and the last `add_deploy` succeeds.
+    #[tokio::test]
+    async fn a_pool_at_its_byte_cap_refuses_before_the_store() {
+        let storage = build_storage_over_unshared(empty_metadata_store().await)
+            .await
+            .with_deploy_rate(u64::MAX, MAX_TRACKED_DEPLOYERS);
+        let term = " ".repeat(MAX_DEPLOY_TERM_BYTES);
+        let maximal_deploys = MAX_POOLED_DEPLOY_BYTES / MAX_DEPLOY_TERM_BYTES;
+        for id in 0..maximal_deploys {
+            let deployer = u8::try_from(id / MAX_POOLED_DEPLOYS_PER_DEPLOYER).unwrap();
+            let mut deploy = deploy_by(deployer, id);
+            deploy.data.term = term.clone();
+            storage.add_deploy(deploy).await.unwrap();
+        }
+        assert_eq!(storage.pooled_term_bytes(), MAX_POOLED_DEPLOY_BYTES);
+
+        let mut extra = deploy_by(9, maximal_deploys);
+        extra.data.term = "x".to_string();
+        let err = storage
+            .add_deploy(extra.clone())
+            .await
+            .expect_err("one byte over the budget must be refused");
+        assert!(err.contains("term bytes in use"), "{err}");
+        assert!(
+            !storage.contains_deploy_in_pool(&extra.sig).await.unwrap(),
+            "a refused deploy must not reach the store"
+        );
+    }
+
+    /// **An expired deploy returns its term bytes** (B36): a budget that only charges is a pool
+    /// that fills and never drains.
+    #[tokio::test]
+    async fn an_expired_deploy_returns_its_term_bytes() {
+        let storage = build_storage().await;
+        let mut deploy = deploy_by(0, 1);
+        deploy.data.term = "x".repeat(1_024);
+        deploy.data.valid_after_block_number = 1;
+        let id = deploy.sig.clone();
+        storage.add_deploy(deploy).await.unwrap();
+        assert_eq!(storage.pooled_term_bytes(), 1_024);
+
+        storage.expire_deploys(51).await.unwrap();
+        assert!(!storage.contains_deploy_in_pool(&id).await.unwrap());
+        assert_eq!(storage.pooled_term_bytes(), 0);
+    }
+
+    /// **A duplicate is refused at the storage's own chokepoint too** — `add_deploy` is a direct
+    /// ingress, and an overwrite would charge the share and the bytes twice while the pool stored one
+    /// row. The refused copy must move neither.
+    #[tokio::test]
+    async fn adding_the_same_deploy_twice_is_refused_and_charged_once() {
+        let storage = build_storage().await;
+        let deploy = deploy_by(0, 1);
+        storage.add_deploy(deploy.clone()).await.unwrap();
+        let err = storage
+            .add_deploy(deploy.clone())
+            .await
+            .expect_err("a byte-identical deploy is already in the pool");
+        assert!(err.contains("already in the pool"), "{err}");
+        assert_eq!(storage.pooled_deploys().await.unwrap().len(), 1);
+        assert_eq!(storage.pooled_term_bytes(), deploy.data.term.len());
     }
 
     fn deploy_by(deployer: u8, id: usize) -> SignedDeployData {
@@ -2348,8 +2860,10 @@ mod tests {
             "the fourth deploy from one key must be refused by its own rate bound, got {err:?}"
         );
 
+        // A deploy the first key has not submitted: the id (the signature) is the pool's identity,
+        // so reusing id 0 here would be the duplicate reservation answering, not this bound.
         assert!(
-            storage.add_deploy(deploy_by(2, 0)).await.is_ok(),
+            storage.add_deploy(deploy_by(2, 500)).await.is_ok(),
             "a second deployer's allowance is its own; the first deployer's flood must not refuse it"
         );
     }
@@ -3588,6 +4102,65 @@ mod tests {
                 .unwrap(),
             0,
             "the completion the walk wrote does describe the store, so the next boot believes it"
+        );
+    }
+    /// **F-U9-01's structural lint:** `insert` takes the global lock twice, and the metadata write
+    /// sits between the two acquisitions rather than inside the first one. The first scope is the
+    /// reservation/equivocation/fringe read; the LMDB write and the deploy-index work are outside;
+    /// the second scope is the representation commit. A single-lock body is the defect this pins.
+    #[test]
+    fn insert_does_not_hold_the_global_lock_across_store_io() {
+        let source = include_str!("dag.rs");
+        let start = source
+            .find("async fn insert")
+            .expect("insert is in this file");
+        let end = source[start..]
+            .find("async fn update_metadata")
+            .map(|offset| start + offset)
+            .expect("update_metadata follows insert");
+        let body = &source[start..end];
+        let locks: Vec<usize> = body
+            .match_indices("self.lock.lock().await")
+            .map(|(index, _)| index)
+            .collect();
+        assert!(
+            locks.len() >= 2,
+            "insert must release the global lock between the reservation and the commit"
+        );
+        let add = body
+            .find(".add(block_metadata.clone())")
+            .expect("insert writes the block metadata");
+        assert!(
+            locks[0] < add && add < locks[1],
+            "the metadata write must be outside the first lock scope and before the commit lock"
+        );
+    }
+
+    /// **The guard-scope lint for F-U9-02.** `update_metadata` must read the height map before it
+    /// takes the representation write guard; holding that guard across the store read serialiates every
+    /// representation reader behind a store operation. A source-order check is the falsifier here
+    /// because the concrete metadata store cannot be delayed without a production test hook.
+    #[test]
+    fn update_metadata_reads_height_map_before_the_write_guard() {
+        let source = include_str!("dag.rs");
+        let start = source
+            .find("async fn update_metadata")
+            .expect("update_metadata is in this file");
+        let body_start = start;
+        let body_end = source[body_start..]
+            .find("async fn lookup")
+            .map(|offset| body_start + offset)
+            .expect("lookup follows update_metadata");
+        let body = &source[body_start..body_end];
+        let read = body
+            .find("height_map().await")
+            .expect("update_metadata reads the height map");
+        let write = body
+            .find("representation.write().await")
+            .expect("update_metadata takes the representation write guard");
+        assert!(
+            read < write,
+            "the height-map read must precede the representation write guard"
         );
     }
 }

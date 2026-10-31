@@ -1,5 +1,8 @@
 # Tokens in Rholang: ERTP
 
+**How-to.** The ledger layout, authority model and Int bound are in
+[the ERTP technical reference](../node/ertp.md).
+
 How to make and use a token from Rholang. ERTP is a set of capabilities — a brand, a mint, an issuer,
 purses and payments — and this page is the API over them. For the ledger and the authority model
 underneath, see [ERTP](../node/ertp.md).
@@ -88,13 +91,8 @@ Reply shapes worth pinning:
 | `issuer!("getAmountMath", *ret)` | `(true, amountMath)` |
 | `issuer!("makeEmptyPurse", *ret)` | `(true, purse)` |
 
-**Balances are bare Ints, not amounts.** `getCurrentAmount`, `getAmountOf` and `deposit` answer
-`(true, n)`; the pair-shaped replies come from `amountMath`'s constructors and arithmetic. Agoric's
-ERTP returns an amount from `getCurrentAmount`, so a client ported from it needs this.
-
-Amounts are `(brand, value)` with an **Int** value, and the value is bounded by the ledger's
-`NonNegI64`. `amountMath` refuses a value it could not hold — `i64::MAX + 1` promotes to a `BigInt`
-and is refused — and `add` refuses a sum that would overflow rather than truncating it.
+Balances are bare Ints and amounts are bounded by the ledger's `NonNegI64`; the exact replies and the
+overflow rule are in [the reference](../node/ertp.md#amounts-are-int-valued-and-bounded).
 
 ## Depositing into your own purse
 

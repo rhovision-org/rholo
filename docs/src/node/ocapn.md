@@ -1,5 +1,8 @@
 # OCapN interoperability
 
+**Technical reference** for the node side: listeners, wire shape, code map and limits. The client
+how-to is [Talking to a node from another implementation](../developer/ocapn.md).
+
 [OCapN](https://ocapn.org/) (the Object Capability Network, *CapTP*) is the capability transport
 Agoric's stack speaks. It lets a foreign peer — an Agoric vat, an `@endo/ocapn` client, any
 implementation of the protocol — open a session to a node and hold **live references** to objects on
@@ -49,7 +52,7 @@ api-server {
 }
 ```
 
-**A bind address is not the same as an address a peer can dial** (HAZOP row C237), and `0.0.0.0` is
+**A bind address is not the same as an address a peer can dial**, and `0.0.0.0` is
 the case that catches people: it means *every* address on this host, so a node that advertises it hands
 out locations where the peer dials **itself**. Same-host dialling happens to work, which makes the
 mistake invisible until a peer somewhere else tries to follow a sturdyref or accept a handoff. So a
@@ -77,13 +80,13 @@ responder refuses a handshake naming another node before doing any cryptography.
 against Agoric's own implementation (`spec/audit/evidence/ocapn-noise/`). **Keep the identity file**:
 a node that loses it comes back under a new name, and peers holding the old one cannot find it.
 
-**One file is one peer, and the name cannot be rotated** (HAZOP row C234). The designator *is* the
+**One file is one peer, and the name cannot be rotated**. The designator *is* the
 Ed25519 key in that file, so two nodes sharing it are **one peer** to everyone else: the crossed-hello
 rule compares sessions by that name, so their sessions evict each other and a sturdyref to one resolves
 at the other. And there is no rotation — replacing the key, or deleting the file and letting the node
 regenerate one, renames the node, which is the same breakage as losing it.
 
-**The node's name is a function of configuration** (HAZOP row C235). Without an identity it derives
+**The node's name is a function of configuration**. Without an identity it derives
 from the deployer key; with one it *is* the Ed25519 key. So adding `api-server.ocapn-listen-noise` or
 `ocapn-listen-websocket` to a running node — or adding `ocapn-identity-key` — **renames it**, and every
 location handed out under the old name stops resolving. Decide the name before peers hold it. (This
@@ -156,7 +159,7 @@ Four consequences a client feels:
   binding between a CapTP session and a deployer key, so the chain cannot tell one peer from another.
 - **Bridged deploys are rate-limited** to 4 per second **across every session and capability** — each
   one spends the node's REV, so the total is on the node's spend. A second bound sits *under* that
-  total: one capability may take at most 1 per second (W-N8-02). The total alone is unfair rather than
+  total: one capability may take at most 1 per second. The total alone is unfair rather than
   unsafe — the one object a peer loops on can spend the whole allowance while every other capability
   the node exports is refused — and a limiter per capability *instead of* the total would be a bound of
   N times the number, which is the resource-amplification class the row itself is filed under.
@@ -177,7 +180,7 @@ port had to choose. They matter to anyone integrating a new peer.
   label, so `(true, 0)` crosses as `<desc:tagged 'rho:tuple' [true, 0]>` — the passable union's own
   extension point — and comes back a tuple. A bare list would not do: a list from the peer does not
   match a contract's `(brand, value)` pattern, which is what had kept the ERTP arms that take an amount
-  out of reach (see [ERTP](ertp.md); the wire-shape decision is AUDIT C226, Law 59).
+  out of reach (see [ERTP](ertp.md); the wire-shape decision is Law 59).
 - **Struct members are ordered by their encoded key bytes**, not by the key string — the reference's
   own sort. The session signature covers a struct, so this is load-bearing.
 - The session Public Identifier is two SHA-256 rounds over the session public key; the Session ID is

@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "tracker": "https://github.com/rhovision-org/rholo/issues/51",
-  "source_dev_sha": "d8dd1163168b3c357fc4bccbd1853b820abbcecb",
-  "observed_date": "2026-10-24",
+  "source_dev_sha": "9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e",
+  "observed_date": "2026-10-30",
   "closure_requested": false,
   "policy": "Every \u00a7A/\u00a7B and every \u00a76 consensus-changing row must be landed on dev or deferred with a named decision owner and a one-line reason. Release execution evidence remains separately accountable; a green test run alone is not closure.",
   "items": [
@@ -384,7 +384,7 @@
         "spec/audit/passes.md",
         "#51"
       ],
-      "blocker": "All 90 current \u00a76 rows are enumerated with exact row hashes, including the changed Decimal decision and five additional rows. Independent classification and construct-specific historical replay remain open."
+      "blocker": "All 92 current \u00a76 rows are enumerated with exact row hashes, including the changed Decimal decision and five additional rows. Independent classification and construct-specific historical replay remain open."
     },
     {
       "id": "Audit:law52-partition",
@@ -528,6 +528,39 @@
         "merge_commit": "8803233b96ce9a9e31787c9342251be27c82c89a"
       },
       "notes": "#388 is the merged canonical implementation; #371 closed as superseded. This implementation selection does not decide #372's recipient, custody, distribution cadence, or wider governance terms, which remain under the separately deferred A:rev-economics disposition."
+    },
+    {
+      "id": "Audit:cost-tracks-work",
+      "title": "The C345/C346 charge changes: collection canonicalisation, union, censure",
+      "status": "merged",
+      "decision_owner": "Jim / consensus",
+      "references": [
+        "#51",
+        "#514",
+        "spec/audit/passes.md"
+      ],
+      "evidence": {
+        "pr": 514,
+        "merge_commit": "78efd3fa1e6dbaf2a863fbf9da58325eccfb4e90"
+      },
+      "notes": "The C345/C346 charges are on dev in #514. The \u00a76 cost-deviation row and the inventory re-pin are recorded at this SHA. Remaining: a pre-fork replay refusal, a populated-store upgrade, a second binary, and regeneration of every network's genesis post-state hash."
+    },
+    {
+      "id": "Audit:cost-insert-and-tally",
+      "title": "The cost register's charges: set.add/set + x (C353), the tallies (C354)",
+      "status": "merged",
+      "decision_owner": "Jim / consensus",
+      "references": [
+        "#51",
+        "#518",
+        "spec/audit/passes.md",
+        "spec/cost-register.tsv"
+      ],
+      "evidence": {
+        "pr": 518,
+        "merge_commit": "9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e"
+      },
+      "notes": "The charge change and the cost register are on dev, with the section 6 deviation row extended for C353/C354. Replay, populated-store, second-binary and genesis-regeneration evidence remain separate release obligations."
     }
   ],
   "close_clause_evidence": "https://github.com/rhovision-org/rholo/issues/51#issuecomment-6316299117",

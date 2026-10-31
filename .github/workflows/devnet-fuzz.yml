@@ -1,4 +1,6 @@
 # Nightly devnet fuzz — robustness, input guards and the scheduler modes, over a real Docker network.
+# The schedule also runs the source-pinned N4/N8 quiet-chain and recovery gates.
+# These jobs use disposable Docker networks; manual mode selection stays independent.
 #
 # **Nothing here gates a pull request.** It needs Docker, a built image and a live network, so it runs
 # on a schedule (and on demand) rather than on every push: a flaky network harness in the PR path
@@ -44,8 +46,94 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  live-proof-binary:
+    if: ${{ github.event.inputs.mode == 'live-proof-binary' }}
+    name: Build exact dev Linux x86-64 binary for isolated live join proof
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Freeze exact merged dev revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach 3607cf9f7832054376ac33a4c1c56fd0b701e89d
+          test "$(git rev-parse HEAD)" = 3607cf9f7832054376ac33a4c1c56fd0b701e89d
+          mkdir -p target/live-proof
+          git rev-parse HEAD > target/live-proof/source-sha.txt
+          test -z "$(git status --porcelain)"
+      - name: Install pinned compiler and system dependencies
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.95.0 --profile minimal
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev libssl-dev pkg-config build-essential clang
+          ldd --version | head -1
+      - name: Compile locked release binary on Ubuntu 22.04
+        env:
+          CARGO_INCREMENTAL: '0'
+        run: |
+          set -euo pipefail
+          cargo +1.95.0 build --locked --release -p rchain-node --bin rnode
+          cp target/release/rnode target/live-proof/rnode
+          chmod 0755 target/live-proof/rnode
+          sha256sum target/live-proof/rnode > target/live-proof/SHA256SUMS
+          file target/live-proof/rnode > target/live-proof/file.txt
+          ldd target/live-proof/rnode > target/live-proof/ldd.txt
+          ./target/live-proof/rnode --version > target/live-proof/version.txt 2>&1
+          grep -F '3607cf9f' target/live-proof/version.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rholo-live-proof-binary-${{ github.run_id }}
+          path: target/live-proof/
+          retention-days: 3
+          if-no-files-found: error
+
+  n457-proof-binary:
+    if: ${{ github.event.inputs.mode == 'n457-proof-binary' }}
+    name: Source-pinned fresh-join regressions and native proof binary
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31
+      - name: Install pinned compiler and native dependencies
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev libssl-dev pkg-config build-essential
+      - name: Exercise requester and state-restore regressions
+        run: |
+          set -euo pipefail
+          mkdir -p target/n457-proof
+          git rev-parse HEAD > target/n457-proof/source-sha.txt
+          cargo test --locked -p rchain-casper --lib engine::lfs_block_requester -- --nocapture 2>&1 | tee target/n457-proof/requester-tests.log
+          cargo test --locked -p rchain-casper --lib engine::node_syncing -- --nocapture 2>&1 | tee target/n457-proof/restore-tests.log
+      - name: Build native Linux proof binary
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          cargo build --locked --release -p rchain-node --bin rnode
+          cp target/release/rnode target/n457-proof/rnode
+          (cd target/n457-proof && sha256sum rnode > SHA256SUMS)
+          target/n457-proof/rnode --version > target/n457-proof/version.txt
+          grep -F "$(git rev-parse HEAD)" target/n457-proof/version.txt
+          ldd target/n457-proof/rnode > target/n457-proof/ldd.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: n457-native-proof-${{ github.run_id }}
+          path: target/n457-proof/
+          retention-days: 14
+          if-no-files-found: error
+
   fuzz:
-    if: ${{ github.event.inputs.mode != 'pr373-proof' && github.event.inputs.mode != 'pr373-proof-rust' && github.event.inputs.mode != 'final-gap' && github.event.inputs.mode != 'final-gap-rust' && github.event.inputs.mode != 'final-gap-nodes' && github.event.inputs.mode != 'final-gap-recovery' }}
+    if: ${{ github.event.inputs.mode != 'pr373-proof' && github.event.inputs.mode != 'pr373-proof-rust' && github.event.inputs.mode != 'final-gap' && github.event.inputs.mode != 'final-gap-rust' && github.event.inputs.mode != 'final-gap-nodes' && github.event.inputs.mode != 'final-gap-recovery' && github.event.inputs.mode != 'quiet-gap' && github.event.inputs.mode != 'quiet-seeded' && github.event.inputs.mode != 'issue447-n4' && github.event.inputs.mode != 'issue447-conflict' && github.event.inputs.mode != 'issue447-registry' && github.event.inputs.mode != 'issue447-rcash' && github.event.inputs.mode != 'issue457-inbound' && github.event.inputs.mode != 'n457-proof-binary' && github.event.inputs.mode != 'live-proof-binary' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -110,6 +198,365 @@ jobs:
           done
 
       - name: Tear the devnet down
+        if: always()
+        run: tools/devnet.sh down -v || true
+
+  issue457-inbound:
+    if: ${{ github.event.inputs.mode == 'issue457-inbound' }}
+    name: Issue 457 asymmetric inbound reachability and recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_NODE_MEMORY: "2g"
+      DEVNET_THREAD_POOL_SIZE: "2"
+      # The joiner is a passive replica; the test does not require it to propose.
+      DEVNET_RESET_PASSIVE: "1"
+      DEVNET_PREFIX: n457reach
+      DEVNET_NETWORK: n457-reachability
+      DEVNET_GRPC_BASE: "55402"
+      DEVNET_HTTP_BASE: "55403"
+      DEVNET_ADMIN_BASE: "55405"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Validate the independent fault-injection predicates
+        run: |
+          set -euo pipefail
+          mkdir -p target/issue457
+          git rev-parse HEAD > target/issue457/source.txt
+          python3 -m unittest discover -s tests -p 'test_n457_asymmetric.py' -v 2>&1 | tee target/issue457/unit.log
+          command -v nsenter
+          command -v iptables
+      - name: Build pinned Docker node
+        run: |
+          set -euo pipefail
+          tools/devnet.sh build
+          docker image inspect rnode:local > target/issue457/image.json
+      - name: Run blocked-inbound and full-reachability controls
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          mkdir -p target/issue457/{blocked,open}
+          tools/devnet.sh up --validators 4 --fresh > target/issue457/start.log 2>&1
+          started=$?
+          if [ "$started" -ne 0 ]; then
+            echo "setup=$started" | tee target/issue457/verdicts.txt
+            exit "$started"
+          fi
+          # Run the fully reachable arm first, before the chain grows under
+          # continued auto-proposing during the negative reply-blackout window.
+          python3 tools/n457-mature-join-arm.py \
+            --min-height 28 --timeout 420 --out target/issue457/open \
+            > target/issue457/open/run.log 2>&1
+          open=$?
+          docker logs n457reach-validator-3 \
+            > target/issue457/open/joiner.log 2>&1 || true
+          if grep -Eq 'active-bonds leaf not found|block receiver state full' \
+              target/issue457/open/joiner.log; then
+            echo 'FAIL: successful join was followed by a state/receiver error' \
+              >> target/issue457/open/run.log
+            open=1
+          fi
+          # The next reset discards only the joiner's store and network
+          # namespace. Surviving validators remain on their original volumes.
+          python3 tools/n457-asymmetric-inbound.py \
+            --min-height 28 --mature-timeout 240 --negative-timeout 180 \
+            --out target/issue457/blocked \
+            > target/issue457/blocked/run.log 2>&1
+          blocked=$?
+          printf 'inbound_reply_loss=%s\nfull_reachability=%s\n' "$blocked" "$open" \
+            | tee target/issue457/verdicts.txt
+          if [ "$blocked" -ne 0 ] || [ "$open" -ne 0 ]; then
+            exit 1
+          fi
+      - name: Preserve source-pinned witness and node logs
+        if: always()
+        run: |
+          mkdir -p target/issue457
+          docker ps -a --filter "name=n457reach" > target/issue457/containers.txt || true
+          for node in n457reach-bootstrap n457reach-validator-1 n457reach-validator-2 n457reach-validator-3; do
+            docker logs "$node" > "target/issue457/$node.log" 2>&1 || true
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue457-asymmetric-${{ github.run_id }}
+          path: target/issue457/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove only the disposable fault-injection devnet
+        if: always()
+        run: |
+          tools/devnet.sh down -v || true
+
+  issue447-n4:
+    if: ${{ github.event.inputs.mode == 'issue447-n4' }}
+    name: Issue 447 four-validator divergent-tip merge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      DEVNET_PREFIX: n420fork
+      DEVNET_NETWORK: n447-disposable
+      DEVNET_NODE_MEMORY: 2g
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_WAIT_TRIES: "180"
+    steps:
+      - name: Checkout exact acceptance source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Source and runner inventory
+        run: |
+          mkdir -p target/issue447
+          git rev-parse HEAD | tee target/issue447/source.sha
+          free -m | tee target/issue447/runner-memory.txt
+          docker info --format '{{.ServerVersion}}' | tee target/issue447/docker-version.txt
+          python3 -m unittest discover -s tests -p 'test_n447_*.py' -v 2>&1 | tee target/issue447/unit-tests.log
+      - name: Build source-pinned real node image
+        run: |
+          set -euo pipefail
+          tools/devnet.sh build 2>&1 | tee target/issue447/build.log
+          docker image inspect rnode:local --format '{{.Id}}' | tee target/issue447/image-id.txt
+      - name: Start a fresh isolated four-validator network
+        run: |
+          set -euo pipefail
+          tools/devnet.sh up --validators 4 --fresh --no-autopropose --epoch-length 10 2>&1 | tee target/issue447/startup.log
+      - name: Verify divergent-tip gossip and application-state merge
+        run: |
+          set -euo pipefail
+          timeout --preserve-status 1000s python3 tools/n420-fork-point.py             --out target/issue447/fork-point --timeout 480 --gossip-timeout 120             2>&1 | tee target/issue447/fork-point.log
+      - name: Preserve verdict and diagnostics
+        if: always()
+        run: |
+          mkdir -p target/issue447
+          echo "source=$(git rev-parse HEAD)" | tee target/issue447/verdict.txt
+          docker ps -a --no-trunc --filter "name=n420fork" 2>&1 | tee target/issue447/containers.txt || true
+          docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}' 2>&1             | tee target/issue447/docker-stats.txt || true
+          for name in n420fork-bootstrap n420fork-validator-1 n420fork-validator-2 n420fork-validator-3; do
+            docker logs --tail 600 "$name" > "target/issue447/${name}-stdout.log" 2>&1 || true
+          done
+      - name: Upload raw four-node acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: issue447-n4-${{ github.run_id }}
+          path: target/issue447/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Teardown only the disposable campaign
+        if: always()
+        run: |
+          DEVNET_PREFIX=n420fork DEVNET_NETWORK=n447-disposable tools/devnet.sh down -v || true
+  issue447-registry:
+    if: ${{ github.event.inputs.mode == 'issue447-registry' }}
+    name: Issue 447 registry pinned-state read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DEVNET_PREFIX: n447registry
+      DEVNET_NETWORK: n447-registry-disposable
+      DEVNET_NODE_MEMORY: 2g
+      DEVNET_WAIT_TRIES: "180"
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Source and probe regressions
+        run: |
+          mkdir -p target/issue447-registry
+          git rev-parse HEAD > target/issue447-registry/source.sha
+          python3 -m unittest discover -s tests -p 'test_n447_registry.py' -v             2>&1 | tee target/issue447-registry/unit.log
+      - name: Build exact source node image
+        run: |
+          set -euo pipefail
+          tools/devnet.sh build 2>&1 | tee target/issue447-registry/build.log
+          docker image inspect rnode:local --format '{{.Id}}' > target/issue447-registry/image-id.txt
+      - name: Start fresh disposable registry chain
+        run: |
+          set -euo pipefail
+          tools/devnet.sh up --validators 1 --fresh --no-autopropose             --epoch-length 10 2>&1 | tee target/issue447-registry/startup.log
+      - name: Probe native registry at identical pinned block roots
+        run: |
+          set -euo pipefail
+          timeout --preserve-status 240s python3 tools/n447-registry-pinned.py             --out target/issue447-registry/registry.json --timeout 150             2>&1 | tee target/issue447-registry/registry.log
+      - name: Capture local node diagnostics
+        if: always()
+        run: |
+          docker ps -a --filter "name=n447registry" > target/issue447-registry/containers.txt || true
+          docker logs --tail 550 n447registry-bootstrap             > target/issue447-registry/node.log 2>&1 || true
+      - name: Preserve pinned read evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: issue447-registry-${{ github.run_id }}
+          path: target/issue447-registry/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Tear down isolated devnet only
+        if: always()
+        run: tools/devnet.sh down -v || true
+
+  issue447-conflict:
+    if: ${{ github.event.inputs.mode == 'issue447-conflict' }}
+    name: Issue 447 real four-validator same-channel conflict
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      DEVNET_PREFIX: n447conflict
+      DEVNET_NETWORK: n447-conflict-disposable
+      DEVNET_NODE_MEMORY: 3g
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_WAIT_TRIES: "180"
+    steps:
+      - name: Checkout exact merge source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Source provenance and negative verdict controls
+        run: |
+          mkdir -p target/issue447-conflict
+          git rev-parse HEAD | tee target/issue447-conflict/source.sha
+          python3 -m unittest discover -s tests -p 'test_n447_conflict.py' -v             2>&1 | tee target/issue447-conflict/regressions.log
+      - name: Build real Docker node
+        run: |
+          set -euo pipefail
+          tools/devnet.sh build 2>&1 | tee target/issue447-conflict/build.log
+          docker image inspect rnode:local --format '{{.Id}}' > target/issue447-conflict/image-id.txt
+      - name: Start isolated four-validator genesis
+        run: |
+          set -euo pipefail
+          tools/devnet.sh up --validators 4 --fresh --no-autopropose --no-propose-on-deploy --epoch-length 10 2>&1 | tee target/issue447-conflict/startup.log
+      - name: Execute conflicting linear-cell updates across 2+2
+        run: |
+          set -euo pipefail
+          verdict=0
+          seen=""
+          for trial in 1 2 3 4 5 6 7 8; do
+            case_dir="target/issue447-conflict/trial-$trial"
+            mkdir -p "$case_dir"
+            if [[ "$trial" != 1 ]]; then
+              tools/devnet.sh down -v
+              tools/devnet.sh up --validators 4 --fresh --no-autopropose --no-propose-on-deploy --epoch-length 10 2>&1 | tee "$case_dir/startup.log"
+            fi
+            options=(--costlier-writer A)
+            if (( trial % 2 == 0 )); then options=(--costlier-writer B --swap-writers); fi
+            if timeout --preserve-status 1800s python3 tools/n447-same-channel.py "${options[@]}" --out "$case_dir/conflict.json" --timeout 420 2>&1 | tee "$case_dir/conflict.log"; then
+              :
+            else
+              verdict=1
+            fi
+            for node in n447conflict-bootstrap n447conflict-validator-1 n447conflict-validator-2 n447conflict-validator-3; do
+              docker logs "$node" > "$case_dir/$node.log" 2>&1 || true
+            done
+            if (( verdict != 0 )); then break; fi
+            winner=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(s["value"]["survivor"] for s in d["steps"] if s["stage"] == "winner"))' "$case_dir/conflict.json")
+            seen="$seen$winner"
+            if [[ "$seen" == *A* && "$seen" == *B* ]]; then break; fi
+          done
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("target/issue447-conflict")
+          observed = set()
+          files = sorted(root.glob("trial-*/conflict.json"))
+          assert files, "no completed trial evidence"
+          for path in files:
+              result = json.loads(path.read_text())
+              assert result["result"] == "PASS", path
+              observed.add(next(s["value"]["survivor"] for s in result["steps"] if s["stage"] == "winner"))
+              for log in path.parent.glob("n447conflict-*.log"):
+                  content = log.read_text(errors="replace")
+                  assert not any(s in content for s in ("I1 VIOLATED", "I2 VIOLATED", "panicked at")), log
+          assert observed == {"A", "B"}, "bounded campaign did not cover both winners"
+          (root / "coverage.json").write_text(json.dumps({"result": "PASS", "trials": len(files), "winners": sorted(observed)}, indent=2))
+          PY
+          exit "$verdict"
+      - name: Capture node diagnostics
+        if: always()
+        run: |
+          docker ps -a --filter "name=n447conflict" > target/issue447-conflict/containers.txt || true
+          for node in n447conflict-bootstrap n447conflict-validator-1 n447conflict-validator-2 n447conflict-validator-3; do
+            docker logs --tail 450 "$node" > "target/issue447-conflict/$node.log" 2>&1 || true
+          done
+      - name: Preserve raw conflict verdict
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: issue447-conflict-${{ github.run_id }}
+          path: target/issue447-conflict/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Teardown disposable conflict network
+        if: always()
+        run: |
+          DEVNET_PREFIX=n447conflict DEVNET_NETWORK=n447-conflict-disposable tools/devnet.sh down -v || true
+
+  issue447-rcash:
+    if: ${{ github.event.inputs.mode == 'issue447-rcash' }}
+    name: Issue 447 exact-r-cash verified 17-step installer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      DEVNET_PREFIX: rcash447
+      DEVNET_NETWORK: rcash447-disposable
+      DEVNET_NODE_MEMORY: 6g
+      DEVNET_THREAD_POOL_SIZE: "2"
+      APP_DIR: /tmp/rcash-447
+      APP_COMMIT: 0c1cc6e4b2c72fb80aeaae51ec92a2749b9a50a4
+    steps:
+      - name: Check out exact node source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Record node source and offline acceptance controls
+        run: |
+          mkdir -p target/issue447-rcash
+          git rev-parse HEAD > target/issue447-rcash/node-source.sha
+          python3 -m unittest discover -s tests -p 'test_n447_rcash_evidence.py' -v             2>&1 | tee target/issue447-rcash/regressions.log
+      - name: Build real node Docker image
+        run: |
+          set -euo pipefail
+          tools/devnet.sh build 2>&1 | tee target/issue447-rcash/node-build.log
+          docker image inspect rnode:local --format '{{.Id}}' > target/issue447-rcash/node-image.txt
+      - name: Start disposable funded one-validator chain
+        run: |
+          set -euo pipefail
+          tools/devnet.sh up --validators 1 --fresh --epoch-length 10             2>&1 | tee target/issue447-rcash/network-startup.log
+      - name: Fetch exactly pinned external r-cash source
+        run: |
+          set -euo pipefail
+          git clone -q --filter=blob:none --depth 1             https://github.com/PatrickMockridge/r-cash.git "$APP_DIR"
+          git -C "$APP_DIR" fetch --depth 1 origin "$APP_COMMIT"
+          git -C "$APP_DIR" checkout -q --detach "$APP_COMMIT"
+          test "$(git -C "$APP_DIR" rev-parse HEAD)" = "$APP_COMMIT"
+          git -C "$APP_DIR" rev-parse HEAD > target/issue447-rcash/rcash-source.sha
+      - name: Build original r-cash CLI and contract corpus
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/rcash-447-env"
+          source "$RUNNER_TEMP/rcash-447-env/bin/activate"
+          python3 -m pip install -q -r "$APP_DIR/harness/requirements.txt"
+          cd "$APP_DIR"
+          python3 tools/build_contracts.py
+          cargo build --locked -p rcash-cli 2>&1 | tee "$GITHUB_WORKSPACE/target/issue447-rcash/rcash-build.log"
+          python3 tools/keygen.py --out .testnet/keys.json --names admin1,admin2,admin3
+          python3 tools/keygen.py --out .devnet/keys.json --names reporter1,reporter2,reporter3,admin1,admin2,admin3
+      - name: Run verified dependency-by-dependency installer
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/rcash-447-env/bin/activate"
+          cd "$APP_DIR"
+          timeout --preserve-status 3600s python3 harness/install_testnet.py --fresh             --node http://127.0.0.1:40403             --keys .testnet/keys.json --admin-keys .devnet/keys.json             --state .testnet/install.json --ops .testnet/ops             --manifest "$RUNNER_TEMP/rcash-447-manifest.json"             2>&1 | tee "$GITHUB_WORKSPACE/target/issue447-rcash/installer.log"
+          cd "$GITHUB_WORKSPACE"
+          python3 tools/n447-rcash-evidence.py             --state "$APP_DIR/.testnet/install.json"             --out target/issue447-rcash/verified-steps.json
+      - name: Collect disposal and node diagnostics
+        if: always()
+        run: |
+          docker logs --tail 800 rcash447-bootstrap > target/issue447-rcash/node.log 2>&1 || true
+          docker ps -a --filter "name=rcash447" > target/issue447-rcash/containers.txt || true
+      - name: Upload source-pinned application acceptance artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: issue447-rcash-${{ github.run_id }}
+          path: target/issue447-rcash/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Tear down ONLY the disposable application network
         if: always()
         run: tools/devnet.sh down -v || true
 
@@ -288,6 +735,7 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s tests -p test_decimal_release_preflight.py -v
           python3 tests/consensus-drill-regression.py
+          python3 tests/test_quiet_chain_evidence.py
           python3 -m unittest discover -s tests -p test_recovery_harness_controls.py -v
       - name: Integrated Rust proof obligations
         run: |
@@ -314,14 +762,65 @@ jobs:
           required_test -p rchain-models --lib property_tests
           required_test -p rchain-casper --lib initial_fringe
           required_test -p rchain-casper --lib engine::node_syncing::tests
+          required_test -p rchain-node --lib instances::proposer_instance::tests
+          required_test -p rchain-casper --lib quiet_chain_retry_is_bounded_without_weakening_quorum
           required_test -p rchain-casper --lib round_escape
           required_test -p rchain-casper --lib quiet_chain_tests
           required_test -p rchain-casper --lib attestation_suppression_tests
+          required_test -p rchain-casper --test merge_determinism
           required_test -p rchain-casper --test committed_bounds
           required_test -p rchain-rholang --lib params_
           required_test -p rchain-rholang --lib an_unknown_params_format_is_refused
           required_test -p rchain-rholang --lib funding_the_pot
           required_test -p rchain-rholang --lib pot_funding_overflow
+      - name: Reintroduced quiet-wakeup and rejection-view faults must fail
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/final-gap
+          cp node/src/instances/proposer_instance.rs /tmp/proposer-instance-original.rs
+          cp casper/src/multi_parent_casper.rs /tmp/parent-merge-original.rs
+          trap 'cp /tmp/proposer-instance-original.rs node/src/instances/proposer_instance.rs; cp /tmp/parent-merge-original.rs casper/src/multi_parent_casper.rs' EXIT
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("node/src/instances/proposer_instance.rs")
+          s=p.read_text(); old="ProposeStatus::NotEnoughNewBlocks | ProposeStatus::AwaitingFinality"
+          assert s.count(old)==1
+          p.write_text(s.replace(old,"ProposeStatus::NotEnoughNewBlocks"))
+          PYCONTROL
+          if cargo test --locked -p rchain-node --lib pending_finality_is_retried_without_external_traffic > target/final-gap/quiet-wakeup-negative.log 2>&1; then
+            echo "Missing wakeup was not detected"
+            exit 1
+          fi
+          grep -q 'pending finality lost its wakeup' target/final-gap/quiet-wakeup-negative.log
+          cp /tmp/proposer-instance-original.rs node/src/instances/proposer_instance.rs
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("casper/src/multi_parent_casper.rs")
+          s=p.read_text(); old=".filter(|h| causal_past.contains(h))"
+          assert s.count(old)==1
+          p.write_text(s.replace(old,".filter(|_| true)"))
+          PYCONTROL
+          if cargo test --locked -p rchain-casper --test merge_determinism later_finalisers_cannot_change_a_parents_rejection_input > target/final-gap/rejection-view-negative.log 2>&1; then
+            echo "Out-of-view rejection input was not detected"
+            exit 1
+          fi
+          grep -q "an out-of-view finaliser changed the parents' rejection set" target/final-gap/rejection-view-negative.log
+          cp /tmp/parent-merge-original.rs casper/src/multi_parent_casper.rs
+          python3 - <<'PYCONTROL'
+          from pathlib import Path
+          p=Path("casper/src/multi_parent_casper.rs")
+          s=p.read_text(); old="        for member in newly_finalized.intersection(final_scope) {"
+          assert s.count(old)==1
+          fault="\n            if dag.lookup(member).await?.and_then(|m| m.member_of_fringe) != Some(fringe_hash_of(&meta.fringe)) { continue; }"
+          p.write_text(s.replace(old,old+fault))
+          PYCONTROL
+          if cargo test --locked -p rchain-casper --test merge_determinism later_fringe_membership_cannot_rewrite_a_parents_rejection_input > target/final-gap/membership-negative.log 2>&1; then
+            echo "Mutable membership was not detected"
+            exit 1
+          fi
+          grep -q "a later fringe membership overwrote the parents' rejection input" target/final-gap/membership-negative.log
+          echo "REINTRODUCED_QUIET_AND_REJECTION_VIEW_FAULTS_DETECTED"
       - name: Reintroduced send-only fault must fail the reply regression
         shell: bash
         run: |
@@ -441,7 +940,7 @@ jobs:
           DEVNET_PREFIX=acceptance DEVNET_NETWORK=acceptance tools/devnet.sh down -v || true
 
   final-gap-recovery:
-    if: ${{ github.event.inputs.mode == 'final-gap-recovery' }}
+    if: ${{ github.event_name == 'schedule' || github.event.inputs.mode == 'final-gap-recovery' }}
     permissions:
       contents: read
       actions: read
@@ -525,9 +1024,232 @@ jobs:
             target/lfs-anchor-evidence/
             target/final-gap-image/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'schedule' && 7 || 14 }}
       - name: Teardown only disposable campaign networks
         if: always()
         run: |
           tools/devnet.sh down -v || true
           DEVNET_PREFIX=acceptance DEVNET_NETWORK=acceptance tools/devnet.sh down -v || true
+
+  quiet-435-real-nodes:
+    if: ${{ github.event_name == 'schedule' || github.event.inputs.mode == 'quiet-gap' }}
+    name: Issue 435 quiet chain, one paused validator, no helpers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_NODE_MEMORY: "2g"
+      DEVNET_THREAD_POOL_SIZE: "2"
+      DEVNET_PREFIX: acceptance
+      DEVNET_NETWORK: acceptance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Build exact source node
+        run: |
+          set -euo pipefail
+          mkdir -p target/quiet-435
+          git rev-parse HEAD | tee target/quiet-435/source.txt
+          tools/devnet.sh build
+          docker image inspect rnode:local > target/quiet-435/image.json
+      - name: Execute independent N4 and N8 quiet-chain campaigns
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          failed=0
+          for n in 4 8; do
+            mkdir -p "target/quiet-435/n$n"
+            tools/devnet.sh up --validators "$n" --fresh --no-autopropose --epoch-length 10 > "target/quiet-435/n$n/start.log" 2>&1
+            start_code=$?
+            if [ "$start_code" -eq 0 ]; then
+              python3 tools/quiet-chain-issue-435.py --validators "$n" --window 240 --out "target/quiet-435/n$n" > "target/quiet-435/n$n/drill.log" 2>&1
+              code=$?
+            else
+              code=$start_code
+            fi
+            echo "quiet_n$n=$code" | tee -a target/quiet-435/exit-codes.txt
+            test "$code" -eq 0 || failed=1
+            for ((i=0; i<n; i++)); do
+              node="acceptance-validator-$i"
+              [ "$i" -ne 0 ] || node=acceptance-bootstrap
+              docker logs "$node" > "target/quiet-435/n$n/$node.log" 2>&1 || true
+            done
+            docker unpause "acceptance-validator-$((n-1))" >/dev/null 2>&1 || true
+            tools/devnet.sh down -v || true
+          done
+          exit "$failed"
+      - name: Preserve verdicts and node-level evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: quiet-435-${{ github.run_id }}
+          path: target/quiet-435/
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'schedule' && 7 || 14 }}
+      - name: Teardown disposable networks
+        if: always()
+        run: |
+          tools/devnet.sh down -v || true
+
+
+  quiet-435-seeded-real-nodes:
+    if: ${{ github.event_name == 'schedule' || github.event.inputs.mode == 'quiet-seeded' }}
+    name: Issue 435 seeded-baseline quiet chain, no helpers during window
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_NODE_MEMORY: "2g"
+      DEVNET_THREAD_POOL_SIZE: "2"
+      DEVNET_PREFIX: acceptance
+      DEVNET_NETWORK: acceptance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Build exact source node
+        run: |
+          set -euo pipefail
+          mkdir -p target/quiet-435-seeded
+          git rev-parse HEAD | tee target/quiet-435-seeded/source.txt
+          tools/devnet.sh build
+          docker image inspect rnode:local > target/quiet-435-seeded/image.json
+      - name: Execute independent N4 and N8 quiet-chain campaigns
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          failed=0
+          for n in 4 8; do
+            mkdir -p "target/quiet-435-seeded/n$n"
+            tools/devnet.sh up --validators "$n" --fresh --no-autopropose --epoch-length 10 > "target/quiet-435-seeded/n$n/start.log" 2>&1
+            start_code=$?
+            if [ "$start_code" -eq 0 ]; then
+              python3 tools/quiet-chain-issue-435.py --initialization seeded --validators "$n" --window 240 --out "target/quiet-435-seeded/n$n" > "target/quiet-435-seeded/n$n/drill.log" 2>&1
+              code=$?
+            else
+              code=$start_code
+            fi
+            echo "quiet_n$n=$code" | tee -a target/quiet-435-seeded/exit-codes.txt
+            test "$code" -eq 0 || failed=1
+            for ((i=0; i<n; i++)); do
+              node="acceptance-validator-$i"
+              [ "$i" -ne 0 ] || node=acceptance-bootstrap
+              docker logs "$node" > "target/quiet-435-seeded/n$n/$node.log" 2>&1 || true
+            done
+            docker unpause "acceptance-validator-$((n-1))" >/dev/null 2>&1 || true
+            tools/devnet.sh down -v || true
+          done
+          exit "$failed"
+      - name: Preserve verdicts and node-level evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: quiet-435-seeded-${{ github.run_id }}
+          path: target/quiet-435-seeded/
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'schedule' && 7 || 14 }}
+      - name: Teardown disposable networks
+        if: always()
+        run: |
+          tools/devnet.sh down -v || true
+
+  lfs-restore-crash-regressions:
+    if: ${{ github.event.inputs.mode == 'final-gap-rust' }}
+    name: LFS restore repeated lifecycle and crash backtrace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler gdb
+      - name: Compile exact restore test and preserve provenance
+        run: |
+          mkdir -p target/lfs-crash
+          git rev-parse HEAD > target/lfs-crash/source.txt
+          cargo test --locked -p rchain-node --test lfs_restore_dev_tax --no-run --message-format=json > target/lfs-crash/build.jsonl
+      - name: Stress undebugged restores and capture a native core on failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=$(python3 -c 'import json; rows=[json.loads(l) for l in open("target/lfs-crash/build.jsonl")]; print(next(r["executable"] for r in rows if r.get("target",{}).get("name")=="lfs_restore_dev_tax" and r.get("executable")))')
+          ulimit -c unlimited
+          echo "$PWD/target/lfs-crash/core.%p" | sudo tee /proc/sys/kernel/core_pattern
+          for attempt in $(seq 1 12); do
+            log="target/lfs-crash/undebugged-$attempt.log"
+            if timeout 240s "$binary" --nocapture --test-threads=4 > "$log" 2>&1; then
+              grep -q 'test result: ok. 9 passed; 0 failed' "$log"
+              echo "undebugged attempt=$attempt PASS" | tee -a target/lfs-crash/verdicts.txt
+            else
+              echo "undebugged attempt=$attempt FAIL" | tee -a target/lfs-crash/verdicts.txt
+              for core in target/lfs-crash/core.*; do
+                [ -f "$core" ] || continue
+                # Rust ignores SIGPIPE; preserve that behavior under gdb while fatal signals still stop.
+              gdb --batch -ex 'set pagination off' -ex 'thread apply all bt' "$binary" "$core" > "$core.backtrace.txt" 2>&1 || true
+              done
+              tail -100 "$log"
+              exit 1
+            fi
+          done
+      - name: Repeat serial and parallel restores under debugger
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=$(python3 -c 'import json; rows=[json.loads(l) for l in open("target/lfs-crash/build.jsonl")]; print(next(r["executable"] for r in rows if r.get("target",{}).get("name")=="lfs_restore_dev_tax" and r.get("executable")))')
+          sha256sum "$binary" > target/lfs-crash/SHA256SUMS
+          failed=0
+          for threads in 1 4; do
+            for attempt in 1 2 3; do
+              log="target/lfs-crash/threads-$threads-run-$attempt.log"
+              # Rust ignores SIGPIPE; preserve that behavior under gdb while fatal signals still stop.
+              gdb --batch -ex 'set pagination off' -ex 'handle SIGPIPE nostop noprint pass' -ex run -ex 'thread apply all bt' --args "$binary" --nocapture --test-threads="$threads" > "$log" 2>&1 || true
+              if grep -q 'test result: ok. 9 passed; 0 failed' "$log" && ! grep -Eq 'received signal SIG|exited with code' "$log"; then
+                echo "threads=$threads attempt=$attempt PASS" | tee -a target/lfs-crash/verdicts.txt
+              else
+                echo "threads=$threads attempt=$attempt FAIL" | tee -a target/lfs-crash/verdicts.txt
+                tail -100 "$log"
+                failed=1
+                break 2
+              fi
+            done
+          done
+          exit "$failed"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: lfs-restore-crash-${{ github.run_id }}
+          path: target/lfs-crash/
+          if-no-files-found: error
+
+  lfs-native-address-sanitizer:
+    if: ${{ github.event.inputs.mode == 'final-gap-rust' }}
+    name: LFS restore native address sanitizer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTC_BOOTSTRAP: "1"
+      RUSTFLAGS: "-Zsanitizer=address -Cforce-frame-pointers=yes"
+      CC: clang
+      CXX: clang++
+      CFLAGS: "-fsanitize=address -fno-omit-frame-pointer"
+      CXXFLAGS: "-fsanitize=address -fno-omit-frame-pointer"
+      LDFLAGS: "-fsanitize=address"
+      ASAN_OPTIONS: "detect_leaks=0:halt_on_error=1"
+      RUST_BACKTRACE: full
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler clang
+      - name: Instrument Rust and native restore dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/lfs-asan
+          git rev-parse HEAD > target/lfs-asan/source.txt
+          cargo test --locked --target x86_64-unknown-linux-gnu -p rchain-node --test lfs_restore_dev_tax -- --nocapture --test-threads=4 2>&1 | tee target/lfs-asan/restore.log
+          grep -q 'test result: ok. 9 passed; 0 failed' target/lfs-asan/restore.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: lfs-native-asan-${{ github.run_id }}
+          path: target/lfs-asan/
+          if-no-files-found: error

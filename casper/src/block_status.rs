@@ -102,29 +102,6 @@ pub enum BlockStatus {
     /// inside `hash_block`'s cover, so it is consensus-visible and a future version bump would not
     /// have been enforced at all.
     InvalidVersion,
-    /// **The block is stamped before its own parents by more than the protocol tolerates** (W-N14-01).
-    ///
-    /// `BlockMessage.timestamp` is inside `hash_block`'s cover, and it is republished verbatim as the
-    /// block's canonical time — `rho:block:data` serves it to contracts and the client surfaces return
-    /// it (W-N14-03). Nothing on the acceptance path read it: every other wire field a proposer
-    /// controls has a predicate in `block_summary`, and this one had none, so a proposer could stamp a
-    /// block with any time at all and every validator would build the next block on top of it — with
-    /// the bogus time handed on to any contract that asks what time it is.
-    ///
-    /// **The bound is one-sided — a lower bound against the block's own parents — and that is what
-    /// makes it safe to add.** A validator that was offline and is catching up builds a block stamped
-    /// *now* on a parent stamped hours ago: a large **positive** gap, which a lower bound never sees,
-    /// so the #223 shape (a returning validator proposing at twenty missed heights in two seconds) is
-    /// not refused by this. Only a block dated *before* its parents is, and an honest proposer's clock
-    /// is not minutes behind the parents it has just read. The **forward** case is deliberately not
-    /// refused here, for that same reason — an upper bound against the parent is exactly the shape
-    /// that refuses a legitimate backlog — and is closed where refusing costs no fork instead: at the
-    /// receiving node's own attestation gate (`attest_is_live`) and its block ingress.
-    ///
-    /// It is a **consensus change** — it rejects blocks that are valid today — and is a deliberate
-    /// divergence from the Scala `blockSummary`, which composes no timestamp predicate at all. It is
-    /// registered as one in `spec/audit/passes.md` §6, as `TooManyJustifications` is.
-    InvalidBlockTimestamp,
 }
 
 impl BlockStatus {
@@ -179,11 +156,7 @@ impl BlockStatus {
             | BlockStatus::TooManyDeploys
             | BlockStatus::TooManyJustifications
             | BlockStatus::ExceedsBlockPhloLimit
-            | BlockStatus::InvalidVersion
-            // The block's own stamp against the stamps of the parents its justifications name — both
-            // sides are the block plus the DAG's structure, so a node with a different view reaches
-            // the same verdict. Restoring a record for this would blame a block for this node's clock.
-            | BlockStatus::InvalidBlockTimestamp => FailureCause::Attributable,
+            | BlockStatus::InvalidVersion => FailureCause::Attributable,
         }
     }
 
@@ -264,18 +237,9 @@ impl BlockStatus {
 
             // **`Attributable`, and yet not an offence** — each reads an input this node owns, so
             // another node can reach the opposite verdict for the same block.
-            //
-            // `InvalidBlockTimestamp` is here rather than among the misdemeanours for a second reason
-            // on top of that one: a proposer's stamp is bounded against its parents, but a clock that
-            // is minutes slow and a proposer choosing the chain's time are the same bytes, and this
-            // node cannot tell them apart. Punishing the first as the second is what the slash
-            // machinery exists to avoid, and `TooManyJustifications` is here for the same reason.
-            // Making a timestamp violation slashable is a decision with its own evidence, not a
-            // side effect of adding the bound.
             BlockStatus::ContainsLowCostDeploy
             | BlockStatus::TooManyJustifications
-            | BlockStatus::InvalidVersion
-            | BlockStatus::InvalidBlockTimestamp => None,
+            | BlockStatus::InvalidVersion => None,
 
             // Never the block's fault (`Divergence`, `Cascade`), and `Valid` is not a refusal.
             BlockStatus::Valid
@@ -310,11 +274,6 @@ impl std::fmt::Display for BlockStatus {
                  disagreement is about the merge rather than about the block's deploys"
             }
             BlockStatus::InvalidBondsCache => "invalid bonds cache",
-            BlockStatus::InvalidBlockTimestamp => {
-                "the block is stamped before its own parents by more than the protocol tolerates, so \
-                 the time it hands to every contract that asks (`rho:block:data`) is the proposer's \
-                 to choose rather than the chain's"
-            }
             BlockStatus::InvalidRejectedDeploy => "the block's rejected-deploy set does not match its parents",
             BlockStatus::ContainsExpiredDeploy => "a deploy has expired",
             BlockStatus::ContainsFutureDeploy => "a deploy has a future validity window",

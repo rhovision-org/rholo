@@ -939,17 +939,26 @@ where
         .cloned()
         .collect();
 
-    let full_conflicts_map: BTreeMap<D, BTreeSet<D>> = conflicts_map
+    // Final decisions are constraints, not candidates for re-election. A chain
+    // already forced out must not reject an otherwise compatible chain, and
+    // finalized chains must not enter the cost minimization as rejectable items.
+    let full_conflicts_map: BTreeMap<D, BTreeSet<D>> = conflict_set_compatible
         .iter()
-        .map(|(k, vs)| {
-            let deps = with_dependencies(vs, dependency_map);
-            (k.clone(), vs.union(&deps).cloned().collect())
+        .map(|k| {
+            let vs = conflicts_map.get(k).cloned().unwrap_or_default();
+            let deps = with_dependencies(&vs, dependency_map);
+            (
+                k.clone(),
+                deps.intersection(&conflict_set_compatible)
+                    .cloned()
+                    .collect(),
+            )
         })
         .collect();
 
     let (rejection_options, census) = search(&full_conflicts_map, budget)?;
     let mergeable_overflow_rejection_options = add_mergeable_overflow_rejections(
-        conflict_set,
+        &conflict_set_compatible,
         dependency_map,
         &rejection_options,
         init_mergeable_values,
@@ -996,6 +1005,67 @@ mod tests {
     ) -> (BTreeSet<BTreeSet<D>>, SearchCensus) {
         compute_rejection_options_with_census(conflicts_map, SearchBudget::UNBOUNDED)
             .expect("unbounded")
+    }
+
+    #[test]
+    fn finally_rejected_chain_cannot_reject_a_compatible_chain() {
+        // Chain 1 is finalized; 2 conflicts with it and with independent 3.
+        // Once 2 is forced out, it cannot be selected to reject 3.
+        let ((accepted, rejected), _) = resolve_conflict_set_with_census(
+            &set([2, 3]),
+            &set([1]),
+            &set([]),
+            |c| if *c == 2 { 100 } else { 1 },
+            &map([(1, set([2])), (2, set([1, 3])), (3, set([2]))]),
+            &map([]),
+            &BTreeMap::<i32, BTreeMap<i32, i64>>::new(),
+            &BTreeMap::<i32, i64>::new(),
+            SearchBudget::NODE,
+        )
+        .unwrap();
+        assert_eq!(accepted, set([3]));
+        assert_eq!(rejected, set([2]));
+    }
+
+    #[test]
+    fn final_constraints_are_invariant_under_rejection_costs() {
+        for forced_cost in 0..8 {
+            for survivor_cost in 0..8 {
+                let ((accepted, rejected), _) = resolve_conflict_set_with_census(
+                    &set([2, 3]),
+                    &set([1]),
+                    &set([]),
+                    |c| if *c == 2 { forced_cost } else { survivor_cost },
+                    &map([(1, set([2])), (2, set([1, 3])), (3, set([2]))]),
+                    &map([]),
+                    &BTreeMap::<i32, BTreeMap<i32, i64>>::new(),
+                    &BTreeMap::<i32, i64>::new(),
+                    SearchBudget::NODE,
+                )
+                .unwrap();
+                assert_eq!((accepted, rejected), (set([3]), set([2])));
+            }
+        }
+    }
+
+    #[test]
+    fn forced_rejection_cannot_trigger_numeric_overflow_rejections() {
+        let ((accepted, rejected), _) = resolve_conflict_set_with_census(
+            &set([2, 3]),
+            &set([1]),
+            &set([]),
+            |_| 1,
+            &map([(1, set([2])), (2, set([1]))]),
+            &map([]),
+            &BTreeMap::from([
+                (2, BTreeMap::from([(7, -100)])),
+                (3, BTreeMap::from([(7, 1)])),
+            ]),
+            &BTreeMap::from([(7, 0)]),
+            SearchBudget::NODE,
+        )
+        .unwrap();
+        assert_eq!((accepted, rejected), (set([3]), set([2])));
     }
 
     #[test]

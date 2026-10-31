@@ -41,20 +41,27 @@ rate (see [Running a validator: hardware requirements](../node/validator-require
 
 ### The practical upshot — a validator on modest hardware
 
-The payoff is operational, not just theoretical. Counted 2026-10-15, roughly **203,000 lines of Rust**
-across 474 source files compile to a single **43.6 MB native binary** — no JVM to boot, no collector in
+The payoff is operational, not just theoretical. Counted <!-- recount:date -->2026-10-30<!-- recount:end -->,
+<!-- recount:rs-lines -->231,044<!-- recount:end --> lines of Rust across
+<!-- recount:rs-files -->513<!-- recount:end --> source files compile to a single
+**<!-- recount:binary-mib -->47.0<!-- recount:end --> MiB native binary**
+(<!-- recount:binary-bytes -->49,317,360<!-- recount:end --> bytes) — no JVM to boot, no collector in
 the process, no `-Xmx4g -Xss2m` to size. The collector-induced pauses and the heap sizing that made the
 JVM node's runtime heavy and its latency unpredictable are gone, so a validator runs comfortably on any
 reasonably modern desktop PC or high-performance laptop with an NVMe SSD. See
 [Running a validator: hardware requirements](../node/validator-requirements.md).
 
-*(Both figures are counted, not remembered, on 2026-10-15: the line and file totals are
-`git ls-files '*.rs' | xargs wc -l` over the workspace — 203,173 lines over 474 files — and the binary
-is a release build (unstripped, with no `[profile.release]` tuning), 43,639,760
-bytes — 41.6 MiB. They are rounded because they move with every commit, which is also why they are not
-wrapped in a `<!-- counts:… -->` marker: that mechanism exists so a reader can trust a number that is
-stable between emissions, and a marker on a figure that changes weekly would fail the conformance gate
-every night instead.)*
+*(Both figures are held in `tools/artifact-counts.json` and emitted by `tools/recount-artifact.sh`:
+the line and file totals are `git ls-files '*.rs' | xargs wc -l` over the workspace —
+<!-- recount:rs-lines -->231,044<!-- recount:end --> lines over
+<!-- recount:rs-files -->513<!-- recount:end --> files — and the binary is the default release build
+(unstripped, with no `[profile.release]` tuning),
+<!-- recount:binary-bytes -->49,317,360<!-- recount:end --> bytes,
+<!-- recount:binary-mib -->47.0<!-- recount:end --> MiB, sha256
+`<!-- recount:binary-sha256 -->446dbaf13e24930fe4067ec97390959e328c62dc7a6e0e631dc83de846ad34bf<!-- recount:end -->`. `--check` refuses a page that disagrees with the
+record, and the nightly `--verify-live` re-measures the tree. The record is refreshed when the
+documentation changes, not on every code commit, which is why these figures are not in the law-count
+gate.)*
 
 The consequence is structural: **validator operation genuinely decentralizes.** The requirements sit
 within consumer-grade hardware, not a datacenter, so the barrier to running a validating node is a

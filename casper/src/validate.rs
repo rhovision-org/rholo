@@ -363,25 +363,70 @@ pub async fn sequence_number(
     }
 }
 
+/// **The regression check's answer** (Law 88d). `Unresolved` is not a verdict on the block: the
+/// check cannot be evaluated because a justification is absent from the DAG message map, and the
+/// current rule **passes** (the Scala's own `None`). It is carried so the reason is named rather
+/// than folded into "the check said yes" — the later height/sequence check is where such a block
+/// fails, and it already names the missing hash. `NoOwnJustification` is the second, different
+/// unresolved shape: the sender is absent from its own justification set.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JustificationOutcome {
+    Pass,
+    Regression,
+    Unresolved(Vec<BlockHash>),
+    NoOwnJustification,
+}
+
+impl JustificationOutcome {
+    /// **The classification as a pure function** (Law 88d), for the conformance corpus. Unresolved
+    /// when the justification is absent from the message map; otherwise the regression relation's
+    /// answer. It carries no hash, because the corpus is about the classification, not the id.
+    pub fn classify(in_msg_map: bool, regression: bool) -> Self {
+        if !in_msg_map {
+            JustificationOutcome::Unresolved(Vec::new())
+        } else if regression {
+            JustificationOutcome::Regression
+        } else {
+            JustificationOutcome::Pass
+        }
+    }
+
+    /// Whether the outcome refuses the block. **Only `Regression` does**; `Unresolved` is not a
+    /// verdict, which is what keeps this clause free of a consensus change.
+    pub fn refuses(&self) -> bool {
+        matches!(self, JustificationOutcome::Regression)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            JustificationOutcome::Pass => "pass",
+            JustificationOutcome::Regression => "regression",
+            JustificationOutcome::Unresolved(_) => "unresolved",
+            JustificationOutcome::NoOwnJustification => "no_own",
+        }
+    }
+}
+
 /// Validate there is no justification regression (port of `justificationRegressions`).
+///
+/// **Verdicts are unchanged.** `Pass`, `Unresolved` and `NoOwnJustification` all admit to the next
+/// check; only `Regression` refuses. Making `Unresolved` a refusal would be a consensus change.
 pub async fn justification_regressions(
     dag: &dyn BlockDagStorage,
     b: &BlockMessage,
 ) -> Result<ValidBlockProcessing, String> {
-    let valid = check_justification_regression(dag, b)
-        .await?
-        .unwrap_or(true);
-    if valid {
-        Ok(Ok(()))
-    } else {
-        Ok(Err(BlockStatus::JustificationRegression))
+    match check_justification_regression(dag, b).await? {
+        JustificationOutcome::Regression => Ok(Err(BlockStatus::JustificationRegression)),
+        JustificationOutcome::Pass
+        | JustificationOutcome::Unresolved(_)
+        | JustificationOutcome::NoOwnJustification => Ok(Ok(())),
     }
 }
 
 async fn check_justification_regression(
     dag: &dyn BlockDagStorage,
     b: &BlockMessage,
-) -> Result<Option<bool>, String> {
+) -> Result<JustificationOutcome, String> {
     let repr = dag.get_representation().await;
     let msg_map: &BTreeMap<BlockHash, Message<BlockHash, Validator>> =
         &repr.dag_message_state.msg_map;
@@ -394,12 +439,20 @@ async fn check_justification_regression(
         .collect();
     let justifications = match justifications {
         Some(js) => js,
-        None => return Ok(None),
+        None => {
+            let missing = b
+                .justifications
+                .iter()
+                .filter(|j| !msg_map.contains_key(*j))
+                .cloned()
+                .collect();
+            return Ok(JustificationOutcome::Unresolved(missing));
+        }
     };
 
     let prev_msg = match justifications.iter().find(|m| m.sender == b.sender) {
         Some(m) => m,
-        None => return Ok(None),
+        None => return Ok(JustificationOutcome::NoOwnJustification),
     };
 
     let res = justifications.iter().all(|just| {
@@ -413,7 +466,11 @@ async fn check_justification_regression(
             None => true,
         }
     });
-    Ok(Some(res))
+    Ok(if res {
+        JustificationOutcome::Pass
+    } else {
+        JustificationOutcome::Regression
+    })
 }
 
 /// Validate that a block does not neglect an invalid-but-still-bonded justification (port of
@@ -529,58 +586,6 @@ pub async fn bonds_cache(
     }
 }
 
-/// How far *behind* its own parents a block's timestamp may be.
-///
-/// A constant rather than a `casper.*` configuration key, and deliberately. The bounds that are
-/// configuration — `max-number-of-parents`, `min-phlo-price` — are properties of the *network the
-/// consensus algorithm is defined over*, which is why an operator has to state them and why getting
-/// them wrong splits the chain. This is a tolerance for clock error with no such counterpart: a node
-/// whose clock is minutes behind the parents it has just read is wrong about the time, not differently
-/// configured, and a rule that cannot be configured is a rule two operators cannot configure
-/// differently. Five minutes is some three hundred times the skew of two NTP-synchronised hosts.
-///
-/// Promoting it to configuration is a one-line change if a network ever runs without time
-/// synchronisation and needs to say so.
-pub const MAX_BLOCK_TIMESTAMP_DRIFT_MS: i64 = 300_000;
-
-/// A block's stamp must not precede its parents' by more than [`MAX_BLOCK_TIMESTAMP_DRIFT_MS`].
-///
-/// **Deterministic, and that is the whole design.** Both sides of the comparison are read from the
-/// block and from the parents its own justifications name — never from this node's clock. A wall-clock
-/// comparison here would decide validity differently on every validator and fork the chain, which is
-/// why the bound is relative to the parent chain rather than to `Instant::now()`.
-///
-/// It costs one block-store read per justification, so it runs **after** `block_summary`'s `pure`
-/// array: `justification_count` has by then already refused a block whose set is too wide to be worth
-/// those reads. That ordering is the whole reason those cheap checks exist.
-///
-/// A parent the store does not hold is skipped rather than refused, matching
-/// `check_justification_regression`'s posture: a justification this node cannot resolve is
-/// `justification_regressions`' business, and inventing a refusal here would reject blocks during a
-/// legitimate catch-up. A block with no resolvable parents at all — genesis, and the first block of a
-/// chain this node is still assembling — has nothing to compare against and passes.
-pub async fn block_timestamp(
-    block_store: &BlockStore,
-    block: &BlockMessage,
-) -> Result<ValidBlockProcessing, String> {
-    let mut newest_parent_ms: Option<i64> = None;
-    for justification in &block.justifications {
-        let mut vals = block_store.get(&[*justification]).await?;
-        let Some(Some(parent)) = vals.pop() else {
-            continue;
-        };
-        newest_parent_ms =
-            Some(newest_parent_ms.map_or(parent.timestamp, |m: i64| m.max(parent.timestamp)));
-    }
-    match newest_parent_ms {
-        None => Ok(Ok(())),
-        Some(newest) if block.timestamp.saturating_add(MAX_BLOCK_TIMESTAMP_DRIFT_MS) >= newest => {
-            Ok(Ok(()))
-        }
-        Some(_) => Ok(Err(BlockStatus::InvalidBlockTimestamp)),
-    }
-}
-
 /// Compose the effectful + pure checks (port of `blockSummary`).
 ///
 /// Explicit-bound entry point for callers with already resolved parameters and legacy fixtures.
@@ -660,13 +665,6 @@ pub async fn block_summary_from_state(
         if !status.is_valid() {
             return Ok(Err(status));
         }
-    }
-    // **After the cheap checks, because this one reads the block store** (W-N14-01). The block's own
-    // timestamp is the last field of the wire a proposer fully controls that had no predicate, and the
-    // position is not incidental: it costs one read per justification, so `justification_count` above
-    // must already have refused a set too wide to pay for.
-    if let Err(status) = block_timestamp(block_store, block).await? {
-        return Ok(Err(status));
     }
     repeat_deploy(dag, block_store, block, expiration_threshold).await
 }
@@ -1784,18 +1782,17 @@ mod effectful_tests {
         );
     }
 
-    /// **A block stamped before its own parents is refused, and a catching-up validator is not**
-    /// (W-N14-01).
+    /// **A block's timestamp is never a validity input** (W-N14-01, #43).
     ///
-    /// `timestamp` is inside the block hash and is republished to `rho:block:data`, and nothing read
-    /// it. The bound is one-sided, and this test is as much about the side it *does not* take as about
-    /// the one it does: the last case is the #223 shape — a returning validator stamping *now* on a
-    /// parent stamped a day ago — which a symmetric bound would refuse and a lower bound must not.
+    /// The header timestamp is the proposer's informational wall clock, served to contracts through
+    /// `rho:block:data`. It is not trusted and validators do not judge it: a block stamped an hour
+    /// before its parent, or a day after it, is accepted exactly as one stamped on time. A bound here
+    /// was briefly added and removed, because an honest proposer stamps its own clock, so a single
+    /// parent stamped in the future made every honest child invalid until real time caught up.
     ///
-    /// Falsified by deleting the call from `block_summary`, which makes the middle assertion below
-    /// return `Ok(())` — the placement is asserted here rather than only read.
+    /// Falsified by reintroducing any timestamp predicate into `block_summary`.
     #[tokio::test]
-    async fn a_block_stamped_before_its_parents_is_refused() {
+    async fn a_block_timestamp_is_never_a_validity_input() {
         let parent_hash = hash(7);
         let dag = mock(BTreeMap::from([(
             parent_hash,
@@ -1808,51 +1805,35 @@ mod effectful_tests {
         parent.timestamp = parent_ms;
         let store = block_store(vec![parent]).await;
 
-        // An hour *before* the parent: the proposer is choosing the chain's time. (A minute of
-        // backdating is inside the five-minute tolerance on purpose, and a first version of this test
-        // asserted the refusal for exactly that and was wrong — the bound is the bound.)
-        let mut early = block(1, 1, 1, vec![parent_hash]);
-        early.timestamp = parent_ms - 3_600_000;
+        // An equality-only oracle can pass vacuously when every variant fails
+        // for an unrelated reason. First prove this fixture is otherwise valid.
+        let mut on_time = block(1, 1, 1, vec![parent_hash]);
+        on_time.timestamp = parent_ms;
+        let reference = block_summary(&dag, &store, &on_time, "root", 100, 1, 0)
+            .await
+            .unwrap();
         assert_eq!(
-            block_timestamp(&store, &early).await.unwrap(),
-            Err(BlockStatus::InvalidBlockTimestamp)
-        );
-        // And it is reached on the acceptance path, not merely available — this is what fails if the
-        // call is removed from `block_summary`.
-        assert_eq!(
-            block_summary(&dag, &store, &early, "root", 100, 1, 0)
-                .await
-                .unwrap(),
-            Err(BlockStatus::InvalidBlockTimestamp),
-            "the check runs before the replay, among the cheap pre-state checks"
+            reference,
+            Ok(()),
+            "the on-time control must be admitted before comparing timestamps"
         );
 
-        // Exactly at the tolerance is inside it; one millisecond past is not.
-        let mut at_bound = block(1, 1, 1, vec![parent_hash]);
-        at_bound.timestamp = parent_ms - MAX_BLOCK_TIMESTAMP_DRIFT_MS;
-        assert!(block_timestamp(&store, &at_bound).await.unwrap().is_ok());
-        let mut past_bound = block(1, 1, 1, vec![parent_hash]);
-        past_bound.timestamp = parent_ms - MAX_BLOCK_TIMESTAMP_DRIFT_MS - 1;
-        assert_eq!(
-            block_timestamp(&store, &past_bound).await.unwrap(),
-            Err(BlockStatus::InvalidBlockTimestamp)
-        );
-
-        // **The backlog case, and the reason the bound is one-sided** (#223, law C267): a validator
-        // that was down builds on an old parent and stamps `now`. A day of positive gap is legitimate.
-        let mut catching_up = block(1, 1, 1, vec![parent_hash]);
-        catching_up.timestamp = parent_ms + 86_400_000;
-        assert!(
-            block_timestamp(&store, &catching_up).await.unwrap().is_ok(),
-            "a lower bound must never refuse a block built on old parents"
-        );
-
-        // Genesis, and any block whose justifications this node cannot resolve, has nothing to compare
-        // against. Refusing there would reject a chain this node is still assembling.
-        let genesis = block(1, 0, 0, vec![]);
-        assert!(block_timestamp(&store, &genesis).await.unwrap().is_ok());
-        let orphan = block(1, 1, 1, vec![hash(99)]);
-        assert!(block_timestamp(&store, &orphan).await.unwrap().is_ok());
+        for stamp in [
+            parent_ms - 3_600_000,  // an hour before the parent
+            parent_ms + 86_400_000, // a day after it (a catching-up validator)
+            0,
+            i64::MAX,
+        ] {
+            let mut child = block(1, 1, 1, vec![parent_hash]);
+            child.timestamp = stamp;
+            assert_eq!(
+                block_summary(&dag, &store, &child, "root", 100, 1, 0)
+                    .await
+                    .unwrap(),
+                reference,
+                "timestamp {stamp} must not change the verdict"
+            );
+        }
     }
 
     #[tokio::test]
@@ -2197,6 +2178,114 @@ mod effectful_tests {
         assert!(
             EquivocationEvidence::decode(&fat_header).is_ok(),
             "and it round-trips"
+        );
+    }
+    /// The stalled-round escape must produce a block accepted by the *actual*
+    /// justification regression validator, not just the expected parent IDs.
+    /// The same DAG with the stale peer parent must be rejected with the named
+    /// BlockStatus. This is the before/after validation control for PR #492.
+    #[tokio::test]
+    async fn escaped_child_passes_real_justification_validation() {
+        use rchain_shared::refined::{BlockHeight, NonNegI64, SeqNum};
+
+        let a = Validator::new([0u8; 65]);
+        let b = Validator::new([1u8; 65]);
+        let bonds = BTreeMap::from([
+            (a, NonNegI64::try_from(250).unwrap()),
+            (b, NonNegI64::try_from(250).unwrap()),
+            (Validator::new([2u8; 65]), NonNegI64::try_from(250).unwrap()),
+            (Validator::new([3u8; 65]), NonNegI64::try_from(250).unwrap()),
+        ]);
+        let mut state: DagMessageState<BlockHash, Validator> = DagMessageState::empty();
+        let a1 = state.create_message(
+            hash(10),
+            BlockHeight::try_from(1).unwrap(),
+            a,
+            SeqNum::try_from(1).unwrap(),
+            bonds.clone(),
+            &BTreeSet::new(),
+        );
+        let b1 = state.create_message(
+            hash(20),
+            BlockHeight::try_from(1).unwrap(),
+            b,
+            SeqNum::try_from(1).unwrap(),
+            bonds.clone(),
+            &BTreeSet::new(),
+        );
+        state.insert_msg_mut(&a1);
+        state.insert_msg_mut(&b1);
+        let b2 = state.create_message(
+            hash(21),
+            BlockHeight::try_from(2).unwrap(),
+            b,
+            SeqNum::try_from(2).unwrap(),
+            bonds.clone(),
+            &[b1.clone()].into_iter().collect(),
+        );
+        state.insert_msg_mut(&b2);
+        let a2 = state.create_message(
+            hash(11),
+            BlockHeight::try_from(3).unwrap(),
+            a,
+            SeqNum::try_from(2).unwrap(),
+            bonds.clone(),
+            &[a1.clone(), b2.clone()].into_iter().collect(),
+        );
+        state.insert_msg_mut(&a2);
+
+        // The round snapshot predates B2, which A2 already justified.
+        state.round_parents = [(a, a1), (b, b1.clone())].into_iter().collect();
+        let repaired = state.parents_for_new_block_escaping_checked(&a).unwrap();
+        let actual_child = state.create_message(
+            hash(12),
+            BlockHeight::try_from(4).unwrap(),
+            a,
+            SeqNum::try_from(3).unwrap(),
+            bonds,
+            &repaired,
+        );
+        let repaired_ids = actual_child.parents.iter().copied().collect();
+        let stale_ids = vec![a2.id, b1.id];
+
+        let mut dag = mock(BTreeMap::new());
+        dag.representation.dag_message_state = state;
+        let accepted = block(0, 4, 3, repaired_ids);
+        let refused = block(0, 4, 3, stale_ids);
+
+        assert_eq!(
+            justification_regressions(&dag, &accepted).await.unwrap(),
+            Ok(()),
+            "the actual block validator must admit the escaped child's justifications"
+        );
+        assert_eq!(
+            justification_regressions(&dag, &refused).await.unwrap(),
+            Err(BlockStatus::JustificationRegression),
+            "the original stale round parent must be rejected by the real validator"
+        );
+        // The proposer-produced child carries the same selected justifications;
+        // its other validation stages (execution, signatures and finality) are
+        // deliberately outside this focused rejection-path regression test.
+    }
+
+    /// **An unresolvable justification is named, and the verdict is unchanged** (Law 88d). The
+    /// regression check cannot evaluate a justification absent from the message map; the current
+    /// rule passes (Scala fidelity), so the block reaches the height check, where it fails naming
+    /// the hash. Turning this into a refusal would be a consensus change and fails this test.
+    #[tokio::test]
+    async fn an_unknown_justification_passes_the_regression_check_and_is_named() {
+        let dag = mock(BTreeMap::new());
+        let b = block(9, 1, 1, vec![hash(7)]);
+
+        assert_eq!(
+            check_justification_regression(&dag, &b).await.unwrap(),
+            JustificationOutcome::Unresolved(vec![hash(7)]),
+            "the unresolved shape carries the hash the node could not resolve"
+        );
+        assert_eq!(
+            justification_regressions(&dag, &b).await.unwrap(),
+            Ok(()),
+            "the verdict is unchanged: the rule passes, exactly as the Scala's `None` did"
         );
     }
 }

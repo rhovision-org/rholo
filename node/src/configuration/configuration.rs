@@ -9,6 +9,7 @@ use super::commandline::config_mapper;
 use super::commandline::options::{Commands, Options};
 use super::hocon::{check_shard_config_exclusivity, node_conf_from_hocon};
 use super::model::NodeConf;
+use crate::resources::policy::StartupEnforcement;
 
 /// A named set of defaults (port of `Configuration.Profile`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,6 +135,17 @@ impl Configuration {
         // with the other operator-facing configuration errors, against the defaults' own `NodeConf`
         // taken above.
         check_inert_config(&node_conf, &defaults_conf)?;
+        check_resource_guard(&node_conf)?;
+
+        // The hostlist's own bounds. Checked whether or not the route is mounted, so a configuration
+        // that would be refused the moment the route is enabled is refused now rather than at the
+        // restart that enables it.
+        crate::web::node_list::NodeListConfig {
+            probe_interval: node_conf.api_server.node_list_probe_interval,
+            probe_timeout: node_conf.api_server.node_list_probe_timeout,
+            max_entries: node_conf.api_server.node_list_max_entries,
+        }
+        .validate()?;
 
         // AUDIT §6: the Kamon reporter switches. Checked here, where the operator-facing
         // configuration errors already live (`check_shard_config_exclusivity`, the shard quorum
@@ -146,6 +158,11 @@ impl Configuration {
         check_merge_divergence_injection(&node_conf)?;
         check_sync_anchor(&node_conf)?;
         check_self_reset(&node_conf)?;
+        // **The production recipient is a repository constant** (`genesis::dev_tax`): an empty
+        // configured address resolves to it outside dev mode and to no allocation inside it. Applied
+        // before validation, so the genesis builder, the replay descriptors and the checks see one
+        // value; an explicit value always wins.
+        apply_production_dev_tax_address(&mut node_conf);
         check_dev_tax_address(&node_conf)?;
 
         Ok((check_dev_mode(node_conf), profile, config_file))
@@ -330,6 +347,28 @@ pub fn check_inert_config(node_conf: &NodeConf, defaults: &NodeConf) -> Result<(
     Ok(())
 }
 
+/// The resource-guard block's own refusals (A2): an unknown enforcement word, a negative floor or a
+/// non-positive data-dir floor is an operator error, not a setting to guess around.
+fn check_resource_guard(node_conf: &NodeConf) -> Result<(), String> {
+    let guard = &node_conf.resource_guard;
+    if StartupEnforcement::parse(&guard.enforce_startup).is_none() {
+        return Err(format!(
+            "resource-guard.enforce-startup must be auto, enforce or warn (got {:?})",
+            guard.enforce_startup
+        ));
+    }
+    if guard.min_available_mb < 0 {
+        return Err(
+            "resource-guard.min-available-mb must be >= 0 (0 = the chain-length policy table)"
+                .to_string(),
+        );
+    }
+    if guard.min_data_dir_free_mb <= 0 {
+        return Err("resource-guard.min-data-dir-free-mb must be greater than 0".to_string());
+    }
+    Ok(())
+}
+
 /// If not in dev mode, strip the deployer private key (port of `Configuration.checkDevMode`).
 /// **The divergence injection refuses to arm outside dev-mode**, and says why.
 ///
@@ -372,6 +411,19 @@ fn check_sync_anchor(node_conf: &NodeConf) -> Result<(), String> {
 /// genesis creation (`node_launch::apply`), because only a node about to build a genesis is making
 /// that decision, and only there can a *new* chain be told from a restart onto an existing one — the
 /// public testnet's bootstrap is standalone and its genesis predates this key.
+/// Resolve every shard's empty `dev-tax-address` to [`rchain_casper::genesis::dev_tax::
+/// PRODUCTION_DEV_TAX_ADDRESS`] outside dev mode, and leave it empty inside it. An explicit value is
+/// untouched. See `dev_tax::effective_address` for why this is a repository constant rather than an
+/// image default (devnets must never inherit a real allocation).
+fn apply_production_dev_tax_address(node_conf: &mut NodeConf) {
+    let dev_mode = node_conf.dev_mode;
+    for spec in node_conf.casper.shards.iter_mut() {
+        let configured = spec.genesis_block_data.dev_tax_address.clone();
+        spec.genesis_block_data.dev_tax_address =
+            rchain_casper::genesis::dev_tax::effective_address(&configured, dev_mode);
+    }
+}
+
 fn check_dev_tax_address(node_conf: &NodeConf) -> Result<(), String> {
     for spec in node_conf.casper.shards.iter() {
         let address = &spec.genesis_block_data.dev_tax_address;
@@ -520,7 +572,8 @@ pub fn merge(high: Hocon, low: Hocon) -> Hocon {
 mod tests {
     use super::*;
     use crate::configuration::model::{
-        ApiServer, DevConf, Metrics, PeersDiscovery, ProtocolClient, ProtocolServer, Storage,
+        ApiServer, DevConf, Metrics, PeersDiscovery, ProtocolClient, ProtocolServer,
+        ResourceGuardConf, Storage,
     };
     use rchain_casper::{CasperConf, GenesisBlockData, ShardMemberships, ShardSpec};
     use rchain_comm::peer_node::PeerNode;
@@ -710,6 +763,7 @@ mod tests {
             attest_on_new_blocks: true,
             no_attest_on_new_blocks: false,
             dev_mode: false,
+            resource_guard: ResourceGuardConf::default(),
             protocol_server: ProtocolServer {
                 network_id: "testnet".to_string(),
                 host: None,
@@ -747,6 +801,10 @@ mod tests {
                 port_admin_http: 40405,
                 max_blocks_limit: 50,
                 enable_reporting: false,
+                publish_node_list: false,
+                node_list_probe_interval: secs(60),
+                node_list_probe_timeout: secs(2),
+                node_list_max_entries: 32,
                 enable_txn_api: false,
                 enable_devnet_cors: false,
                 enable_devnet_admin_public: false,
@@ -801,6 +859,12 @@ mod tests {
                         system_contract_pub_key: String::new(),
                         dev_tax_address: String::new(),
                         dev_tax_vesting_blocks: 18_934_560,
+
+                        liveness_absence_threshold: 0,
+                        liveness_jail_after_boundaries: 0,
+                        liveness_jail_epochs: 0,
+                        liveness_vote_window: 0,
+                        liveness_slash_severity: 0,
                     },
                     5,
                 ),
@@ -818,6 +882,7 @@ mod tests {
                 equivocation_injection: false,
                 merge_divergence_injection: 0,
                 sync_anchor: None,
+                expected_genesis_hash: None,
                 self_reset: false,
                 effect_mode: "dfs".to_string(),
             },
@@ -1199,6 +1264,51 @@ mod tests {
         assert_eq!(config.casper.shards.primary().shard_id.to_string(), "/root");
     }
 
+    /// **The hostlist is off unless an operator turns it on**, and its bounds are refused where every
+    /// other operator-facing configuration error is. The bounds are checked whether or not the route
+    /// is mounted, so a configuration that would be refused at the restart that enables it is refused
+    /// now.
+    #[test]
+    fn publish_node_list_defaults_off_parses_on_and_validates_its_bounds() {
+        let off = node_conf_from_hocon(&parse_defaults("/var/lib/rnode").unwrap()).unwrap();
+        assert!(!off.api_server.publish_node_list);
+        assert_eq!(off.api_server.node_list_max_entries, 32);
+        assert_eq!(
+            off.api_server.node_list_probe_interval,
+            std::time::Duration::from_secs(60)
+        );
+
+        let on = node_conf_from_hocon(&merge(
+            parse_hocon_str("api-server { publish-node-list = true }"),
+            parse_defaults("/var/lib/rnode").unwrap(),
+        ))
+        .unwrap();
+        assert!(on.api_server.publish_node_list);
+
+        let bad = |body: &str| {
+            let conf = node_conf_from_hocon(&merge(
+                parse_hocon_str(body),
+                parse_defaults("/var/lib/rnode").unwrap(),
+            ))
+            .unwrap();
+            crate::web::node_list::NodeListConfig {
+                probe_interval: conf.api_server.node_list_probe_interval,
+                probe_timeout: conf.api_server.node_list_probe_timeout,
+                max_entries: conf.api_server.node_list_max_entries,
+            }
+            .validate()
+        };
+        for body in [
+            "api-server { node-list-max-entries = 0 }",
+            "api-server { node-list-max-entries = 129 }",
+            // A probe that outlives its cycle starts the next one on top of the last.
+            "api-server { node-list-probe-interval = 1s, node-list-probe-timeout = 5s }",
+            "api-server { node-list-probe-timeout = 0s }",
+        ] {
+            assert!(bad(body).is_err(), "{body} must be refused");
+        }
+    }
+
     /// The transaction API is off unless an operator turns it on: a gateway node must not serve the
     /// routes by virtue of being a gateway.
     #[test]
@@ -1304,6 +1414,7 @@ mod tests {
             attest_on_new_blocks: true,
             no_attest_on_new_blocks: true,
             dev_mode: true,
+            resource_guard: ResourceGuardConf::default(),
             protocol_server: ProtocolServer {
                 network_id: "testnet".to_string(),
                 host: Some("localhost".to_string()),
@@ -1341,6 +1452,10 @@ mod tests {
                 port_admin_http: 111111,
                 max_blocks_limit: 111111,
                 enable_reporting: true,
+                publish_node_list: false,
+                node_list_probe_interval: secs(60),
+                node_list_probe_timeout: secs(2),
+                node_list_max_entries: 32,
                 enable_txn_api: false,
                 enable_devnet_cors: false,
                 enable_devnet_admin_public: false,
@@ -1398,6 +1513,12 @@ mod tests {
                         system_contract_pub_key: default_system_contract_pub_key(),
                         dev_tax_address: String::new(),
                         dev_tax_vesting_blocks: 18_934_560,
+
+                        liveness_absence_threshold: 0,
+                        liveness_jail_after_boundaries: 0,
+                        liveness_jail_epochs: 0,
+                        liveness_vote_window: 0,
+                        liveness_slash_severity: 0,
                     },
                     111111,
                 ),
@@ -1412,6 +1533,7 @@ mod tests {
                 equivocation_injection: false,
                 merge_divergence_injection: 0,
                 sync_anchor: None,
+                expected_genesis_hash: None,
                 self_reset: false,
                 effect_mode: "dfs".to_string(),
             },
@@ -1646,6 +1768,84 @@ mod tests {
             let err = check_inert_config(&changed, &defaults)
                 .expect_err(&format!("{name} must be refused, not accepted and ignored"));
             assert!(err.contains(name), "{name} is not named in: {err}");
+        }
+    }
+
+    /// **The resource-guard thresholds are refused at build, not guessed around** (A2). A typo in the
+    /// enforcement word or a nonsensical floor would otherwise reach the preflight and be read as
+    /// "auto" or as a zero floor — the failure this test exists to forbid. The control is the shipped
+    /// default: it must pass, or the three refusals would be green over a broken comparison.
+    #[test]
+    fn resource_guard_thresholds_are_checked_at_build() {
+        let defaults = node_conf_from_hocon(&parse_defaults("/var/lib/rnode").expect("defaults"))
+            .expect("defaults parse");
+        check_resource_guard(&defaults).expect("the shipped resource-guard block is not refused");
+
+        for (name, change) in [
+            (
+                "resource-guard.enforce-startup",
+                Box::new(|c: &mut NodeConf| {
+                    c.resource_guard.enforce_startup = "sometimes".to_string();
+                }) as Box<dyn Fn(&mut NodeConf)>,
+            ),
+            (
+                "resource-guard.min-available-mb",
+                Box::new(|c: &mut NodeConf| {
+                    c.resource_guard.min_available_mb = -1;
+                }),
+            ),
+            (
+                "resource-guard.min-data-dir-free-mb",
+                Box::new(|c: &mut NodeConf| {
+                    c.resource_guard.min_data_dir_free_mb = 0;
+                }),
+            ),
+        ] {
+            let mut changed = defaults.clone();
+            change(&mut changed);
+            let err = check_resource_guard(&changed)
+                .expect_err(&format!("{name} must be refused, not guessed around"));
+            assert!(err.contains(name), "{name} is not named in: {err}");
+        }
+    }
+
+    /// **The production dev-tax recipient is applied from the repository constant only outside dev
+    /// mode.** Empty config → the constant on a production node, empty on a devnet; explicit wins.
+    #[test]
+    fn an_empty_dev_tax_address_resolves_from_the_repository_outside_dev_mode() {
+        let defaults = parse_defaults("/tmp/n467-dev-tax").expect("defaults");
+        let mut conf = node_conf_from_hocon(&defaults).expect("a default NodeConf");
+
+        conf.dev_mode = false;
+        apply_production_dev_tax_address(&mut conf);
+        for spec in conf.casper.shards.iter() {
+            assert_eq!(
+                spec.genesis_block_data.dev_tax_address,
+                rchain_casper::genesis::dev_tax::PRODUCTION_DEV_TAX_ADDRESS
+            );
+        }
+
+        conf.dev_mode = true;
+        for spec in conf.casper.shards.iter_mut() {
+            spec.genesis_block_data.dev_tax_address = String::new();
+        }
+        apply_production_dev_tax_address(&mut conf);
+        for spec in conf.casper.shards.iter() {
+            assert!(
+                spec.genesis_block_data.dev_tax_address.is_empty(),
+                "dev mode must not inherit the production allocation"
+            );
+        }
+
+        for spec in conf.casper.shards.iter_mut() {
+            spec.genesis_block_data.dev_tax_address = "an explicit address".to_string();
+        }
+        apply_production_dev_tax_address(&mut conf);
+        for spec in conf.casper.shards.iter() {
+            assert_eq!(
+                spec.genesis_block_data.dev_tax_address,
+                "an explicit address"
+            );
         }
     }
 }

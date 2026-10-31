@@ -253,7 +253,9 @@ blocks_at() { printf '%s\\n' 'aa11 sender9 post 1 []' 'bb22 sender9 post 1 []'; 
     # once. The stub is that shape in miniature: A serves two blocks, B serves one of A's and one of
     # its own.
     a = src.index('echo "== 4. what is above the point =="')
-    b = src.index('if [ "$APPLY" != "1" ]; then', a)
+    # The slice stops at the movement marker: `report_movement` samples heights through helpers this
+    # fixture does not load, and the marker is the boundary the section's own output ends at.
+    b = src.index("# --- movement:", a)
     section4 = src[a:b]
     with tempfile.TemporaryDirectory(prefix="reconcile-s4-") as d:
         report = os.path.join(d, "deploys.jsonl")
@@ -281,6 +283,7 @@ blocks_at() {   # the five fields the section reads, last one never empty
         # 3 + 2, once each — the observation count of the same record is 3 answers, and the old
         # section totalled 8 by adding h1's deploys a second time.
         assert "5 deploy(s) above the point across 2 unique block(s)" in p.stdout, p.stdout
+        assert "(heights 1..1; snapshot 1 taken at unknown)" in p.stdout, p.stdout
         print("PASS section 4 counts a block once and names the nodes that served it")
 
     # --- section 4: two nodes may not disagree about one block's own numbers ----------------------
@@ -338,8 +341,11 @@ blocks_at() {   # the five fields the section reads, last one never empty
     section10 = src[a:b]
 
     def run_finality(name, nodes, expect_rc, required):
-        lines = ["set -uo pipefail", "MEET=0", "RECONCILE_FINALITY_ROUNDS=1",
+        lines = ["set -uo pipefail", "MEET=0", "MAXH=0", "RECONCILE_FINALITY_ROUNDS=1",
                  "sleep() { :; }", "trigger_block() { :; }",
+                 # Range refresh behavior is exercised by reconcile-cache-regression.py;
+                 # this fixture isolates the existing finality arithmetic over stubbed blocks.
+                 "refresh_block_ranges() { :; }",
                  "NAMES=(%s)" % " ".join(nodes), "declare -A HOST PORT"]
         for n in nodes:
             lines.append("HOST[%s]=%s; PORT[%s]=1" % (n, n, n))
@@ -516,3 +522,26 @@ docker() {
         # The environments the survivor has are the survivor's, not the joiner's stale copies.
         assert (dst_vol / "blockstorage" / "data.mdb").read_bytes() == b"survivor" * 16
         print("PASS the copy loop moves an absent source aside and prints the manifest")
+
+    # --- movement: a producing chain is reported, not silently absorbed ---------------------------
+    # Issue 488's residual: the audit is a snapshot of MAXH, and a node that advances past it must
+    # say so rather than leaving the operator to infer the audit's range. Non-fatal by design.
+    a = src.index("report_movement() {")
+    b = src.index("\n}\n", a) + 3
+    movement = src[a:b]
+    script = """set -uo pipefail
+MAXH=57
+declare -A HGT HOST PORT
+HGT[A]=57; HGT[D]=55
+NAMES=(A D)
+HOST[A]=a; PORT[A]=1; HOST[D]=d; PORT[D]=2
+height_of() { case "$1" in a) printf 60 ;; d) printf 55 ;; esac; }
+""" + movement + """
+report_movement
+"""
+    p = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+    assert p.returncode == 0, f"report_movement exited {p.returncode}\n{p.stdout}{p.stderr}"
+    assert "NOTE: A advanced 57 → 60 since the snapshot; the audit above covers only heights 0..57" in p.stdout, p.stdout
+    assert "NOTE: D" not in p.stdout, p.stdout
+    assert "Movement during an audit is normal" in p.stdout, p.stdout
+    print("PASS movement is reported for an advancing node, not a static one, and is not fatal")

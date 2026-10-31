@@ -94,6 +94,9 @@ pub fn publish_dialing_fixtures_with_budget(
             location: location.clone(),
             registry: registry.clone(),
             session: session.clone(),
+            // The greeter dials too, so it draws from the **same** budget as the enlivener and the
+            // admin route (C347). It used to draw from nothing, which capped it at `MAX_PEERS`.
+            dials: dials.clone(),
         }),
     );
     bootstrap.publish(
@@ -122,6 +125,9 @@ struct Greeter {
     location: PeerLocator,
     registry: Arc<SessionRegistry>,
     session: SessionSlot,
+    /// The node's own-dial budget, shared with the enlivener and the admin route (C347). `None` is
+    /// the conformance harness, which installs none.
+    dials: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 #[async_trait]
@@ -178,6 +184,11 @@ impl Greeter {
         let handle = match self.registry.live(&peer) {
             Some(existing) => existing,
             None => {
+                // **A greeter's dial draws from the budget too** (C347). It dialled with no permit,
+                // so a peer's handoff could make the node hold `MAX_PEERS` sessions against a
+                // published ceiling of `MAX_DIALED_SESSIONS`. Taken before the connect and held by
+                // the loop task below, exactly as the enlivener does it.
+                let permit = crate::capacity::reserve_dial_slot(&self.dials)?;
                 let connection = self
                     .netlayer
                     .new_outgoing_connection_from(
@@ -210,6 +221,8 @@ impl Greeter {
                     }
                 }
                 tokio::spawn(async move {
+                    // Held for the session's whole life, whichever way the loop ends.
+                    let _permit = permit;
                     let _ = loop_.run().await;
                 });
                 handle

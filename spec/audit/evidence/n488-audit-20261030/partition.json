@@ -1,0 +1,58 @@
+{
+  "before": {
+    "n488-bootstrap": [
+      "n488net"
+    ],
+    "n488-validator-1": [
+      "n488net"
+    ],
+    "n488-validator-2": [
+      "n488net"
+    ],
+    "n488-validator-3": [
+      "n488net"
+    ]
+  },
+  "boundary": "Docker network membership; not a consensus or finality verdict",
+  "finished_unix": 1793371112.602306,
+  "kind": "bounded-two-by-two-topology",
+  "partition": {
+    "n488-bootstrap": [
+      "n488net"
+    ],
+    "n488-validator-1": [
+      "n488net"
+    ],
+    "n488-validator-2": [
+      "n488-n447-right"
+    ],
+    "n488-validator-3": [
+      "n488-n447-right"
+    ]
+  },
+  "restored": {
+    "n488-bootstrap": [
+      "n488net"
+    ],
+    "n488-validator-1": [
+      "n488net"
+    ],
+    "n488-validator-2": [
+      "n488net"
+    ],
+    "n488-validator-3": [
+      "n488net"
+    ]
+  },
+  "started_unix": 1793371077.8166578,
+  "topology_recovered": true,
+  "validators": [
+    "n488-bootstrap",
+    "n488-validator-1",
+    "n488-validator-2",
+    "n488-validator-3"
+  ],
+  "workload_argv_count": 2,
+  "workload_executable": "bash",
+  "workload_exit": 0
+}

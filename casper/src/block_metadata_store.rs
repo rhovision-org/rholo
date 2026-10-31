@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use rchain_block_storage::dag::metadata_store::{
-    add_block_to_dag_state_mut, block_metadata_to_info, recreate_in_memory_state,
-    validate_dag_state_after, BlockInfo, DagState,
+    add_block_to_dag_state_mut, block_metadata_into_info, block_metadata_to_info,
+    recreate_in_memory_state, validate_dag_state_after, BlockInfo, DagState,
 };
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
@@ -25,10 +25,14 @@ impl BlockMetadataStore {
     pub async fn create(
         store: Arc<dyn KeyValueTypedStore<BlockHash, BlockMetadata>>,
     ) -> Result<Self, String> {
-        let blocks = store.to_map().await?;
-        let info_map: BTreeMap<BlockHash, BlockInfo> = blocks
-            .iter()
-            .map(|(hash, meta)| (*hash, block_metadata_to_info(meta)))
+        // Move justification sets out of owned records instead of cloning them.
+        // to_map() still materializes the full decoded history before this pass;
+        // only per-record duplication is reduced, not total startup or replay memory.
+        let info_map: BTreeMap<BlockHash, BlockInfo> = store
+            .to_map()
+            .await?
+            .into_iter()
+            .map(|(hash, meta)| (hash, block_metadata_into_info(meta)))
             .collect();
         let dag_state = recreate_in_memory_state(&info_map)?;
         Ok(BlockMetadataStore {
@@ -217,6 +221,43 @@ mod tests {
             fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
             member_of_fringe: None,
         }
+    }
+
+    #[test]
+    fn owned_metadata_projection_matches_the_borrowed_projection() {
+        let mut block = meta(hash(2), &[hash(0), hash(1)], 2);
+        block.validation_failed = true;
+        block.slashable = true;
+        let expected = block_metadata_to_info(&block);
+        let actual = block_metadata_into_info(block);
+        assert_eq!(
+            actual, expected,
+            "moving fields must preserve every DAG value"
+        );
+        assert_eq!(actual.parents.len(), 2);
+        assert!(actual.validation_failed);
+    }
+
+    /// A restored index must preserve height, children, and persisted contents
+    /// after taking ownership of the decoded metadata records.
+    #[tokio::test]
+    async fn restored_dag_projection_is_identical_to_the_live_index() {
+        let backing = metadata_store();
+        let live = BlockMetadataStore::create(backing.clone()).await.unwrap();
+        live.add(meta(hash(0), &[], 0)).await.unwrap();
+        live.add(meta(hash(1), &[hash(0)], 1)).await.unwrap();
+        live.add(meta(hash(2), &[hash(0), hash(1)], 2))
+            .await
+            .unwrap();
+
+        let expected_set = live.dag_set().await;
+        let expected_children = live.child_map_data().await;
+        let expected_heights = live.height_map().await;
+        let restored = BlockMetadataStore::create(backing).await.unwrap();
+        assert_eq!(*restored.dag_set().await, *expected_set);
+        assert_eq!(*restored.child_map_data().await, *expected_children);
+        assert_eq!(*restored.height_map().await, *expected_heights);
+        assert!(restored.get_unchecked(&hash(2)).await.is_ok());
     }
 
     #[tokio::test]

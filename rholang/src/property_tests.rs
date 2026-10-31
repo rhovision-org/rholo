@@ -14,6 +14,7 @@ use rchain_models::par_ops::{from_expr, par_concat};
 use rchain_models::sorted::SortedProc;
 use rchain_models::sorter::sort_par_term;
 use rchain_models::types::is_closed;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::env::Env;
@@ -109,6 +110,7 @@ mod reward_laws {
                 boundary,
                 i64::try_from(grace).expect("a small grace"),
                 i64::try_from(knee).expect("a small knee"),
+                &BTreeSet::new(),
             );
 
             prop_assert_eq!(out.len(), rewards.len(), "a scaling keeps every key");
@@ -148,7 +150,7 @@ mod reward_laws {
                 BlockHeight::try_from(spoken_at).expect("a height at or above zero"),
             )]);
             // `grace == knee` is the binary shape: the cliff the tree shipped before this was graded.
-            let out = apply_weight(rewards, &participation, boundary, slack, slack);
+            let out = apply_weight(rewards, &participation, boundary, slack, slack, &BTreeSet::new());
             prop_assert_eq!(
                 out.get(&v).map(|r| i64::from(*r)),
                 Some(0),
@@ -164,7 +166,7 @@ mod reward_laws {
             let slack = i64::try_from(slack).expect("a small slack");
             let v = validator(1);
             let rewards = BTreeMap::from([(v, nn(100))]);
-            let out = apply_weight(rewards, &BTreeMap::new(), boundary, slack, slack);
+            let out = apply_weight(rewards, &BTreeMap::new(), boundary, slack, slack, &BTreeSet::new());
             prop_assert_eq!(
                 out.get(&v).map(|r| i64::from(*r)),
                 Some(0),
@@ -188,7 +190,7 @@ mod reward_laws {
                 .enumerate()
                 .map(|(i, h)| (validator(i), BlockHeight::try_from(*h).expect("a test height")))
                 .collect();
-            prop_assert_eq!(apply_weight(rewards.clone(), &participation, boundary, 0, 0), rewards);
+            prop_assert_eq!(apply_weight(rewards.clone(), &participation, boundary, 0, 0, &BTreeSet::new()), rewards);
         }
 
         /// **And a validator inside the grace is paid in full** —
@@ -210,7 +212,7 @@ mod reward_laws {
                 (v, BlockHeight::try_from(boundary - offset).expect("a height")),
             ]);
             prop_assert_eq!(
-                apply_weight(rewards.clone(), &participation, boundary, grace, grace),
+                apply_weight(rewards.clone(), &participation, boundary, grace, grace, &BTreeSet::new()),
                 rewards
             );
         }
@@ -238,7 +240,7 @@ mod reward_laws {
             let participation = BTreeMap::from([
                 (v, BlockHeight::try_from(boundary - behind).expect("a height")),
             ]);
-            let out = apply_weight(rewards, &participation, boundary, grace, knee);
+            let out = apply_weight(rewards, &participation, boundary, grace, knee, &BTreeSet::new());
             let paid = i64::from(*out.get(&v).expect("a scaling keeps every key"));
             prop_assert!(paid < reward, "inside the ramp the share is cut");
             prop_assert!(paid > 0, "and it is not cut to nothing");

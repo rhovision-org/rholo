@@ -1,0 +1,101 @@
+{
+  "binary": {
+    "build_command": "cargo build --release -p rchain-node --bin rnode",
+    "bytes": 49317360,
+    "mtime": 1793391636,
+    "path": "/home/patrick/RNodeRust/.claude/worktrees/docs-clean-2026-10-30/target/release/rnode",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "sha256": "446dbaf13e24930fe4067ec97390959e328c62dc7a6e0e631dc83de846ad34bf",
+    "stale": "false",
+    "strip": "not stripped"
+  },
+  "code_dirty": false,
+  "date": "2026-10-30",
+  "git_commit": "78efd3fa1",
+  "git_dirty": true,
+  "known_stale": [
+    "39102784",
+    "47065056",
+    "189725",
+    "197000",
+    "203000",
+    "226974",
+    "43.6",
+    "461",
+    "467",
+    "474",
+    "508"
+  ],
+  "legacy": {
+    "bytes": 27425437,
+    "citation_paths": 162,
+    "citation_refs": 249,
+    "files": 1596
+  },
+  "members": 14,
+  "per_crate": {
+    "block-storage": {
+      "files": 17,
+      "lines": 5073
+    },
+    "casper": {
+      "files": 98,
+      "lines": 74600
+    },
+    "comm": {
+      "files": 38,
+      "lines": 9206
+    },
+    "crypto": {
+      "files": 27,
+      "lines": 4744
+    },
+    "graphz": {
+      "files": 1,
+      "lines": 837
+    },
+    "models": {
+      "files": 38,
+      "lines": 13187
+    },
+    "node": {
+      "files": 99,
+      "lines": 43424
+    },
+    "ocapn": {
+      "files": 30,
+      "lines": 12019
+    },
+    "qucalc": {
+      "files": 4,
+      "lines": 1087
+    },
+    "rholang": {
+      "files": 53,
+      "lines": 41610
+    },
+    "rspace": {
+      "files": 59,
+      "lines": 16506
+    },
+    "rspace-bench": {
+      "files": 1,
+      "lines": 495
+    },
+    "sdk": {
+      "files": 12,
+      "lines": 3111
+    },
+    "shared": {
+      "files": 34,
+      "lines": 4864
+    }
+  },
+  "schema": 1,
+  "tracked_rs_files": 513,
+  "tracked_rs_lines": 231044,
+  "workspace": {
+    "files": 2,
+    "lines": 281
+  }
+}

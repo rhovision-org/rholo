@@ -314,4 +314,58 @@ theorem the_two_cycle_drifts : ¬ twoCycle.Paced (fun _ => 7) 2 := by
   obtain ⟨_t, _ht, hne⟩ := h false [true, false, true] hrun (by decide)
   exact hne rfl
 
+/-! ## The paced gate (Law 51d)
+
+A time-gated action — the proposer's escape from a round that is not closing — must **consume** its
+permit. A gate that banks the permit ("the interval has elapsed") fires on every subsequent tick, so
+the bound stops pacing anything and a fast producer can exhaust the finality-lag bound while its peers
+are still assembling the next shared justification layer. The model is the two-state permit below; the
+conformance corpus ties it to `take_escape_permit` in the proposer. -/
+
+namespace Pacing
+
+/-- The gate's state: when the blocked round was first seen, if it has been. -/
+structure Permit where
+  since : Option Nat
+  deriving DecidableEq, Repr
+
+/-- The interval: 15 000 ms (`ROUND_STALL_ESCAPE`). -/
+def bound : Nat := 15000
+
+/-- One tick of the correct gate: start the clock; after a full interval escape **and move the
+    sighting to now**; otherwise wait with the sighting unchanged. -/
+def take (p : Permit) (now : Nat) : Bool × Permit :=
+  match p.since with
+  | none => (false, { since := some now })
+  | some first =>
+      if bound ≤ now - first then (true, { since := some now }) else (false, p)
+
+/-- The banked gate — the defect: the interval licenses every later tick. -/
+def banked (p : Permit) (now : Nat) : Bool × Permit :=
+  match p.since with
+  | none => (false, { since := some now })
+  | some first => (bound ≤ now - first, p)
+
+/-- **A permit is consumed by the escape that uses it.** -/
+theorem a_permit_is_consumed (p : Permit) (now : Nat) :
+    (take p now).1 = true → (take p now).2.since = some now := by
+  unfold take
+  split
+  · simp
+  · split <;> simp_all
+
+/-- **The banked gate fires every tick**, which is what the correct gate must not do. -/
+theorem the_banked_gate_fires_every_tick :
+    (banked ⟨some 0⟩ 15000).1 = true ∧ (banked ⟨some 0⟩ 15001).1 = true ∧
+      (banked ⟨some 0⟩ 30000).1 = true := by decide
+
+/-- **The correct gate paces**: after the escape at 15 000 ms, the next tick does not escape and the
+    sighting is the escape instant; the following full interval does. -/
+theorem the_correct_gate_waits_a_full_interval :
+    (take ⟨some 0⟩ 15000).1 = true ∧
+      (take (take ⟨some 0⟩ 15000).2 15001).1 = false ∧
+      (take (take ⟨some 0⟩ 15000).2 30000).1 = true := by decide
+
+end Pacing
+
 end Rchain

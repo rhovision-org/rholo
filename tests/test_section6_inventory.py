@@ -20,8 +20,8 @@ class InventoryTests(unittest.TestCase):
         return module.validate(self.source,self.inventory,self.matrix,self.ledger)
     def test_exact_inventory_never_authorizes_release(self):
         result=self.check()
-        self.assertEqual(result["section6_rows"],91)
-        self.assertEqual(result["tracker_obligations"],42)
+        self.assertEqual(result["section6_rows"],93)
+        self.assertEqual(result["tracker_obligations"],44)
         self.assertFalse(result["release_authorized"])
     def test_new_source_row_is_not_silently_skipped(self):
         self.source=self.source.replace("\n## 7.","\n| Additional validity rule | oracle | changes acceptance |\n\n## 7.",1)

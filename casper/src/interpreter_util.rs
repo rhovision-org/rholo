@@ -114,6 +114,7 @@ pub async fn compute_deploys_checkpoint(
     block_data: BlockData,
     pre_state_hash: &Blake2b256Hash,
     fringe_state_hash: &Blake2b256Hash,
+    batch_limit: Option<usize>,
 ) -> Result<
     (
         Blake2b256Hash,
@@ -123,13 +124,14 @@ pub async fn compute_deploys_checkpoint(
     String,
 > {
     runtime
-        .compute_state(
+        .compute_state_with_limit(
             pre_state_hash,
             deploys,
             system_deploys,
             rand,
             block_data,
             fringe_state_hash,
+            batch_limit,
         )
         .await
 }

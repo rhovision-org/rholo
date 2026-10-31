@@ -1,0 +1,19 @@
+{
+  "exported_at_utc": "2026-10-29T04:16:23.876682+00:00",
+  "source_revision": "a5259969a7c5673ccdfc5dad97981d0a3607fcf0",
+  "database": "block-metadata",
+  "records": 7866,
+  "uncompressed_bytes": 12071157,
+  "uncompressed_sha256": "2e22bb9a632a7572d5056b46a5eadb8e8a626092ff2a64b3a85ea18d7c9e4d61",
+  "compressed_bytes": 3199043,
+  "compressed_sha256": "706022f03310794cb324a507834f420cc1cbd21e229d8432c3ded692ddeaf9b0",
+  "snapshot": {
+    "method": "read-only data.mdb copy with identical source meta pages before/after and in copy; no lock file copied",
+    "source_bytes": 15036416,
+    "meta_page_bytes": 4096,
+    "source_meta_sha256": "6f004bc3a62aa48d25f05069f4900ca9b73db1130c95892f4edc29be37a83da4",
+    "copy_seconds": 0.047,
+    "snapshot": "/home/aria/tmp/rholo-pr480-bench-20261029/snapshot-0"
+  },
+  "contents": "Public DAG block metadata only; no keys, wallet, tuple-space state or deploy payloads"
+}

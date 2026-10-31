@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "source_dev_sha": "d8dd1163168b3c357fc4bccbd1853b820abbcecb",
-  "observed_date": "2026-10-24",
+  "source_dev_sha": "9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e",
+  "observed_date": "2026-10-30",
   "section": "spec/audit/passes.md \u00a76",
   "independent_signoff": false,
   "boundary": "Exact source-row coverage is distinct from independently verified safety. Conservative categories remain reviewable; maintainer owner-and-reason dispositions live in the linked tracker ledger.",
@@ -22,7 +22,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A merge diffs each affected channel once, not once per produce/consume event.** | Archived `legacy/rspace/src/main/scala/coop/rchain/rspace/merger/StateChange.scala:apply` at `1b7583649` maps `producesAffected(...).map(_.channelsHash)` and `consumesAffected(...).map(_.channelsHashes)` to sequences and appends `curVal.added ++ change.added`, so a consume-and-replace is diffed twice and the merged state holds two copies. | Issue #420: the Rust port inherited this; the fix dedupes by channel (`BTreeSet<Blake2b256Hash>`) and channel set (`BTreeSet<Vec<Blake2b256Hash>>`). **Consensus change:** merged state hashes move for any scope containing a consume-and-replace or two continuations on one channel set; `rejectedDeploys` does not move. Pre-launch category A, like #280/C248; every validator must run the fix from the fork point, and the deployed testnet chain is already bagged and cannot be repaired. The live 840->841 replay is owned by #421/#429. AUDIT **C336**, section 140 |"
       },
       "missing_proof": "The exact live 840->841 four-parent merge replay (tuple-space state is not exported; #421/#429 own the M5 witness) and the devnet/fork-point run; maintainer sign-off.",
@@ -46,7 +46,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| LFS bootstrap admission compares the authenticated **node id**, not the mutable endpoint | Archived `legacy/casper/src/main/scala/coop/rchain/casper/engine/NodeSyncing.scala:onFinalizedFringeMessage` at `1b7583649` uses whole-`PeerNode` equality | Issue #386: a configured hostname and the same key announced with an IP or changed port must not prevent sync from starting. The transport already binds the claimed sender id to its client certificate (C115); a different key, or no configured bootstrap, is still refused before the retry target or one-shot latch changes. Refusal is a warning naming both identities. This is bootstrap admission, not a change to block/deploy encodings or replay rules. AUDIT **C334** |"
       },
       "missing_proof": "Source states the admission rule is node-local. Independent admission/retry and real-node restart verification remain required.",
@@ -73,7 +73,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| An instance-less or unknown-only `Expr` is **refused** with `Malformed(\"expr_instance\")` rather than decoded as `false` | The prior Scala comparison is recorded in section 17; this change does not establish the Scala runtime refusal behavior | Issue #380 requires an unsupported expression to fail rather than become a different value. **Acceptance change from earlier Rust releases:** malformed bytes accepted before are refused now; coordinate validator upgrades and review any historical malformed terms before replay. Recognized variants, explicit false and Nil keep their encodings. Unknown fields accompanying a recognized variant are outside this fix. AUDIT **C333**, section 138 |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -96,7 +96,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `New.injections` sorted by key (determinism) | `models/.../rholang/*` | `HashMap` order is non-deterministic in Rust |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -119,7 +119,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `locally_free` excluded from `Eq`/`Hash` (`AlwaysEqual`) | `models/.../Par.scala` | the cache field is not part of structural identity |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -142,7 +142,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| Negative deploy cost **rejected** (not wrapped to `uint64`) | `accounting/Costs.scala` `toProto` = `PCost(c.value)` | Scala wraps a negative `Long` into `uint64` (latent bug); reject is safer |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -165,7 +165,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| Integer arithmetic **promotes to `BigInt`** on `i64` overflow and never wraps; mixed `Int`/`BigInt` operands promote | `Reduce.scala` `wrappingAdd`/`wrappingSub`/`wrappingMul`/`wrappingNeg` and `i64::MIN / -1` errors | RCHIP #51: silent overflow/underflow is the bug class behind the PoS incidents (\"one may blow up the world\"); exact arithmetic removes it. A **hard fork** \u2014 previously-wrapped results change, so prior state is invalid |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -192,7 +192,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| A **new exact decimal value type** (`GDecimal`, wire tag 35, sort rank 14, scale \u2264 38, canonical coefficient) | None: the archived Scala `RhoTypes.proto` at `1b7583649` has `g_int`/`g_big_int` and no decimal or float variant | Issue #380 option B, accepted 2026-10-19. There is no oracle to deviate *from*; the row records that the absence is a decision rather than an oversight. Exact arithmetic with no rounding, `%`/bitwise refused by name, division exact-or-error; `1d == 1` at scalar level while structural keys and patterns keep type identity (the `Int`/`BigInt` precedent). The Lean model now carries the class (`edecimal`, tag 14) and sort-corpus rows 43\u201350 pin it. This change lands the type ungated on `dev`: **a release that includes Decimal must also include #373 and start a new chain from its genesis, with every validator running a binary that understands tag 35. A mixed-version validator set on the old genesis can diverge on a decimal source literal. Before replacing a running chain, record validator binary versions and scan persisted history/state for decimal use; a schedule row does not gate this pre-launch addition.** `docs/src/node/consensus.md:43` and `docs/src/qucalc/architecture.md:115` (exact integer arithmetic, never floating point) are unchanged and remain true \u2014 a deploy value type is not a rule engine. **What the tie does not cover:** the model's `edecimal` is the canonical scaled integer; the bridge from the Rust `(coefficient, scale)` pair (`scaled_value`'s injectivity and order-preservation on canonical values), canonicalization, exact arithmetic, division's error condition, the wire's minimal bytes, reducer dispatch and the cost model are **not modelled** \u2014 they are carried by the Rust refinement and its unit/corpus tests. Law 1a's note and `spec/INVENTORY.md`'s Law 1 row state the same boundary; a standalone `Rchain/Decimal.lean` + `decimal` corpus is the follow-up that would close it. |"
       },
       "missing_proof": "A new wire value type needs new-genesis and uniform-validator history acceptance, not just source-level tests.",
@@ -217,7 +217,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| Number-channel merge diffs are **checked** (`i64` overflow is an error) \u2014 the subtraction, the merge, **and the accumulation** (`EventLogIndex::combine`, `casper/src/merging.rs`'s mergeable-diff sum) | `calculateNumChannelDiff` (`Long` subtraction wraps) and `EventLogIndex.combine` (`+` wraps) | a wrapped diff silently corrupts the merged state (Laws 9 & 17); same class as RCHIP #51 \u2014 recorded as issue #52, and the accumulation was the last site in that class (AUDIT C41, fixed: the error now propagates to the merge, which refuses the block). **Hard fork:** on a block whose channel diffs sum past `i64`, the old node computed a *wrapped* diff and a wrong state hash, the new one refuses the merge \u2014 so a chain that accepted such a block diverges on it. The wrapped value was already wrong, which is why this is a fix rather than a divergence in behaviour that was ever correct |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -240,7 +240,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `Add<NonNegI64>` for heights (no negative delta) | \u2014 | invariant preserved structurally |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -263,7 +263,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| gRPC `max_decoding_message_size` wired (was 4 MB tonic default) | `defaults.conf` `grpc-max-recv-message-size = 16M` | honors the existing config |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -286,7 +286,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| transport `send` timeout (`DEFAULT_SEND_TIMEOUT`) | `GrpcTransportClient.DefaultSendTimeout` | the constant existed but was unused |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -309,7 +309,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| stream size cap enforced while draining | `StreamHandler.collect` | Scala checks the cap during the fold; the port had moved it after full buffering |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -332,7 +332,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| semaphore-bounded inbound dispatch | per-peer `LimitedBufferObservable` | bounded-queue analog |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -359,7 +359,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **The mergeable-channel collection is inert**: the reducer collects the channels each deploy touched (`merge_chs`) and **nothing reads it**, so `DeployMergeableData.channels` is `[]` for every deploy | `Reduce.scala` returns `mergeableChannels`, which becomes `DeployMergeableData.channels` | **Wiring it is a hard fork**: it changes every block's serialized form and therefore every state hash \u2014 the #280 class \u2014 and the bound the fix needs (a bounded per-deploy count, and the `u16` prefix truncation at encode) belongs in the unit that carries the fork note. Recorded rather than left looking live: the write-only `merge_chs`/`update_mergeable_channels` (`rholang/src/reduce.rs`), the two `u16` count prefixes (`rholang/src/merging.rs`) that encode an always-zero count, and `EvaluateResult.mergeable` \u2014 which **is** read downstream (`runtime_replay.rs`, `runtime_manager.rs`) and is therefore live-but-empty, so the dead half is the collection and not the field. The silent half is closed: the decode **refuses trailing bytes** (`a_mergeable_value_with_trailing_bytes_is_refused`). AUDIT **C256** |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -382,7 +382,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| super-majority as exact integer `3\u00b7stake > 2\u00b7total` | `sdk/consensus/Stake.scala` `stake.toDouble / totalStake > 2d/3` | Law 14 is \"strictly > 2/3\"; the f64 form loses precision for stakes \u2265 2\u2075\u00b3 (recorded in \u00a72 of the \u03c1-pure remediation) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -405,7 +405,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `bonds_map`/stake carried as `NonNegI64` (reject negative) | `Message.bondsMap`/`BlockMetadata.bondsMap`/`BlockMessage.bonds` are `Long` in Scala | stake is non-negative by the PoS invariant; negative stakes are rejected at the proto/genesis boundary rather than silently carried as signed `i64` |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -428,7 +428,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| internal gRPC (propose + repl) binds `127.0.0.1` | Scala binds both servers to `0.0.0.0` | unauthenticated propose/repl are no longer network-reachable (C1/H1) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -451,7 +451,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| external/internal gRPC split (deploy `40401`, propose+repl `40402`) | Scala has the same split (`port-grpc-external`/`internal`) | the port previously put all three services on one listener |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -474,7 +474,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| Repl phlo limit + wall-clock deadline | Scala runs Repl with no limit | a runaway term must not drain the node (C1) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -497,7 +497,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| deploy gRPC rate limit (100 req/s) | Scala has no limit | bound unauthenticated deploy flooding (H2) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -520,7 +520,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| per-peer block-request rate limit (100/s) | Scala serves every request | bound block-request bandwidth amplification (H4) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -543,7 +543,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `BlockRetriever.requested` capped (10k) + waiting-list capped (32) | Scala map is unbounded | bound peer-advertised hash flooding (H5) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -566,7 +566,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `Finalizer` borrows the message map (no clone) | Scala clones the map per call | remove the O(map) clone per message (H6) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -589,7 +589,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `connections` write-lock released before outbound I/O | Scala holds the `Ref` across the send | a slow peer must not stall the connection table (H3) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -612,7 +612,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| concurrent (bounded) TLS handshake accept | Scala serializes accepts on the handshake | a stalled handshake must not stall inbound connections (M1) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -635,7 +635,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| store ops offloaded to `spawn_blocking` | Scala runs LMDB on the effect runtime | fsync'd LMDB writes must not block async workers (M3) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -658,7 +658,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| peer-table evicts least-recently-seen when saturated | Scala drops the peer (relies on the ping RPC) | without a ping RPC a full bucket would saturate permanently (M5) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -681,7 +681,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `/reporting/trace` gated on `enable-reporting` | Scala reads the flag but does not enforce it | the flag must actually gate the route (M6) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -704,7 +704,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| bootstrap request gives up after 10 retries | Scala `keepOnRequestingTillRunning` retries forever | a dead bootstrap must not block startup (M8) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -727,7 +727,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| deploy pool capped (`MAX_POOLED_DEPLOYS = 10_000`) | Scala deploy pool is unbounded | a remote flood must not exhaust the deploy store (R2) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -750,7 +750,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| stream decompression capped (`content_length \u2264 max_stream_message_size`) | Scala `LZ4Compressor` does not bound decompressed size | reject a decompression bomb before allocating (R3) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -773,7 +773,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| Kademlia RPC rate-limited (100 req/s) | Scala Kademlia ping/lookup are unlimited | bound sybil/routing-table pollution + peer enumeration (R5) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -796,7 +796,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| exploratory deploy phlo limit (`1e9`) + 60 s deadline | Scala runs exploratory deploy with no limit | a runaway term must not drain a read-only node (R6) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -819,7 +819,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| private keys written owner-only (`0o600`) | Scala `fs.write` uses default perms | secret material must not be world-readable (R8) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -842,7 +842,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| rholang depth guards (`MAX_PARSE_DEPTH = 128` on the parser's own recursion, `MAX_CHAIN_LENGTH = 512` on one flat chain, `MAX_AST_DEPTH = 768` on the term) | Scala BNFC parser has no depth guard | a deeply-nested term must not overflow the stack (R9). **The first version of this row said `MAX_PARSE_DEPTH = 512`, which was never its value** \u2014 512 is the chain limit, and the depth limit has always been 128 \u2014 and the two bounds do not compose, which is AUDIT C99. Row corrected 2026-09-26 |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -865,7 +865,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `MAX_VALUE_DEPTH = 256` on a **produced value** (`rholang/src/storage.rs`, both produce paths) | the Scala has no such bound | a *runtime-built* value aborts the process inside `eval_single_expr`'s recursion at a depth of ~401 \u2014 a few hundred bytes of source, before any phlo or balance check \u2014 and no parsed term is involved (AUDIT C100). **Hard fork:** a deploy that sends a value nested deeper than 256 evaluates on an old node (up to ~400, where it aborts) and is **refused** by the new one, so a chain upgrading in place diverges on such a deploy; lockstep upgrade is the practice, and this is the row that says so. The number sits deliberately below the parser's 768 because the two walks have different frames: 256 is measured against the value route's own abort (~401), while 768 is measured against the normalizer's (~1,000) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -888,7 +888,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `if`'s condition is normalized against an **empty** par (`normalizer.rs::normalize_if`), as `match`'s target is | `PIfNormalizer.scala:24` passes the caller's `input` through, so the target becomes `<the par before the if> \\| <condition>`; `PMatchNormalizer.scala:28` \u2014 the *same* desugaring \u2014 passes `input.copy(par = VectorPar())` | the Scala contradicts itself: its `if` and `match` desugarings of one construct normalize the target differently, and only the `if` path's version is broken (`if E {A} else {B}` = `match E {true => A; false => B}`, and a process's meaning cannot depend on what precedes it in a `par`). Under the Scala's `if` path every non-first `if` is a silent no-op \u2014 see **C21**. The port follows the spec and the Scala's `match` path. **Hard fork:** the normal form of any term whose par holds a non-first `if` changes, so a chain that ran the old rule and upgrades diverges on such a deploy (and on genesis, where the effected normal forms *are* genesis content: `ListOps.rho:203,242`, `MultiSigRevVault.rho:155`, and the rgov family) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -911,7 +911,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| HTTP `/api/deploy` + explore routes rate-limited (100 req/s) | Scala HTTP deploy routes are unlimited | match the gRPC deploy rate limit (R10) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -934,7 +934,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| PBKDF2 iterations raised `1024 \u2192 310_000` | Scala uses BouncyCastle default `1024` | slow offline brute-force of encrypted keys at rest (R11) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -957,7 +957,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `BindPattern.freeCount` **rejected** when negative at the proto boundary | `RhoTypes.proto:124` \u2014 `int32 freeCount`, signed, so negative is representable; the vendored tree does not carry the Scala's `BindPattern` proto conversion, so whether the oracle refuses it there could not be established | the count is not descriptive: `RhoMatch::get` fills `0..free_count` from the match's free map, so a negative count silently applies the continuation with *no* bound values (and an over-large one pads with `Nil`). The port's two siblings on the same field family \u2014 `ReceiveBind` (`:118`) and `MatchCase` (`:165`) \u2014 already validate it, so this is also what makes the three uniform. A refusal at the declared boundary rather than a clamp (AUDIT C52) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -981,7 +981,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `New.bind_count`/`Receive.bind_count` are a **`FreeCount`** carrier, and a negative count is **rejected at the proto boundary** | `RhoTypes.proto`'s `int32 bindCount` on both messages; the Scala's `New.scala`/`Receive.scala` carry it as a signed `Int` and neither tree validates it, so the oracle carries a negative count into the term | the count is not descriptive: it is a `well_scoped_par` depth, a sort-key leaf (`sorter.rs`'s `leaf_i64`), the extent of `env.shift` in substitution and the argument to `new_bindings_cost`, and a negative value is meaningless to all four. The port used to *clamp* it where it was used (`.max(0)`, `types.rs:436,440`), which hid the malformed message and left a term whose sort key carries a value no rule defines. Refused where it arrives \u2014 the same validate-on-ingress rule as the sibling `free_count` fields (`ReceiveBind`/`MatchCase`, C52) and `BindPattern.freeCount` (the row above) \u2014 and carried by `FreeCount`, so the sign cannot be *written* from Rust either. **Stricter than the oracle** (the Scala validates nothing there), and **not a hard fork**: the two counts the normalizer derives go through `checked_level_count`, so no deploy produces a negative one and only a hand-built or wire-injected message can. Falsified first: `a_negative_bind_count_is_refused_at_the_wire_boundary` fails against the old pass-through |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1004,7 +1004,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| The store-items **server** logs and **drops** a request whose store cannot be read, where the oracle's page build fails the request | `rspace/.../exporters/RSpaceExporterItems.scala:28,52,76` \u2014 the page is assembled from `exporter.getNodes(startPath, skip, take)` inside `F`, so a store error propagates to the caller and the request fails | the port's handler (`casper/src/engine/node_running.rs`'s `handle_store_items_request`) has no error reply to send: `StoreItemsMessage` is the only response type, so its choices are a *state claim* (an empty or short page, which the requester then validates its own traversal against) or a drop. It drops \u2014 a timeout is retryable and a wrong answer may be accepted \u2014 which is also the policy the same function already applies to an over-large `take`, so it is consistent rather than novel. **The consequence is named**: the requester retries or times out and never receives a page that under-reports the state. Everything *inside* the page assembly is fallible in the oracle's shape now (`get_history_and_data` returns the store's error), so the drop is confined to the one place that cannot reply |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1027,7 +1027,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| RSpace candidate selection is **sorted-first** by content hash (not newest-first insertion order) | `RSpace.scala`/`RSpaceOps.scala` shuffle candidates via `Random.shuffle` before matching | live Scala is non-deterministic across runs; the port selects the sorted-first candidate for consensus. Implemented per `docs/src/node/sorted-matching.md` (changes post-state hashes only for multi-candidate deploys) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1050,7 +1050,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| Block validation replays dependency-free blocks **concurrently** (per-block forked `ReplayRhoRuntime`, batch processor), then inserts serially | Scala `BlockProcessor` validates one block at a time | replay is verify-only (Law 11), so concurrent re-validation does not change the committed state \u2014 a throughput optimization, not a semantic change. See `docs/src/formal/concurrency.md` |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1073,7 +1073,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| LFS sync inserts the downloaded blocks in **ascending** height order (parents before children) | `NodeSyncing.populateDag` `heightMap.flatMap(_._2).toList.reverse` | `BlockDagStorage.insert` requires every justification to already be in the message map, and a justification is always at a strictly lower height; the Scala `reverse` inserts the newest block first and fails with \"justification not present in message map\" for any fresh observer |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1097,7 +1097,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| LFS block requester downloads the **full ancestry chain to genesis** (no `lowerBound`/`extraHeights` cutoff) | `LfsBlockRequester.ST` `lowerBound`/`extraHeights` + `NodeSyncing` `blockHeightsBeforeFringe = deployLifespan` (`populateDag` `minHeight` filter) | a syncing node's DAG is always empty (`NodeLaunch.apply` only syncs when `dagSet.isEmpty`), so the Scala cutoff stops ~50 blocks short of genesis and leaves the lowest downloaded block's justification dangling \u2014 the same \"justification not present\" failure once the fringe is past `deployLifespan`. **Measured consequence (2026-09-24, AUDIT C64)**: on a chain the walk is one generation \u2014 one round trip \u2014 per block, so this deviation is 6,300 round trips where the oracle's bounded walk makes ~50, and a fresh validator was observed at ~1.5 blocks/minute (~70 hours for that chain). The *pacing* is faithful and measured (`the_walk_advances_on_responses_not_on_the_idle_timeout`: 3.85 ms for a 6-block walk against a 30 s idle timeout); the per-generation latency is the syncing node's, not the requester's **Disposition (2026-09-24, R3): an efficiency divergence with a measured cost, not a correctness one.** The oracle's `lowerBound`/`extraHeights` and `blockHeightsBeforeFringe` are a *cutoff* \u2014 they stop a walk that would otherwise continue past what the DAG already holds \u2014 so the port downloads a **superset** of the blocks it needs, all of them valid, and the resulting DAG is the same. What differs is the traffic, and C64 measured it: **6,300 round trips where ~50 would do**. So the row records a divergence the oracle *bounds* rather than forbids, with its cost named. **Disposition (2026-09-25, settled rather than deferred): a deliberate divergence, kept.** The port walks the full ancestry on purpose \u2014 `BlockDagStorage::insert` requires every justification present and a syncing node's DAG is empty, so a cutoff would have to invent a boundary the port does not have, and the Scala's own cutoff leaves the lowest downloaded block's justification dangling once the fringe is past `deployLifespan`. Taking it is therefore not an open efficiency unit but a change that would need the truncated-ancestry DAG semantics defined first \u2014 and **nothing in this register would catch a wrong one, because the oracle has no model of the block requester at all** (AUDIT C94: no `lowerBound`, `extraHeights`, `requestStream` or `LfsBlockRequester` occurs in any `.lean`). **CORRECTED (2026-09-27, AUDIT C64): the premise above is false, and the deviation does not exist.** The oracle's cutoff is **inert in its own production path**. `LfsBlockRequester.scala:125` declares `lowerBound: Long = 0` on `ST.apply`, and the **only** construction of the block requester's `ST` in the tree \u2014 `:318`, inside `stream()` \u2014 passes `initialHashes`, `latest = finalizedHashes` and `extraHeights = blockHeightsBeforeFringe` and **never passes `lowerBound`**. So `minimumHeight` is `0` for the whole sync, and both gates are `>= 0` and vacuously true: `blockIsAccepted = isReceivedLatest || isReceived && blockNumber >= minimumHeight` (`:228`) and `NodeSyncing.populateDag`'s `blockHeightOk = blockHeight >= minHeight`, which is fed `st.lowerBound`. `extraHeights` is `deployLifespan` (`MultiParentCasper.scala:35`, `val deployLifespan = 50`) and is not a bound on the walk at all: it appears only as `max(0, min(height - 1, lowerBound) - extraHeights)`, which *reduces* the bound further, i.e. lengthens the walk. The `lowerBound` machinery is exercised by nothing but `LfsBlockRequesterStateSpec`, which passes `lowerBound = 200` itself \u2014 so every number in this row that treats `~50` as the oracle's walk length (\"stops ~50 blocks short of genesis\", \"~50 blocks below the fringe\", \"6,300 round trips where the oracle's bounded walk makes ~50\") compares the port against a cutoff **the oracle never applies**. Both trees walk the full ancestry to genesis; the port is **faithful**, and AUDIT C64's `owes` (\"adopt the Scala's `lowerBound` cutoff\") would have been a **no-op** \u2014 or, seeded, a behaviour change *away* from the oracle. What remains true is the measurement this row already carries: a fresh validator catches up slowly, and C64's own account attributes it to the syncing node's shared message loop (~25 s per generation), not to the walk's extent. **Witness**: `a_walk_longer_than_deploy_lifespan_reaches_genesis` (`casper/src/engine/lfs_block_requester.rs`) walks a 51-block chain and requires the genesis block to be fetched; planting the cutoff reddens it and two older tests, so the port's full-ancestry behaviour was already multiply pinned. This also discharges the \"nothing would catch a wrong cutoff\" clause below: the port's side of it is now witnessed |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1120,7 +1120,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| The store-items **server refuses** a page over 32 MiB (drop, no reply) where the oracle serves whatever it is asked | the Scala's `handleStoreItemsRequest` has no byte cap; its only bound is the requester's own `PAGE_SIZE` | the requester's `PAGE_SIZE` self-consistency is not a defence *for the responder*: `validate_state_items` requires the received keys to match the page the requester recomputes, so a responder that truncates is caught while one that is asked for 10,000 fat nodes pays tens of megabytes per request, per peer, in memory it must assemble before it can measure it. Registered with its cost: the assembly is still paid, the bandwidth and the per-request ceiling are not (AUDIT C73) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1143,7 +1143,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| Active validator set = a **stake-weighted draw without replacement** from the eligible pool, seeded one epoch ahead | `Pos.rhox:718-726` `pickActiveValidators` returns the first `$$numberOfActiveValidators$$` entries of `allBonds.toList()` \u2014 *key* order, not stake order; its own comment is `// TODO: Randomly select 100 active validators once we have on-chain randomness` | the contract's rule is not a rule to port: \"the first N in map order\" is a placeholder for a random selection, and it makes the consensus set depend on map iteration order rather than on anything consensus-relevant. The cap exists because finality's supermajority is stake-weighted, so membership decides who can finalise; the port's first rule was therefore deterministic and stake-ordered. **That rule was replaced by the contract's own intent (2026-09-28, `spec/RUST-VS-SCALA.md` \u00a73 item 12)**: `select_active` draws from the eligible pool in its canonical `BTreeMap` order, seeded by a `pos:epoch_seed` leaf written **one boundary ahead** from the state hash of the last **finalised fringe** \u2014 the >2/3-agreed frontier, which a lone proposer does not move \u2014 so the block that draws is not the block that chose the entropy. Why it changed: the rule's seed was `hash(shard_id, block_number, sender, pre_state_hash)` computed at the moment of use, so the drawing proposer could reroll freely by proposing a different block. **Weighted, not uniform, since 2026-10-02**: the draw was uniform for four days, which is a per-*key* rule \u2014 the first slot went to a dust validator as readily as to the largest one, so splitting a stake across keys bought slots *and income* (only drawn members are paid), and a single large validator earned below its share. `draw_weighted_without_replacement` now walks the pool accumulating weights and takes the first entry past a uniform 128-bit draw, exact integers throughout; the first slot is then exactly `stake / total`, which is the property that removes the split incentive. **The residuals are named in \u00a73 item 12** \u2014 the seed-setter's influence (O1, reduced rather than closed: a proposer can present a stale fringe, so the steering space is the distinct fringes its candidates induce, normally one), pre-positioning (O2), the sequential draw's residual (O3, **closed** as an exposure and now stated as a residual: the tail is proportional to the weights that *remain*, so splitting is no longer worth ~`k` times the slots but is not provably neutral), and the fluctuating security budget (O4). Its consumer sweep is recorded there too: three readers of the active set make a *decision* on it (`validate::neglected_invalid_block`, the proposer's own `check_active_validator`, and the finaliser's pruned-history fallback), and the draw narrows what each covers. The *timing* is unchanged \u2014 both apply it only at an epoch boundary (law 44) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1166,7 +1166,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| A slashed validator that had a **staged withdrawal** is removed from the pending map | `Pos.rhox:491` leaves it in `pendingWithdrawers` while zeroing its bond (`:487`), so at the next boundary `movePendingWithdrawer` files it under `withdrawers` with a zero amount, where it stays forever (never paid, never removed \u2014 nothing deletes a zero claim) | the payable outcome is identical (zero), and the port does not carry a permanent tombstone: `slash` removes the validator from the pool, the active set, the claim map *and* the pending map. Recorded because it is a state-shape difference a reader would otherwise meet as a missing entry |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1189,7 +1189,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| Epoch length `0` (the port's permissive default) means **every block is a boundary**; the contract's `%`/`/` by it would fault | `Pos.rhox:517` `blockNumber % $$epochLength$$`, `:381` `blockNumber / $$epochLength$$`, `:249` `bonds / $$minimumBond$$` | the contract cannot express a zero epoch length or a zero `minimumBond` \u2014 it divides by both. The port's default parameters have both at zero (ad-hoc runtimes and tests install no genesis PoS state), so the port defines what the contract leaves as an arithmetic fault: a zero epoch length is the one-block epoch `epochLength = 1` means, and a zero (or zero-normalising) minimum bond pays a reward of zero rather than faulting the block. The Lean model states its conservation theorem for the defined case only (`Rchain.sum_rewards_le_pot`'s hypothesis `0 < activeBonds / minimumBond`), which is the same boundary |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1212,7 +1212,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `deploy-status` has **no `Running`** state: a deploy the node is executing right now answers `Pooled`, or `Unknown` once the pool no longer holds it | `BlockApiImpl.scala:218-224` \u2014 `findCurrentlyExecutedDeploy` reads the node's `BlockExecutionTracker` (a per-node cache of the deploys its own block creator is executing) and answers `notProcessed(\"Running\")`, and `findPooledOrRunningDeploy` consults it after the pool | the port has no execution tracker: deploys are pulled out of the pool into `compute_deploys_checkpoint` with no in-flight record, so there is nothing to look up. A derived answer would be a guess \u2014 \"neither in the DAG nor in the pool\" also describes a deploy whose block was just proposed and one dropped with its block \u2014 and the window is the length of one proposal. Registered rather than invented: the states a client can act on (pooled, processed with success, processed with error, unknown) are complete, and `Running` only ever meant \"the node you asked is busy with it right now\" |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1235,7 +1235,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `metrics { prometheus, influxdb, influxdb-udp, zipkin, sigar }` (and the matching `--prometheus`/`--influxdb`/`--zipkin`/`--sigar` flags) are **parsed and never consulted** | `kamon.conf` \u2014 where `prometheus { enabled = false }` gates Kamon's scrape endpoint, and the influxdb/zipkin/sigar blocks configure reporters that push | nothing outside `node/src/configuration/` reads `MetricsConf`: the node always serves `GET /metrics` in Prometheus text format, there is no InfluxDB or UDP sender, and the tracing/span backends are out of scope (`diagnostics/mod.rs`, said there). So the switches are inert in both directions \u2014 `prometheus = false` does not disable the endpoint and `= true` does not start a reporter. Said once in `defaults.conf` where an operator reads the switch, and recorded here as the second config surface found doing nothing (`disable-state-exporter` was the first, wired in `687fc4b30`) **Disposition (2026-09-24/25, R3 then `bf44e5fc3`): the four reporters it cannot honour are refused at startup, and `prometheus` is accepted with a note.** The node now exits 1 naming each unimplemented reporter \u2014 `Configuration error: unimplemented metrics reporter(s) enabled: influxdb. This port has no InfluxDB sender, no InfluxDB UDP sender, no Zipkin span reporter and no Sigar collector, so these settings would report nothing \u2014 refused rather than accepted and ignored. GET /metrics serves Prometheus text and is always on; unset the setting to start.` \u2014 because an ignored knob is exactly the failure this pass keeps recording. `prometheus` is accepted **ungated**, with a note that the endpoint is always on rather than gated, since the endpoint *is* implemented (`web::http`'s scrape tests pin it). Two facts decided the shape: the config parser **ignores unknown keys** while clap **rejects unknown CLI flags**, so *deleting* the fields was safe for config files and breaking for command lines \u2014 which makes keep-and-refuse the only honest route; and the refusal can fire only for an operator who explicitly asked, since `defaults.conf` sets all five false and the oracle's defaults are false too |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1260,7 +1260,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| Vaults are a **balance map keyed by REV address**; `transfer` takes the caller's `deployerId` rather than a minted purse | `RevVault.rho:103-140` \u2014 `findOrCreate` \u2192 `_makeVault` returns a `MakeMint` **purse**, and `transfer`/`deposit`/`getBalance` are called *on the purse* with an `unforgeableAuthKey` | the *spend* rule holds either way: the port derives the `from` account from the caller's unforgeable `deployerId` (`system_processes.rs`'s `transfer`, \"capability, not data\"), so no deploy can spend another key's vault \u2014 **conditional on the `deployer` field being authenticated, which is what C120 found missing and this row used to assert unconditionally.** It held at the deploy *ingress* (where `SignedDeployData::verify_signature` ran) and not on the *block* path, where a peer's `ProcessedDeploy` carries `deployer` and `sig` copied verbatim off the wire; a bonded proposer could therefore name any account and have every validator charge it. The block path now runs the same check (`casper/src/validate.rs::deploy_signatures` in `block_summary`'s pure list), so the claim is unconditional again \u2014 and it is a claim about *two* paths now, not one. What is unforgeable is the deploy's identity rather than a minted name. What the simplification **loses** is *delegation*: a purse could be handed to a contract that then spends from it, and here only the signing key can spend. **That half is no longer lost (2026-09-27): `findOrCreate` returns a minted handle, and a handle spends.** `Dispatch::register` and `Tuplespace::install` let a native handler bind a freshly minted name; the name is drawn from the send's own RNG, so replay mints the same bytes; and `transfer_vault` is now one spend rule for both the `deployerId` arm and the handle arm. The paragraphs below are kept as the record of the decision this supersedes \u2014 the reasoning is still the reason the *classic* shape is unchanged. **Decided 2026-09-23** (Programme B item B2) to keep it: nothing in the tree delegates (the wallet, the faucet, the gateway legs and the genesis ceremony all act as the key itself), and landing it needs the deploy's RNG threaded into a native call \u2014 the minted name is a `new`, so it must be replayable \u2014 plus a leaf and a client-visible API change. The *reply-shape* half was recorded where a client meets it: `spec/API-SCHEMA.md`'s `rho:rchain:revVault` row \u2014 **\u274c open when this was written and \u2705 since 2026-09-27**, carrying the minted-handle shape beside the classic one, so the deviation this sentence points at is closed rather than pending. What remains of C114 is the sealer/unsealer path's **coverage**, not a shape |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1283,7 +1283,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| Storage is **refunded** when a produce/consume matches (the gas a matched op costs) | `ChargingRSpace.scala:105-127` \u2014 `refundForConsume` and `refundForRemovingProduces`, charged as negative `Cost`s *before* the event and COMM costs | the port charged the storage and never refunded it, recording the gap as a \"safe over-charge\"; the refunds are restored (law 49, `spec/Rchain/Charging.lean`). **Hard fork:** the recorded `PCost` of a deploy that matches changes, and cost is part of the block's state \u2014 on a chain that accepted such a block the old node recorded a *higher* cost than the Scala's, so the old value was already wrong, which is why this is a fix and not a behaviour that was ever correct. The order matters as much as the amounts: a refund credited after the exhaustion check cannot save a deploy that has already run out (`peak_refunds_first`), which is why the Scala charges them immediately |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1306,7 +1306,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| The Coop **multisig public keys** are read as the port's initial **trusted stakeholder** set | `Pos.rhox:122-128` creates the Coop multisig vault from those keys (and `$$posMultiSigQuorum$$`), and `:470-482` sends slashed stake to it; the Scala has no trusted-stakeholder concept at all \u2014 that is this port's extension for observer admission (`spec/RUST-FIRST.md`) | a mapping, not an accident (`06bf01a7f`, and the doc comment on `build_pos_genesis` says it): the Coop multisig is the network's governance body in the contract, and admission is the port's governance-shaped hook, so the closest analogue of \"who may govern validators\" is the keys the contract gives governance to. The alternative reading \u2014 that they are only slashing-vault owners, leaving the genesis `trusted` set as the validators alone \u2014 is equally supportable, and nothing in either tree says which was intended. Recorded because the consequence is silent: an operator setting these keys for vault control is also granting admission rights. The `--pos-multi-sig-quorum` option has no counterpart at all (no multisig vault), so it stays \"Reserved\" in its help text **Disposition (2026-09-24, R3): the oracle is silent, and the row should say that rather than that a choice was made.** `Pos.rhox` creates the Coop multisig from those keys and sends slashed stake to it; the Scala has no trusted-stakeholder concept at all, and **nothing in either tree says which was intended** \u2014 so the two readings are equally supportable and the row is the record of that, not of a preference |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1329,7 +1329,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| A pattern that binds one free level **twice is refused by the matcher** (`spatial_match`'s entry, `linear`), where the Scala silently merges the repeated binding | `SpatialMatcher.scala:144,209-211` \u2014 `handleRemainder` does a plain `insert`, so `@[v, v]` against `[1, 1]` matches with one binding winning right-biased | law 5 says a pattern binds each free level **at most once**, and the model states it as the matcher's entry condition (`spatialMatch` = `spatialMatchCore \u2026 && linear pattern`, `Match.lean:369`); the port now does too (AUDIT C42). The Scala's merge is why the finding was latent rather than visible: the repeated binding is *consistent* here, so the overwrite was silent. Not reachable from source either way \u2014 the normalizer refuses a twice-bound binder first (`normalizer.rs:111,289,590,1325`) \u2014 so this closes a silent-overwrite path rather than changing what any deploy does, and it is **not** a hard fork. Falsified: with the guard bypassed, `@[v0, v0]` against `[1, 1]` matches and `law5_a_pattern_that_binds_a_variable_twice_never_matches` fails |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1352,7 +1352,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **The finalizer's progress guard**: a non-advancing fringe is dropped from the advance chain (`if nf == current { break }`, `block-storage/src/dag/finalizer.rs:361-363`) | `Finalizer.scala:175` \u2014 `LazyList.unfold(parentFringe)(nextFringe(_).map(nf => (nf, nf))).lastOption`, which compares fringes **never** (the gate is the support map) | the oracle would not terminate on a repeating fringe, because `lastOption` forces the whole lazy list; the port must not diverge. **Weaker than a cycle guard as a *guard*, but the walk is bounded by the chain, which is why the weaker shape is enough** (settled 2026-09-24, C69's second half): each iteration passes the previous fringe as the cutoff and `self_parents` stops at it, so for every sender the minimum message can only move along that sender's own unfinalized chain \u2014 finite and acyclic \u2014 in one direction, and a step that is not the fixed point moves strictly. The walk therefore terminates in at most (messages on the longest unfinalized chain) steps, and a cycle of *any* length would have to move strictly forever on a finite chain. Measured rather than argued: `the_fringe_walk_is_bounded_by_the_non_finalized_chain_length` drives the loop over a generated `L`-layer fork \u2014 **6 steps on 8 layers, against a 25-message bound** \u2014 with the assertion inside the loop, so a hypothetical cycle fails the test rather than hanging it. The guard stays as the belt for the fixed point (`nf == current`), not as the thing preventing divergence. Found 2026-09-24 with C69, which is the same reading"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1375,7 +1375,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **Equivocating blocks are refused** \u2014 at `insert` (H-1) and at restore (H1c) \u2014 where the oracle has no such gate | `legacy/block-storage/.../dag/BlockMetadataStore.scala:118-124` \u2014 `validateDagState` asserts only that the height map's numbers are contiguous, never `(sender, seq_num)`, so a forked store restores silently; and the Scala tree contains no equivocation check at all | an equivocating validator can neither enter the DAG nor stall finalization \u2014 the H-1 stall is a liveness failure the Scala admits, so the premise law 15's proof needs is **guaranteed here and only observed there** (AUDIT C84, and H1a's note) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1398,7 +1398,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| An **empty window** in `visualizeDag` renders an empty graph where the oracle raises | `legacy/casper/.../api/GraphGenerator.scala:39` \u2014 `timeseries.head` on a `List` built from a `Set` throws on empty | the endpoint is a *view*, and a graph of nothing is the honest rendering of an empty DAG; refusing would turn a visualization request into an error (AUDIT C85) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1425,7 +1425,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A resolved parent at or above the block's number is refused** \u2014 the **failed** ones included (H1b, `casper/src/validate.rs:152-154`, test `h1b_a_failed_parent_above_the_childs_height_is_refused` at `casper/src/dag.rs:1287`) | `legacy/casper/src/main/scala/coop/rchain/casper/Validate.scala:178-198` \u2014 `blockNumber` maps the justifications through `lookupUnsafe` and then `.filter(!_.validationFailed)`, so a failed parent is discarded before the maximum and **no resolved parent's height is compared against the block's number at all**; it admits the block | `Descends` (`spec/Rchain/Casper/Dag.lean:296-297`) is the premise law 15's proof consumes, and the laws are the port's oracle where they outrank the reference \u2014 a premise the port *guarantees* is worth a refusal a byzantine peer can trigger and **no honest proposer can**: justifications are `latest_msgs.values()` (`multi_parent_casper.rs:293-300`) and a failed block never enters `latest_msgs` (`block-storage/src/dag/message_state.rs:118-128`, the H-2 exclusion), so the operator consequence is a validator-side divergence on byzantine input only (AUDIT C82, C83) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1448,7 +1448,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **The height maximum counts failed justifications** \u2014 a child numbered above a failed parent is admitted to the other checks (`casper/src/validate.rs:232-234`, test `a_failed_parent_still_sets_its_childs_height`) | `legacy/casper/src/main/scala/coop/rchain/casper/Validate.scala:178-198` \u2014 `blockNumber` filters failed justifications out before the maximum (`.filter(!_.validationFailed)`), so a child numbered above a failed parent is refused `InvalidBlockNumber` | **C173's decision, option (a), and it is the laws' call rather than the reference's**: law 53a's `falsifiable` cell names this rule as one of the two repairs for `Terminal`, and C173's `owes` carried both. Skipping the failed parent made a failure *hide its own block* \u2014 and the reader that hides it is inside `block_summary`, which runs **before** `neglected_invalid_block`, so the child never reached the rule that could refuse it on other grounds nor the restoring rule's revalidation. **Operator consequence: a port validator admits a block a Scala validator refuses** \u2014 the opposite direction from the row above, and a validator-side divergence on this check alone. The risk is bounded the same way: no honest proposer can produce such a block (a failed block is kept out of `latest_msgs`, H-2), so the route is byzantine-only. **AUDIT C173**; the account and the falsifier are in \u00a725 |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1471,7 +1471,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| The block path **verifies every deploy's signature** \u2014 `validate::deploy_signatures` in `block_summary`'s pure list, refusing with `InvalidDeploySignature` before any replay | `legacy/casper/src/main/scala/coop/rchain/casper/Validate.scala:92-116` \u2014 `blockSummary` validates the deploy's shard, window and dedup and **never its signature**; `legacy/models/src/main/scala/coop/rchain/models/NormalizerEnv.scala:33-36` binds `deployerId` from `deploy.pk` with nothing having checked it either. So the oracle has the *same* defect on both paths, which is why this row records a **shared defect** rather than a port divergence \u2014 the port simply closes it in the stricter of the two trees | a deploy's `deployer` is the field the replay reads to decide whose vault is charged and paid, so an unauthenticated one is an authorization claim rather than a malformed datum: a bonded proposer could name any account, put arbitrary bytes in `sig`, and have every validator debit that account and pay the proposer's term, with a post-state hash the proposer computed honestly \u2014 the block was **valid and unattributable** (AUDIT C120). The check belongs in `block_summary` beside `phloLimit`, for the reason that list's own comment gives, and it is the second instance of the port choosing to be stricter there than the oracle (the first is that `blockSummary` here checks `phloPrice` and `phloLimit` at all, which the Scala does not). **Hard fork:** a block whose deploy signature does not verify was accepted before and is refused now, so a chain upgrading in place diverges on such a block \u2014 and the honest reading of that is that only a proposer which *forged* the deploy could have produced one, which is the point of the refusal rather than a cost of it |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1497,7 +1497,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| The node's own block metadata **carries the `slashable` flag** (`BlockMetadataProto.slashable = 22`), where the port dropped it | \u2014 (no Scala counterpart: `BlockMetadata.slashable` is this port's own distinction, and the Scala has neither the field nor the rule that reads it) | the flag is the input to C110's slash rule, and the port hard-coded it to `false` in `from_proto` while writing it into every stored metadata \u2014 so the rule had no reachable input, a proposer's `to_slash` was always empty, and the **receiving** side refused *every* `Slash` as unjustified (`slash_is_unjustified` is `!slashed.is_subset(&justified)`, and `justified` was always empty). Carrying it restores the economic consequence of an attributable failure, which C111 left as the only seizure rule in the tree (AUDIT C122). **Hard fork:** a proposer on a fixed node may include a `Slash` an unfixed one would not, and a fixed node accepts a justified `Slash` that an unfixed one refuses with `UnjustifiedSlash` \u2014 so a chain upgrading in place diverges on any block containing one; lockstep upgrade is the practice, and this is the row that says so. The metadata is node-local and never on the wire, so the field itself changes no format and no state hash. **Narrowed 2026-10-02 (C198, \u00a752):** `slashable` is now derived from `BlockStatus::is_slashing_offence`, not from `FailureCause::Attributable` \u2014 the three statuses that read a per-node knob or the compiled version set are no longer offences, because a node that reached the opposite verdict about blame would refuse the slashing block and split rather than disagree. |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1523,7 +1523,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A slash is graded by the offence** \u2014 `Malicious` takes everything the validator holds in the PoS system, `Misdemeanour` a quarter, `HonestMistake` a tenth, with the remainder **returned to its own vault** (`SlashSeverity` / `BlockStatus::slash_severity` / `NativeSystemState::slash`) | `Pos.rhox:470-482` \u2014 the contract transfers `allBonds.get(slashedValidator)`, **the whole bond**, and has no notion of fault at all (its only guard is an auth token) | the *fault* distinction is this port's (C110, C173) and the *gradation* is C199's. The deviation here is the tiers: before C199 the port took the whole bond, as the oracle does. **Hard fork (#51 category A):** the same offence now moves a different amount, so bond and reward amounts move, every downstream block hash moves, and a fixed node and an unfixed one compute different post-states for a block containing a slash \u2014 lockstep upgrade is the practice, and this is the row that says so |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1546,7 +1546,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A boundary's participation comes from the last finalised fringe** \u2014 the epoch's participation rule reads each drawn validator's latest *message* height as of the last finalised fringe, derived by every node from its own DAG (`multi_parent_casper::participation_for_block` \u2192 `NativeSystemDeployOp::CloseBlock` \u2192 `apply_weight`, `rholang/src/native_state.rs`) | \u2014 (the contract has no per-validator activity signal at all: `Pos.rhox`'s `activeValidators` is membership, not activity, and nothing in it is a function of who has been messaging) | **the read is the deviation, and it took two attempts to get right.** It first read a per-validator record in native state (`pos:last_spoke`, written by a block-level system deploy whose payload was empty), which failed twice over: the read was the boundary block's **pre-state** \u2014 a function of the proposer's justification set, and nothing requires a block to justify everything it has seen, so the penalty could be *aimed* at a chosen rival \u2014 and the *write* happened only on a proposal, so a validator that attested and carried nothing recorded nothing and read as absent. The fringe is what the epoch seed already reads (see the seed's own row) and for the same reason, and it measures **messages**, so an attestation counts. **The residual, stated rather than implied**: the steering space becomes \"one per reachable fringe\" \u2014 normally one, occasionally a handful for a proposer willing to present a stale fringe \u2014 so a stale fringe moves every validator's reading back together and singles nobody out, but a reduction is not a closure, and it is registered beside the seed's. The record and its proto field are **retired**; the field is *reserved* rather than reused, and a block written before the retirement is refused at **replay** rather than at the wire, because an unknown oneof field decodes to `Empty` and `replay_block_system_deploy` is what rejects an `Empty` entry in a block's system-deploy list. **Hard fork (#51 category A):** a boundary's committed rewards move *and* the retirement shifts every positional seed in the block-level system-deploy list down by one, so a fixed node and an unfixed one compute different post-states for the same block; lockstep upgrade is the practice |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1569,7 +1569,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A validator's epoch reward is scaled by its participation** \u2014 `PosParams::absence_slack` is the *knee* (the lag at which the weight reaches zero) and `PosParams::participation_grace` the *flat part* before it, with a linear ramp between; inside the grace the share is whole, past the knee it is zero, and the withheld fraction stays in the staking vault for a later epoch (`apply_weight`, `rholang/src/native_state.rs`) | `Pos.rhox:244-249` \u2014 the contract pays every member of `activeValidators` its share unconditionally; there is no absence term anywhere in it | the rule is **income only**, and structurally so rather than by promise: its whole effect is to *scale* the rewards a boundary is about to commit, so no bond, no pool entry and no ledger is reachable from it \u2014 a validator that was paid less is not a validator that was slashed. **Two parameters rather than one, and that is a property rather than a taste**: a rule that pays an honest validator *in full* and reaches zero somewhere else cannot be a function of a single threshold, because the ramp would have to begin at lag zero and would put a haircut on every live validator. `grace == knee` reproduces a binary threshold rule exactly, which is also what a params record written before the grace existed decodes to \u2014 zero there would silently ramp every chain that had armed the rule. `absence_slack = 0` \u2014 the shipped default \u2014 disables it, which is the contract's behaviour exactly. **Hard fork (#51 category A)** for any network that arms it: the committed reward amounts move, so the pot and every post-state after the boundary move with them. The model carries it (`Rchain.participationWeight`, `Rchain.absenceAdjusted`) and carries law 46 *through* it (`Rchain.weighted_rewards_le_pot`), and its biting statement is paired with a decided instance (`Rchain.the_ramp_is_a_ramp`) because the implication alone is satisfied vacuously by a weight that never withholds |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1592,7 +1592,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **The block's producer is paid a share of what its deploys burned** \u2014 `PosParams::executor_share` basis points of a deploy's burned phlo, taken out of the staking vault at the end of the deploy's cost accounting (`SystemDeploy::pay_executor` \u2192 `NativeSystemState::pay_executor`) and paid to the block's own signed `sender`; the shipped default is 2 500, a quarter | `Pos.rhox:397-404` and `:417-454` \u2014 the charge is deposited to `posVault` (`deposit!(deployerId, amount, posVaultAddr)`) and the unconsumed part transferred back out of it (`posVault!(\"transfer\", deployerRevAddress, refundAmount, posAuthKey)`); the contract makes **no payment to a block's producer at all**, so every burned photon reaches the epoch pot and is split across the drawn active set whether its validator proposed or not | the deviation is the payment, and it is a **reallocation inside a fixed pie** rather than an emission: the pie is what was burned, and before this the whole of it went to the drawn set, which pays a validator for *being drawn* and nothing for the work of producing the block it is paid from. The signal is the one thing the protocol can read without new state \u2014 the block's own signed `sender`, set before its deploys run and identical on play and replay \u2014 so it needs no participation score, no counter leaf and no third party's report, and it cannot be steered by anyone but the signer. **Hard fork (#51 category A):** the payment moves REV between two vaults, so a block's post-state hash differs between a fixed node and an unfixed one, and the epoch pot \u2014 and therefore every drawn validator's reward \u2014 is smaller by the shares paid. `executor_share = 0` is the contract's behaviour exactly, and it is what a params record written before the field existed decodes to (a forty-byte record still reads). Registered with the plan's B2; the model carries it as `payExecutor` with `payExecutor_conserves` (\u201ca transfer, not a mint\u201d), `payExecutor_leaves_the_stake` (the pool, the active set and the committed ledger are untouched) and `producer_pay_is_monotone` (the payment is a function of the work) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1617,7 +1617,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **An equivocation is slashable, and its proof travels in the block** \u2014 the `Slash` system deploy carries an `EquivocationEvidenceProto` header (`EquivocationEvidenceProto.blockHash/sender/seqNum/sig/sigAlgorithm`), the H-1 gate records the refused block's header (`BlockDagStorage::recorded_equivocations`), and a receiver re-checks the offence against **its own DAG** (`validate::equivocation_is_proved`) | \u2014 (the Scala has no equivocation *slashing* at all: `BlockDagKeyValueStorage` refuses the second block and keeps nothing, so the fault is free) | the H-1 *refusal* is the oracle's; the penalty is this port's (AUDIT C200, and #150's risk plan). **Hard fork (#51 category A):** a fixed node proposes a `Slash` an unfixed one cannot, and **accepts** one an unfixed one refuses as `UnjustifiedSlash` \u2014 so a chain upgrading in place diverges on any block containing one; lockstep upgrade is the practice, and this is the row that says so. The payload is a fixed-width header rather than the refused block because it lands in consensus state and a refused block's size is whatever its sender chose |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1640,7 +1640,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `Secp256k1::verify_bytes` **refuses a message that is not the 32-byte prehash** (a named `PREHASH_LEN`), where the dependency truncates a longer one to its leftmost 32 bytes | `Secp256k1.scala` / `NativeSecp256k1` take exactly 32 bytes and the Scala's doc warns of an **assertion exception** on other lengths, so the oracle either asserts (a crash, if the JNI assertion is enabled) or its C++ truncates \u2014 the ambiguity is C134's and is unresolved in the oracle | the truncation made this function answer for a *prefix* of its message, which on `rho:crypto:secp256k1Verify` is a verdict a contract can receive for a message nobody signed. The port refuses: a defined `false` for an input that is not a prehash, which is neither the crash nor the silent truncation the oracle offers, and is the same preference this register records elsewhere \u2014 a refusal at the boundary rather than a value from a failure. Safe for every caller because `signature_hash` produces 32 bytes for `secp256k1` and `secp256k1:eth` alike (AUDIT C134). **Hard fork:** a deploy whose contract verified a suffixed message was answered `true` before and `false` now, so a chain upgrading in place diverges on it; lockstep upgrade is the practice, and this is the row that says so |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1663,7 +1663,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **Native writes join the merge's conflict relation** (issue #83): two chains of different blocks that wrote a common native key conflict when neither block has seen the other, and depend on each other when one has; a native-writing block's chains are accepted or rejected together; the accepted writes are applied ancestors first (`NativeRelations`, `casper/src/merging.rs`) | \u2014 (no Scala counterpart: the Scala's PoS and vault state is tuple-space data, so `deploysAreConflicting` sees it through the event logs; the port's native state has no event log) | a native write is an absolute value from its block's own pre-state, so two concurrent writers can be neither concatenated (duplicate keys: every node panicked at the first epoch boundary with two sibling blocks) nor de-duplicated (two equal phlo charges write equal vault balances, and keeping one destroys the other's REV). **Behaviour change:** concurrent blocks that both write a native key - both boundary blocks at one height, or both charging phlo - now conflict, so one is rejected exactly as a tuple-space conflict would be, where before the merge panicked. Tests: `boundary_merge_tests` |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1686,7 +1686,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **An empty `FinalizedFringe` is refused as a sync target**, and a finished LFS walk that received no block fails the attempt | `NodeSyncing.scala:124-128` \u2014 `startRequester.modify { case true if isValid => (false, true); \u2026 }` \u2014 latches on the **first** fringe from the bootstrap and inspects nothing about its contents, so it starts the sync on an empty one and `requestApprovedState` then reports the state restored | the genesis master **broadcasts** `FinalizedFringe { hashes: Vec::new() }` as it creates genesis (`node_launch.rs::create_store_broadcast_genesis`) \u2014 an announcement that the approved state *is* the genesis, not a sync target. A node already connected receives it **before** the answer to its own request: measured on a devnet, 34 ms after the announcement and 83 ms *before* the master had even seen the request, so the trigger was consumed by the announcement, the correct answer was discarded in silence (a later fringe from the bootstrap logs nothing at all), and the node logged `LFS state is successfully restored.` having restored nothing, then ran on an empty DAG and rejected every block it heard about (#100). Under the oracle's shape a fresh multi-validator network never forms at all. **Not a hard fork**: it changes which fringe a *joining* node acts on, not any block's validity, and no block or deploy changes meaning. One thing keeps the refusal narrow: the responder can never emit an empty fringe \u2014 both of its branches return at least one hash \u2014 so the only producer of one is the genesis broadcast, and this refuses exactly the input the oracle mishandles. **The companion guard is defence in depth, not the fix**: `run_approved_state_sync` also fails a walk that finishes with an empty `height_map`, which the empty fringe is the only way to reach, because `LfsState::received` writes a `height_map` entry only for a key it actually requested. Witnesses: `an_empty_fringe_does_not_consume_the_sync_trigger` (the regression pin \u2014 fails with the check disabled) and `an_empty_fringe_finishes_the_walk_at_once_with_nothing_in_it` (the premise, in the block requester) |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1709,7 +1709,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| `check_min_messages` requires the minimum-message **sender set** to equal the bonded set, where the oracle compares counts (issue #97) | `legacy/block-storage/src/main/scala/coop/rchain/blockstorage/dag/Finalizer.scala:64-66` \u2014 the identical body, and the identical TODO above it: *\"add support for epoch changes, simple comparison for senders count is not enough\"* | count-only coverage admitted `[A, A, B]` for bonds `{A, B, C}`: `calculate_next_layer` collapses the duplicate sender into one entry, so the published fringe **omitted bonded validator `C`** while presenting A's stake twice \u2014 90 of 100 support on the contributing change's own fixture, a malformed fringe a byzantine proposer can present as a supermajority. **Stricter than the oracle, and not a hard fork**: the only newly refused case is equal count with a different sender set, and that case used to publish a fringe no honest node could derive from the same justifications \u2014 no block or deploy changes meaning. The oracle has *not* made this decision (the TODO is upstream's, open), so this row is a deliberate departure rather than a divergence by oversight, and the register's law 14a/14b rows plus `spec/Rchain/Casper/Dag.lean`'s `checkMinMessages` carry the same change. Falsified both ways: `check_min_messages_needs_all_bonded_senders` and `calculate_finalization_requires_exact_sender_coverage` fail against the count-only body, and the model's `the_gate_demands_the_bonded_senders` fails against the count-only model |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1736,7 +1736,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **The finality gate's partition is the *live weight set***: `calculate_fringe` takes the set a candidate must have been seen by and the quorum's denominator as **separate maps**, and the node passes the bonded validators whose latest message is within `LIVENESS_WINDOW` (5) heights of the tip as the partition, and the whole bonded map as the quorum (issue #70) | `Finalizer.scala`'s `calculateFinalization` takes one `bonds_map` and uses it for both the full-partition filter and `totalStake`; there is **no liveness predicate anywhere upstream** \u2014 a validator that stops producing messages keeps blocking the fringe | with one map, a bonded validator that produces no message can never be \"seen by every seer\", so the partition is unsatisfiable and finality stops **whatever share of the stake the survivors hold**: measured on a three-validator devnet at `100/100/50` on 2026-09-29, the two survivors at 80 % of the pool did not resume finality after the third was stopped, and the same shape froze #105's two-validator chain with the survivor holding 91 %. **Shrinking only the *partition* is what keeps the safety property**: a quorum measured over the live set instead would be reached by *any* self-consistent subset \u2014 `3\u00b7F > 2\u00b7L` with `F \u2264 L` over the live set is unconditional \u2014 so under a partition each side would finalise its own view and two conflicting finalisations would exist. \"Finality needs quorum stake, not live nodes\" is the requirement, and the denominator is what keeps it. **Hard fork** (#51 category A): which fringe is agreed changes, hence the merge base and every block hash after it. Falsified both ways by `a_silent_bonded_validator_does_not_cap_the_fringe`, and the predicate itself by the `liveness` unit tests **And the partition is what the derivation ranges over** (`block-storage/src/dag/liveness.rs`, the port's `live_justifications`; `inPartition` in `spec/Rchain/Casper/Dag.lean`): the justifications handed to the finalizer are first restricted to senders still in the live set. C174 narrowed the partition and left this half standing, and the two disagreed \u2014 `latest_msgs` keeps a departed validator's last message for ever, so candidates go on justifying it while the window has already retired it, and the coverage gate was asked to compare four messages against three bonded senders. That is the second stop of #70: the fringe advances a few heights after a validator is killed and then pins. AUDIT C183. |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1762,7 +1762,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **The full-partition filter is containment, not equality** (`sees_the_whole_partition`, `block-storage/src/dag/finalizer.rs`): a candidate is credited when every seer set **contains** the live partition | `Finalizer.scala`'s `seenBy.values.forall(_ == bondsMap.keySet)` | with one map for both questions a seer outside the partition could only be a sender with no bond (one that has unbonded, say), so equality and containment almost always agreed; C174's live partition is what made them differ routinely \u2014 a stopped validator that last spoke after a candidate is one of its seers, and equality then credited the survivors 0 of their stake (#213's `0 of 250`). A seer set missing a partition member is still refused (law 52b) and the quorum is still the whole bonded map. **Hard fork** (#51 category A), as C174's row is: which fringe is agreed changes. AUDIT C208. |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1788,7 +1788,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **The merge search is bounded, and an exceeded search is refused rather than answered** (`SearchBudget`, `sdk/src/dag/merging.rs`; the node's policy is `SearchBudget::NODE`) | `ConflictResolutionLogic.scala`'s `computeRejectionOptions` enumerates unconditionally \u2014 the oracle has no bound at all, and its cost is exponential in the conflict set's size, which the DAG decides | **Node-local, not a fork**, and the distinction is exact rather than hopeful: an exceeded search returns *no answer*, the merge is refused, and the error reaches `ValidateError::Internal` (`multi_parent_casper.rs:361`) \u2014 a drop, which inserts no metadata. It must never become `mark_failed_attributable`, because nothing clears that record (C173) and a local resource policy would then estrange a node from a proposer for ever. Every node that *does* finish the search gets the identical option set, so no block hash moves. Measured: the widest single merge observed was **2,026,511 steps** over nine node-runs, and the enumerated worst case is `2^43 = 8.8e12`. AUDIT C184; `candidate:bounded-work-per-step` (C180) gains its first held member. |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1812,7 +1812,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **The LFS block walk gives up when it stops completing blocks**: `request_blocks` fails after `MAX_IDLE_ROUNDS` (3) **consecutive** idle resend intervals in which `LfsState::finished` did not grow (`casper/src/engine/lfs_block_requester.rs`, issue #102) | `LfsBlockRequester.scala:309-312` \u2014 `requestStream.evalOnIdle(resendRequests, requestTimeout).terminateAfter(_.isFinished) concurrently responseStream`: the **only** termination condition is `isFinished`, so a fringe naming state no peer has retries forever. Nothing upstream bounds the walk: `requestTimeout` is the *resend* interval, not a deadline | the port did the same, and the consequence is #102's first defect rather than a theoretical one: `run_approved_state_sync` `join!`s the block walk with the tuple-space request, so a walk that never ends is a **sync attempt that never ends** \u2014 the spawned task never returns, `notify_when_restored` never fires, and the node sits in `NodeSyncing` for good **with a serving API and no error line**, which is the \"silently stuck\" class this register keeps finding. **Why a pace rule and not a deadline**: a long chain legitimately takes longer than any fixed duration, so a wall-clock bound would abandon a walk that is *long* rather than *stuck*; the quantity that distinguishes them is whether blocks are still being completed, and `finished` is monotone (`done` only adds, `add` refuses an existing key), which is what makes \"did it move\" well-formed \u2014 **Law 51a**'s `Drift`, the same shape as C171 and refused by the same `Paced`. **Pace, not a rate**: a slow peer that needs several resends per block is untouched, because the counter resets on every completed block. Falsified in both directions: deleting the give-up leaves the walk hanging (`a_walk_nobody_serves_fails_rather_than_hangs` reports #102's exact symptom after its 2 s harness bound), and deleting the reset abandons a progressing walk (`a_slow_but_progressing_walk_is_not_abandoned` fails on the second block) \u2014 the two mutations cannot both be satisfied by a rule that is not this one |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1835,7 +1835,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A new block justifies the `latest_msgs` as of the last round boundary, not `latest_msgs`** (`DagMessageState::round_parents`, `block-storage/src/dag/message_state.rs`; the proposer reads it in `get_pre_state_for_new_block`) | `BlockCreator`'s `getPreStateForNewBlock` builds the parent set as `dag.latestMessages.map(_.id)`, every sender's newest message | the oracle's parent set is one its **own** finalizer cannot advance on. `calculate_next_fringe_support_map` derives each candidate's `seen_by` from `parents \u2216 next_layer`, so a parent set that *is* every sender's newest message has almost no remainder: the head of each round has an empty one and the later movers have seen a prefix. Measured in-process through the production entry point with three live validators at the devnet's `100/100/50`: `Support { supporting: 0, total: 250, full_partitions: 0, candidates: 2 }`, refusing before the quorum is ever consulted. With the round snapshot the same chain publishes a fringe and tracks the tip at a constant 12-height lag (48/60, 168/180, 348/360). Nothing else moves: heights stay `max + 1`, the validity rules are untouched, and the gate is unchanged. **What this is not:** not a validation fork \u2014 a block justifying a snapshot is an ordinary block every existing check accepts, so an unpatched node accepts a patched node's blocks \u2014 but it *is* a proposer divergence, because the two produce different blocks on the same history, which is why it is registered rather than assumed. The `150 of 250` the devnet logged is this defect's half-fixed shape, reproduced in-process on the way to the correction. AUDIT C185; pass \u00a735. |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1865,7 +1865,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A block's justification set is bounded by `max-number-of-parents`, refused on the receiving side** (`casper/src/validate.rs::justification_count`, read off `casper.max-number-of-parents`, whose shipped default moved from `2147483647` to `255`; the proposer refuses to build a block above it in `proposer.rs::create_block`) | **the oracle composes no per-block bound at all** \u2014 the same fact the `ExceedsBlockPhloLimit` row records \u2014 and this tree carries no `legacy/` to check a Scala `maxNumberOfParents` against, so the honest statement is that the key was configuration in this port and nothing more: no proposer cap and no validation rule, while two doc comments (`proposer.rs`, `validate.rs`) and **C123's fix rationale** each asserted it bounded exactly this set. **Hard fork (#51 category A):** a block justifying more parents than the bound is valid today and refused after, so an upgraded node rejects what an unupgraded one accepts. `0` or negative disables the check, which is how a chain keeps the pre-#153 semantics exactly rather than by accident. **It is also the tenth key of AUDIT C143's class** \u2014 parsed into `NodeConf` and read by nothing \u2014 which C143's own list of nine did not reach; the register's disposition for that class is to *refuse* the key, and this key takes the other horn of it, enforcing the setting rather than rejecting it, because unlike the keepalive and random-port knobs its documented purpose is one this port can honour. AUDIT C191; #153. |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1890,7 +1890,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A block's own timestamp is bounded below by its parents** (`casper/src/validate.rs::block_timestamp`, in `block_summary` after the pure list, refusing `InvalidBlockTimestamp`; the tolerance is `MAX_BLOCK_TIMESTAMP_DRIFT_MS` = five minutes, a constant rather than a `casper.*` key) | **the oracle composes no timestamp predicate at all.** `BlockMessage.timestamp` is inside `hash_block`'s cover and is republished verbatim as the block's canonical time \u2014 `rho:block:data` serves it to contracts and every client surface returns it \u2014 and nothing in `blockSummary` reads the field, so a proposer could stamp a block with any time at all and every validator would build the next block on top of it. **Hard fork (#51 category A):** a block stamped more than five minutes before its parents is valid today and refused after, so an upgraded node rejects what an unupgraded one accepts. **The bound is one-sided \u2014 a lower bound against the block's own parents, never this node's clock \u2014 and both halves are load-bearing.** Never the local clock, because a wall-clock comparison inside a *validity* predicate decides differently on every validator and is a fork by construction. Only a lower bound, because a validator that was offline builds a block stamped *now* on a parent stamped hours ago \u2014 a large **positive** gap, which a lower bound cannot see, so C267 (`a-bound-must-not-refuse-a-legitimate-backlog`) is discharged by construction rather than by argument, and the #223 shape (a returning validator proposing at twenty missed heights in two seconds) is not refused by it. The **forward** case is deliberately not closed here, for that same reason: an upper bound against the parent is exactly the shape that refuses a legitimate backlog. What that leaves is that `rho:block:data` can read ahead by one block on a chain whose bonded proposer stamps ahead; the amplification that made the field worth attacking \u2014 every replay of a far-future block prompting an attestation \u2014 is closed at the receiving node's own gate (`attest_is_live`, now bounded in *both* directions, where `saturating_sub` had made any future stamp read as live), and at the node's own clock, where refusing costs no fork. A constant rather than a configuration key because a rule that cannot be configured is a rule two operators cannot configure differently: the keys that *are* configuration (`max-number-of-parents`, `min-phlo-price`) are properties of the network the consensus algorithm is defined over, and clock tolerance is not. **Not an offence** (`slash_severity` is `None`): a slow clock and a proposer choosing the chain's time are the same bytes, and the slash machinery exists for offences the network has agreed to punish. W-N14-01, W-N14-02, W-N14-03, W-N14-04. |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1913,7 +1913,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A deploy whose term exceeds 64 KiB is refused at this node's own ingress** (`casper/src/multi_parent_casper.rs::MAX_DEPLOY_TERM_BYTES`, checked in `deploy` before the parse) | **the oracle's deploy service has no such bound.** `parse` refuses by AST *depth* and by the length of a `|`-chain, and by nothing else, so a term's **breadth** (`a!(1, 1, \u2026, 1)`, `new x, x, \u2026, x`, a wide `match`) is bounded only by the term's own size \u2014 and every element is then normalized, on a term an unauthenticated caller supplies, before the admission decision that would refuse it. **Not a hard fork, and the reason is structural rather than a promise:** a deploy refused here never enters the pool and therefore never enters a block, so no two nodes can disagree about a block over it \u2014 and the block path never calls this function, so a peer's block is unaffected however wide its terms are. It is the same class as the deploy service's own 256 KiB decode cap, one layer in: the cap bounds the *message*, this bounds the *work*, and 64 KiB of Rholang source is several times the largest contract in this tree. **What is deliberately not done, and why:** a breadth rule inside the *parser*, which would be fork-visible \u2014 the oracle accepts a wide term, so refusing one here would make this node reject a block the oracle accepts, a split the day someone writes one. What makes that affordable is that the accumulation a breadth rule would guard is O(k) rather than O(k\u00b2) since W-N12-01, so breadth now costs linear work on an input already bounded by the wire. W-N12-02. |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -1938,7 +1938,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A validator's bond may be other people's stake: `pos:bonds` carries the *aggregate*, and `pos:delegations` attributes it** \u2014 `rho:rchain:pos!(\"delegate\", \u2026)` moves a principal from the **delegator's own** vault into the staking vault and adds it to the operator's pool entry, so the entry a slash reaches and the weight `select_active` draws on are the operator's own stake **plus** every delegation to it; the ledger `pos:delegations` (`(operator, delegator) \u2192 amount`) records which part is whose, and `pos:pending_delegations`, `pos:delegation_claims` and `pos:delegated_rewards` carry the staged exit, its escrow and a delegator's accrued share | `Pos.rhox:355-404` \u2014 the contract's `bond` writes `allBonds` out of the **deployer's own** vault only (`deposit!(deployerId, amount, posVaultAddr)`) and nothing in `Pos.rhox` lets a key carry another's stake: there is no delegation primitive, no ledger to attribute one, and `getBonds` returns a per-key bond that is self-funded by construction | A delegator spends from its own vault through its own `deployerId` and the **protocol** attributes the stake elsewhere \u2014 so this needs no capability `spec/RUST-FIRST.md`'s B2 declined, and the alternative shape (bonding from a named vault, which would) is the one issue #193 rejected for that reason. Admission is open \u2014 any bonded operator is delegable-to, with no commission and no consent step \u2014 and the per-delegation floor is `minimum_bond`, reused rather than a new parameter. **Hard fork (#51 category A):** an operator's post-state depends on a third party's deploys, so every block hash from the first delegation onward differs between a fixed and an unfixed node. **What makes the fork point late rather than at genesis is stated as a requirement**: the four leaves are absent on a chain that never delegates and no setter is called until its value is non-empty \u2014 `set_*` is an unconditional `put`, so an empty write is a different trie root from an absent leaf (`pos:epoch_seed` is the precedent) \u2014 and with no delegations the aggregate *is* the stake, so such a chain's post-state is byte-identical to one without the primitive. **Decided here, implemented in the same change's second unit** (AUDIT C204) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1962,7 +1962,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **An epoch's reward for a key with delegators is split pro-rata, and a delegator's share is credited to `pos:delegated_rewards` rather than to the operator's `pos:committed`** \u2014 after `epoch_rewards` and the participation weight, each drawn validator's reward is divided across its own stake and its delegations in canonical key order; the operator keeps the integer-division remainder, and `epoch_pot` subtracts **both** ledgers | `Pos.rhox:241-256` \u2014 `getCurrentEpochRewards` computes one share per **validator** and `commitCurrentEpochRewards` (`:568-576`) writes it to that validator's `committedRewards` entry; there is no second party for a share to belong to, because there is no delegation | Crediting a delegator's share to the operator's `committed` entry would put money the operator may spend into the operator's ledger \u2014 the single most likely way to get this primitive wrong, which is why the split is a separate leaf rather than an extra field. The split is **exact** (`split_sums_to_the_reward`): the delegators' shares plus the operator's remainder are the reward the key was paid, so a validator with delegators commits the same total it would have alone and law 46's `sum_rewards_le_pot` survives the split rather than needing restatement. It is the **identity** with no delegators (`split_with_no_delegators_is_the_operator`), which is what makes the dormancy claim above hold arithmetically and not only at the store. The rule is one `proRata` shared with the fan-out below. **Hard fork (#51 category A):** the split moves REV between two ledgers, so every block hash from the first post-delegation boundary differs. **Decided here, implemented in the same change's second unit** (AUDIT C204) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -1987,7 +1987,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A slash fans the untaken remainder out to each delegator's own vault, and clears the delegation ledgers** \u2014 `atRisk` reads the operator's **aggregate** pool entry, so the tier applies to a delegator's principal exactly as to the operator's; `returned` is distributed pro-rata by each party's at-risk contribution \u2014 the operator's own part to its vault, each delegator's part to **its own** vault \u2014 with the dust to the operator, and the offender is removed from `pos:delegations`, `pos:pending_delegations`, `pos:delegation_claims` and `pos:delegated_rewards` together | `Pos.rhox:470-482` \u2014 the contract's slash moves the whole bond to the Coop vault and **deletes the validator's own entries**; the port already deviates by returning the untaken remainder to the offender's own vault (AUDIT C199), and there is no third party in the contract for a remainder to belong to | This is the sharpest correctness risk in the primitive and it is stated as such: the port's post-C199 slash pays `at_risk \u2212 taken` to `vault_address(validator)`, and with delegations present that hands a delegator's principal to the party it was delegated to. The fan-out is the same `proRata` the reward split uses (with `base = 0`, since every principal is at risk), so its sum arithmetic is one theorem rather than two. **The model cannot state the per-vault attribution and says so**: `PosState.user` is the total over every user vault, so `spec/Rchain/Pos.lean`'s law 57 proves the *amounts* and the clearing, and which vault is credited is pinned by a Rust witness \u2014 the identical simplification the withdrawal path already carries. An escrowed (`pos:delegation_claims`) principal is reached too, mirroring the validator's own escrowed claim, because it stays at risk until its deadline passes. **Hard fork (#51 category A):** the payment destination changes the block's post-state. **Decided here, implemented in the same change's second unit** (AUDIT C204) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -2011,7 +2011,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **`withdraw` refuses while delegations are outstanding, and `delegate` refuses while a withdrawal is pending** \u2014 so a validator is never simultaneously withdrawing and delegated-to | \u2014 (no counterpart: with no delegation primitive there is no second ledger for a withdrawal to be ambiguous against) | Without both refusals the escrow accounting is two-valued: a staged withdrawal moves the operator's **whole** pool entry \u2014 which may contain delegated principal \u2014 into `pos:withdrawers`, where the delegator has no claim, and a slash reaching that escrow could not tell whose money it was. Refusing both directions keeps one meaning per ledger, and the cost is a refusal an honest operator can always resolve by waiting a boundary. The two are also what make the slash's `at_risk` well-formed: with the invariant held, an operator's escrowed claim never contains delegated principal. `delegate` refuses three more inputs for the same reason \u2014 an operator not in the pool, self-delegation (`operator == delegator`), and an amount below `minimum_bond` \u2014 and the last of those is the DoS control on a ledger unbounded in delegator count (`spec/RUST-VS-SCALA.md` \u00a73 item 12, residual **O5**). **Hard fork (#51 category A):** a refusal the oracle does not have changes which deploys succeed. **Decided here, implemented in the same change's second unit** (AUDIT C204) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -2035,7 +2035,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **The merge composes cost accounting per accepted deploy instead of a block carrying it** \u2014 `pre_charge`, `refund` and `pay_executor` are three balance movements that sum to zero, so the merge re-applies them from what the chain already holds (`charge`, `refund` and `burned` are functions of the `ProcessedDeploy`; the producer is the host block's own signed `sender`), and a block's native sidecar carries only its **own** writes. Each accepted deploy's moves land in the vaults the three system deploys would have moved; a chain that wrote one of those slots itself keeps its absolute value in the sidecar, and only the moves of blocks that value had *not* seen are added on top | \u2014 (no counterpart: the Scala has no native-state merge, so it has no sidecar and no per-deploy cost composition to compare against) | **This replaces a conflict that was universal.** Cost accounting runs for *every* user deploy and all three moves touch `pos:vault`, so while the sidecar carried that slot every user-deploy block overlapped every concurrent sibling on it \u2014 and the merge's one recourse against two incomposable absolute snapshots is to reject a whole block, which took the deploy's own native writes (a delegation, a bond, a `trust`) with it. That made `bond`/`withdraw`/`trust`/`delegate` no-ops on any network with more than one proposer, while a *system* deploy escaped: `close_block` writes no `pos:vault` and two sibling boundaries compute identical values from one pre-state, so rejecting one leaves the other's equal write. **Hard fork (#51 category A):** the *conflict relation* changes, so which blocks a merge accepts, and therefore every block hash after the first concurrent user-deploy pair, differs between a fixed and an unfixed node. Lockstep upgrade is the practice. **The residual is filed rather than hidden**: two *concurrent* `delegate` blocks still conflict on `pos:delegations` and one is still rejected whole, and `trust`/`withdraw` are the same shape \u2014 a ledger is a set, not a sum (AUDIT C207) |"
       },
       "missing_proof": "Independent disposition and construct-specific historical replay/compatibility evidence",
@@ -2058,7 +2058,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A deploy already past its lifespan is refused at admission** (issue #356) | `BlockAPI.deploy` screens signature, phlo, shard and *too far in the future*; an expired anchor is pooled, and `Proposer.selectDeploys` drops it silently | the state it creates is not a waiting deploy but a dead one: the height only grows, so an expired anchor can never become selectable \u2014 while the submitter is answered `Success!` and the node says nothing anywhere. A future anchor is the opposite (the chain reaches it), which is why that arm stays. Measured end to end in \u00a7137 |"
       },
       "missing_proof": "Independent confirmation of node-local/proposer-only classification and existing regression evidence",
@@ -2078,7 +2078,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **A block's `version` must be the one scheduled for its height**, not merely one the binary knows (`casper/src/validate.rs::block_version` against `rchain_models::block_version::version_at`; the proposer and the genesis stamp `version_at` of their own height) | `legacy/models/src/main/scala/coop/rchain/models/BlockVersion.scala` \u2014 a constant and a supported list, with no notion of *when* a version applies; and the Scala's `Validate.version` has no production caller | **This is the activation gate the acceptance specification lists as absent** (`docs/src/spec/testnet-acceptance.md` \u00a75, \"hard-fork / activation gate\"). A node replays its chain from genesis, so a rule a binary simply starts applying is applied to old blocks too; a schedule row `(version, from_height)` lets a release change the rules *at a height* instead, below which the old version and the old rules still hold. **Not a fork:** the shipped schedule is the single row `(1, 0)`, so every block every chain has produced is valid under it and no block changes. Every later row is a scheduled fork that needs a new binary on every validator before its height, but not a new genesis. Plan H1, `docs/src/contributor/post-quantum-plan.md` \u00a714 |"
       },
       "missing_proof": "Shipped singleton schedule is inert; later height activation requires separate validator/acceptance evidence.",
@@ -2103,7 +2103,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **The fee floor and the parent bound are committed in the genesis state** \u2014 `casper.min-phlo-price` and `casper.max-number-of-parents` are copied into every membership's genesis data when the config is read and from there into `PosParams::min_phlo_price` / `max_number_of_parents`, a native-state leaf the genesis post-state hash covers | `legacy/casper/.../Validate.scala` `phloPrice` reads `minPhloPrice` from the node's `CasperConf`, with nothing committed; the parent bound has no Scala rule at all (the row above) | before this, both were **validity rules read from each node's own config** \u2014 C198's \"withheld\" knobs (`casper/src/block_status.rs`), where two correctly configured operators can disagree about the same block with no committed value to settle it. Committed, a node configured unlike its peers builds a different genesis and cannot replay theirs, and moving either bound later becomes a change of chain state rather than a config push to every operator. **Hard fork (#51 category A):** the params leaf grows from eight fields to ten and gains a format byte at its head (`PARAMS_FORMAT`), so every genesis built from this commit has a different post-state hash. The format byte replaces the length rule for every later field: a record in a format the node does not know is refused rather than read positionally, which is what keeps two branches that append fields in different orders from decoding each other's records to transposed values with no error (`an_unknown_params_format_is_refused`). An unversioned record of up to eight fields still decodes, as \"neither bound committed\", which is what the chain that wrote it ran (`decode_params`). **Enforced on the block and restore paths:** `multi_parent_casper::validation_bounds_for_block` reads the params at a locally validated parent's post-state before merge/replay; these bounds are immutable in this release. Only unversioned records retain the legacy config rule. `node_launch::check_running_validation_bounds` decodes the approved state and refuses an incompatible config before Running, on fresh sync, genesis and reconnect; an empty genesis fringe is checked at genesis post-state. Missing, malformed and unknown-format leaves are errors, and a committed zero never means absence. `casper/tests/committed_bounds.rs` exercises opposing configs through the real block validator and the startup/restore gate. The independent wire fixture pins payload slots 8/9; #371 must use format 2 with vesting at payload index 10 (89 bytes) and retain the one 64-byte payload grace boundary. The tag identifies a declared layout; the byte fixture catches matching encoder/decoder swaps. A decoded zero alone does not prove field absence. |"
       },
       "missing_proof": "Genesis leaf layout changes; independent genesis hash, config mismatch and restore/replay acceptance are required.",
@@ -2127,7 +2127,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **`fundPot` adds REV to the validators' reward pot with no claim** \u2014 `rho:rchain:pos!(\"fundPot\", deployerId, amount, ret)` debits the caller's own vault and credits the staking vault (`NativeSystemState::fund_pot`), recording nothing in `pos:bonds`, `pos:withdrawers`, `pos:committed` or `pos:delegated_rewards`, so the whole amount is pot at the next boundary | \u2014 (no counterpart: `Pos.rhox`'s pot is the vault less its claims, and the only REV that reaches it unclaimed is burned phlo) | **so validator rewards can be raised without a fork.** Before this the only levers were `executor_share`, a genesis parameter, and a mint, which is consensus code; both are new geneses. The caller can spend only its own vault (the `deployerId` capability, as for `bond`), and zero or an amount the vault cannot cover is refused and moves nothing (`funding_the_pot_adds_unclaimed_rev_and_bonding_does_not`, and the conservation sweep). **Hard fork (#51 category A), the #279 shape:** a deploy that called `fundPot` failed on an older node (`pos: unknown method`) and succeeds on this one, so a chain carrying such a deploy replays differently; it ships in the batched fork rather than behind the activation schedule. Like `bond`, its write to `pos:vault` is a native write, so two concurrent blocks that both fund the pot conflict and the merge rejects one Both balances are checked before either write: `pot_funding_overflow_moves_neither_balance` fails before this ordering fix (the donor loses one drop) and passes after it. |"
       },
       "missing_proof": "Native balance transition differs when used; independent conservation, refusal and replay acceptance are required.",
@@ -2151,7 +2151,7 @@
       ],
       "existing_evidence": {
         "kind": "authored register on pinned dev, not a new execution witness",
-        "url": "https://github.com/rhovision-org/rholo/blob/d8dd1163168b3c357fc4bccbd1853b820abbcecb/spec/audit/passes.md",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
         "source_row": "| **Initial LFS solicitation waits for admitted reply, with bounded retries** (C335; comm_util.rs::request_initial_fringe and node_launch.rs) | The prior request loop stopped at transport send success and the first-target wait had no exit for a missing streamed response | Node-local startup/recovery change. Acknowledging the request does not deliver its reply. Only trusted nonempty admission stops re-solicitation; exhausting ten bounded send/response intervals returns an error, never restore success. Six Rust regressions and a reintroduced send-only fault detect the failure. No validity, quorum or finalized-state rule changes; real-node reactivation is an independent acceptance gate. |"
       },
       "missing_proof": "Source states reply delivery is node-local; independent real-node reactivation and failure-path evidence remain required.",
@@ -2161,6 +2161,58 @@
       "id": "S6:507f3e24c48232b3",
       "row_sha256": "507f3e24c48232b3e8948aa8e5004cd31b6d4318cf24f539f4ce9b00add7f452",
       "source_line": 384
+    },
+    {
+      "invariant": "**Liveness enforcement is a new PoS boundary rule (RCHIP #55, Law 89).**",
+      "fork_class": "A_CANDIDATE",
+      "classification": "IMPLEMENTED / EVIDENCE INCOMPLETE",
+      "related_issue_pr_or_audit": [
+        "RCHIP #55",
+        "#149",
+        "C344"
+      ],
+      "code_or_invariant": [
+        "**Liveness enforcement is a new PoS boundary rule (RCHIP #55, Law 89).**"
+      ],
+      "existing_evidence": {
+        "kind": "authored register on pinned dev, not a new execution witness",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
+        "source_row": "| **Liveness enforcement is a new PoS boundary rule (RCHIP #55, Law 89).** | Pos.rhox has no liveness jail, vote or ejection; the port adds five genesis parameters, five `pos:` leaves and the `voteSlash`/`unvoteSlash`/`getLiveness`/`getVotes` methods. | A chain that arms liveness enforcement changes its boundary post-state: a jailed validator is not drawn and earns nothing, and a passing >2/3 active-stake vote slashes and bans. Default-off and the format-2 params encoding keep unarmed chains byte-identical; arming requires a new genesis and is a hard fork. Pre-launch category A; every validator must run the binary; no live evidence yet. RCHIP #55, HAZOP U21, C344 |"
+      },
+      "source_line": 391,
+      "row_sha256": "0963a698bc9c4ee42a824fac97c352c637c7cff739bd022c8d34a4ec09d6a0e5",
+      "id": "S6:0963a698bc9c4ee4",
+      "missing_proof": "The source row did not exist at the ledger's pinned dev commit; the URL therefore shows the section without this row. Live testnet evidence for jail/vote and the partition arm is owed.",
+      "smallest_action": "Run the devnet/live liveness-enforcement arm and commit the evidence under spec/audit/evidence/.",
+      "acceptance_test": "tests/liveness-enforcement.py plus the live artifact",
+      "decision_owner": "@PatrickMockridge"
+    },
+    {
+      "invariant": "Cost charges track the work of collection canonicalisation, union and rho:gov:censure.",
+      "fork_class": "A_CANDIDATE",
+      "classification": "IMPLEMENTED / EVIDENCE INCOMPLETE",
+      "related_issue_pr_or_audit": [
+        "#51",
+        "#514",
+        "C345",
+        "C346",
+        "A:cost-tracks-work"
+      ],
+      "code_or_invariant": [
+        "Cost charges track the work of collection canonicalisation, union and rho:gov:censure."
+      ],
+      "existing_evidence": {
+        "kind": "authored register on pinned dev, not a new execution witness",
+        "url": "https://github.com/rhovision-org/rholo/blob/9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e/spec/audit/passes.md",
+        "source_row": "| **Cost charges track the work of collection canonicalisation, union, set insertion, the tallies and `rho:gov:censure`.** | Archived `legacy/rholang/src/main/scala/coop/rchain/rholang/interpreter/accounting/Costs.scala` at `1b7583649` charges `unionCost(other.size)` \u2014 the right operand only \u2014 a flat `KEYS_METHOD_COST = 10`, a flat `ADD_COST` for a set insertion that re-canonicalises the set, no charge on a tally's option lists at all, and no canonicalisation charge beyond the method call; the Rust-native `rho:gov:*` folds have no Scala oracle. | Rust charges `canonicalization_cost(n) = 3n` for the conversions, `set`, `keys` and `add` output, both union operands, `(u+1)^3` for censure and the scanned entries for a tally (Law 91, `spec/Rchain/Cost.lean`; C345/C346, pass \u00a7149, and C353/C354, pass \u00a7150, whose cost register found the last two). **Hard fork (#51 category A):** `refund_amount`/`burned_amount` and every post-state hash move; a pre-fork block containing a conversion, a set insertion, a tally or a censure does not replay under the new code (`replay_cost_mismatch`); every network's genesis post-state hash moves; the block-version activation gate is owed. |"
+      },
+      "missing_proof": "No historical replay of a pre-fork block containing a conversion or censure, no populated-store upgrade and no second binary; the block-version activation gate is owed.",
+      "smallest_action": "Regenerate every pinned genesis hash, run the pre-fork replay refusal on a chain carrying the fix, exercise a populated-store upgrade, and obtain maintainer sign-off.",
+      "acceptance_test": "A pre-fork block containing a conversion or censure is refused with replay_cost_mismatch, and a post-fork chain replays identically on two independent binaries.",
+      "decision_owner": "Jim / consensus",
+      "id": "S6:ccb08bb8dcafdd3c",
+      "row_sha256": "ccb08bb8dcafdd3c17e3202e4d29ac587d3a3d15fb399314444f7854a915c33f",
+      "source_line": 392
     }
   ]
 }

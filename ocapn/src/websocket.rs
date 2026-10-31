@@ -67,7 +67,8 @@ const AUTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// How long the TLS handshake and the WebSocket upgrade may take, together. **The reference bounds
 /// neither**, and without a bound a peer that connects and then sends nothing holds this connection
-/// for ever — which, because the upgrade runs inside the node's accept loop, is every peer.
+/// for ever. Both this and [`AUTH_TIMEOUT`] now run on the connection's **first use** rather than in
+/// the accept loop (C349), so the bound is a session's, not the listener's.
 const ESTABLISH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The WebSocket layer's own bounds.
@@ -216,44 +217,113 @@ impl Netlayer for WebsocketNetlayer {
         Ok(Box::new(conn))
     }
 
-    /// The socket is accepted, then the transport, the WebSocket upgrade and the in-band challenge
-    /// run — **each bounded**, because the peer chooses how long to take at every one of them.
+    /// **The socket is accepted and nothing else** (C349). The transport, the WebSocket upgrade and
+    /// the in-band challenge run on the connection's first use — `recv` — each bounded, exactly as
+    /// [`crate::noise`] runs its handshake in the session task.
     ///
-    /// **The residual, stated rather than hidden.** Everything up to and including the challenge runs
-    /// *here*, inside the node's accept loop, so a peer that connects and then stays silent holds that
-    /// loop until [`ESTABLISH_TIMEOUT`] elapses. [`crate::noise`] does not have this shape: its accept
-    /// is a socket accept and the handshake runs in the session task. The fix is the same one — defer
-    /// the upgrade to the connection's first use — and it is deferred here rather than done because
-    /// unifying the two directions under one stream type means hand-rolling the dialler's TLS, which
-    /// `connect_async` does internally. Named, not forgotten.
+    /// Before this, all three ran *here*, inside the node's accept loop, so one peer that connected
+    /// and then stayed silent held that loop for up to `ESTABLISH_TIMEOUT + AUTH_TIMEOUT` (40 s).
     async fn accept_incoming_connection(&self) -> io::Result<Box<dyn NetConn>> {
-        let (tcp, peer_addr) = self.listener.accept().await?;
-        let establishing = async {
-            // The transport first, then the WebSocket layer. The two arms produce different stream
-            // types, so the byte stream is boxed *before* the WebSocket layer is built — after which
-            // everything downstream is one type.
-            let io: BoxedIo = match &self.tls {
-                Some(config) => {
-                    let acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
-                    Box::new(acceptor.accept(tcp).await?)
-                }
-                None => Box::new(tcp),
+        let (tcp, peer) = self.listener.accept().await?;
+        Ok(Box::new(PendingWsConn {
+            tcp: Some(tcp),
+            tls: self.tls.clone(),
+            identity: self.identity.clone(),
+            peer,
+            ready: None,
+        }))
+    }
+}
+
+/// **A connection this node has accepted but not yet established** (C349).
+///
+/// The accept is a socket accept; the TLS handshake, the WebSocket upgrade and the server's side of
+/// the challenge happen on the first `recv`. A peer that connects and goes silent therefore costs one
+/// queued session slot bounded by [`ESTABLISH_TIMEOUT`] + [`AUTH_TIMEOUT`], not the accept loop — the
+/// price the `noise` transport already pays.
+struct PendingWsConn {
+    /// The socket, until the first use consumes it.
+    tcp: Option<tokio::net::TcpStream>,
+    tls: Option<Arc<tokio_rustls::rustls::ServerConfig>>,
+    identity: NoiseIdentity,
+    peer: SocketAddr,
+    /// The established connection, once the first use has run.
+    ready: Option<WsConn<BoxedIo>>,
+}
+
+impl PendingWsConn {
+    /// Run the transport, the upgrade and the server's challenge, **once**. A second call is the
+    /// established connection.
+    async fn ensure(&mut self) -> io::Result<&mut WsConn<BoxedIo>> {
+        if self.ready.is_none() {
+            let tcp = self
+                .tcp
+                .take()
+                .ok_or_else(|| io::Error::other("the websocket socket was already consumed"))?;
+            let establishing = async {
+                // The transport first, then the WebSocket layer. The two arms produce different
+                // stream types, so the byte stream is boxed *before* the WebSocket layer is built —
+                // after which everything downstream is one type.
+                let io: BoxedIo = match &self.tls {
+                    Some(config) => {
+                        let acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
+                        Box::new(acceptor.accept(tcp).await?)
+                    }
+                    None => Box::new(tcp),
+                };
+                accept_async_with_config(io, Some(ws_config()))
+                    .await
+                    .map_err(io::Error::other)
             };
-            accept_async_with_config(io, Some(ws_config()))
+            let stream = tokio::time::timeout(ESTABLISH_TIMEOUT, establishing)
                 .await
-                .map_err(io::Error::other)
-        };
-        let stream = tokio::time::timeout(ESTABLISH_TIMEOUT, establishing)
-            .await
-            .map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!("the websocket upgrade took longer than {ESTABLISH_TIMEOUT:?}"),
-                )
-            })??;
-        let mut conn = WsConn::new(stream, Some(peer_addr));
-        authenticate_as_server(&mut conn, &self.identity).await?;
-        Ok(Box::new(conn))
+                .map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!("the websocket upgrade took longer than {ESTABLISH_TIMEOUT:?}"),
+                    )
+                })??;
+            let mut conn = WsConn::new(stream, Some(self.peer));
+            authenticate_as_server(&mut conn, &self.identity).await?;
+            self.ready = Some(conn);
+        }
+        // Total rather than an `expect`: the arm is unreachable, and the type system's gate is right
+        // that an unreachable panic is still a panic site in production code.
+        match self.ready.as_mut() {
+            Some(conn) => Ok(conn),
+            None => Err(io::Error::other(
+                "the websocket connection is not established",
+            )),
+        }
+    }
+}
+
+#[async_trait]
+impl NetConn for PendingWsConn {
+    async fn send(&mut self, message: &[u8]) -> io::Result<()> {
+        // The client speaks first in this protocol, so the established path is reachable only after a
+        // `recv`. Before that, sending is the same refusal as an unauthenticated connection — the
+        // reference's rule, kept rather than buffered.
+        match self.ready.as_mut() {
+            Some(conn) => conn.send(message).await,
+            None => Err(io::Error::other(
+                "the websocket peer-authentication handshake has not completed",
+            )),
+        }
+    }
+
+    fn peer_address(&self) -> Option<SocketAddr> {
+        Some(self.peer)
+    }
+
+    fn verified_peer(&self) -> Option<[u8; 32]> {
+        // The accepting side never learns a proven key: the reference's handshake has only the server
+        // prove itself (see `WsConn::verified`).
+        self.ready.as_ref().and_then(|conn| conn.verified)
+    }
+
+    async fn recv(&mut self) -> io::Result<Option<Vec<u8>>> {
+        self.ensure().await?.recv().await
     }
 }
 
@@ -593,8 +663,12 @@ mod tests {
             rchain_shared::base16::encode(&identity().verifying_key()),
         );
 
-        let accepting =
-            tokio::spawn(async move { server.accept_incoming_connection().await.is_ok() });
+        // The accept no longer runs the handshake (C349); the server has to use the connection for the
+        // client's challenge to be answered at all, which is what the client checks against.
+        let accepting = tokio::spawn(async move {
+            let mut conn = server.accept_incoming_connection().await.expect("accept");
+            conn.recv().await
+        });
         let client = WebsocketNetlayer::bind("127.0.0.1:0", identity())
             .await
             .expect("bind the dialing side");
@@ -607,6 +681,62 @@ mod tests {
             "the refusal names what failed: {err}"
         );
         let _ = accepting.await;
+    }
+
+    /// **A peer that connects and says nothing does not hold the accept loop** (C349).
+    ///
+    /// The accept is a socket accept and the upgrade runs on first use. A second client therefore
+    /// completes a full handshake and message while the first is still silent; before the fix the
+    /// silent peer held the loop for `ESTABLISH_TIMEOUT + AUTH_TIMEOUT` (40 s), so this test could not
+    /// have got its second accept.
+    #[tokio::test]
+    async fn a_silent_client_does_not_hold_the_accept() {
+        let (server, locator) = listening().await;
+        let addr = server.local_addr().expect("the listener's address");
+        let server = Arc::new(server);
+
+        // 1. A silent peer: connected, never upgraded, never speaking.
+        let silent = tokio::net::TcpStream::connect(addr).await.expect("connect");
+
+        // 2. The accept returns without waiting for it.
+        let accepting = Arc::clone(&server);
+        let first = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            accepting.accept_incoming_connection(),
+        )
+        .await
+        .expect("the accept must not wait for the peer's upgrade")
+        .expect("accept");
+
+        // 3. A well-behaved client completes a handshake and a message while the first is silent.
+        let client = tokio::spawn(async move {
+            let client = WebsocketNetlayer::bind("127.0.0.1:0", identity())
+                .await
+                .expect("bind the dialing side");
+            let mut conn = client
+                .new_outgoing_connection(&locator)
+                .await
+                .expect("the server proves its identity on first use");
+            conn.send(b"ping").await.expect("send");
+        });
+
+        let accepting = Arc::clone(&server);
+        let mut second = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            accepting.accept_incoming_connection(),
+        )
+        .await
+        .expect("the second accept must not be behind the silent peer")
+        .expect("accept");
+        assert_eq!(
+            second.recv().await.expect("recv").expect("a message"),
+            b"ping",
+            "the second session's handshake and message must complete"
+        );
+        client.await.expect("the dialing side completes");
+
+        drop(first);
+        drop(silent);
     }
 
     /// **Only a `init:peer-auth` is signed.** The record wrapper is what keeps the responder from

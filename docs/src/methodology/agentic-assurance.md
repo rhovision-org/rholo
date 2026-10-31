@@ -197,5 +197,5 @@ failures are the part of the record a reader should actually read.
 - `AGENTS.md` — the rules the repository states for agents working in it
 - `spec/AUDIT.md`, `spec/findings.tsv` — the findings register and its row schema
 - `spec/audit/evidence/` — committed runs
-- `docs/src/contributor/spec.md` — the gates index
+- `spec/README.md` — the specification tree and its gates
 - Newcombe et al., *How Amazon Web Services Uses Formal Methods*, CACM 58(4), 2015 — the process-report model

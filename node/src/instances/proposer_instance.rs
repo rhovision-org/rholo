@@ -27,9 +27,14 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use rchain_casper::blocks::proposer::propose_result::{ProposeResult, ProposeStatus};
 use rchain_casper::blocks::proposer::proposer::{ProposeSource, Proposer, ProposerResult};
+use rchain_casper::engine::node_phase::{NodePhase, NodePhaseCell};
 use rchain_casper::state::ProposerState;
+
+use crate::resources::budget::PermitBudget;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
 use rchain_shared::log::{Log, LogSource};
+
+use crate::resources::ResourceGuard;
 
 /// Log one propose outcome. Routine outcomes (no new deploys, not bonded, a propose already in
 /// flight) are `debug`; every outcome that means *a block was expected and was not produced* is
@@ -56,6 +61,12 @@ fn log_propose_result(log: &Arc<dyn Log>, result: &(ProposeResult, Option<BlockM
                      the chain will not advance until this is fixed"
                 ),
             ),
+            ProposeStatus::ResourcePressure(state) => log.warn(
+                source,
+                &format!(
+                    "propose withheld: the node is {state} and is not producing (resource fallback,                      unit C)"
+                ),
+            ),
             status @ (ProposeStatus::TooFarAheadOfLastFinalized
             | ProposeStatus::InternalDeployError) => {
                 log.warn(source, &format!("propose failed: {status}"))
@@ -65,7 +76,7 @@ fn log_propose_result(log: &Arc<dyn Log>, result: &(ProposeResult, Option<BlockM
     }
 }
 
-/// How long after a "not due" outcome the node asks itself to propose again.
+/// How long after pending work or publication the node asks itself to propose again.
 ///
 /// `NotEnoughNewBlocks` is what the proposer returns when the round gate refuses (this validator already
 /// spoke this round) and when its own block lost a stale-snapshot race (§48). Both say "the next attempt
@@ -81,9 +92,18 @@ pub const NOT_DUE_RETRY: Duration = Duration::from_millis(
     rchain_casper::blocks::proposer::proposer::ROUND_STALL_ESCAPE.as_millis() as u64 + 1_000,
 );
 
-/// Whether a propose outcome is "not due yet", which the node retries on its own.
-fn not_due(result: &(ProposeResult, Option<BlockMessage>)) -> bool {
-    result.1.is_none() && result.0.propose_status == ProposeStatus::NotEnoughNewBlocks
+/// A publication needs one paced follow-up to discover whether finality work
+/// remains. A locally produced block does not pass through the remote-block tap;
+/// relying on another validator to prompt it can strand every successful proposer.
+/// The follow-up reuses the normal quorum, round and attestation guards, so an
+/// idle chain returns NoNewDeploys and stops without creating an extra block.
+fn needs_retry(source: ProposeSource, result: &(ProposeResult, Option<BlockMessage>)) -> bool {
+    (source == ProposeSource::Automatic && result.1.is_some())
+        || (result.1.is_none()
+            && matches!(
+                result.0.propose_status,
+                ProposeStatus::NotEnoughNewBlocks | ProposeStatus::AwaitingFinality
+            ))
 }
 
 /// Create the proposer stream (port of `ProposerInstance.create`).
@@ -92,6 +112,9 @@ pub fn create(
     propose_requests_tx: mpsc::Sender<(ProposeSource, oneshot::Sender<ProposerResult>)>,
     proposer: Proposer,
     state: Arc<tokio::sync::Mutex<ProposerState>>,
+    resources: Arc<ResourceGuard>,
+    execution: Arc<PermitBudget>,
+    phase: NodePhaseCell,
     log: Arc<dyn Log>,
 ) -> impl tokio_stream::Stream<Item = (ProposeResult, Option<BlockMessage>)> + Send + 'static {
     create_with_retry(
@@ -99,6 +122,9 @@ pub fn create(
         propose_requests_tx,
         proposer,
         state,
+        resources,
+        execution,
+        phase,
         log,
         NOT_DUE_RETRY,
     )
@@ -109,6 +135,9 @@ fn create_with_retry(
     propose_requests_tx: mpsc::Sender<(ProposeSource, oneshot::Sender<ProposerResult>)>,
     proposer: Proposer,
     state: Arc<tokio::sync::Mutex<ProposerState>>,
+    resources: Arc<ResourceGuard>,
+    execution: Arc<PermitBudget>,
+    phase: NodePhaseCell,
     log: Arc<dyn Log>,
     not_due_retry: Duration,
 ) -> impl tokio_stream::Stream<Item = (ProposeResult, Option<BlockMessage>)> + Send + 'static {
@@ -126,6 +155,9 @@ fn create_with_retry(
             let state = state.clone();
             let tx = propose_requests_tx.clone();
             let proposer = proposer.clone();
+            let resources = resources.clone();
+            let phase = phase.clone();
+            let execution = execution.clone();
             let log = log.clone();
             async move {
                 let permit = match lock.clone().try_acquire_owned() {
@@ -137,11 +169,140 @@ fn create_with_retry(
                     }
                 };
 
+                // **The fallback gate** (unit C, B37): a node that has stopped producing does not
+                // call the proposer at all. The requester gets a refusal naming the state, and no
+                // retry is scheduled — the autopropose timer asks again, so recovery needs no restart.
+                let fallback = resources.snapshot().fallback;
+                if fallback.stops_production() {
+                    let result = (
+                        ProposeResult {
+                            propose_status: ProposeStatus::ResourcePressure(
+                                fallback.as_str().to_string(),
+                            ),
+                        },
+                        None,
+                    );
+                    chan::oneshot_send(
+                        propose_id_def,
+                        ProposerResult::Failure {
+                            status: result.0.propose_status.clone(),
+                            seq_number: 0,
+                            message: format!(
+                                "the node is {} ({}); it is not proposing",
+                                fallback.as_str(),
+                                resources.snapshot().fallback_reason
+                            ),
+                        },
+                    );
+                    log_propose_result(&log, &result);
+                    state.lock().await.latest_propose_result = Some(result.clone());
+                    drop(permit);
+                    return Some(result);
+                }
+
+                // **Only a node in the running phase proposes** (B47, F-U20-04). The proposer
+                // stream starts beside launch, so a request can arrive while launch is still
+                // `Starting`; wait for the decision rather than answer a healthy boot with a
+                // failure. `Syncing`/`Blocked` are refused immediately.
+                let decided = phase.wait_until_decided().await;
+                if !matches!(&decided, NodePhase::Running) {
+                    let result = (
+                        ProposeResult {
+                            propose_status: ProposeStatus::ResourcePressure(
+                                "not-running".to_string(),
+                            ),
+                        },
+                        None,
+                    );
+                    chan::oneshot_send(
+                        propose_id_def,
+                        ProposerResult::Failure {
+                            status: result.0.propose_status.clone(),
+                            seq_number: 0,
+                            message: format!(
+                                "the node is in phase {}; it does not propose before the running \
+                                 engine",
+                                decided.label()
+                            ),
+                        },
+                    );
+                    log_propose_result(&log, &result);
+                    state.lock().await.latest_propose_result = Some(result.clone());
+                    drop(permit);
+                    return Some(result);
+                }
+
+                // **A block-pipeline fault stops production.** A node that has dropped a
+                // dependency-free block cannot claim its own chain is the network's; the same
+                // fail-safe as a finality-gap halt, at the earlier event. The process-wide
+                // counter is cleared only by a restart/operator repair (U19).
+                if rchain_casper::blocks::block_processor::pipeline_faults() > 0 {
+                    let result = (
+                        ProposeResult {
+                            propose_status: ProposeStatus::ResourcePressure("blocked".to_string()),
+                        },
+                        None,
+                    );
+                    chan::oneshot_send(
+                        propose_id_def,
+                        ProposerResult::Failure {
+                            status: result.0.propose_status.clone(),
+                            seq_number: 0,
+                            message: "the block pipeline recorded a fault; not proposing until \
+                                      the node is repaired and restarted"
+                                .to_string(),
+                        },
+                    );
+                    log_propose_result(&log, &result);
+                    state.lock().await.latest_propose_result = Some(result.clone());
+                    drop(permit);
+                    return Some(result);
+                }
+
+                // **The execution lease** (C341): the proposer takes at most the configured
+                // batch cap and the headroom budget allows. A Throttled host therefore runs a
+                // smaller batch; only zero permits withholds, and a withheld propose schedules no
+                // retry (the timer asks again).
+                let cap = execution.limit().min(proposer.batch_cap());
+                let mut permits = Vec::new();
+                for _ in 0..cap {
+                    match execution.try_acquire() {
+                        Some(permit) => permits.push(permit),
+                        None => break,
+                    }
+                }
+                if permits.is_empty() {
+                    let result = (
+                        ProposeResult {
+                            propose_status: ProposeStatus::ResourcePressure(
+                                "throttled".to_string(),
+                            ),
+                        },
+                        None,
+                    );
+                    chan::oneshot_send(
+                        propose_id_def,
+                        ProposerResult::Failure {
+                            status: result.0.propose_status.clone(),
+                            seq_number: 0,
+                            message: "the execution permit budget is exhausted; not proposing"
+                                .to_string(),
+                        },
+                    );
+                    log_propose_result(&log, &result);
+                    state.lock().await.latest_propose_result = Some(result.clone());
+                    drop(permit);
+                    return Some(result);
+                }
+
                 let (r_tx, r_rx) = oneshot::channel();
                 {
                     state.lock().await.curr_propose_result = Some(r_rx);
                 }
-                let r = proposer.propose(source, propose_id_def).await;
+                let r = proposer
+                    .propose_with_limit(source, propose_id_def, Some(permits.len()))
+                    .await;
+                drop(permits);
                 let r = match r {
                     Ok(r) => r,
                     Err(e) => (
@@ -169,12 +330,13 @@ fn create_with_retry(
                 if trigger.swap(false, Ordering::SeqCst) {
                     let (d_tx, d_rx) = oneshot::channel();
                     chan::send(&tx, (ProposeSource::Automatic, d_tx)).await;
-                    // Keep the receiver alive until the re-queued propose completes it.
-                    std::mem::forget(d_rx);
+                    // Automatic proposals have no caller; dropping the receiver
+                    // releases the channel allocation instead of leaking per retry.
+                    drop(d_rx);
                 }
 
-                // A "not due" outcome on a quiet net has nobody left to ask again — see `NOT_DUE_RETRY`.
-                if not_due(&r) && !retry_pending.swap(true, Ordering::SeqCst) {
+                // Pending work and successful publication both need a paced wakeup on a quiet net.
+                if needs_retry(source, &r) && !retry_pending.swap(true, Ordering::SeqCst) {
                     let tx = tx.clone();
                     let retry_pending = retry_pending.clone();
                     tokio::spawn(async move {
@@ -182,7 +344,7 @@ fn create_with_retry(
                         retry_pending.store(false, Ordering::SeqCst);
                         let (d_tx, d_rx) = oneshot::channel();
                         chan::send(&tx, (ProposeSource::Automatic, d_tx)).await;
-                        std::mem::forget(d_rx);
+                        drop(d_rx);
                     });
                 }
                 Some(r)
@@ -220,7 +382,8 @@ mod tests {
         ))
     }
 
-    /// A proposer whose block creator always answers `outcome`, counting how often it is asked.
+    /// A counted creator: publish once for Created, then report an idle finalized chain;
+    /// other outcomes remain constant to exercise the bounded pending retries.
     fn proposer(outcome: BlockCreatorResult, calls: Arc<AtomicUsize>) -> Proposer {
         let get_seq: Arc<dyn Fn(Validator) -> BoxFuture<i64> + Send + Sync> =
             Arc::new(|_v| Box::pin(async { 0i64 }));
@@ -231,10 +394,63 @@ mod tests {
             dyn Fn(
                     &ValidatorIdentity,
                     ProposeSource,
+                    Option<usize>,
                 ) -> BoxFuture<Result<BlockCreatorResult, String>>
                 + Send
                 + Sync,
-        > = Arc::new(move |_v, _source| {
+        > = Arc::new(move |_v, _source, _limit| {
+            let previous = calls.fetch_add(1, Ordering::SeqCst);
+            let outcome = if previous > 0 && matches!(outcome, BlockCreatorResult::Created(_)) {
+                BlockCreatorResult::NoNewDeploys
+            } else {
+                outcome.clone()
+            };
+            Box::pin(async move { Ok(outcome) })
+        });
+        let validate: Arc<
+            dyn Fn(&BlockMessage) -> BoxFuture<Result<(), ValidateError>> + Send + Sync,
+        > = Arc::new(|_b| Box::pin(async { Ok(()) }));
+        let effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<()> + Send + Sync> =
+            Arc::new(|_b| Box::pin(async {}));
+        Proposer::new(
+            get_seq,
+            check_active,
+            create_block,
+            validate,
+            effect,
+            ValidatorIdentity::from_hex(
+                "67e56582298859ddae725f972992a07c6c4fb9f62a8fff58ce3ca926a1063530",
+            )
+            .unwrap(),
+            Arc::new(rchain_shared::log::NopLog),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            false,
+            block_store(),
+        )
+    }
+
+    /// The same counted proposer, recording the batch limit the node passes through.
+    fn proposer_recording(
+        outcome: BlockCreatorResult,
+        calls: Arc<AtomicUsize>,
+        seen: Arc<std::sync::Mutex<Option<usize>>>,
+    ) -> Proposer {
+        let get_seq: Arc<dyn Fn(Validator) -> BoxFuture<i64> + Send + Sync> =
+            Arc::new(|_v| Box::pin(async { 0i64 }));
+        let check_active: Arc<
+            dyn Fn(&ValidatorIdentity) -> BoxFuture<Result<bool, String>> + Send + Sync,
+        > = Arc::new(|_v| Box::pin(async { Ok(true) }));
+        let create_block: Arc<
+            dyn Fn(
+                    &ValidatorIdentity,
+                    ProposeSource,
+                    Option<usize>,
+                ) -> BoxFuture<Result<BlockCreatorResult, String>>
+                + Send
+                + Sync,
+        > = Arc::new(move |_v, _source, limit| {
+            *seen.lock().expect("recorded limit") = limit;
             calls.fetch_add(1, Ordering::SeqCst);
             let outcome = outcome.clone();
             Box::pin(async move { Ok(outcome) })
@@ -262,6 +478,39 @@ mod tests {
         )
     }
 
+    fn throttled() -> Arc<ResourceGuard> {
+        ResourceGuard::inert(crate::resources::ResourceSnapshot {
+            fallback: crate::resources::ResourceState::Throttled,
+            fallback_reason: "headroom below the throttle floor",
+            ..crate::resources::ResourceSnapshot::default()
+        })
+    }
+
+    /// A guard whose fallback state is `Normal`: the resource gate is open.
+    fn healthy() -> Arc<ResourceGuard> {
+        ResourceGuard::inert(crate::resources::ResourceSnapshot {
+            fallback: crate::resources::ResourceState::Normal,
+            ..crate::resources::ResourceSnapshot::default()
+        })
+    }
+
+    /// A fresh cell in `Running`, so the propose gate is open without touching process state.
+    fn running_phase() -> NodePhaseCell {
+        let cell = NodePhaseCell::new();
+        cell.set_phase(NodePhase::Running);
+        cell
+    }
+
+    fn execution_budget(available_mb: u64, total_mb: u64) -> Arc<PermitBudget> {
+        let guard = ResourceGuard::inert(crate::resources::ResourceSnapshot {
+            mem_available_mb: available_mb,
+            mem_total_mb: total_mb,
+            fallback: crate::resources::ResourceState::Normal,
+            ..crate::resources::ResourceSnapshot::default()
+        });
+        crate::resources::CapacityBudget::new(guard).execution
+    }
+
     /// Send one request, drive the stream for `window`, and report how often the creator was asked.
     async fn asks_after_one_request(
         outcome: BlockCreatorResult,
@@ -275,6 +524,9 @@ mod tests {
             tx.clone(),
             proposer(outcome, calls.clone()),
             Arc::new(tokio::sync::Mutex::new(ProposerState::default())),
+            healthy(),
+            execution_budget(4_096, 8_192),
+            running_phase(),
             Arc::new(rchain_shared::log::NopLog),
             retry,
         );
@@ -306,7 +558,59 @@ mod tests {
         );
     }
 
-    /// Only "not due" is retried. A proposer with nothing to do stays quiet.
+    /// A paced finality obligation must wake even when no remote block, deploy,
+    /// or autopropose timer can trigger the next attempt. The idle control below
+    /// distinguishes this obligation from an empty finalized chain.
+    #[tokio::test]
+    async fn pending_finality_is_retried_without_external_traffic() {
+        let asks = asks_after_one_request(
+            BlockCreatorResult::AwaitingFinality,
+            Duration::from_millis(40),
+            Duration::from_millis(300),
+        )
+        .await;
+        assert!(asks >= 2, "pending finality lost its wakeup: {asks}");
+        assert!(asks <= 9, "pending finality retry stormed: {asks}");
+    }
+
+    /// Publishing a block does not discharge its finality obligation. If the
+    /// last remote notification arrived during that publication, success must
+    /// leave one paced wakeup to re-read the DAG without helper traffic.
+    #[tokio::test]
+    async fn successful_automatic_publication_keeps_a_bounded_wakeup() {
+        use rchain_models::block::state_hash::StateHash;
+        let block = BlockMessage {
+            version: 1,
+            shard_id: "root".into(),
+            block_hash: rchain_models::block_hash::BlockHash::new([1; 32]),
+            block_number: 0.try_into().unwrap(),
+            sender: Validator::new([0; 65]),
+            seq_num: 0.try_into().unwrap(),
+            pre_state_hash: StateHash::new([0; 32]),
+            post_state_hash: StateHash::new([0; 32]),
+            justifications: vec![],
+            bonds: Default::default(),
+            rejected_deploys: Default::default(),
+            rejected_blocks: Default::default(),
+            rejected_senders: Default::default(),
+            state: Default::default(),
+            sig_algorithm: "secp256k1".into(),
+            sig: vec![],
+            timestamp: 0,
+        };
+        let asks = asks_after_one_request(
+            BlockCreatorResult::Created(block),
+            Duration::from_millis(40),
+            Duration::from_millis(300),
+        )
+        .await;
+        assert_eq!(
+            asks, 2,
+            "publication must recheck once, then stop when idle"
+        );
+    }
+
+    /// A proposer with nothing to do discharges its wakeup and stays quiet.
     #[tokio::test]
     async fn nothing_to_do_is_not_retried() {
         let asks = asks_after_one_request(
@@ -322,5 +626,239 @@ mod tests {
     #[test]
     fn the_retry_lands_past_the_stall_escape() {
         assert!(NOT_DUE_RETRY > rchain_casper::blocks::proposer::proposer::ROUND_STALL_ESCAPE);
+    }
+
+    /// **A node that has stopped producing does not call the proposer** (unit C, B37). The request is
+    /// answered with a `Failure` naming the state — not a silent `Empty` — and no "not due" retry is
+    /// scheduled: the timer asks again, so recovery needs no restart.
+    #[tokio::test]
+    async fn a_refused_propose_is_logged_and_not_retried() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = mpsc::channel(16);
+        let critical = ResourceGuard::inert(crate::resources::ResourceSnapshot {
+            fallback: crate::resources::ResourceState::Critical,
+            fallback_reason: "headroom below the critical floor",
+            ..crate::resources::ResourceSnapshot::default()
+        });
+        let stream = create_with_retry(
+            rx,
+            tx.clone(),
+            proposer(BlockCreatorResult::NoNewDeploys, calls.clone()),
+            Arc::new(tokio::sync::Mutex::new(ProposerState::default())),
+            critical,
+            execution_budget(4_096, 8_192),
+            running_phase(),
+            Arc::new(rchain_shared::log::NopLog),
+            Duration::from_millis(50),
+        );
+        let (otx, orx) = oneshot::channel();
+        tx.send((ProposeSource::Automatic, otx)).await.unwrap();
+        let mut stream = Box::pin(stream);
+        let first = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("the request is answered")
+            .expect("one result");
+        assert!(matches!(
+            first.0.propose_status,
+            ProposeStatus::ResourcePressure(ref state) if state == "critical"
+        ));
+        assert!(first.1.is_none(), "no block is produced under pressure");
+
+        let refusal = orx.await.expect("the requester is answered");
+        assert!(
+            matches!(
+                refusal,
+                ProposerResult::Failure {
+                    status: ProposeStatus::ResourcePressure(_),
+                    ..
+                }
+            ),
+            "the caller learns why: {refusal:?}"
+        );
+
+        // The retry window passes with the proposer still never called, and no second result.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), stream.next())
+                .await
+                .is_err(),
+            "a withheld propose must not schedule the not-due retry"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_throttled_proposer_takes_a_smaller_batch_and_releases_the_lease() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let execution = execution_budget(900, 8_192); // one execution permit
+        let (tx, rx) = mpsc::channel(16);
+        let stream = create_with_retry(
+            rx,
+            tx.clone(),
+            proposer_recording(
+                BlockCreatorResult::NoNewDeploys,
+                calls.clone(),
+                seen.clone(),
+            )
+            .with_batch_cap(4),
+            Arc::new(tokio::sync::Mutex::new(ProposerState::default())),
+            throttled(),
+            execution.clone(),
+            running_phase(),
+            Arc::new(rchain_shared::log::NopLog),
+            Duration::from_millis(50),
+        );
+        let mut stream = Box::pin(stream);
+        let (otx, _orx) = oneshot::channel();
+        tx.send((ProposeSource::Automatic, otx)).await.unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("a Throttled propose completes")
+            .expect("one result");
+        assert_eq!(*seen.lock().expect("recorded limit"), Some(1));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            execution.in_flight(),
+            0,
+            "the execution lease must be returned after the propose"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_normal_proposer_may_take_the_full_batch_cap() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let execution = execution_budget(4_096, 8_192);
+        let expected = execution.limit().min(4);
+        let (tx, rx) = mpsc::channel(16);
+        let stream = create_with_retry(
+            rx,
+            tx.clone(),
+            proposer_recording(
+                BlockCreatorResult::NoNewDeploys,
+                calls.clone(),
+                seen.clone(),
+            )
+            .with_batch_cap(4),
+            Arc::new(tokio::sync::Mutex::new(ProposerState::default())),
+            healthy(),
+            execution.clone(),
+            running_phase(),
+            Arc::new(rchain_shared::log::NopLog),
+            Duration::from_millis(50),
+        );
+        let mut stream = Box::pin(stream);
+        let (otx, _orx) = oneshot::channel();
+        tx.send((ProposeSource::Automatic, otx)).await.unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("a propose completes")
+            .expect("one result");
+        assert_eq!(*seen.lock().expect("recorded limit"), Some(expected));
+        assert_eq!(execution.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn zero_execution_permits_withholds_without_a_retry() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let execution = execution_budget(100, 8_192); // below the floor: zero permits
+        let (tx, rx) = mpsc::channel(16);
+        let stream = create_with_retry(
+            rx,
+            tx.clone(),
+            proposer_recording(
+                BlockCreatorResult::NoNewDeploys,
+                calls.clone(),
+                seen.clone(),
+            )
+            .with_batch_cap(4),
+            Arc::new(tokio::sync::Mutex::new(ProposerState::default())),
+            throttled(),
+            execution.clone(),
+            running_phase(),
+            Arc::new(rchain_shared::log::NopLog),
+            Duration::from_millis(40),
+        );
+        let mut stream = Box::pin(stream);
+        let (otx, orx) = oneshot::channel();
+        tx.send((ProposeSource::Automatic, otx)).await.unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("the request is answered")
+            .expect("one result");
+        assert!(matches!(
+            first.0.propose_status,
+            ProposeStatus::ResourcePressure(ref state) if state == "throttled"
+        ));
+        assert!(first.1.is_none());
+        assert!(matches!(
+            orx.await.expect("the requester is answered"),
+            ProposerResult::Failure {
+                status: ProposeStatus::ResourcePressure(_),
+                ..
+            }
+        ));
+        assert_eq!(*seen.lock().expect("recorded limit"), None);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(execution.in_flight(), 0);
+        tokio::time::sleep(Duration::from_millis(160)).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(80), stream.next())
+                .await
+                .is_err(),
+            "a zero-permit withhold must not schedule the not-due retry"
+        );
+    }
+
+    /// **A shard outside `Running` does not propose** (B47, F-U20-04). The request is answered
+    /// with a `Failure` naming the phase, the proposer is never called, and nothing is retried.
+    #[tokio::test]
+    async fn a_syncing_cell_does_not_propose() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = mpsc::channel(16);
+        let phase = NodePhaseCell::new();
+        phase.set_phase(NodePhase::Syncing);
+        let stream = create_with_retry(
+            rx,
+            tx.clone(),
+            proposer(BlockCreatorResult::NoNewDeploys, calls.clone()),
+            Arc::new(tokio::sync::Mutex::new(ProposerState::default())),
+            healthy(),
+            execution_budget(4_096, 8_192),
+            phase,
+            Arc::new(rchain_shared::log::NopLog),
+            Duration::from_millis(50),
+        );
+        let (otx, orx) = oneshot::channel();
+        tx.send((ProposeSource::Automatic, otx)).await.unwrap();
+        let mut stream = Box::pin(stream);
+        let first = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("the request is answered")
+            .expect("one result");
+        assert!(matches!(
+            first.0.propose_status,
+            ProposeStatus::ResourcePressure(ref state) if state == "not-running"
+        ));
+        assert!(first.1.is_none(), "no block is produced outside Running");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "the proposer must not be called while the shard is syncing"
+        );
+        match orx.await.expect("the requester is answered") {
+            ProposerResult::Failure {
+                status, message, ..
+            } => {
+                assert!(matches!(
+                    status,
+                    ProposeStatus::ResourcePressure(ref state) if state == "not-running"
+                ));
+                assert!(message.contains("syncing"), "{message}");
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
     }
 }

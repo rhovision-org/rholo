@@ -1,0 +1,115 @@
+Baseline source 40efb9599a44bf36f877143a3cb94ccda56700bc
+Expected regression failures
+test_failed_transfer_cannot_publish_a_partial_snapshot (__main__.RangeSnapshotTests.test_failed_transfer_cannot_publish_a_partial_snapshot) ... FAIL
+test_finality_above_the_plan_range_is_checked_in_current_inventory (__main__.RangeSnapshotTests.test_finality_above_the_plan_range_is_checked_in_current_inventory) ... FAIL
+test_invalid_list_elements_use_live_fallback (__main__.RangeSnapshotTests.test_invalid_list_elements_use_live_fallback) ... FAIL
+test_new_divergence_cannot_pass_using_an_old_agreement (__main__.RangeSnapshotTests.test_new_divergence_cannot_pass_using_an_old_agreement) ... FAIL
+test_no_cache_control_reads_current_blocks (__main__.RangeSnapshotTests.test_no_cache_control_reads_current_blocks) ... FAIL
+test_nonempty_error_object_is_not_cached_as_an_empty_inventory (__main__.RangeSnapshotTests.test_nonempty_error_object_is_not_cached_as_an_empty_inventory) ... FAIL
+test_recovered_node_is_not_rejected_using_its_old_inventory (__main__.RangeSnapshotTests.test_recovered_node_is_not_rejected_using_its_old_inventory) ... FAIL
+test_recovery_cannot_exit_success_with_current_unfinalized_divergence (__main__.RangeSnapshotTests.test_recovery_cannot_exit_success_with_current_unfinalized_divergence) ... FAIL
+test_truncated_json_uses_live_fallback (__main__.RangeSnapshotTests.test_truncated_json_uses_live_fallback) ... FAIL
+test_valid_range_is_fetched_once_per_node_in_plan (__main__.RangeSnapshotTests.test_valid_range_is_fetched_once_per_node_in_plan) ... ok
+
+======================================================================
+FAIL: test_failed_transfer_cannot_publish_a_partial_snapshot (__main__.RangeSnapshotTests.test_failed_transfer_cannot_publish_a_partial_snapshot)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/home/rholo-reconcile-cache-20261029/tests/reconcile-cache-regression.py", line 107, in test_failed_transfer_cannot_publish_a_partial_snapshot
+    self.assertEqual(result.stdout.count("aa sender state 0 []"), 2)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 2
+
+======================================================================
+FAIL: test_finality_above_the_plan_range_is_checked_in_current_inventory (__main__.RangeSnapshotTests.test_finality_above_the_plan_range_is_checked_in_current_inventory)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/home/rholo-reconcile-cache-20261029/tests/reconcile-cache-regression.py", line 88, in test_finality_above_the_plan_range_is_checked_in_current_inventory
+    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 9 != 0 : == 10. finality past the point ==
+  finality [1] A=2 B=2  past-the-point=0
+  NOT final: A finalised 2 ff… but A (height 3) does not hold it
+  Finality has not advanced past 1 on every node, so the recovery is not verified.
+  (a chain that converged to one head but cannot finalise is C259's state, and this refuses it
+   rather than reporting it as recovered.)
+
+
+======================================================================
+FAIL: test_invalid_list_elements_use_live_fallback (__main__.RangeSnapshotTests.test_invalid_list_elements_use_live_fallback)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/home/rholo-reconcile-cache-20261029/tests/reconcile-cache-regression.py", line 117, in test_invalid_list_elements_use_live_fallback
+    self.assertEqual(result.stdout.count("aa sender state 0 []"), 2)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 2
+
+======================================================================
+FAIL: test_new_divergence_cannot_pass_using_an_old_agreement (__main__.RangeSnapshotTests.test_new_divergence_cannot_pass_using_an_old_agreement)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/home/rholo-reconcile-cache-20261029/tests/reconcile-cache-regression.py", line 83, in test_new_divergence_cannot_pass_using_an_old_agreement
+    self.assertEqual(result.returncode, 6, result.stdout + result.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 6 : == 9. verification: block hashes per height, not heights ==
+  [1] A=3 B=3  hashes-agree=1
+
+
+======================================================================
+FAIL: test_no_cache_control_reads_current_blocks (__main__.RangeSnapshotTests.test_no_cache_control_reads_current_blocks)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/home/rholo-reconcile-cache-20261029/tests/reconcile-cache-regression.py", line 127, in test_no_cache_control_reads_current_blocks
+    self.assertEqual(result.stdout.count("aa sender state 0 []"), 2)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 1 != 2
+
+======================================================================
+FAIL: test_nonempty_error_object_is_not_cached_as_an_empty_inventory (__main__.RangeSnapshotTests.test_nonempty_error_object_is_not_cached_as_an_empty_inventory)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/home/rholo-reconcile-cache-20261029/tests/reconcile-cache-regression.py", line 100, in test_nonempty_error_object_is_not_cached_as_an_empty_inventory
+    self.assertEqual(result.stdout.count("aa sender state 0 []"), 2)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 2
+
+======================================================================
+FAIL: test_recovered_node_is_not_rejected_using_its_old_inventory (__main__.RangeSnapshotTests.test_recovered_node_is_not_rejected_using_its_old_inventory)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/home/rholo-reconcile-cache-20261029/tests/reconcile-cache-regression.py", line 77, in test_recovered_node_is_not_rejected_using_its_old_inventory
+    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 6 != 0 : == 9. verification: block hashes per height, not heights ==
+  [1] A=3 B=3  hashes-agree=0
+  NOT converged after the wait: the nodes still disagree on a block hash at or above 1
+
+
+======================================================================
+FAIL: test_recovery_cannot_exit_success_with_current_unfinalized_divergence (__main__.RangeSnapshotTests.test_recovery_cannot_exit_success_with_current_unfinalized_divergence)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/home/rholo-reconcile-cache-20261029/tests/reconcile-cache-regression.py", line 94, in test_recovery_cannot_exit_success_with_current_unfinalized_divergence
+    self.assertEqual(result.returncode, 6, result.stdout + result.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 6 : == 9. verification: block hashes per height, not heights ==
+  [1] A=3 B=3  hashes-agree=1
+== 10. finality past the point ==
+  finality [1] A=2 B=2  past-the-point=1
+  finality advanced past 1 on every node, and every finalized block is one the nodes' own DAGs hold.
+  (this section plus section 9 is #287's falsifier: one head, agreeing block hashes, no genesis.)
+
+
+======================================================================
+FAIL: test_truncated_json_uses_live_fallback (__main__.RangeSnapshotTests.test_truncated_json_uses_live_fallback)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/home/rholo-reconcile-cache-20261029/tests/reconcile-cache-regression.py", line 113, in test_truncated_json_uses_live_fallback
+    self.assertEqual(result.stdout.count("aa sender state 0 []"), 2)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 2
+
+----------------------------------------------------------------------
+Ran 10 tests in 7.219s
+
+FAILED (failures=9)

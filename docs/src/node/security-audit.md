@@ -1,486 +1,372 @@
-# Security audit (September 2026)
+# Security audit (October 2026)
 
-This chapter is a point-in-time report. It records what an adversarial review of the node found at
-commit `67dd6fb7b`, what it could not settle, and how the node's safety properties compare with three
-other production chains read from their own source.
+This chapter is a point-in-time report of an adversarial read of the node at **`dev@be5016682`**
+(2026-10-30). It records what the pass confirmed, what it could not settle, and how the node's safety
+properties compare with three other production chains read from their own source at pinned revisions.
 
-It is written to be useful when it is unflattering. The node's one confirmed high-severity weakness is
-in this chapter, together with the structural properties that make whole classes of defect
-unrepresentable. Both halves matter: a review that lists only residual defects misrepresents a system
-whose thesis is carrying invariants in the semantics rather than in review.
+It is written to be useful when it is unflattering. The pass's principal finding is a **live instance
+of the cost-model class the September 2026 pass opened** — collection conversions that sort for a flat
+charge — together with five defects outside that class and two places where the assurance record says
+more than the code does. The structural properties that make whole classes of defect unrepresentable
+are unchanged, and they are in §6.
 
-**Scope, and how to read it.** The review itself was report-only: nothing was changed *by the pass*,
-and no finding was fixed while it ran. What you are reading is therefore a photograph of `67dd6fb7b`:
-the findings, their probes and the numbers those probes produced — the amplification table in §3, the
-probe results in §7 — are true of that commit and not of whatever `dev` says today, and they are left
-as measured rather than edited. **Where a *status* has moved since, it is stated as a status and given
-its current figure** (the register's totals, the witness count, which questions have closed), because a
-reader checking this chapter against today's tree should not find it wrong — only dated.
+**Scope, and how to read it.** The pass itself was report-only: no production code was changed while it
+ran. What you are reading is a photograph of `be5016682`, so the measurements in §3 and the verdicts in
+§2 are true of that commit — and **the re-admission checks in §2 are what say whether they still hold**.
+The eight findings were then remediated in the same PR (pass §149), so a reader of today's tree should
+read §2 as *what was found* and §149 as *what changed*: the §2 rows are not rewritten, because a
+findings page that edits its own findings cannot be checked against. Disposition is *not* this page's
+claim — the check-off is [`spec/AUDIT.md`](../../../spec/AUDIT.md), the account of the pass is
+[`spec/audit/passes.md`](../../../spec/audit/passes.md) §148 with the remediation as §149, and the
+evidence is [`spec/audit/evidence/n20261030-reaudit/README.md`](../../../spec/audit/evidence/n20261030-reaudit/)
+and [`spec/audit/evidence/c345-c352-remediation-20261030/`](../../../spec/audit/evidence/c345-c352-remediation-20261030/).
+The September 2026 pass is preserved as §9.
 
-**Every confirmed finding was closed out — the P1s and P2s the same day, and the lower-severity tail
-over the following days.** The fixes are in their own commits rather than edited into this text, so
-that the photograph stays a photograph; what follows is the outcome, not a rewrite, and where a status
-has moved since, it is stated as a status rather than edited into the measurement.
-
-The three P1s were one root cause — the gas model did not bound work — and were closed by a per-block
-phlo cap, by making the five operations that charged less than their work charge for it, and by
-charging the parse. The P2s closed by a DAG write order that now writes data before the pointer it is
-found by, by saturating arithmetic in the `qucalc` governance folds, and by a block `version`
-predicate that had existed since the port with **no caller**.
-
-**Signing and an SBOM on the release path closed as a decision, and the other item did not close
-because it cannot.** The release path was resolved on 2026-09-28: a `sha256sum` is published beside the
-binary and nothing further, because a signature needs a trust root and a key policy that a code change
-should not choose silently — the decision and its reasoning are recorded on the step in
-`.github/workflows/build-rnode.yml`, which is where a reader should look for it. And *cancellation
-inside a running builtin* is **not achievable on this design**: a builtin runs its CPU synchronously inside
-`Box::pin(async { … })` with no `await` before it, so a deadline can bound how long the *caller* waits
-and never the work itself. That finding is what determined the shape of the whole remediation — bound
-the work, because interrupting it is not available — and it is worth stating here because a reader who
-expects a cancellation token will go looking for one that was deliberately not written.
-
-**Two corrections belong in this chapter rather than in a commit.** The remediation advice in §3 named
-a `HashSet` where `Par` derives no `Hash`, so it did not compile; it is marked there. And one of the
-five planned charge fixes was **reverted because implementing it showed the finding was wrong**: the
-crypto builtins' inputs have to pass through the storage path, which already charges proportionally,
-so their flat charge bought no unbounded work. A finding that does not survive being implemented is a
-finding that was wrong, and it is recorded as one rather than quietly dropped.
-
-The places where the close-out *went beyond* the reference implementation are registered in
-[`spec/RUST-VS-SCALA.md`](../../../spec/RUST-VS-SCALA.md) §3 — the per-block cost bounds, the DAG write
-order, the block `version` check, the governance bound, the ordered dedup and the three charges that
-followed, and (item 12, the largest of them) the **randomised active-validator draw**, which replaces a
-selection rule the reference's own source marks as a placeholder.
+Two design facts from the prior close-out still shape any remediation. Cancellation inside a running
+builtin is **not achievable on this design** — a builtin runs its CPU synchronously inside
+`Box::pin(async { … })` with no `await` before it, so a deadline bounds how long the *caller* waits and
+never the work itself. And the release publishes a `sha256sum` and nothing further, because a signature
+needs a trust root and a key policy that a code change should not choose silently.
 
 ## 1. Method
 
-The approach is the one this project's own audit history found to work, with its refutation stage
-rebuilt.
+The approach is the project's audit history's: independent adversarial lenses, then a separate
+refutation stage. This pass adopts the **four-verdict** vocabulary the repository actually defines
+(`docs/src/spec/adversary.md`, `spec/audit/evidence/wargame/preregistration.md`):
 
-**Three stages.** Independent lenses read the tree adversarially, each required to produce either a
-reproduction or nothing. Every candidate finding was then handed to a *second* agent whose instruction
-was to refute it. Survivors were graded and given a falsifier.
+- **`CONFIRMED`** — the mechanism was re-derived in the code and the falsifier that would kill it is
+  named.
+- **`NOT-RE-ESTABLISHED`** — plausible, but not re-provable from source; the row names the measurement
+  it would need. The dynamic class (races, load, crash timing) lives here, deliberately.
+- **`REFUTED`** — only with a **positive artifact**: a named line, an existing test, or a measurement
+  showing the mechanism absent. An empty-handed refutation is forced to `NOT-RE-ESTABLISHED`; a
+  self-reported clean is not evidence.
+- **`UNSTATABLE`** — only for a proposer-side claim with no reachability fact.
 
-**Why the refutation stage was rebuilt.** The earlier rule was "default to REFUTED whenever the
-mechanism could not be re-established from source". That rule cannot distinguish *the mechanism is
-absent* from *the mechanism is real but not re-establishable by reading* — and the second category is
-exactly the high-severity dynamic class (races, crafted-depth exhaustion, load-driven denial of
-service, crash consistency). A default-REFUTED filter therefore suppresses the best material.
+**Three lenses, blind to each other and to the register.** *A* read work and the block path
+(`rholang` cost sites, `models` canonicalisation, `casper` validation/processing, the gRPC ingress).
+*B* read network ingress and the new surface (the OCapN crate and bridge, every HTTP/admin route, the
+hostlist, the relay, config defaults). *C* read consensus, recovery, liveness, the Lean laws 86–90 and
+the assurance apparatus. Each returned at most six candidates with a mechanism, reachability, an
+artifact and a falsifier.
 
-This pass used three verdicts instead — **`CONFIRMED` / `NOT-RE-ESTABLISHED` / `REFUTED`** — where only
-`REFUTED` removes a finding, and a `REFUTED` verdict must carry a positive artifact: a named line, a
-test, or a measurement showing the mechanism absent. An empty-handed refutation is a self-reported
-clean, and this project's audit record already holds that "an independent read is evidence and a
-self-reported clean is not".
+**Refutation and calibration.** Each candidate went to a separate referee that saw only the claim,
+mechanism, class and falsifier. The lenses each supplied one candidate they expected a referee to
+reject. **The authors were right once in three** — one was refuted, one returned
+`NOT-RE-ESTABLISHED` (the mechanism was accurate but the harm was not), and one was *confirmed*: the
+no-finality proposal bound, which the model itself exhibits as
+`a_gate_without_the_bound_admits_a_private_chain`. The lesson is recorded rather than smoothed: a
+proposer's confidence is not a control; the control is the verdict's artifact, and every `CONFIRMED`
+below names one.
 
-**The discipline earned its keep.** Ten candidate findings were refuted, including the one the pass
-opened expecting to lead with:
-
-| Candidate | Verdict | The artifact that killed it |
-|---|---|---|
-| Deeply-nested protobuf reaches an unbounded recursion in `wire.rs` and exhausts the stack from the unauthenticated deploy port | REFUTED | `prost`'s `RECURSION_LIMIT = 100` refuses the message at decode, before any handler runs; the server stack is 32 MiB (`node/src/main.rs`) |
-| The `qucalc` `i64` overflow panics the interpreter and is a remote denial of service | REFUTED | Continuation dispatch is spawned and `join_spawned` maps the `JoinError`; the deploy fails, the node survives (measured) |
-| The Docker image builds an unpinned dependency set with no CI signal | REFUTED | `ci.yml` runs `cargo clippy --locked --workspace --all-targets --all-features` on every push |
-| The T1 coverage headline is contradicted by the coverage register | REFUTED | The cited rows are a date-stamped batch snapshot the same document supersedes |
-| Vendored genesis `.rho` integrity is checked only at audit time | half REFUTED | The check runs on every push, and an edited contract changes the genesis post-state hash |
-
-Two of the pass's own severity assessments were also corrected by measurement rather than argument: the
-`qucalc` `trust_levels` function is **linear**, not quadratic (its relaxation is monotone over levels in
-`{0,1,2,3,4,5}`, so it converges in at most six iterations whatever the input size), and the LMDB
-crash window is bounded to two fsyncs and can self-heal on a multi-validator network.
-
-**Limits, stated plainly.** The pass read code and ran targeted tests. It did not run a live multi-node
-attack, did not re-measure coverage, and did not re-read all 89 T1 modules line by line. Findings below
-marked *measured* carry a command and a number; those marked *read* are code-path arguments.
+**What was not run.** No live multi-node attack; no external audit; no mutation score; no coverage
+re-measure; no full reading of the three chain trees; no 600 s wall-clock wait (the deadline argument
+is a projection from measured per-call time); no 100 000-entry relay exhaustion; no market-cap
+measurement.
 
 ## 2. Results
 
-| | | Closed out |
-|---|---|---|
-| Confirmed P0 (chain split / fund loss / RCE) | **none** | — |
-| Confirmed P1 (remote unauthenticated denial of service) | 3, sharing one root cause | **all three, same day** |
-| Confirmed P2 | 4 | **all four, same day** |
-| Confirmed P3 | 14 | **all fourteen** — the signing/SBOM one as a decision (a checksum, nothing further), the rest fixed |
-| Not re-established (refutation incomplete) | 1 | **closed since** — the cost asymmetry was measured at 14.2 s for a 4097-member fold and bounded to 512 (§3) |
-| Refuted during the pass | 10 | — |
+| | |
+|---|---|
+| Confirmed P0 (chain split / fund loss / RCE) | **none** |
+| Confirmed P1 (remote unauthenticated CPU denial of service; a proposal bound that is skipped) | **3** |
+| Confirmed P2 | **3** |
+| Confirmed P3 / assurance | **2** |
+| Not re-established (mechanism true, harm not established) | **1** |
+| Refuted, with a positive artifact | **1** |
+| Re-verified and already recorded (no new row) | **1** |
 
-The absence of a P0 is the headline result, and it is a result about the project's prior work: on a tree
-where earlier passes had confirmed remote denial-of-service defects, this pass could not find a chain
+The rows are **C345–C352** in [`spec/AUDIT.md`](../../../spec/AUDIT.md); their accounts are §148 of
+`passes.md`. The absence of a P0 remains the headline, and it is a result about the prior work: on a
+tree where earlier passes confirmed remote denial-of-service defects, this pass could not find a chain
 split, a fund loss, or remote code execution.
 
-**The closure column is the part a later reader needs most**, and both of its exceptions have since
-been settled. The *not-re-established* row was the `qucalc::gov::censure` cost asymmetry: the pass's
-refutation never completed, so what an attacker actually pays at the ingress was unanswered, and the
-close-out recorded that rather than guessing. **It was measured afterwards** — 14.2 seconds for a
-4097-member fold, i.e. the charge was not merely asymmetric but absent — and the bound that replaced it
-is 512, set from that measurement. The register now reads **204 of 204 rows `done`**, with no
-not-re-established row left. The P3 row's exception was signing and an SBOM, a decision rather than
-work, and the decision has been taken: an `sha256sum` beside the binary and nothing further, recorded
-on the release step with the reason (a signature needs a trust root that a code change should not pick
-on the project's behalf).
+**Carried findings from September**, re-derived rather than reopened:
 
-## 3. The gas model does not bound work
+| September item | State today |
+|---|---|
+| The gas model does not bound work (P1) | **Partially re-opened.** The September instances are fixed (§3); the *class* recurred in the collection conversions, the union asymmetry and `censure` (C345, C346). |
+| The DAG can wedge silently after a crash (P2) | **Moot.** The fringe-data record retired (`casper/src/dag.rs:1439-1482`); the write-order finding and its silent-restore arm have nothing left to order against. |
+| Governance arithmetic unchecked (P2) | **Closed.** Saturating folds; `censure` charged and bounded (and now found underpriced — C346). |
+| Block `timestamp` unvalidated (P2) | **Half-closed.** A one-sided predicate landed: a block may not be stamped before its parents (`casper/src/validate.rs:544,562-581`). A far-future stamp is still accepted by design (#223); the decision is open. |
+| DAG memory quadratic (P2) | **Accepted, measured.** The growth is a known function of a known input; sizing a host remains the answer and the rate is in §4. |
+| 14 lower-severity items (P3) | Re-derived; most closed (deny policy, schema casing, openapi body, workflow pins, counts). The type-system counted classes are still reported, not enforced. |
+| One not-re-established (`censure`) | Closed, then re-opened as underpriced (C346). |
 
-This is the pass's principal finding and the only one with a high severity.
+**Both tables are the state at the pin.** All eight rows above were remediated in §149 (C348 kept as
+an accepted residual), so the gas-model row's "partially re-opened" instance is now charged — output
+size for the conversions, both operands for the union, `(U+1)³` for `censure` (Law 91) — and the
+"underpriced" reading of `censure` is answered by the cube.
 
-**The cost model charges a flat rate for work that is superlinear in attacker input.** Deducing a
-`Set` is implemented with a linear scan in `models/src/sorter.rs` (`par_set`), so `Set.union` costs
-Θ(N²) — measured with an empirical exponent of **2.43**, i.e. super-quadratic, because the accumulating
-result vector is itself rescanned. The cost table charges a **flat 13 phlo** for the operation
-regardless of N.
+The P3 signing exception is a **decision, not work**: the release emits an `sha256sum` and no
+signature or SBOM, because a signature needs a trust root this repository has not chosen.
 
-Measured in release, on a term parsed from source:
+## 3. The gas model does not bound work — September and October
 
-| N | source | phlo charged | union | total |
-|---|---|---|---|---|
-| 5 000 | 23.9 KB | 13 | 0.42 s | 0.45 s |
-| 10 000 | 48.9 KB | 13 | 1.65 s | 1.7 s |
-| 20 000 | 108.9 KB | 13 | 7.97 s | 8.0 s |
-| 40 000 | 228.9 KB | 13 | 64.1 s | **98.0 s** |
+This is the pass's principal finding and the reason this section keeps its number.
 
-That is roughly 7.5×10⁹ nanoseconds of node CPU per phlo, against a cost table whose own fair rate is
-about one phlo per byte of real work.
+**What September measured, at `67dd6fb7b`.** `Set.union` deduplicated through a linear scan, so it was
+Θ(N²) — an empirical exponent of **2.43** — and the cost table charged a flat **13 phlo**:
 
-**This is a divergence from the Scala reference, not inherited behaviour.** The Scala deduplicates
-through a `HashSet` (`SortedParHashSet.apply`), expected O(N). The port replaced a hash set with a
-linear scan. `par_map` has the same defect.
+| N | union | total |
+|---|---|---|
+| 5 000 | 0.42 s | 0.45 s |
+| 10 000 | 1.65 s | 1.7 s |
+| 20 000 | 7.97 s | 8.0 s |
+| 40 000 | 64.1 s | **98.0 s** |
 
-Three aggravating factors:
+**What landed since.** The dedup is sort-then-dedup (`models/src/sorter.rs:851-887`), the charges for
+union/diff track their arguments (`rholang/src/accounting.rs:112-136` — **the union half was the right
+operand only until §149**, and both are charged now), the parse is charged before evaluation
+(`rholang/src/runtime.rs:336-346`), a block carries `MAX_BLOCK_PHLO = 25 500 000 000` and at most 255
+deploys (`casper/src/validate.rs:784-809`), and the governance folds are bounded at
+`MAX_GOV_UNIVERSE = 512` and charged (`rholang/src/system_processes.rs:1273-1292`, cubic for `censure`
+since §149).
 
-1. **Execution-time parsing is uncharged.** `Costs::parsing_cost` is defined and called nowhere in the
-   tree, and `phlo_limit = 0` is accepted at ingress, so a deploy can force the full parse and
-   normalise before the first charge lands. The Scala charges `parsingCost` before `sourceToADT`.
-2. **Nothing bounds a block.** The validator-side check list has no total-phlo cap and no deploy-count
-   cap. `MAX_BLOCK_DEPLOYS` is used only by the local proposer; nothing on the receiving side enforces
-   it, and there is no bonded-sender check on the block path. The only transmission bound is the 256 MiB
-   streamed block size.
-3. **A running call cannot be interrupted.** The reduce-step budget and the cancellation flag are
-   checked at continuation boundaries only, so a single builtin call of arbitrarily long duration runs
-   to completion. There is no wall-clock timeout on the block execution path.
+**What October measured, at `be5016682`** (release; `rholang/tests/gas_amplification.rs`,
+`RNODE_GAS_PROBE=1`; full log in the evidence directory):
 
-**Why no gate caught this.** None of the project's gates is about cost. The law register covers semantics —
-canonicalisation, substitution, COMM, matching, merge, finality arithmetic. A cost regression is not a
-panic, not an `unsafe`, not a type escape, not a coverage drop, and not a law violation, so it is
-invisible to every check the project runs. That is a gap in the shape of the register, not in the
-strictness of any particular gate.
+| operation | charged | work |
+|---|---|---|
+| `[N ints].toSet()` | **18 phlo at every N** (500 → 40 000) | wall time 7 → 724 ms; the conversion's own share grows ~N log N |
+| `[N pairs].toMap()` | **no positive charge site** (delta negative at every N) | wall time 17 → 620 ms |
+| `map.set(k,v)` | **22 phlo flat** (500 → 10 000) | clone + linear scan + full re-sort |
+| `map.keys()` | flat method charge (10) | clone N keys + full sort |
+| `setA ++ setB`, `\|A\|=\|B\|=N` | `3·N` | proportional — **the September union defect is closed** |
+| `setA ++ {x}` | **13 phlo** | re-sorts `\|A\|+1` elements |
+| `rho:gov:censure` at U | `N²`, N = list lengths | Θ(U³); U can reach 2N |
 
-**Prioritised remediation.** Add a per-block phlo cap and a validator-side deploy-count cap; make the
-set/map dedup ordered; wire `parsing_cost` at execution time before the cost is sampled; and check the
-cancellation flag inside long builtins. The `par_set` change is small and removes the amplification's
-root.
+**The class, stated narrowly.** A signed deploy is an unauthenticated remote input. `toSet`/`toMap`,
+`set`, `keys` and the asymmetric union perform superlinear work for a charge that does not grow with
+it; `censure` is underpriced by a factor of U. The block caps bound *declared* phlo and *counts*, never
+CPU, and the 600 s `BLOCK_VALIDATION_TIMEOUT` aborts the awaiting task but cannot interrupt a
+synchronous builtin — it bounds the waiter, not the work. **These are the instances found by reading
+the conversion and fold arms; that is an inspection, not a proof that no fourth exists**, and no gate
+is about cost (§5).
 
-*Corrected during the close-out, 2026-09-28.* This paragraph first said "replace the linear scan with a
-`HashSet`", and **that does not compile**: `Par` derives no `Hash` anywhere in the AST and no manual
-impl exists, so `HashSet<Par>` is a type error. The fix that landed is **sort-then-dedup** — `par_set`
-sorts by `Par`'s derived total order, which puts equal elements adjacent, then `Vec::dedup`s them, and
-because the sort is stable it keeps the first of each run, which is the element the scan kept;
-`par_map` sorts by key and makes one keep-last pass, reproducing last-write-wins. Byte-for-byte the
-same output at Θ(N log N). The advice was wrong in the ordinary way — a remediation sentence is a claim
-like any other, and this one was never compiled before it was published.
-
-*And the remediation has since been carried out* (2026-09-28), in the order given. The ordered dedup,
-the two validator-side caps and the execution-time parse charge landed first — and then the per-block
-cap turned out to be **inoperative on its own**, because a cost model bounds work only when a phlo buys
-bounded work. A second pass made the five operations whose charge did not track their work charge for
-it. The worst was `rho::gov:censure`, cubic in its arguments and charged **nothing at all**; the cost of
-that being free was measured at **14.2 seconds** for a 4097-member fold, and the bound that replaced it
-is 512 — set from that measurement, not chosen.
-
-**What that sweep is worth, stated rather than implied.** The five were found by *reading the cost
-table for charges that do not track their work* — an inspection, not a proof that no sixth exists. The
-claim is "these five", not "the cost model is now sound", and a sixth charge of the same shape would
-need the same reading to find. The per-block cap bounds the total a block can spend; it does not, on
-its own, make any individual charge proportional, which is why both halves were needed and why the cap
-alone was found to be inoperative.
-
-**The cancellation item is not "left" — it is not achievable on this design**, which the close-out
-established by reading rather than assumed. A builtin runs its CPU synchronously inside
-`Box::pin(async { … })` with no `await` before it, so it blocks a worker thread to completion; `tokio`'s
-spawn handle *detaches* rather than aborts when dropped, and the code's own comment says so; and the
-cancellation flag is read only at dispatch boundaries. A deadline can therefore bound how long the
-*caller* waits and never the work itself — which is why this remediation took the shape it did. Bound
-the work, because interrupting it is not available, and a reader who goes looking for the cancellation
-token will not find one.
-
-Details and the divergences they carry: `spec/RUST-VS-SCALA.md` §3.
+**What §149 did, and what §150 added.** The conversions and `set`/`keys` now charge their output
+(`3 · n`, computed before the work), `++`/`.union` charge **both** operands (as `diff_cost` already
+charged `|left|·|right|`), and `censure` charges `(U+1)³`. The bound stayed at 512 because the cubic
+path was then measured at it — 33 ms for a 512-member universe in release. **§150 then built the
+instrument §149 lacked**: [`spec/COST.md`](../../../spec/COST.md) registers every priced operation with
+the shape of its charge, a census refuses an arm that declares none, and a deterministic shape test
+measures that a declared shape still grows — and its first census found **two more instances of the
+class** (`set.add` C353, the tallies' uncounted option lists C354). What remains is the **log factor**
+— the charge is linear for `O(n log n)` work, bounded, not exact — and the fact that the gate reads
+declarations rather than work. The 600 s deadline stays as the liveness backstop it is.
 
 ## 4. Other confirmed findings
 
-**The DAG can wedge silently after a crash (P2).** `casper/src/dag.rs::insert` writes the block
-metadata — which marks the block known, so a re-offer is a no-op — *before* the fringe record. A crash
-between the two leaves a store where the block is present and its fringe record is not;
-`get_pre_state_for_parents` then refuses every block for which that one is the max-fringe parent, and
-the missing record is skipped **silently** on restore, while the three sibling arms all fail closed.
-The record is keyed by the fringe rather than the block, so on a multi-validator network a later block
-declaring the same fringe repairs it. **On a single-validator or standalone node it does not: the node
-is wedged permanently and the recovery is to wipe the data directory and resync.** The write order is a
-faithful port of the Scala; the fix — write the fringe record before the metadata — is the same
-data-then-pointer order the RSpace history layer already follows, and it turns the window into a
-harmless orphan record. **That half has landed** (`casper/src/dag.rs`, AUDIT F-5). Making the silent
-restore arm loud is a complementary one-line change and **is still owed** — the fold that skips a
-missing entry in silence is unchanged.
+**The proposal finality bound is skipped when there is no finalised block (P1, C351).**
+`create_block` computes the last finalised height and puts the whole bound **and** the isolation latch
+inside `if let Some(finalized)` (`casper/src/blocks/proposer/proposer.rs:1103-1129`). On a fresh chain
+or a sub-quorum view `last_finalized_block_hash()` is `None`, so nothing fires and a bonded validator
+can extend its chain without a lag bound — the round gate limits the rate, not the height. The Lean
+model totalises the case as genesis height 0 (`rewind_plan` does the same), and its
+`a_gate_without_the_bound_admits_a_private_chain` is exactly the skipped arm. This is the one finding
+the lenses expected to be refuted. **Remediated in §149**: the gate is total in the anchor.
 
-**Governance arithmetic is unchecked in release (P2) — closed.** `qucalc`'s `rho:gov:*` handlers
-performed plain `i64` arithmetic on values taken straight from deploy arguments with no range check. In
-debug builds this panicked and the deploy failed; in release it wrapped, and the wrapped results were
-silently wrong — `resolveWeights` returned a clamped zero where a maximum was asked for, a delegation
-could produce a *negative* weight, `censure` could promote a voucher from `i64::MIN` to `i64::MAX`, and a
-ranked tally could elect the landslide loser or report no winner for a unanimous vote. These are pure
-functions and every node wrapped identically, so it was a correctness defect for anything reading the
-governance channels as an oracle rather than a consensus split — which is why it was fixed rather than
-registered: the folds now **saturate** (`0c1ee2f2c`), and the `censure` fold's charge, which was absent
-altogether, was added with a bound measured at 14.2 s (§3).
+**The OCapN greeter dials without the dial budget (P2, C347).** A peer that completes a CapTP session
+can deliver a `handoff-give` to the published greeter, which dials the named exporter location without
+taking a unit from the `MAX_DIALED_SESSIONS` reserve
+(`ocapn/src/fixtures.rs::Greeter::receive`; contrast `ocapn/src/enliven.rs:171-182`). The registry caps
+the count at `MAX_PEERS = 256`, so it is bounded — but at 16× the documented dial reserve, and a
+documented 64-session surface becomes ~304. All four transports are off by default. **Remediated in
+§149**: both dialing fixtures take one shared permit, before the connect.
 
-**Block `timestamp` is hashed and consumed but never validated (P2 for any contract that reads it).**
-The acceptance predicates check every other field that the content hash covers, but not `timestamp`.
-`timestamp` is not merely informational: it is exposed to contracts on `rho:block:data`, so a bonded
-proposer can choose a value that every honest validator replays, and a contract that reads it changes
-its output and therefore the post-state hash. **The `version` half of this finding is closed** — its
-predicate had existed since the port with no caller, and it is now one of `block_summary`'s pure checks,
-answering `InvalidVersion`. **The `timestamp` half is the port's own and remains open**: no predicate
-was written for it, and the question of what a validator could check (a bound? a window? nothing, since
-the proposer's clock is unverifiable) has no obvious answer. The generalisable question — *which fields
-are in the hash but absent from the acceptance predicate?* — now has a three-item answer:
-`timestamp`, `rejected_blocks`, `rejected_senders`.
+**The transaction API's leg amount is bounded only by the coordinator's whole vault (P2, C348).** The
+ingress checks leg count (32) and rate (10/s) and copies `amount` through; the participant rejects
+`amount > balance` and accepts `amount == balance`, so one admitted leg can escrow the validator's
+entire vault on that shard to a caller-chosen address. This is the residual of the already-known C121:
+the load-bearing guards are the loopback admin bind and `enable-txn-api`, and a remote caller needs
+`enable-devnet-admin-public` as well. **Kept as a residual** (§149): the API still does not cap a leg,
+and the [operating page](operating.md) now says to cap the coordinator's vault rather than the
+request.
 
-**DAG memory grows quadratically in block count (P2, registered — and accepted).** Each message retains
-its whole ancestry, so total residency is N(N+1)/2 where N is every block ever accepted, and the
-message map is never pruned. This is a known, measured residual — the node's own metric reads
-17 319 555 entries at 5 885 blocks, exactly N(N+1)/2. What this pass adds is the reachability analysis:
-the input rate is attacker-controllable, and nothing a bonded validator must respect bounds it, which
-puts 16 GB of resident memory roughly twelve hours away at a two-second block interval.
+**The body and its disposition row are two transactions (P2, C350).** The receiver stores the body
+(`block_receiver.rs:559`) and then writes the `Pending` row (`:579`) in **different LMDB
+environments** (`casper/src/storage.rs:76-112`), so a crash between them leaves a stored body with no
+row. `reoffer_unsettled` iterates rows; the legacy scan is gated by a one-time marker; the periodic
+audit reports and withholds readiness but does not adopt. Recovery is a peer re-delivery or an
+operator reset. No safety breach — the verdict truth stays in DAG metadata — but a lost obligation.
+**Remediated in §149**: the ledger shares the bodies' LMDB environment and `put_across` commits both
+in one transaction.
 
-**The decision taken on it is to accept and record the rate, not to bound it** (2026-09-28). Bounding
-it means designing pruning of finalized ancestry into the DAG and its liveness rules — a design change,
-not a patch, and one that touches the rules the finalizer depends on. The rate above is the measurement
-that makes accepting it a decision rather than an omission: the growth is a known function of a known
-input, so an operator can size for it and a later pass can revisit with a number rather than a hunch.
+**A websocket client holds that transport's accept loop for ~40 s (P3, C349).** The upgrade (10 s
+timeout) and the in-band challenge (30 s read) run inside the per-transport accept task rather than
+the session task (`ocapn/src/websocket.rs:229-257`; contrast `noise.rs:301-313`). The module doc names
+the residual; only new sessions on that one optional transport are blocked. **Remediated in §149**:
+the accept is a socket accept and the upgrade runs on the connection's first use.
 
-**Fourteen lower-severity items** span: two production `await-holding-lock` sites that contradict the
-audit record's claim that only test modules remain; a published API-schema rule that states the wrong
-tag casing for the deploy-status envelope (the wire emits capitalized tags, and the machine-checked
-envelope law agrees with the wire); a served `openapi.json` that declares the wrong request body for
-`/explore-deploy`; a `cargo-deny` invocation that runs only the advisory check, leaving the authored
-licence allow-list as dead letter; no checksum, signature, SBOM or reproducible-build step in any
-workflow; a `next-audit-number` helper that does not see an allocated number and would re-issue it;
-counted-but-unenforced classes in the type-system gate; a coverage-ledger check that no workflow
-invokes; and hand-repeated counts that have drifted (the README's line count and the two documents'
-disagreement over how many crates the workspace has).
+**Two assurance findings.** Barrier B46 says "`Running` requires no unresolved orphan", but the code
+sets `Running` after a bounded audit and gates **readiness** instead (`node_phase.rs:17-24`; the code's
+own "visible, not settled" vocabulary in Law 88a is correct). And the HAZOP/resource-safety gates
+check that a named symbol *occurs in a file*, not that the named test asserts the claim — the
+discipline `check-rust-witnesses.sh` applies to the register's witness column is not applied to those
+falsifier cells. The first is C352; the second is recorded here and in §5, not as a row, because it was
+not carried through the referee queue. **Remediated in §149** for B46 (it names readiness); the
+falsifier-cell gate remains the open instrument described in §5.
 
-**All but one of those have since closed**, re-checked against the tree rather than remembered:
-`await-holding-lock` is now reported **only inside `#[cfg(test)]` modules** (the gate still allow-lists
-the lint, so this is a property of the sites, not of the lint); the deploy-status casing is stated
-correctly in `operating.md` and `building-apps.md` and held by law 43's envelope corpus; the served
-`openapi.json` declares a string body for `/api/explore-deploy` and says so in `spec/API-SCHEMA.md`;
-`cargo-deny` runs `check` rather than `check advisories`, so the licence allow-list is live; the release
-workflow publishes a checksum; `next-audit-number` reads the emitted register's own rendering, which is
-the shape it had missed; the README's lines and the crate count agree with the workspace (13);
-`coverage.yml` exists and refuses a stale commit. The one that remains is the type-system gate's
-counted classes — still reported, still not enforced — and it is no longer a *finding*: the baseline's
-own header now says they are a dated measurement rather than a ratchet, so the gate does not claim to
-enforce what it does not.
+**Liveness enforcement, re-verified (no new row).** A coalition holding strictly >2/3 of active stake
+can jail and then slash an honest validator whose blocks are merely *censored*: participation is read
+from the finalised fringe only (`casper/src/multi_parent_casper.rs:277-284`), so a validator absent
+from that fringe reads as absent, and a vote can reach it after jail. The hazard is **already
+recorded** — resource safety case H-RS-17 and RCHIP #55 §8 — and the partition arm that would measure
+it is still owed.
+
+**New surfaces, measured.** The four OCapN transports (tcp-testing-only, unix, noise, websocket) are
+all unset by default; the admin dial route is off and, when on, loopback-bound, 2/s, deny-local; the
+deploy relay is off and re-offers only already-signed, already-validated deploys (its fan-out and
+seen-set behaviour was **not** re-established as a security primitive); the hostlist is off, admits 128
+entries, caps probe bodies at 64 KiB and refuses a probe target of the wrong host class; admission is
+pool capacity with 429 + `Retry-After`, and the phase/fault gates refuse deploys on a syncing, faulted
+or isolated shard.
 
 ## 5. What a green register does not cover
 
-The project's check-off is genuinely green — **204 of 204 findings closed**, all 89 T1 rows with a
-verdict — and, unusually, the law register does not overclaim: all **88** registered Rust witnesses
-resolve to real functions, there are **zero `#[ignore]`d tests** in the tree, and the Lean gate refuses
-`sorry`, `admit` and `opaque`. That was checked adversarially rather than assumed.
+The check-off is [`spec/AUDIT.md`](../../../spec/AUDIT.md) and it says what it says — cite it, do not
+restate a total here, because a hand-typed count is the claim that rots. What the register does not
+cover is specific:
 
-What the register does not cover is specific:
+- **The cost gate reads declarations, not work.** §3 was the demonstration that no gate could see a
+  charge that does not track its work: a live cost defect on a tree where every gate was green. There
+  is one now — `spec/cost-register.tsv` with `tools/check-cost-register.py`, and a deterministic shape
+  test beside it ([the cost model](../formal/cost-model.md), pass §150) — and its limits are the next
+  bullet's shape: it fails on an arm with no declared charge, a row for nothing, and a charge moved out
+  of its arm, and the shape test fails when a charge stops growing. It **cannot** see a `linear`
+  declaration over `O(n log n)` work (the recorded log factor), a wrong declaration, or a mis-set
+  constant. A new builtin that charges nothing still passes if it *declares* `identity` or `capped` —
+  the claim is now written down and reviewable, which is the difference.
+- **The assurance gates read names, not assertions.** A HAZOP falsifier or a resource-safety evidence
+  cell that names a real test in the right file passes `--gate` without anyone checking that the test
+  asserts the deviation's negation. The register's own witness column has a run-by-name gate; these
+  cells do not.
+- **The computed gates are weaker than they read.** The type-system gate's counted classes (`cast`,
+  `lax`, `get`, `index`, `div`, `overflow`) are reported and not enforced; the ratchet that once failed
+  the build is no longer wired.
+- **The assurance floor moved down and nothing measures the new one.** The mutation harnesses were
+  deleted; the line-coverage floor is execution coverage and is satisfiable by tests that assert only
+  well-formedness. This pass could not put a mutation score on the workspace.
+- **The push path is thinner than the nightly.** The formal gate, the coverage floor and the devnet
+  fuzz are nightly or manual; a change that breaks a corpus can land on a push and stay green for a
+  day.
 
-- **The assurance floor moved down and nothing measures the new one.** The close-out deleted the
-  instrument, mutation and register-join harnesses on the grounds that their failures were always "a
-  document disagrees with the tree". That is a defensible trade, but no mutation tool remains, so the
-  real strength of the 87% line-coverage floor is now unmeasured. In the sampled module the coverage is
-  assertion-dense (five mutation-style defects, five caught); the aggregate is *execution* coverage and
-  is satisfiable by tests that assert only well-formedness. **This pass could not put a single number on
-  the workspace's mutation score, and the apparatus that would produce one was deleted.**
-- **The computed gates are weaker than they read.** The type-system gate's counted classes — `cast`,
-  `lax`, `get`, `index`, `div`, `overflow` — are reported and **not enforced**; the ratchet that once
-  failed the build is no longer wired.
-- **The push path is much thinner than the nightly.** The formal gate, the coverage floor and the devnet
-  fuzz are nightly or manual only, so a spec-side change that breaks a conformance corpus can land on a
-  push and stay green for a day.
-- **Nothing in the register asks what an attacker pays.** Cost is not a row type the audit can express.
+**A green gate is not evidence of security.** It is evidence about the class that gate can see.
 
 ## 6. Inherent and extrinsic safety
 
-Bug-hunting audits the *extrinsic* half of a security posture — what is currently broken, which bounds
-fail, which checks are missing. That half must be redone forever, because a check can be bypassed,
-removed or forgotten. The other half, in Mark Miller's distinction, is **inherent safety**: a property
-that follows from the semantics themselves, holding without trusting the implementer and without a
-runtime check continuously enforcing it.
+Bug-hunting audits the *extrinsic* half of a security posture. The other half is **inherent safety**: a
+property that follows from the semantics, without trusting the implementer or a runtime check.
 
 **Two classes of privilege-escalation defect are unrepresentable in rholang, and one is proved.**
 
-*Authority cannot be forged.* There is no grammar production that writes a private name, and no rholang
-operation destructures one. A name is allocated from a splittable hash-derived RNG and exists only to be
-received: "invoke on a channel you were not given" has no term in the language.
+*Authority cannot be forged.* No grammar production writes a private name and no rholang operation
+destructures one; a name exists only to be received.
 
 *Authority cannot be captured across a call boundary.* A COMM step transfers exactly the evaluated
-datum into the tuple space and substitutes it into the *receiver's* body in the receiver's own
-environment; the sender's environment is never consulted. Reaching into a caller's variables or
-continuation is not guarded — it is unsayable. Closedness is a **theorem**, not a convention: a closed
-program cannot *grow* a free variable by reduction. Confused-deputy, in the sense of a deputy acting
-with borrowed authority, has no expression.
-
-Also proved: substitution preserves sort and closedness, sort is functional and decidable, and
-canonicalisation is idempotent and commutative. Determinism here is itself a safety property — merge is
-a commutative monoid and canonicalisation is idempotent, so execution *order* cannot change the state,
-which removes a class of divergence rather than testing for it.
+datum into the tuple space and substitutes it into the *receiver's* body in the receiver's environment.
+Closedness is a **theorem**: a closed program cannot grow a free variable by reduction. Also proved:
+substitution preserves sort and closedness, sort is functional and decidable, canonicalisation is
+idempotent and commutative, and merge is a commutative monoid — so execution *order* cannot change the
+state.
 
 **Honest caveats.** Three, and they matter:
 
-1. **Unforgeability is axiomatised, not proved.** The claim that a name's bytes cannot be guessed rests
-   on the crypto axioms (law 19), not on a theorem. A break in the hash would falsify an axiom, not
-   contradict a proof. Say "axiomatised at the crypto boundary" — never "proved unforgeable".
-2. **The `rho:*` namespace is ambient authority.** Twenty-seven system urns are resolved
-   unconditionally for every deploy, so any contract that can spell the public string can reach the
-   channel — including `rho:gov:*`, whose folds were the pass's worst cost finding and are now charged
-   and bounded (§3, §4). Mutation methods on some channels are additionally gated by the caller's own
-   deployer identity, which is genuine capability discipline, but the channel and everything read-only
-   are ambient.
-3. **The blessed genesis keys are published constants in the source.** The capability they confer is
-   therefore forgeable, and what actually prevents their use is a negative allow-list that rejects
-   deploys signed with them. That is the cleanest seam in the codebase: a forgeable capability restored
-   by an access-control list.
+1. **Unforgeability is axiomatised, not proved** (law 19). Say "axiomatised at the crypto boundary",
+   never "proved unforgeable".
+2. **The `rho:*` namespace is ambient authority** — a fixed table of system channels resolved for
+   every deploy. `rho:gov:*` is now charged and bounded (§3), but the channels themselves are ambient.
+   The **OCapN bridge is a second ambient path**: a remote peer's delivery becomes a deploy the node
+   signs with its own key. It is off by default, rate-limited, and the dial policy constrains its
+   egress, but it is authority the language does not hand out — §4's greeter finding is in this
+   surface.
+3. **The blessed genesis keys are published constants**; what prevents their use is a negative
+   allow-list, an access-control list restoring a forgeable capability.
 
-Genuine capability distribution does exist — a deploy's own identity is bound at normalise time from its
-verified signature, so a deploy receives exactly its own identity and never anyone else's.
-
-**The honest summary:** the language and calculus are safe-by-structure and partly proved; the chain
-layer's authority distribution is access control by another name; and the cryptographic substrate is
-assumed rather than established. That is where assurance ends.
+New tied properties since September: the admission contract (law 86), the block disposition and
+proposal gates (law 88), liveness enforcement (law 89, a hard fork), the hostlist (law 90, advisory),
+and the exact decimal algebra (law 87, a hard fork). Each is machine-checked and tied to its Rust by a
+corpus or named witnesses; none of them makes a cost charge proportional or a gate see work.
 
 ## 7. Comparison with other chains
 
-**Context first, because it is the most relevant fact in any comparison.** Solana, Sui and Bitcoin SV
-are live mainnet networks and have been for years; as of September 2026 their market capitalisations
-are on the order of $70bn, $5bn and $0.4bn respectively. This node is **pre-testnet**. It has had none
-of the adversarial exposure, external audit budget or years of production hardening those networks
-have absorbed. A comparison that omits that asymmetry is not neutral — it flatters the incumbents by
-grading a codebase that has never faced an attacker as though it had.
+The question is the same for all four: *is there an operation reachable by an unauthenticated remote
+attacker whose cost to the node is superlinear in attacker input while the charge is flat?* **Every
+one has one** — a defect class in VM cost models, not one chain's weakness.
 
-With that stated, the comparison is worth making, and it is not made by reading declared limits. Four
-nodes were probed with the *same* question, because reading constants and calling them bounds is how a
-comparison goes wrong. The question was: **is there an operation reachable by an unauthenticated
-remote attacker whose cost to the node is superlinear in attacker input, while the charge to the
-attacker is flat or sublinear?**
+Pinned and read 2026-10-30: Solana (Agave) `v4.4.0` / `9ef63128`; Sui `testnet-v1.83.0` / `16d2dc1e`; Bitcoin SV
+`v1.2.3` / `6504a3af`.
 
-Every one of the four has such an operation. This is a defect class in the design of VM cost models
-generally, not a distinguishing weakness of any one chain.
-
-**Two rows below have moved since the probe, and the table is left as measured rather than edited.**
-This node's amplification instance — the `Set` dedup's Θ(N²·⁴³) for a flat 13 phlo — is now
-sort-then-dedup, i.e. Θ(N log N), and the zero-phlo governance folds are charged and bounded (§3, §4),
-so "worst instance found" describes the tree the probe ran against. The containment cell said "no
-per-block cap"; a per-block phlo cap and a validator-side deploy-count cap have since landed, which is
-the row the README's own table marks as the one this node did not lead and fixed within the day. What
-remains of that cell is the third item: there is still **no timeout on the block execution path**, and
-that is not repairable by bounding work, because a builtin cannot be interrupted (§3).
-
-| | Worst instance found | What the attacker pays | Blast-radius containment |
+| chain | worst instance at the pin | attacker pays | containment |
 |---|---|---|---|
-| **This node** | `Set` dedup Θ(N^2.43) for a flat 13 phlo; 98 CPU-seconds at N = 40 000. Plus a zero-phlo path | 13 phlo | **no per-block cap**; no deploy-count cap on validators; no block-path timeout |
-| **Solana** | `sol_big_mod_exp` charges 8 042 compute units for ≥10 ms of bignum work (≥40×). Every transaction copies up to 64 MiB of account data with **zero units charged** | flat 5 000 lamports, *identical to a transaction that loads nothing* | good: 48 M block compute-unit budget, 64 MiB loaded-data cap |
-| **Sui** | A zkLogin native charges a flat 200 units for hashing up to 256 KiB passed by reference and reusable across calls (~82× against its own keccak price) | gas; transactions bounded to 128 KiB | best of the four: instruction tiers rising to 1000×, 128 KiB transaction bound, per-package verification meter |
-| **Bitcoin SV** | `OP_CAT` doubles the top stack element with its size guard inside a pre-Genesis branch: **~40 bytes of script → roughly a terabyte of work**. The legacy sighash is Θ(N²) and reachable via an attacker-chosen flag bit, computed *before* verification | byte-shaped fees on a *failing* transaction collect nothing | **none in consensus**: opcode limit `UINT32_MAX`, stack cap `INT64_MAX`, and the cancellation token is skipped on the block path |
+| **This node** | conversions sort for a flat 18 phlo; `set`/`keys` flat; `censure` N² for Θ(U³); asymmetric `++` 3 phlo | 18–22 phlo, or N² | per-block phlo cap (25.5e9), 255-deploy cap, 600 s deadline that bounds the waiter, not the work |
+| **Solana (Agave)** | bignum is a complexity formula (base 422 / divisor 189), not September's flat 8 042; account data copied under a 64 MiB cap with no per-byte charge in the files read | 5 000 lamports whether it loads anything or not | compute-unit budget; 64 MiB cap |
+| **Sui** | gas charges bytes proportionally; September's zkLogin cell could not be re-established at this pin | gas; transactions bounded | instruction tiers; size bound; verifier meter |
+| **Bitcoin SV** | `OP_CAT` doubling with the 520-byte guard **pre-Genesis only** | fees on a failing transaction collect nothing | opcode cap is a parameter, not a consensus constant |
 
-**Where this node sits:** mid-pack on amplification — better than Bitcoin SV, comparable to Solana,
-behind Sui — and second-worst on containment, because Sui and Solana both bound the blast radius and
-this node bounds a block hardly at all. Its instance was also the narrowest of the four to repair — a
-regression against its own Scala oracle, which deduplicates through a hash set — and it is the one that
-has since been repaired (§3).
-
-On the inherent-safety axis (§6) the ordering is different, and more favourable:
-
-| | Unforgeable authority | No ambient authority | Encapsulation | Reentrancy / confused deputy | Machine-checked |
-|---|---|---|---|---|---|
-| **This node** | **unrepresentable** (soundness axiomatised) | none in the language; **27 ambient urns** in the chain layer | n/a — capabilities are copyable references by design | **unrepresentable** | **Lean 4 + Coq; closedness proved** |
-| **Sui** | **unrepresentable** — linear `UID` freshly minted from the transaction digest | banned at the bytecode level | **unrepresentable** — linear resources | **unrepresentable** — no dynamic dispatch | static verifier yes; **Move Prover absent** |
-| **Solana** | checked — a program-derived address has no private key, but granting the privilege is a runtime check | present — any program may invoke any executable program | absent — accounts are flat cloneable buffers | checked at runtime | ABI digests only, which are checksums |
-| **Bitcoin SV** | absent as a concept | fewest surfaces, by having almost no semantics | linear by consensus validation | moot — no calls exist | **nothing** |
-
-Bitcoin SV deserves the specific note that it *negates* the model deliberately: an operator RPC injects
-a consensus blacklist, and spending a blacklisted output causes blocks on the active chain to be
-disconnected. That is safety by legal process rather than by semantic property — the opposite of what an
-object-capability design is for. Sui is the closest analogue to this node and makes a broader set of
-properties unrepresentable, but enforces them with a static verifier at publish time rather than in the
-semantics, and its prover does not ship.
-
-**Caveats that limit this table.** Solana's VM and bignum library are unvendored registry pins, and
-Sui's crypto and P2P layers are git dependencies, so in both cases the component the worst native calls
-into — and, for Sui, the entire network ingress path — could not be read. That is recorded as "could not
-trace", not as a clean bill of health. The Solana tree compared is the archived `solana-labs/solana`
-monorepo, whose last commit predates this audit; the live lineage is Anza's Agave fork.
+This node was mid-pack on amplification **at the pin**: the caps and the deadline existed, the
+deadline bounds the waiter rather than a synchronous builtin, and the conversion family was unpriced.
+**The same PR that reported it priced it** (§149): the conversions and the union charge their output,
+and `censure` its cube (Law 91), so the row above is history rather than today's arithmetic — and what
+remains is the log factor of a sort, not a flat charge. The
+structural axes — authority, encapsulation, machine-checking — are unchanged from September; the
+[README's table](../../../README.md) carries them. Sui's crypto/P2P and Solana's Agave VM are unvendored, so
+those cells are **could not trace**, not cleared. Market-cap figures are dropped: they age fastest and
+have no gate.
 
 ## 8. Open questions
 
-**These are decisions, not defects, and the close-out left them open on purpose.** Nothing here is
-something the review found broken and nobody got to; each is a choice the project has to make
-deliberately, and the close-out recorded them as an agenda rather than resolving them on the way past.
-A reader looking for what is *unfinished* should read this section; a reader looking for what was
-*found* should read §3 and §4. **One item has left this list since it was written** — the `legacy/`
-tree, which was not decided but resolved — and it is kept below as a closed entry rather than deleted,
-so a later reader does not raise it again.
+These are decisions, not defects.
 
-**Active-validator-set selection has no oracle — and the rule has now been changed, which is why this
-item was acted on rather than left listed.** The law register pins the epoch-boundary *timing*, not the
-membership: if the rule is wrong, the epoch-boundary validator set differs from any other
-implementation — a chain split — with nothing in either oracle able to arbitrate. That is still true of
-the rule that replaced the old one. What is *no longer* true is the specific defect the review found
-while reading it: the old seed, `hash(shard_id, block_number, sender, pre_state_hash)`, was computed at
-the moment of use, so the proposer of the drawing block could reroll the set freely by proposing a
-different block — a free, unbounded reroll by the one party that also chose the sample frame. As of
-2026-09-28 `select_active` draws uniformly without replacement from the pool, seeded by a
-`pos:epoch_seed` leaf written one boundary ahead from the **last finalised fringe's state hash** — the
->2/3-agreed frontier, which no single proposer moves — so the block that draws is not the block that
-chose the entropy, and the entropy is not one party's to choose. **The residuals are named in [`spec/RUST-VS-SCALA.md`](../../../spec/RUST-VS-SCALA.md)
-§3 item 12** — the seed-setter's influence through its justification set (reduced, not closed: a
-proposer may still present a stale fringe, so the steering space is the distinct fringes its own
-candidates induce rather than one per justification subset — and the pre-state anchor that would
-have restored the larger space is deliberately *not* kept beside the fringe), capital pre-positioning
-before a public seed, the per-key exposure the draw carried while it was uniform, and a security budget
-that now fluctuates epoch to epoch — **and the uniform rule was revisited on 2026-10-02**: the draw is
-now stake-weighted, so the per-key exposure is closed and what remains is that the draw is *sequential*,
-which makes the first slot exactly proportional and the later ones proportional to the weights that
-remain. **And the draw carries a liveness consequence that the deterministic rule masked**,
-measured on devnets with a cap below the validator count: an epoch's proposal duty can land on a
-validator whose own view of the active set is stale, while the node that could propose is drawn out —
-so the chain waits. With no cap every bonded validator is always in the set, so there is always a
-proposer; that is why this arrives with the draw rather than before it. The gate that produces it is
-*self-imposed* — a drawn-out validator's block would still be accepted by its peers, since no
-receiving-side rule tests the sender against the active set — so reading the **pool** rather than the
-drawn set in `check_active_validator` would remove the hazard, at the cost of letting non-active
-validators propose. That is a change to proposal behaviour and is left as a decision. Measurements and
-the control are in [`spec/RUST-VS-SCALA.md`](../../../spec/RUST-VS-SCALA.md) §3 item 12.
-The membership predicate remains unverified by either oracle; it is now *different* and *documented*,
-which is not the same as *checked*.
+- **The cost gate's blind spots, not the gate itself.** The instrument exists now
+  ([the cost model](../formal/cost-model.md), §150): a register over every priced operation, a census
+  that refuses an undeclared arm, and a deterministic shape test. Its first census found two more live
+  instances (`set.add`, and the tallies' uncounted option lists) — which is the argument for it. What
+  it still cannot see is the *work*: a `linear` row over `O(n log n)` code, a wrong declaration, and a
+  mis-set constant all pass. The first is the log-factor decision below; the last is a measurement
+  nobody has done (one phlo per operation is a count, not a calibrated unit).
+- **The charge's shape at the margin.** The conversions are linear for `O(n log n)` work, so a phlo buys
+  work bounded by `charge · log charge`. Bounded is the requirement the defect violated; an exact price
+  of a comparison is a larger decision.
+- **A far-future block timestamp.** The lower bound landed; the future direction is still accepted by
+  design (#223). The decision is open.
+- **The transaction API's amount.** Decided as a residual (§149): no API cap, and the operator caps the
+  coordinator's vault. If a network later wants a sub-balance bound, it is a policy on top of the
+  chain's, and it is a decision rather than a fix.
+- **The rejection sets.** `rejected_deploys` is compared on replay; `rejected_blocks` and
+  `rejected_senders` are hashed and carried but not compared. Show reachability or record them inert.
+- **The deploy relay.** Fan-out defaults to every peer and the seen set clears at 100 000; the harm was
+  not established, but the fan-out policy is a tuning decision worth stating.
+- **Active-validator-set selection.** The epoch seed is drawn from the finalised fringe; a proposer
+  presenting a stale reachable fringe retains a handful of choices. The residuals are named in
+  [`spec/RUST-VS-SCALA.md`](../../../spec/RUST-VS-SCALA.md) §3 item 12.
+- **Permissive defaults** (epoch length 0, bond minimum 0) remain reachable only on ad-hoc runtimes;
+  **term-depth margin** remains a proof debt; the **fringe liveness predicate** still counts messages
+  rather than senders.
+- **The hard-fork schedule** for laws 87 (decimal), 88 (disposition), 89 (liveness), 90 (hostlist) and
+  91 (the charge magnitudes): which network arms which, and when. **91 is the one that ships ungated
+  and cannot wait for a schedule** — it changes a block's post-state hash, so every validator on a
+  network must move together and every pinned genesis hash must be regenerated (§149).
 
-**Two permissive defaults define what the contract treats as an arithmetic fault.** An epoch length of
-zero and a minimum bond of zero make every block an epoch boundary and zero the reward, where the
-contract divides by both and faults — a node running these mints and pays on a schedule the contract
-cannot express. **Where they are reachable is narrower than it first reads, and worth stating**: a
-*configured* node never sees them (`epoch-length` is 10000 and `bond-minimum` 1 in
-`node/src/configuration/`), and `PosParams::default()` is reached only when no genesis PoS state has
-been installed at all (`rholang/src/native_state.rs`, the `None` arm of the params read). So this is a
-decision about ad-hoc runtimes and tests, not about a devnet or a testnet.
+## 9. The September 2026 pass (historical)
 
-**Whether the margin on term depth is worth stating.** The parser and storage depth guards have
-measured values but their agreement with the depth measure is an acknowledged proof debt. They are also
-a hard fork: a term an older node accepts, a newer one refuses.
+The first pass ran at `67dd6fb7b` (2026-09-28) with three lenses and a rebuilt refutation stage using
+**three** verdicts (`CONFIRMED` / `NOT-RE-ESTABLISHED` / `REFUTED`). It confirmed no P0, three P1 sharing
+one root cause (the gas model), four P2 and fourteen P3, left one item not re-established, and refuted
+ten candidates — including a deeply-nested-protobuf stack exhaustion (the decoder's recursion limit)
+and a `qucalc` overflow panic (the spawn/join boundary).
 
-**Resolved: the `legacy/` tree was archived out of the working tree** (2026-09-28). It was built and
-scanned by no CI job, and it carried its own 2020–21 dependency manifest whose advisories `cargo-deny`
-cannot see because it walks only the Rust lockfile — so it was never a runtime surface, but
-re-enabling its build would have resolved to known-vulnerable versions with nothing to say so. It now
-lives at the commit that froze it (`1b7583649`), and every `legacy/…` citation in this repository — in
-code comments, in `spec/`, and in this book — resolves there, which is why the revision is recorded
-rather than the tree merely deleted. See the README's *Where the Scala went*.
+Its principal finding was that `Set.union` deduplicated through a linear scan — Θ(N²·⁴³) for a flat 13
+phlo, **98 CPU-seconds at N = 40 000** — with the aggravating facts that execution-time parsing was
+uncharged, nothing bounded a block's total work, and a running call could not be interrupted. Its
+remediation landed days later: sort-then-dedup, the block phlo and deploy-count caps, the parse charge,
+the governance bound, and a sweep of charges that did not track their work. One planned fix was
+reverted because the finding did not survive implementation.
 
-**Whether the fringe's liveness predicate should be re-decided.** It compares cardinalities — how many
-messages, not which senders — so two messages from one sender plus one from a second satisfy a
-three-validator bond map. This is a faithful port of an upstream gap and is already registered as an
-upstream design property; it is listed here only because a liveness rule that counts rather than names
-is the kind of thing worth re-deciding deliberately rather than inheriting.
+Its other confirmed items were the DAG crash wedge (since retired with the fringe-data record), the
+governance saturating arithmetic, the unvalidated block timestamp (since half-closed), the accepted
+quadratic DAG residency, and fourteen lower-severity items. Its open questions — the active-set seed,
+the permissive defaults, the depth margin, the fringe predicate — are carried into §8.
+
+**These numbers are true of `67dd6fb7b`.** For a current status, read
+[`spec/AUDIT.md`](../../../spec/AUDIT.md), not this section.

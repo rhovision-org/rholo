@@ -15,6 +15,13 @@ pub trait KeyValueStore {
     fn delete(&mut self, keys: &[Vec<u8>]) -> Result<usize, String>;
     fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String>;
 
+    /// **Every key, without the values.** The default is an `entries` scan and therefore copies
+    /// every value; a store that can walk its keys alone (LMDB's read cursor) must override it.
+    /// Added for the stored-body audit, which needs the block store's hashes and never the bodies.
+    fn keys(&self) -> Result<Vec<Vec<u8>>, String> {
+        Ok(self.entries()?.into_iter().map(|(key, _)| key).collect())
+    }
+
     /// Number of records currently stored. Defaults to an O(n) `entries` scan; implementations
     /// may override with a cheaper count.
     fn num_records(&self) -> usize {
@@ -59,6 +66,10 @@ impl KeyValueStore for InMemoryKeyValueStore {
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect())
+    }
+
+    fn keys(&self) -> Result<Vec<Vec<u8>>, String> {
+        Ok(self.map.keys().cloned().collect())
     }
 
     fn num_records(&self) -> usize {
@@ -111,6 +122,22 @@ mod tests {
             store.get(&[k("a"), k("b")]).unwrap(),
             vec![None, Some(vec![2])]
         );
+    }
+
+    /// **Keys without values.** The InMemory override must not clone values (the default would);
+    /// the assertion is on the exact key set.
+    #[test]
+    fn keys_returns_every_key_without_values() {
+        let mut store = InMemoryKeyValueStore::default();
+        store
+            .put(vec![
+                (b"a".to_vec(), vec![1, 2, 3]),
+                (b"b".to_vec(), vec![4]),
+            ])
+            .unwrap();
+        let mut keys = store.keys().expect("keys");
+        keys.sort();
+        assert_eq!(keys, vec![b"a".to_vec(), b"b".to_vec()]);
     }
 
     #[test]

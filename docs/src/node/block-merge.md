@@ -25,7 +25,7 @@ longer re-executes other branches' deploys.
 |---|---|
 | conflict set (events back to the last finalized block) | the **merge scope** — `MergeScope { final_scope, conflict_scope }` built from the merge fringe and the final fringe (`casper/src/merging.rs`) |
 | per-deploy event log | `EventLogIndex` (`rspace/src/merger/event_log_index.rs`): the produces/consumes/joins a deploy touched, each classified (created / destroyed / copied by peek / existed in pre-state / touches a pre-state join), plus `NumberChannelsDiff` for mergeable channels |
-| a block's changes | `BlockIndex` → `Vec<DeployChainIndex>`; each chain carries its `StateChange` (the trie-level diff), its `EventLogIndex` **and its own `native_effects`** — the native writes of the deploys *it* carries, and of no other chain's (#280) |
+| a block's changes | `BlockIndex` → `Vec<DeployChainIndex>`; each chain carries its `StateChange` (the trie-level diff), its `EventLogIndex` **and its own `native_effects`** — the native writes of the deploys *it* carries, and of no other chain's |
 | denied deploys written into the block | `BlockMessage::rejected_deploys` (the `rejectedDeploys` field) |
 | apply the surviving changes to the base state | `MergeScope::compute_merged_state` → `StateChange::combine` → `compute_trie_actions` (`rspace/src/merger/state_change_merger.rs`) → `HotStoreTrieAction`s → one checkpoint on the base history |
 | "the deployer is not charged, the validator is not rewarded" | see *Open items* — the effects are excluded from the merged state; the accounting consequence is not implemented |
@@ -43,7 +43,7 @@ a port of `EventLogMergingLogic.scala`):
 - a **shared deploy id** is always a conflict (`DeployChainIndex::deploys_are_conflicting`).
 
 That is the counterpart of `MergeabilityRules.scala`; the RSpace-level rules that the Scala
-implementation was missing (see the issue thread) are here, which is why the merge can be applied
+implementation was missing are here, which is why the merge can be applied
 without replay.
 
 ## The diff unit is the channel, not the event
@@ -52,7 +52,8 @@ without replay.
 (consumes), because that is the trie leaf the merge writes. A consume-and-replace deploy records the
 consumed datum (the `Comm`, in `produces_consumed`) and the produced datum (the `Produce`, in
 `produces_linear`) on the **same** channel with different event hashes; a per-event pass diffs that
-channel twice and appends the produced datum twice (issue #420, AUDIT **C336**). Both collectors are
+channel twice and appends the produced datum twice
+([Incident history](incident-history.md#the-finalized-merge-duplicate)). Both collectors are
 `BTreeSet`s for this reason — `Vec::dedup` would not do, because entries arrive in event-hash order, not
 grouped by channel. The joins map is keyed by the channel set and is idempotent.
 
@@ -96,17 +97,13 @@ was honest. Both are required, and both are deterministic.
 - the merge scope, the conflict/dependency maps, the rejection options and the optimum are all
   functions of the DAG and the event logs — no clocks, no maps with undefined iteration order
   (`BTreeMap`/`BTreeSet` throughout);
-- **and a chain's fate does not move when the scope does** (#280). "A function of the DAG" is true
-  of the resolution and was not sufficient: the native relation used to be keyed on the *host block*,
-  so a chain was a conflict partner for a slot its block wrote and its rejection was closed over the
-  whole block. At an epoch boundary — where every block runs `close_block` — every concurrent pair
-  conflicted, and the same round resolved differently once the fringe advanced past it, which is how
-  a committed deploy's write came to be present at three heights and gone from the fourth on every
-  node at once (`spec/audit/evidence/n280-merge-loses-a-write-results.md`). The relation is now on
-  each chain's **own** native writes, the whole-block rule is deleted rather than narrowed, and the
-  acceptance of a chain that wrote no contended slot is the same in every scope it can appear in.
-  Its law is **17c** (`spec/INVENTORY.md`); the `tests/` half is
-  `casper/src/merging.rs::boundary_merge_tests`;
+- **and a chain's fate does not move when the scope does.** "A function of the DAG" is true of the
+  resolution and was not sufficient: the native relation is on each chain's **own** native writes, the
+  whole-block rule is deleted rather than narrowed, and the acceptance of a chain that wrote no
+  contended slot is the same in every scope it can appear in. Its law is **17c**
+  (`spec/INVENTORY.md`); the `tests/` half is
+  `casper/src/merging.rs::boundary_merge_tests`. The epoch-boundary write loss that motivated this is
+  in [Incident history](incident-history.md#k8-write-loss-at-an-epoch-boundary);
 - `StateChange::apply` diffs each affected channel once. This is a **deliberate deviation from the
   pinned Scala oracle**: `StateChange.scala::apply` at `1b7583649` maps the affected produces/consumes
   to sequences and appends `curVal.added ++ change.added`, so a consume-and-replace is diffed twice and
@@ -114,7 +111,7 @@ was honest. Both are required, and both are deterministic.
   continuations on one channel set) now produces a different merged state hash; every validator must
   run the fix from the fork point, and the deployed testnet chain is already bagged and cannot be
   repaired. `rejectedDeploys` does not move; the divergence appears as a pre-state-hash disagreement
-  (`spec/audit/passes.md` §6, AUDIT **C336**);
+  (`spec/audit/passes.md` §6; [Incident history](incident-history.md#the-finalized-merge-duplicate));
 - `StateChange::combine` is a **monoid** and the mergeable-channel sum is commutative (**Law 9**), so
   independent logs merge in any order;
 - the trie update is content-addressed (**Law 10**), so the merged state hash is a function of the
@@ -134,12 +131,11 @@ was honest. Both are required, and both are deterministic.
   and a refund path the Scala does not have — a consensus change with no oracle. Treat as an open
   design question, not a settled behaviour.
 
-  **What the epoch work changed about it** (laws 44–47, 2026-09-23): the deployer's phlo used to be
-  burned, so "the validator is not rewarded" was true for want of any reward at all. It is now
-  deposited into the staking vault (`Pos.rhox:397-404`) and distributed by the epoch to the active
-  set, so the RCHIP's second half has become false in a new and *indirect* way: the denied deploy's
-  phlo reaches the validators at the next epoch boundary, and this port's rewards are per-epoch, with
-  no per-deploy counterpart in which "not rewarded *for this deploy*" could be stated.
+  **Laws 44–47 change what "not rewarded" means.** The deployer's phlo is deposited into the staking
+  vault (`Pos.rhox:397-404`) and distributed by the epoch to the active set, so the RCHIP's second
+  half is false in an *indirect* way: the denied deploy's phlo reaches the validators at the next
+  epoch boundary, and this port's rewards are per-epoch, with no per-deploy counterpart in which "not
+  rewarded *for this deploy*" could be stated.
 - **The RCHIP's `RuntimeManager` obstacle is addressed differently.** The proposal notes that a global
   lock plus a singleton interpreter with global cost state prevented parallel execution. In this port
   block validation **forks a replay runtime** at the block's pre-state

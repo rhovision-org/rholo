@@ -3,8 +3,9 @@
 This page is for a developer whose code is **not Rholang**: you have an Agoric vat, an `@endo/ocapn`
 client, or another CapTP implementation, and you want to hold and call objects on a running node.
 
-For what the node exposes and how to configure it, see [OCapN interoperability](../node/ocapn.md).
-This page is the client side: connect, fetch, call, read.
+**How-to.** For what the node exposes and how to configure it, see
+[the OCapN technical reference](../node/ocapn.md). This page is the client side: connect, fetch, call,
+read.
 
 ## 1. Turn the listener on
 
@@ -142,7 +143,7 @@ Two behaviours to expect:
 - **Capabilities cross as references, values cross as data.** The kit's members and the purse above
   are remote references — the underlying Rholang names never leave the node. A `(true, 0)` reply crosses
   as OCapN's **tagged** value, `<desc:tagged 'rho:tuple' [true 0]>`, and comes back a tuple — Law 59
-  (AUDIT C226). It crossed as a bare list once, and a list does not match a contract's
+ . It crossed as a bare list once, and a list does not match a contract's
   `(brand, value)` pattern; that is why §5's round trip is possible at all.
 
 ## 5. What works today
@@ -158,21 +159,16 @@ Two behaviours to expect:
 The last row is the edge that has since been crossed. A tuple crosses to a peer as OCapN's **tagged**
 value — `<desc:tagged 'rho:tuple' [fields…]>` — because a Syrup record is labelled and a Rholang tuple
 has no label, and it comes back a **tuple**, so a contract's `(brand, value)` pattern matches. (A bare
-list would not; that was the reading this wire shape replaced — AUDIT C226, Law 59.) The arms that
+list would not; that was the reading this wire shape replaced — Law 59.) The arms that
 *move* value — `mintPayment(amount)`, `withdraw(amount)`, `revFund(funder, amount)` — are therefore
 reachable. See [ERTP](../node/ertp.md) for the ledger underneath.
 
 Also note:
 
-- **Bridged deploys are rate-limited** to 4 per second across every session and capability; past that
-  a delivery is refused with a reason naming the bound. Under that total, **one capability may take at
-  most 1 per second** (W-N8-02), so the object a peer loops on cannot starve the node's other exported
-  capabilities — the refusal names which of the two bounds was hit.
-- **The node is the on-chain caller.** Every bridged deploy is signed by the node's deployer key, so
-  the chain sees the node, not you. There is no session-to-deployer binding yet.
-- **The node serves a fixed number of sessions** (64) — 48 to the connections it accepts, shared between
-  whatever transports are listening, and 16 reserved for the sessions it dials itself. Past that a new
-  connection is closed, and a dial past the reserve is refused with a reason naming the reserve.
+- **Bridged deploys are rate-limited** and **the node is the on-chain caller**: every delivery is
+  signed by the node's deployer key, so the chain sees the node, not you, and there is no
+  session-to-deployer binding yet. The exact rates and the fixed session count (48 accepted + 16
+  dialled) are in [the reference](../node/ocapn.md#limits).
 
 ## 6. Putting a shard in front of the peers
 
@@ -196,7 +192,7 @@ casper {
   ]
   # The cross-shard routes, on the ADMIN server. Only a node with more than one shard
   # membership and a validator key serves them; the coordinator signs each leg with that
-  # key and spends from its own REV account (AUDIT C121).
+  # key and spends from its own REV account.
   enable-txn-api = true
 }
 api-server {
@@ -237,7 +233,7 @@ in this section has not been run in this repository. It is the deployment these 
 recipe anyone has followed.
 
 **Dialling out.** The node dials on a peer's word — the enlivener connects to a sturdyref's locator and
-the greeter to a handoff give's `exporter-location` — and, since issue #249, on its **own**: `POST
+the greeter to a handoff give's `exporter-location` — and, now, on its **own**: `POST
 /api/v1/ocapn/dial` on the admin server makes the node dial a peer a caller names and fetch the object
 at the swiss number it gives. Both uses are the *same code* (`Enlivener::dial_and_fetch`), because a
 dial the node starts and one a peer asked for differ in who asked, not in what a dial is.
@@ -302,7 +298,7 @@ pinned commit, against this module, and the handshake completes. **Read that tra
 anything in the handshake**: it also says what the run does *not* cover — the record framing, for which
 the reference ships no counterpart.
 
-**And that is still true of the reference today** (AUDIT C227). Upstream `packages/ocapn-noise/src/`
+**And that is still true of the reference today**. Upstream `packages/ocapn-noise/src/`
 contains `bindings.js` **and no netlayer**, so the session framing is this port's own: a `u32` ciphertext
 length, with a message larger than one cipher message split into chunks at a private boundary. It is the
 only OCapN TCP transport that does not netstring — the Python suite, Endo's `tcp-test-only`, and the one
@@ -328,7 +324,7 @@ that signature against the key the dial named. As Endo writes it, `ws://` has **
 The reference also sets **no size limit and no timeout anywhere**; the bounds in the module are this
 port's additions and say so.
 
-**Name this node the way that peer does** (AUDIT C245). Endo identifies a location by
+**Name this node the way that peer does**. Endo identifies a location by
 `ocapn://<designator>.<transport>?<sorted hints>` — every hint included — and resolves a session under
 the location it dialled, so its `designator` for this node is `base32(Ed25519 verifying key)`, which is
 what this node advertises and what a client must dial. A hex designator, or one carrying a hint the

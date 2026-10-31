@@ -201,6 +201,30 @@ mod tests {
         assert!(BlockMessageCodec.decode(&[]).is_err());
     }
 
+    /// **The stored form does not change what a block hashes to** — #457's codec hypothesis.
+    ///
+    /// The block walk re-derives a downloaded block's hash and refuses an answer whose content does not
+    /// match the key it was requested under (`validate::block_hash`). If the protobuf/LZ4 round trip
+    /// dropped or reordered a hashed field, every answer for a stored block would be refused for a
+    /// *systematic* reason, which would look exactly like the live walk's stall. This pins the bridge:
+    /// a block whose hash is its content hash still has that hash after the codec.
+    #[test]
+    fn a_decoded_block_still_hashes_to_its_hash() {
+        let mut block = block();
+        block.block_hash = BlockHash::from(Blake2b256Hash::create(&block.to_bytes_cleared()));
+
+        let stored = BlockMessageCodec.encode(&block);
+        let decoded = BlockMessageCodec.decode(&stored).expect("round trip");
+
+        assert_eq!(
+            BlockHash::from(Blake2b256Hash::create(&decoded.to_bytes_cleared())),
+            decoded.block_hash,
+            "every field the hash covers survived the codec; a mismatch here is a wire cause of \
+             #457, not a walk cause"
+        );
+        assert_eq!(decoded, block);
+    }
+
     /// The protobuf codecs round-trip their values, and malformed bytes are an error rather than a
     /// default-valued message (which a store would then serve as real metadata).
     ///

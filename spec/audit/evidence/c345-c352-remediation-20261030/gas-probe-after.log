@@ -1,0 +1,48 @@
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/feature+node-hostlist/rholang)
+    Finished `release` profile [optimized] target(s) in 19.57s
+     Running tests/gas_amplification.rs (target/release/deps/gas_amplification-86690bff6be18acb)
+
+running 6 tests
+test a_conversion_charges_its_output ... case,n,plain_phlo,converted_phlo,delta_phlo,plain_ms,converted_ms
+toSet,500,8875,10393,1518,9,6
+toSet,1000,17875,20893,3018,9,11
+toSet,2000,36875,42893,6018,17,24
+toSet,4000,74879,86897,12018,38,46
+toSet,10000,192495,222513,30018,100,127
+toSet,20000,412495,472513,60018,232,332
+toSet,40000,852495,972513,120018,493,612
+ok
+test a_map_conversion_charges_its_output ... case,n,plain_phlo,converted_phlo,delta_phlo,plain_ms,converted_ms
+toMap,500,25637,22155,-3482,17,17
+toMap,1000,51641,44655,-6986,37,34
+toMap,2000,105641,91659,-13982,94,72
+toMap,4000,213641,185659,-27982,191,174
+toMap,10000,544873,474891,-69982,619,473
+ok
+test censure_is_cubic_in_the_universe ... members,512,512,0,0,33
+balanced,512,171,170,171,5
+censure-heavy,512,86,340,86,1
+voucher-heavy,512,86,86,340,1
+ok
+test keys_charges_its_output ... case,n,baseline_phlo,keys_phlo,delta_phlo,baseline_ms,keys_ms
+keys,500,22155,14800,-7355,21,17
+keys,1000,44655,29800,-14855,32,34
+keys,2000,91659,61800,-29859,70,73
+keys,4000,185659,125804,-59855,157,201
+keys,10000,474891,321420,-153471,564,577
+ok
+test set_charges_its_output ... case,n,baseline_phlo,set_phlo,delta_phlo,baseline_ms,set_ms
+set,500,22155,23677,1522,22,20
+set,1000,44655,47677,3022,34,50
+set,2000,91659,97681,6022,85,90
+set,4000,185659,197681,12022,159,198
+set,10000,474891,504913,30022,497,621
+ok
+test the_union_charge_tracks_its_work ... case,n,plain_phlo,union_phlo,delta_phlo,plain_ms,union_ms
+union,1000,17875,33824,15949,8,22
+union,5000,93879,177828,83949,45,125
+union,10000,192495,361444,168949,101,317
+ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.16s
+

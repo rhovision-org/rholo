@@ -1,0 +1,5 @@
+{
+  "agave": {"tag": "v4.4.0", "commit": "9ef63128134af559561f6a91a641ec01e665c70d"},
+  "sui": {"tag": "testnet-v1.83.0", "commit": "16d2dc1e05edcf600320a82e17b9392edb0983a5", "sparse": true},
+  "bsv": {"tag": "v1.2.3", "commit": "6504a3aff65ba97c0f6c80962b033e35ecbfed4b"}
+}

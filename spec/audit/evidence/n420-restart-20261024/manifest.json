@@ -1,0 +1,15 @@
+{
+  "boundary": "finite restart/replay witness on a below-minimum host; not supported-tier acceptance",
+  "source_dev_sha": "7878df9e2",
+  "image": "sha256:16ea238f769d25fb6d74ecb635892bd6b8ef35632b31ec8e5c4d830bd8fe9bbf",
+  "observed_date": "2026-10-24",
+  "files": {
+    "README.md": "382ab58245379157141a4bc21ba02bdbe4b4a2595f4d7914ae8f87c799037a3c",
+    "restart.json": "e75a25797f58833a383cf42d9e0b79a04ffc1d48633887e2a0a54af3dc47ec1d"
+  },
+  "non_claims": [
+    "one node, one SIGKILL; not a universal recovery theorem",
+    "restarted with the operator's explicit override on a below-minimum host",
+    "no live network was touched"
+  ]
+}

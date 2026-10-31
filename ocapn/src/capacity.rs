@@ -185,6 +185,31 @@ pub const MAX_PEERS: usize = 256;
 /// an operator's own tooling needs is small, and the transports' capacity is not what pays for it.
 pub const MAX_DIALED_SESSIONS: usize = 16;
 
+/// **Take a slot from the node's own-dial budget, before the socket is opened** (HAZOP row C241;
+/// C347 for the second caller).
+///
+/// Two fixtures dial — the enlivener and the greeter — and both must draw from the one semaphore the
+/// node installs, so the sessions the node *starts* are bounded by [`MAX_DIALED_SESSIONS`] rather than
+/// by [`MAX_PEERS`]. `None` is the conformance harness, which installs no budget: its dials happen
+/// inside a session that already holds a slot.
+///
+/// **The permit's lifetime is the caller's.** A dialer holds it in the task that serves the session,
+/// so the slot lasts exactly as long as the session and a peer that closes releases it; taking it
+/// before the connect is what makes a dial the node cannot afford one it does not open.
+pub(crate) fn reserve_dial_slot(
+    dials: &Option<std::sync::Arc<tokio::sync::Semaphore>>,
+) -> Result<Option<tokio::sync::OwnedSemaphorePermit>, String> {
+    match dials {
+        Some(dials) => match dials.clone().try_acquire_owned() {
+            Ok(permit) => Ok(Some(permit)),
+            Err(_) => Err(format!(
+                "this node already holds as many dialed sessions as it may ({MAX_DIALED_SESSIONS})"
+            )),
+        },
+        None => Ok(None),
+    }
+}
+
 /// Longest gift id accepted, in bytes. A gift id is a peer's own name for a handoff; 64 bytes is past
 /// every real one and far below the 4 MiB message cap that would otherwise be the key's size.
 pub const MAX_GIFT_ID: usize = 64;
@@ -287,5 +312,55 @@ mod tests {
 
         let too_long = BTreeMap::from([("host".to_string(), "x".repeat(MAX_HINT_VALUE + 1))]);
         assert!(check_peer_sized("d", "t", &too_long).is_err());
+    }
+
+    /// **A dial takes a slot from the shared budget, and the refusal names the ceiling** (C347).
+    ///
+    /// Both dialing fixtures go through this function, so there is one rule: at most
+    /// `MAX_DIALED_SESSIONS` node-started sessions, taken before the connect, released when the
+    /// session's own task ends.
+    #[test]
+    fn a_dial_slot_is_taken_from_the_shared_budget_and_released_with_the_permit() {
+        // The conformance harness installs no budget: its dials happen inside a session that
+        // already holds a slot.
+        assert!(reserve_dial_slot(&None)
+            .expect("no budget is not a refusal")
+            .is_none());
+
+        let dials = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DIALED_SESSIONS));
+        let held: Vec<_> = (0..MAX_DIALED_SESSIONS)
+            .map(|_| reserve_dial_slot(&Some(dials.clone())).expect("within the budget"))
+            .collect();
+        assert!(held.iter().all(|permit| permit.is_some()));
+
+        let err = reserve_dial_slot(&Some(dials.clone())).expect_err("the budget is spent");
+        assert!(
+            err.contains(&MAX_DIALED_SESSIONS.to_string()),
+            "the refusal names the ceiling it hit: {err}"
+        );
+
+        // A closed session releases its slot, so the bound is on *concurrent* dials.
+        drop(held);
+        assert!(reserve_dial_slot(&Some(dials))
+            .expect("a released slot is free")
+            .is_some());
+    }
+
+    /// **Every dialing fixture draws from the shared budget**, asserted at the source.
+    ///
+    /// The rule has one implementation and two callers, and a caller that stops drawing from it is
+    /// the defect C347 names coming back. The dial itself needs a live session to reach, so the
+    /// call site — not the dial — is what this pins: the conformance fixtures are exercised end to
+    /// end by the reference suite, which is a Python process this crate does not run.
+    #[test]
+    fn every_dialing_fixture_draws_from_the_shared_budget() {
+        for file in ["src/enliven.rs", "src/fixtures.rs"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
+            let text = std::fs::read_to_string(&path).expect("the fixture source is readable");
+            assert!(
+                text.contains("reserve_dial_slot"),
+                "{file} dials without drawing from the node's dial budget"
+            );
+        }
     }
 }

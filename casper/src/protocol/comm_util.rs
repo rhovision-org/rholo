@@ -73,6 +73,13 @@ impl CommUtil {
         }
     }
 
+    /// The peers this node is connected to. The block walk broadcasts its requests to this set, and
+    /// the give-up diagnostic lists the members that never answered — the reachability shape of a
+    /// joiner whose inbound protocol/discovery ports admit only its bootstrap.
+    pub async fn connected_peers(&self) -> Vec<PeerNode> {
+        self.connections.read().await.clone()
+    }
+
     /// Broadcast a packet (in one piece) to up to `scope_size` random peers (port of `sendToPeers`).
     pub async fn send_to_peers(&self, message: &Packet, scope_size: Option<usize>) {
         let max = scope_size.unwrap_or(self.conf.max_num_of_connections);
@@ -179,6 +186,23 @@ impl CommUtil {
                     peer.endpoint.host
                 ),
             );
+        }
+    }
+
+    /// Fetch LFS ancestry from the configured source of the admitted fringe and
+    /// state pages. A discovered peer can acknowledge a request while its reply
+    /// path to the joiner is blocked; choosing one at random then costs an idle
+    /// retry for each ancestry frontier. The bootstrap is usable before it enters
+    /// the discovery connection set. Block hashes are still verified by the walk,
+    /// and an unserved block still fails under its existing bounded retry policy.
+    pub async fn request_lfs_block(&self, hash: &BlockHash) -> Vec<PeerNode> {
+        if let Some(bootstrap) = &self.conf.bootstrap {
+            self.request_for_block(bootstrap, hash).await;
+            vec![bootstrap.clone()]
+        } else {
+            // Standalone callers have no admitted bootstrap; retain their
+            // peer-based block walk rather than inventing a state source.
+            self.broadcast_request_for_block(hash, Some(1)).await
         }
     }
 
@@ -325,10 +349,23 @@ impl CommUtil {
         self.send_to_peers(&packet, None).await;
     }
 
-    /// Broadcast a request for a block (port of `broadcastRequestForBlock`).
-    pub async fn broadcast_request_for_block(&self, hash: &BlockHash, scope_size: Option<usize>) {
+    /// Broadcast a request for a block and report **which peers it was sent to** — the per-hash
+    /// attribution the join diagnostic needs (#457). `send_to_peers` picks a random subset, so the
+    /// connection set is not the asked set; this returns the subset it actually used.
+    pub async fn broadcast_request_for_block(
+        &self,
+        hash: &BlockHash,
+        scope_size: Option<usize>,
+    ) -> Vec<PeerNode> {
         let packet = BlockRequestSerde.mk_packet(&BlockRequest { hash: *hash });
-        self.send_to_peers(&packet, scope_size).await;
+        let max = scope_size.unwrap_or(self.conf.max_num_of_connections);
+        let peers = {
+            let connections = self.connections.read().await;
+            random_connections(&connections, max)
+        };
+        let msg = protocol_helper::packet(&self.conf.local, &self.conf.network_id, packet);
+        self.transport.broadcast(&peers, msg).await;
+        peers
     }
 
     /// Request the fork-choice tip from peers (port of `sendForkChoiceTipRequest`).

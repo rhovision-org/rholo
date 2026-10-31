@@ -1,0 +1,43 @@
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/feature+node-hostlist/rholang)
+    Finished `release` profile [optimized] target(s) in 5.68s
+     Running tests/gas_amplification.rs (target/release/deps/gas_amplification-86690bff6be18acb)
+
+running 5 tests
+case,n,plain_phlo,converted_phlo,delta_phlo,plain_ms,converted_ms
+case,n,baseline_phlo,keys_phlo,delta_phlo,baseline_ms,keys_ms
+case,n,plain_phlo,converted_phlo,delta_phlo,plain_ms,converted_ms
+case,n,baseline_phlo,set_phlo,delta_phlo,baseline_ms,set_ms
+case,n,plain_phlo,union_phlo,delta_phlo,plain_ms,union_ms
+toSet,500,8875,8893,18,8,7
+union,1000,17875,24824,6949,15,24
+toSet,1000,17875,17893,18,9,12
+toMap,500,25637,20655,-4982,27,17
+keys,500,20655,11810,-8845,27,17
+set,500,20655,20677,22,24,22
+toSet,2000,36875,36893,18,18,22
+keys,1000,41655,23810,-17845,39,38
+toMap,1000,51641,41655,-9986,43,35
+set,1000,41655,41677,22,48,47
+toSet,4000,74879,74897,18,38,47
+union,5000,93879,132828,38949,51,138
+keys,2000,85659,49810,-35849,84,81
+toMap,2000,105641,85659,-19982,94,78
+set,2000,85659,85681,22,102,127
+toSet,10000,192495,192513,18,115,151
+union,10000,192495,271444,78949,110,326
+test the_union_charge_tracks_its_work ... ok
+keys,4000,173659,101814,-71845,198,188
+toMap,4000,213641,173659,-39982,276,207
+set,4000,173659,173681,22,248,261
+toSet,20000,412495,412513,18,245,445
+keys,10000,444891,261430,-183461,653,691
+test keys_is_charged_flat ... ok
+toMap,10000,544873,444891,-99982,754,620
+test a_map_conversion_charges_nothing_and_sorts ... ok
+set,10000,444891,444913,22,690,822
+test set_is_charged_flat ... ok
+toSet,40000,852495,852513,18,630,724
+test a_conversion_charges_nothing_and_sorts ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.53s
+

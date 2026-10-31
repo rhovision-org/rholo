@@ -1,0 +1,73 @@
+{
+  "utc": "2026-10-29T16:56:48.874521+00:00",
+  "logs": {
+    "/var/log/rnode-a.log": {
+      "last_relevant": [
+        "2026-10-29T16:55:37.757Z INFO  [casper.protocol.CommUtil] Block hash 4ee8ff4e6ea50545643180817a64b29b73090827243fb0bb0fac78e0f72cb426: transport accepted 4 initial, 0 retry; 0 failed of 4 peers (transport acceptance is not remote DAG admission)",
+        "2026-10-29T16:55:37.757Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #77 (seq 77)",
+        "2026-10-29T16:55:53.758Z WARN  [casper.blocks.Proposer] round gate escaped after 74 attempt(s) and 1189858 ms blocked \u2014 the round is not closing (AUDIT #213).",
+        "2026-10-29T16:55:53.862Z INFO  [casper.blocks.Proposer] attestation at tip 77: licensed \u2014 nothing_to_finalize=false new_state_transition=false quorum_reachable=true cadence_due=true paced=true round=[0410b8c5 041ed2a2 04d7707c 04dce59b] blocked_attempts=74 escape=true",
+        "2026-10-29T16:55:53.952Z WARN  [casper.interpreter.validate] merge search: 183 merges \u00b7 widest scope 11 chains / 0 conflict pairs / 0 asymmetric \u00b7 most states expanded on one merge 12 \u00b7 width buckets [183, 0, 0, 0, 0] \u00b7 cost buckets [183, 0, 0, 0, 0]",
+        "2026-10-29T16:55:54.151Z INFO  [casper.protocol.CommUtil] Block hash 8926e0207eede1e91fe4676146d544b774fb36d1b68f9366d0686523780e1e4b: transport accepted 4 initial, 0 retry; 0 failed of 4 peers (transport acceptance is not remote DAG admission)",
+        "2026-10-29T16:55:54.151Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #78 (seq 78)",
+        "2026-10-29T16:56:10.153Z WARN  [casper.blocks.Proposer] round gate escaped after 75 attempt(s) and 1206253 ms blocked \u2014 the round is not closing (AUDIT #213).",
+        "2026-10-29T16:56:10.253Z INFO  [casper.blocks.Proposer] attestation at tip 78: licensed \u2014 nothing_to_finalize=false new_state_transition=false quorum_reachable=true cadence_due=true paced=true round=[0410b8c5 041ed2a2 04d7707c 04dce59b] blocked_attempts=75 escape=true",
+        "2026-10-29T16:56:10.346Z WARN  [casper.interpreter.validate] merge search: 185 merges \u00b7 widest scope 11 chains / 0 conflict pairs / 0 asymmetric \u00b7 most states expanded on one merge 12 \u00b7 width buckets [185, 0, 0, 0, 0] \u00b7 cost buckets [185, 0, 0, 0, 0]",
+        "2026-10-29T16:56:10.565Z INFO  [casper.protocol.CommUtil] Block hash 42f401860379aeef9b159cb55676569d5e0dc236e1501137132e6666572a0b59: transport accepted 4 initial, 0 retry; 0 failed of 4 peers (transport acceptance is not remote DAG admission)",
+        "2026-10-29T16:56:10.565Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #79 (seq 79)",
+        "2026-10-29T16:56:26.568Z WARN  [casper.blocks.Proposer] round gate escaped after 76 attempt(s) and 1222668 ms blocked \u2014 the round is not closing (AUDIT #213).",
+        "2026-10-29T16:56:26.663Z INFO  [casper.blocks.Proposer] attestation at tip 79: licensed \u2014 nothing_to_finalize=false new_state_transition=false quorum_reachable=true cadence_due=true paced=true round=[0410b8c5 041ed2a2 04d7707c 04dce59b] blocked_attempts=76 escape=true",
+        "2026-10-29T16:56:26.765Z WARN  [casper.interpreter.validate] merge search: 187 merges \u00b7 widest scope 11 chains / 0 conflict pairs / 0 asymmetric \u00b7 most states expanded on one merge 12 \u00b7 width buckets [187, 0, 0, 0, 0] \u00b7 cost buckets [187, 0, 0, 0, 0]",
+        "2026-10-29T16:56:27.080Z INFO  [casper.protocol.CommUtil] Block hash 08d84c514924e65439fb6659286ecc096ff787b33d87da710ea4a74c269d5dbc: transport accepted 4 initial, 0 retry; 0 failed of 4 peers (transport acceptance is not remote DAG admission)",
+        "2026-10-29T16:56:27.080Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #80 (seq 80)",
+        "2026-10-29T16:56:43.082Z WARN  [casper.blocks.Proposer] round gate escaped after 77 attempt(s) and 1239182 ms blocked \u2014 the round is not closing (AUDIT #213).",
+        "2026-10-29T16:56:43.187Z INFO  [casper.blocks.Proposer] attestation at tip 80: licensed \u2014 nothing_to_finalize=false new_state_transition=false quorum_reachable=true cadence_due=true paced=true round=[0410b8c5 041ed2a2 04d7707c 04dce59b] blocked_attempts=77 escape=true",
+        "2026-10-29T16:56:43.275Z WARN  [casper.interpreter.validate] merge search: 189 merges \u00b7 widest scope 12 chains / 0 conflict pairs / 0 asymmetric \u00b7 most states expanded on one merge 13 \u00b7 width buckets [189, 0, 0, 0, 0] \u00b7 cost buckets [189, 0, 0, 0, 0]",
+        "2026-10-29T16:56:43.495Z INFO  [casper.protocol.CommUtil] Block hash 503b80510580755a8147cabce3e51c22233df978c0a064189a604a06e325539c: transport accepted 4 initial, 0 retry; 0 failed of 4 peers (transport acceptance is not remote DAG admission)",
+        "2026-10-29T16:56:43.495Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #81 (seq 81)"
+      ],
+      "tail_line_count": 2200,
+      "counts_in_tail": {
+        "JustificationRegression": 0,
+        "active-bonds leaf not found": 0,
+        "receiver state full": 0,
+        "Created block": 0,
+        "BlockMessage received": 0
+      }
+    },
+    "/var/log/rnode-d.log": {
+      "last_relevant": [
+        "2026-10-29T16:51:00.019Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([236, 71, 246, 48, 212, 214, 22, 103, 193, 156, 65, 253, 180, 138, 234, 210, 39, 20, 215, 254, 136, 213, 135, 71, 140, 153, 213, 224, 68, 160, 78, 239]))",
+        "2026-10-29T16:51:16.091Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([230, 28, 53, 103, 239, 206, 244, 14, 224, 205, 164, 107, 6, 211, 238, 146, 246, 5, 224, 221, 3, 66, 49, 74, 247, 122, 144, 186, 151, 124, 237, 142]))",
+        "2026-10-29T16:51:32.351Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([109, 200, 132, 232, 8, 82, 83, 95, 251, 58, 27, 158, 62, 134, 87, 218, 96, 74, 100, 177, 128, 2, 94, 212, 242, 76, 148, 23, 186, 150, 121, 243]))",
+        "2026-10-29T16:51:48.262Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([233, 61, 201, 50, 86, 142, 82, 99, 108, 140, 17, 153, 229, 117, 201, 152, 8, 228, 90, 9, 211, 157, 23, 246, 81, 153, 158, 166, 8, 120, 31, 181]))",
+        "2026-10-29T16:52:04.500Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([195, 60, 94, 144, 92, 11, 137, 0, 255, 147, 78, 42, 171, 181, 166, 93, 255, 11, 144, 237, 82, 59, 30, 72, 223, 125, 210, 144, 119, 178, 167, 154]))",
+        "2026-10-29T16:52:21.688Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([175, 15, 49, 240, 22, 152, 211, 252, 205, 23, 21, 231, 178, 159, 174, 27, 95, 141, 214, 161, 125, 37, 159, 24, 255, 96, 156, 227, 233, 201, 41, 182]))",
+        "2026-10-29T16:52:38.523Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([76, 58, 140, 178, 70, 91, 139, 243, 255, 234, 193, 145, 143, 6, 197, 179, 114, 76, 42, 174, 194, 242, 191, 109, 101, 214, 244, 230, 169, 97, 103, 137]))",
+        "2026-10-29T16:52:55.316Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([142, 13, 1, 206, 131, 72, 208, 32, 139, 203, 177, 228, 56, 245, 49, 151, 141, 17, 80, 112, 169, 85, 248, 31, 212, 92, 227, 153, 20, 176, 79, 31]))",
+        "2026-10-29T16:53:13.738Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([219, 143, 154, 60, 102, 11, 87, 19, 34, 122, 208, 179, 50, 71, 50, 172, 157, 107, 240, 27, 55, 48, 2, 183, 232, 58, 89, 220, 99, 142, 99, 247]))",
+        "2026-10-29T16:53:27.982Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([223, 227, 36, 135, 189, 138, 130, 213, 40, 24, 176, 56, 58, 119, 121, 2, 188, 207, 17, 79, 124, 73, 53, 139, 60, 150, 147, 12, 235, 47, 184, 136]))",
+        "2026-10-29T16:53:44.691Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([97, 52, 106, 4, 64, 170, 249, 9, 158, 97, 17, 163, 249, 188, 160, 87, 61, 52, 211, 118, 75, 96, 43, 56, 122, 255, 65, 22, 40, 159, 224, 105]))",
+        "2026-10-29T16:54:00.658Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([7, 135, 12, 16, 56, 175, 134, 142, 228, 193, 178, 82, 83, 3, 116, 84, 57, 239, 127, 138, 63, 17, 118, 244, 184, 10, 52, 196, 112, 23, 148, 203]))",
+        "2026-10-29T16:54:17.776Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([51, 105, 132, 62, 225, 160, 56, 212, 62, 176, 217, 150, 190, 227, 207, 167, 5, 94, 205, 187, 92, 105, 34, 32, 63, 192, 207, 60, 136, 153, 231, 83]))",
+        "2026-10-29T16:54:33.434Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([35, 83, 201, 220, 188, 255, 40, 48, 152, 217, 140, 128, 12, 239, 196, 212, 164, 167, 58, 156, 88, 165, 210, 235, 29, 91, 213, 27, 194, 65, 112, 175]))",
+        "2026-10-29T16:54:49.951Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([39, 92, 189, 248, 254, 117, 71, 69, 15, 247, 175, 174, 26, 3, 203, 242, 142, 35, 86, 84, 189, 155, 189, 10, 148, 71, 127, 85, 218, 102, 168, 143]))",
+        "2026-10-29T16:55:05.956Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([13, 116, 87, 72, 222, 64, 94, 235, 222, 186, 86, 146, 116, 226, 189, 49, 91, 46, 137, 122, 247, 224, 47, 242, 23, 245, 22, 80, 18, 243, 27, 83]))",
+        "2026-10-29T16:55:22.191Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([183, 19, 251, 158, 114, 246, 159, 50, 55, 51, 69, 198, 161, 232, 147, 236, 53, 122, 253, 107, 55, 73, 183, 95, 107, 254, 117, 93, 243, 76, 119, 115]))",
+        "2026-10-29T16:55:38.801Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([78, 232, 255, 78, 110, 165, 5, 69, 100, 49, 128, 129, 122, 100, 178, 155, 115, 9, 8, 39, 36, 63, 176, 187, 15, 172, 120, 224, 247, 44, 180, 38]))",
+        "2026-10-29T16:55:56.139Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([137, 38, 224, 32, 126, 237, 225, 233, 31, 228, 103, 97, 70, 213, 68, 183, 116, 251, 54, 209, 182, 143, 147, 102, 208, 104, 101, 35, 120, 14, 30, 75]))",
+        "2026-10-29T16:56:14.796Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([66, 244, 1, 134, 3, 121, 174, 239, 155, 21, 156, 181, 86, 118, 86, 157, 94, 13, 194, 54, 225, 80, 17, 55, 19, 46, 102, 102, 87, 42, 11, 89]))",
+        "2026-10-29T16:56:30.003Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([8, 216, 76, 81, 73, 36, 230, 84, 57, 251, 102, 89, 40, 110, 204, 9, 111, 247, 135, 179, 61, 135, 218, 113, 14, 164, 167, 76, 38, 157, 93, 188]))",
+        "2026-10-29T16:56:48.811Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([80, 59, 128, 81, 5, 128, 117, 90, 129, 71, 202, 188, 227, 229, 28, 34, 35, 61, 249, 120, 192, 160, 100, 24, 154, 96, 74, 6, 227, 37, 83, 156]))"
+      ],
+      "tail_line_count": 2200,
+      "counts_in_tail": {
+        "JustificationRegression": 0,
+        "active-bonds leaf not found": 0,
+        "receiver state full": 76,
+        "Created block": 0,
+        "BlockMessage received": 0
+      }
+    }
+  }
+}

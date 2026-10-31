@@ -252,6 +252,23 @@ its source contradicts the port's native design.
 | `rho:lang:treeHashMap`, `rho:rchain:configPublicKeyCheck`, `rho:registry:systemContractManager` | Provided only by the interpreted `Registry.rho` (see above); no consumer uses them. |
 | ~~`rho:rchain:multiSigRevVault`~~ | **Stale, corrected 2026-09-27.** This row said the urn was not seeded because no consumer looks it up. It **is** seeded now, and to the *contract* rather than the native channel: installing the multi-signature vault made `lookup!` the only path that answers, so `GENESIS_ALIASES` maps the shorthand to `GenesisAliasSource::Contract` (see "What genesis installs" row 5). The native fixed channel still refuses by direct binding, and its refusal names the lookup path — `spec/API-SCHEMA.md`'s row carries the API half. |
 
+## PoS liveness parameters (RCHIP #55, Law 89)
+
+Five genesis parameters arm liveness enforcement. All are `0`/`none` in the shipped default, which is
+byte-for-byte the pre-change `PosParams` format-2 record and writes no new native leaf. A network that
+arms them starts a **new genesis**; arming an existing chain without one is a separate consensus change.
+
+| key | meaning | default |
+|---|---|---|
+| `liveness-absence-threshold` | heights behind the quorum-supported tip that count as absent | `0` (off) |
+| `liveness-jail-after-boundaries` | consecutive advancing boundaries absent before jail; at least `2` when enabled | `0` |
+| `liveness-jail-epochs` | advancing boundaries a jail lasts | `0` |
+| `liveness-vote-window` | advancing boundaries a slash vote stays open; must fit inside `quarantine-length` | `0` |
+| `liveness-slash-severity` | `none` / `malicious` / `misdemeanour` / `honest-mistake` | `none` |
+
+`PosParams::validate` refuses a half-configured rule at genesis and at decode. See
+[RCHIP #55](rchip-55-liveness-enforcement.md) for the mechanism and its residuals.
+
 ### Test-only and example sources (explicitly not candidates)
 
 `legacy/rholang/examples/**` (76 files — the `tut-*` teaching programs, `old/**`, `linking/**`,

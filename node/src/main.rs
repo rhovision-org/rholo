@@ -92,6 +92,7 @@ fn main() {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .thread_stack_size(32 * 1024 * 1024)
         .worker_threads(worker_threads)
+        .max_blocking_threads(blocking_thread_cap(worker_threads))
         .enable_all()
         .build()
     {
@@ -102,6 +103,13 @@ fn main() {
         }
     };
     runtime.block_on(async_main(options, log_level));
+}
+
+/// A conservative bound on the blocking pool. Each thread reserves a 32 MiB stack; tokio's default
+/// is 512, which is a large worst case on a small host. This is a bound, not a measured optimum:
+/// LMDB work is offloaded through `spawn_blocking`, so the pool must not be tiny.
+fn blocking_thread_cap(workers: usize) -> usize {
+    workers.saturating_mul(2).clamp(16, 64)
 }
 
 /// The machine's hardware parallelism (the tokio default), falling back to 1.
@@ -121,6 +129,14 @@ mod tests {
     /// `--thread-pool-size 0` is refused with a message and `exit(1)` — lives in `main` itself and
     /// cannot be asserted from inside the process; it is what the flag's parse-time validation
     /// covers.
+    #[test]
+    fn the_blocking_thread_cap_is_bounded() {
+        assert!(blocking_thread_cap(0) >= 16);
+        assert!(blocking_thread_cap(1) >= 16);
+        assert_eq!(blocking_thread_cap(24), 48);
+        assert!(blocking_thread_cap(1_024) <= 64);
+    }
+
     #[test]
     fn the_default_worker_count_is_at_least_one() {
         let threads = default_worker_threads();

@@ -1,0 +1,117 @@
+name: Isolated N8 quiet-chain finality on 16GB
+
+on:
+  push:
+    branches:
+      - verify/quiet-finality-16gb-20261030
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quiet-n8-16gb-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quiet-finality:
+    name: N8 and N7 quiet finality, one signed marker per arm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_NODE_MEMORY: "1536m"
+      DEVNET_THREAD_POOL_SIZE: "2"
+      DEVNET_PREFIX: "acceptance"
+      DEVNET_NETWORK: "acceptance"
+      ACCEPTANCE_ARTIFACTS: "1"
+    steps:
+      - name: Checkout pinned isolated source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+
+      - name: Require actual 16GB-class runner and record source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/quiet-finality-16gb
+          git rev-parse HEAD | tee target/quiet-finality-16gb/source-sha.txt
+          free -h | tee target/quiet-finality-16gb/free-before.txt
+          df -h | tee target/quiet-finality-16gb/disk-before.txt
+          cat /proc/meminfo > target/quiet-finality-16gb/meminfo-before.txt
+          mem_kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+          free_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+          test "$mem_kib" -ge 14680064 || { echo "FAIL: less than 14 GiB RAM"; exit 40; }
+          test "$free_kib" -ge 12582912 || { echo "FAIL: less than 12 GiB available"; exit 41; }
+          git diff --check HEAD^ HEAD
+
+      - name: Falsify unsafe quiet-finality results offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tests/consensus-quiet-finality.py tests/test_quiet_finality_controls.py
+          python3 -m unittest discover -s tests -p test_quiet_finality_controls.py -v \
+            2>&1 | tee target/quiet-finality-16gb/unit-results.log
+
+      - name: Build pinned isolated node
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/devnet.sh build 2>&1 | tee target/quiet-finality-16gb/build.log
+
+      - name: Start eight real isolated validators with autonomous production
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/devnet.sh up --validators 8 --fresh --autopropose --epoch-length 10 \
+            2>&1 | tee target/quiet-finality-16gb/start.log
+
+      - name: Require 8/8 and 7/8 quiet finality without helper deploys
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/consensus-quiet-finality.py --window 240 \
+            --out target/quiet-finality-16gb \
+            2>&1 | tee target/quiet-finality-16gb/quiet-finality.log
+
+      - name: Archive causal DAG before teardown
+        if: always()
+        run: python3 tests/capture-quiet-dag.py target/quiet-finality-16gb
+
+      - name: Preserve per-validator diagnostics before teardown
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p target/quiet-finality-16gb
+          free -h > target/quiet-finality-16gb/free-after.txt
+          df -h > target/quiet-finality-16gb/disk-after.txt
+          docker ps -a > target/quiet-finality-16gb/docker-ps.txt 2>&1 || true
+          docker stats --no-stream > target/quiet-finality-16gb/docker-stats.txt 2>&1 || true
+          for i in $(seq 0 7); do
+            node="acceptance-validator-$i"
+            [ "$i" -ne 0 ] || node="acceptance-bootstrap"
+            health_port=$((40403 + 1000 * i))
+            operator_port=$((40405 + 1000 * i))
+            curl --connect-timeout 2 --max-time 5 -fsS \
+              "http://127.0.0.1:${health_port}/health" \
+              -o "target/quiet-finality-16gb/$node-health.json" || true
+            curl --connect-timeout 2 --max-time 5 -fsS \
+              "http://127.0.0.1:${operator_port}/api/v1/status/operator" \
+              -o "target/quiet-finality-16gb/$node-operator.json" || true
+            docker logs "$node" > "target/quiet-finality-16gb/$node.log" 2>&1 || true
+            docker inspect "$node" > "target/quiet-finality-16gb/$node-inspect.json" 2>/dev/null || true
+          done
+
+      - name: Remove disposable isolated network and volumes
+        if: always()
+        shell: bash
+        run: tools/devnet.sh down -v || true
+
+      - name: Upload acceptance evidence, including failed arms
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: isolated-n8-quiet-finality-${{ github.run_id }}
+          path: target/quiet-finality-16gb/
+          if-no-files-found: warn
+          retention-days: 14

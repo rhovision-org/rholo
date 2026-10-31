@@ -383,6 +383,14 @@ Every place the Rust port deliberately departs from the Scala oracle, with the r
 
 | **Initial LFS solicitation waits for admitted reply, with bounded retries** (C335; comm_util.rs::request_initial_fringe and node_launch.rs) | The prior request loop stopped at transport send success and the first-target wait had no exit for a missing streamed response | Node-local startup/recovery change. Acknowledging the request does not deliver its reply. Only trusted nonempty admission stops re-solicitation; exhausting ten bounded send/response intervals returns an error, never restore success. Six Rust regressions and a reintroduced send-only fault detect the failure. No validity, quorum or finalized-state rule changes; real-node reactivation is an independent acceptance gate. |
 
+**Correction, 2026-10-28 — the decimal row.** Law 87 (87a–e) and the `decimal` corpus now cover
+canonicalisation, `scaledValue`'s injectivity and order, exact `+ - *`, division's exact-or-error
+condition and the `edecimal` payload. The wire's minimal bytes and tag 35, serde ingress, the
+literal surface, reducer dispatch and the cost model remain outside the law and Rust-tested;
+AC10 (operator/new-genesis acceptance) remains a release step.
+| **Liveness enforcement is a new PoS boundary rule (RCHIP #55, Law 89).** | Pos.rhox has no liveness jail, vote or ejection; the port adds five genesis parameters, five `pos:` leaves and the `voteSlash`/`unvoteSlash`/`getLiveness`/`getVotes` methods. | A chain that arms liveness enforcement changes its boundary post-state: a jailed validator is not drawn and earns nothing, and a passing >2/3 active-stake vote slashes and bans. Default-off and the format-2 params encoding keep unarmed chains byte-identical; arming requires a new genesis and is a hard fork. Pre-launch category A; every validator must run the binary; no live evidence yet. RCHIP #55, HAZOP U21, C344 |
+| **Cost charges track the work of collection canonicalisation, union, set insertion, the tallies and `rho:gov:censure`.** | Archived `legacy/rholang/src/main/scala/coop/rchain/rholang/interpreter/accounting/Costs.scala` at `1b7583649` charges `unionCost(other.size)` — the right operand only — a flat `KEYS_METHOD_COST = 10`, a flat `ADD_COST` for a set insertion that re-canonicalises the set, no charge on a tally's option lists at all, and no canonicalisation charge beyond the method call; the Rust-native `rho:gov:*` folds have no Scala oracle. | Rust charges `canonicalization_cost(n) = 3n` for the conversions, `set`, `keys` and `add` output, both union operands, `(u+1)^3` for censure and the scanned entries for a tally (Law 91, `spec/Rchain/Cost.lean`; C345/C346, pass §149, and C353/C354, pass §150, whose cost register found the last two). **Hard fork (#51 category A):** `refund_amount`/`burned_amount` and every post-state hash move; a pre-fork block containing a conversion, a set insertion, a tally or a censure does not replay under the new code (`replay_cost_mismatch`); every network's genesis post-state hash moves; the block-version activation gate is owed. |
+
 ## 7. Verification
 
 - `cargo check --workspace` — clean.
@@ -10178,9 +10186,11 @@ entries**.
   it prints is true when printed.
 
 **What this pass does not claim.** The tool's rows carry `candidate:` slugs, not laws — the tool is not
-modelled, and a shell refusal is not a theorem; the four rows whose falsifier is a fault-injection point
-the tree does not have (law 74's fold, law 75's write, F-U16-01's refusal, F-U16-02's swap) stay **owed**
-in the HAZOP's debt line rather than claimed. F-U11-02's law is owed too — law 73's model is a one-shot
+modelled, and a shell refusal is not a theorem; the two rows whose falsifier is a fault-injection point
+the tree does not have (law 74's fold, law 75's write) stay **owed** in the HAZOP's debt line rather
+than claimed. **F-U16-01/02 are no longer owed** (2026-10-30): their refusals are driven by
+`tests/reconcile-docker-lifecycle.sh::test_backup_collision_is_refused` and
+`tests/reconcile-systemd-restore-regression.sh::test_mid_stream_failure_leaves_joiner_unchanged`. F-U11-02's law is owed too — law 73's model is a one-shot
 cell with one lane, and stating it per shard is a change to that model, not a citation. And the devnet arm
 that would exercise a real reset end to end remains **unrun**.
 
@@ -11641,3 +11651,445 @@ pre-state-hash disagreement. Every validator must run the fix from the fork poin
 testnet chain is already bagged and cannot be repaired. **Non-claims:** the live 840->841 four-parent
 replay cannot be recomputed from the node API (tuple-space state is not exported) and remains with
 #421/#429 (M5); the devnet/fork-point arm is owed; CI green is not certification, and #420 stays open.
+
+## 141. A join walk that consumed the key it could not verify (C337, #457)
+
+A fresh node could not join the testnet: the last-finalized-state walk finished 3 of the 28 blocks its
+fringe named, received answers from the bootstrap, then stalled for ninety seconds and failed. **The
+counts were consistent with the defect below, and they were not its cause.** A controlled A/B on
+2026-10-25 — same binary `2745dbb3`, same chain at height 58, only the firewall changed — joined with
+inbound allowed from every peer and stalled with inbound allowed from the bootstrap only: the live
+instance was **inbound reachability**. The walk defect stands on its own, is reachable by a refused or
+corrupted body, and is what this pass fixes and witnesses; the give-up error now names the connected
+peer count and the reachability shape, and #457 stays open for that diagnostic (#458 owns the join
+procedure's doc correction). The finish condition (`LfsState::is_finished`) is `latest.is_empty() && d.is_empty()`; the live state was
+3 finished and 25 keys still in `d`, none of which the walk would ask for again.
+
+**The defect.** `validate_received_block` called `LfsState::received` **before** it recomputed the
+block's content hash, and `received` moved the key `Requested -> Received`. A body that failed
+`validate::block_hash` therefore left its key in `Received`, and `get_next(resend)` selected only
+`Init` (or `Requested` on a resend) — never `Received`. The key was in neither the request set nor the
+finished set: no request selected it, no answer was accepted for it, and `is_finished` could never
+hold. One forged or corrupted answer stalled the whole walk. Two further shapes shared the cause: an
+answer that overtook its request turn was dropped by the `Requested` gate even though its content was
+verifiable, and the give-up message reported only a count (`{finished} finished, {outstanding}
+outstanding`), so the live log could not say whether the residual keys were init, requested or
+stranded.
+
+**The law (Law 81, `spec/Rchain/Sync/Join.lean`).** Two machines: `WrittenStep` is the code as it was
+(accept only `Requested`, a failed body consumes to `Received`, a resend asks only `Requested`), and
+`LifecycleStep` is the repair (accept a **known** key in any non-`done` state, a rejected body is the
+identity, a resend re-asks `Init`, `Requested` **and** `Received`). The falsifier is
+`the_written_walk_cannot_finish_from_a_stranded_key`: from a state with one `Received` key still in
+`latest`, no run of the written machine reaches `isFinished`; the repaired machine reaches it in two
+turns. `a_round_makes_progress` states the fairness and closure hypotheses explicitly; the law does
+not claim answers arrive.
+
+**Fix.** `LfsState` gains `known` and `outstanding_breakdown`; `received` accepts any key in `d`, and
+`get_next` selects `Received` on a resend. `validate_received_block` now checks membership and the
+content hash **before writing any state**, and `process_block` resends immediately on a rejection.
+Unknown hashes are still dropped. The give-up error reports `init/requested/received`, the first eight outstanding hashes, and —
+from the reachability work — the connected peers the walk asked and the peers that never sent a block
+message, so a joiner whose inbound ports admit only its bootstrap is named rather than counted. **The devnet arm** (`spec/audit/evidence/n457-mature-join-20261025/`): four
+validators to 28+ rounds, validator-3 reset to an empty store, LFS restore complete in 34.9 s with
+`status.sync` cleared, the restored anchor a block the bootstrap holds, and no `LFS state sync
+failed` in its log. That is the mature join the live chain could not do; the live chain itself is
+still the observation that counts.
+
+**Evidence.** `a_mature_chain_join_completes` (a 28-block chain through `request_blocks`),
+`resend_re_requests_a_received_key`, `received_accepts_a_known_key_before_its_request_turn`,
+`a_forged_body_does_not_consume_the_key_and_is_re_requested`,
+`a_known_needed_block_is_accepted_before_its_request_is_sent`,
+`received_still_rejects_an_unknown_key`, and
+`a_decoded_block_still_hashes_to_its_hash` (which rules out a codec cause of a systematic hash
+mismatch). **Non-claims:** these are in-process witnesses; the devnet reset arm is the separate
+evidence record, and the live join is not claimed fixed until it passes. The fringe metadata the join
+trusts is Law 83's subject, not this fix's.
+
+**The metadata the join cannot derive was trusted (C338/C339).** `populate_dag` wrote each
+`BlockFringe` — the per-block `fringe` set and `fringe_state_hash` — straight into `BlockMetadata`,
+and `dag.insert` then uses `fringe` for `member_of_fringe`/`fringe_diff` while `close_block` folds
+`fringe_state_hash` into the epoch seed. Nothing checked either field against the blocks the walk had
+verified. The join now (a) refuses an ancestry row for a block the walk did not download, and refuses
+duplicate rows; and (b) recomputes the field that **is** derivable — `fringe` must equal the fringe the
+**finality gate** (`liveness::calculate_finalization`) derives from the block's justifications and bond
+map, using the parents already inserted in height order. The fringe's **state hashes** (the root and
+each per-block `fringe_state_hash`) are not derivable on this path; they are kept and logged, and that
+is **C339**. **Law 85** states exactly why a check cannot simply compare them with a block: the ordinary
+answer serves the max member's claim, and a member's claim is the state at the fringe **it** finalises
+— one fringe earlier than the set it belongs to — while the recovery-anchor and fresh-shard answers
+serve a block's post-state. A singleton pin against the named block's pre- or post-state was
+implemented and the restore suite refuted it; it was removed rather than kept as false assurance. A
+peer that sends no ancestry rows keeps the existing per-block WARN fallback, so the check does not
+refuse older implementations. Law 83 is the trust model this is an instance of.
+
+## 142. A memory gate in front of a bounded pool (C340, #477)
+
+The public testnet settled into `degraded: throttled` at height 1688 with 547 MiB available and
+refused every deploy **and** every explore request with a 503. On its own arithmetic the gate was
+right — 547 MiB is below the 4 GiB host's `critical + 2×margin` recovery boundary — and the watchdog
+kept sampling every five seconds. The defect was the shape, not the arithmetic: a boolean verdict in
+front of a real mempool. A free pool slot was no help, explore shared the deploy refusal, there was no
+deploy relay so the receiving node was the only proposer, and block deploys executed one at a time.
+One undersized host therefore became a network-wide liveness failure, and the chain could not advance
+because the only node holding the work refused to take it.
+
+The close-out is Law 86 (`spec/Rchain/Admission.lean`), five clauses: admission is a bounded queue and
+reads only the pool's bounds (86a); an admitted entry is never silently lost (86b); independent work
+commutes and conflicting work serialises (86c); one permit progresses and the budget bounds the
+schedule, not the queue (86d); and pending work is relocatable without loss (86e). The Rust follows:
+the memory 503 is gone (`resources::admission` keeps only the policy inputs), a full pool/share/rate
+is 429 + `Retry-After`, `acceptsDeploys` is pool capacity, the headroom permit budget bounds execution
+and exploration, a certified cross-deploy batch runs independent deploys on forks and merges their
+chains with a sequential `verify` and a whole-block fallback, and an admitted deploy is offered to
+peers' external deploy service (off by default, `RNODE_DEPLOY_RELAY=1`).
+
+**Measured in this unit:** the Lean register builds and checks 86 laws / 114 entries; the pool, budget,
+HTTP-refusal and batch suites pass; the batch's state hash and every `ProcessedDeploy` equal the
+sequential fold's for both an independent and a conflicting pair; the `admission` corpus (five cases)
+is emitted and consumed by `casper/tests/lean_admission_corpus.rs`, and 86a/86d are `proved-tied` on
+it; `/metrics` carries the resource gauges and `/health` is a readiness body; `cargo test -p
+rchain-node --lib` passes 334 tests. **The live arm is recorded** in
+`spec/audit/evidence/n477-live-arm-20261028/`: a two-validator devnet with validator-1 constrained to
+a 320 MiB cgroup (`degraded: throttled`, ~285 MiB effective headroom) accepted a signed deploy
+(`Success!`), included it in block 112 (`ProcessedWithSuccess`), and advanced the chain 105 → 139,
+with the healthy bootstrap agreeing at 139. **The relay arm is recorded** in `spec/audit/evidence/n477-relay-arm-20261028/`: four validators,
+relay enabled, `validator-1` at 280 MiB (`degraded: critical`, `stops_production()` true — it does not
+propose). A signed deploy submitted to that validator returns `Success!`; `deploy-status` on it shows
+`ProcessedWithSuccess` in block 44 with **sender validator 3**, and finality reaches block 49 with
+three of four validators. The only path from the critical node's pool to a healthy proposer was the
+`RNODE_DEPLOY_RELAY` callback. **Owed:** the same reading on the public testnet's exact shared-host
+topology (two validators in one ~4 GiB host cgroup, which Docker cannot express as nested container
+limits) and a batch-path live arm; the batch and relay remain off by default.
+
+## 143. The headroom budget the proposer never spends (C341, #477)
+
+The load-bearing and concurrency review read the permit path from the HTTP server to the proposer. The
+`CapacityBudget` is built in `node/src/web/http.rs:1977`; the explore path acquires its `PermitBudget`
+before forking runtimes (`http.rs:1586-1603`), but the proposer receives only the `ResourceGuard` and
+checks `fallback.stops_production()` (`node/src/instances/proposer_instance.rs:161-190`). It never
+acquires the **execution** permit. The execution half is read for `/metrics` and the operator status
+split (`http.rs:2004-2007`, `node/src/api/conversion.rs:174-181`) and nowhere else.
+
+So the sentence in barrier B35 — "execution takes the floor, exploration the surplus" — is true of the
+model and the exploration path, and false of block production. A `Throttled` host does not make a
+smaller batch; it keeps proposing at full rate until the fallback word reaches `Critical`, which
+withholds production. HAZOP row F-U17-02 and safety-case rows H-RS-02/H-RS-04 claimed the missing
+control; they are corrected in this pass, and **C341 is `done` in the same PR**: the proposer now
+acquires the execution permits and passes the batch cap, with a batching-enabled `Throttled` falsifier.
+The claim is narrowed to the truth: a batched block is capped by the permits, a sequential block is
+inherently one-at-a-time, and zero permits withhold. B35/F-U17-02/H-RS-04 are restored at that scope.
+
+The same review adds the operator risk contract: `TERMS.md`, the validator start-up notice, and the
+`--accept-under-minimum-risk` requirement for a below-floor validator (B43/B44). It does not add
+liveness slashing or an inactivity leak: absence is not a current offence, paid by default, and remains
+a maintainer/genesis decision (#149).
+
+## 144. Reconciliation snapshots across recovery (C342, #488)
+
+The range-cache optimization in #489 stored each node's inventory before recovery and then reused
+it in both post-recovery verification phases. Immutable block contents do not make that inventory
+immutable: recovery changes which blocks a node holds. The source fragments reproduce both wrong
+verdicts and a complete verification exit of zero despite current unfinalized divergence.
+
+`refresh_block_ranges` now replaces each inventory at every verification round, covers current
+finalized heights, and rejects failed or malformed transfers. Nine regression cases fail on
+`40efb9599a44bf36f877143a3cb94ccda56700bc`; all ten cases pass after the correction, including
+the unchanged valid-range control. The [retained evidence](evidence/n489-range-cache-20261029/README.md)
+is offline and invokes no live node controls. This is not live recovery or fresh-join acceptance.
+
+## 145. Block acceptance and private-chain RCA (C343, #479)
+
+**Found.** The live four-validator testnet stored block bodies from height 6 through at least 250 on
+B/C/D while their DAG stayed at height 5; A reached 267 with finality 3. A local `rnode:477` run
+accepted the exact four-parent block-6 shape and a user-deploy recovery, so the block content is not
+the obvious cause. The RCA found four silent seats: the processor's panic/`Internal`/insert-error
+arms drop a stored block with no disposition; `dag.insert`'s metadata `contains` short-circuit
+answers `Ok(())` after a partial insert; only accepted inserts reach the receiver's `finished`; and
+the proposer never produced `TooFarAheadOfLastFinalized` or compared the tip to finality. The
+receiver's begin-lease leak was already closed on `dev` by #494 (`abort_stored` plus dependency
+headroom), so this pass credits that fix rather than duplicating it.
+
+**Why believed.** A state-machine lens, a failure-masking/concurrency lens, a HAZOP/law lens and an
+adversarial verifier produced the §9 table in `failure-hazop.md`; U19/U20 record the deviations and
+the still-owed falsifiers. The live phase (NodeSyncing recovery vs NodeRunning processor fault) is
+not proven: the operator `status/operator`/logs remain the discriminator.
+
+**How it is falsified.** A fault must produce a durable disposition and a retry; a validation that
+never returns must fault and stop holding the pipeline; a partial insert must complete on retry; a
+failed parent must release its waiting child; `/health` must report
+`pipelineFaults`/`orphanBodies`/`ready:false`/`nodePhase`; a node outside `Running` must refuse
+deploy admission and propose/attest; a tip beyond the finality bound must stop propose and attest and
+expose `proposalHalted`; the operator resume route must clear the latch and the next proposal
+re-check the bound. This pass lands those plus the receiver/insert/proposer tests. Still `owed:` in
+U19/U20: a hash-level scan for bodies written before the ledger, a `Running` constructor that
+refuses an unsettled row, per-shard phase, and the end-to-end re-offer/phase-gate falsifiers.
+
+**What it does not claim.** No live admission/width/join arm; 27 HAZOP falsifiers and two safety-case
+evidences remain visible debt; C343 stays `in progress`.
+
+## 146. Law 88, per-shard phase, audit before Running and the legacy body scan (C343 follow-up)
+
+**Found.** #497 left four items owed, and the follow-up closes them. **Law 88** was still a
+`candidate:` slug: `spec/Rchain/Disposition.lean` now states 88a (a stored body is a DAG block or
+carries an unsettled `Pending`/`Faulted` row, and the start-up audit adopts every unaccounted body
+before `Running`) and 88b (a proposal is admitted only in `Running` and within
+`MAX_PROPOSAL_FINALITY_LAG`), both `proved-model` with defect variants as the falsifiers. The phase
+was one process-wide static: `NodePhaseCell` is now one clone-shared watch cell per shard, carried
+by `ShardParts` and read by the API, proposer, launch and disposition loops; `/health` reports
+`shardPhases` and requires every shard Running for `ready`, and deploy admission reads the shard the
+deploy names. `Running` was set before the re-offer: the audit now runs in `node_launch` — the
+one-time keys-only legacy scan, the ledger re-offer, a bounded 30 s drain — and only then moves the
+phase. The scan needed block hashes, not bodies: `keys()` is a defaulted method on both store traits
+with keys-only overrides for LMDB and the codec-backed typed store, a durable `legacy-body-scan`
+marker gates the walk, and the reset orphan purge uses the same path.
+
+**Why believed.** The law is the model of the code's durable state and proposal policy; the Rust
+tests are its witnesses (`keys_decodes_only_the_key_and_survives_an_undecodable_value`,
+`the_legacy_scan_adopts_every_unaccounted_body_and_writes_its_marker`,
+`a_stored_body_without_a_dag_entry_is_reoffered`,
+`the_phase_stays_starting_until_the_drain_closes`, `two_cells_hold_independent_phases`,
+`a_syncing_cell_does_not_propose`, `health_is_ready_only_when_every_shard_runs`). `rustWitness` is
+populated on both rows; the formal gate runs them.
+
+**How it is falsified.** Deleting the audit before `Running` leaves a body unaccounted and fails
+`startup_without_audit_leaves_an_orphan`; deleting the phase check or the bound fails the gate
+theorems; deleting the codec `keys()` override makes the undecodable-value test fail; writing the
+scan marker before the walk leaves a crash window the scan test's second pass cannot skip; moving
+readiness back to one shard fails the two-shard `/health` test.
+
+**What it does not claim.** The audit's drain is bounded, not fail-closed: a missing-parent row stays
+`Pending` and visible, an undecodable body remains the periodic count audit's signal, and the live
+block-6 phase still needs the old hosts' `status/operator` and logs. `pipelineFaults`,
+`proposalHalted`, `orphanBodies` and `sync_state` remain process-wide. No live-net arm was run. C343
+stays `in progress`; the HAZOP/safety-case debt is re-counted from their gates.
+
+## 147. Liveness enforcement: jail and the stake vote (C344, RCHIP #55)
+
+**Found.** A validator that stops is paid and holds the finality denominator for ever; the 2026-10-02
+decision refused an inactivity leak because it burns a bond through no fault. RCHIP #55 prices absence
+without that: at an **advancing** epoch boundary a sustained absentee is jailed (not drawn, no income;
+its bond and its delegators' principal untouched), and a **strict >2/3 active-stake vote**, opened only
+against a jailed validator, may slash at the configured tier and permanently eject. The mechanism is
+five genesis parameters, five `pos:` leaves and four `rho:rchain:pos` methods; a zeroed config encodes
+the pre-change format-2 `PosParams` record and writes no new leaf, so unarmed chains are byte-identical.
+Law 89 models it; the boundary tally is a state transition, not a block-level `Slash`.
+
+**Why believed.** Native unit tests cover the jail counter, the stall freeze, income zero/bond intact,
+expiry/renewal, the strict threshold, a passing slash+ban, and a banished key's refused rebond; the
+system-process test pins the deployer-id authorization and ballot storage. The Lean model proves the
+jail never writes the pool, a stalled step changes nothing, one lapse is not sustained, a vote below
+2/3 changes nothing, and a passing vote slashes/ejects.
+
+**How it is falsified.** A jail that debits the pool, a counter that advances off a stall, a vote at
+exactly 2/3, a vote against an active validator, or a rebound of a banished key fails a named test or
+the Lean witnesses.
+
+**What it does not claim.** No live testnet arm yet (jail, vote-slash, partition negative,
+restart/expiry, exact threshold); no mainnet arming (#428); no unban; the inactivity leak remains #149
+and @aixaria0's; a boundary block can omit `CloseBlock`, so the epoch transition is skippable until a
+validity rule lands. §6 records the hard fork; C344 stays `in progress`.
+
+## 148. The October 2026 re-audit: cost, new ingress and the OCapN surface (C345–C352)
+
+**Found.** A full pass over `dev@be5016682` (2026-10-30), report-only, in the shape of the September
+2026 audit: three independent lenses (work/block path; network ingress and the new surface;
+consensus/recovery/liveness and the assurance claims), every candidate handed to a separate referee,
+four verdicts with positive-artifact refutations only. Twelve candidates were refereed: nine were
+confirmed — one of them the control its author expected a referee to reject — one was not
+re-established, and one was refuted (the control lesson: confidence is not a control).
+
+The principal finding is a **live instance of the cost-model class the September pass opened**:
+`toSet`/`toMap` and set/map literal evaluation run a canonicalisation sort for a flat charge
+(measured: **18 phlo at N = 500…40 000** while wall time grew 7 → 724 ms), `Map.set` charges a flat 22
+for clone+scan+re-sort, `keys` a flat method charge for a full sort, and `++`/`.union` charge only the
+right operand (3 phlo for a re-sort of the whole union). `rho:gov:censure` charges N² for Θ(U³) work —
+the code's own comment concedes the cubic path "was not measured at the bound" — with internal U up to
+2N. The block caps bound declared phlo and counts, never CPU; the 600 s validation deadline aborts the
+awaiting task but cannot interrupt a synchronous builtin.
+
+Three defects are outside the cost class and were confirmed with mechanisms: the **OCapN greeter**
+dials on a peer's handoff without drawing from the dial reserve (capped at 256 peers, not 16); the
+**transaction API's** leg amount is bounded only by the coordinator's whole vault (the C121 residual,
+behind two or three operator opt-ins); and the **proposal finality bound is skipped when no finalised
+block exists** (`if let Some(finalized)`), which is the Lean model's own
+`a_gate_without_the_bound_admits_a_private_chain` in the code. Two crash/consistency findings: the body
+store and the disposition row are different LMDB environments, so a crash between them orphans the
+body; and a websocket client can hold that transport's accept loop for 40 s. Two assurance findings:
+B46 names `Running` where the code gates readiness, and the collection charges are invisible to every
+gate. One candidate (the deploy relay's fan-out and seen-set) was **not re-established** as a security
+primitive; one (string `length`) was **refuted** with a positive artifact.
+
+**Why believed.** Measurements in `spec/audit/evidence/n20261030-reaudit/gas-probe.log` (release,
+env-gated probe `rholang/tests/gas_amplification.rs`); the referee verdicts and their artifacts in
+`verdicts.md`; the three-chain refresh pinned in `three-chain.json` (Solana/Agave `v4.4.0`/`9ef63128`, Sui
+`testnet-v1.83.0`/`16d2dc1e`, BSV `v1.2.3`/`6504a3af`). Every confirmed finding names a mechanism
+(`path::symbol`) and the test or measurement that would kill it.
+
+**How it is falsified.** A charge site that grows with N in the `toSet`/`toMap`/`set`/`keys` arms
+refutes C345; a timing of the full censure path at the bound under a second refutes C346 (the code's
+recorded quadratic number makes minutes the expected order); a `try_acquire_owned` in the greeter
+refutes C347; a sub-balance cap on a txn leg refutes C348; deferring the websocket handshake to the
+session task refutes C349; adopting a body that has no row refutes C350; a `None`-finality arm that
+refuses at `MAX_PROPOSAL_FINALITY_LAG + 1` refutes C351; naming readiness in B46 closes C352.
+
+**What it does not claim.** No live multi-node attack; no external audit; no mutation score; no
+coverage re-measure; no full reading of the three chain trees; no proof the cost class is closed (no
+gate is about cost); no 600 s wall-clock demonstration (the projection is from measured per-call time);
+no 100 000-entry relay exhaustion; no market-cap measurement; and no claim that the OCapN surface is
+safe — only that its defaults, guards and bounds were measured. The September pass's own findings are
+re-derived, not reopened: most closed, two are wording/partial residuals, one (quadratic DAG residency)
+remains an accepted decision.
+
+## 149. The remediation of the October 2026 findings (C345–C352)
+
+**Shipped.** All eight findings of §148 are remediated in the same commit series as the audit page,
+**ungated** — the pre-testnet precedent: a deployed testnet chain is bagged and cannot be repaired, so
+the choice is a lockstep upgrade, never a mixed network. Two findings are decisions rather than code:
+C348 is a documented residual and C352 is a sentence that named the wrong predicate.
+
+| row | what changed | test that holds it |
+|---|---|---|
+| C345 | `Costs::canonicalization_cost(n) = 3n`; the conversions, `set` and `keys` charge the output they are about to build, and `++`/`.union` charge **both** operands (`union_cost(l, r) = canonicalization_cost(l + r)`). `keys_method_cost` deleted — nothing read it. | `rholang/src/reduce.rs::to_set_charges_its_elements`, `::to_map_charges_its_elements`, `::keys_charges_its_output`, `::set_charges_the_map_it_rebuilds`, `::a_union_charges_both_operands_alike` |
+| C346 | `Costs::gov_censure_cost(u) = (u+1)^3` through a `charge_gov_censure` that keeps the `MAX_GOV_UNIVERSE` refusal; the other three `rho:gov:*` folds keep the squared charge. | `rholang/src/system_processes.rs::censure_is_charged_the_cube_of_its_universe` |
+| C347 | one `capacity::reserve_dial_slot` for both dialing fixtures; the greeter takes the permit before the connect and holds it in the session's own task. | `ocapn/src/capacity.rs::a_dial_slot_is_taken_from_the_shared_budget_and_released_with_the_permit`, `::every_dialing_fixture_draws_from_the_shared_budget` |
+| C348 | **decision, no code**: the leg amount is bounded by the coordinator's vault and not by the API; the doc comment at the bound, the operating page and this row say why. | none; the decision is the evidence |
+| C349 | the accept is a socket accept and nothing else; the TLS handshake, the upgrade and the server's challenge run on the connection's first `recv`, each bounded. `send` before it keeps the same refusal. | `ocapn/src/websocket.rs::a_silent_client_does_not_hold_the_accept` |
+| C350 | the disposition ledger shares the bodies' LMDB environment; `LmdbDirStoreManager::put_across` writes two databases in one transaction (computing the row from a read inside it, refusing two environments); `BodyDispositionWriter` is the one call site. `STORE_FORMAT_VERSION` 3 → 4 and `LEGACY_BODY_SCAN_VERSION` 1 → 2 carry the move. | `shared/src/lmdb.rs::put_across_writes_both_or_neither_and_refuses_two_environments`, `casper/src/block_disposition.rs::the_writer_stores_the_body_and_its_row_together`, `casper/src/storage.rs::mapping_has_expected_databases` |
+| C351 | `finalized_floor(None) = genesis`; the bound and the isolation latch are total in the anchor, and `proposal_is_within_bound` is the gate as a pure function. | `casper/src/blocks/proposer/proposer.rs::a_view_without_a_finalized_block_still_trips_the_bound` |
+| C352 | B46 names **readiness** (`/health`, `orphan_bodies`), not the phase. | `tools/check-docs-links.sh` only (documentation) |
+
+**Law 91.** C345 and C346 carried `candidate:` slugs, and a candidate slug means the property has no
+theorem. `spec/Rchain/Cost.lean` — the sibling of `Charging.lean`, which models the *sequence* of
+charges; this models their *magnitude* — proves `canonicalizationCost_covers_the_operand`,
+`unionCost_symmetric`, `censureCost_exceeds_the_universe` and `censureCost_monotone`, with
+`rightOnlyUnionCost_is_not_symmetric` and `censureCost_is_not_the_square` exhibiting the two old
+formulas. Law 91 is two entries (`lawCeiling` 90 → 91, `entryCeiling` 128 → 130), `proved-model`, with
+seven Rust witnesses and no corpus layer: the cost is a closed form, so a corpus of the same numbers
+would restate the witness. The register emits **91 laws, 130 entries, 10 axioms, all cited**.
+
+**Measured after.** The same release probe, same instrument (`rholang/tests/gas_amplification.rs`,
+`RNODE_GAS_PROBE=1`), `spec/audit/evidence/c345-c352-remediation-20261030/gas-probe-after.log`:
+
+| operation | before | after |
+|---|---|---|
+| `[N ints].toSet()` | 18 phlo at every N (500…40 000) | 18 + 3N (delta 1 518 at N = 500, 120 018 at N = 40 000) |
+| `map.set(k,v)` | 22 flat | flat 18 + 3N |
+| `map.keys()` | 10 flat | 18 + 3N |
+| `setA ++ setB` (equal) | `3·N`, asymmetric | `3·(N+N)`, symmetric |
+| `rho:gov:censure` at `MAX_GOV_UNIVERSE` | `N²` charged for Θ(U³) | `(U+1)³` = 1.35e8 phlo |
+
+The censure probe also **settled the bound**: the four shapes a 512-member universe admits cost
+**33 ms** (members-only), 5 ms (balanced), 1 ms (censure-heavy), 1 ms (voucher-heavy) in release. So
+`MAX_GOV_UNIVERSE` stays 512 — the cubic charge for it is the same order as the time it buys — and the
+§148 note that the cubic path was "unmeasured at the bound" is discharged.
+
+**Consensus blast radius.** C345 and C346 change charges, so they change `refund_amount` and
+`burned_amount`, hence a block's post-state hash: this is **#51 category A**, and a pre-fork block
+containing a conversion or a censure does not replay under the new code (`replay_cost_mismatch`,
+correctly). Every network's **genesis post-state hash moves**; no literal pin lives in-repo
+(`node/tests/pinned_genesis.rs` computes one in-process), but a devnet or operator
+`--expected-genesis-hash` must be regenerated. Ungated per the decision; the thing a post-testnet change
+of this shape would need is a block-version gate, and `models/src/block_version.rs`'s `is_active` still
+has no production caller.
+
+**Why believed.** Every finding has a test that would fail if the fix were reverted, named in the table.
+The two charges are pinned twice: arithmetic in `Costs` and the node's own cost cell
+(`collection_and_censure_charges_are_the_models`), and end-to-end marginals in the reducer. C350's
+atomicity is pinned at the transaction (`put_across` writes both or neither) and at the call site; the
+migration is the existing marker-gated scan, re-armed by the version bump.
+
+**How it is falsified.** Reverting any charge to flat fails the corresponding marginal test; a
+`finalized.is_some_and(...)` gate fails C351's test; deleting the greeter's `reserve_dial_slot` call
+fails the source ratchet; restoring an inline server handshake fails `a_silent_client_does_not_hold_the_accept`;
+making the receiver's two writes separate again fails `put_across`'s abort arm or the mapping test.
+
+**What it does not claim.** The charge is **linear for `O(n log n)` work** — a phlo buys work bounded
+by `charge · log charge`, which is bounded and is not the defect, but is not an exact comparison count.
+The other three `rho:gov:*` folds keep the squared charge and their work shape is unmeasured (C346's
+residual, stated in the row). C348's residual is accepted, not fixed. C350's migration was exercised by
+the test harness, not by a real populated store; a `Faulted` row on an unsettled body returns as
+`Pending`. The fixtures' end-to-end greeter dial is exercised by the reference suite, not by a Rust
+test — the Rust test pins the call site. And **no §6 deviation row was added on the branch**: the
+inventory pins every row by digest and pins `source_dev_sha`, so a row added there would either claim a
+row at an older commit or drag a branch commit into an audit artifact. It is recorded in §6 after merge,
+against the new dev SHA `78efd3fa1`, together with the hard-fork ledger item that records this change.
+## 150. The cost register: the missing instrument, and the two instances its first census found (C353, C354)
+
+**Found.** PR #514 closed the October re-audit's cost findings and said, in its own words, that the
+class was not closed: *"no gate is about cost"* (§148; `security-audit.md` §5), with §8's first open
+question the missing instrument. This pass builds it — and reading the charge surface to fill the
+register found **two live members of the class that the arm-by-arm remediation had missed**, before
+the gate ran a single check.
+
+**C353 — `set.add` and `set + x`.** Both call `reduce.rs::set_add`, which clones every element and
+re-canonicalises the whole set through `par_set`, for a flat `Costs::add_cost()` (3 phlo). A fold
+inserting N elements buys `O(N² log N)` work for `O(N)` phlo. C345 read the *conversion* arms and the
+map `set`; it did not read the insertion path the operator shares. The charge is now
+`canonicalization_cost(len + 1)` — exactly what `.set` on a map already charges — and Law 91a's
+statement did not change: the arm joined a law that was already true of its neighbours.
+
+**C354 — the two tallies.** `gov_tally` charged `gov_fold_cost(ballots + weights)`, a function the
+ranked/approved **option lists do not appear in at all**, while the work is linear in them and (for a
+ranked tally) round-multiplied by the longest ballot. Measured in release, on the old charge:
+
+| shape | charged | wall time |
+|---|---|---|
+| ranked, 100 ballots × 4 000 options | 40 000 phlo | **34 ms** |
+| approval, 128 ballots × 4 000 approvals | 65 536 phlo | **68 ms** |
+| ranked, 16 ballots × 8 options | 1 024 phlo | 0 ms |
+
+A ranked tally now charges `longest × entries` (one scan per entry per round, at most `longest`
+rounds) and an approval tally charges its entries — Law **91c**. The member maps keep
+`MAX_GOV_UNIVERSE`; the lists are **priced rather than refused**, because a refusal would reject a
+legitimate election (a few hundred ballots over ten options) to stop one that the phlo budget already
+stops.
+
+**The instrument.** `spec/cost-register.tsv` — 55 rows, one per priced operation: the work in a
+phrase, the shape (`constant|linear|product|quadratic|cubic|capped|identity`), the basis, the
+`Costs::` constructor or the helper whose body charges, the test that measures it, and any residual;
+rendered into `spec/COST.md`. `tools/check-cost-register.py` fails on an arm with no row, a row for
+nothing, a declared charge that is not in the arm it claims, an `identity`/`capped` row naming a
+charge, and evidence that resolves to nothing; seven mutation tests in `tests/test_cost_register.py`
+hold each of those refusals. `rholang/tests/cost_shapes.rs` is the measuring half and runs in
+`cargo test --workspace`: for each shape family the charged phlo at two sizes must grow at the
+declared rate — deterministic, because it reads phlo and not wall time. CI runs both beside the spawn
+and type-system censuses.
+
+**The other three folds, measured rather than assumed.** C346 left `trustLevels`, `resolveWeights` and
+`tally` charged `U²` with their shapes unmeasured. The probe
+(`rholang/tests/gas_amplification.rs::the_other_governance_folds_are_measured`) finds `trustLevels` at
+0 ms for a 511-member chain — a conferral cannot raise a level past the rater's, so the fixed point
+converges in at most five rounds — and `resolveWeights` at 41 ms at the universe bound with each member
+walking the delegation chain: both quadratic, so the squared charge matches both shapes. They are
+recorded in the register as `quadratic` / `measured`; C346's "unmeasured" residual is discharged.
+
+**Two decisions, recorded not coded.** A collection **literal** stays uncharged: its bytes were
+charged at parse and again at storage, and the runtime route that builds a set is priced by `set.add`
+after C353, so the two routes now meet — the literal route is bounded by the 64 KiB deploy term. And
+the charge remains **linear for `O(n log n)` work**: a phlo buys work bounded by `charge · log charge`,
+bounded and not the defect, but not an exact price of a comparison. `size` is the reverse case: `O(1)`
+work charged by the element count, an over-charge in the safe direction, and the register says so
+rather than the code being changed to match.
+
+**How it is falsified.** The register's own mutation tests — a deleted row for a live arm, a row for
+nothing, a charge moved out of its arm, an identity row naming a charge — and the shape tests, each of
+which fails when its charge is reverted (C353 and C354 were shown that way: `0` against `3` and `0`
+against `54`). The gate is as falsifiable as the defects it exists for, which is the only reason to
+add it.
+
+**What this does not claim.** The gate reads the *declaration* and the charge constructor, not the
+arm's complexity: a `linear` row over `O(n log n)` work passes, which is the recorded log factor, and
+a new arm that charges a constant passes if it declares `constant` — the difference is that the claim
+is now written beside the work in one table a reviewer reads. The **constant** is not checked either:
+one phlo per operation is a count, not a calibrated unit, and `resolveWeights` is the measured
+example (41 ms for a quadratic charge that matches its quadratic shape).
+
+**The §6 row, recorded.** The inventory pins every row by digest and pins `source_dev_sha`, so the
+deviation row could not be added on the branch: a row for C353/C354 pinned to the #514 merge commit
+would point at a `passes.md` that would not contain it, and pinning it to the branch would drag a
+branch commit into an audit artifact. It is recorded here instead, in the operation §149 also deferred
+and the post-#514 closeout performed for that unit: the cost-deviation row in §6 is **extended** to
+cover the set-insertion and tally charges, and the inventory, matrix and ledger are re-pinned to the
+merge commit `9e93c3d1f`, with the inventory's digests, lines and URLs regenerated. The ledger's
+`Audit:cost-insert-and-tally` reads `merged` (#518).

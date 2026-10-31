@@ -1265,18 +1265,22 @@ impl SystemProcesses {
     /// largest round size whose fold is comfortably sub-second, and it is still an order of magnitude
     /// above any real governance set (the genesis PoS set is 2).
     ///
-    /// **What this number does not yet cover.** The measurement above drives the *quadratic* path —
-    /// empty censures, so the fixed point converges in one round. The cubic path (a full censure and
-    /// voucher list) is worse per member and was not measured at the bound. That is the reason to keep
-    /// the bound low rather than to raise it, and a later pass that wants a larger one should measure
-    /// the cubic case first.
+    /// **The cubic path, measured at the bound (C346).** The first measurement drove the *quadratic*
+    /// path — empty censures, so the fixed point converged in one round — and said the cubic path was
+    /// unmeasured. It is measured now, release, by `rholang/tests/gas_amplification.rs`'s
+    /// `censure_is_cubic_in_the_universe`, over the four shapes a 512-member universe admits (the
+    /// bound is on the **sum** of censures, levels and vouchers): members-only **33 ms**, balanced
+    /// 5 ms, censure-heavy 1 ms, voucher-heavy 1 ms. So 512 stays — the constant the cubic charge
+    /// computes for it, `(512+1)³` = 1.35e8 phlo, is the same order as the 33 ms the table's
+    /// one-phlo-per-operation calibration already buys, and no shape reaches a second.
     const MAX_GOV_UNIVERSE: usize = 512;
 
-    /// Bound and charge a `rho:gov:*` fold (audit F-3).
+    /// Bound and charge a `rho:gov:*` fold (audit F-3, C346).
     ///
-    /// Shared by the four handlers because the defect was shared: each parsed its arguments and called
-    /// into `qucalc` with no charge at all, so the cost of a cubic fold was paid by the validator and
-    /// nothing by the deploy. The charge is the squared universe; the bound is the refusal above.
+    /// Shared by the three single-pass handlers because the defect was shared: each parsed its
+    /// arguments and called into `qucalc` with no charge at all, so the work was paid by the validator
+    /// and nothing by the deploy. The charge is the squared universe; the bound is the refusal above.
+    /// `censure`'s fixed point is cubic and takes [`Self::charge_gov_censure`] instead.
     fn charge_gov_fold(
         cc: &ContractCall<ChargingRSpace, std::sync::Weak<RholangAndScalaDispatcher>>,
         universe: usize,
@@ -1289,6 +1293,27 @@ impl SystemProcesses {
         }
         cc.cost()
             .charge(crate::accounting::Costs::gov_fold_cost(universe as i64))
+    }
+
+    /// Bound and charge `rho:gov:censure` — the one `rho:gov:*` handler whose work is **cubic**
+    /// (C346).
+    ///
+    /// `qucalc::censure` iterates a decreasing fixed point (at most `universe + 1` rounds) and each
+    /// round scans the universe per member, so the charge is `(U+1)³`. The other three handlers fold
+    /// in one pass and keep [`Self::charge_gov_fold`]'s quadratic charge; their work shape has not
+    /// been measured and that is named in the register rather than assumed away.
+    fn charge_gov_censure(
+        cc: &ContractCall<ChargingRSpace, std::sync::Weak<RholangAndScalaDispatcher>>,
+        universe: usize,
+    ) -> Result<(), RholangError> {
+        if universe > Self::MAX_GOV_UNIVERSE {
+            return Err(illegal_arg(&format!(
+                "governance input names {universe} members, over the {} limit",
+                Self::MAX_GOV_UNIVERSE
+            )));
+        }
+        cc.cost()
+            .charge(crate::accounting::Costs::gov_censure_cost(universe as i64))
     }
 
     /// `rho:gov:resolveWeights(directVoters, delegations, trust, ret)` — resolve liquid-democracy
@@ -1340,6 +1365,35 @@ impl SystemProcesses {
         })
     }
 
+    /// Bound and charge `rho:gov:tally` — the one `rho:gov:*` handler whose work is a function of a
+    /// list the member universe does not count (C354).
+    ///
+    /// The member maps keep the `MAX_GOV_UNIVERSE` refusal; the **option lists are charged, not
+    /// refused**: every round scans every ranked entry and there are at most `longest` rounds, so a
+    /// ranked tally charges that product and an approval tally charges its entries. A legitimate
+    /// election (a few hundred ballots over ten options) pays a few thousand phlo, and a ballot map
+    /// whose option lists are a million entries deep is priced past the block cap instead of being run.
+    fn charge_gov_tally(
+        cc: &ContractCall<ChargingRSpace, std::sync::Weak<RholangAndScalaDispatcher>>,
+        universe: usize,
+        longest: usize,
+        entries: usize,
+        ranked: bool,
+    ) -> Result<(), RholangError> {
+        if universe > Self::MAX_GOV_UNIVERSE {
+            return Err(illegal_arg(&format!(
+                "governance input names {universe} members, over the {} limit",
+                Self::MAX_GOV_UNIVERSE
+            )));
+        }
+        let cost = if ranked {
+            crate::accounting::Costs::gov_tally_ranked_cost(longest as i64, entries as i64)
+        } else {
+            crate::accounting::Costs::gov_tally_approval_cost(entries as i64)
+        };
+        cc.cost().charge(cost)
+    }
+
     /// `rho:gov:censure(censures, levels, vouchers, ret)` — accountability: `(discredited,
     /// newLevels)` via a ⅔ quorum (floored at 2) with voucher slashing.
     fn gov_censure(&self) -> ScalaBodyFn {
@@ -1360,7 +1414,7 @@ impl SystemProcesses {
                 let c = parse_censure_list(censures)?;
                 let lv = parse_member_int_map(levels)?;
                 let v = parse_voucher_list(vouchers)?;
-                Self::charge_gov_fold(&cc, c.len() + lv.len() + v.len())?;
+                Self::charge_gov_censure(&cc, c.len() + lv.len() + v.len())?;
                 let (disc, new_levels) = qucalc::gov::censure(&c, &lv, &v);
                 let disc_list: Vec<String> = disc.into_iter().collect();
                 let out =
@@ -1387,9 +1441,22 @@ impl SystemProcesses {
                 };
                 let b = parse_ranked_ballots(ballots)?;
                 let w = parse_member_int_map(weights)?;
-                Self::charge_gov_fold(&cc, b.len() + w.len())?;
                 let mode = RhoString::unapply(mode)
                     .ok_or_else(|| illegal_arg("gov:tally expects a mode string"))?;
+                // The option lists are what the work is linear in, and the old universe did not
+                // count them (C354).
+                let entries: usize = b.values().map(Vec::len).sum();
+                let longest = b.values().map(Vec::len).max().unwrap_or(0);
+                let ranked = match mode {
+                    "ranked" => true,
+                    "approval" => false,
+                    _ => {
+                        return Err(illegal_arg(
+                            "gov:tally mode must be \"ranked\" or \"approval\"",
+                        ))
+                    }
+                };
+                Self::charge_gov_tally(&cc, b.len() + w.len(), longest, entries, ranked)?;
                 let winner = match mode {
                     "ranked" => qucalc::gov::tally_ranked(&b, &w),
                     "approval" => qucalc::gov::tally_approval(&b, &w),
@@ -1742,6 +1809,135 @@ impl SystemProcesses {
                     i64::from(bd.block_number)
                 };
                 match op {
+                    "voteSlash" => {
+                        let [deployer_id, target, in_favor, ret] = rest else {
+                            return Err(illegal_arg(
+                                "voteSlash expects deployerId, target public key, a boolean and a                                  return channel",
+                            ));
+                        };
+                        // Capability, not data: the caller is the deployer, as for `bond`/`trust`.
+                        let voter = RhoDeployerId::unapply(deployer_id)
+                            .and_then(|bytes| Validator::try_from(bytes).ok())
+                            .ok_or_else(|| illegal_arg("voteSlash expects a deployerId"))?;
+                        let target = RhoByteArray::unapply(target)
+                            .and_then(|bytes| Validator::try_from(bytes).ok())
+                            .ok_or_else(|| {
+                                illegal_arg("voteSlash expects a 65-byte validator public key")
+                            })?;
+                        let in_favor = RhoBoolean::unapply(in_favor)
+                            .ok_or_else(|| illegal_arg("voteSlash expects a boolean vote"))?;
+                        let out = match native
+                            .cast_vote(&voter, &target, in_favor)
+                            .await
+                            .map_err(|e| illegal_arg(&e))?
+                        {
+                            Ok(()) => {
+                                eprintln!("[pos] ok");
+                                RhoTupleN::apply(vec![RhoBoolean::apply(true), RhoNil::apply()])
+                            }
+                            Err(msg) => {
+                                eprintln!("[pos] refused: {msg}");
+                                RhoTupleN::apply(vec![
+                                    RhoBoolean::apply(false),
+                                    RhoString::apply(msg),
+                                ])
+                            }
+                        };
+                        cc.produce(&rand, &[out], ret, path).await
+                    }
+                    "unvoteSlash" => {
+                        let [deployer_id, target, ret] = rest else {
+                            return Err(illegal_arg(
+                                "unvoteSlash expects deployerId, target public key and a return                                  channel",
+                            ));
+                        };
+                        let voter = RhoDeployerId::unapply(deployer_id)
+                            .and_then(|bytes| Validator::try_from(bytes).ok())
+                            .ok_or_else(|| illegal_arg("unvoteSlash expects a deployerId"))?;
+                        let target = RhoByteArray::unapply(target)
+                            .and_then(|bytes| Validator::try_from(bytes).ok())
+                            .ok_or_else(|| {
+                                illegal_arg("unvoteSlash expects a 65-byte validator public key")
+                            })?;
+                        let out = match native
+                            .retract_vote(&voter, &target)
+                            .await
+                            .map_err(|e| illegal_arg(&e))?
+                        {
+                            Ok(()) => {
+                                eprintln!("[pos] ok");
+                                RhoTupleN::apply(vec![RhoBoolean::apply(true), RhoNil::apply()])
+                            }
+                            Err(msg) => {
+                                eprintln!("[pos] refused: {msg}");
+                                RhoTupleN::apply(vec![
+                                    RhoBoolean::apply(false),
+                                    RhoString::apply(msg),
+                                ])
+                            }
+                        };
+                        cc.produce(&rand, &[out], ret, path).await
+                    }
+                    "getLiveness" => {
+                        let [ret] = rest else {
+                            return Err(illegal_arg("getLiveness expects a return channel"));
+                        };
+                        let records = native.liveness().await.map_err(|e| illegal_arg(&e))?;
+                        let kvs: Vec<(Par, Par)> = records
+                            .iter()
+                            .map(|(validator, record)| {
+                                (
+                                    RhoByteArray::apply(validator.as_bytes().to_vec()),
+                                    RhoTupleN::apply(vec![
+                                        RhoNumber::apply(record.absent_boundaries),
+                                        RhoNumber::apply(record.jail_remaining),
+                                    ]),
+                                )
+                            })
+                            .collect();
+                        cc.produce(&rand, &[RhoMap::apply(kvs)], ret, path).await
+                    }
+                    "getVotes" => {
+                        let [target, ret] = rest else {
+                            return Err(illegal_arg(
+                                "getVotes expects a target public key and a return channel",
+                            ));
+                        };
+                        let target = RhoByteArray::unapply(target)
+                            .and_then(|bytes| Validator::try_from(bytes).ok())
+                            .ok_or_else(|| {
+                                illegal_arg("getVotes expects a 65-byte validator public key")
+                            })?;
+                        let window = native
+                            .vote_windows()
+                            .await
+                            .map_err(|e| illegal_arg(&e))?
+                            .get(&target)
+                            .copied();
+                        let response = match window {
+                            None => RhoNil::apply(),
+                            Some(window) => {
+                                let ballots =
+                                    native.slash_votes().await.map_err(|e| illegal_arg(&e))?;
+                                let kvs: Vec<(Par, Par)> = ballots
+                                    .iter()
+                                    .filter(|(key, _)| key.target == target)
+                                    .map(|(key, in_favor)| {
+                                        (
+                                            RhoByteArray::apply(key.voter.as_bytes().to_vec()),
+                                            RhoBoolean::apply(*in_favor),
+                                        )
+                                    })
+                                    .collect();
+                                RhoTupleN::apply(vec![
+                                    RhoNumber::apply(window.opened_at),
+                                    RhoNumber::apply(window.remaining),
+                                    RhoMap::apply(kvs),
+                                ])
+                            }
+                        };
+                        cc.produce(&rand, &[response], ret, path).await
+                    }
                     "getBonds" => {
                         let [ret] = rest else {
                             return Err(illegal_arg("getBonds expects a return channel"));
@@ -2960,12 +3156,23 @@ mod tests {
     }
 
     fn mock_system_processes(mock: &Arc<MockSpace>) -> (SystemProcesses, Vec<Definition>) {
-        let charging = ChargingRSpace::new(
-            mock.clone(),
-            Arc::new(crate::accounting::CostAccounting::from_initial(
-                crate::accounting::Costs::unsafe_max(),
-            )),
-        );
+        let (sp, defs, _cost) = mock_system_processes_with_cost(mock);
+        (sp, defs)
+    }
+
+    /// The same harness, with the **cost cell** the handlers charge — so a test can assert what a
+    /// call actually costs, rather than only that it ran.
+    fn mock_system_processes_with_cost(
+        mock: &Arc<MockSpace>,
+    ) -> (
+        SystemProcesses,
+        Vec<Definition>,
+        Arc<crate::accounting::CostAccounting>,
+    ) {
+        let cost = Arc::new(crate::accounting::CostAccounting::from_initial(
+            crate::accounting::Costs::unsafe_max(),
+        ));
+        let charging = ChargingRSpace::new(mock.clone(), cost.clone());
         let dispatcher = Arc::new(RholangAndScalaDispatcher::new(
             std::collections::BTreeMap::new(),
         ));
@@ -2975,7 +3182,7 @@ mod tests {
         )));
         let sp = SystemProcesses::new(charging, dispatcher, block_data, native_state);
         let defs = sp.definitions();
-        (sp, defs)
+        (sp, defs, cost)
     }
 
     /// The `(urn, callArity, remainder)` triples `spec/conformance/protocol.tsv` declares, read from
@@ -3577,6 +3784,123 @@ mod tests {
         // the name at the consumer and make its send a no-op.
         let sent = &produced[1].1.pars[0];
         assert_eq!(sent.as_par(), &data, "lookup sends the stored value alone");
+    }
+
+    /// **The liveness slash vote is a deploy-authorised ballot, not a data message.** The caller is
+    /// the deployer id; a byte array is refused, an active validator's ballot is recorded, and the
+    /// read accessor reports the window and the ballots.
+    #[tokio::test]
+    async fn pos_vote_slash_is_authorised_by_the_deployer_id() {
+        use crate::native_state::{pos_liveness_key, PosParams};
+        use crate::pos_liveness::{AbsenceRecord, BallotKey, VoteWindow};
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let native = NativeSystemState::new(Arc::new(
+            rchain_rspace::native_store::InMemNativeStore::empty(),
+        ));
+        let v = |b: u8| rchain_models::validator::Validator::new([b; 65]);
+        let stake = |n: i64| NonNegI64::try_from(n).unwrap();
+        native.set_params(&PosParams {
+            epoch_length: 10,
+            quarantine_length: 50,
+            minimum_bond: stake(1),
+            maximum_bond: stake(1000),
+            liveness_absence_threshold: 10,
+            liveness_jail_after_boundaries: 2,
+            liveness_jail_epochs: 5,
+            liveness_vote_window: 3,
+            liveness_slash_severity: 2,
+            ..PosParams::default()
+        });
+        native.set_bonds(&BTreeMap::from([
+            (v(1), stake(10)),
+            (v(2), stake(10)),
+            (v(3), stake(10)),
+            (v(4), stake(10)),
+        ]));
+        native.set_active(&BTreeMap::from([
+            (v(1), stake(10)),
+            (v(2), stake(10)),
+            (v(3), stake(10)),
+        ]));
+        native
+            .set_liveness(&BTreeMap::from([(
+                v(4),
+                AbsenceRecord {
+                    absent_boundaries: 0,
+                    jail_remaining: 5,
+                },
+            )]))
+            .await
+            .unwrap();
+        native
+            .set_vote_windows(&BTreeMap::from([(
+                v(4),
+                VoteWindow {
+                    opened_at: 30,
+                    remaining: 3,
+                },
+            )]))
+            .await
+            .unwrap();
+        let _ = pos_liveness_key(); // the key is part of the state surface, used by the accessor
+        let charging = ChargingRSpace::new(
+            mock.clone(),
+            Arc::new(crate::accounting::CostAccounting::from_initial(
+                crate::accounting::Costs::unsafe_max(),
+            )),
+        );
+        let dispatcher = Arc::new(RholangAndScalaDispatcher::new(
+            std::collections::BTreeMap::new(),
+        ));
+        let block_data = Arc::new(Mutex::new(BlockData::empty()));
+        let sp = SystemProcesses::new(charging, dispatcher, block_data, Arc::new(native.clone()));
+        let defs = sp.definitions();
+        let pos = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::POS)
+            .expect("pos definition");
+        let ret = FixedChannels::stdout();
+
+        // A deployer id is the capability; a byte array is refused.
+        let byte_call = vec![lpw(vec![
+            RhoString::apply("voteSlash".to_string()),
+            RhoList::apply(vec![
+                RhoByteArray::apply(vec![1; 65]),
+                RhoByteArray::apply(v(4).as_bytes().to_vec()),
+                RhoBoolean::apply(true),
+                ret.clone(),
+            ]),
+        ])];
+        assert!(
+            (pos.handler)(byte_call, DfsPath::root()).await.is_err(),
+            "a byte array is not a deployer id"
+        );
+
+        let call = vec![lpw(vec![
+            RhoString::apply("voteSlash".to_string()),
+            RhoList::apply(vec![
+                RhoDeployerId::apply(v(1).as_bytes().to_vec()),
+                RhoByteArray::apply(v(4).as_bytes().to_vec()),
+                RhoBoolean::apply(true),
+                ret.clone(),
+            ]),
+        ])];
+        (pos.handler)(call, DfsPath::root()).await.unwrap();
+        assert_eq!(
+            native.slash_votes().await.unwrap(),
+            BTreeMap::from([(
+                BallotKey {
+                    target: v(4),
+                    voter: v(1),
+                },
+                true
+            )])
+        );
+        let produced = mock.produced.lock().unpoison();
+        let verdict = RhoTupleN::unapply(produced[0].1.pars[0].as_par()).expect("a tuple");
+        assert_eq!(RhoBoolean::unapply(&verdict[0]), Some(true));
     }
 
     #[tokio::test]
@@ -4273,6 +4597,72 @@ mod tests {
     /// a change to either has to face the other.
     const MAX_UNIVERSE_PROBE: usize = SystemProcesses::MAX_GOV_UNIVERSE;
 
+    /// **`censure` is charged the cube of its universe** (C346).
+    ///
+    /// The charge was `U²` for a fixed point that runs up to `U+1` rounds, each scanning the universe
+    /// per member. This pins the exact amount the handler takes at two sizes, so a revert to the
+    /// quadratic table or a drift in the `+1` fails here rather than in a phlo-budget estimate.
+    #[tokio::test]
+    async fn censure_is_charged_the_cube_of_its_universe() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs, cost) = mock_system_processes_with_cost(&mock);
+
+        let censure = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::GOV_CENSURE)
+            .expect("gov:censure definition");
+        let ack = FixedChannels::stdout();
+        let levels = RhoMap::apply(
+            (0..8)
+                .map(|i| (RhoString::apply(format!("m{i}")), RhoNumber::apply(5)))
+                .collect(),
+        );
+        // The two calls must produce the **same output**, so the storage charge for producing it is
+        // the same and the difference in total charge is the censure charge alone. The extra pairs
+        // name members that are in neither list, so they raise the universe without discrediting
+        // anybody: a ghost at level 0 would need a quorum of two thirds of the universe.
+        let ghosts = RhoList::apply(vec![
+            RhoTupleN::apply(vec![
+                RhoString::apply("g1".to_string()),
+                RhoString::apply("g2".to_string()),
+            ]),
+            RhoTupleN::apply(vec![
+                RhoString::apply("g3".to_string()),
+                RhoString::apply("g4".to_string()),
+            ]),
+        ]);
+        let call = |censures: rchain_models::ast::Par, levels: rchain_models::ast::Par| {
+            (censure.handler)(
+                vec![lpw(vec![
+                    censures,
+                    levels,
+                    RhoList::apply(vec![]),
+                    ack.clone(),
+                ])],
+                DfsPath::root(),
+            )
+        };
+
+        let before = cost.total_charged();
+        call(RhoList::apply(vec![]), levels.clone())
+            .await
+            .expect("censure runs");
+        let with_eight = cost.total_charged() - before;
+
+        let before = cost.total_charged();
+        call(ghosts, levels).await.expect("censure runs");
+        let with_ten = cost.total_charged() - before;
+
+        // `universe` is the sum of the three lists: 8 members, then 8 + 2 censure pairs.
+        assert_eq!(
+            with_ten - with_eight,
+            (10i64 + 1).pow(3) - (8i64 + 1).pow(3),
+            "the charge must track (U+1)³ in the universe, not a square"
+        );
+    }
+
     #[tokio::test]
     async fn gov_tally_ranked_returns_winner() {
         let mock = Arc::new(MockSpace {
@@ -4328,6 +4718,113 @@ mod tests {
         assert_eq!(
             RhoString::unapply(produced[0].1.pars[0].as_par()),
             Some("X")
+        );
+    }
+
+    /// **A tally charges the option lists it scans** (C354), where it used to charge only
+    /// `(ballots + weights)²` — a function the option lists do not appear in, while the work is
+    /// linear in them and round-multiplied by the longest ballot.
+    ///
+    /// Measured difference of charges between two election sizes, so the (constant) cost of producing
+    /// the answer cancels: ranked charges `longest × entries`, approval charges `entries`. Under the
+    /// old charge both differences would be zero — the numbers do not depend on the options at all.
+    #[tokio::test]
+    async fn a_tally_charges_the_option_lists_it_scans() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs, cost) = mock_system_processes_with_cost(&mock);
+        let tally = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::GOV_TALLY)
+            .expect("gov:tally definition");
+        let ack = FixedChannels::stdout();
+        let ballots_of = |n: usize, k: usize| {
+            let options: Vec<String> = (0..k).map(|o| format!("o{o:02}")).collect();
+            RhoMap::apply(
+                (0..n)
+                    .map(|i| (RhoString::apply(format!("m{i}")), string_list(&options)))
+                    .collect(),
+            )
+        };
+        let weights_of = |n: usize| {
+            RhoMap::apply(
+                (0..n)
+                    .map(|i| (RhoString::apply(format!("m{i}")), RhoNumber::apply(1)))
+                    .collect(),
+            )
+        };
+        async fn charged(
+            def: &Definition,
+            cost: &std::sync::Arc<crate::accounting::CostAccounting>,
+            ballots: Par,
+            weights: Par,
+            mode: &str,
+            ack: Par,
+        ) -> i64 {
+            let before = cost.total_charged();
+            (def.handler)(
+                vec![lpw(vec![
+                    ballots,
+                    weights,
+                    RhoString::apply(mode.to_string()),
+                    ack,
+                ])],
+                DfsPath::root(),
+            )
+            .await
+            .expect("tally runs");
+            cost.total_charged() - before
+        }
+
+        // ranked: `longest × entries`.
+        let small = charged(
+            tally,
+            &cost,
+            ballots_of(2, 3),
+            weights_of(2),
+            "ranked",
+            ack.clone(),
+        )
+        .await; // 3 * 6 = 18
+        let large = charged(
+            tally,
+            &cost,
+            ballots_of(2, 6),
+            weights_of(2),
+            "ranked",
+            ack.clone(),
+        )
+        .await; // 6 * 12 = 72
+        assert_eq!(
+            large - small,
+            72 - 18,
+            "a ranked tally's charge must grow with the option lists, not only with the ballots"
+        );
+
+        // approval: `entries`.
+        let small = charged(
+            tally,
+            &cost,
+            ballots_of(2, 3),
+            weights_of(2),
+            "approval",
+            ack.clone(),
+        )
+        .await; // 6
+        let large = charged(
+            tally,
+            &cost,
+            ballots_of(2, 6),
+            weights_of(2),
+            "approval",
+            ack,
+        )
+        .await; // 12
+        assert_eq!(
+            large - small,
+            12 - 6,
+            "an approval tally's charge must grow with the approvals it counts"
         );
     }
 

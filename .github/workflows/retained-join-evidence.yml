@@ -1,0 +1,31 @@
+name: Retained native join evidence
+
+on:
+  pull_request:
+    paths:
+      - 'spec/audit/evidence/n479-native-join-20261029/**'
+      - '.github/workflows/retained-join-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Check recorded private join and live acceptance boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Check out recorded source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Independently check retained logs and observations
+        run: python3 spec/audit/evidence/n479-native-join-20261029/verify.py
+      - name: Check out the immutable public metadata fixture
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 15e2e16240424fe4a5a8aa9131e5462bdbe56f2a
+          path: old-chain-fixture
+      - name: Check the live dropped hash against its complete historical ancestry
+        run: python3 spec/audit/evidence/n479-native-join-20261029/cross-genesis.py --fixture-repo old-chain-fixture

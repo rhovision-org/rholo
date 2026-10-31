@@ -63,6 +63,10 @@ n_proved_tied="$(col proved-tied)"
 n_proved_model="$(col proved-model)"
 n_proved="$(awk -F'\t' 'NR>1 && ($4=="proved-tied" || $4=="proved-model") {print $1}' "$TSV" \
   | sort -u | wc -l | tr -d ' ')"
+# A law with more than one row carries clause letters, and `entries` is larger than `laws` by exactly
+# this population's extra rows. Stated separately so the arithmetic sentence is generated rather than
+# hand-written (2026-10-26: the page said eighteen while the register held sixteen).
+n_clause_laws="$(awk -F'\t' 'NR>1 {c[$1]++} END {n=0; for (k in c) if (c[k]>1) n++; print n+0}' "$TSV")"
 
 value_of() {
   case "$1" in
@@ -76,6 +80,7 @@ value_of() {
     proved-model-laws)    printf '%s' "$n_proved_model" ;;
     proved-model-entries) printf '%s' "$(col_rows proved-model)" ;;
     proved-tied-entries)  printf '%s' "$(col_rows proved-tied)" ;;
+    clause-laws)          printf '%s' "$n_clause_laws" ;;
     owed-laws)            col owed ;;
     open-laws)            col open ;;
     orphaned-laws)        col orphaned ;;
@@ -108,14 +113,13 @@ FILES=(
   "$ROOT/docs/src/introduction.md"
   # **And every other page that states a total by hand, added 2026-09-26 the same way** (AUDIT C106):
   # each of these carried a stale "29 laws" — `quantum-to-rho.md`, `why-rust.md` (twice),
-  # `laws-to-rust.md` (twice), `rholang/reference.md`, `contributor/spec.md`, `RHO-CALCULUS.md`,
+  # `laws-to-rust.md` (twice), `rholang/reference.md`, `RHO-CALCULUS.md`,
   # `RUST-VS-SCALA.md` and `TEST-COVERAGE.md` (twice) — and all of them were outside this list, which
   # is exactly why they drifted. The rule this list grows by is the finding: a count stated outside it
   # is one nothing recomputes.
   "$ROOT/docs/src/qucalc/quantum-to-rho.md"
   "$ROOT/docs/src/contributor/why-rust.md"
   "$ROOT/docs/src/contributor/laws-to-rust.md"
-  "$ROOT/docs/src/contributor/spec.md"
   "$ROOT/docs/src/rholang/reference.md"
   "$SPEC/RHO-CALCULUS.md"
   "$SPEC/RUST-VS-SCALA.md"
@@ -124,13 +128,18 @@ FILES=(
   # by the same rule the rest are: a count stated outside it is one nothing recomputes.
   "$ROOT/docs/src/methodology/law-first-port.md"
   "$ROOT/docs/src/methodology/agentic-assurance.md"
+  # The laws split (2026-10-26): the human page is caught by the `formal/*.md` glob below; the agent
+  # reference states the law/entry total and is added explicitly. The operator setup guide is in the
+  # list for the same rule — it is reader-facing and cites laws.
+  "$ROOT/docs/src/ai/laws-reference.md"
+  "$ROOT/docs/src/node/validator-observer-setup.md"
 )
 for f in "$ROOT"/docs/src/formal/*.md; do FILES+=("$f"); done
 
 # The map as `key=value` lines, reused for both the rewrite and the scan.
 map="$(for k in laws entries laws-entries axioms summary proved-laws proved-tied-laws proved-model-laws \
                  owed-laws open-laws orphaned-laws vacuous-laws axiom-by-design-laws \
-                 proved-model-entries proved-tied-entries; do
+                 proved-model-entries proved-tied-entries clause-laws; do
           printf '%s=%s\n' "$k" "$(value_of "$k")"
         done)"
 

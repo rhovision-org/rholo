@@ -15,9 +15,15 @@ use rchain_models::casper::protocol::casper_message::BlockMessage;
 use rchain_shared::log::{Log, LogSource};
 use tokio::sync::mpsc;
 
+use crate::block_disposition::{BlockDispositionStore, BodyDispositionWriter, PendingStage};
+use crate::blocks::block_processor;
 use crate::blocks::block_retriever::BlockRetriever;
 use crate::engine::node_running::MAX_PENDING_BLOCKS;
 use crate::validate::{block_hash, block_signature, format_of_fields};
+
+/// Reserved capacity for missing parents of blocks already pending in the receiver.
+/// Finite: an attacker can never turn pending dependencies into unbounded state.
+const MAX_DEPENDENCY_HEADROOM: usize = 32;
 
 /// Block-receive status (port of `RecvStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +36,18 @@ pub enum RecvStatus {
     PendingValidation,
     /// Requested missing dependencies.
     Requested,
+}
+
+/// The result of [`BlockReceiverState::claim_reoffer`]: whether the runtime sweep may dispatch a
+/// stored pending body, and whether the claim moved the receiver's own state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReofferClaim {
+    /// The receiver held the body at `EndStoreBlock`; the sweep now owns the dispatch.
+    Claimed,
+    /// The receiver holds no in-memory claim; the sweep owns the dispatch.
+    NotHeld,
+    /// The receiver already has it in flight (or in a state the sweep must not touch).
+    Owned,
 }
 
 /// Block receiver state (port of `BlockReceiverState`).
@@ -81,6 +99,48 @@ impl<MId: Ord + Clone + std::fmt::Debug> BlockReceiverState<MId> {
         }
     }
 
+    /// Undo a begin-stored reservation when a store read or capacity check fails.
+    /// A dependency which children still need stays Requested; an unrelated
+    /// refusal becomes unknown again. Neither is permanently stuck at BeginStoreBlock.
+    pub fn abort_stored(&self, id: &MId) -> Self {
+        let mut next = self.clone();
+        if next.receive_st.get(id) == Some(&RecvStatus::BeginStoreBlock) {
+            if next
+                .child_relations
+                .get(id)
+                .is_some_and(|children| !children.is_empty())
+            {
+                next.receive_st.insert(id.clone(), RecvStatus::Requested);
+            } else {
+                next.receive_st.remove(id);
+            }
+        }
+        next
+    }
+
+    /// **Claim a stored body for the runtime re-offer sweep** (Law 88c), under the receiver's own
+    /// lock, so a sweep cannot dispatch a body the receiver is about to release.
+    ///
+    /// * `NotHeld` — the receiver has no in-memory claim (the overflow refusal path dropped it, or
+    ///   this is a post-restart row). The sweep owns the dispatch.
+    /// * `Claimed` — the receiver holds it at `EndStoreBlock`; this moves it to
+    ///   `PendingValidation`, which is the state `begin_stored` refuses, so a concurrent delivery
+    ///   cannot dispatch it a second time.
+    /// * `Owned` — already in flight, requested, or otherwise not the sweep's to take.
+    pub fn claim_reoffer(&mut self, id: &MId) -> ReofferClaim {
+        if !self.blocks_st.contains_key(id) {
+            return ReofferClaim::NotHeld;
+        }
+        match self.receive_st.get(id) {
+            Some(RecvStatus::EndStoreBlock) => {
+                self.receive_st
+                    .insert(id.clone(), RecvStatus::PendingValidation);
+                ReofferClaim::Claimed
+            }
+            _ => ReofferClaim::Owned,
+        }
+    }
+
     /// Storing of the block is done, waiting validation. Returns the updated state and the unseen
     /// parent dependencies (port of `endStored`). The Scala `assert` is a `Result` error here so an
     /// invariant violation is logged and the block skipped rather than panicking the task.
@@ -123,14 +183,23 @@ impl<MId: Ord + Clone + std::fmt::Debug> BlockReceiverState<MId> {
             ));
         }
 
-        // Bound the receiver state (R29): a peer can stream valid-signed blocks whose justifications
-        // point at nonexistent hashes; those never resolve and would otherwise accumulate here
-        // forever (in `blocks_st`/`receive_st`/`child_relations`).
+        // R29 bounds unsolicited blocks at MAX_PENDING_BLOCKS. Reserve a small,
+        // finite allowance for missing parents of blocks already admitted.
+        // Refusing those parents when the ordinary bound is full deadlocks
+        // the receiver: none of their waiting children can be validated.
+        // Never evict a stored-but-unvalidated child to make room.
         if self.blocks_st.len() >= MAX_PENDING_BLOCKS && !self.blocks_st.contains_key(&id) {
-            return Err(format!(
-                "block receiver state full ({} blocks); dropping {:?}",
-                MAX_PENDING_BLOCKS, id
-            ));
+            let needed = self
+                .child_relations
+                .get(&id)
+                .is_some_and(|children| !children.is_empty());
+            if !needed || self.blocks_st.len() >= MAX_PENDING_BLOCKS + MAX_DEPENDENCY_HEADROOM {
+                return Err(format!(
+                    "block receiver state full ({} blocks); cannot admit {:?}",
+                    self.blocks_st.len(),
+                    id
+                ));
+            }
         }
 
         // Update blocks state, keep unseen parents only.
@@ -259,6 +328,23 @@ impl<MId: Ord + Clone + std::fmt::Debug> BlockReceiverState<MId> {
             child_relations: new_child_relations,
         };
         Ok((new_state, deps_validated))
+    }
+
+    /// Release a block if the receiver still holds it; a no-op when it was never end-stored.
+    ///
+    /// A validation-failed block is inserted into the DAG but is not an `Ok(())`; it must still
+    /// release children that were already waiting on its parent relation. A faulted-before-
+    /// `end_stored` block is not in `blocks_st`, so the release is an idempotent no-op rather than
+    /// an error that hides the original fault.
+    pub fn finished_if_present(
+        &self,
+        id: MId,
+        parents: BTreeSet<MId>,
+    ) -> Result<(Self, BTreeSet<MId>), String> {
+        if !self.blocks_st.contains_key(&id) {
+            return Ok((self.clone(), BTreeSet::new()));
+        }
+        self.finished(id, parents)
     }
 }
 
@@ -402,6 +488,8 @@ async fn incoming_blocks(
     state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
     conf_shard_name: Arc<str>,
     block_store: BlockStore,
+    disposition: BlockDispositionStore,
+    body_writer: BodyDispositionWriter,
     dag: Arc<dyn BlockDagStorage>,
     block_retriever: Arc<BlockRetriever>,
     put_to_incoming_queue: Arc<dyn Fn(BlockMessage) + Send + Sync>,
@@ -425,15 +513,8 @@ async fn incoming_blocks(
             .retry_oldest_pending_request(&block.block_hash)
             .await;
 
-        // Begin storing the block.
-        let should_check = {
-            let mut guard = state.lock().await;
-            let (new_state, should_check) = guard.begin_stored(block.block_hash);
-            *guard = new_state;
-            should_check
-        };
-
-        // Ignore blocks older than the DAG.
+        // Ignore blocks older than the DAG before reserving their hash.
+        // The old order left rejected hashes stuck in BeginStoreBlock.
         if check_if_known(&block, dag.as_ref()).await {
             log.info(
                 source,
@@ -445,6 +526,12 @@ async fn incoming_blocks(
             continue;
         }
 
+        let should_check = {
+            let mut guard = state.lock().await;
+            let (new_state, should_check) = guard.begin_stored(block.block_hash);
+            *guard = new_state;
+            should_check
+        };
         if !should_check {
             continue;
         }
@@ -464,20 +551,47 @@ async fn incoming_blocks(
                         block.block_hash.to_hex()
                     ),
                 );
+                let mut guard = state.lock().await;
+                *guard = guard.abort_stored(&block.block_hash);
                 continue;
             }
         };
+        // **The body and the obligation are one write** (C350, U19, F-U19-01/05/07). The row used to
+        // be a second transaction in another LMDB environment, so a crash between them left a body
+        // nothing owed. One transaction cannot span environments, so the ledger shares the body's and
+        // `store_body_and_mark_pending` commits both together: either both are durable or neither is.
         if !block_stored {
-            if let Err(e) = block_store.put(&[(block.block_hash, block.clone())]).await {
+            if let Err(e) = body_writer
+                .store_body_and_mark_pending(&block, PendingStage::Stored)
+                .await
+            {
+                // The transaction aborted, so the body is *not* stored: the block is not ours to
+                // settle and the peer or retriever offers it again.
                 log.error(
                     source,
                     &format!(
-                        "Failed to store block {}, skipping: {e}",
+                        "Failed to store block {} (or to record its disposition), skipping: {e}",
                         block.block_hash.to_hex()
                     ),
                 );
+                let mut guard = state.lock().await;
+                *guard = guard.abort_stored(&block.block_hash);
                 continue;
             }
+        } else if let Err(e) = disposition
+            .mark_pending(block.block_hash, block.block_number, PendingStage::Stored)
+            .await
+        {
+            // A re-delivery of a body already in the store: there is no body write to pair this with
+            // (and re-marking an existing row is idempotent), so a failure here is the fault surface.
+            block_processor::note_pipeline_fault(&block, "disposition write", &e);
+            log.error(
+                source,
+                &format!(
+                    "Could not record the disposition of stored block {}: {e}",
+                    block.block_hash.to_hex()
+                ),
+            );
         }
 
         // The loop's own failure idiom (as for `end_stored` below): log with the block, skip it, and
@@ -492,6 +606,8 @@ async fn incoming_blocks(
                         block.block_hash.to_hex()
                     ),
                 );
+                let mut guard = state.lock().await;
+                *guard = guard.abort_stored(&block.block_hash);
                 continue;
             }
         };
@@ -520,6 +636,7 @@ async fn incoming_blocks(
                     (unseen, has_all_deps)
                 }
                 Err(e) => {
+                    *guard = guard.abort_stored(&block.block_hash);
                     log.error(source, &e);
                     continue;
                 }
@@ -688,7 +805,7 @@ async fn validated_blocks(
             let parents: BTreeSet<BlockHash> = block.justifications.iter().copied().collect();
             let next = {
                 let mut guard = state.lock().await;
-                match guard.finished(block.block_hash, parents) {
+                match guard.finished_if_present(block.block_hash, parents) {
                     Ok((new_state, next)) => {
                         *guard = new_state;
                         next
@@ -713,8 +830,11 @@ pub fn apply(
     state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
     incoming_blocks_rx: mpsc::Receiver<BlockMessage>,
     finished_processing_rx: mpsc::Receiver<BlockMessage>,
+    released_processing_rx: mpsc::Receiver<BlockMessage>,
     conf_shard_name: String,
     block_store: BlockStore,
+    disposition: BlockDispositionStore,
+    body_writer: BodyDispositionWriter,
     dag: Arc<dyn BlockDagStorage>,
     block_retriever: Arc<BlockRetriever>,
     put_to_incoming_queue: Arc<dyn Fn(BlockMessage) + Send + Sync>,
@@ -724,8 +844,11 @@ pub fn apply(
         state,
         incoming_blocks_rx,
         finished_processing_rx,
+        released_processing_rx,
         conf_shard_name,
         block_store,
+        disposition,
+        body_writer,
         dag,
         block_retriever,
         put_to_incoming_queue,
@@ -739,8 +862,11 @@ pub fn apply_with_queue_observer(
     state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
     incoming_blocks_rx: mpsc::Receiver<BlockMessage>,
     finished_processing_rx: mpsc::Receiver<BlockMessage>,
+    released_processing_rx: mpsc::Receiver<BlockMessage>,
     conf_shard_name: String,
     block_store: BlockStore,
+    disposition: BlockDispositionStore,
+    body_writer: BodyDispositionWriter,
     dag: Arc<dyn BlockDagStorage>,
     block_retriever: Arc<BlockRetriever>,
     put_to_incoming_queue: Arc<dyn Fn(BlockMessage) + Send + Sync>,
@@ -754,18 +880,31 @@ pub fn apply_with_queue_observer(
         state.clone(),
         Arc::from(conf_shard_name),
         block_store,
+        disposition,
+        body_writer,
         dag.clone(),
         block_retriever,
         put_to_incoming_queue,
         out_tx.clone(),
         log.clone(),
     ));
+    // Accepted blocks release through the validated stream (and its taps). A refused insert is
+    // not a validation success, but it is still a DAG entry and must release children that were
+    // already waiting on its parent relation; give that stream its own consumer so it cannot
+    // trigger autopropose/attestation taps.
     tokio::spawn(validated_blocks(
         finished_processing_rx,
+        state.clone(),
+        out_tx.clone(),
+        log.clone(),
+        observer,
+    ));
+    tokio::spawn(validated_blocks(
+        released_processing_rx,
         state,
         out_tx,
         log,
-        observer,
+        None,
     ));
 
     out_rx
@@ -1152,6 +1291,120 @@ mod tests {
     }
 
     #[test]
+    fn a_full_receiver_admits_the_dependency_that_can_drain_it() {
+        let parent = "missing-parent".to_string();
+        let mut state = BlockReceiverState::<MId>::new();
+        for n in 0..MAX_PENDING_BLOCKS {
+            let id = format!("orphan-{n:04}");
+            state
+                .blocks_st
+                .insert(id.clone(), BTreeSet::from([parent.clone()]));
+            state
+                .receive_st
+                .insert(id.clone(), RecvStatus::EndStoreBlock);
+            state
+                .child_relations
+                .entry(parent.clone())
+                .or_default()
+                .insert(id);
+        }
+        state
+            .receive_st
+            .insert(parent.clone(), RecvStatus::Requested);
+
+        let (begun, accepted) = state.begin_stored(parent.clone());
+        assert!(accepted);
+        let (admitted, _) = begun.end_stored(parent.clone(), Vec::new()).unwrap();
+        assert_eq!(admitted.blocks_st.len(), MAX_PENDING_BLOCKS + 1);
+        assert!(admitted.blocks_st.contains_key(&parent));
+        assert_eq!(admitted.child_relations[&parent].len(), MAX_PENDING_BLOCKS);
+
+        let (released, ready) = admitted.finished(parent.clone(), BTreeSet::new()).unwrap();
+        assert_eq!(ready.len(), MAX_PENDING_BLOCKS);
+        assert!(!released.blocks_st.contains_key(&parent));
+    }
+
+    /// **A re-offer claim is taken once** (Law 88c). A held `EndStoreBlock` body moves to
+    /// `PendingValidation`, which `begin_stored` refuses, so a concurrent delivery cannot dispatch
+    /// it a second time; an unheld body is the sweep's (`NotHeld`), and an in-flight one is not.
+    #[test]
+    fn a_reoffer_claim_is_taken_once_and_never_steals_an_inflight_block() {
+        let state = BlockReceiverState::<MId>::new();
+        let (state, _) = state.begin_stored("held".to_string());
+        let (mut state, _) = state.end_stored("held".to_string(), Vec::new()).unwrap();
+        assert_eq!(
+            state.claim_reoffer(&"held".to_string()),
+            ReofferClaim::Claimed
+        );
+        assert_eq!(
+            state.receive_st.get("held"),
+            Some(&RecvStatus::PendingValidation),
+            "the claim moves the receiver's own state"
+        );
+        assert_eq!(
+            state.claim_reoffer(&"held".to_string()),
+            ReofferClaim::Owned
+        );
+        assert_eq!(
+            state.claim_reoffer(&"absent".to_string()),
+            ReofferClaim::NotHeld,
+            "an overflow-refused body has no in-memory claim"
+        );
+    }
+
+    #[test]
+    fn dependency_headroom_is_finite_and_unrelated_blocks_are_refused() {
+        let mut state = BlockReceiverState::<MId>::new();
+        for n in 0..MAX_PENDING_BLOCKS {
+            let id = format!("orphan-{n:04}");
+            state
+                .blocks_st
+                .insert(id.clone(), BTreeSet::from(["missing".to_string()]));
+            state.receive_st.insert(id, RecvStatus::EndStoreBlock);
+        }
+        for n in 0..MAX_DEPENDENCY_HEADROOM {
+            let id = format!("parent-{n:02}");
+            state
+                .child_relations
+                .insert(id.clone(), BTreeSet::from(["orphan-0000".to_string()]));
+            let (begun, can_start) = state.begin_stored(id.clone());
+            assert!(can_start);
+            let (next, _) = begun.end_stored(id, Vec::new()).unwrap();
+            state = next;
+        }
+        assert_eq!(
+            state.blocks_st.len(),
+            MAX_PENDING_BLOCKS + MAX_DEPENDENCY_HEADROOM
+        );
+        let needed = "one-more-parent".to_string();
+        state
+            .child_relations
+            .insert(needed.clone(), BTreeSet::from(["orphan-0000".to_string()]));
+        let (begun, _) = state.begin_stored(needed.clone());
+        assert!(begun.end_stored(needed, Vec::new()).is_err());
+        let unrelated = "unrelated".to_string();
+        let (begun, _) = state.begin_stored(unrelated.clone());
+        assert!(begun.end_stored(unrelated, Vec::new()).is_err());
+    }
+
+    #[test]
+    fn capacity_refusal_does_not_poison_the_hash_for_later_retry() {
+        let mut state = BlockReceiverState::<MId>::new();
+        for n in 0..MAX_PENDING_BLOCKS {
+            let id = format!("ready-{n:04}");
+            state.blocks_st.insert(id.clone(), BTreeSet::new());
+            state.receive_st.insert(id, RecvStatus::PendingValidation);
+        }
+        let hash = "new-head".to_string();
+        let (begun, accepted) = state.begin_stored(hash.clone());
+        assert!(accepted);
+        assert!(begun.end_stored(hash.clone(), Vec::new()).is_err());
+        let recovered = begun.abort_stored(&hash);
+        assert!(!recovered.receive_st.contains_key(&hash));
+        assert!(recovered.begin_stored(hash).1);
+    }
+
+    #[test]
     fn end_stored_errors_if_not_begin_store_block() {
         let (st, _) = BlockReceiverState::<MId>::new().begin_stored("A1".to_string());
         let (new_st, _) = st.end_stored("A1".to_string(), Vec::new()).unwrap();
@@ -1191,6 +1444,33 @@ mod tests {
         assert!(BlockReceiverState::<MId>::new()
             .finished("A1".to_string(), BTreeSet::new())
             .is_err());
+    }
+
+    /// A refused-before-end block has no `blocks_st` entry; releasing it must be a no-op, while a
+    /// refused-but-inserted block still releases its waiting child.
+    #[test]
+    fn finished_if_present_releases_a_waiting_child_and_ignores_an_unknown_block() {
+        let state = BlockReceiverState::<MId>::new();
+        let (next, released) = state
+            .finished_if_present("unknown".to_string(), BTreeSet::new())
+            .unwrap();
+        assert_eq!(next, state);
+        assert!(released.is_empty());
+
+        let (parent, _) = state.begin_stored("parent".to_string());
+        let (parent, _) = parent.end_stored("parent".to_string(), Vec::new()).unwrap();
+        let (child, _) = parent.begin_stored("child".to_string());
+        let (child, _) = child
+            .end_stored("child".to_string(), parents(&[("parent", true)]))
+            .unwrap();
+        let (after, released) = child
+            .finished_if_present("parent".to_string(), BTreeSet::new())
+            .unwrap();
+        assert_eq!(released, BTreeSet::from(["child".to_string()]));
+        assert_eq!(
+            after.receive_st.get("child"),
+            Some(&RecvStatus::PendingValidation)
+        );
     }
 
     #[test]

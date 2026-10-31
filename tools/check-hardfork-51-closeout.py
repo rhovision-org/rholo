@@ -27,6 +27,7 @@ Batch:attestation-format Audit:section6-categoryA Audit:law52-partition
 Audit:law53-estrangement Audit:active-set-draw Audit:parent-limit
 Audit:sidecar-merge Release:attachment-upgrade Release:decimal-genesis
 Audit:merge-resolution-stage4 Audit:inactivity-leak Decision:developer-allocation
+Audit:cost-tracks-work Audit:cost-insert-and-tally
 """.split())
 HEXSHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")

@@ -58,6 +58,24 @@ where
     }
 }
 
+/// Cancel matching byte-identical datum additions and removals across
+/// accepted causal chains before replaying the net change against the base.
+/// A producer in a seeded block, later consumed by the accepted descendant,
+/// must not be reinserted when both chains enter the same merge.
+fn net_datum_change(changes: &ChannelChange<Vec<u8>>) -> ChannelChange<Vec<u8>> {
+    let mut added = changes.added.clone();
+    let mut removed = Vec::new();
+    for datum in &changes.removed {
+        if let Some(index) = added.iter().position(|candidate| candidate == datum) {
+            // Multiset subtraction removes exactly one occurrence.
+            added.remove(index);
+        } else {
+            removed.push(datum.clone());
+        }
+    }
+    ChannelChange { added, removed }
+}
+
 /// Compute the trie actions that apply a [`StateChange`] on top of a base state (port of
 /// `StateChangeMerger.computeTrieActions`).
 ///
@@ -126,6 +144,12 @@ where
         match handle_channel_change(history_pointer, channel_change, &mergeable_chs) {
             Some(action) => produce_trie_actions.push(action),
             None => {
+                let net = net_datum_change(channel_change);
+                if net.added.is_empty() && net.removed.is_empty() {
+                    // Consumed data already produced by an accepted causal
+                    // ancestor has no remaining effect on the base trie.
+                    continue;
+                }
                 let init: Vec<Vec<u8>> = base_reader
                     .get_data(*history_pointer)
                     .await
@@ -136,7 +160,7 @@ where
                 let action = mk_trie_action(
                     *history_pointer,
                     init,
-                    channel_change,
+                    &net,
                     HotStoreTrieAction::TrieDeleteProduce,
                     HotStoreTrieAction::TrieInsertBinaryProduce,
                 )
@@ -345,6 +369,81 @@ mod tests {
     }
 
     type Action = HotStoreTrieAction<String, String, String, String>;
+
+    /// Matching exact serialized bytes cancel one occurrence, not an
+    /// unrelated datum or another copy of the same serialized datum.
+    #[test]
+    fn net_datum_changes_preserve_multiset_cardinality() {
+        let source = change(vec![raw(0), raw(2), raw(0)], vec![raw(0), raw(3)]);
+        let net = net_datum_change(&source);
+        assert_eq!(net.added, vec![raw(2), raw(0)]);
+        assert_eq!(net.removed, vec![raw(3)]);
+        assert_eq!(
+            net_datum_change(&change(vec![raw(0)], vec![raw(0)])),
+            change(vec![], vec![]),
+        );
+    }
+
+    /// A seed that is fully consumed by a later accepted chain leaves no
+    /// action at all when the old base did not hold that seed datum.
+    #[tokio::test]
+    async fn fully_consumed_causal_seed_has_no_net_trie_action() {
+        let channel = hash(9);
+        let seed = StateChange {
+            datums_changes: BTreeMap::from([(channel, change(vec![raw(0)], vec![]))]),
+            ..Default::default()
+        };
+        let consumer = StateChange {
+            datums_changes: BTreeMap::from([(channel, change(vec![], vec![raw(0)]))]),
+            ..Default::default()
+        };
+        let combined = StateChange::combine(&seed, &consumer);
+        let actions = compute_trie_actions(
+            &combined,
+            &MockReader::default(),
+            NumberChannelsDiff::new(),
+            no_hook(),
+        )
+        .await
+        .expect("exactly cancelled datum changes are the identity");
+        assert!(actions.is_empty(), "consumed seed must not reappear");
+    }
+
+    /// A seed datum was produced, then consumed by the accepted branch.
+    /// Replaying both chains from the old base must not resurrect the seed.
+    #[tokio::test]
+    async fn a_seed_then_consumed_linear_cell_has_only_the_winner_after_merge() {
+        let channel = hash(9);
+        let seed = StateChange {
+            datums_changes: BTreeMap::from([(channel, change(vec![raw(0)], vec![]))]),
+            ..Default::default()
+        };
+        let winner = StateChange {
+            datums_changes: BTreeMap::from([(channel, change(vec![raw(2)], vec![raw(0)]))]),
+            ..Default::default()
+        };
+        let combined = StateChange::combine(&seed, &winner);
+        let actions = compute_trie_actions(
+            &combined,
+            &MockReader::default(),
+            NumberChannelsDiff::new(),
+            no_hook(),
+        )
+        .await
+        .expect("accepted seed plus winner must be a valid transition");
+        assert_eq!(actions.len(), 1, "one changed linear cell");
+        match &actions[0] {
+            Action::TrieInsertBinaryProduce(pointer, values) => {
+                assert_eq!(*pointer, channel);
+                assert_eq!(
+                    values,
+                    &vec![raw(2)],
+                    "a consumed seed datum was resurrected next to the accepted update"
+                );
+            }
+            other => panic!("unexpected merge action: {other:?}"),
+        }
+    }
 
     /// **`compute_trie_actions` is the merge's entry point, and only its per-channel helper had been
     /// tested.** The file's three tests all drive `mk_trie_action`, which takes the base value as an

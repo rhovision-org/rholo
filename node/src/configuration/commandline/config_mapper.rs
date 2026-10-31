@@ -315,6 +315,11 @@ pub fn from_options(options: &Options) -> Hocon {
             ));
         }
         opt_str(&mut e, "casper.sync-anchor", &run.sync_anchor);
+        opt_str(
+            &mut e,
+            "casper.expected-genesis-hash",
+            &run.expected_genesis_hash,
+        );
         if run.self_reset {
             e.push(("casper.self-reset".to_string(), Hocon::Boolean(true)));
         }
@@ -379,6 +384,27 @@ pub fn from_options(options: &Options) -> Hocon {
             "api-server.enable-reporting",
             run.api_enable_reporting,
         );
+        flag(
+            &mut e,
+            "api-server.publish-node-list",
+            run.api_publish_node_list,
+        );
+        opt_duration(
+            &mut e,
+            "api-server.node-list-probe-interval",
+            run.api_node_list_probe_interval,
+        );
+        opt_duration(
+            &mut e,
+            "api-server.node-list-probe-timeout",
+            run.api_node_list_probe_timeout,
+        );
+        if let Some(v) = run.api_node_list_max_entries {
+            e.push((
+                "api-server.node-list-max-entries".to_string(),
+                Hocon::Integer(i64::try_from(v).unwrap_or(i64::MAX)),
+            ));
+        }
         flag(
             &mut e,
             "api-server.enable-devnet-cors",
@@ -446,6 +472,16 @@ pub fn from_options(options: &Options) -> Hocon {
             "no-attest-on-new-blocks",
             run.no_attest_on_new_blocks,
         );
+        flag(
+            &mut e,
+            "resource-guard.allow-under-minimum",
+            run.allow_under_minimum,
+        );
+        flag(
+            &mut e,
+            "resource-guard.accept-under-minimum-risk",
+            run.accept_under_minimum_risk,
+        );
         opt_str(
             &mut e,
             "dev.deployer-private-key",
@@ -493,6 +529,28 @@ mod tests {
         assert_eq!(
             casper, None,
             "an absent flag must not write the key at all: {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn the_below_minimum_acceptance_reaches_the_resource_guard() {
+        let mapped = from_options(&options(&["run", "--accept-under-minimum-risk"]));
+        let guard = field(&mapped, "resource-guard").expect("resource-guard block");
+        assert_eq!(
+            field(guard, "accept-under-minimum-risk"),
+            Some(&Hocon::Boolean(true)),
+            "the explicit acceptance must reach the guard: {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn pinned_genesis_cli_reaches_casper_configuration() {
+        let hash = "11".repeat(32);
+        let mapped = from_options(&options(&["run", "--expected-genesis-hash", &hash]));
+        let casper = field(&mapped, "casper").expect("casper configuration");
+        assert_eq!(
+            field(casper, "expected-genesis-hash"),
+            Some(&Hocon::String(hash))
         );
     }
 

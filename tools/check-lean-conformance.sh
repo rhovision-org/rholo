@@ -289,6 +289,10 @@ if [[ -d "$ROOT/spec/conformance" ]]; then
       stake)    test_name="lean_stake_corpus";     crate="rchain-node" ;;
       block)    test_name="lean_block_corpus";     crate="rchain-node" ;;
       liveness) test_name="lean_liveness_corpus";  crate="rchain-node" ;;
+      admission) test_name="lean_admission_corpus"; crate="rchain-casper" ;;
+      decimal)  test_name="lean_decimal_corpus";   crate="rchain-models" ;;
+      hostlist) test_name="lean_hostlist_corpus";  crate="rchain-node" ;;
+      recovery) test_name="lean_recovery_corpus";  crate="rchain-casper" ;;
       protocol) test_name="lean_protocol_corpus";  crate="rchain-rholang" ;;
       envelope) test_name="lean_envelope_corpus";  crate="rchain-node" ;;
       lex)      test_name="lean_lex_corpus";       crate="rchain-node" ;;
@@ -296,15 +300,20 @@ if [[ -d "$ROOT/spec/conformance" ]]; then
       syrup)    test_name="lean_syrup_corpus";    crate="rchain-node" ;;
       *)        fail "corpus spec/conformance/$layer.tsv has no consumer mapping"; continue ;;
     esac
-    if [[ ! -f "$ROOT/rholang/tests/$test_name.rs" && ! -f "$ROOT/node/tests/$test_name.rs" ]]; then
+    if [[ ! -f "$ROOT/rholang/tests/$test_name.rs" && ! -f "$ROOT/node/tests/$test_name.rs" && ! -f "$ROOT/casper/tests/$test_name.rs" && ! -f "$ROOT/models/tests/$test_name.rs" ]]; then
       fail "spec/conformance/$layer.tsv exists but no consumer test ($test_name) does — the corpus has no consumer"
       continue
     fi
-    # Consumers live in `rholang/tests` or `node/tests`; find which, so the case below stays honest.
+    # Consumers live in `rholang/tests`, `node/tests`, `casper/tests` or `models/tests`; find which,
+    # so the ok line stays honest.
     if [[ -f "$ROOT/rholang/tests/$test_name.rs" ]]; then
       dir=rholang
-    else
+    elif [[ -f "$ROOT/node/tests/$test_name.rs" ]]; then
       dir=node
+    elif [[ -f "$ROOT/casper/tests/$test_name.rs" ]]; then
+      dir=casper
+    else
+      dir=models
     fi
     if (cd "$ROOT" && cargo test -p "$crate" --test "$test_name" >/tmp/"$test_name".log 2>&1); then
       ok "$dir/tests/$test_name.rs agrees with spec/conformance/$layer.tsv"

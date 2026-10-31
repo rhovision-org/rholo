@@ -1,7 +1,7 @@
 //! Web API protobuf conversion functions (port of the conversion fns in `api/WebApi.scala`).
 
 use rchain_casper::api::block_api::{
-    Capabilities, FinalityHealth, ProposerHealth, ShardHealthEntry, SyncHealth,
+    Capabilities, DeployPoolStats, FinalityHealth, ProposerHealth, ShardHealthEntry, SyncHealth,
 };
 use rchain_casper::runtime_manager::CapturedReply;
 use rchain_crypto::public_key::PublicKey;
@@ -15,12 +15,14 @@ use rchain_models::casper::protocol::deploy_service::{
 use rchain_shared::base16;
 
 use super::dto::{
-    DataAtNameResponse, DeployExecStatus as ApiDeployExecStatus, DeployRequest,
+    DataAtNameResponse, DeployExecStatus as ApiDeployExecStatus, DeployPoolStatus, DeployRequest,
     ExploratoryDeployResponse, FinalityHealthDto, HaltStatusDto, NodeCapabilities, OperatorStatus,
-    PooledDeploy, ProposerHealthDto, PublicStatus, RhoDataResponse, RhoExprWithBlock,
-    ShardHealthDto, SignatureException, SyncStatus, VersionInfo,
+    PooledDeploy, ProposerHealthDto, PublicStatus, ResourceStatusDto, RhoDataResponse,
+    RhoExprWithBlock, ShardHealthDto, SignatureException, SyncStatus, VersionInfo,
 };
 use super::rho_expr::{expr_from_par, RhoExpr};
+use crate::resources::admission::{effective_available_mb, threshold_mb};
+use crate::resources::{AdmissionPolicy, ResourceSnapshot};
 
 /// **The scope of a counter that is the process's own running total** (W-N10-02). A string on the wire
 /// rather than a boolean, because it names *what* the number counts — a reader comparing it with the
@@ -61,7 +63,12 @@ fn to_shard_health_dto(entry: &ShardHealthEntry) -> ShardHealthDto {
 /// There is no `health`, `finality`, `reset_marker` or reporter argument here. A field added to one of
 /// those cannot appear on the public port because this function could not read it: the leak that a
 /// single struct with two serializers invites is a *compile error* rather than a review miss.
-pub fn to_public_status(status: &Status, caps: &Capabilities) -> PublicStatus {
+pub fn to_public_status(
+    status: &Status,
+    caps: &Capabilities,
+    resource: &ResourceSnapshot,
+    pool: &DeployPoolStats,
+) -> PublicStatus {
     PublicStatus {
         version: VersionInfo {
             api: status.version.api.clone(),
@@ -78,6 +85,17 @@ pub fn to_public_status(status: &Status, caps: &Capabilities) -> PublicStatus {
         propose_on_deploy: caps.propose_on_deploy,
         manual_propose: caps.manual_propose,
         dev_mode: caps.dev_mode,
+        proposer: caps.proposer,
+        degraded: resource.fallback.as_str().to_string(),
+        // **The pool's capacity, not the advisory resource word** (Law 86a). A throttled node with a
+        // free slot accepts; a node whose pool is full refuses with 429 until work drains or relays.
+        accepts_deploys: pool.has_room(),
+        pool: DeployPoolStatus {
+            deploys: pool.deploys,
+            bytes: pool.bytes,
+            max_deploys: pool.max_deploys,
+            max_bytes: pool.max_bytes,
+        },
     }
 }
 
@@ -99,6 +117,7 @@ pub fn to_operator_status(
     // **Every member shard's health** (W-N10-04), gathered by the caller from `health_by_shard`. Threaded
     // like `sync` rather than fetched here, so a caller that has no members maps a status deterministically.
     shards: Option<std::collections::BTreeMap<String, ShardHealthEntry>>,
+    resource: &ResourceSnapshot,
 ) -> OperatorStatus {
     OperatorStatus {
         core,
@@ -144,7 +163,57 @@ pub fn to_operator_status(
                 .map(|(k, v)| (k.clone(), to_shard_health_dto(v)))
                 .collect()
         }),
+        resources: {
+            let available = effective_available_mb(resource);
+            let critical = crate::resources::fallback::critical_floor_mb(resource);
+            let throttle = crate::resources::fallback::throttle_floor_mb(resource);
+            let recovery = crate::resources::fallback::recovery_floor_mb(resource);
+            let cap = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+                .min(8);
+            let total = rchain_casper::budget::permits_for(
+                effective_available_mb(resource),
+                threshold_mb(resource, &AdmissionPolicy::default()),
+                rchain_casper::budget::DEFAULT_PER_EXECUTION_MB,
+                cap,
+            );
+            let permits =
+                rchain_casper::budget::split(total, rchain_casper::budget::DEFAULT_MAX_EXPLORE);
+            ResourceStatusDto {
+                state: resource.state.to_string(),
+                fallback_state: resource.fallback.as_str().to_string(),
+                fallback_reason: resource.fallback_reason.to_string(),
+                fallback_since_ms: resource.fallback_since_ms,
+                mem_available_mb: resource.mem_available_mb,
+                mem_total_mb: resource.mem_total_mb,
+                cgroup_version: resource.cgroup_version.to_string(),
+                cgroup_limit_mb: resource.cgroup_limit_mb,
+                cgroup_current_mb: resource.cgroup_current_mb,
+                cgroup_oom_kills: resource.cgroup_oom_kills,
+                cpu_quota: resource.cpu_quota,
+                data_dir_free_mb: resource.data_dir_free_mb,
+                rnode_processes: u64::try_from(resource.rnode_processes).unwrap_or(u64::MAX),
+                sampled_at_ms: resource.sampled_at_ms,
+                sample_age_ms: now_ms().saturating_sub(resource.sampled_at_ms),
+                source: resource.source.clone(),
+                execution_permits: permits.exec,
+                explore_permits: permits.explore,
+                rss_mb: resource.rss_mb,
+                headroom_mb: available,
+                critical_floor_mb: critical,
+                throttle_floor_mb: throttle,
+                recovery_floor_mb: recovery,
+            }
+        },
     }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 /// Map a casper `Capabilities` + the faucet availability flag to the app-facing `NodeCapabilities`.
@@ -152,6 +221,7 @@ pub fn to_node_capabilities(
     caps: &Capabilities,
     faucet: bool,
     faucet_remaining: i64,
+    node_list: bool,
 ) -> NodeCapabilities {
     NodeCapabilities {
         autopropose: caps.autopropose,
@@ -159,6 +229,8 @@ pub fn to_node_capabilities(
         manual_propose: caps.manual_propose,
         admin_http: caps.admin_http,
         dev_mode: caps.dev_mode,
+        proposer: caps.proposer,
+        node_list,
         faucet,
         faucet_remaining,
     }
@@ -259,11 +331,74 @@ pub fn to_data_at_name_response(dbs: &[DataWithBlockInfo], length: i32) -> DataA
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resources::ResourceState;
     use rchain_casper::api::block_api::HaltStatus;
     use rchain_models::ast::Expr;
     use rchain_models::casper::protocol::deploy_service::{
         BondInfo, Status, VersionInfo as CasperVersionInfo,
     };
+
+    /// **`degraded` follows the fallback word; `acceptsDeploys` follows the pool** (Law 86a).
+    ///
+    /// The two answer different questions. A throttled node with a free slot accepts work: memory
+    /// pressure is an execution budget now, not an ingress verdict (issue #477). Only a pool at its
+    /// count or byte bound makes `acceptsDeploys` false.
+    #[test]
+    fn degraded_is_advisory_and_accepts_deploys_is_pool_capacity() {
+        let status = Status {
+            version: CasperVersionInfo {
+                api: "1".to_string(),
+                node: "n".to_string(),
+            },
+            address: "a".to_string(),
+            network_id: "root".to_string(),
+            shard_id: "root".to_string(),
+            peers: 0,
+            nodes: 0,
+            min_phlo_price: 0,
+            latest_block_number: 0,
+        };
+        let caps = Capabilities {
+            autopropose: false,
+            propose_on_deploy: false,
+            manual_propose: false,
+            admin_http: false,
+            dev_mode: false,
+            proposer: false,
+        };
+        let roomy = DeployPoolStats {
+            deploys: 1,
+            max_deploys: 10,
+            bytes: 10,
+            max_bytes: 100,
+        };
+        let full = DeployPoolStats {
+            deploys: 10,
+            max_deploys: 10,
+            bytes: 100,
+            max_bytes: 100,
+        };
+        for (state, word) in [
+            (ResourceState::Normal, "normal"),
+            (ResourceState::Throttled, "throttled"),
+            (ResourceState::Critical, "critical"),
+            (ResourceState::Unavailable, "unavailable"),
+        ] {
+            let snapshot = ResourceSnapshot {
+                fallback: state,
+                ..ResourceSnapshot::default()
+            };
+            let public = to_public_status(&status, &caps, &snapshot, &roomy);
+            assert_eq!(public.degraded, word);
+            assert!(
+                public.accepts_deploys,
+                "{word} with a free pool must accept; memory is not an ingress verdict"
+            );
+        }
+        let snap = ResourceSnapshot::default();
+        let public = to_public_status(&status, &caps, &snap, &full);
+        assert!(!public.accepts_deploys, "a full pool refuses");
+    }
 
     fn light_block_info() -> LightBlockInfo {
         LightBlockInfo {
@@ -317,6 +452,7 @@ mod tests {
             manual_propose: false,
             admin_http: true,
             dev_mode: true,
+            proposer: false,
         };
         let health = ProposerHealth {
             consecutive_self_validation_failures: 3,
@@ -345,7 +481,12 @@ mod tests {
         // **Two constructors, and which one a field lives on is the subject of the split** (W-N3-01):
         // `to_public_status` cannot see the health, the finality counters or the reporter counts, so a
         // field moved into the operator half by mistake is a compile error rather than a leak.
-        let core = to_public_status(&status, &caps);
+        let core = to_public_status(
+            &status,
+            &caps,
+            &ResourceSnapshot::default(),
+            &DeployPoolStats::default(),
+        );
         let api = to_operator_status(
             core.clone(),
             &caps,
@@ -358,6 +499,7 @@ mod tests {
             40,
             7,
             None,
+            &ResourceSnapshot::default(),
         );
         assert_eq!(core.version.api, "1.0");
         assert_eq!(core.address, "addr");
@@ -463,6 +605,10 @@ mod tests {
             propose_on_deploy: false,
             manual_propose: true,
             dev_mode: false,
+            proposer: false,
+            degraded: "normal".to_string(),
+            accepts_deploys: true,
+            pool: DeployPoolStatus::default(),
         };
         let sync = SyncHealth {
             attempts: 4,
@@ -476,6 +622,7 @@ mod tests {
                 manual_propose: true,
                 admin_http: false,
                 dev_mode: false,
+                proposer: false,
             },
             &ProposerHealth::default(),
             &FinalityHealth::default(),
@@ -486,6 +633,7 @@ mod tests {
             0,
             0,
             None,
+            &ResourceSnapshot::default(),
         );
         let s = api.sync.expect("the reading travels");
         assert_eq!(s.attempts, 4);
@@ -526,6 +674,10 @@ mod tests {
             propose_on_deploy: false,
             manual_propose: false,
             dev_mode: false,
+            proposer: false,
+            degraded: "normal".to_string(),
+            accepts_deploys: true,
+            pool: DeployPoolStatus::default(),
         };
         // The shard's history as a restarted node reads it back: non-zero, and the store answered.
         let finality = FinalityHealth {
@@ -543,6 +695,7 @@ mod tests {
                 manual_propose: false,
                 admin_http: false,
                 dev_mode: false,
+                proposer: false,
             },
             &ProposerHealth::default(),
             &finality,
@@ -553,6 +706,7 @@ mod tests {
             0,
             0,
             None,
+            &ResourceSnapshot::default(),
         );
         let json = serde_json::to_value(&api).expect("the operator status serializes");
         for (key, want) in [
@@ -598,6 +752,10 @@ mod tests {
             propose_on_deploy: false,
             manual_propose: false,
             dev_mode: false,
+            proposer: false,
+            degraded: "normal".to_string(),
+            accepts_deploys: true,
+            pool: DeployPoolStatus::default(),
         };
         let caps = Capabilities {
             autopropose: true,
@@ -605,6 +763,7 @@ mod tests {
             manual_propose: false,
             admin_http: true,
             dev_mode: false,
+            proposer: false,
         };
         let halted = ProposerHealth {
             autopropose_timer_halted: true,
@@ -647,6 +806,7 @@ mod tests {
             0,
             0,
             Some(shards),
+            &ResourceSnapshot::default(),
         );
         // The flat field is the **primary's**, and the primary is healthy.
         assert!(
@@ -695,8 +855,15 @@ mod tests {
             manual_propose: false,
             admin_http: true,
             dev_mode: false,
+            proposer: false,
         };
-        let json = serde_json::to_value(to_public_status(&status, &caps)).expect("serializes");
+        let json = serde_json::to_value(to_public_status(
+            &status,
+            &caps,
+            &ResourceSnapshot::default(),
+            &DeployPoolStats::default(),
+        ))
+        .expect("serializes");
         let keys: Vec<&str> = json
             .as_object()
             .expect("an object")

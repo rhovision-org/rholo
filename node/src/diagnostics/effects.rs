@@ -90,6 +90,73 @@ impl MetricsRegistry {
         source.sub(name).0
     }
 
+    /// **Publish the resource and pool sample** that `/metrics` renders (issue #477). The watchdog
+    /// samples every five seconds; this is called from a task that reads the same snapshot and the
+    /// live permit/pool figures, so a scrape cannot mix a host reading with a different pool state.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_resource_gauges(
+        &self,
+        available_mb: u64,
+        critical_mb: u64,
+        throttle_mb: u64,
+        recovery_mb: u64,
+        rss_mb: u64,
+        execution_limit: usize,
+        execution_in_flight: usize,
+        explore_limit: usize,
+        explore_in_flight: usize,
+        pool_deploys: usize,
+        pool_bytes: usize,
+    ) {
+        let source = Source::base().sub("resource");
+        let mut inner = self.lock();
+        for (name, value) in [
+            (
+                "mem_available_mb",
+                i64::try_from(available_mb).unwrap_or(i64::MAX),
+            ),
+            (
+                "critical_floor_mb",
+                i64::try_from(critical_mb).unwrap_or(i64::MAX),
+            ),
+            (
+                "throttle_floor_mb",
+                i64::try_from(throttle_mb).unwrap_or(i64::MAX),
+            ),
+            (
+                "recovery_floor_mb",
+                i64::try_from(recovery_mb).unwrap_or(i64::MAX),
+            ),
+            ("rss_mb", i64::try_from(rss_mb).unwrap_or(i64::MAX)),
+            (
+                "execution_permits",
+                i64::try_from(execution_limit).unwrap_or(i64::MAX),
+            ),
+            (
+                "execution_in_flight",
+                i64::try_from(execution_in_flight).unwrap_or(i64::MAX),
+            ),
+            (
+                "explore_permits",
+                i64::try_from(explore_limit).unwrap_or(i64::MAX),
+            ),
+            (
+                "explore_in_flight",
+                i64::try_from(explore_in_flight).unwrap_or(i64::MAX),
+            ),
+            (
+                "deploy_pool_deploys",
+                i64::try_from(pool_deploys).unwrap_or(i64::MAX),
+            ),
+            (
+                "deploy_pool_bytes",
+                i64::try_from(pool_bytes).unwrap_or(i64::MAX),
+            ),
+        ] {
+            inner.gauges.insert(Self::key(&source, name), value);
+        }
+    }
+
     /// Produce a snapshot of the currently-accumulated metrics (port of the reporters' input).
     pub fn snapshot(&self) -> PeriodSnapshot {
         let inner = self.lock();
@@ -243,6 +310,43 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resource_gauges_are_published_under_the_resource_source() {
+        let registry = MetricsRegistry::new();
+        registry.set_resource_gauges(547, 409, 613, 817, 120, 2, 1, 0, 0, 3, 1_024);
+        let snapshot = registry.snapshot();
+        let names: Vec<&str> = snapshot
+            .metrics
+            .gauges
+            .iter()
+            .map(|m| m.name.as_str())
+            .collect();
+        for expected in [
+            "rchain.resource.mem_available_mb",
+            "rchain.resource.critical_floor_mb",
+            "rchain.resource.throttle_floor_mb",
+            "rchain.resource.recovery_floor_mb",
+            "rchain.resource.rss_mb",
+            "rchain.resource.execution_permits",
+            "rchain.resource.deploy_pool_deploys",
+        ] {
+            assert!(
+                names.contains(&expected),
+                "missing gauge {expected}: {names:?}"
+            );
+        }
+        let value = |name: &str| {
+            snapshot
+                .metrics
+                .gauges
+                .iter()
+                .find(|m| m.name == name)
+                .map(|m| m.value)
+        };
+        assert_eq!(value("rchain.resource.mem_available_mb"), Some(547));
+        assert_eq!(value("rchain.resource.deploy_pool_bytes"), Some(1_024));
+    }
 
     #[test]
     fn counters_gauges_and_histograms_accumulate() {

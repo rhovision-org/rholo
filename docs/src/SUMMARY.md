@@ -22,6 +22,7 @@
 
 - [The formal layer: how to read this set](formal/README.md)
 - [The laws](formal/laws.md)
+- [The cost model, and the gate that keeps it honest](formal/cost-model.md)
 - [Grammar and sorts](formal/grammar-sorts.md)
 - [Substitution and matching](formal/substitution-matching.md)
 - [Closedness and the Calculus of Constructions](formal/closedness-coc.md)
@@ -39,17 +40,23 @@
 - [Sorted matching (proposal)](node/sorted-matching.md)
 - [Storage](node/storage.md)
 - [Operating the node](node/operating.md)
+- [Ingress admission](node/admission.md)
+- [Running a node: testnet now, mainnet later — validator and observer](node/validator-observer-setup.md)
 - [Cross-shard invoke (remote deploy)](node/shard-invoke.md)
 - [OCapN interoperability](node/ocapn.md)
 - [ERTP: brands, issuers, purses and payments](node/ertp.md)
 - [Running a validator: hardware requirements](node/validator-requirements.md)
+- [Ringfencing a node](node/resource-ringfence.md)
+- [Validator risk, hardware and participation](node/operator-risk.md)
 - [Validator economics](node/validator-economics.md)
 - [Scaling and performance limits](node/scaling.md)
 - [Local devnet (Docker)](node/devnet.md)
 - [The public testnet](node/testnet.md)
 - [Running a public testnet of your own](node/running-a-public-testnet.md)
+- [Updating a running validator](node/updating.md)
 - [The history chain](node/history-chain.md)
-- [Security audit (September 2026)](node/security-audit.md)
+- [Security audit (October 2026)](node/security-audit.md)
+- [Incident history](node/incident-history.md)
 
 # Part IV — Building applications
 
@@ -64,7 +71,6 @@
 - [Architecture & port status](contributor/architecture.md)
 - [The laws → Rust code](contributor/laws-to-rust.md)
 - [On-chain validation phases (Laws 23–25)](contributor/onchain-validation-phases.md)
-- [Formal specification & audit](contributor/spec.md)
 - [Plan: post-quantum migration](contributor/post-quantum-plan.md)
 - [Design: the genesis-contract upgrade path (RCHIP #43)](contributor/genesis-contract-upgrade-path.md)
 - [Design: governance-set parameters (plan H2)](contributor/governance-parameters.md)
@@ -85,6 +91,9 @@
 - [Testnet acceptance specification](spec/testnet-acceptance.md)
 - [The bounded adversary](spec/adversary.md)
 - [Failure-mode HAZOP and disposition](spec/failure-hazop.md)
+- [Resource safety case](spec/resource-safety-case.md)
+- [RCHIP #55 — liveness enforcement](spec/rchip-55-liveness-enforcement.md)
+- [What a joining node trusts](spec/trust-model.md)
 
 # Part VIII — Methodology (draft papers)
 
@@ -94,3 +103,4 @@
 ---
 
 - [Navigation for AI agents](ai-entrypoint.md)
+- [Laws reference for AI agents](ai/laws-reference.md)

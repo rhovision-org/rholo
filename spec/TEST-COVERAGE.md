@@ -26,9 +26,9 @@ and **no file is left without one or the other** — the linter's check 7 passes
 
 ## Inventory
 
-**1481 `#[test]`/`#[tokio::test]` unit functions + 130 integration tests** across 13 crates, with **26
-laws** carrying a randomized property test and **12 benchmark functions** in 7 Criterion groups. Only
-**3 of 13 crates have integration tests** (`rholang`, `casper`, `node`).
+**26 laws** carry a randomized property test. The suite is **1481 `#[test]`/`#[tokio::test]` unit
+functions plus 130 integration tests** across 13 crates, with **12 benchmark functions** in 7 Criterion
+groups. Only **3 of 13 crates have integration tests** (`rholang`, `casper`, `node`).
 
 | Crate | Unit | Integration | Property (laws) | Bench |
 |---|---|---|---|---|

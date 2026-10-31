@@ -1,0 +1,29 @@
+{
+  "boundary": "finite local devnet witness; not a live-testnet join and not a certification",
+  "chain_height": {
+    "n457join-bootstrap": 29,
+    "n457join-validator-1": 29,
+    "n457join-validator-2": 29
+  },
+  "bootstrap_finalized": {
+    "number": 26,
+    "hash": "f8f389991bf01375cec924443c35bddec3f4d9314b02099ce7be332f4bcea7d3"
+  },
+  "reset_target": "n457join-validator-3",
+  "recovered": {
+    "latest_block_number": 30,
+    "restored_anchor_number": 23,
+    "restored_anchor_hash": "c4ce5b0f7b466add437206056fd7e0ad99d6e8aea84ee8680060d314ab79cc22",
+    "anchor_held_by_bootstrap": true,
+    "sync": null
+  },
+  "catch_up_seconds": 39.26590871810913,
+  "sync_failures_in_log": 0,
+  "give_ups_in_log": 0,
+  "manual_reset": true,
+  "non_claims": [
+    "one local four-validator devnet; a finite witness, not a universal join theorem",
+    "the chain is this build's own; the live testnet replay is #421/#429's",
+    "the reset node is started with `--bootstrap` and the devnet's validator key"
+  ]
+}

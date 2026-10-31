@@ -1,0 +1,4 @@
+relay477-validator-1 40.36MiB / 280MiB
+relay477-bootstrap 38.06MiB / 4GiB
+relay477-validator-2 34.64MiB / 4GiB
+relay477-validator-3 40.5MiB / 4GiB

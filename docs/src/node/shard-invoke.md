@@ -1,17 +1,14 @@
 # Cross-shard invoke is a remote deploy
 
-> Issue [#33]: *Linked shards: signed same-account cross-shard invoke (`rho:shard:invoke`)*.
-> This page is the rholo decision record for Layer 1. It **supersedes** the
-> "one powerbox process + a link table" framing in the issue: the primitive needs
-> **no relay, no link table, and no new consensus** — it is a normal, caller-signed
-> deploy submitted to the target shard.
-
-[#33]: https://github.com/rhovision-org/rholo/issues/33
+> **Decision record (Layer 1).** Cross-shard invoke is a normal, caller-signed deploy submitted to
+> the target shard: the primitive needs **no relay, no link table, and no new consensus**. It
+> supersedes the "one powerbox process + a link table" framing that preceded it; the history is in
+> [Incident history](incident-history.md).
 
 The design companion `CapabilityTransport.md` splits cross-shard coordination into
 two layers. This page covers **Layer 1 — the linked invoke**. The delegation layer
 (revocable proxies, promise pipelining, gateway routing, OCapN) is Layer 2, tracked
-separately as `quantum-os#173`, and is out of scope here.
+separately outside this repository, and is out of scope here.
 
 ## The insight: identity is already the same
 

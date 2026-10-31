@@ -1,0 +1,15 @@
+{
+  "fixture_source": "15e2e16240424fe4a5a8aa9131e5462bdbe56f2a",
+  "fixture_sha256": "2e22bb9a632a7572d5056b46a5eadb8e8a626092ff2a64b3a85ea18d7c9e4d61",
+  "metadata_proto": "models/proto/casper.proto:300",
+  "observed_first_overflow_hash": "c20645c3f68aad1717bed1290e7097d12ac1d5f14cd393263273fdbe38828c80",
+  "old_chain_height": 1571,
+  "metadata_value_sha256": "f15fd3198670b7abda7cef40acd74a2c14476324ee536b695c8b17ed7d42fccc",
+  "ancestry_records": 6148,
+  "ancestry_genesis": [
+    "c596bef4bb678b3ac0cdb931b5b6968653209ca40bc35b6fec0050254d479b26"
+  ],
+  "current_live_genesis": "133b1d307b1750129cf0cfb69c4c8f950da21c4e8db2a6a076464d0ccfd98d44",
+  "sender_attribution": "not established",
+  "scope": "Hash correlation and full metadata ancestry, not authentication of the sending peer"
+}

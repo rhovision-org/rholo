@@ -1,0 +1,5 @@
+admission	free_slot	true
+admission	count_bound	true
+admission	duplicate_bound	true
+admission	one_permit	true
+admission	zero_headroom	true

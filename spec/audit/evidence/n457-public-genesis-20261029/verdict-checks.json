@@ -1,0 +1,18 @@
+[
+  {
+    "check": "retained live failure refuses success",
+    "exit_code": 1
+  },
+  {
+    "check": "complete positive diagnostic",
+    "exit_code": 0
+  },
+  {
+    "check": "incomplete cases despite positive top-level flag",
+    "exit_code": 1
+  },
+  {
+    "check": "changed protected state refuses success",
+    "exit_code": 1
+  }
+]

@@ -54,6 +54,7 @@ impl BlockCreator {
         to_slash: &BTreeMap<Validator, ProposedSlash>,
         change_epoch: bool,
         suppress_attestation: bool,
+        batch_limit: Option<usize>,
     ) -> Result<BlockCreatorResult, String> {
         let pre_state_hash = pre_state.pre_state_hash;
         let parents: Vec<BlockHash> = pre_state
@@ -132,6 +133,7 @@ impl BlockCreator {
                     // *next* epoch's active-set seed to. Derived here from the DAG, not carried on the
                     // block: every node computes it for itself, including the replayer.
                     &pre_state.fringe_state,
+                    batch_limit,
                 )
                 .await?,
             )

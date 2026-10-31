@@ -35,6 +35,7 @@ use super::dto::{
 use super::faucet;
 use super::rho_expr::{rho_expr_to_par, unforg_to_par};
 use super::web_api::WebApi;
+use crate::resources::ResourceGuard;
 use crate::web::transaction::{TransactionApi, TransactionResponse};
 
 /// The web API implementation (port of `WebApi.WebApiImpl`).
@@ -48,6 +49,11 @@ pub struct WebApiImpl {
     faucet_ledger: Arc<Mutex<FaucetLedger>>,
     faucet_ledger_path: Option<PathBuf>,
     recovering_faucet_drips: Mutex<HashSet<String>>,
+    /// The sampled host-resource snapshot, shared with the admin surface (A1).
+    resources: Arc<ResourceGuard>,
+    /// `GET /api/v1/nodes` is mounted (`api-server.publish-node-list`). A capability fact, so a
+    /// client can tell "this node does not publish a hostlist" from "the route failed".
+    node_list: bool,
 }
 
 impl WebApiImpl {
@@ -56,6 +62,7 @@ impl WebApiImpl {
         transaction_api: Arc<dyn TransactionApi>,
         deployer_key: Option<PrivateKey>,
         shard_id: String,
+        resources: Arc<ResourceGuard>,
     ) -> Self {
         WebApiImpl {
             block_api,
@@ -65,7 +72,17 @@ impl WebApiImpl {
             faucet_ledger: Arc::new(Mutex::new(FaucetLedger::default())),
             faucet_ledger_path: None,
             recovering_faucet_drips: Mutex::new(HashSet::new()),
+            resources,
+            node_list: false,
         }
+    }
+
+    /// Record that `GET /api/v1/nodes` is mounted, so `/api/v1/capabilities` can say so. A builder
+    /// rather than a `new` argument because every existing test constructor would have to pass a
+    /// value it does not care about.
+    pub fn with_node_list(mut self, enabled: bool) -> Self {
+        self.node_list = enabled;
+        self
     }
 
     /// Production ledger lives alongside the node's other data. A missing or corrupt ledger
@@ -220,6 +237,8 @@ mod tests {
     };
     use std::collections::BTreeMap;
 
+    use crate::resources::{ResourceSnapshot, ResourceState};
+
     /// A block API that answers from its fields and records what it was asked — the `StubBlockApi`
     /// pattern `deploy_grpc_service_v1.rs` and `tonic.rs`'s tests use. The methods this file never
     /// calls are `unreachable!`: a stub that returns a plausible value there would hide a call the
@@ -246,6 +265,7 @@ mod tests {
                     manual_propose: true,
                     admin_http: false,
                     dev_mode: true,
+                    proposer: true,
                 },
                 pooled: Vec::new(),
                 deploy_status: Arc::new(StdMutex::new(Ok(DomainExecStatus::NotProcessed {
@@ -494,12 +514,39 @@ mod tests {
         key_and_address().1
     }
 
+    /// **A node in `Critical` attests nothing, and the stub is never asked** (unit C, B37).
+    #[tokio::test]
+    async fn a_resource_refusal_attests_nothing() {
+        let critical = ResourceGuard::inert(ResourceSnapshot {
+            fallback: ResourceState::Critical,
+            fallback_reason: "headroom below the critical floor",
+            ..ResourceSnapshot::default()
+        });
+        let api = WebApiImpl::new(
+            Arc::new(StubBlockApi::default()),
+            Arc::new(StubTransactionApi),
+            None,
+            "root".to_string(),
+            critical,
+        );
+        let err = api
+            .finality_attestation(&"00".repeat(16))
+            .await
+            .expect_err("a critical node must not attest");
+        assert!(
+            err.0.contains("critical") && err.0.contains("not attesting"),
+            "the refusal names the state: {}",
+            err.0
+        );
+    }
+
     fn api(block_api: StubBlockApi, deployer_key: Option<PrivateKey>) -> WebApiImpl {
         WebApiImpl::new(
             Arc::new(block_api),
             Arc::new(StubTransactionApi),
             deployer_key,
             "root".to_string(),
+            ResourceGuard::inert(Default::default()),
         )
     }
 
@@ -1079,7 +1126,17 @@ impl WebApi for WebApiImpl {
     async fn status(&self) -> Result<crate::api::dto::PublicStatus, BlockApiException> {
         let status = self.block_api.status().await;
         let caps = self.block_api.capabilities().await;
-        Ok(to_public_status(&status, &caps))
+        let pool = self
+            .block_api
+            .deploy_pool_stats()
+            .await
+            .map_err(BlockApiException)?;
+        Ok(to_public_status(
+            &status,
+            &caps,
+            &self.resources.snapshot(),
+            &pool,
+        ))
     }
 
     async fn deploy(&self, request: &DeployRequest) -> Result<String, BlockApiException> {
@@ -1119,7 +1176,12 @@ impl WebApi for WebApiImpl {
         // A dry faucet is not advertised: r-wallet can stop offering it without probing a write.
         let faucet =
             caps.dev_mode && self.deployer_key.is_some() && remaining >= faucet::FAUCET_AMOUNT;
-        Ok(to_node_capabilities(&caps, faucet, remaining))
+        Ok(to_node_capabilities(
+            &caps,
+            faucet,
+            remaining,
+            self.node_list,
+        ))
     }
 
     async fn deploy_status(&self, deploy_id: &str) -> Result<DeployExecStatus, BlockApiException> {
@@ -1358,6 +1420,17 @@ impl WebApi for WebApiImpl {
         &self,
         nonce: &str,
     ) -> Result<FinalityAttestation, BlockApiException> {
+        // **A node that has stopped producing does not attest** (unit C, B37). The refusal is before
+        // the signature exists — the property that matters, because a caller can publish what it is
+        // given, so a claim this node is not entitled to make must not be created even briefly.
+        let snapshot = self.resources.snapshot();
+        if snapshot.fallback.stops_production() {
+            return Err(BlockApiException(format!(
+                "the node is {} ({}); it is not attesting",
+                snapshot.fallback.as_str(),
+                snapshot.fallback_reason
+            )));
+        }
         self.block_api
             .finality_attestation(nonce)
             .await

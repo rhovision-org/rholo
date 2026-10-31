@@ -55,6 +55,20 @@ pub fn block_metadata_to_info(meta: &BlockMetadata) -> BlockInfo {
     }
 }
 
+/// Project stored metadata into the DAG index without cloning its justification set.
+///
+/// Moves the justification set from an owned record rather than cloning it.
+/// The caller still loads all metadata through to_map() before projection;
+/// this is not a bounded-memory streaming reconstruction.
+pub fn block_metadata_into_info(meta: BlockMetadata) -> BlockInfo {
+    BlockInfo {
+        hash: meta.block_hash,
+        parents: meta.justifications,
+        block_num: meta.block_num,
+        validation_failed: meta.validation_failed,
+    }
+}
+
 pub fn add_block_to_dag_state(block: &BlockInfo, state: &DagState) -> DagState {
     let mut next = state.clone();
     add_block_to_dag_state_mut(block, &mut next);

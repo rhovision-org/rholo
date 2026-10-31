@@ -39,8 +39,13 @@ pub fn bytes_to_block_message(bytes: &[u8]) -> Result<BlockMessage, String> {
 }
 
 /// Open the block store from a store manager (port of `BlockStore.apply[F](kvm)`).
+/// The database a shard's block bodies live in. Named here because the disposition ledger must live
+/// in the **same environment** as this one, so the body and its row are one transaction (C350) — and
+/// a writer that names the database by string in two places is a place they can drift.
+pub const BLOCKS_DB: &str = "blocks";
+
 pub async fn create(kvm: &dyn KeyValueStoreManager) -> Result<BlockStore, String> {
-    let store = kvm.store("blocks").await?;
+    let store = kvm.store(BLOCKS_DB).await?;
     Ok(Arc::new(KeyValueTypedStoreCodec::new(
         store,
         Arc::new(BlockHashCodec),

@@ -88,7 +88,9 @@ mutual
     -- node stores the canonical pair, so every value has exactly one representation and `eq_iff`
     -- is plain `Int` equality. A two-field constructor would let `(10,1)` and `(1,0)` denote one
     -- value in two ways, and the comparator's equality law would then be false. The Rust
-    -- `Decimal::scaled_value` produces the same integer (`models/src/decimal.rs`); changing
+    -- `Decimal::scaled_value` produces the same integer (`models/src/decimal.rs`); Law 87
+    -- (`spec/Rchain/Decimal.lean`) proves the bridge from the canonical `(coefficient, scale)`
+    -- pair to this payload. Changing
     -- `MAX_SCALE` is a hard fork that must move this comment, `Sort.lean`'s tag, the Rust value
     -- and the sorter together.
     | edecimal : Int → Expr

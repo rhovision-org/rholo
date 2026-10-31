@@ -634,3 +634,74 @@ async fn accepted_effects_preserved_across_parallel_register_rmws_merge() {
         );
     }
 }
+
+/// **Register-then-read across a burst** — #420's second investigation, reproduced as a falsifier.
+///
+/// The live install registered several Root keys, returned `true` for each, and some entries were
+/// later absent. The question is whether a write is stable under the work that follows it: a block
+/// writes a tuple of registered values, one hundred further blocks are computed from the same base
+/// (each a real `compute_state`, not a read), and the write is read again **at the same post-state**.
+/// Every read returns exactly the written tuple, and the base pre-state — the negative control — does
+/// not carry it. A read that changes under unrelated work is the class this pins.
+#[tokio::test]
+async fn registered_values_survive_a_burst_and_read_the_same() {
+    let rm = build_runtime_manager_with_mode(EffectMode::Sequential).await;
+    let start = seed(&rm).await;
+    let registration =
+        r#"@"reg"!(("alpha","beta","gamma","delta","epsilon","zeta","eta","theta"))"#;
+    let write = play(&rm, 0x31, VALIDATORS[0], start, Some(registration), &[]).await;
+    let read = r#"for (@x <- @"reg") { @"out"!(x) }"#;
+
+    let first = rm
+        .play_exploratory_deploy(read, &StateHash::new(*write.post.as_bytes()))
+        .await
+        .expect("the read at the post-state")
+        .data;
+    let first_debug = format!("{first:?}");
+    for key in ["alpha", "theta"] {
+        assert!(
+            first_debug.contains(&format!("\"{key}\"")),
+            "the registration is visible at the post-state: {first_debug}"
+        );
+    }
+
+    // The burst: one hundred blocks computed from the same base. Each is a real play of the runtime,
+    // so the write is read after unrelated state work rather than from a still runtime.
+    for i in 0..100u8 {
+        let block = play(
+            &rm,
+            0x80 + i,
+            VALIDATORS[usize::from(i % 4)],
+            start,
+            Some(r#"@"burst"!(1)"#),
+            &[],
+        )
+        .await;
+        assert_ne!(
+            block.post, start,
+            "the burst block must compute a new state"
+        );
+    }
+
+    let again = rm
+        .play_exploratory_deploy(read, &StateHash::new(*write.post.as_bytes()))
+        .await
+        .expect("the read after the burst")
+        .data;
+    assert_eq!(
+        format!("{again:?}"),
+        first_debug,
+        "the registration reads the same after the burst"
+    );
+
+    // The negative control: the base pre-state does not carry the write.
+    let base = rm
+        .play_exploratory_deploy(read, &StateHash::new(*start.as_bytes()))
+        .await
+        .expect("the read at the base")
+        .data;
+    assert!(
+        !format!("{base:?}").contains("alpha"),
+        "the base must not carry the registration: {base:?}"
+    );
+}

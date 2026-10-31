@@ -22,7 +22,8 @@ use async_trait::async_trait;
 
 use rchain_block_storage::dag::dag_storage::DeployId;
 use rchain_casper::api::block_api::{
-    ApiErr, BlockApi, Capabilities, DeployerInfo, FinalityHealth, ProposerHealth, ShardHealthEntry,
+    ApiErr, BlockApi, Capabilities, DeployPoolStats, DeployerInfo, FinalityHealth, ProposerHealth,
+    ShardHealthEntry,
 };
 use rchain_casper::runtime_manager::CapturedReply;
 use rchain_models::ast::Par;
@@ -161,6 +162,13 @@ impl BlockApi for ShardRoutingBlockApi {
 
     async fn pooled_deploys(&self) -> ApiErr<Vec<SignedDeployData>> {
         self.primary_api().pooled_deploys().await
+    }
+
+    /// **The primary shard's pool**, not the trait default. The default is `usize::MAX` for stubs;
+    /// leaving the router to it made `/api/status` report an unbounded pool on every real node
+    /// (`acceptsDeploys` could never be false). Caught on the #477 two-validator arm.
+    async fn deploy_pool_stats(&self) -> ApiErr<DeployPoolStats> {
+        self.primary_api().deploy_pool_stats().await
     }
 
     async fn capabilities(&self) -> Capabilities {
@@ -531,6 +539,21 @@ mod tests {
             self.record("pooled_deploys");
             Ok(vec![self.marked_deploy()])
         }
+        async fn deploy_pool_stats(&self) -> ApiErr<DeployPoolStats> {
+            self.record("deploy_pool_stats");
+            // The primary's depth is distinct so a router that answered the trait default (0/MAX)
+            // or a child's figure is caught.
+            Ok(DeployPoolStats {
+                deploys: if self.shard_id.ends_with("root") {
+                    7
+                } else {
+                    9
+                },
+                bytes: 10,
+                max_deploys: 10_000,
+                max_bytes: 64 * 1024 * 1024,
+            })
+        }
         async fn capabilities(&self) -> Capabilities {
             self.record("capabilities");
             // `dev_mode` is the only free boolean that does not imply a devnet, so it carries the
@@ -541,6 +564,7 @@ mod tests {
                 manual_propose: true,
                 admin_http: false,
                 dev_mode: false,
+                proposer: true,
             }
         }
         async fn create_block(&self, _: bool) -> ApiErr<String> {
@@ -769,6 +793,17 @@ mod tests {
             primary,
             child,
         )
+    }
+
+    #[tokio::test]
+    async fn the_router_forwards_the_primary_pools_capacity() {
+        let (api, primary, _child) = router();
+        let stats = api.deploy_pool_stats().await.expect("the primary answers");
+        assert_eq!(
+            stats.deploys, 7,
+            "the primary's depth, not the default or a child's"
+        );
+        assert!(primary.calls.lock().unwrap().contains(&"deploy_pool_stats"));
     }
 
     /// **The map reaches every member, and a non-primary's halt is in it** (W-N10-04).

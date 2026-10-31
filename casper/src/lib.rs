@@ -5,11 +5,14 @@
 //! monotonicity, block numbering/content-addressing, merge determinism, height-map contiguity).
 
 pub mod api;
+pub mod batch;
+pub mod block_disposition;
 pub mod block_metadata_store;
 pub mod block_random_seed;
 pub mod block_status;
 pub mod blocks;
 pub mod bonds_parser;
+pub mod budget;
 pub mod conf;
 pub mod construct_deploy;
 pub mod dag;
@@ -20,6 +23,7 @@ pub mod genesis;
 pub mod interpreter_util;
 pub mod merging;
 pub mod multi_parent_casper;
+pub mod pool;
 pub mod proto_util;
 pub mod protocol;
 pub mod reporting;

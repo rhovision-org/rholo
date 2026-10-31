@@ -168,18 +168,7 @@ impl Enlivener {
                 // and a peer that closes releases it. Without this the node's *own* dials were
                 // bounded by nothing: a dialer could hold `MAX_PEERS` sessions against a ceiling of
                 // 64, which is the number its operator was told.
-                let permit = match &self.dials {
-                    Some(dials) => match dials.clone().try_acquire_owned() {
-                        Ok(permit) => Some(permit),
-                        Err(_) => {
-                            return Err(format!(
-                                "this node already holds as many dialed sessions as it may ({})",
-                                crate::capacity::MAX_DIALED_SESSIONS
-                            ))
-                        }
-                    },
-                    None => None,
-                };
+                let permit = crate::capacity::reserve_dial_slot(&self.dials)?;
                 let connection = self
                     .netlayer
                     .new_outgoing_connection_from(peer, crate::owner::session_origin(&self.session))

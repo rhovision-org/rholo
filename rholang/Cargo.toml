@@ -13,6 +13,7 @@ qucalc = { path = "../qucalc" }
 rchain-models = { path = "../models" }
 rchain-crypto = { path = "../crypto" }
 rchain-rspace = { path = "../rspace" }
+rchain-sdk = { path = "../sdk" }
 rchain-shared = { path = "../shared" }
 
 # The reducer's tokio use is `spawn`/`JoinSet` on the current-thread runtime (`reduce.rs`), which is

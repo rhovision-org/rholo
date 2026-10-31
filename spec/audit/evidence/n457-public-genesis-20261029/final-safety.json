@@ -1,0 +1,46 @@
+{
+  "utc": "2026-10-29T01:12:32.754604+00:00",
+  "endpoints": [
+    {
+      "api": "http://127.0.0.1:40403",
+      "latestBlockNumber": 2363,
+      "degraded": "normal",
+      "acceptsDeploys": true,
+      "version": {
+        "api": "1",
+        "node": "rholo node 0.1.0 (a5259969a7c5673ccdfc5dad97981d0a3607fcf0)"
+      },
+      "finalized": {
+        "blockNumber": 1759,
+        "blockHash": "ec5a08ef2307dc9a4e44a75e3f123ac345776a7c8b7a7811859060a78021f941"
+      }
+    },
+    {
+      "api": "http://127.0.0.1:41403",
+      "error": "<urlopen error [Errno 111] Connection refused>"
+    },
+    {
+      "api": "http://167.99.43.214:40403",
+      "error": "<urlopen error [Errno 111] Connection refused>"
+    },
+    {
+      "api": "http://167.99.43.214:41403",
+      "latestBlockNumber": 2363,
+      "degraded": "normal",
+      "acceptsDeploys": true,
+      "version": {
+        "api": "1",
+        "node": "rholo node 0.1.0 (a5259969a7c5673ccdfc5dad97981d0a3607fcf0)"
+      },
+      "finalized": {
+        "blockNumber": 1759,
+        "blockHash": "ec5a08ef2307dc9a4e44a75e3f123ac345776a7c8b7a7811859060a78021f941"
+      }
+    }
+  ],
+  "services": "MainPID=50198\nNRestarts=0\nExecMainStartTimestamp=Sun 2026-10-25 13:52:09 UTC\n\nMainPID=0\nNRestarts=0\nExecMainStartTimestamp=n/a\n",
+  "observer_unit": "MainPID=0\nActiveState=inactive\n",
+  "meminfo": [
+    "MemAvailable:    1520876 kB"
+  ]
+}

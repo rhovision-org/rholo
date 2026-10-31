@@ -1,0 +1,183 @@
+{
+  "sample_started_utc": "2026-10-29T15:42:56.727598+00:00",
+  "mode": "Read-only APIs, public genesis inputs and unit/listener/resource readings; no process control or transaction",
+  "validators": {
+    "A": {
+      "api_from_host_a": "http://127.0.0.1:40403",
+      "status": {
+        "version": {
+          "api": "1",
+          "node": "rholo node 0.1.0 (d1af45d1db3f5fe2fa6047ad6c8a72b654d041df)"
+        },
+        "networkId": "testnet",
+        "shardId": "/testnet",
+        "latestBlockNumber": 6,
+        "peers": 4,
+        "degraded": "normal",
+        "acceptsDeploys": true
+      },
+      "finalized": {
+        "blockNumber": 2,
+        "blockHash": "bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909",
+        "postStateHash": "8893df6357ad0c16f54841072e5271fd508c476ffc73f21b333492171c51f1be"
+      },
+      "genesis_hash": "133b1d307b1750129cf0cfb69c4c8f950da21c4e8db2a6a076464d0ccfd98d44",
+      "genesis_bonds": 4,
+      "genesis_stake_total": 1000
+    },
+    "D": {
+      "api_from_host_a": "http://127.0.0.1:41403",
+      "status": {
+        "version": {
+          "api": "1",
+          "node": "rholo node 0.1.0 (d1af45d1db3f5fe2fa6047ad6c8a72b654d041df)"
+        },
+        "networkId": "testnet",
+        "shardId": "/testnet",
+        "latestBlockNumber": 6,
+        "peers": 4,
+        "degraded": "normal",
+        "acceptsDeploys": true
+      },
+      "finalized": {
+        "blockNumber": 2,
+        "blockHash": "bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909",
+        "postStateHash": "8893df6357ad0c16f54841072e5271fd508c476ffc73f21b333492171c51f1be"
+      },
+      "genesis_hash": "133b1d307b1750129cf0cfb69c4c8f950da21c4e8db2a6a076464d0ccfd98d44",
+      "genesis_bonds": 4,
+      "genesis_stake_total": 1000
+    },
+    "B": {
+      "api_from_host_a": "http://167.99.43.214:40403",
+      "status": {
+        "version": {
+          "api": "1",
+          "node": "rholo node 0.1.0 (d1af45d1db3f5fe2fa6047ad6c8a72b654d041df)"
+        },
+        "networkId": "testnet",
+        "shardId": "/testnet",
+        "latestBlockNumber": 6,
+        "peers": 4,
+        "degraded": "normal",
+        "acceptsDeploys": true
+      },
+      "finalized": {
+        "blockNumber": 2,
+        "blockHash": "bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909",
+        "postStateHash": "8893df6357ad0c16f54841072e5271fd508c476ffc73f21b333492171c51f1be"
+      },
+      "genesis_hash": "133b1d307b1750129cf0cfb69c4c8f950da21c4e8db2a6a076464d0ccfd98d44",
+      "genesis_bonds": 4,
+      "genesis_stake_total": 1000
+    },
+    "C": {
+      "api_from_host_a": "http://167.99.43.214:41403",
+      "status": {
+        "version": {
+          "api": "1",
+          "node": "rholo node 0.1.0 (d1af45d1db3f5fe2fa6047ad6c8a72b654d041df)"
+        },
+        "networkId": "testnet",
+        "shardId": "/testnet",
+        "latestBlockNumber": 6,
+        "peers": 4,
+        "degraded": "normal",
+        "acceptsDeploys": true
+      },
+      "finalized": {
+        "blockNumber": 2,
+        "blockHash": "bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909",
+        "postStateHash": "8893df6357ad0c16f54841072e5271fd508c476ffc73f21b333492171c51f1be"
+      },
+      "genesis_hash": "133b1d307b1750129cf0cfb69c4c8f950da21c4e8db2a6a076464d0ccfd98d44",
+      "genesis_bonds": 4,
+      "genesis_stake_total": 1000
+    }
+  },
+  "host_a_public_inputs": {
+    "bonds.txt": {
+      "sha256": "bddd18b25c989faf955ea2e66597dc31be9ba516bbe6545ebaaab6b35eac8b70",
+      "noncomment_records": 4
+    },
+    "wallets.txt": {
+      "sha256": "91ed1827cfa2be2c7709227974eaf1af814d00093042e78856b27ce0ca7a2d44",
+      "noncomment_records": 9
+    }
+  },
+  "host_a_resources": {
+    "logical_cpus": 2,
+    "memory_kib": {
+      "MemTotal": 16373568,
+      "MemAvailable": 15818648
+    },
+    "data_filesystem_bytes": 25821052928
+  },
+  "host_a_units": {
+    "rnode": {
+      "MainPID": "78193",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Thu 2026-10-29 14:26:55 UTC",
+      "ActiveState": "active",
+      "running_executable_sha256": "76547fa988a4b2e216feb373cb17affa9cc4217ac9595ea97e77a2e1db3a8745"
+    },
+    "rnode-d": {
+      "MainPID": "78195",
+      "NRestarts": "0",
+      "ExecMainStartTimestamp": "Thu 2026-10-29 14:26:55 UTC",
+      "ActiveState": "active",
+      "running_executable_sha256": "76547fa988a4b2e216feb373cb17affa9cc4217ac9595ea97e77a2e1db3a8745"
+    }
+  },
+  "host_a_validator_listeners": [
+    {
+      "transport": "tcp",
+      "local": "127.0.0.1:40405"
+    },
+    {
+      "transport": "tcp",
+      "local": "127.0.0.1:40402"
+    },
+    {
+      "transport": "tcp",
+      "local": "0.0.0.0:41404"
+    },
+    {
+      "transport": "tcp",
+      "local": "0.0.0.0:41400"
+    },
+    {
+      "transport": "tcp",
+      "local": "0.0.0.0:41401"
+    },
+    {
+      "transport": "tcp",
+      "local": "0.0.0.0:41403"
+    },
+    {
+      "transport": "tcp",
+      "local": "0.0.0.0:40404"
+    },
+    {
+      "transport": "tcp",
+      "local": "0.0.0.0:40400"
+    },
+    {
+      "transport": "tcp",
+      "local": "0.0.0.0:40401"
+    },
+    {
+      "transport": "tcp",
+      "local": "0.0.0.0:40403"
+    },
+    {
+      "transport": "tcp",
+      "local": "127.0.0.1:41405"
+    },
+    {
+      "transport": "tcp",
+      "local": "127.0.0.1:41402"
+    }
+  ],
+  "sample_finished_utc": "2026-10-29T15:42:57.704661+00:00"
+}

@@ -464,7 +464,23 @@ impl DeployService for DeployGrpcServiceV1 {
         let r = self.do_deploy(&signed).await;
         let message = match r {
             Ok(s) => wire::deploy_response::Message::Result(s),
-            Err(e) => wire::deploy_response::Message::Error(to_tonic_service_error(e)),
+            Err(e) => {
+                // A full pool is a bound, not a malformed request (Law 86a): RESOURCE_EXHAUSTED
+                // with a retry hint, which is the gRPC spelling of the HTTP 429.
+                if e.messages
+                    .iter()
+                    .any(|m| rchain_casper::api::block_api::deploy_refusal_is_bounded(m))
+                {
+                    let detail = e.messages.join("; ");
+                    let mut status = Status::resource_exhausted(detail);
+                    status.metadata_mut().insert(
+                        "retry-after",
+                        tonic::metadata::MetadataValue::from_static("1"),
+                    );
+                    return Err(status);
+                }
+                wire::deploy_response::Message::Error(to_tonic_service_error(e))
+            }
         };
         Ok(Response::new(wire::DeployResponse {
             message: Some(message),

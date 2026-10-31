@@ -29,7 +29,23 @@ pub const SHARD_ID_MARKER: &str = "shard-id";
 pub const STORE_FORMAT_MARKER: &str = "store-format";
 
 /// The store format this build writes. See [`STORE_FORMAT_MARKER`].
-pub const STORE_FORMAT_VERSION: u32 = 1;
+// Version 2 adds the recovery-pending key: a v1 binary would ignore it and
+// could enter Running over an interrupted publication. Downgrade must refuse.
+// Version 3 adds the block-disposition ledger: a v2 binary would ignore the
+// rows and could leave a stored body with no disposition for ever (U19).
+// Version 4 moves that ledger into the block-storage environment so the row
+// and its body are one transaction (C350). A v3 binary would look for the
+// ledger in `dagstorage`, find nothing, and treat every in-flight body as
+// unowned — the same orphan one directory over — so downgrade must refuse.
+// The move is followed by a re-scan (`LEGACY_BODY_SCAN_VERSION`), which adopts
+// every stored body the DAG does not hold into the new, empty ledger.
+pub const STORE_FORMAT_VERSION: u32 = 4;
+
+/// **Where a shard records the blocks it still owes an outcome** (U19, `block_disposition`). Holds
+/// only `Pending`/`Faulted` rows — accepted and refused blocks are the DAG metadata — so it is
+/// bounded by in-flight work, not by chain height. Shares the DAG environment: these are facts
+/// about this shard's own ingestion, and one row per unsettled body does not earn a file.
+pub const BLOCK_DISPOSITION_DB: &str = "block-disposition";
 
 /// The gateway's durable coordinator-record database ([`crate::gateway::ledger`]). Node-local: it
 /// is deliberately **not** part of a shard's content-addressed state, because a coordinator's votes
@@ -94,6 +110,14 @@ pub fn rnode_db_mapping() -> Vec<(Db, LmdbEnvConfig)> {
         (
             Db::new(RESET_MARKER_DB),
             LmdbEnvConfig::new("dagstorage", 100 * GB),
+        ),
+        // Blocks this shard has stored and still owes an outcome (U19). One row per unsettled body.
+        // **The body's environment, not the DAG's** (C350): the row is written in the same LMDB
+        // transaction as the body, and a transaction cannot span environments — so co-locating them is
+        // what makes "the body is stored and owed, or neither" structural rather than a promise.
+        (
+            Db::new(BLOCK_DISPOSITION_DB),
+            LmdbEnvConfig::new("blockstorage", 1 * TB),
         ),
         // Runtime mergeable store (cache of mergeable channels for block-merge)
         (
@@ -240,6 +264,17 @@ mod tests {
         // The reset marker shares the DAG's environment (F-U5-01, C274): it is a fact about this
         // shard's chain, and one literal key does not warrant a file of its own.
         assert!(ids.contains(&RESET_MARKER_DB));
+        assert!(ids.contains(&BLOCK_DISPOSITION_DB));
+        // **The disposition ledger shares the bodies' environment** (C350): the body and its row are
+        // one transaction, and an LMDB transaction cannot span environments. A mapping that moves
+        // either one is the crash window coming back, so it is a test rather than a comment.
+        let env_of = |id: &str| {
+            mapping
+                .iter()
+                .find(|(db, _)| db.id == id)
+                .map(|(_, c)| c.name.clone())
+        };
+        assert_eq!(env_of(BLOCK_DISPOSITION_DB), env_of("blocks"));
         let marker = mapping
             .iter()
             .find(|(db, _)| db.id == RESET_MARKER_DB)

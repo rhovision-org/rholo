@@ -30,13 +30,14 @@ use rchain_rspace::trace::event::Event as REvent;
 use rchain_shared::base16;
 
 use crate::api::block_api::{
-    get_full_block_info, get_light_block_info, ApiErr, BlockApi, Capabilities, DeployerInfo,
-    FinalityHealth, ProposeHealth, ProposerHealth, ShardHealthEntry,
+    get_full_block_info, get_light_block_info, ApiErr, BlockApi, Capabilities, DeployPoolStats,
+    DeployerInfo, FinalityHealth, ProposeHealth, ProposerHealth, ShardHealthEntry,
 };
 use crate::api::graph_generator::{dag_as_cluster, ValidatorBlock};
 use crate::api::machine_verifiable_dag::machine_verifiable_dag;
 use crate::blocks::proposer::propose_result::{ProposeResult, ProposeStatus};
 use crate::blocks::proposer::proposer::ProposerResult;
+use crate::engine::node_phase::NodePhaseCell;
 use crate::event_converter::to_rspace_event;
 use crate::interpreter_util::ShardHealth;
 use crate::runtime_manager::{CapturedReply, RuntimeManager};
@@ -61,6 +62,11 @@ pub type ProposeFunction = Box<
 /// cell and Kademlia discovery table (peers/nodes) rather than returning a fixed value.
 pub type NetworkStatusFn =
     Box<dyn Fn() -> Pin<Box<dyn Future<Output = NetworkStatus> + Send + 'static>> + Send + Sync>;
+
+/// **The pending-work relay** (Law 86e). Called after a deploy is admitted, with the signed deploy;
+/// the implementation offers it to peers and returns immediately (it owns any spawned task). It is
+/// an `Fn`, not an `async fn`, so the deploy response does not wait on a peer round-trip.
+pub type RelayFunction = Arc<dyn Fn(SignedDeployData) + Send + Sync>;
 
 /// The concrete `BlockApi` (port of `BlockApiImpl`).
 pub struct BlockApiImpl {
@@ -88,6 +94,11 @@ pub struct BlockApiImpl {
     /// **This shard's finality-and-merge health** (W-N10-02, W-N10-03) — the cell the validation path
     /// writes, one per shard, beside `propose_health` and for the same reason. See [`ShardHealth`].
     shard_health: ShardHealth,
+    /// **This shard's launch phase** (B47). Deploy admission is judged by the shard the deploy names,
+    /// not by a process-wide flag: one syncing shard must not refuse every shard's work.
+    phase: NodePhaseCell,
+    /// The pending-work relay, when the operator enabled it (Law 86e). `None` admits locally only.
+    relay: Option<RelayFunction>,
 }
 
 /// The messages at or above `lowest_height`, in the shape the DAG view renders.
@@ -284,6 +295,8 @@ impl BlockApiImpl {
         system_public_keys: BTreeSet<Vec<u8>>,
         propose_health: ProposeHealth,
         shard_health: ShardHealth,
+        phase: NodePhaseCell,
+        relay: Option<RelayFunction>,
     ) -> Self {
         BlockApiImpl {
             dag,
@@ -306,6 +319,8 @@ impl BlockApiImpl {
             system_public_keys,
             propose_health,
             shard_health,
+            phase,
+            relay,
         }
     }
 
@@ -453,6 +468,31 @@ impl BlockApiImpl {
     }
 }
 
+/// **The capability answer, split from the node so the one identity field can be tested without a
+/// DAG, a store and a runtime.**
+///
+/// `proposer` is the only field here that is *identity* rather than *mode*: the other three are
+/// configuration flags, and `manual_propose` is exactly `!autopropose && !proposeOnDeploy` — so an
+/// unkeyed observer reports it `true`, the same as a manual-mode validator. Anything that needs to
+/// know whether a node can include a deploy reads `proposer`; the test below is what keeps that
+/// distinction from drifting back into the mode flags.
+fn capability_answer(
+    auto_propose: bool,
+    propose_on_deploy: bool,
+    admin_http: bool,
+    dev_mode: bool,
+    holds_validator_key: bool,
+) -> Capabilities {
+    Capabilities {
+        autopropose: auto_propose,
+        propose_on_deploy,
+        manual_propose: !auto_propose && !propose_on_deploy,
+        admin_http,
+        dev_mode,
+        proposer: holds_validator_key,
+    }
+}
+
 #[async_trait]
 impl BlockApi for BlockApiImpl {
     async fn status(&self) -> Status {
@@ -480,14 +520,24 @@ impl BlockApi for BlockApiImpl {
         Ok(pooled.into_values().collect())
     }
 
+    async fn deploy_pool_stats(&self) -> ApiErr<DeployPoolStats> {
+        let (deploys, bytes) = self.dag.deploy_pool_stats().await?;
+        Ok(DeployPoolStats {
+            deploys,
+            max_deploys: crate::dag::MAX_POOLED_DEPLOYS,
+            bytes,
+            max_bytes: crate::dag::MAX_POOLED_DEPLOY_BYTES,
+        })
+    }
+
     async fn capabilities(&self) -> Capabilities {
-        Capabilities {
-            autopropose: self.auto_propose,
-            propose_on_deploy: self.propose_on_deploy,
-            manual_propose: !self.auto_propose && !self.propose_on_deploy,
-            admin_http: self.admin_http,
-            dev_mode: self.dev_mode,
-        }
+        capability_answer(
+            self.auto_propose,
+            self.propose_on_deploy,
+            self.admin_http,
+            self.dev_mode,
+            self.validator_opt.is_some(),
+        )
     }
 
     async fn proposer_health(&self) -> ProposerHealth {
@@ -525,6 +575,33 @@ impl BlockApi for BlockApiImpl {
         if self.is_node_read_only {
             return Err(
                 "Deploy was rejected because node is running in read-only mode.".to_string(),
+            );
+        }
+        // **A shard outside its serving phases cannot include work**, even when its pool has room.
+        // `acceptsDeploys` remains the pool's Law 86a answer; readiness is this explicit refusal.
+        // Applied here so HTTP, gRPC, the faucet and every other caller of the one deploy path
+        // agree, and read from **this shard's** cell so one syncing shard does not refuse the
+        // others. The global `sync_state` is not consulted: the shard's `Syncing` phase is the same
+        // fact at the right scope.
+        if !self.phase.admits_work() {
+            return Err(format!(
+                "Deploy refused: shard {} is in phase {} and is not ready to include work.",
+                self.shard_id,
+                self.phase.phase().label()
+            ));
+        }
+        if crate::blocks::block_processor::pipeline_faults() > 0 {
+            return Err(
+                "Deploy refused: the block pipeline is blocked after a fault and is not ready to \
+                 include work."
+                    .to_string(),
+            );
+        }
+        if crate::blocks::proposer::proposer::proposal_isolated() {
+            return Err(
+                "Deploy refused: this validator is isolated from finality and is not proposing; \
+                 an operator repair/restart is required."
+                    .to_string(),
             );
         }
         if !deploy.verify_signature() {
@@ -594,6 +671,15 @@ impl BlockApi for BlockApiImpl {
             Ok(id) => Ok(format!("Success!\nDeployId is: {}", base16::encode(&id))),
             Err(e) => Err(e.0),
         };
+
+        // **Offer admitted work to peers before proposing** (Law 86e). The deploy is already in
+        // this pool; the relay copies it to peers, so a constrained node that cannot execute it
+        // still lets a properly equipped validator include it. The callback spawns its own task.
+        if r.is_ok() {
+            if let Some(relay) = &self.relay {
+                relay(deploy.clone());
+            }
+        }
 
         // Auto-propose if enabled and a trigger is available.
         if self.propose_on_deploy || self.auto_propose {
@@ -1101,6 +1187,32 @@ fn deploy_error_text(
 mod tests {
     use super::*;
     use rchain_models::casper::protocol::casper_message::RholangState;
+
+    /// **The discriminator is identity, not mode.**
+    ///
+    /// Both arms are the same configuration (`--autopropose` off), so `manualPropose` is `true` for
+    /// both — which is the whole reason it cannot be the field a hostlist filters on. Only the
+    /// validator key separates a manual-mode validator from an observer. Falsified by computing
+    /// `proposer` from any of the mode flags: one of the two assertions then flips.
+    #[test]
+    fn proposer_is_the_validator_identity_not_the_mode() {
+        let validator = capability_answer(false, false, false, false, true);
+        let observer = capability_answer(false, false, false, false, false);
+        assert_eq!(
+            (validator.manual_propose, observer.manual_propose),
+            (true, true),
+            "the mode flag cannot tell them apart — that is the trap this field exists to remove"
+        );
+        assert!(validator.proposer, "a keyed manual validator can propose");
+        assert!(
+            !observer.proposer,
+            "an unkeyed observer cannot propose, whatever its mode"
+        );
+
+        // Autopropose does not change the identity answer either.
+        assert!(capability_answer(true, true, false, false, true).proposer);
+        assert!(!capability_answer(true, true, false, false, false).proposer);
+    }
 
     fn block() -> BlockMessage {
         BlockMessage {

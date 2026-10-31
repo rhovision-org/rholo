@@ -1,0 +1,15 @@
+test_failed_transfer_cannot_publish_a_partial_snapshot (__main__.RangeSnapshotTests.test_failed_transfer_cannot_publish_a_partial_snapshot) ... ok
+test_finality_above_the_plan_range_is_checked_in_current_inventory (__main__.RangeSnapshotTests.test_finality_above_the_plan_range_is_checked_in_current_inventory) ... ok
+test_invalid_list_elements_use_live_fallback (__main__.RangeSnapshotTests.test_invalid_list_elements_use_live_fallback) ... ok
+test_new_divergence_cannot_pass_using_an_old_agreement (__main__.RangeSnapshotTests.test_new_divergence_cannot_pass_using_an_old_agreement) ... ok
+test_no_cache_control_reads_current_blocks (__main__.RangeSnapshotTests.test_no_cache_control_reads_current_blocks) ... ok
+test_nonempty_error_object_is_not_cached_as_an_empty_inventory (__main__.RangeSnapshotTests.test_nonempty_error_object_is_not_cached_as_an_empty_inventory) ... ok
+test_recovered_node_is_not_rejected_using_its_old_inventory (__main__.RangeSnapshotTests.test_recovered_node_is_not_rejected_using_its_old_inventory) ... ok
+test_recovery_cannot_exit_success_with_current_unfinalized_divergence (__main__.RangeSnapshotTests.test_recovery_cannot_exit_success_with_current_unfinalized_divergence) ... ok
+test_truncated_json_uses_live_fallback (__main__.RangeSnapshotTests.test_truncated_json_uses_live_fallback) ... ok
+test_valid_range_is_fetched_once_per_node_in_plan (__main__.RangeSnapshotTests.test_valid_range_is_fetched_once_per_node_in_plan) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 9.369s
+
+OK

@@ -307,8 +307,17 @@ fn int_bigop(
 /// shared with the `+` operator exactly as Scala shares them (`EPlusBody`'s
 /// `case (lhs: ESetBody, rhs) => add(lhs, List[Par](rhs))` calls the same `add` the `.add(x)`
 /// method does), so the two cannot drift apart.
+///
+/// **The charge is the set it rebuilds, not one addition** (C353). It clones every element and then
+/// re-canonicalises the whole set through `par_set`, so the work is the output's canonicalisation —
+/// the same shape `set` charges on a map (C345). The flat `add_cost` this used to charge let a fold
+/// that inserts N elements buy `O(N² log N)` work for `O(N)` phlo: one member of the class the
+/// October re-audit closed, in the arm the arm-by-arm reading did not reach, and found by the cost
+/// register's first census.
 fn set_add(b: &ParSet, element: Par, cost: &CostAccounting) -> Result<Expr, RholangError> {
-    cost.charge(Costs::add_cost())?;
+    cost.charge(Costs::canonicalization_cost(
+        (b.ps.len() as i64).saturating_add(1),
+    ))?;
     let element_conn = element.connective_used;
     let element_lf = element.locally_free.0.clone();
     let mut ps = b.ps.clone();
@@ -989,9 +998,10 @@ fn eval_arm(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Result<Expr, 
                     }))
                 }
                 (Expr::ESet(l), Expr::ESet(r)) => {
-                    // Set union (the `union` method's semantics, `ParSet.union`): the Scala `++`
-                    // union-s the two sets, charging `unionCost(otherPs.size)`.
-                    cost.charge(Costs::union_cost(r.ps.len() as i64))?;
+                    // Set union (`ParSet.union`): both operands are canonicalised into the result, so
+                    // both are charged — the old charge was the right operand only, which made
+                    // `bigSet ++ {}` free while it still rebuilt `bigSet` (C345).
+                    cost.charge(Costs::union_cost(l.ps.len() as i64, r.ps.len() as i64))?;
                     let mut ps = l.ps.clone();
                     ps.extend(r.ps.clone());
                     let mut s = par_set(ps);
@@ -1007,7 +1017,7 @@ fn eval_arm(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Result<Expr, 
                     // Map union (`baseMap ++ otherMap`, right-biased: the other map's value wins on
                     // a colliding key — which is what `par_map`'s canonicalisation gives, since it
                     // keeps the last of each key).
-                    cost.charge(Costs::union_cost(r.kvs.len() as i64))?;
+                    cost.charge(Costs::union_cost(l.kvs.len() as i64, r.kvs.len() as i64))?;
                     let mut kvs = l.kvs.clone();
                     kvs.extend(r.kvs.clone());
                     let mut m = par_map(kvs);
@@ -1502,7 +1512,7 @@ fn eval_method(
             let other = eval_single_expr(&args[0], env, cost)?;
             match (&base, &other) {
                 (Expr::ESet(b), Expr::ESet(o)) => {
-                    cost.charge(Costs::union_cost(o.ps.len() as i64))?;
+                    cost.charge(Costs::union_cost(b.ps.len() as i64, o.ps.len() as i64))?;
                     let mut ps = b.ps.clone();
                     ps.extend(o.ps.clone());
                     let mut s = par_set(ps);
@@ -1515,7 +1525,7 @@ fn eval_method(
                     Ok(from_expr(Expr::ESet(s)))
                 }
                 (Expr::EMap(b), Expr::EMap(o)) => {
-                    cost.charge(Costs::union_cost(o.kvs.len() as i64))?;
+                    cost.charge(Costs::union_cost(b.kvs.len() as i64, o.kvs.len() as i64))?;
                     let mut kvs = b.kvs.clone();
                     kvs.extend(o.kvs.clone());
                     let mut m = par_map(kvs);
@@ -1634,9 +1644,14 @@ fn eval_method(
             let base = eval_single_expr(target, env, cost)?;
             let key = eval_expr(&args[0], env, cost)?;
             let value = eval_expr(&args[1], env, cost)?;
-            cost.charge(Costs::add_cost())?;
             match base {
                 Expr::EMap(b) => {
+                    // `set` clones the map, scans it for the key, and rebuilds it through
+                    // `par_map`, so the work is the output's canonicalisation rather than one
+                    // addition (C345). Charged before the clone.
+                    cost.charge(Costs::canonicalization_cost(
+                        (b.kvs.len() as i64).saturating_add(1),
+                    ))?;
                     let mut kvs = b.kvs.clone();
                     if let Some(slot) = kvs.iter_mut().find(|(k, _)| k == &key) {
                         slot.1 = value;
@@ -1651,9 +1666,11 @@ fn eval_method(
         "keys" => {
             check_arity("keys", 0, args.len())?;
             let base = eval_single_expr(target, env, cost)?;
-            cost.charge(Costs::keys_method_cost())?;
             match base {
                 Expr::EMap(b) => {
+                    // `keys` clones the map's keys and canonicalises them into a set; the work is
+                    // the output's size, not a flat method charge (C345).
+                    cost.charge(Costs::canonicalization_cost(b.kvs.len() as i64))?;
                     let keys: Vec<Par> = b.kvs.iter().map(|(k, _)| k.clone()).collect();
                     Ok(from_expr(Expr::ESet(par_set(keys))))
                 }
@@ -1786,6 +1803,9 @@ fn eval_method(
             match base {
                 Expr::ESet(_) => Ok(target.clone()),
                 Expr::EMap(b) => {
+                    // The conversion builds `b.kvs.len()` tuples and canonicalises them into a set;
+                    // charge the output it is about to build, before it builds it (C345).
+                    cost.charge(Costs::canonicalization_cost(b.kvs.len() as i64))?;
                     let ps: Vec<Par> = b
                         .kvs
                         .iter()
@@ -1798,12 +1818,15 @@ fn eval_method(
                     connective_used,
                     remainder,
                     ..
-                }) => Ok(from_expr(Expr::ESet(ParSet {
-                    ps: par_set(ps).ps,
-                    connective_used,
-                    locally_free: AlwaysEqual(vec![]),
-                    remainder,
-                }))),
+                }) => {
+                    cost.charge(Costs::canonicalization_cost(ps.len() as i64))?;
+                    Ok(from_expr(Expr::ESet(ParSet {
+                        ps: par_set(ps).ps,
+                        connective_used,
+                        locally_free: AlwaysEqual(vec![]),
+                        remainder,
+                    })))
+                }
                 other => Err(method_not_defined("toSet", &other)),
             }
         }
@@ -1813,6 +1836,9 @@ fn eval_method(
             match base {
                 Expr::EMap(_) => Ok(target.clone()),
                 Expr::ESet(b) => {
+                    // Charged from the operand's size, before the tuples are decoded and the map is
+                    // canonicalised (C345).
+                    cost.charge(Costs::canonicalization_cost(b.ps.len() as i64))?;
                     let mut kvs = Vec::new();
                     for p in b.ps {
                         match unapply_tuple2(&p) {
@@ -1828,6 +1854,7 @@ fn eval_method(
                     Ok(from_expr(Expr::EMap(par_map(kvs))))
                 }
                 Expr::EList(EList { ps, .. }) => {
+                    cost.charge(Costs::canonicalization_cost(ps.len() as i64))?;
                     let mut kvs = Vec::new();
                     for p in ps {
                         match unapply_tuple2(&p) {
@@ -4900,5 +4927,134 @@ mod tests {
             }
             _ => panic!("a case whose pattern matches must reduce, padding the unfilled level"),
         }
+    }
+
+    // --- C345: the collection conversions and unions charge their work ------------------------
+
+    /// What one term charges to evaluate, method dispatch included.
+    ///
+    /// `eval_single_expr` charges the operand's evaluation and the method; it does **not** charge
+    /// storage (that is `ChargingRSpace`'s), so a difference of differences between the same term
+    /// shape at two sizes is exactly the operation's marginal charge.
+    fn charged(src: &str) -> i64 {
+        let cost = CostAccounting::from_initial(Costs::unsafe_max());
+        let env = Env::new();
+        let p: Par = crate::normalizer::source_to_adt(src).expect("parse").into();
+        eval_single_expr(&p, &env, &cost).expect("eval");
+        cost.total_charged()
+    }
+
+    fn ints(n: usize) -> String {
+        let items: Vec<String> = (0..n).map(|i| i.to_string()).collect();
+        format!("[{}]", items.join(","))
+    }
+
+    fn pairs(n: usize) -> String {
+        let items: Vec<String> = (0..n).map(|i| format!("({i},{i})")).collect();
+        format!("[{}]", items.join(","))
+    }
+
+    /// The method's marginal charge at size `n`: the same expression is the operand of both arms, so
+    /// only the method's own charge differs.
+    fn marginal(
+        baseline: impl Fn(&str) -> String,
+        method: impl Fn(&str) -> String,
+        operand: impl Fn(usize) -> String,
+        n: usize,
+    ) -> i64 {
+        let base = operand(n);
+        charged(&method(&base)) - charged(&baseline(&base))
+    }
+
+    /// **`toSet` charges 3 phlo per element it canonicalises** (C345). The old charge was flat — 18
+    /// phlo at 500 elements and at 40 000 — while the sort's wall time grew from 7 ms to 724 ms.
+    #[test]
+    fn to_set_charges_its_elements() {
+        let identity = |t: &str| t.to_string();
+        assert_eq!(
+            marginal(identity, |t| format!("{t}.toSet()"), ints, 9)
+                - marginal(identity, |t| format!("{t}.toSet()"), ints, 8),
+            Costs::add_cost().value,
+            "one more element must cost one more canonicalisation"
+        );
+    }
+
+    /// **`toMap` charges 3 phlo per element**, through the same `par_map` canonicalisation.
+    #[test]
+    fn to_map_charges_its_elements() {
+        let identity = |t: &str| t.to_string();
+        assert_eq!(
+            marginal(identity, |t| format!("{t}.toMap()"), pairs, 9)
+                - marginal(identity, |t| format!("{t}.toMap()"), pairs, 8),
+            Costs::add_cost().value
+        );
+    }
+
+    /// **`keys` charges 3 phlo per key**, where it used to charge a flat 10. The baseline is the map
+    /// the method reads, so the conversion's own charge is cancelled out.
+    #[test]
+    fn keys_charges_its_output() {
+        let to_map = |t: &str| format!("{t}.toMap()");
+        assert_eq!(
+            marginal(to_map, |t| format!("{t}.toMap().keys()"), pairs, 9)
+                - marginal(to_map, |t| format!("{t}.toMap().keys()"), pairs, 8),
+            Costs::add_cost().value
+        );
+    }
+
+    /// **`set` charges 3 phlo for the map it rebuilds**, where it used to charge 3 for one addition.
+    #[test]
+    fn set_charges_the_map_it_rebuilds() {
+        let to_map = |t: &str| format!("{t}.toMap()");
+        assert_eq!(
+            marginal(to_map, |t| format!("{t}.toMap().set(0,0)"), pairs, 9)
+                - marginal(to_map, |t| format!("{t}.toMap().set(0,0)"), pairs, 8),
+            Costs::add_cost().value
+        );
+    }
+
+    /// **`add` — and so `set + x`, which shares its body — charges the set it rebuilds** (C353).
+    ///
+    /// `set_add` clones every element and re-canonicalises the whole set, so the charge must grow with
+    /// the set. The flat `add_cost` this replaced made a fold of N insertions buy `O(N² log N)` work
+    /// for `O(N)` phlo. The baseline is the set the method reads, so the conversion's own charge is
+    /// cancelled out.
+    #[test]
+    fn a_set_add_charges_the_set_it_rebuilds() {
+        let to_set = |t: &str| format!("{t}.toSet()");
+        assert_eq!(
+            marginal(to_set, |t| format!("{t}.toSet().add(0)"), ints, 9)
+                - marginal(to_set, |t| format!("{t}.toSet().add(0)"), ints, 8),
+            Costs::add_cost().value,
+            "one more element in the set must cost one more canonicalisation"
+        );
+        // The `+` operator shares `set_add`, so it is charged the same. Its own `op_call_cost` is a
+        // constant and cancels in the marginal.
+        assert_eq!(
+            marginal(to_set, |t| format!("{t}.toSet() + 0"), ints, 9)
+                - marginal(to_set, |t| format!("{t}.toSet() + 0"), ints, 8),
+            Costs::add_cost().value,
+            "`set + x` is the same body and the same charge"
+        );
+    }
+
+    /// **A union charges both operands.** The defect was the asymmetry: the old charge was the right
+    /// operand only, so `bigSet ++ Set()` was free while it rebuilt `bigSet`. These two terms must
+    /// cost the same, and both must scale with the large operand.
+    #[test]
+    fn a_union_charges_both_operands_alike() {
+        let big = format!("{}.toSet()", ints(64));
+        let empty = "Set()".to_string();
+        let left = charged(&format!("{big} ++ {empty}"));
+        let right = charged(&format!("{empty} ++ {big}"));
+        assert_eq!(
+            left, right,
+            "a union must not be cheaper because its large operand is on the left"
+        );
+        let small = format!("{}.toSet()", ints(4));
+        assert!(
+            right > charged(&format!("{small} ++ {empty}")),
+            "a 64-element union must cost more than a 4-element one"
+        );
     }
 }

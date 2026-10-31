@@ -92,16 +92,15 @@ The number printed is in the chain's smallest unit, 1e-8 REV. Keep balances as e
 ordinary JavaScript `JSON.parse` followed by `Number` arithmetic cannot represent every integer
 above `9007199254740991`. Converting that rounded value to `BigInt` does not restore precision.
 
-`0` is a zero balance, not an error. It can mean either a vault with zero balance or no vault; this query does not distinguish the two. Also: post the body as a *bare JSON
-string* (the rholang term); an object gets `invalid type: map, expected a string`. **The command above is
-the one that was run** — the earlier `printf` form on this page looked right and produced a body that was
-not valid JSON, which is the sort of thing only running it verbatim catches.
+`0` is a zero balance, not an error. It can mean either a vault with zero balance or no vault; this
+query does not distinguish the two. Post the body as a *bare JSON string* (the rholang term); an object
+gets `invalid type: map, expected a string`.
 
-**Verified on 2026-09-30:** 8 of 8 sampled addresses return the sheet's own numbers — random draws plus
+**Sampled verification:** 8 of 8 sampled addresses return the sheet's own numbers — random draws plus
 the largest allocation, the smallest non-zero, a balance of `1` and two zero balances — and a valid REV
 address that is *not* in the sheet returns `0`. Every answer comes from the genesis block
-(`blockNumber: 0`). This is sampled verification, not a reconciliation of all 13,946
-allocations, and it does not establish the historical accuracy of the spreadsheet.
+(`blockNumber: 0`). This is sampled verification, not a reconciliation of all 13,946 allocations, and it
+does not establish the historical accuracy of the spreadsheet.
 
 ## What "read-only" means here, precisely
 
@@ -153,7 +152,7 @@ The genesis inputs are the ordinary two files:
 
 and the validator key is a raw 64-hex secret at `/etc/rnode-history/validator.key` (the format the port
 reads: `rnode keygen` cannot be used non-interactively — it loops on a password prompt and segfaults
-without a TTY — so the key was generated directly and the public half derived from it).
+without a TTY — so the key is generated directly and the public half derived from it).
 
 PoS parameters: `--epoch-length 10 --quarantine-length 10 --bond-minimum 1 --bond-maximum 1000000
 --number-of-active-validators 10`. They are written into the genesis block and, on a chain that never

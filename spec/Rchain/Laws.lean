@@ -212,10 +212,12 @@ structure Law where
   /-- A note where the status needs qualifying. -/
   note : String := ""
 
--- **The budget is raised for this one literal, measured.** The register is a single list of 86 rows,
--- and elaborating it is a unification problem over the rows' field types rather than a proof: it fits
--- the default 200 000 heartbeats at 58 laws and not at 59, so the budget is raised here rather than the
--- register split into chunks an accidental duplicate could hide between.
+-- **The budget is raised for these literals, measured.** Elaborating a register chunk is a unification
+-- problem over the rows' field types rather than a proof: one list fit the default 200 000 heartbeats at
+-- 58 laws and not at 59, so the budget is raised here. The chunks are `lawsA`/`lawsB`/`lawsC` for a
+-- *memory* reason recorded above them (19.1 GB as one literal against the 16 GB CI runner); the duplicate
+-- they were once feared to hide is caught by the numbering and entry-ceiling checks, which is why the
+-- reason to keep one literal retired with the measurement.
 set_option maxHeartbeats 4000000
 
 /-- Every law in the catalog, the orphaned ones and the open ones included, because a register
@@ -224,7 +226,13 @@ that lists only the formalized laws cannot notice a law that was dropped.
 Statements are the one-line form; `spec/INVENTORY.md` carries the long form and the Rust realization.
 `falsifiable` is `none` where the witness is owed, which is most of the non-corpus laws: naming that gap
 is the purpose, not a defect of this file. -/
-def laws : List Law := [
+-- **Three chunks, not one literal.** The whole register elaborated at 19.1 GB peak
+-- (measured 2026-10-25, rchain-laws build), over the 16 GB CI runner — the SIGTERM of
+-- #417, now deterministic. Each chunk is elaborated on its own; the concatenation is a
+-- value. A duplicate cannot hide between chunks: the numbering check requires every number
+-- 1..`lawCeiling`, and `entryCeiling` pins the row count, so a repeated row leaves a
+-- number missing (the reason to keep one literal retired with that argument).
+def lawsA : List Law := [
   -- ── Rholang: the language (Laws 1–6) ────────────────────────────────────────────────────────────
   { number := 1, clause := "a", layer := "Rholang",
     rustWitness := [
@@ -314,8 +322,9 @@ def laws : List Law := [
       **not** a theorem here, and neither are canonicalization, exact `+ - * /`, division's \
       exact-or-error condition, the wire's minimal-byte form, the reducer's dispatch, or the cost \
       model. Those are carried today by the Rust refinement (`Decimal::new`/`from_wire`, private \
-      fields) and its unit and corpus tests; a standalone `Rchain/Decimal.lean` plus a `decimal` \
-      corpus is the follow-up that would prove them" },
+      fields) and its unit and corpus tests; the standalone `Rchain/Decimal.lean` plus the `decimal` \
+      corpus is **Law 87** (87a–e), whose boundary is the same: wire bytes/tag 35, serde ingress, the \
+      literal surface, reducer dispatch and the cost model remain Rust-tested, not modelled" },
   { number := 1, clause := "b", layer := "Rholang",
     rustWitness := ["models/src/property_tests.rs:law1b_every_permutation_of_a_collection_sorts_alike"],
     statement := "Each element comparator (`cmpPar`, `cmpSend`, …, `cmpConnective`) is a lawful total \
@@ -1952,6 +1961,9 @@ def laws : List Law := [
       `txnCommit_fixes`; the row is `owed` no longer" },
 
   -- ── Laws 30–43: the surface the ten silent defects live in ──────────────────────────────────────
+]
+
+def lawsB : List Law := [
   { number := 30, layer := "Rholang",
     statement := "Every term the parser accepts is in the BNFC grammar (`rholang_mercury.cf`) — \
       **modulo the deviations law 31 names**, and checked as a `decide`d corpus with the soundness \
@@ -2924,6 +2936,40 @@ def laws : List Law := [
       <reason>` — the register's own `status` discipline applied to a table that is prose. Two rows are \
       honestly `not modelled`: the join rule (`spec/Rchain/Silence.lean` already records that boundary, and \
       a half-filled join is silence there as it is in the node) and the inactivity leak above" },
+  { number := 51, clause := "d", layer := "Progress",
+    rustWitness := [
+      "casper/src/blocks/proposer/proposer.rs:round_escape_permit_is_consumed_even_when_the_round_stays_open",
+      "casper/src/blocks/proposer/proposer.rs:late_escape_and_repeated_ticks_do_not_bank_unused_permits"],
+    statement := "**A time-gated action consumes its permit.** The proposer's escape from a round \
+      that is not closing may fire only after a full `ROUND_STALL_ESCAPE` interval, and firing it \
+      re-arms the sighting: a still-open round must wait another full interval. A banked permit — \
+      the defect shape, `banked` — licenses every later tick once the first interval elapsed, so the \
+      bound stops pacing anything and a fast producer can exhaust the finality-lag bound while its \
+      peers are still assembling the next shared justification layer",
+    status := .provedTied,
+    corpus := some "recovery",
+    declarations := [`Rchain.Pacing.Permit, `Rchain.Pacing.take, `Rchain.Pacing.banked,
+      `Rchain.Pacing.a_permit_is_consumed, `Rchain.Pacing.the_banked_gate_fires_every_tick,
+      `Rchain.Pacing.the_correct_gate_waits_a_full_interval],
+    axioms := [],
+    rust := ["casper/src/blocks/proposer/proposer.rs"],
+    witness := [`Rchain.Pacing.a_permit_is_consumed,
+      `Rchain.Pacing.the_banked_gate_fires_every_tick,
+      `Rchain.Pacing.the_correct_gate_waits_a_full_interval],
+    falsifiable := some "Deleting the sighting reset in `take_round_escape` makes \
+      `round_escape_permit_is_consumed_even_when_the_round_stays_open` fire: the second tick at +1 ms \
+      escapes. `late_escape_and_repeated_ticks_do_not_bank_unused_permits` pins the late sighting \
+      (90 s) and the burst after it. The corpus row `pace 15000 15001` expects no escape and fires \
+      under the banked model, while `the_banked_gate_fires_every_tick` exhibits that model's defect \
+      as a theorem",
+    note := "The code was adopted from candidate `b26bda1a` (branch \
+      `aixaria0:verify/quiet-finality-integrated-20261030`): `proposer.rs` is byte-identical between \
+      that branch's merge-base and this tree, so only the proposer hunk was taken. The fix is \
+      **consensus-neutral** — it gates `AlreadyProposedThisRound`, not block validity, the state \
+      hash or the wire — and `ROUND_STALL_ESCAPE` is unchanged at 15 s. The model's `bound` is 15 000 \
+      ms; the corpus (`spec/conformance/recovery.tsv`) is the tie to `take_escape_permit`. The layer \
+      is named `recovery` because the decline of an escape storm is a recovery property; later \
+      clauses (the receiver re-offer and the fault classification) extend it." },
   { number := 52, clause := "a", layer := "Casper",
     rustWitness := [
       "casper/src/blocks/proposer/proposer.rs:the_quorum_is_measured_against_the_whole_bonded_map_not_the_live_one"],
@@ -3543,6 +3589,9 @@ def laws : List Law := [
       domain, so a loss is a violation rather than a note. The leaf is `exprToSy_wireable` over the \
       expression constructors — every one the encoder refuses is refused by the definition's own \
       fall-through, so the proof is a case per constructor rather than an argument." },
+]
+
+def lawsC : List Law := [
   { number := 60, clause := "a", layer := "RSpace",
     statement := "**An install is total on a channel.** An install that would replace a *different* \
       installed continuation is **refused**, and an idempotent re-install of the same one changes \
@@ -4012,31 +4061,36 @@ def laws : List Law := [
   { number := 72, layer := "Casper",
     statement := "**A completion record brackets every durable effect.** The reset's marker may be \
       written only once *every* effect it brackets has been applied — the DAG rewind, the body purge, \
-      and the runtime's durable root. No reachable state has the record written with an effect missing, \
-      and the boot repair re-applies the whole set from any half-applied state",
+      the runtime's durable root, **and the cleanup of the derived deploy and deployer indexes**. No \
+      reachable state has the record written with an effect missing, and the boot repair re-applies the \
+      whole set from any half-applied state",
     status := .provedModel,
-    declarations := [`Rchain.ResetState, `Rchain.resetStep, `Rchain.resetSystem,
-      `Rchain.a_rewound_record_implies_every_effect_applied],
+    declarations := [`Rchain.ResetState, `Rchain.resetStep, `Rchain.skippedIndexStep,
+      `Rchain.resetSystem, `Rchain.a_rewound_record_implies_every_effect_applied],
     axioms := [],
-    rust := ["casper/src/engine/reset.rs", "rspace/src/history/history_repository.rs"],
+    rust := ["casper/src/engine/reset.rs", "casper/src/dag.rs",
+      "rspace/src/history/history_repository.rs"],
     rustWitness := ["casper/tests/reset.rs:a_crash_after_the_rewind_is_repaired_at_boot_by_the_marker",
       "casper/tests/reset.rs:the_guard_refuses_a_rewinding_whose_anchor_body_is_absent"],
     witness := [`Rchain.an_early_commit_reaches_a_record_that_lies,
+      `Rchain.a_skipped_index_cleanup_reaches_a_record_that_lies,
       `Rchain.a_reset_can_complete],
-    falsifiable := "The port's own order, recording the completion after the rewind and the purge but \
-      before the runtime root. `an_early_commit_reaches_a_record_that_lies` exhibits the state that \
-      order admits — a `rewound` record with the root unmoved — so the law is red on the code as it \
-      stands and `a_reset_can_complete` keeps it from being vacuous.",
-    note := "**Why the record must bracket all three effects.** `rewind_and_purge` writes the marker when \
-      the first two have returned (`casper/src/engine/reset.rs:81`), and the runtime root is written \
-      *afterwards* (`:261-266`), through `HistoryRepository::reset` → `validate_and_set_current_root` \
-      (`rspace/src/history/history_repository.rs:337`), itself a durable write. A crash between the two \
-      leaves the record claiming the stores agree while a third does not, and the boot guard reading \
+    falsifiable := "Two of the port's own orders. `earlyCommitStep` records the completion after the \
+      rewind and the purge but before the runtime root; `skippedIndexStep` records it with the \
+      derived-index effect optional — the early return in `drop_above` when the metadata drop is empty. \
+      Each exhibits a reachable `rewound` record with an effect missing, so the law was red on the code \
+      as it stood, and `a_reset_can_complete` keeps it from being vacuous.",
+    note := "**Why the record must bracket all four effects.** `rewind_and_purge` writes the marker when \
+      the first two have returned (`casper/src/engine/reset.rs:81`), the runtime root is written \
+      *afterwards* through `HistoryRepository::reset` → `validate_and_set_current_root` \
+      (`rspace/src/history/history_repository.rs:337`), and the derived indexes are cleaned by \
+      `BlockDagKeyValueStorage::drop_above` (`casper/src/dag.rs:410`). A crash before any of them \
+      leaves the record claiming the stores agree while one does not, and the boot guard reading \
       `rewound` re-applies nothing (`reset.rs:140-151`). `reset_volatile`'s doc \
-      (`history_repository.rs:346-358`) names the same class for the merge. HAZOP rows F-U13-01 and \
-      F-U13-02 (docs/src/spec/failure-hazop.md). The fix is in the tree: the two marker writes moved to \
-      the callers, around all three effects, and the guard's `Rewinding` branch re-establishes the \
-      runtime root — witnessed by the two reset tests named above." },
+      (`history_repository.rs:346-358`) names the same class for the merge. HAZOP rows F-U13-01/02 and \
+      **F-U17-11** (docs/src/spec/failure-hazop.md): the root half landed earlier; the index half is \
+      B39, and its rule is that stale rows are derived from the **surviving** block set, not from the \
+      list the current call happened to drop." },
 
   { number := 73, layer := "Casper",
     statement := "**A raised request is not spent until the act commits.** The self-reset's request cell \
@@ -4249,7 +4303,993 @@ def laws : List Law := [
       right one. **And the granularity is the epoch, not the block** — native state is written at \
       boundaries — which is stated because a reader comparing the schedule to a balance needs to know \
       which clock the balance follows." },
+
+  { number := 80, layer := "Casper",
+    statement := "**`CURRENT_ROOT` names only an accepted block.** A checkpoint may record a candidate \
+      post-state as a *known* root, but the store's current-root pointer moves only when a block whose \
+      post-state is that root is accepted into the DAG — so no reachable state has the pointer naming a \
+      state no accepted block references, and a boot republishes only an accepted root",
+    status := .provedModel,
+    declarations := [`Rchain.PubState, `Rchain.pubStep, `Rchain.pubSystem,
+      `Rchain.a_current_root_is_an_accepted_state, `Rchain.a_boot_republishes_only_an_accepted_root],
+    axioms := [],
+    rust := ["rspace/src/history/roots_store.rs", "rspace/src/history/history_repository.rs",
+      "casper/src/runtime_replay.rs", "casper/src/blocks/block_processor.rs"],
+    rustWitness := [],
+    witness := [`Rchain.an_early_publish_reaches_an_orphan_root, `Rchain.publication_can_advance],
+    falsifiable := "The port's order before the deferred publish: the replay checkpoint records the \
+      candidate root and moves `CURRENT_ROOT` before `dag.insert` decides. \
+      `an_early_publish_reaches_an_orphan_root` exhibits the reachable state that order admits — a \
+      current root no accepted block references — so the law was red on the code as it stood, and \
+      `publication_can_advance` keeps it from being vacuous.",
+    note := "**Why recording a root is not publishing it.** Validation replays the block's deploys, \
+      writes a checkpoint and the root tag, and only then calls `dag.insert` \
+      (`casper/src/blocks/block_processor.rs:118`); the replay checkpoint reaches \
+      `RootsStore::record_root` (`casper/src/runtime_replay.rs:302-306` → \
+      `rspace/src/history/history_repository.rs:317`), which writes the root tag and `CURRENT_ROOT` in \
+      one LMDB transaction. A block refused for a bad pre-state hash or dropped by a rewind therefore \
+      leaves the pointer naming a post-state no accepted block carries — a durable pointer that is not \
+      a function of the chain the node runs. The fix (B40, HAZOP F-U17-10) splits the write: candidate \
+      checkpoints record the **known** root only, and the publish runs after acceptance at the insert \
+      sites, with a non-decreasing-height guard and a boot reconciliation that republishes the latest \
+      accepted root when it is known. `reset`'s `validate_and_set_current_root` keeps publishing: its \
+      root is an accepted ancestor's. **What it does not claim**: the cross-store window between the \
+      insert and the publish is narrowed, not closed — there is no WAL — and a crash there is repaired \
+      at boot, best-effort if the root is unknown. `rustWitness` is owed until the deferred-publish \
+      tests land." },
+
+  { number := 81, layer := "Sync",
+    statement := "**A join walk accepts a verified answer for any known key, and re-asks every \
+      outstanding key.** The block walk's key can reach `Received` without being finished — an answer \
+      that arrived before its request turn is dropped, and a body that fails its content check has \
+      already consumed the key. As written, no request selects `Received` and no answer is accepted \
+      for it, so the key is stranded and `is_finished` can never hold. The repair accepts an answer \
+      for a known key whatever the request slot, validates before consuming, and re-requests `Init`, \
+      `Requested` and `Received` on a resend; one accepted answer per round raises the finished \
+      measure, which is bounded by the walk's key universe",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Join.accepted_answer_is_verified,
+      `Rchain.Sync.Join.every_outstanding_key_is_requested_on_a_resend,
+      `Rchain.Sync.Join.a_round_makes_progress,
+      `Rchain.Sync.Join.the_written_walk_cannot_finish_from_a_stranded_key],
+    axioms := [],
+    rust := ["casper/src/engine/mod.rs", "casper/src/engine/lfs_block_requester.rs"],
+    rustWitness := [
+      "casper/src/engine/mod.rs:resend_re_requests_a_received_key",
+      "casper/src/engine/mod.rs:received_accepts_a_known_key_before_its_request_turn",
+      "casper/src/engine/mod.rs:received_still_rejects_an_unknown_key",
+      "casper/src/engine/lfs_block_requester.rs:a_forged_body_does_not_consume_the_key_and_is_re_requested",
+      "casper/src/engine/lfs_block_requester.rs:a_known_needed_block_is_accepted_before_its_request_is_sent",
+      "casper/src/engine/lfs_block_requester.rs:a_mature_chain_join_completes",
+      "block-storage/src/dag/codecs.rs:a_decoded_block_still_hashes_to_its_hash"],
+    witness := [`Rchain.Sync.Join.the_written_walk_strands_a_received_key,
+      `Rchain.Sync.Join.the_fixed_walk_can_finish_from_a_stranded_key,
+      `Rchain.Sync.Join.a_rejected_body_leaves_the_walk_where_it_was],
+    falsifiable := "A walk state with one `Received` key still in `latest`: \
+      `the_written_walk_cannot_finish_from_a_stranded_key` shows every `WrittenStep` leaves it \
+      `Received`, so no run reaches `isFinished` — the `(3 finished, 25 outstanding)` shape. The same \
+      counts appeared in the live join, but a controlled A/B (2026-10-25) found that instance was inbound \
+      reachability, not this defect; the stranded key is what the code admits and what this row fixes. \
+      The same state reaches the goal in two turns of the repaired machine \
+      (`the_fixed_walk_can_finish_from_a_stranded_key`), so the falsifier is not vacuous and the \
+      repair is not a widening of the accepted set to unknown keys: `Step.unknown` still drops them.",
+    note := "**Why the missing transition was not the whole defect.** The Rust consumes before it \
+      validates (`lfs_block_requester.rs:73-108` calls `received` and only then checks the hash), so a \
+      body that fails the check leaves the key `Received`; and `get_next` re-requests only `Init`, or \
+      `Requested` on a resend (`mod.rs:102-114`). The model keeps both facts as `WrittenStep`, which is \
+      what makes the falsifier the code's own shape rather than an invented one. The repaired machine's \
+      fairness hypothesis is explicit: `a_round_makes_progress` needs a verified answer to exist \
+      (`hanswer`) and the key universe to be finite and closed (`hK`); the Rust supplies the closure \
+      through the fringe's ancestry but this module does not prove the DAG finite. **Law 69 is not \
+      replaced**: it models the tuple-space page walk, whose validation failure aborts the attempt and \
+      so has no silent stranded key. The witnesses are the 28-block `request_blocks` test and the \
+      requester's rejection/early-answer tests; the codec round-trip witness rules out a wire cause \
+      of a systematic hash mismatch." },
+
+  { number := 82, layer := "PoS",
+    statement := "**A validator's lifecycle has six transitions, and trust is the admission one.** \
+      `observer → trusted → bonded → active → withdrawing → claimable`, with `removed` as the model's \
+      reading of the Rust's absence: `trust`/`untrust` move the admission list (a trusted caller, \
+      never a self-revocation), `bond` is self-only and requires trust and leaves the active set \
+      alone, `withdraw` stages without moving a coin, the epoch boundary is the only step that can \
+      *add* to the active set, and a slash needs evidence. Revocation is not confiscation: `untrust` \
+      changes no stake ledger, so an untrusted-but-bonded validator stays in consensus",
+    status := .provedModel,
+    declarations := [`Rchain.Lifecycle, `Rchain.LifecycleStep, `Rchain.phaseOf,
+      `Rchain.trust_only_from_a_trusted_key, `Rchain.untrust_leaves_the_bond_alone,
+      `Rchain.the_trusted_set_never_empties, `Rchain.bond_is_self_only,
+      `Rchain.activation_only_at_a_boundary],
+    axioms := [],
+    rust := ["rholang/src/native_state.rs", "rholang/src/system_processes.rs",
+      "casper/src/genesis/mod.rs"],
+    rustWitness := [
+      "rholang/src/native_state.rs:trust_requires_a_trusted_caller",
+      "rholang/src/native_state.rs:untrust_removes_trust_and_leaves_the_bond_alone",
+      "rholang/src/native_state.rs:untrust_does_not_change_the_active_set",
+      "rholang/src/native_state.rs:bond_escrows_the_stake_and_activates_at_the_boundary",
+      "rholang/src/native_state.rs:the_epoch_gate_does_nothing_off_a_boundary",
+      "rholang/src/native_state.rs:a_validator_with_delegations_cannot_withdraw",
+      "rholang/src/native_state.rs:the_boundary_pays_on_the_participation_it_is_handed"],
+    witness := [`Rchain.untrust_does_not_deactivate, `Rchain.the_bond_step_does_not_activate,
+      `Rchain.a_justified_slash_is_a_step, `Rchain.a_bond_reaches_the_bonded_phase],
+    falsifiable := "The rule this replaces is C111's: `untrust` called `slash` on a bonded target, so \
+      one trusted signature moved another validator's entire stake to the Coop vault. In the model that \
+      rule would be a second `doUntrust` writing `pos`, and `untrust_leaves_the_bond_alone` would be \
+      unprovable by `rfl` — the theorem is the state equality itself, not a description of it. \
+      `the_trusted_set_never_empties` excludes the other shape: a caller revoking itself out of the \
+      admission list. `activation_only_at_a_boundary` excludes activation by `bond`.",
+    note := "**The audit found the code matches the law, with one contradiction that is a comment.** \
+      `trust`/`untrust` bind the caller to the unforgeable `deployerId` (`system_processes.rs:2043-2063`), \
+      `bond`/`withdraw` bind the actor to the deployer (`:1852-1901`), `untrust` does not confiscate \
+      (C111), and activation is `select_active` at a boundary. The stale module header at \
+      `rholang/src/native_state.rs:25` says `slash`/`untrust` 'remove the validator and confiscate the \
+      stake', which the code and C111 contradict; the comment is fixed, the semantics are not. \
+      **What the model does not claim**: `Validator` is an id and the vault is one total, so the \
+      per-vault debit of a bond is the Rust's property and not a theorem here; the Rust's min/max bond \
+      bounds are policy outside the state machine; and `retired` is model-only — the Rust observes \
+      removal as absence. `untrust` leaving an active validator active is deliberate and is named as a \
+      non-claim of Law 83's trust model. The witnesses are the lifecycle's own tests: the caller \
+      gate, revocation without confiscation, revocation without deactivation, the bond/boundary \
+      split, the epoch gate, the delegation guard and the boundary payout." },
+
+  { number := 83, layer := "Sync",
+    statement := "**The join is content-trustless, not finality-trustless.** Every join input is \
+      genesis-anchored (the configured genesis block/state and its `bond keys ∪ pos-multi-sig` trust \
+      set), verified (block content hashes, trie pages by Law 70, ancestry membership and the \
+      *derived* `fringe`), or residual (the bootstrap's choice of finalised root, the fringe's state \
+      hashes — the root and each per-block `fringe_state_hash` — liveness, and wire \
+      signatures/finality proofs). Two joiners that verify the same block map and hold the same trie \
+      read the same value at the claimed root and answer the same block lookup; the residual is an \
+      exact, checked enumeration",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Trust.Join, `Rchain.Sync.Trust.derivedFringe,
+      `Rchain.Sync.Trust.join_is_content_trustless,
+      `Rchain.Sync.Trust.a_lying_ancestry_fringe_is_refused,
+      `Rchain.Sync.Trust.the_derivation_is_a_function_of_the_verified_inputs,
+      `Rchain.Sync.Trust.the_residual_is_exactly_named],
+    axioms := [],
+    rust := ["casper/src/engine/node_syncing.rs", "casper/src/engine/lfs_block_requester.rs",
+      "casper/src/genesis/mod.rs"],
+    rustWitness := [
+      "casper/src/engine/node_syncing.rs:an_ancestry_entry_for_an_unknown_block_is_refused",
+      "casper/src/engine/node_syncing.rs:two_ancestry_entries_for_one_block_are_refused",
+      "casper/src/engine/node_syncing.rs:an_ancestry_fringe_that_is_not_the_derived_fringe_is_refused"],
+    witness := [`Rchain.Sync.Trust.a_lying_ancestry_state_hash_changes_replay,
+      `Rchain.Sync.Trust.genesis_trust_anchor,
+      `Rchain.Sync.Trust.a_different_multisig_list_changes_the_anchor,
+      `Rchain.Sync.Trust.the_derivation_is_a_function_of_the_verified_inputs],
+    falsifiable := "The peer-chosen field the join path could not check: \
+      `a_lying_ancestry_state_hash_changes_replay` shows two ancestry rows with the same block and \
+      fringe and a different `fringe_state_hash` produce different replay metadata, which \
+      `close_block` folds into the epoch seed — so the fringe's state hash is a residual. \
+      `a_lying_ancestry_fringe_is_refused` is the field that *is* derivable and therefore refused; \
+      `a_different_multisig_list_changes_the_anchor` is the anchor's sensitivity. **A singleton pin \
+      was tried and refuted**: it compared the root with the named block's pre- or post-state, and the \
+      node's restore suite showed the served root is the state *at* the fringe — one fringe earlier \
+      than the block's pre-state — so the check was removed rather than kept as false assurance, and \
+      C339 now covers every fringe-state claim.",
+    note := "**The exact wording matters.** The proved claim is *content* trustlessness: every state \
+      byte and block body is checked against a hash, so two joiners with the same verified inputs \
+      cannot read differently. It is **not** finality trustlessness: the joiner trusts the \
+      bootstrap's choice of finalised root, its liveness, the per-block `fringe_state_hash` for a \
+      multi-member fringe, and it checks neither block signatures nor a quorum finality proof. Those \
+      are enumerated in `the_residual_is_exactly_named` and on the trust-model page. The Rust fix this \
+      row accompanies verifies ancestry block membership, duplicate-freedom and the derived `fringe`, \
+      and refuses a derivable fringe that lies; **C339 stays open** — the fringe's state hashes are \
+      not derivable on the join path, so the residual stands. The witnesses are the join path's own \
+      tests: membership, duplicate, derived-fringe, and the state-hash residual stated as one. A \
+      singleton state pin was attempted and the node's restore suite refuted it; the law records the \
+      absence rather than the false check." },
+  { number := 84, layer := "Casper",
+    statement := "**The genesis anchor is a function of the genesis inputs, and the ceremony refuses \
+      any other key.** The block's sender, the blessed deploys' signer and the governance admin are \
+      the **first bond in the bonds file** — an input — so identical inputs give identical bytes \
+      (the signing schemes are deterministic) and therefore one genesis hash. A node whose local key \
+      is not that bond must refuse to run the ceremony rather than build a private chain. The old \
+      rule let each node's own key sign, so identical inputs gave different blocks (#456)",
+    status := .provedModel,
+    declarations := [`Rchain.GenesisInputs, `Rchain.genesisCreator, `Rchain.mayCreate,
+      `Rchain.the_genesis_anchor_is_a_function_of_the_inputs,
+      `Rchain.the_genesis_state_is_a_function_of_the_inputs],
+    axioms := [],
+    rust := ["casper/src/engine/node_launch.rs", "casper/src/genesis/mod.rs",
+      "casper/src/bonds_parser.rs"],
+    rustWitness := [
+      "casper/src/engine/node_launch.rs:the_genesis_ceremony_is_the_first_bond_or_refused"],
+    witness := [`Rchain.an_open_ceremony_reaches_two_genesis_hashes,
+      `Rchain.the_first_bond_may_create],
+    falsifiable := "An **open** ceremony — any local key may sign — reaches two genesis hashes from \
+      one bonds file: `an_open_ceremony_reaches_two_genesis_hashes` exhibits it with the smallest \
+      input (one bond, two other keys), and `mayCreate` refuses both under the rule. The measured \
+      live instance is #456: two nodes, identical inputs, sender and post-state both different.",
+    note := "**The rule is the first bond in bonds-file order, and the current network already obeys \
+      it**: #456's table shows the network genesis sender is the first bond's key. So a correctly-run \
+      ceremony produces the same hash as before; the change is the **refusal**, not a new genesis for \
+      nets that followed it. What the model does not restate: that secp256k1 (RFC-6979) and Ed25519 \
+      signatures are deterministic, which is what makes identical signed deploys give identical \
+      bytes — that is `crypto/`'s property and its own tests. The Rust check is at `create_genesis`: \
+      the first bond is read from the file (not the sorted map, which loses file order) and the local \
+      key must equal it. The witness is the two-key ceremony test: the first bond is admitted, the \
+      second refuses with both keys named, and the autogen path's `.sk` supplies the generated first \
+      bond's key for a standalone node." },
+
+  { number := 85, layer := "Casper",
+    statement := "**The finalized fringe's root is a member's claim about a fringe it finalises, not a \
+      state field of the named block.** The ordinary answer serves the max `(height, hash)` member's \
+      `fringe_state_hash`; a recovery anchor and the fresh-shard answer serve a block's \
+      `post_state_hash`; and a member's claim is the state at the fringe **it** finalises — one \
+      fringe earlier than the set it belongs to. The served root is therefore always some member's \
+      claim, but it need not equal either state the block carries, which is why the singleton pin was \
+      false and removed. The joiner cannot recompute the merge, so the root is assumed (C339)",
+    status := .provedModel,
+    declarations := [`Rchain.FringeClaim, `Rchain.ClaimsTheStateAtItsFringe, `Rchain.servedRoot,
+      `Rchain.the_served_root_is_a_members_claim,
+      `Rchain.the_served_root_is_the_state_at_the_members_fringe],
+    axioms := [],
+    rust := ["casper/src/engine/node_running.rs", "casper/src/multi_parent_casper.rs",
+      "casper/src/engine/node_syncing.rs"],
+    rustWitness := [],
+    witness := [`Rchain.a_members_claim_is_not_necessarily_a_block_state,
+      `Rchain.the_served_root_is_a_members_claim],
+    falsifiable := "The pin this branch first implemented: compare the served root with the named \
+      block's pre- or post-state. `a_members_claim_is_not_necessarily_a_block_state` is its \
+      refutation — a member's claim (the state at the empty fringe) is neither the block's pre-state \
+      nor its post-state — and the node's `lfs_restore_dev_tax` suite found it in the genesis-branch \
+      claim. The three answer branches are the remaining distinctions: they serve three different \
+      kinds of value under one field name.",
+    note := "**The member/finaliser distinction is the whole of it**, and `multi_parent_casper.rs` \
+      records the stall it caused when a reader took a member for a finaliser (the base came out one \
+      fringe early and the chain stopped at height 20). The responder's ordinary branch takes the max \
+      member of the latest fringe and serves its membership claim anyway; the anchor and fresh-shard \
+      branches serve `post_state_hash` instead. The law proves the served value is always a member's \
+      claim (never an invented root) and that the claim is the state at that member's fringe; it does \
+      **not** supply `stateAt` (the merge), which is why C339 stays open. Recomputing the merge on the \
+      join path, or carrying a proof for the root, is the closing option; a pin is not." },
+
+  { number := 86, clause := "a", layer := "Admission",
+    statement := "**Admission is a bounded queue, and the decision reads only the pool's bounds.** A \
+      free slot with a new id admits; a full pool refuses with a named reason. The resource word \
+      (`normal`/`throttled`/`critical`/`unavailable`) is not an input to `enqueue`: it is an input to \
+      the execution budget (86d). The legacy boolean gate is modelled as `legacyAdmit`, and \
+      `the_legacy_gate_refuses_an_empty_slot` is the height-1688 state as a theorem",
+    status := .provedTied,
+    corpus := some "admission",
+    declarations := [`Rchain.Admission.Pool, `Rchain.Admission.enqueue,
+      `Rchain.Admission.legacyAdmit, `Rchain.Admission.an_empty_slot_admits,
+      `Rchain.Admission.a_full_pool_refuses,
+      `Rchain.Admission.the_legacy_gate_refuses_an_empty_slot],
+    axioms := [],
+    rust := ["casper/src/dag.rs", "casper/src/pool.rs", "node/src/resources/fallback.rs"],
+    rustWitness := [],
+    witness := [`Rchain.Admission.an_empty_slot_admits,
+      `Rchain.Admission.a_full_pool_refuses,
+      `Rchain.Admission.the_legacy_gate_refuses_an_empty_slot],
+    falsifiable := "The live height-1688 state: an empty pool, a free slot, `throttled`, and a 503. \
+      `the_legacy_gate_refuses_an_empty_slot` is that state proved; deleting the resource parameter \
+      from `enqueue` is the change that would make it unprovable. A rule that admitted only above the \
+      throttle floor would instead fail `an_empty_slot_admits`.",
+    note := "The model's `capacity` is the count bound; the Rust's byte and per-deployer bounds are \
+      the same `hasSlot` shape and are driven by the admission corpus when it lands. The row is \
+      `proved-tied` on `spec/conformance/admission.tsv`; its Rust consumer drives \
+      `casper::pool::check_admission`/`check_commit`, the same policy `dag.rs` calls. The corpus's \
+      five cases cover the free slot, the count bound, the duplicate, one permit and zero headroom; \
+      the rate, share and byte bounds are unit-tested in `casper::pool`. The law does **not** say a \
+      node must accept unbounded work: a full pool is a real bound and refuses, with a retry \
+      condition." },
+
+  { number := 86, clause := "b", layer := "Admission",
+    statement := "**No admitted work is silently lost.** A pool step advances an entry's status \
+      (pending → running → done, or pending → expired) and never removes the row; every refusal \
+      returns the pool it was given. `no_admitted_work_is_lost` proves every accepted id is in the \
+      ledger at every reachable state, so a retirement is observable",
+    status := .provedModel,
+    declarations := [`Rchain.Admission.Accepted, `Rchain.Admission.StatusStep,
+      `Rchain.Admission.Step, `Rchain.Admission.accepted_of_step,
+      `Rchain.Admission.no_admitted_work_is_lost,
+      `Rchain.Admission.a_dropping_pool_loses_work],
+    axioms := [],
+    rust := ["casper/src/dag.rs"],
+    rustWitness := [],
+    witness := [`Rchain.Admission.no_admitted_work_is_lost,
+      `Rchain.Admission.a_refusal_changes_nothing],
+    falsifiable := "`dropOnPressure` is the defect variant: it filters the entry out and \
+      `a_dropping_pool_loses_work` exhibits the accepted id that is then absent. A step that removed \
+      a row instead of advancing its status would make `no_admitted_work_is_lost` unprovable. The \
+      expiry rule is the stated `pending → expired` transition, not an unobserved deletion.",
+    note := "The ledger keeps `done` and `expired` rows rather than deleting them, so 'what happened \
+      to this deploy?' is answerable after retirement. The Rust pool currently deletes an included \
+      deploy on block insertion (`casper/src/dag.rs:1380-1417`) and keeps the deploy index; the model \
+      states the property the index supplies, and the note names the difference. A rewind/reset is \
+      outside this step relation and is Law 72's subject." },
+
+  { number := 86, clause := "c", layer := "Admission",
+    statement := "**Independent work commutes; conflicting work serialises.** At the effect level the \
+      criterion is disjoint **closures** (`Independent`), not disjoint footprints; \
+      `independent_pair_commutes` is the existing Law 9 theorem, and `independent_prefix_commutes` \
+      moves an independent effect across a fold. At the state-change level, \
+      `independent_change_commutes_with_a_fold` moves a `NonConflicting` change past a fold and \
+      `independent_folds_commute` swaps two independent batches",
+    status := .provedModel,
+    declarations := [`Rchain.Admission.Independent,
+      `Rchain.Admission.independent_pair_commutes,
+      `Rchain.Admission.independent_prefix_commutes,
+      `Rchain.Admission.independent_change_commutes_with_a_fold,
+      `Rchain.Admission.independent_folds_commute,
+      `Rchain.Admission.independent_batches_commute],
+    axioms := [],
+    rust := ["casper/src/runtime_manager.rs", "casper/src/merging.rs",
+      "rspace/src/merger/state_change.rs"],
+    rustWitness := [],
+    witness := [`Rchain.Admission.independent_prefix_commutes,
+      `Rchain.Admission.independent_change_commutes_with_a_fold,
+      `Rchain.Admission.independent_folds_commute],
+    falsifiable := "`effectA`/`effectB` have disjoint footprints and overlapping closures; \
+      `effect_reorder_diverges` reaches different states in the two orders, so a footprint partition \
+      is unsound. `nonConflicting_not_necessary` keeps the criterion honest: the law claims a \
+      sufficient condition, not the port's conflict predicate.",
+    note := "**The bridge is the obligation.** The Lean model's `NonConflicting` is over the \
+      modelled `StateChange`; the Rust executor certifies a batch from its **dynamic** read/write \
+      `TouchLog` (channels and native slots, read or written). That the touch log implies \
+      `NonConflicting` is a refinement obligation, not a theorem here, which is why this row is \
+      `proved-model` and never silently `proved-tied`. The first Rust release keeps \
+      `batch.verify = true` (re-execute sequentially and compare state hash and every \
+      `ProcessedDeploy`) with a circuit breaker; the differential batch suite is the witness." },
+
+  { number := 86, clause := "d", layer := "Admission",
+    statement := "**One permit progresses; capacity changes the schedule, not the queue.** A \
+      non-empty pending pool with at least one permit has a step (`one_permit_progresses`), and \
+      `next` takes at most `permits` ids (`the_batch_is_bounded_by_the_permits`). The defect shape is \
+      `needsTwoPermits`: a non-empty pool with one permit and no step",
+    status := .provedTied,
+    corpus := some "admission",
+    declarations := [`Rchain.Admission.Node, `Rchain.Admission.scheduleBatch,
+      `Rchain.Admission.next, `Rchain.Admission.NodeStep,
+      `Rchain.Admission.one_permit_progresses,
+      `Rchain.Admission.scheduleBatch_length_le_permits,
+      `Rchain.Admission.the_batch_is_bounded_by_the_permits,
+      `Rchain.Admission.a_scheduler_that_needs_two_permits_stalls],
+    axioms := [],
+    rust := ["casper/src/budget.rs", "node/src/resources/budget.rs",
+      "casper/src/blocks/proposer/proposer.rs"],
+    rustWitness := [],
+    witness := [`Rchain.Admission.one_permit_progresses,
+      `Rchain.Admission.the_batch_is_bounded_by_the_permits,
+      `Rchain.Admission.a_scheduler_that_needs_two_permits_stalls],
+    falsifiable := "`needsTwoPermits` is the defect: a step relation that requires two permits \
+      leaves a non-empty pool with one permit with no step, which \
+      `a_scheduler_that_needs_two_permits_stalls` exhibits. The live node's boolean gate had the \
+      stronger defect — no step even with every permit — and `the_legacy_gate_refuses_an_empty_slot` \
+      is that half.",
+    note := "The permit count is the headroom budget (64 MiB per execution in the first cut), never \
+      a permission to enqueue. `enqueue` has no permit parameter; `next` does, so a smaller budget makes \
+      a smaller batch and cannot change an admission answer. Critical/Unavailable may stop block \
+      production; they do not stop admission or relay." },
+
+  { number := 86, clause := "e", layer := "Admission",
+    statement := "**Pending work is relocatable without loss.** A relay **copies** an entry to a peer \
+      and leaves the sender's row alone (`relay_preserves_the_sender`); when the receiver has room \
+      the copy is accepted (`relay_copies_to_the_receiver`); both pools keep every accepted id \
+      (`relay_preserves_both_pools`). The defect shape is a **moving** relay, which loses work",
+    status := .provedModel,
+    declarations := [`Rchain.Admission.TwoNodes, `Rchain.Admission.relay,
+      `Rchain.Admission.relay_preserves_the_sender,
+      `Rchain.Admission.relay_copies_to_the_receiver,
+      `Rchain.Admission.relay_preserves_both_pools,
+      `Rchain.Admission.a_moving_relay_loses_work],
+    axioms := [],
+    rust := ["casper/src/dag.rs", "casper/src/api/block_api_impl.rs",
+      "node/src/runtime/node_runtime.rs", "casper/src/protocol/client.rs"],
+    rustWitness := [],
+    witness := [`Rchain.Admission.relay_preserves_the_sender,
+      `Rchain.Admission.relay_preserves_both_pools,
+      `Rchain.Admission.a_moving_relay_loses_work],
+    falsifiable := "`moveRelay` deletes from the sender and drops when the receiver is full; \
+      `a_moving_relay_loses_work` exhibits the id absent from both pools. A relay that removed the \
+      sender's row would make `relay_preserves_the_sender` unprovable.",
+    note := "**The Rust relay is a copy over the deploy service, not a new wire message.** After an \
+      admission, `BlockApiImpl` calls the operator-enabled `RelayFunction`, which offers the signed \
+      deploy to each connected peer's external deploy service (`GrpcDeployService::deploy`). The \
+      receiver runs the same signature, shard, rate, share, count and byte checks as a direct \
+      submission, because it is the same `deploy` path; the sender keeps its own pool row. A bounded \
+      seen set suppresses a relay circulating; the switch is `RNODE_DEPLOY_RELAY` (default off, API \
+      port 40401, `RNODE_DEPLOY_RELAY_PORT` to change it). The model's receiver bound is the count \
+      bound; the Rust's is the receiver's own pool." },
+
+  { number := 87, clause := "a", layer := "Decimal",
+    statement := "**Canonicalisation is a normal form.** `canonicalize` strips trailing zeros while \
+      the scale is positive and sends every zero to `(0,0)`; `new` canonicalises **before** the \
+      scale bound, and `fromParts` bounds **first** and then refuses a zero-with-scale or a \
+      trailing-zero pair **by name**",
+    status := .provedTied,
+    corpus := some "decimal",
+    declarations := [`Rchain.Decimal.Canonical, `Rchain.Decimal.canonicalize,
+      `Rchain.Decimal.new, `Rchain.Decimal.fromParts,
+      `Rchain.Decimal.canonicalize_idempotent, `Rchain.Decimal.canonicalize_cross,
+      `Rchain.Decimal.scaledValue_canonicalize, `Rchain.Decimal.new_ok_iff,
+      `Rchain.Decimal.new_error_iff, `Rchain.Decimal.fromParts_ok_iff,
+      `Rchain.Decimal.fromParts_zero_with_scale,
+      `Rchain.Decimal.fromParts_trailing_zero],
+    axioms := [],
+    rust := ["models/src/decimal.rs"],
+    rustWitness := ["models/src/decimal.rs:canonicalisation_strips_trailing_zeros_and_normalises_zero",
+      "models/src/decimal.rs:the_scale_bound_is_inclusive",
+      "models/src/decimal.rs:strict_construction_refuses_a_noncanonical_pair",
+      "models/tests/lean_decimal_corpus.rs:the_decimal_algebra_matches_the_lean_model"],
+    witness := [`Rchain.Decimal.canonicalize_idempotent,
+      `Rchain.Decimal.new_ok_iff,
+      `Rchain.Decimal.fromParts_ok_iff,
+      `Rchain.Decimal.fromParts_zero_with_scale,
+      `Rchain.Decimal.fromParts_trailing_zero],
+    falsifiable := "`new 10^39,39` is accepted as `(1,0)` while `new 1,39` is \
+      `ScaleOutOfRange 39`: the bound is applied after canonicalisation. `new 0,39` is `(0,0)` \
+      because the zero is canonicalised before the bound is read. `fromParts 0,3` is \
+      `ZeroWithScale 3` and `fromParts 110,2` is `TrailingZero 2`; a constructor that classified by \
+      the wrong test fails those rows, and deleting canonicalisation before the bound flips the \
+      `10^39,39` row.",
+    note := "The model's `Int`/`Nat` stand for the Rust `BigInt`/`u32`. The wire's minimal-byte form \
+      and tag 35, serde ingress, the literal surface, reducer dispatch and the cost model are \
+      outside Law 87 and remain Rust-tested. The corpus's `new`/`parts` rows take the raw pair, \
+      because those are the constructors where a non-canonical input is legal (and refused by name)." },
+
+  { number := 87, clause := "b", layer := "Decimal",
+    statement := "**`scaledValue` is the value embedding.** On canonical values it is injective, \
+      and `cmpNumeric` is the order of the scaled payload: `cmpNumeric a b = cmp (scaledValue a) \
+      (scaledValue b)` with `eq_iff`, `swap` and `lt_trans`",
+    status := .provedTied,
+    corpus := some "decimal",
+    declarations := [`Rchain.Decimal.scaledValue, `Rchain.Decimal.cmpNumeric,
+      `Rchain.Decimal.canonical_zero_unique, `Rchain.Decimal.scaledValue_injective,
+      `Rchain.Decimal.cmpNumeric_eq_scaled, `Rchain.Decimal.cmpNumeric_eq_iff,
+      `Rchain.Decimal.cmpNumeric_swap, `Rchain.Decimal.cmpNumeric_lt_trans],
+    axioms := [],
+    rust := ["models/src/decimal.rs", "models/src/sorter.rs"],
+    rustWitness := ["models/src/decimal.rs:scaled_value_is_unique_for_canonical_values",
+      "models/src/decimal.rs:comparison_is_numeric_across_scales",
+      "models/src/sorter.rs:smaller_decimal_values_come_first_across_scales",
+      "models/tests/lean_decimal_corpus.rs:the_decimal_algebra_matches_the_lean_model"],
+    witness := [`Rchain.Decimal.scaledValue_injective,
+      `Rchain.Decimal.cmpNumeric_eq_scaled,
+      `Rchain.Decimal.cmpNumeric_eq_iff,
+      `Rchain.Decimal.cmpNumeric_swap,
+      `Rchain.Decimal.cmpNumeric_lt_trans],
+    falsifiable := "The pair `(10,1)` and `(1,0)` has one `scaledValue` and is not equal, so the \
+      `Canonical` hypothesis is load-bearing. `cmp 15:1 2:0` is `lt`; a lexicographic \
+      `(coefficient, scale)` order would say `gt`, which is the defect the sorter's DECIMAL score \
+      avoids. `cmp -15:1 -2:0` is `gt`, pinning the sign against an absolute-value comparator.",
+    note := "`scaledValue d = coefficient × 10^(MAX_SCALE − scale)`; `MAX_SCALE = 38` is the sorter's \
+      score and the `Expr.edecimal` payload (`spec/Rchain/Par.lean`). The row is tied to the decimal \
+      corpus for the value algebra and to `sort.tsv` rows 43–50 for the payload's class order." },
+
+  { number := 87, clause := "c", layer := "Decimal",
+    statement := "**`+`, `-` and `*` are exact.** The result is canonical; addition and \
+      subtraction satisfy `scaledValue (add a b) = scaledValue a + scaledValue b` and its \
+      subtraction dual, and a successful product satisfies `scaledValue q × 10^38 = scaledValue a × \
+      scaledValue b`. `add` commutes and `sub (add a b) b = a`",
+    status := .provedTied,
+    corpus := some "decimal",
+    declarations := [`Rchain.Decimal.add, `Rchain.Decimal.sub, `Rchain.Decimal.mul,
+      `Rchain.Decimal.add_canonical, `Rchain.Decimal.sub_canonical,
+      `Rchain.Decimal.scaledValue_add, `Rchain.Decimal.scaledValue_sub,
+      `Rchain.Decimal.add_new, `Rchain.Decimal.sub_new,
+      `Rchain.Decimal.add_comm, `Rchain.Decimal.add_sub_cancel,
+      `Rchain.Decimal.mul_ok_iff, `Rchain.Decimal.mul_error_iff,
+      `Rchain.Decimal.scaledValue_mul],
+    axioms := [],
+    rust := ["models/src/decimal.rs"],
+    rustWitness := ["models/src/decimal.rs:arithmetic_is_exact",
+      "models/tests/lean_decimal_corpus.rs:the_decimal_algebra_matches_the_lean_model"],
+    witness := [`Rchain.Decimal.add_canonical, `Rchain.Decimal.scaledValue_add,
+      `Rchain.Decimal.mul_ok_iff, `Rchain.Decimal.scaledValue_mul,
+      `Rchain.Decimal.add_sub_cancel],
+    falsifiable := "`9:38 + 1:38 = 1:37` and `5:1 + 5:1 = 1:0` pin carry and strip; `25:20 × 4:20 = \
+      1:38` while `1:20 × 1:20` is `ScaleOutOfRange 40`, so canonicalisation before the bound is \
+      observable. The product identity is `q.scaledValue × 10^38 = a.scaledValue × b.scaledValue`; \
+      dropping the `10^38` is false by that factor, and the corpus's `mul` rows catch it.",
+    note := "The Rust `add`/`sub` return `Result` because `Decimal::new` is fallible in general, but \
+      for canonical operands the aligned scale is at most 38 and the result is always `Ok`; the model \
+      is total and `add_new`/`sub_new` are the bridge. `mul` is `Except`: the only model error is \
+      `ScaleOutOfRange` after canonicalisation; the u32-only `ScaleOverflow` is outside. Mixed \
+      `Int`/`BigInt` promotion and the cost model are reducer concerns, Rust-tested, not modelled." },
+
+  { number := 87, clause := "d", layer := "Decimal",
+    statement := "**Division is exact or an explicit error.** A zero divisor is \
+      `DivisionByZero`; a nonzero divisor returns a canonical quotient exactly when one exists \
+      within `MAX_SCALE`, and otherwise `InexactDivision`. The quotient satisfies \
+      `q.scaledValue × b.scaledValue = a.scaledValue × 10^38`",
+    status := .provedTied,
+    corpus := some "decimal",
+    declarations := [`Rchain.Decimal.divAt, `Rchain.Decimal.divUpTo, `Rchain.Decimal.div,
+      `Rchain.Decimal.divAt_spec, `Rchain.Decimal.divUpTo_none_iff,
+      `Rchain.Decimal.divUpTo_some_spec, `Rchain.Decimal.div_zero,
+      `Rchain.Decimal.div_ok_spec, `Rchain.Decimal.div_error_iff],
+    axioms := [],
+    rust := ["models/src/decimal.rs"],
+    rustWitness := ["models/src/decimal.rs:division_is_exact_or_refused",
+      "rholang/src/reduce.rs:decimal_division_is_exact_or_an_explicit_error",
+      "models/tests/lean_decimal_corpus.rs:the_decimal_algebra_matches_the_lean_model"],
+    witness := [`Rchain.Decimal.divAt_spec, `Rchain.Decimal.divUpTo_none_iff,
+      `Rchain.Decimal.div_ok_spec, `Rchain.Decimal.div_error_iff,
+      `Rchain.Decimal.div_zero],
+    falsifiable := "`1/3` and `1/2^39` are `InexactDivision`; `1/2` and `1/2^38` are exact; `1/0` \
+      is `DivisionByZero`. A rounding division, or a 39th digit, changes one of those. The division \
+      corpus pins the inclusive 38-digit bound and the negative case `-1/2 = -5:1`.",
+    note := "The theorem is the **exactness criterion**, not the algorithm: the Rust computes the \
+      quotient one decimal digit at a time, while the model scans `divAt` over scales `0..=38`. The \
+      corpus is the tie between them. `Int`'s Euclidean `/` and `%` agree with the Rust's truncating \
+      `BigInt` on the only uses here — a divisibility test and an exact quotient — and the negative \
+      corpus rows pin it." },
+
+  { number := 87, clause := "e", layer := "Decimal",
+    statement := "**The `edecimal` payload bridge.** `edecimalOf d = Expr.edecimal d.scaledValue`; \
+      on canonical values it is injective, and `cmpExpr` on two payloads is `cmpNumeric`, so the \
+      model's value order is the sorter's DECIMAL class order",
+    status := .provedTied,
+    corpus := some "sort",
+    declarations := [`Rchain.Decimal.edecimalOf, `Rchain.Decimal.cmpExpr_edecimalOf,
+      `Rchain.Decimal.edecimalOf_eq_iff,
+      `Rchain.Decimal.cmpNumeric_eq_cmpExpr_edecimalOf],
+    axioms := [],
+    rust := ["models/src/sorter.rs"],
+    rustWitness := ["models/src/sorter.rs:smaller_decimal_values_come_first_across_scales",
+      "models/src/sorter.rs:decimal_keys_normalise_within_the_class_but_not_against_an_int",
+      "rholang/tests/lean_sort_corpus.rs:the_canonical_order_is_the_lean_models_pairwise"],
+    witness := [`Rchain.Decimal.cmpExpr_edecimalOf,
+      `Rchain.Decimal.edecimalOf_eq_iff,
+      `Rchain.Decimal.cmpNumeric_eq_cmpExpr_edecimalOf],
+    falsifiable := "`sort.tsv` rows 43–50 put the Decimal class at rank 14 and order `1.5d` before \
+      `2d`; a payload that carried the `(coefficient, scale)` pair instead of `scaledValue` flips \
+      those rows, and a two-field `Expr.edecimal` would make the comparator's `eq_iff` false for \
+      `(10,1)` and `(1,0)`.",
+    note := "This clause is tied to the existing **`sort`** corpus (rows 43–50), not to the decimal \
+      corpus: the value algebra is tied by `decimal.tsv`, while `Expr.edecimal` is compared by the \
+      sorter corpus and `models/src/sorter.rs`'s DECIMAL score. Law 1a's note is updated to point \
+      here; its statement, status and declarations are not widened." },
+
+  { number := 88, clause := "a", layer := "Disposition",
+    statement := "**A stored body is accounted for or visible.** A body in the block store is \
+      either a DAG block (its metadata is the durable verdict) or carries an unsettled \
+      `Pending`/`Faulted` row; the start-up audit adopts every unaccounted body before the phase \
+      becomes `Running`, so that transition cannot skip a stored body. The law says **visible**, \
+      not **settled**: a body whose justifications are not in the DAG stays `Pending` and visible, \
+      and the bounded start-up drain does not wait for it",
+    status := .provedModel,
+    declarations := [`Rchain.Disposition.State,
+      `Rchain.Disposition.Disposition, `Rchain.Disposition.audit,
+      `Rchain.Disposition.adoptBody, `Rchain.Disposition.startup,
+      `Rchain.Disposition.audit_covers,
+      `Rchain.Disposition.audit_makes_an_unbacked_body_visible,
+      `Rchain.Disposition.audit_does_not_change_dag,
+      `Rchain.Disposition.startup_clean,
+      `Rchain.Disposition.startup_without_audit_leaves_an_orphan,
+      `Rchain.Disposition.a_dropped_row_is_an_orphan],
+    axioms := [],
+    rust := ["casper/src/block_disposition.rs", "casper/src/engine/node_launch.rs",
+      "node/src/runtime/node_runtime.rs", "casper/src/dag.rs", "shared/src/typed_store.rs"],
+    rustWitness := ["shared/src/typed_store.rs:keys_decodes_only_the_key_and_survives_an_undecodable_value",
+      "casper/src/block_disposition.rs:the_legacy_scan_adopts_every_unaccounted_body_and_writes_its_marker",
+      "casper/src/block_disposition.rs:a_stored_body_without_a_dag_entry_is_reoffered",
+      "casper/src/block_disposition.rs:the_phase_stays_starting_until_the_drain_closes"],
+    witness := [`Rchain.Disposition.audit_covers,
+      `Rchain.Disposition.audit_makes_an_unbacked_body_visible,
+      `Rchain.Disposition.audit_does_not_change_dag,
+      `Rchain.Disposition.startup_clean,
+      `Rchain.Disposition.startup_without_audit_leaves_an_orphan,
+      `Rchain.Disposition.a_dropped_row_is_an_orphan],
+    falsifiable := "`skipAudit` flips the phase without adopting: \
+      `startup_without_audit_leaves_an_orphan` exhibits the stored body 7 with no DAG entry and no \
+      row, which is the live incident's shape. Deleting a row without a DAG record \
+      (`a_dropped_row_is_an_orphan`) is the other defect shape; an audit that removed rows instead \
+      of adding them fails `audit_covers`.",
+    note := "Node-local durable ingestion, not consensus state, so `proved-model` rather than a \
+      corpus-tied row: there is no wire or derived value to tie. This row promotes C343's \
+      `candidate:block-disposition-and-isolation`. The model assumes readable bodies; the Rust scan \
+      skips a body whose bytes do not decode, that body remains an orphan, and the periodic \
+      stored-body count audit (`orphanBodies`) withholds readiness. The bounded drain is a \
+      liveness policy, not a state predicate: `Running` follows an audit attempt, and a \
+      missing-parent row stays `Pending` by design." },
+
+  { number := 88, clause := "b", layer := "Disposition",
+    statement := "**A proposal is admitted only in `Running` and within the finality bound.** The \
+      gate refuses outside the running phase and one height beyond `MAX_PROPOSAL_FINALITY_LAG`, \
+      which is what bounds a private chain when no peer accepts it. The gate is **total in the \
+      anchor**: a view with no finalised block measures from genesis, so `no anchor` is not `no \
+      bound`",
+    status := .provedModel,
+    declarations := [`Rchain.Disposition.Phase,
+      `Rchain.Disposition.MAX_PROPOSAL_FINALITY_LAG,
+      `Rchain.Disposition.withinProposalFinalityBound,
+      `Rchain.Disposition.gate, `Rchain.Disposition.Refusal,
+      `Rchain.Disposition.GateResult,
+      `Rchain.Disposition.gate_admits_only_in_running_and_within_bound,
+      `Rchain.Disposition.gate_admits_at_the_bound,
+      `Rchain.Disposition.gate_refuses_beyond_the_bound,
+      `Rchain.Disposition.gate_refuses_outside_running,
+      `Rchain.Disposition.a_gate_without_the_phase_admits_a_syncing_node,
+      `Rchain.Disposition.a_gate_without_the_bound_admits_a_private_chain,
+      `Rchain.Disposition.finalizedFloor, `Rchain.Disposition.totalGate,
+      `Rchain.Disposition.floor_never_exceeds_the_anchor,
+      `Rchain.Disposition.skipWithoutAnchor,
+      `Rchain.Disposition.a_gate_that_skips_the_bound_without_an_anchor_admits_a_private_chain,
+      `Rchain.Disposition.a_view_without_a_finalized_block_is_still_bounded,
+      `Rchain.Disposition.the_anchor_is_passed_through],
+    axioms := [],
+    rust := ["casper/src/blocks/proposer/proposer.rs",
+      "node/src/instances/proposer_instance.rs", "casper/src/engine/node_phase.rs",
+      "node/src/web/http.rs"],
+    rustWitness := ["casper/src/blocks/proposer/proposer.rs:the_proposal_finality_bound_passes_at_the_bound_and_refuses_beyond_it",
+      "casper/src/blocks/proposer/proposer.rs:a_view_without_a_finalized_block_still_trips_the_bound",
+      "casper/src/engine/node_phase.rs:two_cells_hold_independent_phases",
+      "node/src/instances/proposer_instance.rs:a_syncing_cell_does_not_propose",
+      "node/src/web/http.rs:health_is_ready_only_when_every_shard_runs"],
+    witness := [`Rchain.Disposition.gate_admits_only_in_running_and_within_bound,
+      `Rchain.Disposition.gate_admits_at_the_bound,
+      `Rchain.Disposition.gate_refuses_beyond_the_bound,
+      `Rchain.Disposition.gate_refuses_outside_running,
+      `Rchain.Disposition.a_gate_without_the_phase_admits_a_syncing_node,
+      `Rchain.Disposition.a_gate_without_the_bound_admits_a_private_chain,
+      `Rchain.Disposition.a_gate_that_skips_the_bound_without_an_anchor_admits_a_private_chain,
+      `Rchain.Disposition.a_view_without_a_finalized_block_is_still_bounded],
+    falsifiable := "`legacyGate` admits a syncing node \
+      (`a_gate_without_the_phase_admits_a_syncing_node`) and `unboundedGate` admits a tip beyond \
+      the bound (`a_gate_without_the_bound_admits_a_private_chain`). A gate that reads the wrong \
+      phase, or drops the bound, fails those rows. **And the third shape, which the Rust had** \
+      (C351): `skipWithoutAnchor` answers `.allow` for every tip when the view has no fringe, which \
+      `a_gate_that_skips_the_bound_without_an_anchor_admits_a_private_chain` exhibits; \
+      `a_view_without_a_finalized_block_is_still_bounded` is total, and \
+      `a_view_without_a_finalized_block_still_trips_the_bound` pins that the Rust now answers it \
+      the same way.",
+    note := "The bound is policy (`32`), not a measured optimum, and the Rust split is: the phase \
+      gate in `proposer_instance`, the height gate in `proposer.rs`. This row promotes C343's \
+      `candidate:block-disposition-and-isolation`. **The anchor is total since C351**: the gate was \
+      wrapped in `if let Some(finalized)`, so a view with no finalised block skipped both the bound \
+      and the isolation latch. Genesis is the floor (`finalized_floor`), which is the answer \
+      `RewindPlan` already gives and the one `finalizedFloor` states; the model took a plain `Nat` \
+      all along, so the Rust was the outlier. Normal operation is unchanged (at genesis the gap is \
+      1 of 32). The model does not prove a peer accepted the chain — it bounds the private chain a \
+      node can build; the finality algorithm and slashing are outside it." },
+
+  { number := 88, clause := "c", layer := "Disposition",
+    statement := "**An overflow refusal is a deferral, not an orphan.** The receiver stores the \
+      body and writes the `Pending` row before it can refuse for capacity, so the refusal changes \
+      no row: the obligation survives by construction. A runtime sweep re-offers an aged `Stored` \
+      row once every justification is in the DAG; a row already in flight (`Validating`/`Retry`) is \
+      never eligible; a held body's claim is taken once; and a re-offered row moves to `Retry`, so \
+      a second sweep dispatches nothing",
+    status := .provedTied,
+    corpus := some "recovery",
+    declarations := [`Rchain.Disposition.Recovery.Row, `Rchain.Disposition.Recovery.eligible,
+      `Rchain.Disposition.Recovery.refuse,
+      `Rchain.Disposition.Recovery.an_overflow_refusal_keeps_the_row,
+      `Rchain.Disposition.Recovery.Receiver, `Rchain.Disposition.Recovery.claim,
+      `Rchain.Disposition.Recovery.a_claim_is_taken_once,
+      `Rchain.Disposition.Recovery.reoffer,
+      `Rchain.Disposition.Recovery.reoffer_is_not_eligible,
+      `Rchain.Disposition.Recovery.the_age_floor_gates_eligibility,
+      `Rchain.Disposition.Recovery.an_inflight_row_is_not_eligible],
+    axioms := [],
+    rust := ["casper/src/block_disposition.rs", "casper/src/blocks/block_receiver.rs",
+      "node/src/runtime/node_runtime.rs"],
+    rustWitness := ["casper/src/block_disposition.rs:a_refused_stored_body_is_reoffered_by_the_runtime_sweep",
+      "casper/src/block_disposition.rs:a_pending_body_waits_for_its_parent",
+      "casper/src/block_disposition.rs:the_sweep_is_idempotent",
+      "casper/src/blocks/block_receiver.rs:a_reoffer_claim_is_taken_once_and_never_steals_an_inflight_block"],
+    witness := [`Rchain.Disposition.Recovery.an_overflow_refusal_keeps_the_row,
+      `Rchain.Disposition.Recovery.a_claim_is_taken_once,
+      `Rchain.Disposition.Recovery.reoffer_is_not_eligible,
+      `Rchain.Disposition.Recovery.the_age_floor_gates_eligibility,
+      `Rchain.Disposition.Recovery.an_inflight_row_is_not_eligible],
+    falsifiable := "Removing the age floor makes the sweep race the receiver's own release and the \
+      boot sweep (`the_age_floor_gates_eligibility` flips); dropping the `Validating`/`Retry` \
+      exclusion makes a second sweep duplicate an in-flight body (`an_inflight_row_is_not_eligible`, \
+      `the_sweep_is_idempotent`); dropping the claim lets the sweep and the receiver dispatch the \
+      same held body (`a_reoffer_claim_is_taken_once...`); and a sweep that does not move the row \
+      in flight fails `a_refused_stored_body_is_reoffered_by_the_runtime_sweep`'s `Retry` \
+      assertion.",
+    note := "The code was adopted from candidate `ac41fe7d`/`4d9883a4`/`20ef2505` and re-homed on \
+      #499's `NodePhaseCell` (the candidate calls the pre-#499 free `wait_until_running`), with the \
+      receiver claim added: the candidate's sweep could race the receiver's own release, because the \
+      in-memory state is shared through the `Arc<Mutex<…>>`. **Liveness only** — the sweep dispatches \
+      the same `block_processor` validation path as the boot audit, and no validity, state-hash or \
+      wire rule changes. The model abstracts the store I/O, the missing-body arm and the queue. \
+      Named residual: a just-released block is briefly neither held nor in the DAG; the 60 s floor \
+      makes the window small, and the restart-under-load arm is the place to look for duplicate \
+      proposals before adding an in-flight hash set." },
+
+  { number := 88, clause := "d", layer := "Disposition",
+    statement := "**An unresolvable justification is named, not silently passed into an \
+      unclassified fault.** The regression check cannot be evaluated when a justification is absent \
+      from the DAG message map; the current rule **passes** (the Scala's own `None`), and that \
+      verdict is deliberate — only a detected regression refuses. What the outcome must carry is its \
+      name: `Unresolved` is distinct from `Pass`, `NoOwnJustification` from both, and a later \
+      height/sequence failure is recorded under the stage `missing justification`, not \
+      `validation internal`",
+    status := .provedTied,
+    corpus := some "recovery",
+    declarations := [`Rchain.Disposition.Recovery.Outcome,
+      `Rchain.Disposition.Recovery.classify, `Rchain.Disposition.Recovery.refuses,
+      `Rchain.Disposition.Recovery.outcomeName,
+      `Rchain.Disposition.Recovery.unresolved_does_not_refuse,
+      `Rchain.Disposition.Recovery.regression_refuses,
+      `Rchain.Disposition.Recovery.pass_does_not_refuse],
+    axioms := [],
+    rust := ["casper/src/validate.rs", "casper/src/blocks/block_processor.rs"],
+    rustWitness := ["casper/src/validate.rs:an_unknown_justification_passes_the_regression_check_and_is_named",
+      "casper/src/blocks/block_processor.rs:a_missing_justification_is_recorded_under_its_own_stage"],
+    witness := [`Rchain.Disposition.Recovery.unresolved_does_not_refuse,
+      `Rchain.Disposition.Recovery.regression_refuses,
+      `Rchain.Disposition.Recovery.pass_does_not_refuse],
+    falsifiable := "Making `Unresolved` a refusal flips `unresolved_does_not_refuse` and the \
+      corpus `classify false true unresolved` row — and is a consensus change, which is why the test \
+      `an_unknown_justification_passes_the_regression_check_and_is_named` pins the passing verdict. \
+      Folding the reason back into `validation internal` fails \
+      `a_missing_justification_is_recorded_under_its_own_stage`.",
+    note := "The verdicts are **unchanged**: a block that passed the regression check still passes \
+      it, and one that failed still refuses with `JustificationRegression`. The later failure is the \
+      height/sequence check's `Err(\"missing justification <hex>\")`, which the processor now records \
+      under its own stage; the retry semantics are the same durable `Faulted` row. This is \
+      classification and observability, not a validity rule — a design pass corrected an earlier \
+      reading that called it a live drop (the processor already records and retries the fault)." },
+
+  { number := 89, layer := "PoS",
+    statement := "**Liveness enforcement is jail first; only a vote reaches the bond.** A validator \
+      absent across advancing epoch boundaries is removed from the active set for `J` boundaries and \
+      paid nothing, while its bond and its delegators' principal are untouched. A stake-weighted vote \
+      of strictly more than two thirds of the active stake, opened only against an already-jailed \
+      validator, may slash it at the configured tier and permanently eject it. A stalled boundary or \
+      an off-boundary block changes nothing",
+    status := .provedModel,
+    declarations := [`Rchain.Liveness.State, `Rchain.Liveness.stepJail,
+      `Rchain.Liveness.boundaryStep, `Rchain.Liveness.jail_never_touches_the_bond,
+      `Rchain.Liveness.the_stall_rule_changes_nothing,
+      `Rchain.Liveness.no_boundary_no_action,
+      `Rchain.Liveness.one_lapse_is_not_sustained,
+      `Rchain.Liveness.stallStep,
+      `Rchain.Liveness.a_stall_that_counts_jails_an_innocent,
+      `Rchain.Liveness.passes, `Rchain.Liveness.voteSlash,
+      `Rchain.Liveness.vote_admits_only_above_threshold,
+      `Rchain.Liveness.a_passing_vote_slashes_and_ejects,
+      `Rchain.Liveness.a_simple_majority_is_not_enough,
+      `Rchain.Liveness.openWindow,
+      `Rchain.Liveness.a_vote_without_jail_is_not_opened,
+      `Rchain.Liveness.burnStep,
+      `Rchain.Liveness.jail_that_burns_the_bond_reaches_a_stake,
+      `Rchain.Liveness.releaseIfPresent,
+      `Rchain.Liveness.a_returning_validator_is_released,
+      `Rchain.Liveness.renewIfAbsent,
+      `Rchain.Liveness.a_still_absent_validator_is_renewed],
+    axioms := [],
+    rust := ["rholang/src/native_state.rs", "rholang/src/pos_liveness.rs",
+      "rholang/src/system_processes.rs", "casper/src/genesis/mod.rs",
+      "block-storage/src/dag/liveness.rs"],
+    rustWitness := ["rholang/src/native_state.rs:a_sustained_absence_jails_without_touching_the_bond",
+      "rholang/src/native_state.rs:one_boundary_omission_does_not_jail",
+      "rholang/src/native_state.rs:a_stall_freezes_the_jail_clock",
+      "rholang/src/native_state.rs:a_vote_below_two_thirds_does_not_slash",
+      "rholang/src/native_state.rs:a_passing_vote_slashes_and_permanently_ejects",
+      "rholang/src/native_state.rs:a_jailed_validator_returns_after_the_term",
+      "rholang/src/native_state.rs:a_still_absent_validator_is_renewed",
+      "rholang/src/native_state.rs:a_banished_validator_cannot_rebond",
+      "rholang/src/native_state.rs:a_delegation_cannot_buy_slash_voting_power_mid_epoch",
+      "rholang/src/native_state.rs:two_of_three_active_votes_cannot_cross_strict_threshold_via_delegation",
+      "rholang/src/system_processes.rs:pos_vote_slash_is_authorised_by_the_deployer_id"],
+    witness := [`Rchain.Liveness.jail_never_touches_the_bond,
+      `Rchain.Liveness.the_stall_rule_changes_nothing,
+      `Rchain.Liveness.no_boundary_no_action,
+      `Rchain.Liveness.one_lapse_is_not_sustained,
+      `Rchain.Liveness.a_stall_that_counts_jails_an_innocent,
+      `Rchain.Liveness.vote_admits_only_above_threshold,
+      `Rchain.Liveness.a_passing_vote_slashes_and_ejects,
+      `Rchain.Liveness.a_simple_majority_is_not_enough,
+      `Rchain.Liveness.a_vote_without_jail_is_not_opened,
+      `Rchain.Liveness.jail_that_burns_the_bond_reaches_a_stake,
+      `Rchain.Liveness.a_returning_validator_is_released,
+      `Rchain.Liveness.a_still_absent_validator_is_renewed],
+    falsifiable := "`stallStep` counts absence without checking finality progress and jails a \
+      validator during a stall (`a_stall_that_counts_jails_an_innocent`); `burnStep` jails by \
+      removing the pool entry and `jail_that_burns_the_bond_reaches_a_stake` exhibits the bond that \
+      moved, while `stepJail` leaves `pool` unchanged; a simple-majority gate admits two of three \
+      (`a_simple_majority_is_not_enough`); a vote against an active validator is not opened \
+      (`a_vote_without_jail_is_not_opened`).",
+    note := "RCHIP #55. The model separates the two steps: `stepJail` never writes `pool`, and \
+      `voteSlash` writes it only when `passes` (strict `3 * for > 2 * total`, the same rule as \
+      `is_super_majority`), and both sides of that inequality read the **active-set snapshot**, not \
+      the mutable pool, so a mid-epoch delegation cannot buy voting power. The Rust side supplies the expiry/renewal arithmetic, the participation \
+      map (from the receiver's finalised fringe), the vote-window tally, the delegation fan-out on a \
+      slash, and the withdrawal escrow; those are outside the model. This is **not** an inactivity \
+      leak: no automatic step touches a bond. Default off; a network arms it at genesis. The boundary- \
+      skip hole (no validity rule requires a `CloseBlock` at a boundary) is a separate residual." },
+
+  { number := 90, clause := "a", layer := "Node",
+    statement := "**A served hostlist entry is earned.** A peer appears in `GET /api/v1/nodes` only \
+      when a probe of its derived client endpoint (`protocol + 3`) completed in the current cycle \
+      with the serving node's `networkId`, a `shardId` in its membership, `proposer = true`, and an \
+      `address` naming that peer's node id. A peer that is not dialable, does not answer, answers for \
+      another network, shard or node, or does not claim a proposer is not served; the serving node \
+      itself is served only when it can propose",
+    status := .provedTied,
+    corpus := some "hostlist",
+    declarations := [`Rchain.HostList.valid, `Rchain.HostList.peerPart,
+      `Rchain.HostList.servedIds, `Rchain.HostList.every_served_entry_is_valid,
+      `Rchain.HostList.every_served_peer_is_a_proposer,
+      `Rchain.HostList.a_failed_single_probe_is_absent,
+      `Rchain.HostList.peer_part_mem],
+    axioms := [],
+    rust := ["node/src/web/node_list.rs", "casper/src/api/block_api_impl.rs"],
+    rustWitness := ["node/src/web/node_list.rs:an_observer_is_not_served",
+      "node/src/web/node_list.rs:a_mismatched_network_is_not_served",
+      "node/src/web/node_list.rs:a_peer_on_another_shard_is_not_served",
+      "node/src/web/node_list.rs:a_peer_answering_for_another_node_id_is_not_served",
+      "node/src/web/node_list.rs:an_unreachable_peer_is_not_served",
+      "node/src/web/node_list.rs:a_non_json_answer_is_refused",
+      "casper/src/api/block_api_impl.rs:proposer_is_the_validator_identity_not_the_mode"],
+    witness := [`Rchain.HostList.every_served_entry_is_valid,
+      `Rchain.HostList.every_served_peer_is_a_proposer,
+      `Rchain.HostList.a_failed_single_probe_is_absent],
+    falsifiable := "Dropping `proposer` from `valid` serves an observer that reports \
+      `manualPropose: true` (`an_observer_is_not_served`, and `an_observer_is_not_served` in the \
+      corpus); dropping `networkId` serves another chain's node; dropping the address check serves a \
+      co-hosted validator under its neighbour's identity; treating a failed probe as success serves a \
+      peer that did not answer. The `proposer` field itself is falsified at the source: \
+      `manual_propose` is `!autopropose && !proposeOnDeploy`, so an unkeyed observer reports it \
+      `true`, exactly like a manual-mode validator — the test pins that both report the same mode and \
+      only the key separates them.",
+    note := "**What the model does not claim.** `proposer` is a peer's own claim over plain HTTP, so \
+      an on-path observer can forge a well-formed answer; the list is advisory and a client \
+      re-verifies. Host-class filtering (a public node never probes a private peer, Law 62's rule), \
+      DNS pinning, the body and field bounds, and the redirect refusal are Rust-tested \
+      implementation facts rather than modelled. The probe adds no new host to the node's egress: it \
+      dials a port on a host the node already dials under mutual TLS, and the request carries no \
+      caller- or peer-supplied URL. **Rollout:** a node older than the `proposer` field lacks it and \
+      is excluded until upgraded; safe, temporarily a shorter list." },
+
+  { number := 90, clause := "b", layer := "Node",
+    statement := "**The list is bounded, deduplicated and ordered.** At most `maxEntries` entries, at \
+      most one per node id, the serving node first when it can propose, and the rest ascending by \
+      node id — the response is a function of the bound, not of the network's size, and its order is \
+      stable across cycles",
+    status := .provedTied,
+    corpus := some "hostlist",
+    declarations := [`Rchain.HostList.servedIds, `Rchain.HostList.peerPart,
+      `Rchain.HostList.the_list_is_bounded, `Rchain.HostList.self_is_first,
+      `Rchain.HostList.self_is_present_when_a_proposer],
+    axioms := [],
+    rust := ["node/src/web/node_list.rs"],
+    rustWitness := ["node/src/web/node_list.rs:the_list_is_sorted_and_bounded",
+      "node/src/web/node_list.rs:a_duplicate_connection_is_served_once",
+      "node/src/web/node_list.rs:self_is_first_and_flagged",
+      "node/src/web/node_list.rs:self_is_absent_when_not_a_proposer"],
+    witness := [`Rchain.HostList.the_list_is_bounded, `Rchain.HostList.self_is_first,
+      `Rchain.HostList.self_is_present_when_a_proposer],
+    falsifiable := "Removing the `take` makes the list a function of the peer count; sorting after \
+      truncation drops self or reorders it; skipping the id dedupe serves a peer twice when two \
+      connections name it. `truncation_self_first` and `duplicate_ids` in the corpus pin the first \
+      and third.",
+    note := "Ascending order is **by construction** — the peer part is walked over ascending ids — so \
+      it needs no sort theorem; the corpus's expected id list is what ties the order to the Rust's \
+      lexicographic `BTreeMap` order, which coincides for the fixed-length hex ids the node uses. \
+      `latestBlockNumber` and `acceptsDeploys` are served and deliberately **not** filtered on: a \
+      lagging or full proposer is still deploy-capable, and there is no oracle for a lag threshold." },
+
+  { number := 90, clause := "c", layer := "Node",
+    statement := "**The list is fresh.** It is derived only from the probes of the cycle that \
+      produced it; a peer whose probe fails in a cycle is absent from that cycle's list, whatever the \
+      previous cycle served. There is no cache that could revive an entry",
+    status := .provedTied,
+    corpus := some "hostlist",
+    declarations := [`Rchain.HostList.peerPart, `Rchain.HostList.servedIds,
+      `Rchain.HostList.a_failed_single_probe_is_absent],
+    axioms := [],
+    rust := ["node/src/web/node_list.rs"],
+    rustWitness := ["node/src/web/node_list.rs:an_unreachable_peer_is_not_served",
+      "node/src/web/node_list.rs:a_public_node_does_not_probe_a_private_peer"],
+    witness := [`Rchain.HostList.a_failed_single_probe_is_absent],
+    falsifiable := "Keeping a per-peer success cache across cycles revives a peer that has gone away; \
+      treating a timed-out probe as success serves it immediately. The `unreachable` corpus case pins \
+      the derivation; the provider rebuilds its snapshot from each cycle's outcomes and never reads \
+      the previous one.",
+    note := "The only freshness window is the previous snapshot being served while the next cycle \
+      runs, bounded by one probe interval and documented. The provider's snapshot is swapped whole; \
+      no lock is held across a probe, and the route takes no caller input." },
+
+  { number := 91, clause := "a", layer := "Rholang",
+    statement := "**A canonicalisation or a union charges the elements it canonicalises.** A \
+      collection the reducer builds (`toSet`, `toMap`, `set`, `keys`) charges three phlo per element \
+      of the output it is about to build, charged from the operand size before the work; a set or \
+      map union charges both operands, so the charge is a function of the total element count and \
+      does not depend on which operand is which",
+    status := .provedModel,
+    declarations := [`Rchain.canonicalizationCost, `Rchain.unionCost,
+      `Rchain.canonicalizationCost_covers_the_operand, `Rchain.unionCost_is_the_sum_of_its_operands,
+      `Rchain.unionCost_symmetric, `Rchain.rightOnlyUnionCost,
+      `Rchain.rightOnlyUnionCost_is_not_symmetric],
+    axioms := [],
+    rust := ["rholang/src/reduce.rs", "rholang/src/accounting.rs"],
+    rustWitness := ["rholang/src/reduce.rs:to_set_charges_its_elements",
+      "rholang/src/reduce.rs:to_map_charges_its_elements",
+      "rholang/src/reduce.rs:keys_charges_its_output",
+      "rholang/src/reduce.rs:set_charges_the_map_it_rebuilds",
+      "rholang/src/reduce.rs:a_set_add_charges_the_set_it_rebuilds",
+      "rholang/src/reduce.rs:a_union_charges_both_operands_alike",
+      "rholang/src/accounting.rs:collection_and_censure_charges_are_the_models"],
+    witness := [`Rchain.canonicalizationCost_covers_the_operand, `Rchain.unionCost_symmetric],
+    falsifiable := "The charge this replaced was flat — 18 phlo for a `toSet` of 500 elements and \
+      of 40 000, while the sort's wall time grew from 7 ms to 724 ms — and the union charged the \
+      right operand only, which `rightOnlyUnionCost_is_not_symmetric` exhibits as asymmetric at one \
+      pair. Reverting either makes the corresponding witness test fail: `to_set_charges_its_elements` \
+      sees a zero marginal charge, and `a_union_charges_both_operands_alike` sees the two arms \
+      differ.",
+    note := "**The log factor is named rather than hidden.** A canonicalisation sorts, so the work \
+      is `O(n log n)` and the charge is linear: a phlo buys work bounded by `charge · log charge`, \
+      which is bounded — the defect C345 names is *unbounded* work for a flat charge — but it is not \
+      an exact comparison count, and this row does not claim one. **Not charged, and deliberately \
+      so**: a collection literal the evaluator builds stays uncharged, because its bytes were \
+      charged at parse and the create path is not attacker-sized. The tie is prose plus the Rust \
+      witness, not a corpus: the cost is a closed form, so a corpus of the same numbers would \
+      restate the witness. Consensus-visible (#51 category A): the charge moves refund and burned \
+      amounts, hence every post-state hash. **The row was true and the code was not, in one arm**: \
+      `set.add`/`set + x` charged a flat 3 phlo for the same re-canonicalisation until the cost \
+      register's first census found it (C353). The statement did not need to change — the arm needed \
+      to join it, which is what a law that is checked against a census can say and a law checked \
+      against its own witnesses cannot." },
+
+  { number := 91, clause := "b", layer := "Rholang",
+    statement := "**The censure charge bounds the cubic fold.** `rho:gov:censure` charges `(U+1)³` \
+      phlo for a member universe of `U` — a charge that covers every member and grows with the \
+      universe — where the fold's fixed point runs at most `U+1` rounds over `U` members",
+    status := .provedModel,
+    declarations := [`Rchain.censureCost, `Rchain.censureCost_exceeds_the_universe,
+      `Rchain.censureCost_monotone, `Rchain.censureCost_is_not_the_square],
+    axioms := [],
+    rust := ["rholang/src/system_processes.rs", "rholang/src/accounting.rs"],
+    rustWitness := ["rholang/src/system_processes.rs:censure_is_charged_the_cube_of_its_universe",
+      "rholang/src/accounting.rs:collection_and_censure_charges_are_the_models"],
+    witness := [`Rchain.censureCost_exceeds_the_universe, `Rchain.censureCost_monotone],
+    falsifiable := "The charge this replaced was `U²` for a `Θ(U³)` fixed point; \
+      `censureCost_is_not_the_square` exhibits a universe at which the two differ, and \
+      `censure_is_charged_the_cube_of_its_universe` reads the handler's own cost cell at two \
+      universes, so a revert to the quadratic table fails there rather than in an estimate.",
+    note := "**The bound is measured, not chosen.** `MAX_GOV_UNIVERSE` is 512, and the cubic path at \
+      it was timed in release (`rholang/tests/gas_amplification.rs`): 33 ms for a 512-member levels \
+      map, 1–5 ms for the three mixed shapes — so the constant stays and the `(512+1)³` = 1.35e8 phlo \
+      it charges is the same order as the time it buys under the table's one-phlo-per-operation \
+      calibration. The bound is on the **sum** of censures, levels and vouchers, which is what stops \
+      a deep cascade: a discredit needs a quorum of about two thirds of the eligible set, and the \
+      universe counts the censure pairs that must supply it. **The other three `rho:gov:*` folds \
+      keep the squared charge**, and their work shapes were measured afterwards (C354): `trustLevels` \
+      converges in at most five rounds because a conferral cannot raise a level past the rater's, and \
+      `resolveWeights` walks each member's delegation chain — both quadratic, so the squared charge \
+      matches the shape. The measurement was recorded in the cost register (`spec/COST.md`) rather \
+      than left as a residual." },
+
+  { number := 91, clause := "c", layer := "Rholang",
+    statement := "**A tally charges the option lists it scans.** A ranked tally charges the worst \
+      case — one scan per ranked entry per round, at most `longest` rounds — and an approval tally \
+      charges every approved entry. The member maps keep the universe bound; the lists are priced \
+      rather than refused",
+    status := .provedModel,
+    declarations := [`Rchain.tallyCost, `Rchain.tallyCost_covers_the_entries,
+      `Rchain.tallyCost_is_the_worst_case],
+    axioms := [],
+    rust := ["rholang/src/system_processes.rs", "rholang/src/accounting.rs"],
+    rustWitness := ["rholang/src/system_processes.rs:a_tally_charges_the_option_lists_it_scans",
+      "rholang/src/accounting.rs:the_tally_charges_are_the_models"],
+    witness := [`Rchain.tallyCost_covers_the_entries, `Rchain.tallyCost_is_the_worst_case],
+    falsifiable := "The charge this replaced was `(ballots + weights)²`, a function the option lists \
+      do not appear in at all; `a_tally_charges_the_option_lists_it_scans` reads the handler's own \
+      cost cell for the same election at two option-list sizes and the difference is zero under that \
+      charge, so a revert fails there. The probe measures the work the old charge ignored: 34 ms for \
+      a ranked tally of 100 ballots over 4 000 options and 68 ms for an approval tally over 4 000.",
+    note := "**Priced, not refused.** The member maps keep `MAX_GOV_UNIVERSE`; the option lists are \
+      bounded by the charge itself — a ballot map whose lists are a million entries deep is priced \
+      past the block phlo cap instead of being run — because a refusal here would reject a legitimate \
+      election (a few hundred ballots over ten options) to stop one that the phlo budget already \
+      stops. The ranked worst case is `longest × entries`: every round scans every entry, and a round \
+      may eliminate only one option, so `longest` bounds the rounds. The floor is the approval side. \
+      Consensus-visible (#51 category A)." },
+
 ]
+
+def laws : List Law := lawsA ++ lawsB ++ lawsC
 
 /-- Every law number the catalog defines. Laws with clauses repeat. -/
 def numbers : List Nat := laws.map (·.number)

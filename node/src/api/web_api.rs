@@ -18,7 +18,8 @@ use crate::web::transaction::TransactionResponse;
 #[async_trait]
 pub trait WebApi: Send + Sync {
     /// **The public status.** No operator state: see [`super::dto::PublicStatus`] for why the two
-    /// halves are two types rather than one type with two serializers (W-N3-01).
+    /// halves are two types rather than one type with two serializers (W-N3-01). Peer liveness is the
+    /// narrow exception on the `/health` route, not a field of this status.
     async fn status(&self) -> Result<super::dto::PublicStatus, BlockApiException>;
 
     async fn deploy(&self, request: &DeployRequest) -> Result<String, BlockApiException>;

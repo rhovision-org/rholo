@@ -18,7 +18,8 @@ IV.
 | Running/operating the node — REPL, standalone genesis, ports, Docker network | [`docs/src/node/operating.md`](docs/src/node/operating.md) |
 | Reader/agent navigation map (goal-indexed) | [`docs/src/ai-entrypoint.md`](docs/src/ai-entrypoint.md) |
 | The ρ-calculus core spec (grammar, sorts, operations, refinements) | [`spec/RHO-CALCULUS.md`](spec/RHO-CALCULUS.md) |
-| The law register — every invariant, its source of truth and its Rust realization | [`spec/INVENTORY.md`](spec/INVENTORY.md) |
+| The law register — every invariant, its checked status, axioms and Rust realization | [`spec/LAWS.md`](spec/LAWS.md) (long-form catalogue: [`spec/INVENTORY.md`](spec/INVENTORY.md)) |
+| Operating manual for the register — numbering, statuses, commands, the Lean-first protocol | [`docs/src/ai/laws-reference.md`](docs/src/ai/laws-reference.md) |
 | Human-facing walkthrough: each law → concrete Rust file/type/function + test | [`docs/src/contributor/laws-to-rust.md`](docs/src/contributor/laws-to-rust.md) |
 | The ρ→CoC type-system spec | [`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md) |
 | How Rust made the Scala fragility explicit (bugs caught, production-readiness) | [`spec/RUST-VS-SCALA.md`](spec/RUST-VS-SCALA.md) |
@@ -112,7 +113,7 @@ is not pulled in by the library target and a bare `lake build` would otherwise c
 answers asks for one — a "network usability test" applied to every doc change. It is not recorded as
 adopted, because a policy nothing checks reads as a policy that holds. What does hold is the narrower
 and true thing: the two rules above, the audit's residue stated above, and the registers that *are*
-gated (`spec/AUDIT.md`'s check-off, the law register, the test-coverage census). Whether a doc PR gets
+gated (`spec/AUDIT.md`'s check-off, the law register, the test-coverage census, the cost register). Whether a doc PR gets
 a checklist is a maintainer's decision rather than an edit to this file.
 
 ## Intent
@@ -135,7 +136,7 @@ recorded in the Scala-deviation register, [`spec/audit/passes.md`](spec/audit/pa
 ## The target, and how work is tracked
 
 **The oracle is done.** `spec/laws.tsv` reads **0 `owed`, 1 `open`** across
-<!-- counts:entries -->103 entries<!-- counts:end --> — <!-- counts:proved-model-entries -->71<!-- counts:end --> `proved-model`, <!-- counts:proved-tied-entries -->23<!-- counts:end -->
+<!-- counts:entries -->131 entries<!-- counts:end --> — <!-- counts:proved-model-entries -->86<!-- counts:end --> `proved-model`, <!-- counts:proved-tied-entries -->36<!-- counts:end -->
 `proved-tied`, <!-- counts:axioms -->10 axioms<!-- counts:end --> (9 crypto by design, 1 named) — the single open row
 (law 63a, a bridged deploy's attribution) being a cross-implementation relay this tree cannot reach
 rather than a proof debt, so the mathematical programme the prime directive sets is finished. Adding a
@@ -187,7 +188,7 @@ For any component you are about to write in Rust:
 |-------|-------|----------|-------|
 | **Lean 4** (primary) | algebraic/order laws, canonicalization, merge monoids, consensus arithmetic | [`spec/`](spec/) | `cd spec && lake build` |
 | **Coq** | substitution, α-equivalence, and programming-language metatheory (Autosubst in Phase 1) | [`spec/coq/`](spec/coq/) | `make -C spec/coq` |
-| **Inventory** | the laws, each with source-of-truth + formalization status | [`spec/INVENTORY.md`](spec/INVENTORY.md) | — |
+| **Register** | the laws, each with status, declarations, axioms and falsifier | [`spec/LAWS.md`](spec/LAWS.md) (long form: [`spec/INVENTORY.md`](spec/INVENTORY.md)) | — |
 | **Type system** | the port's own type discipline: ρ-calculus as the base sort of a Calculus of Constructions, no silent partiality | [`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md), `Rchain/Rho.lean`, `Rchain/Ty.lean` | `cd spec && lake build` |
 
 The **type-system spec** ([`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md)) overlaps the Lean/Coq split
@@ -237,12 +238,14 @@ code.
 - In-repo executable semantics: `rholang/src/main/k/rholang/*.k` (`name-equivalence.k`,
   `processes-semantics.k`, `sending-receiving.k`, `matching-function.k`, `free.k`).
 
-Per-law proof status lives in [`spec/INVENTORY.md`](spec/INVENTORY.md).
+Per-law proof status lives in the register, [`spec/LAWS.md`](spec/LAWS.md); the long-form catalogue is
+[`spec/INVENTORY.md`](spec/INVENTORY.md). The numbering key and the protocol for changing a law are in
+[`docs/src/ai/laws-reference.md`](docs/src/ai/laws-reference.md).
 
 ## What must be preserved
 
-The full law table (with per-law formalization status and line-level source pointers) lives in
-[`spec/INVENTORY.md`](spec/INVENTORY.md); it is the canonical catalog and is not repeated here.
+The full law table, with line-level source pointers, lives in [`spec/INVENTORY.md`](spec/INVENTORY.md);
+the register is the authority for status, and it is not repeated here.
 
 **Proven vs. axiomatized:** the algebraic/combinatorial laws are provable statements — Law 1
 (idempotence/commutativity), Law 2's core (≡), Law 4's core (COMM), and Law 6 (`Closed`) are already
@@ -282,8 +285,11 @@ For every law in the inventory:
 
 ## Ground truth
 
-**Where the Scala is.** The `legacy/` tree was archived out of the working tree on 2026-09-28 — 32 MB
-and 1,596 files that no CI job built, tested or scanned, carrying a 2020-21 dependency manifest
+**Where the Scala is.** The `legacy/` tree was archived out of the working tree on 2026-09-28 —
+<!-- recount:legacy-mib -->26.2<!-- recount:end --> MiB
+(<!-- recount:legacy-bytes -->27,425,437<!-- recount:end --> bytes) across
+<!-- recount:legacy-files -->1,596<!-- recount:end --> files that no CI job built, tested or scanned,
+carrying a 2020-21 dependency manifest
 `cargo-deny` cannot see. It is readable at the revision that froze it, **`1b7583649`**:
 `https://github.com/rhovision-org/rholo/blob/1b7583649/legacy/<path>`, or locally with
 `git checkout 1b7583649 -- legacy`. Every `legacy/...` path cited anywhere in this repository — here,
@@ -390,11 +396,12 @@ must be a literal IP (`SocketAddr::from_str` rejects hostnames like `localhost`)
   Law 11 rig-replay); certificate and oracle are complementary, each with a decided witness.
   Pure `relaxed` stays hard-rejected on the block paths. Phase-by-phase account:
   [`docs/src/contributor/onchain-validation-phases.md`](docs/src/contributor/onchain-validation-phases.md).
-- **Rewrite — complete**: all thirteen workspace members are at the workspace root — the eleven ported
-  crates (`sdk`, `shared`, `crypto`, `graphz`, `models`, `block-storage`, `rspace`, `rholang`,
-  `casper`, `comm`, `node`) plus `rspace-bench` and `qucalc`, the Rust-first native AI + governance
-  crate (Part VI of the book). The proofs-first *pause* was lifted in practice; the port was written
-  against the verified spec rather than waiting on Laws 1–11.
+- **Rewrite — complete**: all <!-- recount:members -->14<!-- recount:end --> workspace members are at
+  the workspace root — the eleven ported crates (`sdk`, `shared`, `crypto`, `graphz`, `models`,
+  `block-storage`, `rspace`, `rholang`, `casper`, `comm`, `node`) plus `rspace-bench`, `ocapn` (the
+  CapTP/OCapN transports) and `qucalc`, the Rust-first native AI + governance crate (Part VI of the
+  book). The proofs-first *pause* was lifted in practice; the port was written against the verified
+  spec rather than waiting on Laws 1–11.
 - **Node — operational**: `rnode` builds and runs. A standalone node reaches the `Running` state
   (genesis block created) and serves the API — Deploy **40401**, Propose/Repl **40402** (loopback),
   HTTP **40403**, admin **40405**, protocol **40400**, discovery **40404**. Run instructions:

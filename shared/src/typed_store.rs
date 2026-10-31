@@ -30,6 +30,13 @@ pub trait KeyValueTypedStore<K, V>: Send + Sync {
     async fn contains(&self, keys: &[K]) -> Result<Vec<bool>, String>;
     async fn to_map(&self) -> Result<BTreeMap<K, V>, String>;
 
+    /// **Every key, without decoding a value.** The default is `to_map`, which decodes both
+    /// codecs; `KeyValueTypedStoreCodec` overrides it to walk the byte store's keys and decode
+    /// only the key codec. Used by the stored-body audit, which needs hashes, not bodies.
+    async fn keys(&self) -> Result<Vec<K>, String> {
+        Ok(self.to_map().await?.into_keys().collect())
+    }
+
     /// Number of records stored. Defaults to `to_map().len()`; the codec-backed implementation
     /// overrides this with a cheaper `num_records` on the underlying byte store.
     async fn count(&self) -> Result<usize, String> {
@@ -131,6 +138,11 @@ where
             .collect()
     }
 
+    async fn keys(&self) -> Result<Vec<K>, String> {
+        let raw = self.with_store(move |store| store.keys()).await?;
+        raw.iter().map(|key| self.k_codec.decode(key)).collect()
+    }
+
     async fn count(&self) -> Result<usize, String> {
         self.with_store(move |store| Ok(store.num_records())).await
     }
@@ -190,6 +202,29 @@ mod tests {
         Arc::new(tokio::sync::Mutex::new(
             Box::new(InMemoryKeyValueStore::default()) as Box<dyn KeyValueStore + Send + Sync>,
         ))
+    }
+
+    /// **The codec override is the point**: `keys()` walks the byte store's keys and decodes only
+    /// the key codec. A value that cannot decode as the value type proves it — `keys()` succeeds
+    /// where `to_map()` must fail, so deleting the override fails this test.
+    #[tokio::test]
+    async fn keys_decodes_only_the_key_and_survives_an_undecodable_value() {
+        let shared = in_memory();
+        shared
+            .lock()
+            .await
+            .put(vec![(b"alpha".to_vec(), vec![0xff])])
+            .unwrap();
+        let store = KeyValueTypedStoreCodec::<String, i64>::new(
+            shared,
+            Arc::new(StringCodec),
+            Arc::new(I64Codec),
+        );
+        assert_eq!(store.keys().await.expect("keys"), vec!["alpha".to_string()]);
+        assert!(
+            store.to_map().await.is_err(),
+            "the value is not a decodable i64; keys must not decode it"
+        );
     }
 
     #[tokio::test]

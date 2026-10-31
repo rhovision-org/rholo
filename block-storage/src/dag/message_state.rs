@@ -129,8 +129,11 @@ where
                 (Some(latest), Some(_)) => {
                     super::liveness::heights_behind(supported_tip, latest.height) > window
                 }
-                // Never spoken: it ages out only with quorum-backed progress.
-                (None, _) => i64::from(supported_tip) - i64::from(self.round_height) > window,
+                // Never spoken: allow the initial grace once, measured from
+                // chain origin by the whole-stake quorum clock. Measuring from
+                // round_height rearmed this absent sender after every boundary,
+                // freezing each fresh quiet round for another full window.
+                (None, _) => i64::from(supported_tip) > window,
             }
         });
         if closed {
@@ -158,36 +161,79 @@ where
         self.round_parents.values().cloned().collect()
     }
 
-    /// **[`Self::parents_for_new_block`] with the sender's own entry replaced by its newest message** — the
-    /// escape, for a proposer that has already spoken this round and has been waiting past
-    /// the elapsed `ROUND_STALL_ESCAPE` interval for the round to close.
+    /// The stalled-round escape advances the sender's own entry and any peer entries
+    /// needed to preserve the justifications in the sender's previous message.
     ///
-    /// It exists because refusing has no way out. The round closes only when every bonded sender has
-    /// advanced past the boundary, a quiet sender stops holding it back only once `LIVENESS_WINDOW` heights
-    /// have passed above its last message, and that is measured from the tip — which a refusal freezes. So a
-    /// validator killed while inside the window is never retired and the round never closes: measured on the
-    /// node (flat height for the whole window after a kill, no error) and in-process
-    /// (`the_round_closes_when_a_validator_goes_quiet_inside_the_window`). This parent set moves the tip, so
-    /// the window ages the quiet sender out and the round closes on its own — and the next proposal is an
-    /// ordinary one again.
+    /// **Why the escape exists:** a quiet bonded sender inside the liveness window can
+    /// prevent a round boundary from closing. The window advances relative to the tip,
+    /// so refusing every proposal freezes the very clock needed to retire that sender.
+    /// After a bounded stall, advancing the self-parent moves the tip and eventually
+    /// permits an ordinary round again. This escape need not advance finality itself.
     ///
-    /// **It may not advance the fringe, and that is the accepted cost.** It is taken only after the
-    /// elapsed-stall wait, so in a healthy round it is never taken at all; the rate matters more
-    /// than this block's own finality, because a chain that cannot move cannot finalise anything.
+    /// **Replace, do not append:** adding a second parent for the same sender makes
+    /// self-parent selection ambiguous and previously admitted proposals without tip
+    /// progress. The map maintains exactly one selected message per sender.
     ///
-    /// Replaced, not added: a parent set with two messages from one sender makes the block creator's
-    /// `find(|m| m.sender == me)` ambiguous, it picks the older one, and the tip freezes with the numbers
-    /// stuck — measured, and the reason the first version of this escape admitted 74 proposals to a tip that
-    /// never left 2.
+    /// A frozen round snapshot can have an older peer message than the one the
+    /// sender already justified. Advancing only the sender's entry makes the next
+    /// block fail justification-regression validation against its own parent.
+    /// Preserve unaffected round parents so an escape does not unnecessarily
+    /// turn the normal round snapshot into the latest-message parent set.
     pub fn parents_for_new_block_escaping(&self, sender: &S) -> BTreeSet<Message<M, S>> {
         if self.round_parents.is_empty() {
             return self.latest_msgs.values().cloned().collect();
         }
         let mut parents = self.round_parents.clone();
         if let Some(mine) = self.latest_msgs.get(sender) {
+            // The previous self-message is the validation rule's comparison point.
+            // Each of its peer parents must still be seen by the replacement
+            // justification. Prefer the newest peer message when it includes
+            // that history; retain the prior parent across a conflicting fork.
+            for id in &mine.parents {
+                if let Some(prior) = self.msg_map.get(id) {
+                    let covered = parents
+                        .get(&prior.sender)
+                        .is_some_and(|selected| prior.seen.is_subset(&selected.seen));
+                    if !covered {
+                        let replacement = self
+                            .latest_msgs
+                            .get(&prior.sender)
+                            .filter(|latest| prior.seen.is_subset(&latest.seen))
+                            .unwrap_or(prior);
+                        parents.insert(prior.sender.clone(), replacement.clone());
+                    }
+                }
+            }
             parents.insert(sender.clone(), mine.clone());
         }
         parents.values().cloned().collect()
+    }
+
+    /// The production escape gate. A previous self-message must not lose an unresolved
+    /// parent while repairing its peer justification view: the unchecked escape path
+    /// cannot prove monotonicity if the message is absent from the local map.
+    ///
+    /// Return all missing IDs so the proposer can report precisely which DAG inputs
+    /// it needs, rather than silently treating missing history as covered.
+    /// Complete DAGs retain the exact parent-selection semantics above.
+    pub fn parents_for_new_block_escaping_checked(
+        &self,
+        sender: &S,
+    ) -> Result<BTreeSet<Message<M, S>>, Vec<M>> {
+        if !self.round_parents.is_empty() {
+            if let Some(mine) = self.latest_msgs.get(sender) {
+                let missing: Vec<M> = mine
+                    .parents
+                    .iter()
+                    .filter(|id| !self.msg_map.contains_key(*id))
+                    .cloned()
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(missing);
+                }
+            }
+        }
+        Ok(self.parents_for_new_block_escaping(sender))
     }
 
     /// **Whether `sender` has already produced a block since the last round boundary** — and so must not
@@ -475,6 +521,115 @@ mod tests {
         }
     }
 
+    /// A stalled round must not make the sender forget peers that its previous block saw.
+    /// Four bonds with only two active senders leave the round snapshot frozen.
+    #[test]
+    fn escape_preserves_each_prior_justification_view() {
+        let bonds = [(0, 250), (1, 250), (2, 250), (3, 250)];
+        let mut state: DagMessageState<i32, i32> = DagMessageState::empty();
+        let a1 = at(10, 0, 1, 1, &bonds);
+        let b1 = at(20, 1, 1, 1, &bonds);
+        state.insert_msg_mut(&a1);
+        state.insert_msg_mut(&b1);
+        let b2 = state.create_message(
+            21,
+            BlockHeight::try_from(2).unwrap(),
+            1,
+            SeqNum::try_from(2).unwrap(),
+            b1.bonds_map.clone(),
+            &[b1.clone()].into_iter().collect(),
+        );
+        state.insert_msg_mut(&b2);
+        let a2_parents: BTreeSet<_> = [a1.clone(), b2.clone()].into_iter().collect();
+        let a2 = state.create_message(
+            11,
+            BlockHeight::try_from(3).unwrap(),
+            0,
+            SeqNum::try_from(2).unwrap(),
+            a1.bonds_map.clone(),
+            &a2_parents,
+        );
+        state.insert_msg_mut(&a2);
+
+        // Snapshot B1 predates the B2 that A2 already justified.
+        state.round_parents = [(0, a1), (1, b1)].into_iter().collect();
+        let escaped = state.parents_for_new_block_escaping(&0);
+        let selected_a = escaped.iter().find(|m| m.sender == 0).unwrap();
+        let selected_b = escaped.iter().find(|m| m.sender == 1).unwrap();
+        assert_eq!(selected_a.id, a2.id);
+        let previous_b = state.msg_map.get(&21).unwrap();
+        assert_eq!(selected_b.id, b2.id);
+        assert!(
+            previous_b.seen.is_subset(&selected_b.seen),
+            "the escaped block regresses its previous self-parent's B justification"
+        );
+
+        // Exercise the *same predicate* as casper/src/validate.rs
+        // check_justification_regression, not merely equality of selected IDs.
+        let validator_accepts = |justifications: &BTreeSet<Message<i32, i32>>| {
+            let prior_self = justifications.iter().find(|m| m.sender == 0).unwrap();
+            justifications.iter().all(|just| {
+                let old = prior_self
+                    .parents
+                    .iter()
+                    .filter_map(|id| state.msg_map.get(id))
+                    .find(|m| m.sender == just.sender);
+                old.is_none_or(|old| old.seen.is_subset(&just.seen))
+            })
+        };
+        assert!(validator_accepts(&escaped));
+        let stale: BTreeSet<_> = [a2.clone(), state.msg_map.get(&20).unwrap().clone()]
+            .into_iter()
+            .collect();
+        assert!(
+            !validator_accepts(&stale),
+            "validator must reject the stale peer justification"
+        );
+
+        // A higher-sequence message on a conflicting branch cannot replace
+        // an earlier parent if it does not cover the history A already saw.
+        state.latest_msgs.insert(1, at(22, 1, 3, 4, &bonds));
+        let fork_escape = state.parents_for_new_block_escaping(&0);
+        assert_eq!(
+            fork_escape.iter().find(|m| m.sender == 1).unwrap().id,
+            b2.id
+        );
+    }
+
+    /// The production escape gate must name unresolved previous justifications,
+    /// rather than silently skipping the monotonicity check for that peer.
+    #[test]
+    fn escape_checked_reports_missing_previous_justification() {
+        let bonds = [(0, 250), (1, 250), (2, 250), (3, 250)];
+        let mut state: DagMessageState<i32, i32> = DagMessageState::empty();
+        let a1 = at(10, 0, 1, 1, &bonds);
+        let b1 = at(20, 1, 1, 1, &bonds);
+        state.insert_msg_mut(&a1);
+        state.insert_msg_mut(&b1);
+        let a2 = state.create_message(
+            11,
+            BlockHeight::try_from(2).unwrap(),
+            0,
+            SeqNum::try_from(2).unwrap(),
+            a1.bonds_map.clone(),
+            &[a1.clone(), b1.clone()].into_iter().collect(),
+        );
+        state.insert_msg_mut(&a2);
+        state.round_parents = [(0, a1), (1, b1)].into_iter().collect();
+
+        assert_eq!(
+            state.parents_for_new_block_escaping_checked(&0).unwrap(),
+            state.parents_for_new_block_escaping(&0),
+            "the checked path must preserve healthy parent selection"
+        );
+        state.msg_map.remove(&20);
+        assert_eq!(
+            state.parents_for_new_block_escaping_checked(&0),
+            Err(vec![20]),
+            "the missing peer parent must be named, not silently ignored"
+        );
+    }
+
     /// The quorum clock is a liveness measure, not a per-sender round marker.
     /// Stake 100/100/50 yields a quorum-supported height 2 while the
     /// boundary contains a sender at height 3 (and another at height 4).
@@ -532,6 +687,38 @@ mod tests {
     /// quorum-backed progress height exists. One fast proposer cannot
     /// silently close the round; the boundary may move again once a
     /// full-stake supermajority resumes sending messages.
+    #[test]
+    fn a_never_spoken_validator_does_not_rearm_its_grace_every_round() {
+        let bonds = [(0, 100), (1, 100), (2, 100), (3, 100)];
+        let window = super::super::liveness::LIVENESS_WINDOW;
+        let mut state: DagMessageState<i32, i32> = DagMessageState::empty();
+        state.insert_msg_mut(&at(0, 0, 0, 1, &bonds));
+        for step in 1..=window + 1 {
+            for sender in 0..3 {
+                let seq = if sender == 0 { step } else { step - 1 };
+                state.insert_msg_mut(&at(
+                    100 + step as i32 * 10 + sender,
+                    sender,
+                    seq,
+                    step + 1,
+                    &bonds,
+                ));
+            }
+        }
+        let first_boundary = window + 2;
+        assert_eq!(i64::from(state.round_height), first_boundary);
+        assert!(!state.latest_msgs.contains_key(&3));
+        for sender in 0..3 {
+            let seq = i64::from(state.latest_msgs[&sender].sender_seq) + 1;
+            state.insert_msg_mut(&at(1000 + sender, sender, seq, first_boundary + 1, &bonds));
+        }
+        assert_eq!(
+            i64::from(state.round_height),
+            first_boundary + 1,
+            "a never-spoken validator rearmed its grace after the quorum already retired it"
+        );
+    }
+
     #[test]
     fn missing_supermajority_freezes_round_until_quorum_returns() {
         let bonds = [(0, 100), (1, 100), (2, 100)];

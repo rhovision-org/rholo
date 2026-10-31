@@ -19,6 +19,18 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
+  partition-topology:
+    name: Two-sided Docker partition topology (offline regressions)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Assert isolation, rollback, and negative controls
+        run: python3 -m unittest discover -s tests -p 'test_n447_*.py' -v
+      - name: Parse the full fork-point harness
+        run: python3 -m py_compile tools/n420-fork-point.py tools/n447_partition.py
+
   quality:
     name: Formatting and lints
     runs-on: ubuntu-24.04
@@ -223,6 +235,19 @@ jobs:
         # source check beside the queue bound rather than a test.
         run: tools/check-spawn-observability.sh --gate
 
+      - name: Cost register gate
+        # The "flat charge for superlinear work" defect has been found twice — the 2026-09 union dedup
+        # and the 2026-10 conversions, union asymmetry and `censure` — both times by measurement,
+        # because nothing in the tree could see a charge that does not track its work. This is the
+        # census over the charge sites: every arm of the reducer's dispatch has a row saying what it
+        # charges and for what shape, an arm with no row fails, a row for nothing fails, and a declared
+        # charge that is not in the arm it claims fails. The half that *measures* the charge is
+        # `rholang/tests/cost_shapes.rs`, which the workspace test step above runs.
+        run: |
+          python3 tools/check-cost-register.py
+          tools/emit-cost-register.sh --check
+          python3 -m unittest discover -s tests -p test_cost_register.py -v
+
       - name: Review-ledger coverage gate
         # The audit's own limit statement — `all N T1 modules read`, printed by `audit-status.sh` and
         # rendered into `AUDIT.md` — is a claim about *modules that can fork the chain or lose funds*,
@@ -243,6 +268,12 @@ jobs:
         # that does not occur in the file it names, and a debt count that disagrees with the page —
         # because a number nothing checks is a number that rots.
         run: tools/check-hazop-worksheet.sh --gate
+
+      - name: Resource safety case gate
+        # The resource safety case is a claim about a document: every hazard names a threat, a
+        # barrier, a consequence, a residual and evidence; no row claims a pass. `owed:` is counted
+        # debt until the programme's units land, and `--require-evidence` is the completion gate.
+        run: tools/check-resource-safety-case.sh --gate
 
       - name: Artefact-producing build paths are pin-locked and unparameterised
         # Two wargame rows name a gate rather than a test, and neither existed: `every build path
@@ -331,3 +362,26 @@ jobs:
 
       - name: emSign exception rejects unpatched root providers
         run: python3 tools/check-emsign-dependency-policy.py
+
+  docs:
+    name: Documentation book
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install mdbook
+        run: cargo install --locked mdbook --version 0.5.4
+
+      - name: Documentation structure, links and anchors
+        run: tools/check-docs-links.sh --gate
+
+      - name: Artifact figures match the record
+        run: tools/recount-artifact.sh --check
+
+      - name: Law counts match the register
+        run: tools/emit-lean-counts.sh --check
+
+      - name: Build the book
+        run: mdbook build docs

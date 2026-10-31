@@ -1,0 +1,357 @@
+name: Recovery v2 — full acceptance on dev (16GB)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - verify/quiet-finality-integrated-20261030
+      - verify/finality-recovery-current-dev-20261030
+      - verify/finality-recovery-dedup-20261030
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integrated-finality-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  safety:
+    name: Targeted safety tests and one pinned node binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout pinned source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+      - name: Record source and resources
+        run: |
+          set -euo pipefail
+          mkdir -p target/verified-image
+          git rev-parse HEAD > target/verified-image/source-sha.txt
+          free -h > target/verified-image/resources.txt
+          test "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)" -ge 14680064
+          test "$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)" -ge 12582912
+          git diff --check HEAD^ HEAD
+      - name: Harness negative controls
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p test_quiet_finality_controls.py -v
+          python3 -m unittest discover -s tests -p test_recovery_harness_controls.py -v
+          python3 -m unittest discover -s tests -p test_post_restart_proposal.py -v
+      - name: Build source-pinned image and test stage
+        run: |
+          set -euo pipefail
+          tools/devnet.sh build 2>&1 | tee target/verified-image/build.log
+          docker build --target builder --build-arg GIT_HEAD_COMMIT="$(git rev-parse HEAD)" \
+            -f docker/rnode/Dockerfile -t quiet-safety:local . \
+            2>&1 | tee target/verified-image/test-image-build.log
+      - name: Rust regressions and counterfactual scheduling control
+        run: |
+          set -euo pipefail
+          docker run --rm -e CARGO_BUILD_JOBS=4 \
+            -v "$PWD/spec/conformance:/app/spec/conformance:ro" quiet-safety:local \
+            bash tests/verify-quiet-finality-safety.sh \
+            2>&1 | tee target/verified-image/rust-regressions.log
+      - name: Package the tested node for every acceptance arm
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sha256sum rnode:local /usr/local/bin/rnode \
+            > target/verified-image/binary-sha256.txt
+          docker image inspect rnode:local > target/verified-image/image-inspect.json
+          docker save rnode:local | gzip > target/verified-image/rnode-image.tar.gz
+      - name: Preserve build and test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: verified-node-image
+          path: target/verified-image/
+          retention-days: 90
+
+  quiet-finality:
+    name: N8 and N7 quiet finality, one signed marker per arm
+    needs: safety
+    strategy:
+      fail-fast: false
+      matrix:
+        repetition: [1, 2]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_NODE_MEMORY: "1536m"
+      DEVNET_THREAD_POOL_SIZE: "2"
+      DEVNET_PREFIX: "acceptance"
+      DEVNET_NETWORK: "acceptance"
+      ACCEPTANCE_ARTIFACTS: "1"
+    steps:
+      - name: Checkout pinned isolated source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+
+      - name: Require actual 16GB-class runner and record source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/quiet-finality-16gb
+          git rev-parse HEAD | tee target/quiet-finality-16gb/source-sha.txt
+          free -h | tee target/quiet-finality-16gb/free-before.txt
+          df -h | tee target/quiet-finality-16gb/disk-before.txt
+          cat /proc/meminfo > target/quiet-finality-16gb/meminfo-before.txt
+          mem_kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+          free_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+          test "$mem_kib" -ge 14680064 || { echo "FAIL: less than 14 GiB RAM"; exit 40; }
+          test "$free_kib" -ge 12582912 || { echo "FAIL: less than 12 GiB available"; exit 41; }
+          git diff --check HEAD^ HEAD
+
+      - name: Falsify unsafe quiet-finality results offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tests/consensus-quiet-finality.py tests/test_quiet_finality_controls.py
+          python3 -m unittest discover -s tests -p test_quiet_finality_controls.py -v \
+            2>&1 | tee target/quiet-finality-16gb/unit-results.log
+
+      - name: Load the exact tested binary image
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: verified-node-image
+          path: target/verified-image
+
+      - name: Verify binary provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat target/verified-image/source-sha.txt)" = "$(git rev-parse HEAD)"
+          gzip -dc target/verified-image/rnode-image.tar.gz | docker load
+          docker run --rm --entrypoint sha256sum rnode:local /usr/local/bin/rnode > target/verified-image/observed-sha256.txt
+          diff target/verified-image/binary-sha256.txt target/verified-image/observed-sha256.txt
+
+      - name: Start eight real isolated validators with autonomous production
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/devnet.sh up --validators 8 --fresh --autopropose --epoch-length 10 \
+            2>&1 | tee target/quiet-finality-16gb/start.log
+
+      - name: Require 8/8 and 7/8 quiet finality without helper deploys
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/consensus-quiet-finality.py --window 240 \
+            --out target/quiet-finality-16gb \
+            2>&1 | tee target/quiet-finality-16gb/quiet-finality.log
+
+      - name: Archive causal DAG before teardown
+        if: always()
+        run: python3 tests/capture-quiet-dag.py target/quiet-finality-16gb
+
+      - name: Preserve per-validator diagnostics before teardown
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p target/quiet-finality-16gb
+          free -h > target/quiet-finality-16gb/free-after.txt
+          df -h > target/quiet-finality-16gb/disk-after.txt
+          docker ps -a > target/quiet-finality-16gb/docker-ps.txt 2>&1 || true
+          docker stats --no-stream > target/quiet-finality-16gb/docker-stats.txt 2>&1 || true
+          for i in $(seq 0 7); do
+            node="acceptance-validator-$i"
+            [ "$i" -ne 0 ] || node="acceptance-bootstrap"
+            health_port=$((40403 + 1000 * i))
+            operator_port=$((40405 + 1000 * i))
+            curl --connect-timeout 2 --max-time 5 -fsS \
+              "http://127.0.0.1:${health_port}/health" \
+              -o "target/quiet-finality-16gb/$node-health.json" || true
+            curl --connect-timeout 2 --max-time 5 -fsS \
+              "http://127.0.0.1:${operator_port}/api/v1/status/operator" \
+              -o "target/quiet-finality-16gb/$node-operator.json" || true
+            docker logs "$node" > "target/quiet-finality-16gb/$node.log" 2>&1 || true
+            docker inspect "$node" > "target/quiet-finality-16gb/$node-inspect.json" 2>/dev/null || true
+          done
+
+      - name: Remove disposable isolated network and volumes
+        if: always()
+        shell: bash
+        run: tools/devnet.sh down -v || true
+
+      - name: Upload acceptance evidence, including failed arms
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: isolated-n8-quiet-finality-${{ github.run_id }}-${{ matrix.repetition }}
+          path: target/quiet-finality-16gb/
+          if-no-files-found: warn
+          retention-days: 90
+
+  n8-16gb:
+    name: N8 partition/rejoin, 16GB VM, 1536MiB per validator
+    needs: safety
+    strategy:
+      fail-fast: false
+      matrix:
+        repetition: [1, 2]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_NODE_MEMORY: "1536m"
+      DEVNET_THREAD_POOL_SIZE: "2"
+      DEVNET_PREFIX: "acceptance"
+      DEVNET_NETWORK: "acceptance"
+      ACCEPTANCE_ARTIFACTS: "1"
+    steps:
+      - name: Checkout pinned candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+
+      - name: Record machine resources and fail closed below 14 GiB
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/isolated-16gb
+          git rev-parse HEAD | tee target/isolated-16gb/source-sha.txt
+          printf 'runner=%s\n' "${{ runner.name }}" | tee target/isolated-16gb/runner-name.txt
+          free -h | tee target/isolated-16gb/free-before.txt
+          df -h | tee target/isolated-16gb/disk-before.txt
+          cat /proc/meminfo > target/isolated-16gb/meminfo-before.txt
+          docker info > target/isolated-16gb/docker-info.txt
+          mem_kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+          printf 'memtotal_kib=%s\n' "$mem_kib" | tee target/isolated-16gb/capacity.txt
+          test "$mem_kib" -ge 14680064 || { echo 'FAIL: less than 14 GiB RAM; refusing to mislabel this as a 16GB trial'; exit 40; }
+          available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+          test "$available_kib" -ge 12582912 || { echo 'FAIL: less than 12 GiB available at start'; exit 41; }
+          echo 'PASS: 16GB-class runner preflight'
+
+      - name: Fail-closed harness controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p test_recovery_harness_controls.py -v 2>&1 | tee target/isolated-16gb/harness.log
+          python3 -m unittest discover -s tests -p test_post_restart_proposal.py -v 2>&1 | tee target/isolated-16gb/post-restart-units.log
+          python3 -m py_compile tests/consensus-partition-rejoin.py tests/test_recovery_harness_controls.py tests/consensus-post-restart-proposal.py tests/test_post_restart_proposal.py
+          git diff --check HEAD^ HEAD
+
+      - name: Load the exact tested binary image
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: verified-node-image
+          path: target/verified-image
+
+      - name: Verify binary provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat target/verified-image/source-sha.txt)" = "$(git rev-parse HEAD)"
+          gzip -dc target/verified-image/rnode-image.tar.gz | docker load
+          docker run --rm --entrypoint sha256sum rnode:local /usr/local/bin/rnode > target/verified-image/observed-sha256.txt
+          diff target/verified-image/binary-sha256.txt target/verified-image/observed-sha256.txt
+
+      - name: Run real N8 isolated partition and rejoin
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p target/isolated-16gb
+          tools/devnet.sh up --validators 8 --fresh --no-autopropose --epoch-length 10 > target/isolated-16gb/start.log 2>&1
+          start_code=$?
+          trial_code=$start_code
+          if [ "$start_code" -eq 0 ]; then
+            trial_code=0
+            for i in $(seq 0 7); do
+              node="acceptance-validator-$i"
+              [ "$i" -ne 0 ] || node="acceptance-bootstrap"
+              actual=$(docker inspect -f '{{.HostConfig.Memory}}' "$node" 2>/dev/null) || actual=""
+              echo "$node memory_bytes=${actual:-missing}" | tee -a target/isolated-16gb/memory-limits.txt
+              if [ "$actual" != "1610612736" ]; then
+                echo "FAIL: $node does not have 1536MiB cap"
+                trial_code=42
+              fi
+            done
+            if [ "$trial_code" -eq 0 ]; then
+              python3 tests/consensus-partition-rejoin.py --validators 8 --out target/isolated-16gb/n8-partition > target/isolated-16gb/n8-campaign.log 2>&1
+              trial_code=$?
+            fi
+          fi
+          printf 'start=%s\npartition=%s\n' "$start_code" "$trial_code" | tee target/isolated-16gb/exit-codes.txt
+          exit "$trial_code"
+
+      - name: Prove same-volume validator actively proposes after two restarts
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The partition arm deliberately uses 1536 MiB per node. Restoring
+          # persisted state requires at least 2048 MiB of cgroup-available
+          # memory. Reserve 2304 MiB for the restart target only; leave the
+          # other seven at 1536 MiB. Total configured caps: 13056 MiB
+          # (12.75 GiB) on the 16GB-class disposable runner. Do not bypass
+          # resource-preflight, change consensus parameters, or touch live nodes.
+          target=acceptance-validator-7
+          docker update --memory 2304m --memory-swap 2304m "$target" \
+            > target/isolated-16gb/recovery-memory-update.txt
+          for i in $(seq 0 7); do
+            node="acceptance-validator-$i"
+            [ "$i" -ne 0 ] || node="acceptance-bootstrap"
+            expected=1610612736
+            [ "$i" -ne 7 ] || expected=2415919104
+            actual=$(docker inspect -f '{{.HostConfig.Memory}}' "$node")
+            swap=$(docker inspect -f '{{.HostConfig.MemorySwap}}' "$node")
+            printf '%s cap_bytes=%s swap_cap_bytes=%s expected_bytes=%s\n' \
+              "$node" "$actual" "$swap" "$expected" \
+              | tee -a target/isolated-16gb/recovery-memory-limits.txt
+            if [ "$actual" != "$expected" ] || [ "$swap" != "$expected" ]; then
+              echo "FAIL: $node has an unexpected recovery memory budget" >&2
+              exit 43
+            fi
+          done
+          printf 'restart_target_cap_mib=2304\nother_node_cap_mib=1536\ntotal_eight_node_caps_mib=13056\npreflight_override=false\n' \
+            | tee target/isolated-16gb/recovery-budget.txt
+          python3 tests/consensus-post-restart-proposal.py --validators 8 --cycles 2 --out target/isolated-16gb/n8-partition 2>&1 | tee target/isolated-16gb/post-restart.log
+
+      - name: Record complete failure or success diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p target/isolated-16gb
+          free -h > target/isolated-16gb/free-after.txt
+          df -h > target/isolated-16gb/disk-after.txt
+          docker ps -a > target/isolated-16gb/docker-ps.txt 2>&1 || true
+          docker stats --no-stream > target/isolated-16gb/docker-stats.txt 2>&1 || true
+          # Preserve exact per-validator readiness evidence before teardown.
+          # A green Docker healthcheck is not equivalent to the strict /health gate.
+          for i in $(seq 0 7); do
+            node="acceptance-validator-$i"
+            [ "$i" -ne 0 ] || node="acceptance-bootstrap"
+            health_port=$((40403 + 1000 * i))
+            operator_port=$((40405 + 1000 * i))
+            if ! curl --connect-timeout 2 --max-time 5 -fsS "http://127.0.0.1:${health_port}/health" \
+                -o "target/isolated-16gb/$node-health.json"; then
+              echo "health endpoint unavailable for $node" > "target/isolated-16gb/$node-health.error"
+            fi
+            if ! curl --connect-timeout 2 --max-time 5 -fsS "http://127.0.0.1:${operator_port}/api/v1/status/operator" \
+                -o "target/isolated-16gb/$node-operator.json"; then
+              echo "operator endpoint unavailable for $node" > "target/isolated-16gb/$node-operator.error"
+            fi
+          done
+          for i in $(seq 0 7); do
+            node="acceptance-validator-$i"
+            [ "$i" -ne 0 ] || node="acceptance-bootstrap"
+            docker logs "$node" > "target/isolated-16gb/$node.log" 2>&1 || true
+            docker inspect "$node" > "target/isolated-16gb/$node-inspect.json" 2>/dev/null || true
+          done
+
+      - name: Tear down disposable local test network
+        if: always()
+        shell: bash
+        run: tools/devnet.sh down -v || true
+
+      - name: Upload reproducible evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: isolated-n8-16gb-${{ github.run_id }}-${{ matrix.repetition }}
+          path: target/isolated-16gb/
+          if-no-files-found: warn
+          retention-days: 90

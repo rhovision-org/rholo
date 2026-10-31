@@ -104,6 +104,13 @@ impl ShardMemberships {
         std::iter::once(&self.primary).chain(self.others.iter())
     }
 
+    /// Every membership, primary first, mutably — for a resolved default that has to reach each
+    /// shard (the production dev-tax address).
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut ShardSpec> {
+        let ShardMemberships { primary, others } = self;
+        std::iter::once(primary).chain(others.iter_mut())
+    }
+
     pub fn len(&self) -> usize {
         1 + self.others.len()
     }
@@ -169,6 +176,8 @@ pub struct CasperConf {
     /// Only consulted when this node's DAG is empty (the boot path that would otherwise request a
     /// fringe). Empty means the ordinary path, unchanged.
     pub sync_anchor: Option<String>,
+    /// Operator-pinned genesis block hash for joining an existing network.
+    pub expected_genesis_hash: Option<String>,
     /// **Whether this node may reset itself** — the acting half of F-U5-01, off by default (#320).
     ///
     /// When a `Divergence` record's revalidation budget is spent, the node can no longer extend the
@@ -264,6 +273,13 @@ pub struct GenesisBlockData {
     /// A config written before this key resolves to `0` — no schedule — which is the rule for a chain
     /// with no allocation, and the only rule a chain that predates the field could have run.
     pub dev_tax_vesting_blocks: i64,
+    /// Liveness enforcement's five parameters (RCHIP #55, Law 89). All zero is the shipped
+    /// pre-change rule; a network arms the mechanism at genesis.
+    pub liveness_absence_threshold: i64,
+    pub liveness_jail_after_boundaries: i32,
+    pub liveness_jail_epochs: i32,
+    pub liveness_vote_window: i32,
+    pub liveness_slash_severity: i32,
 }
 
 #[cfg(test)]
@@ -292,6 +308,12 @@ mod tests {
             system_contract_pub_key: String::new(),
             dev_tax_address: String::new(),
             dev_tax_vesting_blocks: 0,
+
+            liveness_absence_threshold: 0,
+            liveness_jail_after_boundaries: 0,
+            liveness_jail_epochs: 0,
+            liveness_vote_window: 0,
+            liveness_slash_severity: 0,
         }
     }
 

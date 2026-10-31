@@ -48,24 +48,32 @@ Notes for operators:
   **These routes are on the *admin* HTTP server (port 40405), not the public one (40403)** — the
   coordinator signs every leg with this node's validator key and escrows out of **that key's own REV
   account**, so the surface is privileged in the same way `/api/propose` is, and it is deliberately not
-  reachable on the API port a remote client can reach (AUDIT C121). The admin server binds
+  reachable on the API port a remote client can reach. The admin server binds
   `127.0.0.1` unless `api-server.enable-devnet-admin-public = true`, so a wallet on another host needs
   that opt-in — and should weigh it: publishing the admin port publishes an unauthenticated
   spend-this-node's-REV route as well. A transaction may name at most 32 legs, and the coordinator
   ledger holds at most 10,000 records; past either bound a new transaction is refused rather than
   queued.
+  **A leg's amount is not capped by this API** (register C348). It must be non-negative, and the
+  escrow can only move what the coordinator key's own vault holds — but a caller who can reach the
+  route can ask it to escrow that whole vault across shards. That is a deliberate boundary rather than
+  a missing check: a sub-balance cap would be a node-local spending policy layered on the chain's, and
+  the route is already behind three opt-ins (a multi-shard gateway with a signing key,
+  `api-server.enable-txn-api`, and an admin listener published beyond loopback). **If you serve it to
+  callers you do not trust, cap the coordinator key's balance, not the request.**
 - `GET /api/v1/shards` lists the memberships, primary first, each with its own chain height. The
   membership is deliberately *not* folded into `/api/status`, whose `shardId` field existing tooling
   parses on its own.
 - **There is a fourth kind of listener, and every one of them is off unless you ask for one.** The
-  OCapN listeners (issue #249) are where a foreign peer — an Agoric vat, say — can hold live references
+  OCapN listeners are where a foreign peer — an Agoric vat, say — can hold live references
   to objects on this node: `api-server.ocapn-listen` is the conformance suite's plaintext
   `tcp-testing-only` port, `ocapn-listen-unix` a domain socket authenticated by its `0600` mode,
   `ocapn-listen-noise` the one a remote peer should use (authenticated *and* encrypted), and
   `ocapn-listen-websocket` the one `@endo/ocapn` speaks and the weakest of the networked two. They are
   **not** part of the API above, and when `dev.deployer-private-key` is set a peer that
   reaches one can make this node **submit deploys signed with that key** and cause it to **dial any
-  address the peer names**. Read [](ocapn.md) before enabling it; the short version is that binding it
+  address the peer names**. Read [OCapN interoperability](ocapn.md) before enabling it; the short
+  version is that binding it
   publishes the node's own authority, so bind loopback unless every peer that can reach the address is
   one you trust.
 
@@ -101,7 +109,7 @@ not set up for you:
    ```
 
    **There is no flag that takes the hex itself.** `--validator-private-key <hex>` existed and was
-   removed (W-N11-05): a secret in `argv` is readable by any local process through
+   removed because a secret in `argv` is readable by any local process through
    `/proc/<pid>/cmdline`, and hiding the flag from `--help` hides it from the operator, not from the
    host. A command line that still passes it is refused at parse time, naming this route.
 
@@ -227,9 +235,9 @@ Deploys reach a node through the **external gRPC** port (40401 by default) or `P
   accepted (`Response: Success!` with a DeployId) and then never proposed:
   `deploy-status` answers `notProcessed / Unknown`, and the proposer logs
   `No pooled deploys; injecting dummy deploy for block #NNN`. Pass
-  `--valid-after-block-number <current height>` on a binary that predates
-  [#58](https://github.com/rhovision-org/rholo/pull/58), which makes the CLI resolve the anchor
-  from the node's own height the way the faucet, the browser client and `txn_coordinator` already do.
+  `--valid-after-block-number <current height>` on a binary that predates the anchor fix; the CLI
+  resolves the anchor from the node's own height the way the faucet, the browser client and
+  `txn_coordinator` do.
   Short chains hide this: below the lifespan, `-1` is not yet "expired".
 
 - **`deploy-status` reports the outcome *and the reason*.** A success returns
@@ -239,13 +247,13 @@ Deploys reach a node through the **external gRPC** port (40401 by default) or `P
   `{"NotProcessed": {"status": "Pooled"}}`; and a deploy the node has no record of returns
   `"Unknown"`. **The variant tags are PascalCase and the fields camelCase**, which is what law 43's
   envelope catalogue declares (`spec/conformance/envelope.tsv`) — a client switching on
-  `processedWithError` (as this page used to say) matches nothing, and nothing errors.
+  `processedWithError` matches nothing, and nothing errors.
 
-  The reason comes from the block's recorded failure (issue #15), so it is available on any node
+  The reason comes from the block's recorded failure, so it is available on any node
   holding the block. The placeholder
   `"<deploy error message not available in cache or deploy executed on another node>"` survives for one
   case only: a deploy whose record carries no message at all (a block from a node that predates
-  issue #15), which is also the only case the Scala's per-node execution tracker could answer.
+  the fix), which is also the only case the Scala's per-node execution tracker could answer.
 
   To read a term's **return value** — usually what you actually want — have the term send its result
   somewhere it can be read back, using the registry result-slot pattern that the browser client and
@@ -266,13 +274,88 @@ Deploys reach a node through the **external gRPC** port (40401 by default) or `P
 The last row is the one that matters for a *network*: a validator that holds no deploys still has to move
 its latest message, or its stake never reaches the 2/3 finality threshold. Attestation is therefore **on
 by default** (`--no-attest-on-new-blocks` turns it off) and a validator needs **no `--autopropose`** to be
-live — including a validator on a host too small to run the continuous timer (#70). `--autopropose`
+live — including a validator on a small host. `--autopropose`
 remains a dev/CI tool for continuous block production; its dummy-`Nil` injector is not a liveness
 mechanism.
 
 There is **no `--no-autopropose` flag** on the node — you omit `--autopropose`. (`tools/devnet.sh`
 accepts `--no-autopropose` because that is *its* CLI, and it simply omits the node flag. Passing it to
 `rnode run` exits 1 in a restart loop.)
+
+### Admission, memory and the relay
+
+A deploy with a free pool slot is accepted whatever the host's memory state. `degraded` is an
+**advisory** word; `acceptsDeploys` is the pool's count/byte capacity. Only a real bound refuses:
+
+- a full pool, a deployer's share or its rate: **429 + `Retry-After`** (HTTP) or
+  `RESOURCE_EXHAUSTED` (gRPC);
+- a malformed request, bad signature, wrong shard or expired anchor: **400**.
+
+Explore has its own headroom permit budget and a **429** when it is spent; it is never gated by the
+deploy pool. A **503** means the node cannot serve at all. The operator status
+(`/api/v1/status/operator`, admin listener) carries the headroom, the critical/throttle/recovery
+floors, the process RSS and the permit limits; `/metrics` carries the same as `rchain.resource.*`
+gauges; the node's own `GET /health` is a readiness body (200 while serving) and carries
+`finalityStalled`/`finalityStallEpisodes` as the peer-liveness signal.
+
+**Readiness is not pool capacity.** `acceptsDeploys` remains the Law 86a pool answer; `/health` also
+carries `ready`, `phase`, `nodePhase`, `shardPhases`, `pipelineFaults`, `orphanBodies`,
+`orphanDetections`, and `proposalHalted`. **The phase is per shard**: `phase`/`nodePhase` are the
+primary shard's label and `shardPhases` maps every member shard to its own. `ready` requires
+**every** member shard Running (plus no pipeline fault, no isolation and no confirmed orphan);
+a node with one serving and one syncing shard is not ready. Deploy admission is judged by the shard
+the deploy names: `Syncing`/`Blocked` refuse it with a 503 even when the pool has room, while
+`Starting` may pool it (the node is seconds from deciding, and `/health` is still not ready there).
+A block-pipeline fault sets `ready: false`; a validator beyond the finality bound sets
+`proposalHalted` and stops proposing **and** attesting. The operator action is
+`POST /api/v1/proposer/resume` on the admin listener; the next proposal re-checks the bound, so a
+node that is still isolated latches again.
+
+**What launch does before it says Running.** A shard moves `Starting` → `Syncing` (if it restores
+state) → the **start-up disposition audit** → `Running`. The audit runs a one-time **keys-only**
+scan for bodies written before the ledger (the `legacy-body-scan` marker in the shard's durable
+records; it adopts orphan hashes as `Pending` and decodes one body at a time), re-offers every
+unsettled row, and waits a **bounded 30 s** for the rows it actually offered. A row whose
+justification is not in the DAG was never offered, stays `Pending` and visible, and does not hold
+boot; an audit error is logged and boot proceeds. The marker is written only after the scan, so a
+crash rescans. `Running` therefore means "the audit was attempted and its window closed", not "the
+ledger is empty".
+
+**A block the node cannot settle is durable and retried.** Each stored body has a disposition row
+while the node owes it an outcome; a fault (an internal replay error, an insert error, a validation
+past its 10-minute deadline) is recorded with its stage and attempt count and re-offered on a
+doubling backoff (30 s to 10 min, eight attempts) before it is quarantined. `pipelineFaults` is the
+process counter and does not fall when a retry succeeds; a restart is the clean reset for a fault
+whose cause is gone. A quarantined row and an unresolved orphan are both visible on `/health` and
+both withhold `ready`. `orphanBodies` is **zero until the periodic audit has seen the same
+block-store/DAG gap for three consecutive samples**, so an in-flight block does not flap readiness.
+A sustained non-zero value means a body the DAG does not account for. A body written by a build
+before the ledger is adopted by the start-up scan on the next start; a body whose bytes cannot be
+decoded is logged by hash and remains this count audit's signal, so the recovery is an operator
+reset or a peer re-delivery.
+
+**The body and its row are one write.** They live in the same LMDB environment and are committed in
+one transaction, so a crash cannot leave a stored body with no row — the shape that needed the
+start-up scan in the first place. The ledger moved into the block-storage environment in the build
+that carries the October 2026 remediation, which bumped the store-format marker: an **upgrade** from
+an earlier build re-adopts the ledger with the start-up scan on first boot (a `Faulted` row on an
+unsettled body comes back as `Pending`, so the block is retried rather than dropped), and a
+**downgrade** to an earlier build is refused rather than run over a store it cannot read.
+
+**The same build changes the gas charges, so its genesis post-state hash differs from the previous
+build's.** A network upgrading must regenerate any pinned `--expected-genesis-hash` and move together
+(validators and observers alike): a pre-change block containing a collection conversion or a `censure`
+does not replay under the new charges, and a mixed network would refuse it.
+
+| Switch | Default | Effect |
+|---|---|---|
+| `RNODE_DEPLOY_RELAY` | off | offer each admitted deploy to connected peers' external deploy service (`_PORT`, default 40401; `_FANOUT` to cap) |
+| `RNODE_CROSS_DEPLOY_BATCHING` | off | execute independent deploys on forked runtimes and merge them (`_VERIFY` on, `_MAX` default 4) |
+| `RNODE_HTTP_MAX_INFLIGHT_DEPLOY` / `_EXPLORE` | off | operator concurrency caps, 1–1024 |
+
+The batch and relay are opt-in because both are new paths: the batch re-executes a block
+sequentially (`RNODE_CROSS_DEPLOY_BATCH_VERIFY=1`) and falls back on any mismatch; the relay assumes
+the peers expose their external deploy port. Neither changes the block format or the consensus rules.
 
 ### Finality, and why an idle chain can report no fringe
 
@@ -293,8 +376,8 @@ consequences operators run into:
 
 A net that must keep finalising while otherwise idle should either give its founding validator more than
 2/3 of the pool as a genesis stake, or run a second validator — attestation is on by default, so it adds
-its attestations without `--autopropose` (and without a deployer key). [Running a public
-testnet](running-a-public-testnet.md) works both through.
+its attestations without `--autopropose` (and without a deployer key). [The setup
+guide](validator-observer-setup.md) works both through.
 
 ---
 
@@ -308,7 +391,7 @@ Two reads, and the difference between them matters:
   single status call's size a function of that.
 - **`GET /api/v1/pos/delegations?delegator=<65-byte hex>`** — **one delegator's positions**, across
   every operator it has staked with. Scoped to the key you ask about, which is the bounded direction.
-  **On the admin listener (40405), not the public one** (W-N3-03): it is a store query keyed on a
+  **On the admin listener (40405), not the public one**: it is a store query keyed on a
   caller-supplied key, not chain state a peer would read, and it answered any caller's question about
   any delegator's portfolio while it was public.
 

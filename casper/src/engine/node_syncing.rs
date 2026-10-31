@@ -9,16 +9,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rchain_block_storage::approved_store::{ApprovedStore, FINALIZED_FRINGE_KEY};
+use rchain_block_storage::approved_store::{
+    ApprovedStore, FINALIZED_FRINGE_KEY, RECOVERY_PENDING_KEY,
+};
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
-use rchain_block_storage::syntax::insert_genesis;
 use rchain_comm::peer_node::PeerNode;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_comm::transport::transport_layer::TransportLayer;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block_hash::BlockHash;
-use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{
     BlockFringe, BlockMessage, CasperMessage, FinalizedFringe, StoreItemsMessage,
 };
@@ -26,10 +26,11 @@ use rchain_rspace::state::RSpaceImporter;
 use rchain_shared::lock::Unpoison;
 use rchain_shared::log::{Log, LogSource};
 
-use super::lfs_block_requester::request_blocks;
+use super::lfs_block_requester::{request_blocks, BlockRequestLog};
 use super::lfs_tuple_space_requester::{
     request_tuple_space, request_tuple_space_roots, REQUEST_TIMEOUT,
 };
+use super::recovery::RecoveryReplay;
 use crate::protocol::comm_util::CommUtil;
 use crate::validator_identity::ValidatorIdentity;
 
@@ -48,8 +49,13 @@ pub struct NodeSyncing<I: RSpaceImporter> {
     #[allow(dead_code)] // reserved (Scala stores it; consumed by the caller)
     trim_state: bool,
     importer: Option<I>,
+    replay: Option<RecoveryReplay>,
     incoming_blocks_tx: tokio::sync::mpsc::Sender<BlockMessage>,
     incoming_blocks_rx: Option<tokio::sync::mpsc::Receiver<BlockMessage>>,
+    /// **The per-hash block-request log** (#457): which peers each outstanding hash was requested
+    /// from (written by the walk) and which delivered it (written here, where the sending `PeerNode`
+    /// is known). Cleared at each attempt's start. The give-up error reports the difference.
+    block_requests: Arc<tokio::sync::Mutex<BlockRequestLog>>,
     tuple_space_tx: tokio::sync::mpsc::Sender<StoreItemsMessage>,
     tuple_space_rx: Option<tokio::sync::mpsc::Receiver<StoreItemsMessage>>,
     start_requester: bool,
@@ -177,8 +183,10 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             validator_id,
             trim_state,
             importer: Some(importer),
+            replay: None,
             incoming_blocks_tx,
             incoming_blocks_rx: Some(incoming_blocks_rx),
+            block_requests: Arc::new(tokio::sync::Mutex::new(BlockRequestLog::default())),
             tuple_space_tx,
             tuple_space_rx: Some(tuple_space_rx),
             start_requester: true,
@@ -188,6 +196,12 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             fringe_arrived: Arc::new(tokio::sync::Notify::new()),
             terminal: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    /// A sync without a replay context fails closed before publishing any DAG metadata.
+    pub fn with_replay(mut self, replay: RecoveryReplay) -> Self {
+        self.replay = Some(replay);
+        self
     }
 
     /// A future that completes when syncing finishes (port of `finished.get`).
@@ -241,6 +255,12 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                     self.log_source,
                     &format!("BlockMessage received #{} from {peer}.", b.block_number),
                 );
+                // Record which hash this peer delivered before the payload loses its source
+                // (#457's diagnostic). An answer for a different hash does not clear another's entry.
+                self.block_requests
+                    .lock()
+                    .await
+                    .record_answer(&b.block_hash, &peer.id);
                 chan::send(&self.incoming_blocks_tx, b.clone()).await;
                 Ok(())
             }
@@ -407,6 +427,8 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             // The importer and both receivers are moved in here and have no inverse: `handle` holds
             // only the senders, `self` never reaches the task, and `finished` carries no payload.
             // So the loop takes them by `&mut` across attempts instead of re-taking them (AUDIT C181).
+            let block_requests = self.block_requests.clone();
+            let replay = self.replay.clone();
             tokio::spawn(async move {
                 let source = LogSource::new("casper.engine.NodeSyncing");
                 let mut importer = importer;
@@ -436,6 +458,9 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
 
                     started += 1;
                     note_sync_attempt(started);
+                    // A new attempt starts from an empty log: the diagnostic names the peers that
+                    // answered *this* walk, not one that helped a previous one.
+                    *block_requests.lock().await = BlockRequestLog::default();
 
                     let outcome = run_approved_state_sync(
                         &target,
@@ -448,13 +473,20 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                         &mut importer,
                         &mut incoming_blocks_rx,
                         &mut tuple_space_rx,
+                        &block_requests,
+                        replay.as_ref(),
+                        &approved_store,
                     )
                     .await;
+                    let outcome = match outcome {
+                        Ok(()) => {
+                            report_restored_checkpoint(&approved_store, &target, log.as_ref()).await
+                        }
+                        Err(error) => Err(error),
+                    };
 
                     match &outcome {
                         Ok(()) => {
-                            report_restored_checkpoint(&approved_store, &target, log.as_ref())
-                                .await;
                             notify_when_restored(&outcome, &finished);
                             // The state is restored, so this task is returning and the node is no
                             // longer syncing: the reading is cleared rather than left naming the loop
@@ -505,28 +537,48 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
     }
 }
 
-/// Record the checkpoint result without confusing an in-memory DAG restore with a durable
-/// restart checkpoint. A failed checkpoint must not claim persistence, but the DAG has already
-/// been restored, so the caller still signals completion (the node will re-sync on restart).
+/// The pending marker precedes publication into the durable DAG. A restart must
+/// re-enter recovery until the accepted checkpoint has been read back and the
+/// marker removed; a partially published DAG is not evidence of completion.
+async fn mark_recovery_pending(
+    store: &ApprovedStore,
+    fringe: &FinalizedFringe,
+) -> Result<(), String> {
+    store.put(&[(RECOVERY_PENDING_KEY, fringe.clone())]).await?;
+    if store.get(&[RECOVERY_PENDING_KEY]).await? != vec![Some(fringe.clone())] {
+        return Err("recovery pending marker read-back mismatch".to_string());
+    }
+    Ok(())
+}
+
 async fn report_restored_checkpoint(
     approved_store: &ApprovedStore,
     fringe: &FinalizedFringe,
     log: &dyn Log,
-) {
+) -> Result<(), String> {
+    let result = async {
+        approved_store
+            .put(&[(FINALIZED_FRINGE_KEY, fringe.clone())])
+            .await?;
+        if approved_store.get(&[FINALIZED_FRINGE_KEY]).await? != vec![Some(fringe.clone())] {
+            return Err("approved-fringe checkpoint read-back mismatch".to_string());
+        }
+        approved_store.delete(&[RECOVERY_PENDING_KEY]).await?;
+        if approved_store.get(&[RECOVERY_PENDING_KEY]).await? != vec![None] {
+            return Err("recovery pending marker was not cleared".to_string());
+        }
+        Ok(())
+    }
+    .await;
     let source = LogSource::new("casper.engine.NodeSyncing");
-    match approved_store
-        .put(&[(FINALIZED_FRINGE_KEY, fringe.clone())])
-        .await
-    {
+    match &result {
         Ok(()) => log.info(source, "LFS state is successfully restored."),
-        Err(e) => log.error(
+        Err(error) => log.error(
             source,
-            &format!(
-                "LFS state restored to the DAG, but approved-fringe checkpoint was not persisted: {e}. \
-                 The next restart will require another LFS sync."
-            ),
+            &format!("Recovery checkpoint incomplete; refusing completion: {error}"),
         ),
     }
+    result
 }
 
 /// Signal the syncing-finished handle **only when the state was actually restored** (AUDIT C68).
@@ -559,6 +611,9 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     importer: &mut I,
     incoming_blocks_rx: &mut tokio::sync::mpsc::Receiver<BlockMessage>,
     tuple_space_rx: &mut tokio::sync::mpsc::Receiver<StoreItemsMessage>,
+    block_requests: &Arc<tokio::sync::Mutex<BlockRequestLog>>,
+    replay: Option<&RecoveryReplay>,
+    approved_store: &ApprovedStore,
 ) -> Result<(), String> {
     let source = LogSource::new("casper.engine.NodeSyncing");
     let block_fut = request_blocks(
@@ -568,6 +623,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         &block_store,
         comm_util.as_ref(),
         log.as_ref(),
+        block_requests,
     );
     let tuple_fut = request_tuple_space(
         fringe,
@@ -620,13 +676,29 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         ));
     }
 
-    // The fringe tuple-space request above only hydrates the finalized-fringe root itself. Casper's
-    // read/validation APIs (explore, data-at-name, and mergeable-sidecar regeneration during block
-    // indexing) open the pre/post RSpace root of specific downloaded blocks directly, not just the
-    // fringe root - request those too, or an observer's local history reader has no root to open for
-    // anything but the exact fringe state once restore finishes.
+    // Validate the bootstrap's ancestry *before* using its state claims to drive extra
+    // trie requests. No undownloaded block may nominate arbitrary state roots.
+    let downloaded: BTreeSet<BlockHash> = block_st
+        .height_map
+        .values()
+        .flat_map(|s| s.iter().copied())
+        .collect();
+    check_ancestry_shape(&fringe.ancestry, &downloaded)?;
+
+    // The initial tuple-space leg hydrates only the finalized-fringe root. The block
+    // walk supplies every block's pre/post root, but validation and proposing also
+    // read each restored block's fringe_state_hash (the state finalized by its
+    // fringe). That intermediate merge root need not equal any downloaded block's
+    // pre/post root. Hydrating only the latter lets LFS report success and enter
+    // Running, then fail immediately at compute_bonds() because pos:active is
+    // absent in the unopened fringe trie (issue #457).
+    //
+    // Request the complete, deduplicated manifest while the bootstrap still serves
+    // state. An unserved ancestry root must fail the join, not silently produce a
+    // Running node with incomplete replay state.
     let fringe_root = Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes());
-    let block_roots = collect_block_state_roots(&block_store, &block_st.height_map).await?;
+    let block_roots =
+        collect_block_state_roots(&block_store, &block_st.height_map, &fringe.ancestry).await?;
     let extra_roots: Vec<Blake2b256Hash> = block_roots
         .into_iter()
         .filter(|root| *root != fringe_root)
@@ -656,25 +728,32 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         .map_err(|e| e.to_string())?;
     }
 
-    log.info(source, "Rholang state received and saved to store.");
-    populate_dag(
-        dag.as_ref(),
-        &block_store,
-        log.as_ref(),
-        &block_st.height_map,
-        &fringe.ancestry,
-    )
-    .await?;
+    let replay =
+        replay.ok_or_else(|| "LFS recovery has no independent replay context".to_string())?;
+    let verified = replay
+        .verify(&block_store, &block_st.height_map, fringe, &log)
+        .await?;
+    mark_recovery_pending(approved_store, fringe).await?;
+    verified.publish(dag.as_ref(), &block_store).await?;
     Ok(())
 }
 
-/// Collect the pre/post RSpace state roots of every downloaded approved block, so the caller can
-/// request tuple-space data for any that aren't the finalized-fringe root already hydrated above.
+/// Collect the state roots used by both the downloaded block bodies and their
+/// restored per-block fringe claims. The latter are not necessarily block pre/post
+/// roots, but are accessed by consensus as soon as the node leaves NodeSyncing.
+/// Ancestor membership is validated by check_ancestry_shape before this call.
 async fn collect_block_state_roots(
     block_store: &BlockStore,
     height_map: &BTreeMap<i64, BTreeSet<BlockHash>>,
+    ancestry: &[BlockFringe],
 ) -> Result<BTreeSet<Blake2b256Hash>, String> {
     let mut roots = BTreeSet::new();
+
+    for bf in ancestry {
+        roots.insert(Blake2b256Hash::from_byte_array(
+            bf.fringe_state_hash.as_bytes(),
+        ));
+    }
 
     for hash in height_map.values().flat_map(|s| s.iter().copied()) {
         let block = block_store
@@ -695,84 +774,39 @@ async fn collect_block_state_roots(
     Ok(roots)
 }
 
-/// Insert the received blocks into the DAG (port of `populateDag`, minus the Scala `minHeight`
-/// filter — the full ancestry chain is now downloaded and must be inserted).
-async fn populate_dag(
-    dag: &dyn BlockDagStorage,
-    block_store: &BlockStore,
-    log: &dyn Log,
-    height_map: &BTreeMap<i64, BTreeSet<BlockHash>>,
-    // **The per-block fringe state, carried on the fringe the sync was started from** (AUDIT C188,
-    // #139). Empty when the responder did not send it — an older peer, or a requester that did not
-    // ask — in which case every block falls back to the pre-#139 derivation and the log says so per
-    // block. That is a degradation, not a failure: the sync still completes.
+/// **The ancestry's shape** (Law 83, C338): one entry per downloaded block and no duplicates. A
+/// missing entry stays legal because independent replay reconstructs it, but
+/// an entry naming a block the walk did not download is a claim the joiner cannot check at all.
+pub(super) fn check_ancestry_shape(
     ancestry: &[BlockFringe],
+    downloaded: &BTreeSet<BlockHash>,
 ) -> Result<(), String> {
-    let source = LogSource::new("casper.engine.NodeSyncing");
-    log.info(source, "Adding blocks for approved state to DAG.");
-    let fringe_of: BTreeMap<BlockHash, &BlockFringe> =
-        ancestry.iter().map(|b| (b.block_hash, b)).collect();
-    if ancestry.is_empty() {
-        log.warn(
-            source,
-            "The fringe response carried no per-block fringe state (#139): every restored block \
-             will be inserted with an empty fringe, and a block whose close deploy anchors the next \
-             epoch's seed to the fringe state will not replay as the proposer did it. Ask a peer \
-             that knows `includeFringeMetadata`.",
-        );
-    }
-
-    // Insert blocks in ascending height order (parents before children): `dag.insert` requires each
-    // block's justifications to already be present in the message map, and a block's justifications
-    // always sit at strictly lower heights (block height = 1 + max justification height). The prior
-    // `.reverse()` inserted the newest block first — whose justification was not yet in the map —
-    // so LFS sync failed with "justification not present in message map".
-    for hash in height_map.values().flat_map(|s| s.iter().copied()) {
-        let block = block_store
-            .get(&[hash])
-            .await?
-            .into_iter()
-            .flatten()
-            .next()
-            .ok_or_else(|| format!("missing block {}", hash.to_hex()))?;
-        let block_height = i64::from(block.block_number);
-        log.info(
-            source,
-            &format!("Adding #{} {}.", block.block_number, hash.to_hex()),
-        );
-        if block_height == 0 {
-            // Genesis block: insert with validated metadata (fringe empty, fringe_state =
-            // pre_state), matching `insert_genesis`, so the validator is bonded and can build on
-            // block 0.
-            insert_genesis(dag, block).await?;
-        } else {
-            // **The metadata a validating node would have derived**, when the responder sent it
-            // (#139). `from_block` cannot know it: `fringe` and `fringe_state_hash` are a node's own
-            // recomputation and are not block fields, so a restored node otherwise carries an empty
-            // fringe for every block it restores and replays boundary blocks from a zero seed.
-            let bmd = match fringe_of.get(&hash) {
-                Some(bf) => BlockMetadata {
-                    fringe: bf.fringe.clone(),
-                    fringe_state_hash: bf.fringe_state_hash,
-                    ..BlockMetadata::from_block(&block)
-                },
-                None => {
-                    log.warn(
-                        source,
-                        &format!(
-                            "No per-block fringe state for {} (#139): inserting it with an empty \
-                             fringe, which is the pre-#139 behaviour for this block alone",
-                            hash.to_hex()
-                        ),
-                    );
-                    BlockMetadata::from_block(&block)
-                }
-            };
-            dag.insert(bmd, block).await?;
+    let mut seen = BTreeSet::new();
+    for bf in ancestry {
+        if !downloaded.contains(&bf.block_hash) {
+            return Err(format!(
+                "the bootstrap sent fringe metadata for block {}, which the walk did not download",
+                bf.block_hash.to_hex()
+            ));
+        }
+        if !seen.insert(bf.block_hash) {
+            return Err(format!(
+                "the bootstrap sent two ancestry entries for block {}",
+                bf.block_hash.to_hex()
+            ));
+        }
+        for h in &bf.fringe {
+            if !downloaded.contains(h) {
+                return Err(format!(
+                    "the ancestry for block {} names fringe member {}, which the walk did not \
+                     download; a fringe names ancestors, so this is not a history the joiner can \
+                     check",
+                    bf.block_hash.to_hex(),
+                    h.to_hex()
+                ));
+            }
         }
     }
-
-    log.info(source, "Blocks for approved state added to DAG.");
     Ok(())
 }
 
@@ -791,13 +825,14 @@ mod tests {
     use rchain_comm::transport::transport_layer::TransportLayer;
     use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
     use rchain_models::block::state_hash::StateHash;
+    use rchain_models::block_metadata::BlockMetadata;
     use rchain_models::casper::protocol::casper_message::{
         BlockMessage, RholangState, SignedDeployData,
     };
     use rchain_models::comm::protocol::Protocol;
     use rchain_models::validator::Validator;
     use rchain_rspace::state::RSpaceImporter;
-    use rchain_shared::log::{Log, LogSource, NopLog};
+    use rchain_shared::log::{Log, LogSource};
     use rchain_shared::refined::BlockHeight;
     use rchain_shared::state::TrieImporter;
     use rchain_shared::store::{InMemoryKeyValueStore, KeyValueStore};
@@ -805,7 +840,9 @@ mod tests {
     use std::time::Duration;
 
     use crate::protocol::comm_util::{CommUtil, ConnectionsCell};
-    use rchain_block_storage::approved_store::{ApprovedStore, FINALIZED_FRINGE_KEY};
+    use rchain_block_storage::approved_store::{
+        ApprovedStore, FINALIZED_FRINGE_KEY, RECOVERY_PENDING_KEY,
+    };
     use rchain_block_storage::dag::codecs::{ByteCodec, FringeCodec};
 
     use crate::block_metadata_store::BlockMetadataStore;
@@ -1078,6 +1115,130 @@ mod tests {
         }
 
         let dag = build_dag().await;
+        let entries: Vec<_> = blocks
+            .iter()
+            .map(|block| (block.block_hash, BlockMetadata::from_block(block)))
+            .collect();
+        super::super::recovery::publish_verified_blocks(dag.as_ref(), &block_store, &entries)
+            .await
+            .expect("verified metadata must be published parents-first");
+
+        // The whole chain is in the DAG, so the latest block number equals the chain length.
+        assert_eq!(dag.get_representation().await.latest_block_number(), n);
+    }
+
+    /// #457: block pre/post tries are not a complete post-LFS replay manifest.
+    /// A per-block finalised-fringe claim can name a distinct, intermediate
+    /// merge root. Restoring without that root makes the subsequent active-bonds
+    /// lookup fail even when LFS reaches Running and every block was downloaded.
+    #[tokio::test]
+    async fn restore_root_manifest_includes_distinct_ancestry_fringe_state() {
+        let mut genesis = chain_block(0, None);
+        genesis.pre_state_hash = StateHash::new([0x11; 32]);
+        genesis.post_state_hash = StateHash::new([0x22; 32]);
+        let mut child = chain_block(1, Some(genesis.block_hash));
+        child.pre_state_hash = genesis.post_state_hash;
+        child.post_state_hash = StateHash::new([0x33; 32]);
+
+        let block_store: BlockStore = Arc::new(KeyValueTypedStoreCodec::new(
+            in_memory(),
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockMessageCodec),
+        ));
+        for block in [&genesis, &child] {
+            block_store
+                .put(&[(block.block_hash, block.clone())])
+                .await
+                .unwrap();
+        }
+        let height_map = BTreeMap::from([
+            (0, BTreeSet::from([genesis.block_hash])),
+            (1, BTreeSet::from([child.block_hash])),
+        ]);
+        // Child's fringe root (0x44) is neither the pre nor the post
+        // state root of either downloaded block. Genesis repeats 0x11:
+        // deduplication must still hold.
+        let ancestry = vec![
+            BlockFringe {
+                block_hash: genesis.block_hash,
+                fringe: BTreeSet::new(),
+                fringe_state_hash: genesis.pre_state_hash,
+            },
+            BlockFringe {
+                block_hash: child.block_hash,
+                fringe: BTreeSet::new(),
+                fringe_state_hash: StateHash::new([0x44; 32]),
+            },
+        ];
+        let downloaded: BTreeSet<BlockHash> = height_map
+            .values()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        check_ancestry_shape(&ancestry, &downloaded).unwrap();
+        let roots = collect_block_state_roots(&block_store, &height_map, &ancestry)
+            .await
+            .unwrap();
+        assert_eq!(roots.len(), 4, "state roots must be deduplicated");
+        for required in [0x11, 0x22, 0x33, 0x44] {
+            assert!(
+                roots.contains(&Blake2b256Hash::from_byte_array(&[required; 32])),
+                "omitted required root {required:02x}"
+            );
+        }
+
+        // No ancestry is legitimate for older peers, but it must not
+        // introduce a fake root or silently fabricate fringe history.
+        let legacy = collect_block_state_roots(&block_store, &height_map, &[])
+            .await
+            .unwrap();
+        assert!(!legacy.contains(&Blake2b256Hash::from_byte_array(&[0x44; 32])));
+        assert_eq!(legacy.len(), 3);
+    }
+
+    /// **Law 83, C338: a fringe row for a block the walk did not download** is a claim the joiner
+    /// cannot check at all, so it is refused before anything is written.
+    #[test]
+    fn an_ancestry_entry_for_an_unknown_block_is_refused() {
+        let downloaded: BTreeSet<BlockHash> = [hash(0)].into_iter().collect();
+        let entry = BlockFringe {
+            block_hash: hash(9),
+            fringe: BTreeSet::new(),
+            fringe_state_hash: StateHash::new([0u8; 32]),
+        };
+        let err = check_ancestry_shape(&[entry], &downloaded)
+            .expect_err("an entry for an undownloaded block must be refused");
+        assert!(err.contains("did not download"), "{err}");
+    }
+
+    #[test]
+    fn two_ancestry_entries_for_one_block_are_refused() {
+        let downloaded: BTreeSet<BlockHash> = [hash(0)].into_iter().collect();
+        let entry = BlockFringe {
+            block_hash: hash(0),
+            fringe: BTreeSet::new(),
+            fringe_state_hash: StateHash::new([0u8; 32]),
+        };
+        let err = check_ancestry_shape(&[entry.clone(), entry], &downloaded)
+            .expect_err("duplicate ancestry rows must be refused");
+        assert!(err.contains("two ancestry entries"), "{err}");
+    }
+
+    /// **The derivable field is refused when it lies**: a block's `fringe` is recomputed from its
+    /// justifications (`latest_fringe`), so a bootstrap cannot choose it.
+    #[tokio::test]
+    async fn an_ancestry_fringe_that_is_not_the_derived_fringe_is_refused() {
+        let n = 3i64;
+        let blocks: Vec<BlockMessage> = (0..n)
+            .map(|i| chain_block(i, (i > 0).then(|| hash(i as u8 - 1))))
+            .collect();
+        let block_store: BlockStore = Arc::new(KeyValueTypedStoreCodec::new(
+            in_memory(),
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockMessageCodec),
+        ));
+        for b in &blocks {
+            block_store.put(&[(b.block_hash, b.clone())]).await.unwrap();
+        }
         let mut height_map: BTreeMap<i64, BTreeSet<BlockHash>> = BTreeMap::new();
         for b in &blocks {
             height_map
@@ -1085,14 +1246,23 @@ mod tests {
                 .or_default()
                 .insert(b.block_hash);
         }
+        // Block 1 justifies genesis, whose own fringe is empty, so the derived fringe is empty.
+        // Claiming genesis as the fringe is a lie the joiner can see.
+        let mut lying = BTreeSet::new();
+        lying.insert(blocks[0].block_hash);
+        let ancestry = [BlockFringe {
+            block_hash: blocks[1].block_hash,
+            fringe: lying,
+            fringe_state_hash: StateHash::new([0u8; 32]),
+        }];
 
-        populate_dag(dag.as_ref(), &block_store, &NopLog, &height_map, &[])
-            .await
-            .expect("populate_dag must succeed when blocks are inserted parents-first");
-
-        // The whole chain is in the DAG, so the latest block number equals the chain length.
-        assert_eq!(dag.get_representation().await.latest_block_number(), n);
+        // The replay result is authoritative; the supplied fringe must match it.
+        let local = BlockMetadata::from_block(&blocks[1]);
+        let err = super::super::recovery::compare_claim(&local, &ancestry[0])
+            .expect_err("a fringe that disagrees with replay must be refused");
+        assert!(err.contains("disagrees"), "{err}");
     }
+
     /// A non-bootstrap peer cannot consume the one-shot latch or poison the next retry target.
     #[tokio::test]
     async fn initial_fringe_signal_requires_an_authorized_nonempty_target() {
@@ -1277,10 +1447,9 @@ mod tests {
         assert!(!log.contains("the genesis master's announcement"));
     }
 
-    /// The DAG can be restored even if the restart checkpoint fails. Do not report
-    /// unconditional success or silently swallow the missing durable checkpoint.
+    /// A failed durable checkpoint must keep the completion notification closed.
     #[tokio::test]
-    async fn checkpoint_write_failure_is_visible_without_claiming_persistence() {
+    async fn checkpoint_write_failure_refuses_completion() {
         struct RejectCheckpointWrite {
             inner: ApprovedStore,
         }
@@ -1319,8 +1488,22 @@ mod tests {
         };
 
         let failure_log = RecordingLog::default();
-        report_restored_checkpoint(&failing, &fringe, &failure_log).await;
-        assert!(failure_log.contains("approved-fringe checkpoint was not persisted"));
+        mark_recovery_pending(&working, &fringe).await.unwrap();
+        let failure = report_restored_checkpoint(&failing, &fringe, &failure_log).await;
+        assert!(failure.is_err());
+        let finished = tokio::sync::Notify::new();
+        let notified = finished.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        notify_when_restored(&failure, &finished);
+        assert!(tokio::time::timeout(Duration::from_millis(20), notified)
+            .await
+            .is_err());
+        assert!(failure_log.contains("refusing completion"));
+        assert_eq!(
+            working.get(&[RECOVERY_PENDING_KEY]).await.unwrap(),
+            vec![Some(fringe.clone())]
+        );
         assert!(failure_log.contains("checkpoint store unavailable"));
         assert!(!failure_log.contains("LFS state is successfully restored."));
         assert_eq!(
@@ -1329,12 +1512,102 @@ mod tests {
         );
 
         let success_log = RecordingLog::default();
-        report_restored_checkpoint(&working, &fringe, &success_log).await;
+        report_restored_checkpoint(&working, &fringe, &success_log)
+            .await
+            .unwrap();
+        assert_eq!(
+            working.get(&[RECOVERY_PENDING_KEY]).await.unwrap(),
+            vec![None]
+        );
         assert!(success_log.contains("LFS state is successfully restored."));
         assert_eq!(
             working.get(&[FINALIZED_FRINGE_KEY]).await.unwrap(),
             vec![Some(fringe)]
         );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_readback_and_pending_marker_removal_are_required() {
+        struct FaultyCheckpoint {
+            inner: ApprovedStore,
+            discard: Option<u8>,
+            keep_pending: bool,
+        }
+        #[async_trait]
+        impl KeyValueTypedStore<u8, FinalizedFringe> for FaultyCheckpoint {
+            async fn get(&self, keys: &[u8]) -> Result<Vec<Option<FinalizedFringe>>, String> {
+                self.inner.get(keys).await
+            }
+            async fn put(&self, pairs: &[(u8, FinalizedFringe)]) -> Result<(), String> {
+                let retained: Vec<_> = pairs
+                    .iter()
+                    .filter(|(key, _)| Some(*key) != self.discard)
+                    .cloned()
+                    .collect();
+                self.inner.put(&retained).await
+            }
+            async fn delete(&self, keys: &[u8]) -> Result<usize, String> {
+                if self.keep_pending {
+                    Ok(0)
+                } else {
+                    self.inner.delete(keys).await
+                }
+            }
+            async fn contains(&self, keys: &[u8]) -> Result<Vec<bool>, String> {
+                self.inner.contains(keys).await
+            }
+            async fn to_map(&self) -> Result<BTreeMap<u8, FinalizedFringe>, String> {
+                self.inner.to_map().await
+            }
+        }
+        let fringe = FinalizedFringe {
+            hashes: vec![hash(7)],
+            state_hash: StateHash::new([7; 32]),
+            ancestry: Vec::new(),
+        };
+        for (discard, keep_pending) in [
+            (Some(RECOVERY_PENDING_KEY), false),
+            (Some(FINALIZED_FRINGE_KEY), false),
+            (None, true),
+        ] {
+            let inner: ApprovedStore = Arc::new(KeyValueTypedStoreCodec::new(
+                in_memory(),
+                Arc::new(ByteCodec),
+                Arc::new(FringeCodec),
+            ));
+            let faulty: ApprovedStore = Arc::new(FaultyCheckpoint {
+                inner: inner.clone(),
+                discard,
+                keep_pending,
+            });
+            let started = mark_recovery_pending(&faulty, &fringe).await;
+            if discard == Some(RECOVERY_PENDING_KEY) {
+                assert!(started.unwrap_err().contains("read-back"));
+                assert_eq!(
+                    inner.get(&[FINALIZED_FRINGE_KEY]).await.unwrap(),
+                    vec![None]
+                );
+            } else {
+                started.unwrap();
+                let outcome =
+                    report_restored_checkpoint(&faulty, &fringe, &RecordingLog::default()).await;
+                assert!(
+                    outcome.is_err(),
+                    "acknowledging a write or delete is not a durable completion proof"
+                );
+                assert_eq!(
+                    inner.get(&[RECOVERY_PENDING_KEY]).await.unwrap(),
+                    vec![Some(fringe.clone())]
+                );
+                report_restored_checkpoint(&inner, &fringe, &RecordingLog::default())
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    inner.get(&[RECOVERY_PENDING_KEY]).await.unwrap(),
+                    vec![None]
+                );
+            }
+        }
     }
 
     /// **AUDIT C68**: a failed LFS sync must not signal the node out of `NodeSyncing`.

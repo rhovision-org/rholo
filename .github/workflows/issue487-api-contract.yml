@@ -1,0 +1,28 @@
+name: Issue 487 finality/settlement API verification
+
+on:
+  push:
+    branches:
+      - fix/487-finality-settlement-api-20261030
+
+permissions:
+  contents: read
+
+jobs:
+  api-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout pinned candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install pinned toolchain and protobuf
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y protobuf-compiler libprotobuf-dev
+      - name: Formatting
+        run: cargo +1.95.0 fmt --all -- --check
+      - name: Settlement and finality contract regressions
+        run: cargo +1.95.0 test --locked -p rchain-node --lib issue_487_ -- --nocapture
+      - name: Existing node API envelope regressions
+        run: cargo +1.95.0 test --locked -p rchain-node --test lean_envelope_corpus

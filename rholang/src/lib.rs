@@ -18,6 +18,7 @@ pub mod merging;
 pub mod native_state;
 pub mod normalizer;
 pub mod parser;
+pub mod pos_liveness;
 pub mod pretty_printer;
 pub mod proc_ast;
 pub mod read_path_census;

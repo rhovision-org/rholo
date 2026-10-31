@@ -12,6 +12,11 @@ import Rchain.Lex
 import Rchain.Parse
 import Rchain.Casper.Validate
 import Rchain.Casper.Rounds
+import Rchain.Progress
+import Rchain.Admission
+import Rchain.HostList
+import Rchain.Decimal
+import Rchain.Disposition
 
 /-!
 # The conformance corpus, generated from the specification
@@ -1017,7 +1022,7 @@ def bigintExpr (n : Int) : Par := one (.ebigint n)
 
 /-- A decimal literal, as a `Par`: `decimalExpr 15 1` is `1.5d`. The payload is the value in
     units of `10^-38` (`MAX_SCALE`), exactly the node's `Decimal::scaled_value`. -/
-def decimalExpr (c : Int) (s : Nat) : Par := one (.edecimal (c * (10 : Int) ^ (38 - s)))
+def decimalExpr (c : Int) (s : Nat) : Par := one (.edecimal (Decimal.scaledValue ⟨c, s⟩))
 
 /-- A method call, as a `Par`. The name is a **code-point list**, the model's convention for strings
     (`charsOf`, as `Ground.str` does) — the node carries a `String` and compares it byte-wise, and
@@ -1771,6 +1776,427 @@ def bodyLine (c : BodyCase) : String :=
     ["body", toString c.blockNumber, c.senderHex, toString c.seqNum, toString c.timestamp,
      String.intercalate ";" c.justificationsHex, c.stateHex, c.bytesHex]
 
+namespace Rchain
+namespace Corpus
+
+/-! ## Law 86 — the admission layer -/
+
+/-- The admission corpus cases, each a shape the Lean pool and the Rust `casper::pool` policy both
+    answer. The Rust consumer drives `check_admission`/`check_commit` and `budget::permits_for`; the
+    cases that are not shared (rate/share bounds, the relay) stay unit tests rather than being
+    claimed by a corpus that does not exercise them. -/
+inductive AdmissionCase where
+  | freeSlot
+  | countBound
+  | duplicateBound
+  | onePermit
+  | zeroHeadroom
+  deriving DecidableEq, Repr
+
+def admissionCaseCount : Nat := 5
+
+open Admission in
+def admissionHolds (c : AdmissionCase) : Bool :=
+  match c with
+  | .freeSlot =>
+      match enqueue { capacity := 1, entries := [] } 0 with
+      | .admitted _ => true
+      | .refused _ _ => false
+  | .countBound =>
+      match enqueue { capacity := 1, entries := [{ id := 0, status := .pending }] } 1 with
+      | .refused _ .full => true
+      | _ => false
+  | .duplicateBound =>
+      match enqueue { capacity := 2, entries := [{ id := 0, status := .pending }] } 0 with
+      | .refused _ .duplicate => true
+      | _ => false
+  | .onePermit =>
+      match next
+          { pool := { capacity := 1, entries := [{ id := 0, status := .pending }] },
+            permits := 1 } with
+      | some (batch, _) => !batch.isEmpty
+      | none => false
+  | .zeroHeadroom =>
+      match next
+          { pool := { capacity := 1, entries := [{ id := 0, status := .pending }] },
+            permits := 0 } with
+      | none => true
+      | some _ => false
+
+def admissionCases : List AdmissionCase :=
+  [.freeSlot, .countBound, .duplicateBound, .onePermit, .zeroHeadroom]
+
+theorem admissionCases_decide : admissionCases.all admissionHolds = true := by decide
+
+theorem admissionCases_length : admissionCases.length = admissionCaseCount := by decide
+
+def admissionCaseName : AdmissionCase → String
+  | .freeSlot => "free_slot"
+  | .countBound => "count_bound"
+  | .duplicateBound => "duplicate_bound"
+  | .onePermit => "one_permit"
+  | .zeroHeadroom => "zero_headroom"
+
+def admissionLine (c : AdmissionCase) : String :=
+  String.intercalate "\t"
+    ["admission", admissionCaseName c, if admissionHolds c then "true" else "false"]
+
+
+/-! ## Law 90 — the publishable hostlist -/
+
+def hostPeer (id : Nat) : Rchain.HostList.Peer :=
+  { id := id, host := "h", protocolPort := 40400 }
+
+def hostCtx (selfId : Nat) (selfProposer : Bool) (maxEntries : Nat) : Rchain.HostList.Ctx :=
+  { networkId := "testnet", shardIds := ["/root"], maxEntries := maxEntries,
+    self := hostPeer selfId, selfProposer := selfProposer }
+
+def hostAnswer (id : Nat) : Option Rchain.HostList.Answer :=
+  some { address := id, networkId := "testnet", shardId := "/root", proposer := true }
+
+def hostObserver (id : Nat) : Option Rchain.HostList.Answer :=
+  some { address := id, networkId := "testnet", shardId := "/root", proposer := false }
+
+def hostForeignNetwork (id : Nat) : Option Rchain.HostList.Answer :=
+  some { address := id, networkId := "othernet", shardId := "/root", proposer := true }
+
+def hostCase (name : String) (ctx : Rchain.HostList.Ctx)
+    (os : List Rchain.HostList.Outcome) (expected : List Nat) : Rchain.HostList.Case :=
+  { name := name, ctx := ctx, outcomes := os, expected := expected }
+
+/-- **The hostlist cases.** Each is a shape both sides run: the Lean `servedIds` above and the Rust
+    `derive_hostlist`. The corpus line carries the **ids the derivation must produce**, so a drift in
+    the filter, the ordering, dedupe, the bound or self's presence fails the tie on one side or the
+    other — there is no expected value duplicated in prose. -/
+def hostListCases : List Rchain.HostList.Case :=
+  [ hostCase "self_only" (hostCtx 0 true 8) []
+      [0]
+  , hostCase "observer_excluded" (hostCtx 0 true 8)
+      [{ peer := hostPeer 1, answer := hostObserver 1 }]
+      [0]
+  , hostCase "wrong_network" (hostCtx 0 true 8)
+      [{ peer := hostPeer 1, answer := hostForeignNetwork 1 }]
+      [0]
+  , hostCase "wrong_shard" (hostCtx 0 true 8)
+      [{ peer := hostPeer 1, answer := some { address := 1, networkId := "testnet", shardId := "/child", proposer := true } }]
+      [0]
+  , hostCase "unreachable" (hostCtx 0 true 8)
+      [{ peer := hostPeer 1, answer := none }]
+      [0]
+  , hostCase "address_mismatch" (hostCtx 0 true 8)
+      [{ peer := hostPeer 1, answer := some { address := 2, networkId := "testnet", shardId := "/root", proposer := true } }]
+      [0]
+  , hostCase "three_valid_sorted" (hostCtx 0 true 8)
+      [{ peer := hostPeer 5, answer := hostAnswer 5 },
+       { peer := hostPeer 3, answer := hostAnswer 3 },
+       { peer := hostPeer 1, answer := hostAnswer 1 }]
+      [0, 1, 3, 5]
+  , hostCase "truncation_self_first" (hostCtx 0 true 2)
+      [{ peer := hostPeer 1, answer := hostAnswer 1 },
+       { peer := hostPeer 2, answer := hostAnswer 2 },
+       { peer := hostPeer 3, answer := hostAnswer 3 }]
+      [0, 1]
+  , hostCase "duplicate_ids" (hostCtx 0 true 8)
+      [{ peer := hostPeer 1, answer := hostAnswer 1 },
+       { peer := hostPeer 1, answer := hostAnswer 1 }]
+      [0, 1]
+  , hostCase "self_not_a_proposer" (hostCtx 0 false 8)
+      [{ peer := hostPeer 7, answer := hostAnswer 7 }]
+      [7]
+  ]
+
+def hostListCaseCount : Nat := 10
+
+def hostListHolds (c : Rchain.HostList.Case) : Bool :=
+  Rchain.HostList.servedIds c.ctx c.outcomes == c.expected
+
+theorem hostListCases_decide : hostListCases.all hostListHolds = true := by decide
+
+theorem hostListCases_length : hostListCases.length = hostListCaseCount := by decide
+
+def hostListLine (c : Rchain.HostList.Case) : String :=
+  String.intercalate "\t"
+    ["hostlist", c.name,
+      if c.expected.isEmpty then "-" else String.intercalate "," (c.expected.map toString)]
+
+
+/-! ## Law 51d — the paced gate (the `recovery` layer) -/
+
+/-- One `recovery` case. `pace` is Law 51d's gate (first sighting, tick, expected
+    `(escape?, new sighting)`); `eligible` is Law 88c's sweep predicate (stage, since, now,
+    expected). The Rust consumer dispatches on the kind and calls the same predicate. -/
+inductive RecoveryCase where
+  | pace (first : Option Nat) (now : Nat) (expected : Bool × Option Nat)
+  | eligible (stage : Rchain.Disposition.Recovery.Stage) (since : Nat) (now : Nat)
+      (expected : Bool)
+  | classify (inMap regression : Bool) (expected : String)
+  deriving Repr
+
+def recoveryHolds : RecoveryCase → Bool
+  | .pace first now expected =>
+      decide (Rchain.Pacing.take ⟨first⟩ now = (expected.1, { since := expected.2 }))
+  | .eligible stage since now expected =>
+      decide (Rchain.Disposition.Recovery.eligible ⟨stage, since⟩ now = expected)
+  | .classify inMap regression expected =>
+      decide (Rchain.Disposition.Recovery.outcomeName
+        (Rchain.Disposition.Recovery.classify inMap regression) = expected)
+
+def recoveryCases : List RecoveryCase :=
+  [ .pace none 0 (false, some 0)
+  , .pace (some 0) 14999 (false, some 0)
+  , .pace (some 0) 15000 (true, some 15000)
+  , .pace (some 0) 15001 (true, some 15001)
+  , .pace (some 0) 30000 (true, some 30000)
+  , .pace (some 15000) 15001 (false, some 15000)
+  , .pace (some 15000) 30000 (true, some 30000)
+  , .eligible .stored 0 59999 false
+  , .eligible .stored 0 60000 true
+  , .eligible .validating 0 60000 false
+  , .eligible .retry 0 60000 false
+  , .classify true true "regression"
+  , .classify true false "pass"
+  , .classify false true "unresolved"
+  , .classify false false "unresolved"
+  ]
+
+def recoveryCaseCount : Nat := 15
+
+theorem recoveryCases_decide : recoveryCases.all recoveryHolds = true := by decide
+
+theorem recoveryCases_length : recoveryCases.length = recoveryCaseCount := by decide
+
+def recoveryStageName : Rchain.Disposition.Recovery.Stage → String
+  | .stored => "stored"
+  | .validating => "validating"
+  | .retry => "retry"
+
+def recoveryLine : RecoveryCase → String
+  | .pace first now expected =>
+      String.intercalate "\t"
+        ["recovery", "pace",
+          match first with | none => "-" | some n => toString n,
+          toString now,
+          if expected.1 then "true" else "false",
+          match expected.2 with | none => "-" | some n => toString n]
+  | .eligible stage since now expected =>
+      String.intercalate "\t"
+        ["recovery", "eligible", recoveryStageName stage,
+          toString since, toString now, if expected then "true" else "false"]
+  | .classify inMap regression expected =>
+      String.intercalate "\t"
+        ["recovery", "classify", if inMap then "true" else "false",
+          if regression then "true" else "false", expected]
+
+
+/-! ## Law 87 — the decimal value algebra -/
+
+open Rchain.Decimal in
+inductive DecimalOp where
+  | mk | parts | scaled | cmp | add | sub | mul | div
+  deriving DecidableEq, Repr
+
+open Rchain.Decimal in
+inductive DecimalOutcome where
+  | value (d : Decimal)
+  | scaled (n : Int)
+  | cmp (o : Ordering)
+  | error (e : DecimalError)
+  deriving DecidableEq, Repr
+
+structure DecimalCase where
+  name : String
+  op : DecimalOp
+  a : Decimal
+  b : Option Decimal
+  expected : DecimalOutcome
+  deriving DecidableEq, Repr
+
+open Rchain.Decimal in
+def decimalRun (c : DecimalCase) : DecimalOutcome :=
+  let b := c.b.getD ⟨0, 0⟩
+  match c.op with
+  | .mk =>
+      match Decimal.new c.a.coefficient c.a.scale with
+      | .ok d => .value d
+      | .error e => .error e
+  | .parts =>
+      match Decimal.fromParts c.a.coefficient c.a.scale with
+      | .ok d => .value d
+      | .error e => .error e
+  | .scaled => .scaled (Decimal.scaledValue c.a)
+  | .cmp => .cmp (Decimal.cmpNumeric c.a b)
+  | .add => .value (Decimal.add c.a b)
+  | .sub => .value (Decimal.sub c.a b)
+  | .mul =>
+      match Decimal.mul c.a b with
+      | .ok d => .value d
+      | .error e => .error e
+  | .div =>
+      match Decimal.div c.a b with
+      | .ok d => .value d
+      | .error e => .error e
+
+def decimalHolds (c : DecimalCase) : Bool := decide (decimalRun c = c.expected)
+
+def dec (c : Int) (s : Nat) : Decimal := ⟨c, s⟩
+
+open Rchain.Decimal in
+def decOk (c : Int) (s : Nat) : DecimalOutcome := .value (dec c s)
+
+open Rchain.Decimal in
+def decScaled (n : Int) : DecimalOutcome := .scaled n
+
+def decCmp (o : Ordering) : DecimalOutcome := .cmp o
+
+open Rchain.Decimal in
+def decErr (e : DecimalError) : DecimalOutcome := .error e
+
+def decimalCases : List DecimalCase :=
+  [ -- new: canonicalisation, zero, the bounds and the two constructor orderings
+    { name := "new_negative_strip", op := .mk, a := dec (-110) 2, b := none,
+      expected := decOk (-11) 1 },
+    { name := "new_strip", op := .mk, a := dec 110 2, b := none, expected := decOk 11 1 },
+    { name := "new_zero_scale", op := .mk, a := dec 0 5, b := none, expected := decOk 0 0 },
+    { name := "new_zero_above_bound", op := .mk, a := dec 0 39, b := none,
+      expected := decOk 0 0 },
+    { name := "new_scale_38", op := .mk, a := dec 1 38, b := none, expected := decOk 1 38 },
+    { name := "new_scale_39", op := .mk, a := dec 1 39, b := none,
+      expected := decErr (.scaleOutOfRange 39) },
+    { name := "new_huge_strip", op := .mk, a := dec ((10 : Int) ^ 39) 39, b := none,
+      expected := decOk 1 0 },
+    -- parts: the strict constructor and its two named refusals
+    { name := "parts_negative", op := .parts, a := dec (-11) 1, b := none,
+      expected := decOk (-11) 1 },
+    { name := "parts_zero", op := .parts, a := dec 0 0, b := none, expected := decOk 0 0 },
+    { name := "parts_zero_with_scale", op := .parts, a := dec 0 3, b := none,
+      expected := decErr (.zeroWithScale 3) },
+    { name := "parts_trailing_zero", op := .parts, a := dec 110 2, b := none,
+      expected := decErr (.trailingZero 2) },
+    { name := "parts_scale_39", op := .parts, a := dec 1 39, b := none,
+      expected := decErr (.scaleOutOfRange 39) },
+    -- scaled: the payload is the value in units of 10^-38
+    { name := "scaled_one", op := .scaled, a := dec 1 0, b := none,
+      expected := decScaled ((10 : Int) ^ 38) },
+    { name := "scaled_fifteen", op := .scaled, a := dec 15 1, b := none,
+      expected := decScaled (15 * (10 : Int) ^ 37) },
+    { name := "scaled_zero", op := .scaled, a := dec 0 0, b := none, expected := decScaled 0 },
+    { name := "scaled_negative", op := .scaled, a := dec (-11) 1, b := none,
+      expected := decScaled (-11 * (10 : Int) ^ 37) },
+    -- cmp: cross-scale, signs and the 38 boundary
+    { name := "cmp_lt_cross", op := .cmp, a := dec 15 1, b := some (dec 2 0),
+      expected := decCmp .lt },
+    { name := "cmp_gt_cross", op := .cmp, a := dec 2 0, b := some (dec 15 1),
+      expected := decCmp .gt },
+    { name := "cmp_eq", op := .cmp, a := dec 5 1, b := some (dec 5 1), expected := decCmp .eq },
+    { name := "cmp_negative", op := .cmp, a := dec (-15) 1, b := some (dec (-2) 0),
+      expected := decCmp .gt },
+    { name := "cmp_boundary", op := .cmp, a := dec 1 38, b := some (dec 2 38),
+      expected := decCmp .lt },
+    { name := "cmp_zero", op := .cmp, a := dec 0 0, b := some (dec 1 38),
+      expected := decCmp .lt },
+    -- add: alignment, carry/strip, cancellation and the 38 boundary
+    { name := "add_cross", op := .add, a := dec 15 1, b := some (dec 2 0),
+      expected := decOk 35 1 },
+    { name := "add_boundary_strip", op := .add, a := dec 9 38, b := some (dec 1 38),
+      expected := decOk 1 37 },
+    { name := "add_cancel", op := .add, a := dec 1 0, b := some (dec (-1) 0),
+      expected := decOk 0 0 },
+    { name := "add_negative", op := .add, a := dec (-15) 1, b := some (dec (-2) 0),
+      expected := decOk (-35) 1 },
+    { name := "add_carry", op := .add, a := dec 5 1, b := some (dec 5 1),
+      expected := decOk 1 0 },
+    -- sub
+    { name := "sub_cross", op := .sub, a := dec 2 0, b := some (dec 15 1), expected := decOk 5 1 },
+    { name := "sub_boundary", op := .sub, a := dec 9 38, b := some (dec 1 38),
+      expected := decOk 8 38 },
+    { name := "sub_negative", op := .sub, a := dec 0 0, b := some (dec 1 38),
+      expected := decOk (-1) 38 },
+    -- mul: exact products, the scale-2 strip and the scale-40 boundary
+    { name := "mul_cross", op := .mul, a := dec 15 1, b := some (dec 2 0),
+      expected := decOk 3 0 },
+    { name := "mul_square", op := .mul, a := dec 15 1, b := some (dec 15 1),
+      expected := decOk 225 2 },
+    { name := "mul_strip", op := .mul, a := dec 5 1, b := some (dec 2 1),
+      expected := decOk 1 1 },
+    { name := "mul_scale_40_error", op := .mul, a := dec 1 20, b := some (dec 1 20),
+      expected := decErr (.scaleOutOfRange 40) },
+    { name := "mul_scale_40_strip", op := .mul, a := dec 25 20, b := some (dec 4 20),
+      expected := decOk 1 38 },
+    { name := "mul_zero", op := .mul, a := dec 0 0, b := some (dec 1 38),
+      expected := decOk 0 0 },
+    -- div: the exact-or-error criterion, including 2^38 and 2^39
+    { name := "div_half", op := .div, a := dec 1 0, b := some (dec 2 0), expected := decOk 5 1 },
+    { name := "div_third_inexact", op := .div, a := dec 1 0, b := some (dec 3 0),
+      expected := decErr .inexactDivision },
+    { name := "div_two_pow_38", op := .div, a := dec 1 0,
+      b := some (dec 274877906944 0),
+      expected := decOk 363797880709171295166015625 38 },
+    { name := "div_two_pow_39_inexact", op := .div, a := dec 1 0,
+      b := some (dec 549755813888 0), expected := decErr .inexactDivision },
+    { name := "div_zero", op := .div, a := dec 1 0, b := some (dec 0 0),
+      expected := decErr .divisionByZero },
+    { name := "div_negative", op := .div, a := dec (-1) 0, b := some (dec 2 0),
+      expected := decOk (-5) 1 } ]
+
+def decimalCaseCount : Nat := 42
+
+theorem decimalCases_decide : decimalCases.all decimalHolds = true := by decide
+
+theorem decimalCases_length : decimalCases.length = decimalCaseCount := by decide
+
+theorem decimalCases_ops :
+    (decimalCases.map (fun c => c.op)).eraseDups.length = 8 := by decide
+
+theorem decimalCases_verdicts :
+    (decimalCases.filterMap (fun c =>
+      match c.expected with
+      | .cmp o => some o
+      | _ => none)).eraseDups.length = 3 := by decide
+
+def decimalOpName : DecimalOp → String
+  | .mk => "new"
+  | .parts => "parts"
+  | .scaled => "scaled"
+  | .cmp => "cmp"
+  | .add => "add"
+  | .sub => "sub"
+  | .mul => "mul"
+  | .div => "div"
+
+def decimalRender (d : Decimal) : String :=
+  toString d.coefficient ++ ":" ++ toString d.scale
+
+open Rchain.Decimal in
+def decimalErrorName : DecimalError → String
+  | .scaleOutOfRange s => "scale_out_of_range:" ++ toString s
+  | .zeroWithScale s => "zero_with_scale:" ++ toString s
+  | .trailingZero s => "trailing_zero:" ++ toString s
+  | .divisionByZero => "division_by_zero"
+  | .inexactDivision => "inexact_division"
+
+def decimalOutcomeKind : DecimalOutcome → String
+  | .value _ => "ok"
+  | .scaled _ => "scaled"
+  | .cmp _ => "cmp"
+  | .error _ => "error"
+
+def decimalOutcomePayload : DecimalOutcome → String
+  | .value d => decimalRender d
+  | .scaled n => toString n
+  | .cmp .lt => "lt"
+  | .cmp .eq => "eq"
+  | .cmp .gt => "gt"
+  | .error e => decimalErrorName e
+
+def decimalLine (c : DecimalCase) : String :=
+  String.intercalate "\t"
+    ["decimal", c.name, decimalOpName c.op, decimalRender c.a,
+     match c.b with | some b => decimalRender b | none => "-",
+     decimalOutcomeKind c.expected, decimalOutcomePayload c.expected]
+
+end Corpus
+end Rchain
+
 /-- `rchain-corpus --layer {flags|match|silence|store|protocol} [--out FILE]` — print the corpus
 (stdout by default). -/
 def main (args : List String) : IO UInt32 := do
@@ -1779,7 +2205,8 @@ def main (args : List String) : IO UInt32 := do
       || a == "c21" || a == "protocol" || a == "json" || a == "envelope"
       || a == "syrup"
       || a == "lex" || a == "sort" || a == "parse" || a == "body" || a == "closed"
-      || a == "stake" || a == "block" || a == "liveness")).getD "flags"
+      || a == "stake" || a == "block" || a == "liveness" || a == "admission"
+      || a == "decimal" || a == "hostlist" || a == "recovery")).getD "flags"
   let (lines, count) :=
     if want == "c21" then (Corpus.c21Cases.map Corpus.c21Line, Corpus.c21CaseCount)
     else if want == "match" then (Corpus.matchCases.map Corpus.matchLine, Corpus.matchCaseCount)
@@ -1811,6 +2238,14 @@ def main (args : List String) : IO UInt32 := do
       (Corpus.blockCases.map Corpus.blockLine, Corpus.blockCaseCount)
     else if want == "liveness" then
       (Corpus.livenessCases.map Corpus.livenessLine, Corpus.livenessCaseCount)
+    else if want == "admission" then
+      (Corpus.admissionCases.map Corpus.admissionLine, Corpus.admissionCaseCount)
+    else if want == "decimal" then
+      (Corpus.decimalCases.map Corpus.decimalLine, Corpus.decimalCaseCount)
+    else if want == "hostlist" then
+      (Corpus.hostListCases.map Corpus.hostListLine, Corpus.hostListCaseCount)
+    else if want == "recovery" then
+      (Corpus.recoveryCases.map Corpus.recoveryLine, Corpus.recoveryCaseCount)
     else (Corpus.flagCases.map Corpus.flagLine, Corpus.flagCaseCount)
   if lines.length != count then
     IO.eprintln s!"rchain-corpus: {want}: the case list and the declared count disagree"

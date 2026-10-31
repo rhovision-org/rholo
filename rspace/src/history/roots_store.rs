@@ -70,6 +70,31 @@ impl RootsStore {
         Ok(self.get(&key.to_byte_array()).await?.is_some())
     }
 
+    /// Record `key` as a known root **without** moving the current one (law 80, B40).
+    ///
+    /// A candidate state's post-state is known as soon as a checkpoint has folded it; it is not the
+    /// node's current root until the block that carries it is accepted. This is the checkpoint half
+    /// of the split; [`Self::publish_current_root`] is the acceptance half, and
+    /// [`Self::record_root`] stays the atomic pair for genesis and for the lazy empty root.
+    pub async fn record_known_root(&self, key: Blake2b256Hash) -> Result<(), String> {
+        self.put(key.to_byte_array().to_vec(), ROOT_TAG.to_vec())
+            .await
+    }
+
+    /// Move `CURRENT_ROOT` to `key` **if the store already knows it** (law 80, B40).
+    ///
+    /// Returns whether the pointer moved. An unknown root is refused rather than written: a publish
+    /// may only name a state a checkpoint recorded, and the two writes are separate transactions
+    /// here because they belong to different events — the checkpoint and the block's acceptance.
+    pub async fn publish_current_root(&self, key: Blake2b256Hash) -> Result<bool, String> {
+        let bytes = key.to_byte_array().to_vec();
+        if !self.is_known_root(key).await? {
+            return Ok(false);
+        }
+        self.put(CURRENT_ROOT.to_vec(), bytes).await?;
+        Ok(true)
+    }
+
     /// Record `key` as a known root and set it as current (port of `recordRoot`).
     ///
     /// **One call, not two** (the programme's L2). The two writes are one fact — "this root exists, and
@@ -194,5 +219,43 @@ mod tests {
             Some(root),
             "and becomes current again"
         );
+    }
+
+    /// **Recording is not publishing** (law 80, B40, HAZOP F-U17-10). A checkpoint records a
+    /// candidate post-state as known; the acceptance step is what moves `CURRENT_ROOT`, and it moves
+    /// only to a root the store already knows.
+    #[tokio::test]
+    async fn a_deferred_commit_records_the_root_without_moving_current() {
+        let roots = store();
+        let accepted = Blake2b256Hash::from_bytes([0x11; 32]);
+        let candidate = Blake2b256Hash::from_bytes([0x22; 32]);
+        roots
+            .record_root(accepted)
+            .await
+            .expect("the accepted root");
+
+        roots
+            .record_known_root(candidate)
+            .await
+            .expect("the candidate root");
+        assert_eq!(
+            roots.current_root().await.expect("read"),
+            Some(accepted),
+            "a known root is not current until it is published"
+        );
+
+        assert!(roots
+            .publish_current_root(candidate)
+            .await
+            .expect("publish"));
+        assert_eq!(roots.current_root().await.expect("read"), Some(candidate));
+
+        // An unknown root is refused rather than written: a publish may only name a state a
+        // checkpoint recorded.
+        assert!(!roots
+            .publish_current_root(Blake2b256Hash::from_bytes([0xAB; 32]))
+            .await
+            .expect("refused"));
+        assert_eq!(roots.current_root().await.expect("read"), Some(candidate));
     }
 }

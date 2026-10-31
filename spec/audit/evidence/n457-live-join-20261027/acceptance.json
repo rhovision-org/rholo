@@ -1,0 +1,56 @@
+{
+  "baseline": {
+    "genesis_hash": "c596bef4bb678b3ac0cdb931b5b6968653209ca40bc35b6fec0050254d479b26",
+    "last_finalized_hash": "8d973fd877d12663c2638121db48c08880bef579eb8fdf67bcee09d7dddd52c0",
+    "last_finalized_height": 214,
+    "live_binary_version": "rholo node 0.1.0 (a5259969a7c5673ccdfc5dad97981d0a3607fcf0)",
+    "node_count": 4,
+    "same_finalized_hash": true,
+    "same_genesis": true,
+    "same_height": true,
+    "tip": 218
+  },
+  "captured_utc": "2026-10-27",
+  "decision": "PARTIAL: seeded replay and mismatch rejection pass; fresh live join not yet accepted",
+  "fresh_join": {
+    "blocks_received_log_entries": 221,
+    "entered_running": false,
+    "limit_seconds": 360,
+    "log_sha256": "10c76dbca7bc219fff419e5cfa73c182511979cfa63c8920b5d3d0f045437a78",
+    "max_block_height_received": 214,
+    "min_block_height_received": 139,
+    "requester_30s_idle_warnings": 10,
+    "restored": false,
+    "status": "INCOMPLETE"
+  },
+  "live_validator_state_unchanged": true,
+  "network": "testnet",
+  "scope": "read-only API baseline and temporary observer, no validator service replacement",
+  "seeded_copy": {
+    "restart": {
+      "entered_running": true,
+      "final_hash_match": true,
+      "log_sha256": "02269cc9c7554e69157cad9479517476d9de266c2e77b56db3ea2f64c5dcc743",
+      "peers_at_check": 0,
+      "status": "PASS",
+      "tip": 218
+    },
+    "scope": "key-stripped copy of existing live node DAG, not a fresh network join",
+    "startup": {
+      "entered_running": true,
+      "final_hash_match": true,
+      "log_sha256": "24a4690d44cec9286419676d36e0d972d5bb0a172d371dbfff156db9e7857b75",
+      "peers_at_check": 0,
+      "status": "PASS",
+      "tip": 218
+    },
+    "wrong_genesis_pin": {
+      "entered_running": false,
+      "explicit_mismatch_logged": true,
+      "log_sha256": "2510ecd07552cf69eca6e6278392f75271b93a267a777802d0e1b57d189b00fe",
+      "status": "PASS"
+    }
+  },
+  "source_binary_sha256": "b4b2c8c3b7ae12ab16fae4cfd31d9918e687f6c41f0c28befc4f05c9721b8fd2",
+  "source_commit": "3607cf9f7832054376ac33a4c1c56fd0b701e89d"
+}

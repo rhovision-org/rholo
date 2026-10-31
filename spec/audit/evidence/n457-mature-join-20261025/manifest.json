@@ -1,0 +1,16 @@
+{
+  "boundary": "finite local devnet witness of the #457 LFS restore; not a live-testnet join and not a certification",
+  "source_sha": "cdb00670c9922f943a5b485644627c5efe24e4b9",
+  "image": "rnode:local sha256:39b9b3d085d205a535849c76d03c2296cc24e422d0ee06befaceaacad52c542c",
+  "arm": "tools/n457-mature-join-arm.py",
+  "files": {
+    "mature-join.json": "9e947e6719e3bef4889c532403eefc2d88599470f9e9fa3a6da87cee6870e5e6",
+    "README.md": "bc611ac454ac1b9831a8515a4c1d95277ba993943388c86379e1a4fa3af390c9"
+  },
+  "non_claims": [
+    "one local four-validator devnet, one reset: a finite witness",
+    "the restored approved fringe can lag the bootstrap's live finality by a few blocks",
+    "convergence to the moving tip is not asserted (windowed catch-up owns it)",
+    "the multi-member fringe state hash remains C339"
+  ]
+}

@@ -61,6 +61,13 @@ pub struct ProofOfStake {
     /// straight into `PosParams`. `0` is no schedule at all, which is the rule for a chain with no
     /// allocation — see [`rchain_rholang::native_state::PosParams::dev_tax_vesting_blocks`].
     pub dev_tax_vesting_blocks: NonNegI64,
+    /// Liveness enforcement's five parameters (RCHIP #55, Law 89), carried straight into
+    /// [`rchain_rholang::native_state::PosParams`]. All zero is the pre-change rule (off).
+    pub liveness_absence_threshold: i64,
+    pub liveness_jail_after_boundaries: i64,
+    pub liveness_jail_epochs: i64,
+    pub liveness_vote_window: i64,
+    pub liveness_slash_severity: i64,
     pub pos_multi_sig_public_keys: Vec<String>,
     pub pos_multi_sig_quorum: i32,
     pub pos_vault_pub_key: String,

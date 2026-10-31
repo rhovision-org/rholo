@@ -69,22 +69,28 @@ pub fn build_pos_genesis(
             trusted.insert(validator);
         }
     }
+    let params = PosParams {
+        minimum_bond: proof_of_stake.minimum_bond,
+        maximum_bond: proof_of_stake.maximum_bond,
+        epoch_length: i64::from(proof_of_stake.epoch_length),
+        quarantine_length: i64::from(proof_of_stake.quarantine_length),
+        number_of_active_validators: i64::from(proof_of_stake.number_of_active_validators),
+        executor_share: proof_of_stake.executor_share,
+        absence_slack: proof_of_stake.absence_slack,
+        participation_grace: proof_of_stake.participation_grace,
+        min_phlo_price: proof_of_stake.min_phlo_price,
+        max_number_of_parents: proof_of_stake.max_number_of_parents,
+        dev_tax_vesting_blocks: proof_of_stake.dev_tax_vesting_blocks,
+        liveness_absence_threshold: proof_of_stake.liveness_absence_threshold,
+        liveness_jail_after_boundaries: proof_of_stake.liveness_jail_after_boundaries,
+        liveness_jail_epochs: proof_of_stake.liveness_jail_epochs,
+        liveness_vote_window: proof_of_stake.liveness_vote_window,
+        liveness_slash_severity: proof_of_stake.liveness_slash_severity,
+    };
     PosGenesis {
         bonds,
         trusted,
-        params: PosParams {
-            minimum_bond: proof_of_stake.minimum_bond,
-            maximum_bond: proof_of_stake.maximum_bond,
-            epoch_length: i64::from(proof_of_stake.epoch_length),
-            quarantine_length: i64::from(proof_of_stake.quarantine_length),
-            number_of_active_validators: i64::from(proof_of_stake.number_of_active_validators),
-            executor_share: proof_of_stake.executor_share,
-            absence_slack: proof_of_stake.absence_slack,
-            participation_grace: proof_of_stake.participation_grace,
-            min_phlo_price: proof_of_stake.min_phlo_price,
-            max_number_of_parents: proof_of_stake.max_number_of_parents,
-            dev_tax_vesting_blocks: proof_of_stake.dev_tax_vesting_blocks,
-        },
+        params,
         dev_vesting,
     }
 }
@@ -190,7 +196,7 @@ fn proof_of_stake_from_config(
         .into_iter()
         .map(|(pk, stake)| contracts::Validator { pk, stake })
         .collect();
-    Ok(ProofOfStake {
+    let pos = ProofOfStake {
         // Refused, not clamped (deferred item 1d): a genesis file that asks for a negative bond
         // bound is asking for a rule this protocol cannot state.
         minimum_bond: NonNegI64::try_from(gbd.bond_minimum)
@@ -234,7 +240,16 @@ fn proof_of_stake_from_config(
         pos_multi_sig_public_keys: gbd.pos_multi_sig_public_keys.clone(),
         pos_multi_sig_quorum: gbd.pos_multi_sig_quorum,
         pos_vault_pub_key: gbd.pos_vault_pub_key.clone(),
-    })
+
+        liveness_absence_threshold: gbd.liveness_absence_threshold,
+        liveness_jail_after_boundaries: i64::from(gbd.liveness_jail_after_boundaries),
+        liveness_jail_epochs: i64::from(gbd.liveness_jail_epochs),
+        liveness_vote_window: i64::from(gbd.liveness_vote_window),
+        liveness_slash_severity: i64::from(gbd.liveness_slash_severity),
+    };
+    // The liveness config is all-or-nothing; check it at the config boundary where a person wrote it.
+    build_pos_genesis(&pos, None).params.validate()?;
+    Ok(pos)
 }
 
 /// Build the unsigned genesis block from processed deploys (port of
@@ -678,6 +693,12 @@ mod tests {
             pos_multi_sig_quorum: 0,
             pos_vault_pub_key: String::new(),
             dev_tax_vesting_blocks: NonNegI64::zero(),
+
+            liveness_absence_threshold: 0,
+            liveness_jail_after_boundaries: 0,
+            liveness_jail_epochs: 0,
+            liveness_vote_window: 0,
+            liveness_slash_severity: 0,
         }
     }
 
@@ -810,6 +831,12 @@ mod tests {
                 system_contract_pub_key: String::new(),
                 dev_tax_address: String::new(),
                 dev_tax_vesting_blocks: 0,
+
+                liveness_absence_threshold: 0,
+                liveness_jail_after_boundaries: 0,
+                liveness_jail_epochs: 0,
+                liveness_vote_window: 0,
+                liveness_slash_severity: 0,
             },
             1,
         )

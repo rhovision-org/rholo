@@ -73,9 +73,13 @@ async fn wait_for_genesis(client: &reqwest::Client, base: &str) -> Value {
 fn the_read_routes_answer_and_their_refusals_are_defined() {
     common::test_runtime().block_on(async {
         let dir = temp_dir("api-surface");
-        let ports = free_ports(4);
+        let ports = free_ports(5);
         let http_port = ports[0];
         let mut conf = standalone_conf(&dir, &ports, Some(VALIDATOR_PRIV_HEX));
+        // Reserve the external gRPC listener too: its default 40401 can be
+        // selected as the ephemeral admin HTTP port, yielding an HTTP/2 reply
+        // to this test's HTTP/1 admin request.
+        conf.api_server.port_grpc_external = ports[4] as i32;
         // Dev mode admits the exploratory routes the way a devnet does; the read routes below do not
         // depend on it, but a node that refuses to boot would fail this test for the wrong reason.
         conf.dev_mode = true;

@@ -98,7 +98,12 @@ pub struct VersionInfo {
 /// **What any caller may read**: the chain-public half of the node's status (W-N3-01).
 ///
 /// It was one struct. The other half — divergence records, the safety halt, poison recoveries, the
-/// sync task's state — is operator state, and it was served to anyone who could reach the public port.
+/// sync task's state — is operator state.
+///
+/// **The peer-liveness exception:** `/health` may publish `finalityStalled`/`finalityStallEpisodes`
+/// (a separate `PeerLiveness` projection from `ShardHealth`), because a peer needs to know whether a
+/// validator is live. That does not widen this type: `to_public_status` still takes no finality or
+/// health argument, and the operator-only reason/reporter/halt remain off the public route., and it was served to anyone who could reach the public port.
 /// Split rather than gated, and split *structurally*: `to_public_status` takes no health, finality or
 /// reporter argument, so a field added to one of those cannot leak here by someone forgetting to edit
 /// a serializer — it does not compile. That is the difference between this and one struct with two
@@ -123,6 +128,31 @@ pub struct PublicStatus {
     /// Dev mode is on. Public: it is a configuration fact, and a client that must not be handed
     /// dev-only answers has to be able to see it.
     pub dev_mode: bool,
+    /// **This node holds a validator identity and can propose at all.** The field a wallet needs to
+    /// tell a validator from an observer: `manualPropose` is a mode flag and an unkeyed observer
+    /// reports it as `true` too (see `Capabilities::proposer`).
+    pub proposer: bool,
+    /// **The sampled resource state, advisory** (A1, Law 86): `normal` while the host facts are
+    /// readable, `unavailable` when they are not, and `throttled`/`critical` when the fallback state
+    /// machine latches them. It is a word, not a number, and it no longer gates admission: a throttled
+    /// node with a free pool accepts work.
+    pub degraded: String,
+    /// Whether the deploy pool has room under its count and term-byte bounds (Law 86a). A throttled
+    /// node with a free slot accepts; memory pressure bounds execution concurrency, not admission.
+    pub accepts_deploys: bool,
+    /// The pool's depth and bounds, so a client can see *why* `acceptsDeploys` is false.
+    pub pool: DeployPoolStatus,
+}
+
+/// **The deploy pool's public capacity answer** (Law 86a). Counts and bytes only; per-deployer keys
+/// and ages stay on the operator surface.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeployPoolStatus {
+    pub deploys: usize,
+    pub bytes: usize,
+    pub max_deploys: usize,
+    pub max_bytes: usize,
 }
 
 /// **The shard's autopropose halt**, beside the episode count the surface already carried — which
@@ -330,6 +360,57 @@ pub struct OperatorStatus {
     /// members (a stub), which law 43's catalog carries as a nullable-but-always-present key.
     #[serde(default)]
     pub shards: Option<std::collections::BTreeMap<String, ShardHealthDto>>,
+
+    /// **The sampled resource snapshot** (A1): the operator surface carries the numbers and their
+    /// provenance; the public surface carries only `degraded`/`acceptsDeploys`.
+    pub resources: ResourceStatusDto,
+}
+
+/// The numeric host-resource reading, on the operator surface only.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceStatusDto {
+    /// The **raw read**: `normal` | `unavailable`.
+    pub state: String,
+    /// The fallback state machine's word (unit C): `normal` | `throttled` | `critical` |
+    /// `unavailable`.
+    pub fallback_state: String,
+    /// Why the fallback state is what it is, in a stable phrase.
+    pub fallback_reason: String,
+    /// When the fallback state last changed (ms since the Unix epoch).
+    pub fallback_since_ms: u64,
+    pub mem_available_mb: u64,
+    pub mem_total_mb: u64,
+    /// `v1` | `v2` | `unavailable`.
+    pub cgroup_version: String,
+    #[serde(default)]
+    pub cgroup_limit_mb: Option<u64>,
+    #[serde(default)]
+    pub cgroup_current_mb: Option<u64>,
+    pub cgroup_oom_kills: u64,
+    /// `(quota, period)` from `cpu.max`/`cpu.cfs_quota_us`; `null` when unquoted or unknown.
+    #[serde(default)]
+    pub cpu_quota: Option<(u64, u64)>,
+    #[serde(default)]
+    pub data_dir_free_mb: Option<u64>,
+    pub rnode_processes: u64,
+    /// When the snapshot was taken (ms since the Unix epoch) and how old it is now.
+    pub sampled_at_ms: u64,
+    pub sample_age_ms: u64,
+    /// Which readers contributed, e.g. `meminfo+cgroup+disk`.
+    pub source: String,
+    /// **The execution permit budget** (Law 86d): how many concurrent executions the headroom pays
+    /// for, and the explore share. Limits only; the in-flight count is a live node quantity.
+    pub execution_permits: usize,
+    pub explore_permits: usize,
+    /// The node's own resident set (MiB), from `/proc/self/status`; 0 when unreadable.
+    pub rss_mb: u64,
+    /// The cgroup-aware headroom and the three thresholds an operator needs to read `degraded`
+    /// without inferring them (issue #477): critical, throttle and recovery floors.
+    pub headroom_mb: u64,
+    pub critical_floor_mb: u64,
+    pub throttle_floor_mb: u64,
+    pub recovery_floor_mb: u64,
 }
 
 /// The LFS sync task's state, carried under `sync` on the status response (law 69's other half).
@@ -368,6 +449,11 @@ pub struct NodeCapabilities {
     pub admin_http: bool,
     /// Dev mode is on (`--dev-mode`).
     pub dev_mode: bool,
+    /// **This node holds a validator identity and can propose at all** (`Capabilities::proposer`).
+    /// An observer reports `false`; `manualPropose` does not distinguish the two.
+    pub proposer: bool,
+    /// The `GET /api/v1/nodes` hostlist is mounted (`api-server.publish-node-list`).
+    pub node_list: bool,
     /// The `/api/v1/faucet` endpoint is available (dev mode + a deployer key + remaining budget).
     pub faucet: bool,
     /// Faucet transfer budget still available, in REV drops. Clients can hide a dry faucet.
@@ -472,6 +558,10 @@ mod tests {
             propose_on_deploy: true,
             manual_propose: false,
             dev_mode: true,
+            proposer: false,
+            degraded: "normal".to_string(),
+            accepts_deploys: true,
+            pool: DeployPoolStatus::default(),
         };
         assert_eq!(status.min_phlo_price, 3);
         assert_eq!(status.latest_block_number, 4);

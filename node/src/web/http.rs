@@ -18,13 +18,14 @@ use axum::routing::{get, post};
 use axum::{middleware, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::sync::watch;
+use tokio::sync::{watch, OwnedSemaphorePermit, Semaphore};
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
 
 use rchain_casper::api::block_api::BlockApi;
 use rchain_casper::api::block_report_api::BlockReportApi;
 use rchain_casper::gateway::GatewayTxn;
+use rchain_casper::interpreter_util::ShardHealth;
 use rchain_casper::protocol::comm_util::ConnectionsCell;
 use rchain_comm::discovery::NodeDiscovery;
 use rchain_comm::rp::rp_conf::RPConf;
@@ -33,6 +34,10 @@ use rchain_models::validator::Validator;
 use rchain_shared::base16;
 use rchain_shared::rate_limiter::KeyedRateLimiter;
 use rchain_shared::refined::{Port, ShardId};
+
+use std::collections::BTreeMap;
+
+use rchain_casper::engine::node_phase::{NodePhase, NodePhaseCell};
 
 use crate::api::admin_web_api::AdminWebApi;
 use crate::api::dto::{
@@ -43,7 +48,9 @@ use crate::api::grpc::{DEFAULT_API_RATE_LIMIT_PER_SEC, MAX_TRACKED_PEERS};
 use crate::api::web_api::WebApi;
 use crate::diagnostics::effects::MetricsRegistry;
 use crate::diagnostics::NewPrometheusReporter;
+use crate::resources::{CapacityBudget, ResourceGuard};
 use crate::runtime::shutdown::stop_requested;
+use crate::web::node_list::NodeListProvider;
 use crate::web::pos_read::PosReadApi;
 use crate::web::reporting::transform_result;
 use crate::web::status_info;
@@ -52,6 +59,10 @@ use crate::web::version_info;
 /// Rate limit for the devnet faucet endpoint. Much stricter than the deploy route because each
 /// request transfers real (dev) REV.
 const FAUCET_RATE_LIMIT_PER_SEC: u64 = 1;
+
+/// `GET /api/v1/nodes` reads a cached snapshot, so this is a courtesy bound rather than a cost
+/// bound: enough for a wallet's discovery sweep, not enough to be a scraping surface.
+const NODE_LIST_RATE_LIMIT_PER_SEC: u64 = 10;
 
 /// The most legs one cross-shard transaction may name (AUDIT C121).
 ///
@@ -85,6 +96,9 @@ const OCAPN_DIAL_RATE_LIMIT_PER_SEC: u64 = 2;
 /// script cannot hammer the node's own actuator, the same reason the sibling admin routes have one.
 const RESUME_AUTOPROPOSE_RATE_LIMIT_PER_SEC: u64 = 1;
 
+/// The resource-fallback resume is an operator action like the autopropose resume: one per second.
+const RESUME_RESOURCE_RATE_LIMIT_PER_SEC: u64 = 1;
+
 /// The subject an ingress bound uses when the request carries no connection information.
 ///
 /// That happens when a router is called directly rather than served — which is what the tests do. One
@@ -92,6 +106,52 @@ const RESUME_AUTOPROPOSE_RATE_LIMIT_PER_SEC: u64 = 1;
 /// exactly as it was before the bound was keyed. Deliberately **not** a bypass, because a bypass would
 /// be indistinguishable from the defect.
 const UNATTRIBUTED_PEER: &[u8] = b"unattributed-peer";
+
+/// An opt-in bound on executing HTTP requests, separate from the per-peer rate limit.
+/// One zero-delay admission attempt is made before JSON extraction; refusal is 429.
+/// No default number is guessed for a validator without resource measurements.
+const MAX_CONFIGURED_HTTP_INFLIGHT: usize = 1024;
+
+#[derive(Clone)]
+pub struct InFlightAdmission {
+    limit: usize,
+    semaphore: Arc<Semaphore>,
+}
+
+impl InFlightAdmission {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            semaphore: Arc::new(Semaphore::new(limit)),
+        }
+    }
+}
+
+fn parse_inflight_limit(
+    raw: Option<&str>,
+    name: &str,
+) -> Result<Option<InFlightAdmission>, String> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let limit = raw.parse::<usize>().map_err(|_| {
+        format!("{name} must be an integer from 1 to {MAX_CONFIGURED_HTTP_INFLIGHT}")
+    })?;
+    if !(1..=MAX_CONFIGURED_HTTP_INFLIGHT).contains(&limit) {
+        return Err(format!(
+            "{name} must be an integer from 1 to {MAX_CONFIGURED_HTTP_INFLIGHT}"
+        ));
+    }
+    Ok(Some(InFlightAdmission::new(limit)))
+}
+
+fn inflight_from_env(name: &str) -> Result<Option<InFlightAdmission>, String> {
+    match std::env::var(name) {
+        Ok(value) => parse_inflight_limit(Some(&value), name),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(_) => Err(format!("{name} is not valid Unicode")),
+    }
+}
 
 /// Comm state needed by `GET /status` (port of the `ConnectionsCell`/`NodeDiscovery`/`RPConfAsk`
 /// arguments of `StatusInfo.service`).
@@ -109,6 +169,35 @@ pub struct StatusProvider {
 pub struct ShardRegistry {
     pub primary: ShardId,
     pub members: Vec<(ShardId, Arc<dyn BlockApi>)>,
+    /// **One phase cell per member shard** (B47). `/health` reads every one; deploy admission reads
+    /// the shard the request names. A shard absent here is not claimed Running.
+    pub phases: BTreeMap<ShardId, NodePhaseCell>,
+}
+
+impl ShardRegistry {
+    /// The primary shard's phase, or `Starting` when the fixture has no cell for it.
+    pub fn primary_phase(&self) -> NodePhase {
+        self.phases
+            .get(&self.primary)
+            .map(NodePhaseCell::phase)
+            .unwrap_or(NodePhase::Starting)
+    }
+
+    /// The named shard's phase, if it is a member.
+    pub fn phase_of(&self, id: &ShardId) -> Option<NodePhase> {
+        self.phases.get(id).map(NodePhaseCell::phase)
+    }
+
+    /// **Node readiness is every shard's readiness.** A node with one serving and one syncing shard
+    /// is not ready for node-level work; an empty member list (the HTTP fixture) is governed by the
+    /// primary cell rather than vacuously true.
+    pub fn all_running(&self) -> bool {
+        matches!(self.primary_phase(), NodePhase::Running)
+            && self
+                .members
+                .iter()
+                .all(|(id, _)| self.phases.get(id).is_some_and(NodePhaseCell::is_running))
+    }
 }
 
 /// State shared by the public HTTP server (port of the `webApi` + `prometheusReporter` +
@@ -145,12 +234,29 @@ pub struct HttpState {
     /// policy question with no oracle behind it — the Scala's HTTP deploy routes are unlimited — so it
     /// is left where it was rather than answered by a guess.
     pub explore_rate_limiter: Arc<KeyedRateLimiter>,
+    /// Optional process-wide in-flight bounds. They do not use a memory
+    /// estimate or claim to prevent OOM; the operator must set each separately.
+    pub deploy_admission: Option<InFlightAdmission>,
+    pub explore_admission: Option<InFlightAdmission>,
+    /// **The execution permit budget** (Law 86d): headroom bounds concurrent execution, never
+    /// admission. Explore takes an explore permit; the proposer takes execution permits.
+    pub budget: Arc<CapacityBudget>,
+    /// The primary shard's finality cells. **The peer-liveness exception** (W-N3-01): `/health` may
+    /// publish whether this validator is stalled, because peers need it; the operator-only reason,
+    /// reporter, halt and divergence records remain off this route.
+    pub peer_liveness: ShardHealth,
     /// Rate limiter for the devnet faucet endpoint.
     pub faucet_rate_limiter: Arc<KeyedRateLimiter>,
     /// Whether the faucet routes are mounted at all — dev mode **and** a deployer key, which is the
     /// handler's own condition, carried here so the mount and the handler cannot disagree (AUDIT
     /// R34). When false the routes do not exist and the documented **404** is what a caller gets.
     pub faucet_enabled: bool,
+    /// **The deploy hostlist** (`GET /api/v1/nodes`), when `api-server.publish-node-list` is on.
+    /// `None` means the route is not mounted at all, so a disabled node answers 404 exactly like one
+    /// built before the route existed.
+    pub node_list: Option<Arc<NodeListProvider>>,
+    /// Rate limiter for the hostlist route. See [`NODE_LIST_RATE_LIMIT_PER_SEC`].
+    pub node_list_rate_limiter: Arc<KeyedRateLimiter>,
 }
 
 /// State shared by the admin HTTP server (port of the `adminWebApiRoutes` argument of
@@ -275,6 +381,22 @@ async fn api_deploys(State(state): State<HttpState>) -> Response {
 
 async fn api_capabilities(State(state): State<HttpState>) -> Response {
     json_result(state.web_api.capabilities().await)
+}
+
+/// `GET /api/v1/nodes` — the deploy hostlist (Law 90).
+///
+/// The route is only mounted when `api-server.publish-node-list` is on, so the `None` arm is what a
+/// caller sees on a node that does not publish it — and it is the same 404 an older node answers.
+/// The handler reads a snapshot the probe loop swapped whole; it holds no lock across I/O and takes
+/// no caller input, which is why the probe target set cannot be steered by a request.
+async fn api_node_list(State(state): State<HttpState>) -> Response {
+    match &state.node_list {
+        Some(provider) => {
+            let snapshot = provider.snapshot();
+            Json(snapshot.as_ref()).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// `GET /api/v1/shards` — the shards this node is a member of (a gateway is a member of several),
@@ -499,6 +621,15 @@ async fn api_txn_run(State(state): State<AdminState>, Json(req): Json<TxnRequest
                 .into_response()
         }
     };
+    // **The leg amount has a floor and no ceiling beyond the coordinator's own vault** (register
+    // C348, the C121 residual). `GatewayTxn::run` refuses a negative amount (`NonNegI64`), and what
+    // the escrow can move is bounded by what the coordinator holds — but this API does not cap a leg,
+    // so a caller who can reach the route can ask the coordinator to escrow its whole vault across
+    // shards. That is a decision rather than an oversight (2026-10-30): the route is behind three
+    // opt-ins — a multi-shard gateway with a signing key, `api-server.enable-txn-api`, and an admin
+    // listener published beyond loopback — and a sub-balance cap would be a second, node-local policy
+    // layered on the chain's. An operator who serves it to untrusted callers caps the coordinator's
+    // vault, not the request; `docs/src/node/operating.md` says so.
     let mut legs = Vec::with_capacity(req.legs.len());
     for leg in &req.legs {
         match rchain_shared::refined::ShardId::try_from(leg.shard_id.clone()) {
@@ -573,8 +704,117 @@ async fn api_txn_list(State(state): State<AdminState>) -> Response {
     }
 }
 
+/// **The deploy response: a bound is a 429, a malformed request is a 400** (Law 86a). Extracted so
+/// the classification is testable without a listener.
+fn deploy_response(result: Result<String, BlockApiException>) -> Response {
+    match result {
+        Ok(id) => (StatusCode::OK, Json(id)).into_response(),
+        Err(err) if rchain_casper::api::block_api::deploy_refusal_is_bounded(&err.0) => {
+            in_flight_refused(&err.0)
+        }
+        Err(err) => (StatusCode::BAD_REQUEST, Json(err.0)).into_response(),
+    }
+}
+
+/// **`GET /health` on the node's own API** (issue #477): a readiness-shaped body that is 200 while
+/// the router serves. It is **not** a host snapshot and **not** a pressure gate: `degraded` is
+/// advisory, `acceptsDeploys` is pool capacity, and low memory is not an unhealthy node.
+///
+/// **The peer-liveness exception:** it also carries `finalityStalled` and `finalityStallEpisodes` from
+/// the primary shard's `ShardHealth`, so a peer can see a validator that has stopped finalising. The
+/// operator-only reason, reporter, halt and divergence records are deliberately absent. The external
+/// nginx snapshot on the public testnet can proxy this route; a host-level `mem_available_mb` still
+/// belongs on the operator surface.
+async fn api_health(State(state): State<HttpState>) -> Response {
+    // **Phase is a readiness signal, not a resource verdict** (U20/B47). `acceptsDeploys` remains
+    // Law 86a pool capacity; `ready` is the answer to "can this node include work now?" and is the
+    // field a deploy client should gate on. Readiness is **every shard's**: a node with one
+    // serving and one syncing shard is not ready for node-level work.
+    let pipeline_faults = rchain_casper::blocks::block_processor::pipeline_faults();
+    let proposal_isolated = rchain_casper::blocks::proposer::proposer::proposal_isolated();
+    // **Confirmed, not sampled**: `orphan_bodies` is zero until the periodic audit has seen the
+    // same store/DAG gap for three consecutive samples, so an in-flight block does not flap this.
+    let orphan_bodies = rchain_casper::block_disposition::orphan_bodies();
+    let primary_phase = state.shards.primary_phase();
+    let all_running = state.shards.all_running();
+    let shard_phases: BTreeMap<String, &'static str> = state
+        .shards
+        .phases
+        .iter()
+        .map(|(id, cell)| (id.to_string(), cell.phase().label()))
+        .collect();
+    let blocked = !all_running || pipeline_faults > 0 || proposal_isolated || orphan_bodies > 0;
+    match state.web_api.status().await {
+        Ok(status) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": !blocked,
+                "ready": !blocked,
+                "phase": primary_phase.label(),
+                "nodePhase": primary_phase.label(),
+                "shardPhases": shard_phases,
+                "pipelineFaults": pipeline_faults,
+                "orphanBodies": orphan_bodies,
+                "orphanDetections": rchain_casper::block_disposition::orphan_detections(),
+                "lastPipelineFault": rchain_casper::blocks::block_processor::last_pipeline_fault(),
+                "proposalHalted": proposal_isolated,
+                "proposalHaltReason": rchain_casper::blocks::proposer::proposer::proposal_isolation_reason(),
+                "degraded": status.degraded,
+                "acceptsDeploys": status.accepts_deploys,
+                "height": status.latest_block_number,
+                "pool": status.pool,
+                "finalityStalled": state.peer_liveness.finality_stall_sustained(),
+                "finalityStallEpisodes": state.peer_liveness.stall_episodes(),
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"ok": false, "ready": false, "phase": "unavailable", "error": e.0})),
+        )
+            .into_response(),
+    }
+}
+
 async fn api_deploy(State(state): State<HttpState>, Json(req): Json<DeployRequest>) -> Response {
-    json_result(state.web_api.deploy(&req).await)
+    // **A shard outside its serving phases does not claim it can include work.** The pool may have
+    // room; the shard still cannot produce a block from it. Judge the shard the deploy names, so one
+    // syncing shard does not refuse every shard's work. `acceptsDeploys` keeps its Law 86a meaning.
+    let target = ShardId::try_from(req.data.shard_id.clone())
+        .ok()
+        .and_then(|id| state.shards.phase_of(&id));
+    if let Some(phase) = target {
+        if !phase.admits_work() {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({
+                    "error": format!(
+                        "shard {} is in phase {}; deploy admission is refused",
+                        req.data.shard_id,
+                        phase.label()
+                    ),
+                    "ready": false,
+                    "phase": phase.label(),
+                })),
+            )
+                .into_response();
+        }
+    }
+    if rchain_casper::blocks::block_processor::pipeline_faults() > 0
+        || rchain_casper::blocks::proposer::proposer::proposal_isolated()
+        || rchain_casper::block_disposition::orphan_bodies() > 0
+    {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "error": "node is blocked (pipeline fault, isolation or an orphan body); deploy admission is refused",
+                "ready": false,
+                "phase": "blocked",
+            })),
+        )
+            .into_response();
+    }
+    deploy_response(state.web_api.deploy(&req).await)
 }
 
 async fn api_faucet(State(state): State<HttpState>, Json(req): Json<FaucetRequest>) -> Response {
@@ -705,6 +945,160 @@ async fn api_v1_deploy_status(
     json_result(state.web_api.deploy_status(&deploy_signature).await)
 }
 
+/// A single node can report a finalized frontier, not the availability of network quorum.
+fn finality_observation(
+    status: Option<&crate::api::dto::PublicStatus>,
+    finalized: Option<&rchain_models::casper::protocol::deploy_service::BlockInfo>,
+    observed_at_unix_ms: u64,
+) -> serde_json::Value {
+    let tip = status.map(|s| s.latest_block_number);
+    let height = finalized.map(|b| b.block_info.block_number);
+    let hash = finalized.map(|b| b.block_info.block_hash.clone());
+    let lag = tip.zip(height).and_then(|(tip, height)| {
+        if tip >= height && height >= 0 {
+            Some(tip.saturating_sub(height))
+        } else {
+            None
+        }
+    });
+    json!({
+        "scope": "nodeLocal",
+        "availability": "unknown",
+        "observedAtUnixMs": observed_at_unix_ms,
+        "latestBlockNumber": tip,
+        "finalizedBlockNumber": height,
+        "finalizedBlockHash": hash,
+        "observedFinalityLag": lag,
+    })
+}
+
+fn observation_time_ms() -> u64 {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
+}
+
+/// GET /api/v1/finality-observation: informational node-local evidence, never quorum assurance.
+/// A missing or inconsistent reading is explicitly unknown, never interpreted as a healthy network.
+async fn api_finality_observation(State(state): State<HttpState>) -> Response {
+    let observed_at = observation_time_ms();
+    let (status, finalized) =
+        tokio::join!(state.web_api.status(), state.web_api.last_finalized_block(),);
+    let complete = status.is_ok() && finalized.is_ok();
+    let body = finality_observation(status.as_ref().ok(), finalized.as_ref().ok(), observed_at);
+    (
+        if complete {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(body),
+    )
+        .into_response()
+}
+
+/// Convert an execution observation and an independent block-finality verdict to settlement.
+/// An error while reading finality is *unknown*, never `false` or `true`.
+fn deploy_settlement_observation(
+    deploy_id: &str,
+    execution: &crate::api::dto::DeployExecStatus,
+    finalized: Option<bool>,
+    observed_at_unix_ms: u64,
+) -> serde_json::Value {
+    use crate::api::dto::DeployExecStatus;
+    match execution {
+        DeployExecStatus::NotProcessed { status } => json!({
+            "deployId": deploy_id,
+            "observedAtUnixMs": observed_at_unix_ms,
+            "stage": "notProcessed",
+            "execution": "unknown",
+            "finalized": null,
+            "settlementConfirmed": false,
+            "blockHash": null,
+            "blockNumber": null,
+            "nodeStatus": status,
+            "scope": "nodeLocal",
+        }),
+        DeployExecStatus::ProcessedWithSuccess { block, .. }
+        | DeployExecStatus::ProcessedWithError { block, .. } => {
+            let succeeded = matches!(execution, DeployExecStatus::ProcessedWithSuccess { .. });
+            let stage = match (finalized, succeeded) {
+                (Some(true), true) => "finalizedSuccess",
+                (Some(true), false) => "finalizedError",
+                (Some(false), _) => "includedUnfinalized",
+                (None, _) => "finalityUnknown",
+            };
+            json!({
+                "deployId": deploy_id,
+                "observedAtUnixMs": observed_at_unix_ms,
+                "stage": stage,
+                "execution": if succeeded { "succeeded" } else { "failed" },
+                "finalized": finalized,
+                "settlementConfirmed": succeeded && finalized == Some(true),
+                "blockHash": block.block_hash,
+                "blockNumber": block.block_number,
+                "nodeStatus": null,
+                "scope": "nodeLocal",
+            })
+        }
+    }
+}
+
+/// GET /api/v1/deploy-settlement/{signature}. A processed deploy is not a settled deploy.
+/// Read `is_finalized` against its *actual inclusion block*, never inferred from tip success.
+async fn api_deploy_settlement(
+    State(state): State<HttpState>,
+    Path(deploy_signature): Path<String>,
+) -> Response {
+    let execution = match state.web_api.deploy_status(&deploy_signature).await {
+        Ok(execution) => execution,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "deployId": deploy_signature,
+                    "stage": "unknown",
+                    "finalized": null,
+                    "settlementConfirmed": false,
+                    "error": "deploy status could not be read",
+                })),
+            )
+                .into_response();
+        }
+    };
+    let finalized = match &execution {
+        crate::api::dto::DeployExecStatus::NotProcessed { .. } => None,
+        crate::api::dto::DeployExecStatus::ProcessedWithSuccess { block, .. }
+        | crate::api::dto::DeployExecStatus::ProcessedWithError { block, .. } => {
+            match state.web_api.is_finalized(&block.block_hash).await {
+                Ok(is_finalized) => Some(is_finalized),
+                // Return the same fail-closed observation, with unknown finality.
+                // A failed RPC must never be interpreted as block settlement.
+                Err(_) => {
+                    return Json(deploy_settlement_observation(
+                        &deploy_signature,
+                        &execution,
+                        None,
+                        observation_time_ms(),
+                    ))
+                    .into_response();
+                }
+            }
+        }
+    };
+    Json(deploy_settlement_observation(
+        &deploy_signature,
+        &execution,
+        finalized,
+        observation_time_ms(),
+    ))
+    .into_response()
+}
+
 /// `GET /api/v1/openapi.json` — the OpenAPI 3.0 document describing the v1 API. Hand-written from the
 /// endpoint DTOs (the Scala derives the same schema from its endpoints4s algebra).
 /// The OpenAPI document this node serves at `GET /api/v1/openapi` — the schema a client generates its
@@ -714,6 +1108,7 @@ async fn api_v1_deploy_status(
 pub const OPENAPI_JSON: &str = r##"{
   "openapi": "3.0.0",
   "info": { "title": "RNode API", "version": "1.0" },
+  "servers": [ { "url": "/api/v1" } ],
   "paths": {
     "/status": {
       "get": {
@@ -723,6 +1118,39 @@ pub const OPENAPI_JSON: &str = r##"{
             "description": "Node version, address and peer/node counts",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiStatus" } } }
           }
+        }
+      }
+    },
+    "/finality-observation": {
+      "get": {
+        "summary": "Node-local finalized frontier and observed lag (network availability unknown)",
+        "description": "A sampled node-local frontier; not a claim about network quorum. A missing source returns HTTP 503 with null fields.",
+        "responses": {
+          "200": {"description": "Local frontier observation", "content": {"application/json": {"schema": {"type": "object"}}}},
+          "503": {"description": "Incomplete local observation (unknown)"}
+        }
+      }
+    },
+    "/deploy-settlement/{deploy_signature}": {
+      "get": {
+        "summary": "Execution and separately observed inclusion-block finality",
+        "description": "Only finalizedSuccess confirms settlement. ProcessedWithSuccess alone is speculative. On a failed finality read the response is finalityUnknown and settlementConfirmed=false.",
+        "parameters": [{"in": "path", "name": "deploy_signature", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Execution/finality distinction", "content": {"application/json": {"schema": {"type": "object"}}}},
+          "400": {"description": "Deploy status could not be read"}
+        }
+      }
+    },
+    "/admission": {
+      "get": {
+        "summary": "Configured HTTP in-flight admission bounds",
+        "description": "Deploy and explore concurrency budget, not a memory, finality or readiness signal. Unset budgets return configured=false.",
+        "responses": {
+          "200": { "description": "HTTP concurrency-only admission state", "content": { "application/json": { "schema": { "type": "object", "properties": {
+            "deploy": { "$ref": "#/components/schemas/HttpAdmissionBudget" },
+            "explore": { "$ref": "#/components/schemas/HttpAdmissionBudget" }
+          } } } } }
         }
       }
     },
@@ -762,6 +1190,16 @@ pub const OPENAPI_JSON: &str = r##"{
         }
       }
     },
+    "/nodes": {
+      "get": {
+        "summary": "Deploy-capable nodes a wallet can send deploys to",
+        "description": "The live peers whose derived `protocol + 3` HTTP port answered /api/v1/status with this network and shard and reported `proposer: true`. Advisory: peers report their own state, so a client re-verifies. Present only when `api-server.publish-node-list` is on; answers 404 otherwise.",
+        "responses": {
+          "200": { "description": "The hostlist", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NodeListResponse" } } } },
+          "404": { "description": "The node does not publish a hostlist" }
+        }
+      }
+    },
     "/txn": {
       "post": {
         "summary": "Open or resume a cross-shard transaction",
@@ -795,10 +1233,12 @@ pub const OPENAPI_JSON: &str = r##"{
     "/deploy": {
       "post": {
         "summary": "Deploy a signed rholang term",
+        "servers": [ { "url": "/api" }, { "url": "/api/v1" } ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeployRequest" } } } },
         "responses": {
           "200": { "description": "Deploy accepted", "content": { "application/json": { "schema": { "type": "string" } } } },
-          "400": { "description": "Invalid deploy" }
+          "400": { "description": "Invalid deploy" },
+          "429": { "$ref": "#/components/responses/HttpAdmissionExhausted" }
         }
       }
     },
@@ -815,20 +1255,24 @@ pub const OPENAPI_JSON: &str = r##"{
     "/explore-deploy": {
       "post": {
         "summary": "Run an exploratory deploy",
+        "servers": [ { "url": "/api" }, { "url": "/api/v1" } ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "string" } } } },
         "responses": {
           "200": { "description": "Result expression", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExploratoryDeployResponse" } } } },
-          "400": { "description": "Deploy failed" }
+          "400": { "description": "Deploy failed" },
+          "429": { "$ref": "#/components/responses/HttpAdmissionExhausted" }
         }
       }
     },
     "/explore-deploy-by-block-hash": {
       "post": {
         "summary": "Exploratory deploy at a block hash",
+        "servers": [ { "url": "/api" }, { "url": "/api/v1" } ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExploreDeployRequest" } } } },
         "responses": {
           "200": { "description": "Result expression", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExploratoryDeployResponse" } } } },
-          "400": { "description": "Deploy failed" }
+          "400": { "description": "Deploy failed" },
+          "429": { "$ref": "#/components/responses/HttpAdmissionExhausted" }
         }
       }
     },
@@ -890,6 +1334,21 @@ pub const OPENAPI_JSON: &str = r##"{
     }
   },
   "components": {
+    "responses": {
+      "HttpAdmissionExhausted": {
+        "description": "Work refused before the request body is decoded because the operator's HTTP in-flight concurrency budget is exhausted. A full deploy pool is a separate 429 from the deploy handler; memory pressure is never an HTTP refusal (Law 86).",
+        "headers": {
+          "Retry-After": {
+            "description": "Delay in seconds before retry; currently 1",
+            "schema": { "type": "integer", "minimum": 1, "example": 1 }
+          }
+        },
+        "content": { "application/json": {
+          "schema": { "type": "string" },
+          "example": "HTTP in-flight capacity exhausted"
+        } }
+      }
+    },
     "schemas": {
       "VersionInfo": {
         "type": "object",
@@ -950,6 +1409,30 @@ pub const OPENAPI_JSON: &str = r##"{
           }
         }
       },
+      "NodeListResponse": {
+        "type": "object",
+        "properties": {
+          "networkId": { "type": "string" },
+          "primaryShard": { "type": "string" },
+          "generatedAt": { "type": "integer", "format": "int64", "description": "When the probe cycle that produced this list completed, in unix milliseconds" },
+          "ownLatestBlockNumber": { "type": "integer", "format": "int64", "description": "The serving node's own height, to rank a peer's latestBlockNumber against" },
+          "nodes": { "type": "array", "items": { "$ref": "#/components/schemas/NodeListEntry" } }
+        }
+      },
+      "NodeListEntry": {
+        "type": "object",
+        "properties": {
+          "nodeId": { "type": "string", "description": "The peer's TLS identity (hex), not its validator key" },
+          "httpUrl": { "type": "string", "description": "The URL this node probed and that answered; the only client endpoint served" },
+          "networkId": { "type": "string" },
+          "shardId": { "type": "string" },
+          "nodeVersion": { "type": "string" },
+          "latestBlockNumber": { "type": "integer", "format": "int64", "description": "Peer-reported at probe time; advisory, not a membership condition" },
+          "proposer": { "type": "boolean", "description": "Peer-reported; always true for a served entry" },
+          "acceptsDeploys": { "type": "boolean", "description": "Peer-reported pool capacity at probe time; advisory, and a client must still handle a 429" },
+          "self": { "type": "boolean", "description": "The serving node itself" }
+        }
+      },
       "ApiStatus": {
         "type": "object",
         "description": "**The chain-public half of the node's status** (W-N3-01). The operator half — divergence records, the safety halt, the report counters, the sync task's state, the durable reset marker — is `OperatorStatus`, served on the admin listener at /api/v1/status/operator and never here.",
@@ -965,7 +1448,16 @@ pub const OPENAPI_JSON: &str = r##"{
           "autopropose": { "type": "boolean", "description": "Continuous block production" },
           "proposeOnDeploy": { "type": "boolean", "description": "Propose immediately after a deploy is accepted" },
           "manualPropose": { "type": "boolean", "description": "Blocks only by an explicit propose" },
-          "devMode": { "type": "boolean", "description": "Dev mode is on" }
+          "devMode": { "type": "boolean", "description": "Dev mode is on" },
+          "proposer": { "type": "boolean", "description": "This node holds a validator identity and can propose at all. Unlike manualPropose (a mode), an unkeyed observer reports false" },
+          "degraded": { "type": "string", "description": "The pressure fallback state: normal | throttled | critical | unavailable (a stale or unreadable sample reports unavailable). A word, not a number; the numbers are on the operator surface" },
+          "acceptsDeploys": { "type": "boolean", "description": "Whether the deploy pool has room under its count and term-byte bounds (Law 86a). Memory pressure bounds execution concurrency, not admission" },
+          "pool": { "type": "object", "properties": {
+            "deploys": { "type": "integer" },
+            "bytes": { "type": "integer" },
+            "maxDeploys": { "type": "integer" },
+            "maxBytes": { "type": "integer" }
+          } }
         }
       },
       "OperatorStatus": {
@@ -984,6 +1476,15 @@ pub const OPENAPI_JSON: &str = r##"{
           "proposeOnDeploy": { "type": "boolean", "description": "Propose immediately after a deploy is accepted" },
           "manualPropose": { "type": "boolean", "description": "Blocks only by an explicit propose" },
           "devMode": { "type": "boolean", "description": "Dev mode is on" },
+          "proposer": { "type": "boolean", "description": "This node holds a validator identity and can propose at all. Unlike manualPropose (a mode), an unkeyed observer reports false" },
+          "degraded": { "type": "string", "description": "The pressure fallback state: normal | throttled | critical | unavailable. A word, not a number; the numbers are on the operator surface" },
+          "acceptsDeploys": { "type": "boolean", "description": "Whether the deploy pool has room under its count and term-byte bounds (Law 86a). Memory pressure bounds execution concurrency, not admission" },
+          "pool": { "type": "object", "properties": {
+            "deploys": { "type": "integer" },
+            "bytes": { "type": "integer" },
+            "maxDeploys": { "type": "integer" },
+            "maxBytes": { "type": "integer" }
+          } },
           "adminHttp": { "type": "boolean", "description": "The admin HTTP surface is published" },
           "consecutiveSelfValidationFailures": { "type": "integer", "format": "int64", "description": "Self-validation failures the proposer has recorded in a row; cleared by a successful propose" },
           "autoproposeTimerHalted": { "type": "boolean", "description": "The autopropose timer has stopped. Two things restart it: the process (the halt is durable, re-seeded at boot), and POST /api/v1/autopropose/resume on the admin listener, which clears the record and wakes the parked timer in-process. Not the same as block production having stopped: the tap and POST /api/propose keep running" },
@@ -1008,7 +1509,30 @@ pub const OPENAPI_JSON: &str = r##"{
           "tasksExitedScope": { "type": "string", "description": "Always 'SinceProcessStart' — see tasksPanickedScope (W-N10-02)" },
           "undeliveredSends": { "type": "integer", "format": "int64", "description": "Sends a closed channel swallowed. Every production send goes through rchain_shared::chan, which keeps the decision and counts it; monotone and process-wide, so a message dropped into a closed channel is a number a probe can read rather than a silence" },
           "undeliveredSendsScope": { "type": "string", "description": "Always 'SinceProcessStart' — the count lives in a process-wide cell, and a restart correctly zeroes it (W-N10-02)" },
-          "shards": { "type": "object", "nullable": true, "description": "**Every member shard's health, keyed by shard id** (W-N10-04), and total over the node's members. The flat fields above are the *primary's* reading; a non-primary shard whose autopropose timer has halted is visible here and nowhere else. Null when the caller is not a node with members", "additionalProperties": { "$ref": "#/components/schemas/ShardHealthDto" } }
+          "shards": { "type": "object", "nullable": true, "description": "**Every member shard's health, keyed by shard id** (W-N10-04), and total over the node's members. The flat fields above are the *primary's* reading; a non-primary shard whose autopropose timer has halted is visible here and nowhere else. Null when the caller is not a node with members", "additionalProperties": { "$ref": "#/components/schemas/ShardHealthDto" } },
+          "resources": { "$ref": "#/components/schemas/ResourceStatus" }
+        }
+      },
+      "ResourceStatus": {
+        "type": "object",
+        "description": "The sampled host-resource snapshot (A1), on the operator surface only. A reading with a source and an age, not a certificate: state=normal means the node did not see pressure at the sample, not that it is healthy",
+        "properties": {
+          "state": { "type": "string", "description": "The raw read: normal | unavailable" },
+          "fallbackState": { "type": "string", "description": "The advisory pressure state machine: normal | throttled | critical | unavailable. It no longer gates deploy/explore admission (Law 86); critical also stops proposing and attesting" },
+          "fallbackReason": { "type": "string", "description": "Why the fallback state is what it is" },
+          "fallbackSinceMs": { "type": "integer", "format": "int64", "description": "When the fallback state last changed (ms since the Unix epoch)" },
+          "memAvailableMb": { "type": "integer", "format": "int64" },
+          "memTotalMb": { "type": "integer", "format": "int64" },
+          "cgroupVersion": { "type": "string", "description": "v1 | v2 | unavailable" },
+          "cgroupLimitMb": { "type": "integer", "format": "int64", "nullable": true },
+          "cgroupCurrentMb": { "type": "integer", "format": "int64", "nullable": true },
+          "cgroupOomKills": { "type": "integer", "format": "int64" },
+          "cpuQuota": { "type": "array", "nullable": true, "description": "(quota, period) from cpu.max/cpu.cfs_quota_us", "items": { "type": "integer", "format": "int64" } },
+          "dataDirFreeMb": { "type": "integer", "format": "int64", "nullable": true },
+          "rnodeProcesses": { "type": "integer", "format": "int64", "description": "Best-effort count of rnode processes in this PID namespace, including this one; advisory only" },
+          "sampledAtMs": { "type": "integer", "format": "int64" },
+          "sampleAgeMs": { "type": "integer", "format": "int64" },
+          "source": { "type": "string", "description": "Which readers contributed, e.g. meminfo+cgroup+disk" }
         }
       },
       "ShardHealthDto": {
@@ -1204,6 +1728,16 @@ pub const OPENAPI_JSON: &str = r##"{
           { "type": "object", "properties": { "status": { "type": "string" } } }
         ]
       },
+      "HttpAdmissionBudget": {
+        "type": "object",
+        "properties": {
+          "configured": { "type": "boolean" },
+          "limit": { "type": "integer", "minimum": 1 },
+          "inFlight": { "type": "integer", "minimum": 0 },
+          "available": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["configured"]
+      },
       "NodeCapabilities": {
         "type": "object",
         "properties": {
@@ -1212,6 +1746,8 @@ pub const OPENAPI_JSON: &str = r##"{
           "manualPropose": { "type": "boolean" },
           "adminHttp": { "type": "boolean" },
           "devMode": { "type": "boolean" },
+          "proposer": { "type": "boolean", "description": "This node holds a validator identity and can propose at all; an unkeyed observer reports false" },
+          "nodeList": { "type": "boolean", "description": "GET /api/v1/nodes is mounted (api-server.publish-node-list)" },
           "faucet": { "type": "boolean" },
         "faucetRemaining": { "type": "integer", "format": "int64" }
         }
@@ -1308,6 +1844,46 @@ async fn admin_resume_autopropose(State(state): State<AdminState>) -> Response {
     json_result(state.admin_web_api.resume_autopropose().await)
 }
 
+/// `POST /api/v1/resources/resume` — clear a latched resource fallback state (unit C, B37).
+///
+/// It takes a **fresh sample** and clears only when that sample is clear; a pressured node answers
+/// `409` with the measured state, so the actuator cannot override live pressure. It never touches the
+/// autopropose halt: that is an integrity decision, not a resource one.
+/// `POST /api/v1/proposer/resume` — clear the process-local proposal-isolation latch.
+///
+/// The next proposal still re-checks the height gap, so an operator who resumes a node that is
+/// still beyond the bound gets the latch set again. This is the explicit recovery action; there is
+/// no automatic clear.
+async fn admin_resume_proposal() -> Response {
+    rchain_casper::blocks::proposer::proposer::clear_proposal_isolation();
+    (
+        StatusCode::OK,
+        Json(json!({
+            "message": "proposal isolation cleared; the next proposal re-checks the finality bound",
+        })),
+    )
+        .into_response()
+}
+
+async fn admin_resume_resources(State(state): State<AdminState>) -> Response {
+    match state.admin_web_api.resume_resource_fallback().await {
+        Ok(word) if word == "normal" => (
+            StatusCode::OK,
+            Json(json!({ "state": word, "message": "resource fallback cleared" })),
+        )
+            .into_response(),
+        Ok(word) => (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "state": word,
+                "message": "the node is still under resource pressure; the resume did not override it"
+            })),
+        )
+            .into_response(),
+        Err(BlockApiException(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!(e))).into_response(),
+    }
+}
+
 /// **The ingress bound, keyed on the peer and applied before the body is decoded.**
 ///
 /// Two defects in one function. Its subject was the *node* — one process-wide bucket per route — so
@@ -1344,6 +1920,87 @@ async fn peer_rate_limit(
     next.run(request).await
 }
 
+/// The one refusal shape the concurrency bound answers with: a reason and a `Retry-After`, before
+/// any body work. **429, not 503**: the node is serving and the pool is the throttle; a full
+/// in-flight budget is a request to come back, not a statement that the service is unavailable
+/// (issue #477, Law 86).
+fn in_flight_refused(message: &str) -> Response {
+    let mut response = (StatusCode::TOO_MANY_REQUESTS, Json(message.to_string())).into_response();
+    response.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        axum::http::HeaderValue::from_static("1"),
+    );
+    response
+}
+
+/// **The concurrency bound on the deploy/explore path** (B35).
+///
+/// The permit is optional (the operator's configured in-flight budget) and lives through the whole
+/// handler future, including exploratory Rholang execution, so a busy route fails quickly without
+/// decoding a body or queuing unbounded work. Memory pressure is a **permit budget** now (Law 86);
+/// it no longer refuses here. Other routes (status, finality, admin) borrow no permit.
+async fn in_flight_admission(
+    State(budget): State<Option<InFlightAdmission>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let _permit: Option<OwnedSemaphorePermit> = match budget {
+        Some(budget) => match budget.semaphore.try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => return in_flight_refused("HTTP in-flight capacity exhausted"),
+        },
+        None => None,
+    };
+    next.run(request).await
+}
+
+/// **The exploratory read's budget** (Law 86d): a read runs a term and pays from the explore share.
+/// The fixed in-flight bound is the operator's optional extra; the memory-derived budget is the
+/// node's own. A refusal is 429 — the node is serving, and the caller may come back.
+async fn explore_in_flight(
+    State((fixed, capacity)): State<(Option<InFlightAdmission>, Arc<CapacityBudget>)>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let _permit = match capacity.explore.try_acquire() {
+        Some(permit) => permit,
+        None => return in_flight_refused("explore execution budget exhausted"),
+    };
+    let _fixed: Option<OwnedSemaphorePermit> = match fixed {
+        Some(fixed) => match fixed.semaphore.try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => return in_flight_refused("HTTP in-flight capacity exhausted"),
+        },
+        None => None,
+    };
+    next.run(request).await
+}
+
+fn admission_field(budget: &Option<InFlightAdmission>) -> serde_json::Value {
+    match budget {
+        Some(budget) => {
+            let available = budget.semaphore.available_permits();
+            json!({
+                "configured": true,
+                "limit": budget.limit,
+                "inFlight": budget.limit - available,
+                "available": available
+            })
+        }
+        None => json!({"configured": false}),
+    }
+}
+
+/// Describes only the HTTP concurrency bound, not memory pressure, validator
+/// health, transport responsiveness, finality progress or readiness.
+async fn api_admission_status(State(state): State<HttpState>) -> Response {
+    Json(json!({
+        "deploy": admission_field(&state.deploy_admission),
+        "explore": admission_field(&state.explore_admission),
+    }))
+    .into_response()
+}
+
 /// Build the public HTTP routes (port of `acquireHttpServer`'s route map: `/version`, `/metrics`,
 /// `/status`, the `/api` JSON routes, `/reporting` + `/api/trace`, the `/api/v1` routes, and the
 /// `/api/v1/openapi.json` OpenAPI document).
@@ -1357,6 +2014,10 @@ pub fn router(state: HttpState) -> Router {
     let deploy_routes = Router::new()
         .route("/api/deploy", post(api_deploy))
         .route("/api/v1/deploy", post(api_deploy))
+        .route_layer(middleware::from_fn_with_state(
+            state.deploy_admission.clone(),
+            in_flight_admission,
+        ))
         .route_layer(middleware::from_fn_with_state(
             (
                 state.deploy_rate_limiter.clone(),
@@ -1375,6 +2036,10 @@ pub fn router(state: HttpState) -> Router {
             "/api/v1/explore-deploy-by-block-hash",
             post(api_explore_deploy_by_block_hash),
         )
+        .route_layer(middleware::from_fn_with_state(
+            (state.explore_admission.clone(), state.budget.clone()),
+            explore_in_flight,
+        ))
         .route_layer(middleware::from_fn_with_state(
             (
                 state.explore_rate_limiter.clone(),
@@ -1402,6 +2067,8 @@ pub fn router(state: HttpState) -> Router {
         .route("/metrics", get(metrics))
         .route("/status", get(status))
         .route("/api/status", get(api_status))
+        .route("/api/v1/admission", get(api_admission_status))
+        .route("/health", get(api_health))
         .route("/api/capabilities", get(api_capabilities))
         .route("/api/shards", get(api_shards))
         .route("/api/deploys", get(api_deploys))
@@ -1420,6 +2087,14 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/deploy/{deploy_id}", get(api_find_deploy))
         .route("/api/is-finalized/{hash}", get(api_is_finalized))
         .route("/api/v1/status", get(api_status))
+        .route(
+            "/api/v1/finality-observation",
+            get(api_finality_observation),
+        )
+        .route(
+            "/api/v1/deploy-settlement/{deploy_signature}",
+            get(api_deploy_settlement),
+        )
         .route("/api/v1/capabilities", get(api_capabilities))
         .route("/api/v1/shards", get(api_shards))
         .route("/api/v1/pos", get(api_pos_status))
@@ -1467,6 +2142,23 @@ pub fn router(state: HttpState) -> Router {
                     (
                         state.faucet_rate_limiter.clone(),
                         "faucet rate limit exceeded",
+                    ),
+                    peer_rate_limit,
+                )),
+        );
+    }
+
+    // The deploy hostlist. Mounted only when the operator opted in: it publishes peer addresses,
+    // and a node that has not opted in must answer 404 rather than an empty list, so a client can
+    // tell "not published" from "no peers".
+    if state.node_list.is_some() {
+        routes = routes.merge(
+            Router::new()
+                .route("/api/v1/nodes", get(api_node_list))
+                .route_layer(middleware::from_fn_with_state(
+                    (
+                        state.node_list_rate_limiter.clone(),
+                        "node list rate limit exceeded",
                     ),
                     peer_rate_limit,
                 )),
@@ -1601,13 +2293,30 @@ pub fn admin_router(state: AdminState) -> Router {
     // should not be able to hammer it.
     let resume_routes = Router::new()
         .route("/api/v1/autopropose/resume", post(admin_resume_autopropose))
+        .route("/api/v1/proposer/resume", post(admin_resume_proposal))
         .route_layer(middleware::from_fn_with_state(
             (
                 state.resume_rate_limiter.clone(),
                 "autopropose resume rate limit exceeded",
             ),
             peer_rate_limit,
-        ));
+        ))
+        // The resource resume has its own bucket: an operator clearing the two actuators must not
+        // spend one's allowance on the other.
+        .merge(
+            Router::new()
+                .route("/api/v1/resources/resume", post(admin_resume_resources))
+                .route_layer(middleware::from_fn_with_state(
+                    (
+                        Arc::new(KeyedRateLimiter::new(
+                            RESUME_RESOURCE_RATE_LIMIT_PER_SEC,
+                            MAX_TRACKED_PEERS,
+                        )),
+                        "resource resume rate limit exceeded",
+                    ),
+                    peer_rate_limit,
+                )),
+        );
 
     Router::new()
         .route("/api/propose", post(admin_propose))
@@ -1646,11 +2355,17 @@ pub async fn acquire_http_server(
     shards: Arc<ShardRegistry>,
     status_provider: Option<StatusProvider>,
     pos: Arc<dyn PosReadApi>,
+    resources: Arc<ResourceGuard>,
+    budget: Arc<CapacityBudget>,
+    peer_liveness: ShardHealth,
     max_connection_idle: Duration,
     enable_reporting: bool,
     // Whether to mount the faucet routes (AUDIT R34): dev mode **and** a deployer key, resolved by
     // the caller because that is where both are known.
     faucet_enabled: bool,
+    // The deploy hostlist, when `api-server.publish-node-list` is on. Built by the caller, which is
+    // where the shard registry and the comm state are known.
+    node_list: Option<Arc<NodeListProvider>>,
     stop: watch::Receiver<bool>,
 ) -> Result<(), String> {
     let port = u16::from(port); // single discharge at the bind boundary
@@ -1660,6 +2375,48 @@ pub async fn acquire_http_server(
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| e.to_string())?;
+    // Read configuration once at startup. An invalid explicit limit stops the
+    // listener instead of silently disabling admission control.
+    let deploy_admission = inflight_from_env("RNODE_HTTP_MAX_INFLIGHT_DEPLOY")?;
+    let explore_admission = inflight_from_env("RNODE_HTTP_MAX_INFLIGHT_EXPLORE")?;
+    // **The resource and pool gauges** (issue #477): a five-second publisher over the same snapshot
+    // the watchdog writes and the live budget/pool counters. It stops with the listener.
+    {
+        let metrics_registry = metrics.clone();
+        let metrics_resources = resources.clone();
+        let metrics_budget = budget.clone();
+        let metrics_web_api = web_api.clone();
+        let mut metrics_stop = stop.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                tokio::select! {
+                    _ = metrics_stop.changed() => break,
+                    _ = tick.tick() => {
+                        let snapshot = metrics_resources.snapshot();
+                        let pool = metrics_web_api
+                            .status()
+                            .await
+                            .map(|s| s.pool)
+                            .unwrap_or_default();
+                        metrics_registry.set_resource_gauges(
+                            crate::resources::admission::effective_available_mb(&snapshot),
+                            crate::resources::fallback::critical_floor_mb(&snapshot),
+                            crate::resources::fallback::throttle_floor_mb(&snapshot),
+                            crate::resources::fallback::recovery_floor_mb(&snapshot),
+                            snapshot.rss_mb,
+                            metrics_budget.execution.limit(),
+                            metrics_budget.execution.in_flight(),
+                            metrics_budget.explore.limit(),
+                            metrics_budget.explore.in_flight(),
+                            pool.deploys,
+                            pool.bytes,
+                        );
+                    }
+                }
+            }
+        });
+    }
     let app = router(HttpState {
         reporter,
         metrics,
@@ -1677,16 +2434,30 @@ pub async fn acquire_http_server(
             DEFAULT_API_RATE_LIMIT_PER_SEC,
             MAX_TRACKED_PEERS,
         )),
+        deploy_admission,
+        explore_admission,
+        budget,
+        peer_liveness,
         faucet_rate_limiter: Arc::new(KeyedRateLimiter::new(
             FAUCET_RATE_LIMIT_PER_SEC,
             MAX_TRACKED_PEERS,
         )),
         faucet_enabled,
+        node_list: node_list.clone(),
+        node_list_rate_limiter: Arc::new(KeyedRateLimiter::new(
+            NODE_LIST_RATE_LIMIT_PER_SEC,
+            MAX_TRACKED_PEERS,
+        )),
     })
     .layer(TimeoutLayer::with_status_code(
         StatusCode::REQUEST_TIMEOUT,
         max_connection_idle,
     ));
+    // The hostlist's probe loop follows the same stop signal as the server, so a node stop does not
+    // leave a task probing peers after the listener has gone.
+    if let Some(provider) = &node_list {
+        provider.spawn(stop.clone());
+    }
     // Graceful shutdown (AUDIT C144): on the operator's word this stops accepting and lets the
     // connections already in flight finish, so a stop is not a truncation of somebody's request.
     //
@@ -1775,6 +2546,8 @@ mod tests {
         RhoDataResponse, VersionInfo,
     };
     use crate::diagnostics::scrape_data_builder::Configuration;
+    use crate::resources::{ResourceGuard, ResourceSnapshot, ResourceState};
+    use crate::web::node_list::NodeListConfig;
     use crate::web::transaction::TransactionResponse;
     use async_trait::async_trait;
     use axum::body::to_bytes;
@@ -1835,6 +2608,173 @@ mod tests {
         ))
     }
 
+    #[tokio::test]
+    async fn issue_487_http_finality_route_never_claims_network_quorum() {
+        use tower::ServiceExt;
+        let mut s = state();
+        s.web_api = Arc::new(MockWebApi {
+            status: {
+                let mut status = test_status();
+                status.latest_block_number = 1791;
+                status.accepts_deploys = true;
+                status
+            },
+            pooled_deploys: PooledDeploys {
+                deploys: Vec::new(),
+            },
+            deploy_result: None,
+            finalized_block: Some(BlockInfo {
+                block_info: rchain_models::casper::protocol::deploy_service::LightBlockInfo {
+                    block_number: 1756,
+                    ..issue_487_block()
+                },
+                deploys: Vec::new(),
+            }),
+            finalized_result: None,
+        });
+        let response = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v1/finality-observation")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["availability"], "unknown");
+        assert_eq!(json["observedFinalityLag"], 35);
+        assert_eq!(json["finalizedBlockNumber"], 1756);
+    }
+
+    #[tokio::test]
+    async fn issue_487_http_settlement_route_requires_independent_finality() {
+        use tower::ServiceExt;
+        for (finalized, expected_stage, confirmed) in [
+            (Some(false), "includedUnfinalized", false),
+            (Some(true), "finalizedSuccess", true),
+            (None, "finalityUnknown", false),
+        ] {
+            let mut s = state();
+            s.web_api = Arc::new(MockWebApi {
+                status: test_status(),
+                pooled_deploys: PooledDeploys {
+                    deploys: Vec::new(),
+                },
+                deploy_result: Some(DeployExecStatus::ProcessedWithSuccess {
+                    deploy_result: Vec::new(),
+                    block: issue_487_block(),
+                }),
+                finalized_block: None,
+                finalized_result: finalized,
+            });
+            let response = router(s)
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri("/api/v1/deploy-settlement/deadbeef")
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(json["stage"], expected_stage);
+            assert_eq!(json["settlementConfirmed"], confirmed);
+        }
+    }
+
+    fn issue_487_block() -> rchain_models::casper::protocol::deploy_service::LightBlockInfo {
+        rchain_models::casper::protocol::deploy_service::LightBlockInfo {
+            version: 1,
+            shard_id: "/testnet".to_string(),
+            block_hash: "block-1781".to_string(),
+            block_number: 1781,
+            sender: "sender".to_string(),
+            seq_num: 1,
+            pre_state_hash: "pre".to_string(),
+            post_state_hash: "post".to_string(),
+            justifications: Vec::new(),
+            bonds: Vec::new(),
+            sig_algorithm: "secp256k1".to_string(),
+            sig: "sig".to_string(),
+            block_size: "0".to_string(),
+            deploy_count: 1,
+            rejected_deploys: Vec::new(),
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn issue_487_execution_success_without_finality_is_not_settlement() {
+        let execution = DeployExecStatus::ProcessedWithSuccess {
+            deploy_result: Vec::new(),
+            block: issue_487_block(),
+        };
+        let speculative = deploy_settlement_observation("sig", &execution, Some(false), 123);
+        assert_eq!(speculative["stage"], "includedUnfinalized");
+        assert_eq!(speculative["execution"], "succeeded");
+        assert_eq!(speculative["finalized"], false);
+        assert_eq!(speculative["settlementConfirmed"], false);
+        assert_eq!(speculative["blockNumber"], 1781);
+        let unknown = deploy_settlement_observation("sig", &execution, None, 124);
+        assert_eq!(unknown["stage"], "finalityUnknown");
+        assert!(unknown["finalized"].is_null());
+        assert_eq!(unknown["settlementConfirmed"], false);
+        let confirmed = deploy_settlement_observation("sig", &execution, Some(true), 125);
+        assert_eq!(confirmed["stage"], "finalizedSuccess");
+        assert_eq!(confirmed["settlementConfirmed"], true);
+    }
+
+    #[test]
+    fn issue_487_finalized_execution_error_is_not_successful_settlement() {
+        let execution = DeployExecStatus::ProcessedWithError {
+            deploy_error: "insufficient phlo".to_string(),
+            block: issue_487_block(),
+        };
+        let result = deploy_settlement_observation("sig", &execution, Some(true), 126);
+        assert_eq!(result["stage"], "finalizedError");
+        assert_eq!(result["execution"], "failed");
+        assert_eq!(result["finalized"], true);
+        assert_eq!(result["settlementConfirmed"], false);
+        let pending = DeployExecStatus::NotProcessed {
+            status: "Pooled".to_string(),
+        };
+        let result = deploy_settlement_observation("sig", &pending, Some(true), 126);
+        assert_eq!(result["stage"], "notProcessed");
+        assert!(result["finalized"].is_null());
+        assert_eq!(result["settlementConfirmed"], false);
+    }
+
+    #[test]
+    fn issue_487_finality_observation_never_guesses_quorum() {
+        let mut status = test_status();
+        status.latest_block_number = 1791;
+        status.accepts_deploys = true;
+        let frontier = rchain_models::casper::protocol::deploy_service::BlockInfo {
+            block_info: rchain_models::casper::protocol::deploy_service::LightBlockInfo {
+                block_number: 1756,
+                ..issue_487_block()
+            },
+            deploys: Vec::new(),
+        };
+        let reading = finality_observation(Some(&status), Some(&frontier), 127);
+        assert_eq!(reading["observedFinalityLag"], 35);
+        assert_eq!(reading["availability"], "unknown");
+        assert_eq!(reading["scope"], "nodeLocal");
+        assert!(status.accepts_deploys);
+        let missing = finality_observation(Some(&status), None, 128);
+        assert!(missing["observedFinalityLag"].is_null());
+        assert!(missing["finalizedBlockHash"].is_null());
+        let mut inconsistent = frontier;
+        inconsistent.block_info.block_number = 1800;
+        let reading = finality_observation(Some(&status), Some(&inconsistent), 129);
+        assert!(reading["observedFinalityLag"].is_null());
+    }
+
     fn test_status() -> PublicStatus {
         PublicStatus {
             version: VersionInfo {
@@ -1852,6 +2792,15 @@ mod tests {
             propose_on_deploy: true,
             manual_propose: false,
             dev_mode: true,
+            proposer: false,
+            degraded: "normal".to_string(),
+            accepts_deploys: true,
+            pool: crate::api::dto::DeployPoolStatus {
+                deploys: 0,
+                bytes: 0,
+                max_deploys: 10_000,
+                max_bytes: 64 * 1024 * 1024,
+            },
         }
     }
 
@@ -1889,12 +2838,16 @@ mod tests {
             undelivered_sends: 0,
             undelivered_sends_scope: "SinceProcessStart".to_string(),
             shards: None,
+            resources: Default::default(),
         }
     }
 
     struct MockWebApi {
         status: PublicStatus,
         pooled_deploys: PooledDeploys,
+        deploy_result: Option<DeployExecStatus>,
+        finalized_block: Option<BlockInfo>,
+        finalized_result: Option<bool>,
     }
 
     #[async_trait]
@@ -1912,7 +2865,9 @@ mod tests {
         }
 
         async fn deploy_status(&self, _: &str) -> Result<DeployExecStatus, BlockApiException> {
-            unimplemented!()
+            self.deploy_result
+                .clone()
+                .ok_or_else(|| BlockApiException("deploy result unavailable".to_string()))
         }
 
         async fn pooled_deploys(&self) -> Result<PooledDeploys, BlockApiException> {
@@ -1945,7 +2900,9 @@ mod tests {
         }
 
         async fn last_finalized_block(&self) -> Result<BlockInfo, BlockApiException> {
-            unimplemented!()
+            self.finalized_block
+                .clone()
+                .ok_or_else(|| BlockApiException("finalized block unavailable".to_string()))
         }
 
         async fn get_block(&self, _: &str) -> Result<BlockInfo, BlockApiException> {
@@ -1977,8 +2934,10 @@ mod tests {
             unimplemented!()
         }
 
-        async fn is_finalized(&self, _: &str) -> Result<bool, BlockApiException> {
-            unimplemented!()
+        async fn is_finalized(&self, hash: &str) -> Result<bool, BlockApiException> {
+            assert_eq!(hash, "block-1781", "lookup must use the inclusion block");
+            self.finalized_result
+                .ok_or_else(|| BlockApiException("finality unavailable".to_string()))
         }
 
         async fn get_transaction(&self, _: &str) -> Result<TransactionResponse, BlockApiException> {
@@ -1995,12 +2954,22 @@ mod tests {
                 pooled_deploys: PooledDeploys {
                     deploys: Vec::new(),
                 },
+                deploy_result: None,
+                finalized_block: None,
+                finalized_result: None,
             }),
             block_report_api: test_block_report_api(),
             // The HTTP tests drive the routes, not the shard list; one member stands in.
-            shards: Arc::new(ShardRegistry {
-                primary: rchain_shared::refined::ShardId::try_from("/root".to_string()).unwrap(),
-                members: Vec::new(),
+            shards: Arc::new({
+                let primary =
+                    rchain_shared::refined::ShardId::try_from("/root".to_string()).unwrap();
+                let phase = NodePhaseCell::new();
+                phase.set_phase(NodePhase::Running);
+                ShardRegistry {
+                    primary: primary.clone(),
+                    members: Vec::new(),
+                    phases: BTreeMap::from([(primary, phase)]),
+                }
             }),
             status_provider: None,
             // `GET /api/v1/pos` (AUDIT C148) is pinned on its own below; the other routes never read
@@ -2019,10 +2988,655 @@ mod tests {
                 FAUCET_RATE_LIMIT_PER_SEC,
                 MAX_TRACKED_PEERS,
             )),
+            node_list: None,
+            node_list_rate_limiter: Arc::new(KeyedRateLimiter::new(
+                NODE_LIST_RATE_LIMIT_PER_SEC,
+                MAX_TRACKED_PEERS,
+            )),
+            deploy_admission: None,
+            explore_admission: None,
+            budget: Arc::new(CapacityBudget::new(ResourceGuard::inert(
+                ResourceSnapshot {
+                    state: "normal",
+                    fallback: ResourceState::Normal,
+                    mem_available_mb: 8_000,
+                    mem_total_mb: 8_192,
+                    sampled_at_ms: 1,
+                    source: "test".to_string(),
+                    ..ResourceSnapshot::default()
+                },
+            ))),
+            peer_liveness: ShardHealth::new(),
             // On by default in the tests, because the router tests drive the faucet route; the
             // off case is pinned by its own test below.
             faucet_enabled: true,
         }
+    }
+
+    /// The `state()` fixture with the hostlist mounted (or not), against the transaction stub — a
+    /// keyed, manual-mode node, so the route's `self` entry is a *proposer* and not just a node.
+    fn node_list_state(enabled: bool) -> HttpState {
+        let mut s = state();
+        if enabled {
+            let shard = "/root";
+            s.node_list = Some(
+                NodeListProvider::new(
+                    NodeListConfig {
+                        probe_interval: Duration::from_secs(60),
+                        probe_timeout: Duration::from_secs(1),
+                        max_entries: 8,
+                    },
+                    Arc::new(tokio::sync::RwLock::new(Vec::new())),
+                    RPConf {
+                        local: PeerNode::from(
+                            NodeIdentifier::new(vec![1u8; 32]),
+                            "127.0.0.1".to_string(),
+                            rchain_shared::refined::Port::new(40400),
+                            rchain_shared::refined::Port::new(40404),
+                        ),
+                        network_id: "testnet".to_string(),
+                        bootstrap: None,
+                        default_timeout: Duration::from_secs(1),
+                        max_num_of_connections: 10,
+                        clear_connections: ClearConnectionsConf {
+                            num_of_connections_pinged: 1,
+                        },
+                    },
+                    Arc::new(TxnStubApi {
+                        shard_id: shard.to_string(),
+                    }),
+                    vec![shard.to_string()],
+                    shard.to_string(),
+                    40403,
+                    Arc::new(rchain_shared::log::NopLog),
+                )
+                .expect("a node-list provider"),
+            );
+        }
+        s
+    }
+
+    /// **A node that has not opted in does not have the route.** The empty list is the wrong answer:
+    /// a client could not tell "not published" from "no deploy-capable peers", and an older node
+    /// answers 404 too.
+    #[tokio::test]
+    async fn the_node_list_route_is_absent_when_disabled() {
+        use tower::ServiceExt;
+        let response = router(state())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v1/nodes")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// The enabled route serves the documented shape, and the serving node — a proposer — is the
+    /// first entry, flagged `self`, at the URL derived from its advertised host and its real port.
+    #[tokio::test]
+    async fn the_node_list_route_serves_self_when_enabled() {
+        use tower::ServiceExt;
+        let s = node_list_state(true);
+        s.node_list.as_ref().expect("mounted").run_cycle().await;
+        let response = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v1/nodes")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["networkId"], "testnet");
+        assert_eq!(json["primaryShard"], "/root");
+        assert_eq!(json["nodes"][0]["self"], true);
+        assert_eq!(json["nodes"][0]["proposer"], true);
+        assert_eq!(json["nodes"][0]["httpUrl"], "http://127.0.0.1:40403");
+        assert_eq!(
+            json["nodes"].as_array().expect("an array").len(),
+            1,
+            "no peers were connected, so self alone"
+        );
+    }
+
+    #[test]
+    fn http_inflight_config_is_opt_in_and_rejects_invalid_values() {
+        assert!(parse_inflight_limit(None, "TEST_LIMIT").unwrap().is_none());
+        for invalid in ["0", "1025", "-1", "nan", "8 ", ""] {
+            assert!(parse_inflight_limit(Some(invalid), "TEST_LIMIT").is_err());
+        }
+        let configured = parse_inflight_limit(Some("2"), "TEST_LIMIT")
+            .unwrap()
+            .expect("configured");
+        assert_eq!(configured.limit, 2);
+        assert_eq!(configured.semaphore.available_permits(), 2);
+    }
+
+    #[tokio::test]
+    async fn in_flight_admission_refuses_explore_aliases_before_body_decode() {
+        use tower::ServiceExt;
+        let mut s = state();
+        s.explore_admission = Some(InFlightAdmission::new(1));
+        s.deploy_admission = Some(InFlightAdmission::new(2));
+        let occupied = s
+            .explore_admission
+            .as_ref()
+            .unwrap()
+            .semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .unwrap();
+        for uri in [
+            "/api/explore-deploy",
+            "/api/v1/explore-deploy",
+            "/api/explore-deploy-by-block-hash",
+            "/api/v1/explore-deploy-by-block-hash",
+        ] {
+            let request = axum::http::Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from("{ invalid JSON"))
+                .unwrap();
+            let reply = router(s.clone()).oneshot(request).await.unwrap();
+            assert_eq!(reply.status(), StatusCode::TOO_MANY_REQUESTS, "{uri}");
+            assert_eq!(
+                reply
+                    .headers()
+                    .get(axum::http::header::RETRY_AFTER)
+                    .unwrap(),
+                "1"
+            );
+        }
+        let status = router(s.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v1/admission")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(status.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["explore"]["inFlight"], 1);
+        assert_eq!(json["deploy"]["inFlight"], 0);
+        assert_eq!(json["deploy"]["limit"], 2);
+        drop(occupied);
+        let reply = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v1/admission")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let data = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&data).unwrap();
+        assert_eq!(json["explore"]["available"], 1);
+    }
+
+    #[tokio::test]
+    async fn deploy_budget_separate_and_status_stays_accessible() {
+        use tower::ServiceExt;
+        let mut s = state();
+        s.deploy_admission = Some(InFlightAdmission::new(1));
+        s.explore_admission = Some(InFlightAdmission::new(3));
+        let held = s
+            .deploy_admission
+            .as_ref()
+            .unwrap()
+            .semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .unwrap();
+        for uri in ["/api/deploy", "/api/v1/deploy"] {
+            let reply = router(s.clone())
+                .oneshot(
+                    axum::http::Request::builder()
+                        .method("POST")
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from("invalid json"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(reply.status(), StatusCode::TOO_MANY_REQUESTS);
+        }
+        let status = router(s.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/status")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status.status(), StatusCode::OK);
+        drop(held);
+        let reply = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/deploy")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from("invalid json"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(reply.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// A real handler holds the permit across its await; completion and
+    /// cancellation both return capacity without a waiting request queue.
+    #[tokio::test]
+    async fn in_flight_permit_covers_async_handler_and_releases_on_completion() {
+        use tower::ServiceExt;
+        let budget = InFlightAdmission::new(1);
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let entered = Arc::new(std::sync::Mutex::new(Some(entered_tx)));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let app = Router::new()
+            .route(
+                "/slow",
+                get({
+                    let entered = entered.clone();
+                    let release = release.clone();
+                    move || {
+                        let entered = entered.clone();
+                        let release = release.clone();
+                        async move {
+                            if let Some(tx) = entered.lock().unwrap().take() {
+                                let _ = tx.send(());
+                            }
+                            release.notified().await;
+                            "done"
+                        }
+                    }
+                }),
+            )
+            .route_layer(middleware::from_fn_with_state(
+                Some(budget.clone()),
+                in_flight_admission,
+            ));
+
+        let running = tokio::spawn({
+            let app = app.clone();
+            async move {
+                app.oneshot(
+                    axum::http::Request::builder()
+                        .uri("/slow")
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(2), entered_rx)
+            .await
+            .expect("handler reached")
+            .expect("handler notified");
+        assert_eq!(budget.semaphore.available_permits(), 0);
+        let refused = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/slow")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+        release.notify_one();
+        assert_eq!(running.await.unwrap().status(), StatusCode::OK);
+        assert_eq!(budget.semaphore.available_permits(), 1);
+
+        let cancelled = tokio::spawn({
+            let app = app.clone();
+            async move {
+                app.oneshot(
+                    axum::http::Request::builder()
+                        .uri("/slow")
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while budget.semaphore.available_permits() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("second handler acquired permit");
+        cancelled.abort();
+        let _ = cancelled.await;
+        assert_eq!(budget.semaphore.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn disabled_admission_does_not_claim_validator_health() {
+        use tower::ServiceExt;
+        let response = router(state())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v1/admission")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["deploy"]["configured"], false);
+        assert_eq!(json["explore"]["configured"], false);
+        assert!(json.get("degraded").is_none());
+    }
+
+    /// **A deploy is not refused by a memory verdict** (issue #477, Law 86).
+    ///
+    /// The body is deliberately invalid JSON: with the memory gate gone, the request reaches axum's
+    /// extractor and answers `400`, never the old `503`. Every alias is covered; the status route
+    /// stays reachable. A re-added gate would have to change `HttpState`, and this test would fail
+    /// on the 503 the new field produced.
+    #[tokio::test]
+    async fn a_deploy_reaches_the_extractor_without_a_memory_verdict() {
+        use tower::ServiceExt;
+        for uri in [
+            "/api/deploy",
+            "/api/v1/deploy",
+            "/api/explore-deploy",
+            "/api/v1/explore-deploy",
+            "/api/explore-deploy-by-block-hash",
+            "/api/v1/explore-deploy-by-block-hash",
+        ] {
+            let reply = router(state())
+                .oneshot(
+                    axum::http::Request::builder()
+                        .method("POST")
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from("{ not json"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_ne!(
+                reply.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{uri}: the body must reach the extractor, not a memory 503"
+            );
+            assert!(
+                reply.status().is_client_error(),
+                "{uri}: the extractor's refusal is a client error, got {}",
+                reply.status()
+            );
+        }
+
+        let status = router(state())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/status")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status.status(), StatusCode::OK);
+    }
+
+    /// **Explore spends the explore budget; a deploy does not** (Law 86d).
+    ///
+    /// On a host below the policy floor the explore share is zero, so a read is refused 429 with a
+    /// retry — but a deploy with a free pool slot still reaches the extractor, because admission is
+    /// the pool's decision and memory only bounds execution.
+    #[tokio::test]
+    async fn explore_is_budgeted_while_a_deploy_is_not() {
+        use tower::ServiceExt;
+        let mut s = state();
+        s.budget = Arc::new(CapacityBudget::new(ResourceGuard::inert(
+            ResourceSnapshot {
+                state: "normal",
+                fallback: ResourceState::Normal,
+                mem_available_mb: 100,
+                mem_total_mb: 8_192,
+                sampled_at_ms: 1,
+                source: "test".to_string(),
+                ..ResourceSnapshot::default()
+            },
+        )));
+        let explore = router(s.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/explore-deploy")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from("\"new return in { return!(1) }\""))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(explore.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            explore
+                .headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .expect("Retry-After"),
+            "1"
+        );
+
+        let deploy = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/deploy")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from("{ not json"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(
+            deploy.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "a deploy must not spend the explore budget"
+        );
+        assert_ne!(deploy.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// **`/health` is a readiness body, not a pressure gate** (issue #477): 200 while the router
+    /// serves, with the advisory word and the pool's capacity. Low memory is not an unhealthy node.
+    #[tokio::test]
+    async fn health_reports_readiness_and_pool_capacity() {
+        use tower::ServiceExt;
+        let reply = router(state())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], true);
+        assert!(json["acceptsDeploys"].is_boolean());
+        assert!(json["pool"].is_object());
+        assert_eq!(json["pool"]["maxDeploys"], 10_000);
+        assert_eq!(json["finalityStalled"], false);
+        assert_eq!(json["finalityStallEpisodes"], 0);
+    }
+
+    /// **The peer-liveness exception** (W-N3-01): `/health` may tell a peer that this validator is
+    /// stalled, while the operator-only reason/reporter/halt stay off the public route. The two
+    /// fields are always present, never nullable.
+    #[tokio::test]
+    async fn health_publishes_the_peer_liveness_projection() {
+        use tower::ServiceExt;
+        let mut s = state();
+        let health = ShardHealth::new();
+        let reason = rchain_block_storage::dag::finalizer::NoAdvance::Support {
+            supporting: 0,
+            total: 1,
+            full_partitions: 0,
+            candidates: 1,
+            partition: 1,
+        };
+        health.note_finality_stall(Some(&reason));
+        assert!(
+            !health.finality_stall_sustained(),
+            "one refusal is not a stall"
+        );
+        health.note_finality_stall(Some(&reason));
+        assert!(health.finality_stall_sustained(), "the threshold is two");
+        assert_eq!(health.stall_episodes(), 1);
+        s.peer_liveness = health;
+
+        let reply = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["finalityStalled"], true);
+        assert_eq!(json["finalityStallEpisodes"], 1);
+    }
+
+    /// **Node readiness is every shard's readiness** (B47): one running shard and one syncing shard
+    /// is not ready, the flat `phase`/`nodePhase` are the primary's reading, and `shardPhases`
+    /// names each member. Moving the second shard to `Running` is what flips `ready`.
+    #[tokio::test]
+    async fn health_is_ready_only_when_every_shard_runs() {
+        use tower::ServiceExt;
+
+        let primary = ShardId::try_from("/root".to_string()).unwrap();
+        let child = ShardId::try_from("/root/child".to_string()).unwrap();
+        let primary_cell = NodePhaseCell::new();
+        primary_cell.set_phase(NodePhase::Running);
+        let child_cell = NodePhaseCell::new();
+        child_cell.set_phase(NodePhase::Syncing);
+        let mut s = state();
+        s.shards = Arc::new(ShardRegistry {
+            primary: primary.clone(),
+            members: vec![
+                (
+                    primary.clone(),
+                    Arc::new(TxnStubApi {
+                        shard_id: "/root".to_string(),
+                    }) as Arc<dyn BlockApi>,
+                ),
+                (
+                    child.clone(),
+                    Arc::new(TxnStubApi {
+                        shard_id: "/root/child".to_string(),
+                    }) as Arc<dyn BlockApi>,
+                ),
+            ],
+            phases: BTreeMap::from([
+                (primary.clone(), primary_cell),
+                (child.clone(), child_cell.clone()),
+            ]),
+        });
+
+        let reply = router(s.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json["ready"], false,
+            "one syncing shard withholds readiness"
+        );
+        assert_eq!(
+            json["nodePhase"], "running",
+            "the flat phase is the primary's"
+        );
+        assert_eq!(json["shardPhases"]["/root"], "running");
+        assert_eq!(json["shardPhases"]["/root/child"], "syncing");
+
+        child_cell.set_phase(NodePhase::Running);
+        let reply = router(s)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ready"], true, "every shard is running");
+    }
+
+    /// **A full pool is a 429 with a retry; a malformed deploy stays a 400** (Law 86a).
+    #[test]
+    fn a_bounded_deploy_refusal_is_429_with_retry_after() {
+        let full = deploy_response(Err(BlockApiException(
+            "deploy pool is full: 67108864 of 67108864 term bytes in use".to_string(),
+        )));
+        assert_eq!(full.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            full.headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .expect("Retry-After"),
+            "1"
+        );
+
+        let share = deploy_response(Err(BlockApiException(
+            "this deployer holds its share of the deploy pool".to_string(),
+        )));
+        assert_eq!(share.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let malformed = deploy_response(Err(BlockApiException(
+            "deploy signature is invalid".to_string(),
+        )));
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
     }
 
     /// **AUDIT C148**: the PoS read has a route, and the route renders what it was handed. The
@@ -2100,6 +3714,10 @@ mod tests {
 
         async fn resume_autopropose(&self) -> Result<String, BlockApiException> {
             Ok("resumed".to_string())
+        }
+
+        async fn resume_resource_fallback(&self) -> Result<String, BlockApiException> {
+            Ok("normal".to_string())
         }
     }
 
@@ -2259,6 +3877,9 @@ mod tests {
                     valid_after_block_number: -1,
                 }],
             },
+            deploy_result: None,
+            finalized_block: None,
+            finalized_result: None,
         });
         let response = api_deploys(State(s)).await;
         assert_eq!(response.status(), StatusCode::OK);
@@ -2284,6 +3905,115 @@ mod tests {
         assert_eq!(doc["openapi"], "3.0.0");
         assert!(doc["paths"].is_object());
         assert!(doc["components"]["schemas"].is_object());
+    }
+
+    /// The served schema must describe the same refusal on every legacy/v1
+    /// deploy/explore alias that the middleware actually enforces.
+    #[tokio::test]
+    async fn openapi_http_admission_refusal_matches_all_six_live_aliases() {
+        use tower::ServiceExt;
+
+        let doc: serde_json::Value =
+            serde_json::from_str(OPENAPI_JSON).expect("served OpenAPI parses");
+        assert_eq!(doc["servers"], json!([{ "url": "/api/v1" }]));
+        assert!(doc["paths"]["/admission"]["get"]["servers"].is_null());
+
+        let documented = &doc["components"]["responses"]["HttpAdmissionExhausted"];
+        assert!(documented.is_object(), "shared 429 response missing");
+        assert_eq!(
+            documented["headers"]["Retry-After"]["schema"]["type"],
+            "integer"
+        );
+        assert_eq!(documented["headers"]["Retry-After"]["schema"]["example"], 1);
+        assert_eq!(
+            documented["content"]["application/json"]["schema"]["type"],
+            "string"
+        );
+        let example = documented["content"]["application/json"]["example"]
+            .as_str()
+            .expect("the 429 example is a string");
+        assert!(
+            example.contains("in-flight"),
+            "the served example must describe the concurrency refusal, got {example}"
+        );
+
+        let mut s = state();
+        s.deploy_admission = Some(InFlightAdmission::new(1));
+        s.explore_admission = Some(InFlightAdmission::new(1));
+        let _held_deploy = s
+            .deploy_admission
+            .as_ref()
+            .unwrap()
+            .semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .unwrap();
+        let _held_explore = s
+            .explore_admission
+            .as_ref()
+            .unwrap()
+            .semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .unwrap();
+
+        for (logical_path, route) in [
+            ("/deploy", "/api/deploy"),
+            ("/deploy", "/api/v1/deploy"),
+            ("/explore-deploy", "/api/explore-deploy"),
+            ("/explore-deploy", "/api/v1/explore-deploy"),
+            (
+                "/explore-deploy-by-block-hash",
+                "/api/explore-deploy-by-block-hash",
+            ),
+            (
+                "/explore-deploy-by-block-hash",
+                "/api/v1/explore-deploy-by-block-hash",
+            ),
+        ] {
+            let operation = &doc["paths"][logical_path]["post"];
+            assert_eq!(
+                operation["responses"]["429"]["$ref"],
+                "#/components/responses/HttpAdmissionExhausted",
+                "{route} has no documented 429"
+            );
+            let servers = operation["servers"]
+                .as_array()
+                .expect("legacy/v1 aliases must be explicit in operation servers");
+            assert_eq!(
+                servers,
+                &vec![json!({"url": "/api"}), json!({"url": "/api/v1"})]
+            );
+            assert!(
+                servers.iter().any(|server| {
+                    let prefix = server["url"].as_str().unwrap();
+                    format!("{prefix}{logical_path}") == route
+                }),
+                "missing OpenAPI mapping for {route}"
+            );
+
+            let request = axum::http::Request::builder()
+                .method("POST")
+                .uri(route)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from("{ invalid JSON"))
+                .unwrap();
+            let reply = router(s.clone()).oneshot(request).await.unwrap();
+            assert_eq!(reply.status(), StatusCode::TOO_MANY_REQUESTS, "{route}");
+            assert_eq!(
+                reply
+                    .headers()
+                    .get(axum::http::header::RETRY_AFTER)
+                    .unwrap(),
+                "1",
+                "{route}"
+            );
+            let body = to_bytes(reply.into_body(), usize::MAX).await.unwrap();
+            let error_text: String = serde_json::from_slice(&body).unwrap();
+            assert_eq!(error_text, "HTTP in-flight capacity exhausted", "{route}");
+        }
     }
 
     fn status_provider() -> StatusProvider {
@@ -2710,7 +4440,16 @@ mod tests {
             Err("unused".to_string())
         }
         async fn capabilities(&self) -> rchain_casper::api::block_api::Capabilities {
-            unreachable!("unused in these tests")
+            // A validator in manual mode, so the hostlist's `proposer` discriminator is exercised
+            // against a node that *can* propose without autopropose.
+            rchain_casper::api::block_api::Capabilities {
+                autopropose: false,
+                propose_on_deploy: false,
+                manual_propose: true,
+                admin_http: false,
+                dev_mode: false,
+                proposer: true,
+            }
         }
         async fn create_block(&self, _: bool) -> Result<String, String> {
             Err("unused".to_string())
@@ -2902,9 +4641,15 @@ mod tests {
         members: Vec<(rchain_shared::refined::ShardId, Arc<dyn BlockApi>)>,
     ) -> HttpState {
         let mut s = state();
-        s.shards = Arc::new(ShardRegistry {
-            primary: rchain_shared::refined::ShardId::try_from("/root".to_string()).unwrap(),
-            members,
+        s.shards = Arc::new({
+            let primary = rchain_shared::refined::ShardId::try_from("/root".to_string()).unwrap();
+            let phase = NodePhaseCell::new();
+            phase.set_phase(NodePhase::Running);
+            ShardRegistry {
+                primary: primary.clone(),
+                members,
+                phases: BTreeMap::from([(primary, phase)]),
+            }
         });
         s
     }
@@ -3043,6 +4788,30 @@ mod tests {
             .await
             .expect("a response");
         assert_eq!(served.status(), StatusCode::OK, "the admin listener does");
+    }
+
+    /// **The resource-fallback resume is an admin actuator** (unit C, B37): mounted on the privileged
+    /// listener and answering the resulting state. The pressure semantics are the state machine's,
+    /// pinned in `resources::fallback`; this pins the route and its answer shape.
+    #[tokio::test]
+    async fn the_resource_resume_route_answers_the_state() {
+        use tower::ServiceExt;
+        let reply = admin_router(txn_state(None, false))
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/resources/resume")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["state"], "normal");
     }
 
     /// **And the delegations route moved with it** (W-N3-03): it answered any caller's question about

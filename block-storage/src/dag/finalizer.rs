@@ -419,6 +419,44 @@ fn sees_the_whole_partition<S: Ord>(
 mod tests {
     use super::*;
 
+    #[test]
+    fn n8_support_requires_six_distinct_bonded_senders_and_complete_coverage() {
+        let map: BTreeMap<i32, Message<i32, i32>> = BTreeMap::new();
+        let finalizer = Finalizer::new(&map);
+        let bonds: BTreeMap<_, _> = (0..8)
+            .map(|v| (v, NonNegI64::try_from(100).unwrap()))
+            .collect();
+        let live: BTreeMap<_, _> = bonds
+            .iter()
+            .filter(|(v, _)| **v != 7)
+            .map(|(v, s)| (*v, *s))
+            .collect();
+        let seers: BTreeSet<_> = (0..7).collect();
+        let layer: BTreeMap<_, _> = (0..7).map(|v| (v, seers.clone())).collect();
+        let mut support: BTreeMap<_, _> = (0..5).map(|v| (v, layer.clone())).collect();
+        assert_eq!(
+            finalizer
+                .calculate_fringe_numbers(&support, &live, &bonds)
+                .0,
+            500
+        );
+        assert!(!finalizer.calculate_fringe(&support, &live, &bonds));
+        support.insert(5, layer.clone());
+        assert!(finalizer.calculate_fringe(&support, &live, &bonds));
+        // A missing seer on even one candidate removes this sender's support.
+        support.get_mut(&5).unwrap().get_mut(&0).unwrap().remove(&6);
+        assert!(!finalizer.calculate_fringe(&support, &live, &bonds));
+        // An unbonded sender cannot replace the missing sixth bonded supporter.
+        support.insert(99, layer);
+        assert!(!finalizer.calculate_fringe(&support, &live, &bonds));
+        assert_eq!(
+            finalizer
+                .calculate_fringe_numbers(&support, &live, &bonds)
+                .1,
+            800
+        );
+    }
+
     fn msg(
         id: i32,
         sender: i32,

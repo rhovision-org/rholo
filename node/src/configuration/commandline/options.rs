@@ -300,6 +300,16 @@ pub struct Run {
     #[arg(long = "no-attest-on-new-blocks")]
     pub no_attest_on_new_blocks: bool,
 
+    /// Start below the resource-guard floor. Explicit and logged; the chain-length floor is a policy
+    /// table, and this flag is the operator's acceptance of starting under it.
+    #[arg(long = "allow-under-minimum")]
+    pub allow_under_minimum: bool,
+
+    /// Accept the documented risk of starting a validator below the resource floor. Required with
+    /// `--allow-under-minimum` for a validator; read `TERMS.md`.
+    #[arg(long = "accept-under-minimum-risk")]
+    pub accept_under_minimum_risk: bool,
+
     /// Disable UPnP.
     #[arg(long = "no-upnp")]
     pub no_upnp: bool,
@@ -451,6 +461,23 @@ pub struct Run {
     /// Enable reporting endpoints.
     #[arg(long = "api-enable-reporting")]
     pub api_enable_reporting: bool,
+
+    /// Publish `GET /api/v1/nodes`, the live deploy-capable peer hostlist. Off by default because
+    /// it discloses peer addresses; every served entry has answered a probe and can propose.
+    #[arg(long = "api-publish-node-list")]
+    pub api_publish_node_list: bool,
+
+    /// How often the node-list hostlist is re-probed.
+    #[arg(long = "api-node-list-probe-interval", value_parser = parse_duration_arg)]
+    pub api_node_list_probe_interval: Option<Duration>,
+
+    /// Per-peer probe timeout for the node-list hostlist.
+    #[arg(long = "api-node-list-probe-timeout", value_parser = parse_duration_arg)]
+    pub api_node_list_probe_timeout: Option<Duration>,
+
+    /// The most entries the node-list hostlist may publish, self included (1–128).
+    #[arg(long = "api-node-list-max-entries")]
+    pub api_node_list_max_entries: Option<usize>,
 
     /// Relax CORS on the admin HTTP API (devnet / browser-wallet access only).
     #[arg(long = "api-enable-devnet-cors")]
@@ -689,6 +716,10 @@ pub struct Run {
     /// the responder is one that knows it.
     #[arg(long = "sync-anchor")]
     pub sync_anchor: Option<String>,
+
+    /// Full genesis block hash of the network to join.
+    #[arg(long = "expected-genesis-hash")]
+    pub expected_genesis_hash: Option<String>,
 
     /// Public keys of the Coop multisig vault.
     ///

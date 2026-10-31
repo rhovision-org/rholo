@@ -3,6 +3,10 @@
 //! Mirrors `sdk/src/main/scala/coop/rchain/sdk/consensus/Stake.scala`.
 //! Law 14: finality requires strictly more than 2/3 of bonded stake.
 
+use std::collections::BTreeMap;
+
+use rchain_shared::refined::{BlockHeight, NonNegI64};
+
 /// Check if `stake` prevails the 2/3 supermajority threshold of `total_stake`.
 ///
 /// Law 14: strictly more than 2/3 of bonded stake. This is the *exact* integer comparison
@@ -14,6 +18,42 @@
 /// stakes can overflow `i64` before reaching this comparison).
 pub fn is_super_majority(stake: i128, total_stake: i128) -> bool {
     stake * 3 > total_stake * 2
+}
+
+/// **The height a supermajority of the bonded stake has reached.** The finalizer's liveness clock:
+/// take each sender's latest height, highest first, and return the first height at which the stake
+/// behind it is a strict supermajority of `bonds`. `0` means no supermajority has spoken.
+///
+/// The rule is here rather than duplicated in `block-storage` and the PoS liveness rule: a
+/// second copy of "which height has a quorum reached" is a second consensus rule waiting to drift.
+pub fn quorum_supported_height<S>(
+    bonds: &BTreeMap<S, NonNegI64>,
+    latest: &BTreeMap<S, BlockHeight>,
+) -> BlockHeight
+where
+    S: Ord,
+{
+    let total: i128 = bonds
+        .values()
+        .map(|stake| i128::from(i64::from(*stake)))
+        .sum();
+    let mut at_height: Vec<(BlockHeight, i128)> = bonds
+        .iter()
+        .filter_map(|(sender, stake)| {
+            latest
+                .get(sender)
+                .map(|height| (*height, i128::from(i64::from(*stake))))
+        })
+        .collect();
+    at_height.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+    let mut supporting = 0i128;
+    for (height, stake) in at_height {
+        supporting += stake;
+        if is_super_majority(supporting, total) {
+            return height;
+        }
+    }
+    BlockHeight::zero()
 }
 
 #[cfg(test)]

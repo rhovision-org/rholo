@@ -1,0 +1,48 @@
+{
+  "/var/log/rnode-a.log": {
+    "first_sampled_line": "2026-10-29T14:26:55.629Z INFO  [resource-preflight] host resources: 15468 MiB available, cgroup v2, data dir 18878 MiB free, 0 rnode process(es), 2 CPU(s), 0 persisted block(s)",
+    "first_overflow": [
+      "2026-10-29T14:37:35.621Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([194, 6, 69, 195, 246, 138, 173, 23, 23, 190, 209, 41, 14, 112, 151, 209, 42, 193, 213, 241, 76, 211, 147, 38, 50, 115, 253, 190, 56, 130, 140, 128]))"
+    ],
+    "overflow_count": 9,
+    "first_other_failures": [
+      "2026-10-29T14:27:47.415Z INFO  [casper.protocol.CommUtil] Block hash 1133bd38a37b02a2591d5f33f935122089b034197fe0ab1b2d7b6a733182ce4c: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:47.722Z INFO  [casper.protocol.CommUtil] Block hash b019ea5d109cbe44172c91c2547004886a63e62f03eb74868294824d300adeb2: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:48.595Z INFO  [casper.protocol.CommUtil] Block hash b9fa8aa3165aa5685497d055006a14355535a39d012bdcfcb515db71273f8890: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:48.920Z INFO  [casper.protocol.CommUtil] Block hash 4ee668f84843390ae6fb4e9f7d69161640a3d0805124bb479edc67ff1562a04b: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:49.006Z INFO  [casper.protocol.CommUtil] Block hash 8534da53e4c46bfc7c19a1f79c70bff3ed438a61882b47eaf14e581f1cf86f7f: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:49.427Z INFO  [casper.protocol.CommUtil] Block hash bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:50.057Z INFO  [casper.protocol.CommUtil] Block hash 2d210fa7ffeb4eeb2625f135895861531e21a40baf45b0e723b76cf8695c8bf2: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:50.327Z INFO  [casper.protocol.CommUtil] Block hash d89461d0f81889fbc8756cd55b738ee042446072bd8879dc68b2ea65119374a5: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)"
+    ],
+    "last_other_failures": [
+      "2026-10-29T16:59:43.984Z INFO  [casper.protocol.CommUtil] Block hash 9f01f8a23c02259ad62bdbcc3a8c135da216b84152d3c65141b9133419ea35f5: transport accepted 4 initial, 0 retry; 0 failed of 4 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T17:00:00.406Z INFO  [casper.protocol.CommUtil] Block hash 7ba83d894beeb5305a8d937e0b5637b68be1ce4998452314e2d47cb34f94ea90: transport accepted 4 initial, 0 retry; 0 failed of 4 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T17:00:16.849Z INFO  [casper.protocol.CommUtil] Block hash 43c8db7ecb2c7382274100770c2cf762e82a3ea5eaff7bf62d2b309a29f1265c: transport accepted 4 initial, 0 retry; 0 failed of 4 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T17:00:33.216Z INFO  [casper.protocol.CommUtil] Block hash ac4017ea6129a583481e71929654a9bd7451db87f0e8ad1b07d7c66277e8f27f: transport accepted 4 initial, 0 retry; 0 failed of 4 peers (transport acceptance is not remote DAG admission)"
+    ]
+  },
+  "/var/log/rnode-d.log": {
+    "first_sampled_line": "2026-10-29T14:26:55.640Z INFO  [resource-preflight] host resources: 15469 MiB available, cgroup v2, data dir 18878 MiB free, 0 rnode process(es), 2 CPU(s), 0 persisted block(s)",
+    "first_overflow": [
+      "2026-10-29T14:37:35.169Z ERROR [casper.blocks.BlockReceiver] block receiver state full (1024 blocks); dropping BlockHash(Hash32([194, 6, 69, 195, 246, 138, 173, 23, 23, 190, 209, 41, 14, 112, 151, 209, 42, 193, 213, 241, 76, 211, 147, 38, 50, 115, 253, 190, 56, 130, 140, 128]))"
+    ],
+    "overflow_count": 97,
+    "first_other_failures": [
+      "2026-10-29T14:27:47.565Z INFO  [casper.protocol.CommUtil] Block hash 1133bd38a37b02a2591d5f33f935122089b034197fe0ab1b2d7b6a733182ce4c: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:47.647Z INFO  [casper.protocol.CommUtil] Block hash b019ea5d109cbe44172c91c2547004886a63e62f03eb74868294824d300adeb2: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:48.857Z INFO  [casper.protocol.CommUtil] Block hash b9fa8aa3165aa5685497d055006a14355535a39d012bdcfcb515db71273f8890: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:49.108Z INFO  [casper.protocol.CommUtil] Block hash 8534da53e4c46bfc7c19a1f79c70bff3ed438a61882b47eaf14e581f1cf86f7f: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:49.191Z INFO  [casper.protocol.CommUtil] Block hash 4ee668f84843390ae6fb4e9f7d69161640a3d0805124bb479edc67ff1562a04b: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:49.191Z INFO  [casper.protocol.CommUtil] Block hash bb7819f8590c9607f20448c121fda71fe0cded1de66510b5379972fe6f077909: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:50.248Z INFO  [casper.protocol.CommUtil] Block hash 2d210fa7ffeb4eeb2625f135895861531e21a40baf45b0e723b76cf8695c8bf2: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:50.599Z INFO  [casper.protocol.CommUtil] Block hash d89461d0f81889fbc8756cd55b738ee042446072bd8879dc68b2ea65119374a5: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)"
+    ],
+    "last_other_failures": [
+      "2026-10-29T14:27:54.416Z INFO  [casper.protocol.CommUtil] Block hash 5b482403afbfd87f2cddd22a4bd64b55b74cf1f28d2b3bd74820ce7269955b38: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:55.121Z INFO  [casper.protocol.CommUtil] Block hash b6425eb65e6596bc7f38ee317ea3b24b1e2c2ec523d14b4f8ea01608830b4b8b: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:55.244Z INFO  [casper.protocol.CommUtil] Block hash 0abf1aa2b5b14bcd67834f7106b0dfd02b7e79afa0997aa0ce164c0951406680: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)",
+      "2026-10-29T14:27:57.440Z INFO  [casper.protocol.CommUtil] Block hash 8468a20a50e5390ef37b889ac58e5db19554319148de4e5ddbf197513257ab0b: transport accepted 3 initial, 0 retry; 0 failed of 3 peers (transport acceptance is not remote DAG admission)"
+    ]
+  }
+}

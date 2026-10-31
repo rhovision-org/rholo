@@ -1,0 +1,54 @@
+== 1. what each node is showing ==
+  A  h=38     finalised=33     afe10701237c7c4fd972be3df23e48213d1429509579
+  B  h=40     finalised=33     afe10701237c7c4fd972be3df23e48213d1429509579
+  C  h=37     finalised=32     a40a5baa3a1b8bfbc311f163c513ffd0cf9988f11e9b
+  D  h=37     finalised=33     afe10701237c7c4fd972be3df23e48213d1429509579
+  snapshot: MAXH=40 taken at 2026-10-30T14:38:20Z (the highest latestBlockNumber in this sample).
+  Sections 2 and 4 are bounded by this snapshot; a producing chain may advance past it.
+== 2. reported equivocation from the block API — a report, not a proof (heights 0..40) ==
+  none reported — every sender has at most one block per height in these endpoints' answers
+== 3. the anchor ==
+  this run's nonce: 695b7fae1d62b287… (signed, so no earlier run's answer can be replayed into it)
+    A  attests height 33    afe10701237c7c4f… by 04f700a41775…
+    B  attests height 33    afe10701237c7c4f… by 04dbe32c2062…
+    C  attests height 32    a40a5baa3a1b8bfb… by 04d8b6c325ae…
+    D  attests height 33    afe10701237c7c4f… by 04ea3ce04abb…
+  proven equivocation, over heights 17..33 (RECONCILE_EQUIV_WINDOW=16):
+    none proved in the window — which bounds the claim, and does not make it universal
+  the meet: height 33, hash afe10701237c7c4fd972be3df23e48213d1429509579fbb771efcd6e94a95145
+  Written out rather than implied: the deepest block a strict supermajority of stake finalised,
+  over attestations this tool verified, with each validator's stake counted exactly once.
+  stake: 750 of 1000 = 75% — a strict supermajority (>66.6%, 3*stake > 2*total on integers)
+  the subset: A B D
+  not in the subset (lagging, not vetoing): C
+  Each one is rewound onto the master's DAG like any other joiner; none of them was asked to
+  agree before this could proceed.
+  What every node attested, for the record:
+    A  height 33    afe10701237c7c4fd972be3df23e48213d1429509579
+    B  height 33    afe10701237c7c4fd972be3df23e48213d1429509579
+    C  height 32    a40a5baa3a1b8bfbc311f163c513ffd0cf9988f11e9b
+    D  height 33    afe10701237c7c4fd972be3df23e48213d1429509579
+== 4. what is above the point ==
+  The survivor is A's DAG, not a chain: every validator proposes its own block each round, so
+  a height legitimately holds one sibling per validator and there is no single line to extract. The
+  joiners resync onto this DAG; the writers re-submit what they can see is missing.
+  (heights 34..40; snapshot 40 taken at 2026-10-30T14:38:20Z)
+  #34: 4 unique block(s) from 16 answer(s)
+  #35: 4 unique block(s) from 15 answer(s)
+  #36: 4 unique block(s) from 6 answer(s)
+  #37: 1 unique block(s) from 2 answer(s)
+  #38: 1 unique block(s) from 1 answer(s)
+  #39: 1 unique block(s) from 1 answer(s)
+  15 deploy(s) above the point across 15 unique block(s); the per-block record is /tmp/reconcile-deploys.jsonl
+  (a block's *bodies* are not in the heights route — /api/block/{hash} carries the terms, the heights
+   route carries counts. The owners re-submit; this tool does not claim to replay them.)
+  NOTE: A advanced 38 → 49 since the snapshot; the audit above covers only heights 0..40
+  NOTE: B advanced 40 → 49 since the snapshot; the audit above covers only heights 0..40
+  NOTE: C advanced 37 → 39 since the snapshot; the audit above covers only heights 0..40
+  NOTE: D advanced 37 → 39 since the snapshot; the audit above covers only heights 0..40
+  Movement during an audit is normal on a producing chain, not a failure: the plan is bounded
+  to the snapshot above, and section 10 states any range it reads above it.
+== plan only ==
+  would: stop every non-master node, move each data directory aside (never delete), restart them to
+        resync onto A's DAG, then verify block hashes per height.
+  re-run with --apply to execute. A's data directory is never touched.

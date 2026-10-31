@@ -38,7 +38,12 @@ use rchain_rholang::system_processes::BlockData;
 use rchain_rspace::checkpoint::SoftCheckpoint;
 use rchain_rspace::hot_store::InMemHotStore;
 use rchain_rspace::merger::event_log_index::NumberChannelsDiff;
-use rchain_rspace::native_store::{BlockNativeEffects, InMemNativeStore, NativeWriter, PREFIX_POS};
+use rchain_rspace::native_store::{
+    BlockNativeEffects, InMemNativeStore, NativeStoreAction, NativeWriter, PREFIX_POS,
+};
+
+use crate::batch;
+use crate::merging::{BlockIndex, DeployChainIndex, DeployIndex, MergeScope};
 use rchain_rspace::rspace::RSpace;
 use rchain_shared::refined::{BlockHeight, NonNegI64};
 use rchain_shared::typed_store::KeyValueTypedStore;
@@ -469,6 +474,34 @@ pub struct RuntimeManager {
     /// (AUDIT C46). Empty on a node with no genesis config, which is the only case in which the
     /// genesis is not replayable at all.
     genesis_vaults: Vec<Vault>,
+    /// Cross-deploy batching (Law 86c). Default off: the sequential path is the reference, and the
+    /// batch path publishes only what the certificate and `verify` accept.
+    batch: BatchPolicy,
+}
+
+/// **The cross-deploy batch policy** (Law 86c). `enabled` is off by default; `verify` re-runs the
+/// whole block sequentially on a fork and refuses a mismatch; `max_batch` caps the fork count.
+#[derive(Clone, Copy, Debug)]
+pub struct BatchPolicy {
+    pub enabled: bool,
+    pub verify: bool,
+    pub max_batch: usize,
+}
+
+impl Default for BatchPolicy {
+    fn default() -> Self {
+        BatchPolicy {
+            enabled: false,
+            verify: true,
+            max_batch: 4,
+        }
+    }
+}
+
+/// The effective batch cap: an explicit execution-permit limit wins over the configured max, and
+/// zero is never a batch size (the proposer withholds before calling this).
+fn effective_max_batch(configured: usize, limit: Option<usize>) -> usize {
+    limit.unwrap_or(configured).max(1)
 }
 
 /// Errors private to the runtime-manager play helpers. Distinguishes the Law 24 certificate
@@ -546,7 +579,24 @@ impl RuntimeManager {
             effect_mode,
             genesis_pos: PosGenesis::default(),
             genesis_vaults: Vec::new(),
+            batch: BatchPolicy::default(),
         }
+    }
+
+    /// Set the cross-deploy batch policy (builder form; default off).
+    pub fn with_batch_policy(mut self, batch: BatchPolicy) -> Self {
+        self.batch = batch;
+        self
+    }
+
+    /// The current batch policy.
+    pub fn batch_policy(&self) -> BatchPolicy {
+        self.batch
+    }
+
+    /// Set the batch policy in place (tests switch it between runs; production uses the builder).
+    pub fn set_batch_policy(&mut self, batch: BatchPolicy) {
+        self.batch = batch;
     }
 
     /// Set the network's genesis PoS descriptors (builder form).
@@ -573,6 +623,16 @@ impl RuntimeManager {
 
     pub fn get_history_repo(&self) -> &RhoHistoryRepository {
         &self.history_repo
+    }
+
+    /// Move `CURRENT_ROOT` to `post_state` if a checkpoint recorded it (law 80, B40).
+    ///
+    /// This is the **acceptance** half of the split: `RSpace::create_checkpoint` records a candidate
+    /// root as known, and this publishes it once the block carrying it is in the DAG. `Ok(false)`
+    /// means the store does not know the root, so it is not publishable — never write a pointer to a
+    /// state no checkpoint produced.
+    pub async fn publish_accepted_root(&self, post_state: Blake2b256Hash) -> Result<bool, String> {
+        self.history_repo.publish_if_known(post_state).await
     }
 
     pub fn get_mergeable_store(&self) -> &MergeableStore {
@@ -1478,6 +1538,38 @@ impl RuntimeManager {
         ),
         String,
     > {
+        self.compute_state_with_limit(
+            start_hash,
+            terms,
+            system_deploys,
+            rand,
+            block_data,
+            fringe_state_hash,
+            None,
+        )
+        .await
+    }
+
+    /// [`Self::compute_state`] with an explicit execution-concurrency cap. The proposer passes
+    /// the permit count it acquired; validation/replay keeps the default (`None`) so it always
+    /// progresses.
+    pub async fn compute_state_with_limit(
+        &self,
+        start_hash: &Blake2b256Hash,
+        terms: &[SignedDeployData],
+        system_deploys: &[SystemDeploy],
+        rand: &Blake2b512Random,
+        block_data: BlockData,
+        fringe_state_hash: &Blake2b256Hash,
+        batch_limit: Option<usize>,
+    ) -> Result<
+        (
+            Blake2b256Hash,
+            Vec<UserDeployRuntimeResult>,
+            Vec<SystemDeployRuntimeResult>,
+        ),
+        String,
+    > {
         let creator = block_data.sender.bytes().to_vec();
         let seq_num = i64::from(block_data.seq_num);
         // **The close deploy's participation is in the deploy itself on this path** (B4, #150): the play
@@ -1505,29 +1597,35 @@ impl RuntimeManager {
             mut processed_deploys,
             mut processed_system_deploys,
             mut native_changes,
-        ) = match Self::block_on(
-            &self.runtime,
-            start_hash,
-            terms,
-            system_deploys,
-            rand,
-            &block_data,
-        )
-        .await
+        ) = match self
+            .block_on(
+                &self.runtime,
+                start_hash,
+                terms,
+                system_deploys,
+                rand,
+                &block_data,
+                self.batch.enabled,
+                batch_limit,
+            )
+            .await
         {
             Ok(v) => v,
             Err(RuntimeRunError::SpeculationInvalidated) => {
                 let oracle = self.fork_play_runtime(*start_hash).await?;
-                let v = Self::block_on(
-                    &oracle,
-                    start_hash,
-                    terms,
-                    system_deploys,
-                    rand,
-                    &block_data,
-                )
-                .await
-                .map_err(String::from)?;
+                let v = self
+                    .block_on(
+                        &oracle,
+                        start_hash,
+                        terms,
+                        system_deploys,
+                        rand,
+                        &block_data,
+                        false,
+                        None,
+                    )
+                    .await
+                    .map_err(String::from)?;
                 fell_back = true;
                 v
             }
@@ -1574,12 +1672,15 @@ impl RuntimeManager {
     /// post-state hash and the processed results — the shared play-and-checkpoint fold of the
     /// speculative run and the validation oracle.
     async fn block_on(
+        &self,
         runtime: &RhoRuntime,
         start_hash: &Blake2b256Hash,
         terms: &[SignedDeployData],
         system_deploys: &[SystemDeploy],
         rand: &Blake2b512Random,
         block_data: &BlockData,
+        batching: bool,
+        batch_limit: Option<usize>,
     ) -> Result<
         (
             Blake2b256Hash,
@@ -1590,15 +1691,30 @@ impl RuntimeManager {
         RuntimeRunError,
     > {
         runtime.set_block_data(block_data.clone());
-        let (mut state_hash, processed_deploys) =
-            Self::play_deploys_with_cost_accounting_with(runtime, start_hash, terms, rand).await?;
-        // The user deploys' native mutations, drained into the checkpoint that call just made — and
-        // **the sidecar's half only**: cost accounting's writes are re-derived by the merge from the
-        // accepted deploys (AUDIT C207), so carrying them here would make every user-deploy block
-        // overlap every concurrent sibling on `pos:vault` and lose its own writes to a whole-block
-        // rejection. The checkpoint has already folded both halves.
-        let mut native_effects = BlockNativeEffects::from_drain(&runtime.last_native_drain())
-            .map_err(RuntimeRunError::Other)?;
+        let (mut state_hash, processed_deploys, mut native_effects) =
+            if batching && !terms.is_empty() && self.batch.enabled {
+                self.play_deploys_batched_with(
+                    runtime,
+                    start_hash,
+                    terms,
+                    rand,
+                    block_data,
+                    batch_limit,
+                )
+                .await?
+            } else {
+                let (hash, processed) =
+                    Self::play_deploys_with_cost_accounting_with(runtime, start_hash, terms, rand)
+                        .await?;
+                let native = BlockNativeEffects::from_drain(&runtime.last_native_drain())
+                    .map_err(RuntimeRunError::Other)?;
+                (hash, processed, native)
+            };
+        // The user deploys' native mutations. On the sequential path this is the checkpoint drain;
+        // on the batched path it is the per-fork sidecar, keyed by the same global ordinals. Cost
+        // accounting's writes are re-derived by the merge from the accepted deploys (AUDIT C207),
+        // so carrying them here would make every user-deploy block overlap every concurrent sibling
+        // on `pos:vault`.
         let mut processed_system_deploys = Vec::new();
         for (i, sd) in system_deploys.iter().enumerate() {
             let ordinal = u32::try_from(terms.len() + i).map_err(|_| {
@@ -1611,10 +1727,6 @@ impl RuntimeManager {
             runtime.native_store().end_writer();
             let (new_hash, processed) = played?;
             state_hash = new_hash;
-            // Each block-level system deploy resets and checkpoints its own state, so its native
-            // mutations (activation, rewards, withdrawal processing, slashing) are read here and
-            // accumulated — one `last_native_changes` per checkpoint, and reset does not clear it.
-            // A block-level system deploy is not cost accounting, so the own-set is the right read.
             let effects = BlockNativeEffects::from_drain(&runtime.last_native_drain())
                 .map_err(RuntimeRunError::Other)?;
             native_effects.merge(effects);
@@ -1626,6 +1738,201 @@ impl RuntimeManager {
             processed_system_deploys,
             native_effects,
         ))
+    }
+
+    /// **The batched deploy path** (Law 86c). Each deploy in a candidate batch runs on a fork from
+    /// the current base; the batch is certified only when the merge's event-log relation and the
+    /// native-slot sets are pairwise disjoint. A conflicting deploy flushes the batch and starts a
+    /// new one, so the published list stays in block order and a conflict costs a fork, not a
+    /// rejection. Any error or a failed `verify` returns `SpeculationInvalidated`, which the caller
+    /// already handles as the whole-block sequential fallback.
+    async fn play_deploys_batched_with(
+        &self,
+        runtime: &RhoRuntime,
+        start_hash: &Blake2b256Hash,
+        terms: &[SignedDeployData],
+        rand: &Blake2b512Random,
+        block_data: &BlockData,
+        batch_limit: Option<usize>,
+    ) -> Result<
+        (
+            Blake2b256Hash,
+            Vec<UserDeployRuntimeResult>,
+            BlockNativeEffects,
+        ),
+        RuntimeRunError,
+    > {
+        let max_batch = effective_max_batch(self.batch.max_batch, batch_limit);
+        let mut base = *start_hash;
+        let mut results: Vec<UserDeployRuntimeResult> = Vec::new();
+        let mut native = BlockNativeEffects::empty();
+        let mut chains: Vec<Arc<DeployChainIndex>> = Vec::new();
+        let mut batch_results: Vec<UserDeployRuntimeResult> = Vec::new();
+        let mut batch_native: BTreeMap<u32, Vec<NativeStoreAction>> = BTreeMap::new();
+
+        for (i, deploy) in terms.iter().enumerate() {
+            let ordinal = u32::try_from(i).map_err(|_| {
+                RuntimeRunError::Other("more deploys than a u32 ordinal can name".to_string())
+            })?;
+            if chains.len() >= max_batch {
+                Self::flush_batch(
+                    &self.history_repo,
+                    &mut base,
+                    &mut results,
+                    &mut native,
+                    &mut chains,
+                    &mut batch_results,
+                    &mut batch_native,
+                )
+                .await?;
+            }
+            let (chain, result, effects) = self
+                .play_one_on_fork(base, deploy, ordinal, block_data, rand)
+                .await?;
+            if !chains.is_empty() && !batch::compatible(&chains, &chain) {
+                Self::flush_batch(
+                    &self.history_repo,
+                    &mut base,
+                    &mut results,
+                    &mut native,
+                    &mut chains,
+                    &mut batch_results,
+                    &mut batch_native,
+                )
+                .await?;
+                let (chain, result, effects) = self
+                    .play_one_on_fork(base, deploy, ordinal, block_data, rand)
+                    .await?;
+                chains.push(chain);
+                batch_results.push(result);
+                batch_native.insert(ordinal, effects);
+            } else {
+                chains.push(chain);
+                batch_results.push(result);
+                batch_native.insert(ordinal, effects);
+            }
+        }
+        Self::flush_batch(
+            &self.history_repo,
+            &mut base,
+            &mut results,
+            &mut native,
+            &mut chains,
+            &mut batch_results,
+            &mut batch_native,
+        )
+        .await?;
+
+        if self.batch.verify {
+            let oracle = self.fork_play_runtime(*start_hash).await?;
+            oracle.set_block_data(block_data.clone());
+            let (raw_hash, raw_results) =
+                Self::play_deploys_with_cost_accounting_with(&oracle, start_hash, terms, rand)
+                    .await?;
+            let logs_match = raw_results.len() == results.len()
+                && raw_results.iter().zip(&results).all(|(raw, batched)| {
+                    raw.deploy.deploy.sig == batched.deploy.deploy.sig
+                        && raw.deploy.cost == batched.deploy.cost
+                        && raw.deploy.deploy_log == batched.deploy.deploy_log
+                        && raw.deploy.is_failed == batched.deploy.is_failed
+                });
+            if raw_hash != base || !logs_match {
+                return Err(RuntimeRunError::SpeculationInvalidated);
+            }
+        }
+
+        // The main runtime is the one the system deploys run on; put it at the merged root.
+        runtime.reset(base).await.map_err(RuntimeRunError::Other)?;
+        Ok((base, results, native))
+    }
+
+    /// Run one deploy on a fork from `base` and build its single-deploy chain index.
+    async fn play_one_on_fork(
+        &self,
+        base: Blake2b256Hash,
+        deploy: &SignedDeployData,
+        ordinal: u32,
+        block_data: &BlockData,
+        rand: &Blake2b512Random,
+    ) -> Result<
+        (
+            Arc<DeployChainIndex>,
+            UserDeployRuntimeResult,
+            Vec<NativeStoreAction>,
+        ),
+        RuntimeRunError,
+    > {
+        let fork = self.fork_play_runtime(base).await?;
+        fork.set_block_data(block_data.clone());
+        let seed = rand.split_byte(u8::try_from(ordinal).map_err(|_| {
+            RuntimeRunError::Other("more than 255 deploys in one block".to_string())
+        })?);
+        fork.native_store()
+            .begin_writer(NativeWriter::Deploy(ordinal));
+        let played = Self::play_deploy_with_cost_accounting_with(&fork, deploy, &seed).await;
+        fork.native_store().end_writer();
+        let played = played?;
+        let checkpoint = fork
+            .create_checkpoint()
+            .await
+            .map_err(RuntimeRunError::Other)?;
+        let event_log_index = BlockIndex::create_event_log_index(
+            &played.deploy.deploy_log,
+            &self.history_repo,
+            base,
+            played.mergeable.clone(),
+        )
+        .await
+        .map_err(RuntimeRunError::Other)?;
+        let mut indexes = BTreeSet::new();
+        let cost = i64::try_from(played.deploy.cost.cost)
+            .map_err(|_| RuntimeRunError::Other("deploy cost exceeds i64".to_string()))?;
+        indexes.insert(DeployIndex {
+            deploy_id: played.deploy.deploy.sig.clone(),
+            cost,
+            event_log_index,
+        });
+        let effects = BlockNativeEffects::from_drain(&fork.last_native_drain())
+            .map_err(RuntimeRunError::Other)?;
+        let native = effects.of_deploy(ordinal).to_vec();
+        let chain = DeployChainIndex::apply(
+            base,
+            &indexes,
+            BTreeMap::new(),
+            String::new(),
+            base,
+            checkpoint.root,
+            &self.history_repo,
+            native.clone(),
+            ordinal,
+        )
+        .await
+        .map_err(RuntimeRunError::Other)?;
+        Ok((Arc::new(chain), played, native))
+    }
+
+    /// Merge the current batch into `base` and fold its results and native writes into the block's.
+    async fn flush_batch(
+        history_repo: &RhoHistoryRepository,
+        base: &mut Blake2b256Hash,
+        results: &mut Vec<UserDeployRuntimeResult>,
+        native: &mut BlockNativeEffects,
+        chains: &mut Vec<Arc<DeployChainIndex>>,
+        batch_results: &mut Vec<UserDeployRuntimeResult>,
+        batch_native: &mut BTreeMap<u32, Vec<NativeStoreAction>>,
+    ) -> Result<(), RuntimeRunError> {
+        if chains.is_empty() {
+            return Ok(());
+        }
+        let set: BTreeSet<Arc<DeployChainIndex>> = chains.iter().cloned().collect();
+        let actions: Vec<NativeStoreAction> = batch_native.values().flatten().cloned().collect();
+        *base = MergeScope::compute_merged_state(&set, *base, history_repo, &actions)
+            .await
+            .map_err(RuntimeRunError::Other)?;
+        results.append(batch_results);
+        native.merge(BlockNativeEffects::from_map(std::mem::take(batch_native)));
+        chains.clear();
+        Ok(())
     }
 
     /// Validate a relaxed-validated block run against the sequential reference (Laws 23–25):
@@ -1656,8 +1963,18 @@ impl RuntimeManager {
         String,
     > {
         let oracle = self.fork_play_runtime(*start_hash).await?;
-        let (oracle_hash, oracle_user, oracle_sys, oracle_native) =
-            Self::block_on(&oracle, start_hash, terms, system_deploys, rand, block_data).await?;
+        let (oracle_hash, oracle_user, oracle_sys, oracle_native) = self
+            .block_on(
+                &oracle,
+                start_hash,
+                terms,
+                system_deploys,
+                rand,
+                block_data,
+                false,
+                None,
+            )
+            .await?;
         let logs_match = relaxed_user
             .iter()
             .zip(&oracle_user)
@@ -2514,5 +2831,207 @@ mod tests {
             "and the denominator a quorum is measured against halves — 200 against 100 is the same \
              quorum read as a different fraction of the same chain"
         );
+    }
+
+    /// **A certified batch matches the sequential fold** (Law 86c). Two independent deploys on
+    /// different channels run on separate forks and are merged; the state hash and every processed
+    /// deploy match the sequential run. `batch.verify` re-runs the block sequentially and refuses a
+    /// mismatch, so this test's equality is also the executor's own check.
+    #[tokio::test]
+    async fn a_certified_batch_matches_the_sequential_fold() {
+        use rchain_models::casper::protocol::casper_message::{DeployData, SignedDeployData};
+        use rchain_rholang::native_state::PosParams;
+        use rchain_rholang::util::rev_address::RevAddress;
+        use rchain_shared::refined::{BlockHeight, SeqNum};
+
+        let mut rm = manager().await;
+        let rand = Blake2b512Random::from_init(&[9u8; 32]);
+        let validator = PublicKey::new(vec![7u8; 65]);
+        let d1 = PublicKey::new(vec![8u8; 65]);
+        let d2 = PublicKey::new(vec![9u8; 65]);
+        let pos = PosGenesis {
+            bonds: BTreeMap::from([(
+                Validator::from_slice(&[1u8; 65]),
+                NonNegI64::try_from(1_000).expect("a stake"),
+            )]),
+            trusted: BTreeSet::new(),
+            params: PosParams::default(),
+            dev_vesting: None,
+        };
+        let vaults = [
+            Vault {
+                rev_address: RevAddress::from_public_key(&d1).expect("d1"),
+                initial_balance: NonNegI64::try_from(1_000_000_000).expect("funded"),
+            },
+            Vault {
+                rev_address: RevAddress::from_public_key(&d2).expect("d2"),
+                initial_balance: NonNegI64::try_from(1_000_000_000).expect("funded"),
+            },
+        ];
+        let (_, genesis_post, _) = rm
+            .compute_genesis(&[], &rand, BlockData::empty(), &pos, &vaults)
+            .await
+            .expect("compute_genesis");
+        let block_data = BlockData {
+            block_number: BlockHeight::zero(),
+            sender: validator.clone(),
+            seq_num: SeqNum::zero(),
+            timestamp: 0,
+        };
+        let mk = |pk: &PublicKey, term: &str, sig: u8| SignedDeployData {
+            data: DeployData {
+                attachments: Vec::new(),
+                term: term.to_string(),
+                timestamp: 0,
+                phlo_price: 1,
+                phlo_limit: 500_000,
+                valid_after_block_number: 0,
+                shard_id: "root".to_string(),
+            },
+            deployer: pk.bytes().to_vec(),
+            sig: vec![sig; 64],
+            sig_algorithm: "secp256k1".to_string(),
+        };
+        let terms = vec![mk(&d1, "@\"a\"!(1)", 1), mk(&d2, "@\"b\"!(2)", 2)];
+        let fringe = Blake2b256Hash::from_bytes([3u8; 32]);
+
+        rm.set_batch_policy(BatchPolicy {
+            enabled: true,
+            verify: true,
+            max_batch: 4,
+        });
+        let (batched_hash, batched_results, _) = rm
+            .compute_state(
+                &genesis_post,
+                &terms,
+                &[],
+                &rand,
+                block_data.clone(),
+                &fringe,
+            )
+            .await
+            .expect("the certified batch");
+        rm.set_batch_policy(BatchPolicy {
+            enabled: false,
+            ..BatchPolicy::default()
+        });
+        let (sequential_hash, sequential_results, _) = rm
+            .compute_state(&genesis_post, &terms, &[], &rand, block_data, &fringe)
+            .await
+            .expect("the sequential fold");
+
+        assert_eq!(
+            batched_hash, sequential_hash,
+            "the certified batch must reach the sequential fold's root"
+        );
+        assert_eq!(
+            batched_results, sequential_results,
+            "and carry the same processed deploys"
+        );
+    }
+    /// **A conflicting pair is not batched** (Law 86c): a produce and a consume on one channel
+    /// flush the first batch, and the consume runs from the merged base. The state hash and every
+    /// processed deploy still match the sequential fold — the conflict costs a fork, not a result.
+    #[tokio::test]
+    async fn a_conflicting_batch_stays_in_order() {
+        use rchain_models::casper::protocol::casper_message::{DeployData, SignedDeployData};
+        use rchain_rholang::native_state::PosParams;
+        use rchain_rholang::util::rev_address::RevAddress;
+        use rchain_shared::refined::{BlockHeight, SeqNum};
+
+        let mut rm = manager().await;
+        let rand = Blake2b512Random::from_init(&[9u8; 32]);
+        let validator = PublicKey::new(vec![7u8; 65]);
+        let d1 = PublicKey::new(vec![8u8; 65]);
+        let d2 = PublicKey::new(vec![9u8; 65]);
+        let pos = PosGenesis {
+            bonds: BTreeMap::from([(
+                Validator::from_slice(&[1u8; 65]),
+                NonNegI64::try_from(1_000).expect("a stake"),
+            )]),
+            trusted: BTreeSet::new(),
+            params: PosParams::default(),
+            dev_vesting: None,
+        };
+        let vaults = [
+            Vault {
+                rev_address: RevAddress::from_public_key(&d1).expect("d1"),
+                initial_balance: NonNegI64::try_from(1_000_000_000).expect("funded"),
+            },
+            Vault {
+                rev_address: RevAddress::from_public_key(&d2).expect("d2"),
+                initial_balance: NonNegI64::try_from(1_000_000_000).expect("funded"),
+            },
+        ];
+        let (_, genesis_post, _) = rm
+            .compute_genesis(&[], &rand, BlockData::empty(), &pos, &vaults)
+            .await
+            .expect("compute_genesis");
+        let block_data = BlockData {
+            block_number: BlockHeight::zero(),
+            sender: validator.clone(),
+            seq_num: SeqNum::zero(),
+            timestamp: 0,
+        };
+        let mk = |pk: &PublicKey, term: &str, sig: u8| SignedDeployData {
+            data: DeployData {
+                attachments: Vec::new(),
+                term: term.to_string(),
+                timestamp: 0,
+                phlo_price: 1,
+                phlo_limit: 500_000,
+                valid_after_block_number: 0,
+                shard_id: "root".to_string(),
+            },
+            deployer: pk.bytes().to_vec(),
+            sig: vec![sig; 64],
+            sig_algorithm: "secp256k1".to_string(),
+        };
+        let terms = vec![
+            mk(&d1, "@\"c\"!(1)", 1),
+            mk(&d2, "for (@x <- @\"c\") { @\"d\"!(x) }", 2),
+        ];
+        let fringe = Blake2b256Hash::from_bytes([3u8; 32]);
+
+        rm.set_batch_policy(BatchPolicy {
+            enabled: true,
+            verify: true,
+            max_batch: 4,
+        });
+        let (batched_hash, batched_results, _) = rm
+            .compute_state(
+                &genesis_post,
+                &terms,
+                &[],
+                &rand,
+                block_data.clone(),
+                &fringe,
+            )
+            .await
+            .expect("the certified batch");
+        rm.set_batch_policy(BatchPolicy {
+            enabled: false,
+            ..BatchPolicy::default()
+        });
+        let (sequential_hash, sequential_results, _) = rm
+            .compute_state(&genesis_post, &terms, &[], &rand, block_data, &fringe)
+            .await
+            .expect("the sequential fold");
+
+        assert_eq!(
+            batched_hash, sequential_hash,
+            "the certified batch must reach the sequential fold's root"
+        );
+        assert_eq!(
+            batched_results, sequential_results,
+            "and carry the same processed deploys"
+        );
+    }
+
+    #[test]
+    fn an_execution_limit_caps_the_configured_batch() {
+        assert_eq!(super::effective_max_batch(4, None), 4);
+        assert_eq!(super::effective_max_batch(4, Some(1)), 1);
+        assert_eq!(super::effective_max_batch(4, Some(0)), 1);
     }
 }

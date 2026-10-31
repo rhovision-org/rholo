@@ -48,6 +48,16 @@ on:
       - "Makefile"
       - "node/tests/lean_*.rs"
       - "rholang/tests/lean_*.rs"
+      - "casper/tests/lean_*.rs"
+      - "models/tests/lean_*.rs"
+      # The admission consumer drives the pool policy and the permit arithmetic; a change to either
+      # moves what the corpus checks (C340, Law 86a/86d).
+      - "casper/src/pool.rs"
+      - "casper/src/budget.rs"
+      # The decimal consumer drives the value algebra and the sorter's payload (Law 87a–e).
+      - "models/src/decimal.rs"
+      - "models/src/property_tests.rs"
+      - "models/src/sorter.rs"
       # **A corpus consumer outside `tests/`.** `rholang/src/system_processes.rs`'s test module reads
       # `spec/conformance/protocol.tsv` to check the installed reply urn table against the catalog,
       # so it is a consumer like the `lean_*_corpus.rs` files — it was simply outside a list that

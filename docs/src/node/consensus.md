@@ -46,20 +46,20 @@ holding at most one third of the stake can out-vote it.
 
 Concretely, the finalizer (`Finalizer` in the DAG layer) tracks the **support** each block has from
 the bonded validators, and advances the finalized fringe whenever that support crosses `> 2/3`.
+The operator consequences of an absent validator are in [validator risk](operator-risk.md): enough
+silent bonded stake stops finality, and the denominator does not shrink. A peer can probe `/health`
+for `finalityStalled`/`finalityStallEpisodes`; `/metrics` carries the same signal for an alert.
 
 **Support counts only full partitions.** A candidate message contributes its sender's stake only when
 **every validator that has seen it has itself seen a message from every validator of the partition**
-(`all_bonded`, `block-storage/src/dag/finalizer.rs`) — so what stands behind a block is a complete
-cross-justified cut, not a plurality. Until 2026-09-29 the partition was the whole bonded set, which
-meant one bonded validator that produced no messages capped finality whatever share of the stake the
-others held: measured on a three-validator devnet at `100/100/50`, the two survivors at 80 % of the
-active set did not resume finality while the third was stopped. The partition is now the **live weight
-set** — the bonded validators whose latest message is within `LIVENESS_WINDOW` heights of the tip
-(`block-storage/src/dag/liveness.rs`) — so a stopped validator stops blocking the partition. The quorum
-is still measured against the **whole** bonded stake, which is what keeps the safety property: a quorum
-over the speaking subset alone would be reached by any self-consistent group, and under a partition two
-groups would finalise different histories
-([#70](https://github.com/rhovision-org/rholo/issues/70)).
+(`block-storage/src/dag/finalizer.rs`) — so what stands behind a block is a complete cross-justified
+cut, not a plurality. The partition is the **live weight set**: the bonded validators whose latest
+message is within `LIVENESS_WINDOW` heights of the tip
+(`block-storage/src/dag/liveness.rs`). A stopped validator therefore stops blocking the partition.
+The quorum is still measured against the **whole** bonded stake, which is what keeps the safety
+property: a quorum over the speaking subset alone would be reached by any self-consistent group, and
+under a partition two groups would finalise different histories. The measurement that led to the live
+weight set is in [Incident history](incident-history.md#finality-and-the-live-weight-set).
 
 Who is *in* that weight set — and what a validator is paid for being in it — is
 [Validator economics](validator-economics.md).

@@ -8,10 +8,11 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use num_bigint::BigInt;
 use proptest::prelude::*;
 
 use crate::ast::{Expr, Par, ProcSort, Send, Var};
-use crate::decimal::{Decimal, MAX_SCALE};
+use crate::decimal::{Decimal, DecimalError, MAX_SCALE};
 use crate::par_ops::{from_expr, par_concat};
 use crate::sorted::Sorted;
 use crate::sorter::{sort_par_term, sort_pars};
@@ -259,4 +260,106 @@ fn the_arbitrary_par_strategy_produces_varied_terms() {
         "the strategy must produce non-trivial terms often (sends {sends}, multi-expr {multi_expr})"
     );
     let _ = empty;
+}
+
+/// A canonical decimal, the input class every Law 87 value theorem assumes.
+fn arb_canonical_decimal() -> impl Strategy<Value = Decimal> {
+    (any::<i64>(), 0u32..=MAX_SCALE).prop_map(|(coefficient, scale)| {
+        Decimal::new(coefficient.into(), scale).expect("in-range scale")
+    })
+}
+
+proptest! {
+    /// **Law 87b.** The scaled payload is an injective embedding of the canonical value: two
+    /// canonical decimals with one payload are one value. This is what makes the sorter's
+    /// `Expr::GDecimal` arm (`scaled_value`) and the Lean `Expr.edecimal` payload agree.
+    #[test]
+    fn law87_scaled_value_is_injective_on_canonical_values(
+        a in arb_canonical_decimal(),
+        b in arb_canonical_decimal(),
+    ) {
+        if a.scaled_value() == b.scaled_value() {
+            prop_assert_eq!(a, b);
+        }
+    }
+
+    /// **Law 87b.** `cmp_numeric` is the order of the scaled payload.
+    #[test]
+    fn law87_scaled_value_preserves_order(
+        a in arb_canonical_decimal(),
+        b in arb_canonical_decimal(),
+    ) {
+        prop_assert_eq!(a.cmp_numeric(&b), a.scaled_value().cmp(&b.scaled_value()));
+    }
+
+    /// **Law 87c.** Addition is exact in units of `10^-38`.
+    #[test]
+    fn law87_addition_is_exact_in_scaled_units(
+        a in arb_canonical_decimal(),
+        b in arb_canonical_decimal(),
+    ) {
+        let sum = a.add(&b).expect("canonical addition cannot fail");
+        prop_assert_eq!(sum.scaled_value(), a.scaled_value() + b.scaled_value());
+    }
+
+    /// **Law 87c.** Subtraction is exact in units of `10^-38`.
+    #[test]
+    fn law87_subtraction_is_exact_in_scaled_units(
+        a in arb_canonical_decimal(),
+        b in arb_canonical_decimal(),
+    ) {
+        let difference = a.sub(&b).expect("canonical subtraction cannot fail");
+        prop_assert_eq!(difference.scaled_value(), a.scaled_value() - b.scaled_value());
+    }
+
+    /// **Law 87c.** A successful product satisfies the scaled identity; the only refusal is the
+    /// scale bound (there is no rounding path).
+    #[test]
+    fn law87_multiplication_satisfies_the_scaled_identity(
+        a in arb_canonical_decimal(),
+        b in arb_canonical_decimal(),
+    ) {
+        match a.mul(&b) {
+            Ok(q) => prop_assert_eq!(
+                q.scaled_value() * BigInt::from(10).pow(MAX_SCALE),
+                a.scaled_value() * b.scaled_value()
+            ),
+            Err(e) => {
+                let scale_only = matches!(e, DecimalError::ScaleOutOfRange { .. });
+                prop_assert!(scale_only);
+            }
+        }
+    }
+
+    /// **Law 87d.** A successful quotient satisfies the scaled identity; a nonzero divisor's
+    /// refusal is exactly `InexactDivision`, and a zero divisor is exactly `DivisionByZero`.
+    #[test]
+    fn law87_division_satisfies_the_scaled_identity_or_is_an_explicit_error(
+        a in arb_canonical_decimal(),
+        b in arb_canonical_decimal(),
+    ) {
+        if b.is_zero() {
+            prop_assert_eq!(a.div(&b), Err(DecimalError::DivisionByZero));
+        } else {
+            match a.div(&b) {
+                Ok(q) => prop_assert_eq!(
+                    q.scaled_value() * b.scaled_value(),
+                    a.scaled_value() * BigInt::from(10).pow(MAX_SCALE)
+                ),
+                Err(e) => prop_assert_eq!(e, DecimalError::InexactDivision),
+            }
+        }
+    }
+
+    /// **Law 87a.** Canonicalisation is idempotent: a canonical value is a normal form.
+    #[test]
+    fn law87_canonicalisation_is_idempotent(
+        coefficient in any::<i64>(),
+        scale in 0u32..=MAX_SCALE,
+    ) {
+        let once = Decimal::new(coefficient.into(), scale).expect("in-range scale");
+        let twice = Decimal::new(once.coefficient().clone(), once.scale())
+            .expect("canonical scale is in range");
+        prop_assert_eq!(once, twice);
+    }
 }

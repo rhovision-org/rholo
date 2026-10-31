@@ -1,0 +1,10 @@
+hostlist	self_only	0
+hostlist	observer_excluded	0
+hostlist	wrong_network	0
+hostlist	wrong_shard	0
+hostlist	unreachable	0
+hostlist	address_mismatch	0
+hostlist	three_valid_sorted	0,1,3,5
+hostlist	truncation_self_first	0,1
+hostlist	duplicate_ids	0,1
+hostlist	self_not_a_proposer	7

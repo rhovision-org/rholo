@@ -1,0 +1,4264 @@
+{
+  "boundary": "finite 1 GiB fault-injection arm; not supported-tier acceptance",
+  "seconds": 600,
+  "deploy_every_s": 2.0,
+  "deploys_attempted": 102,
+  "deploy_refusals": 6,
+  "fallback_states_seen": [
+    "normal",
+    "throttled"
+  ],
+  "initial": {
+    "n420soak-bootstrap": {
+      "oom_killed": false,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    },
+    "n420soak-validator-1": {
+      "oom_killed": false,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    },
+    "n420soak-validator-2": {
+      "oom_killed": false,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    },
+    "n420soak-validator-3": {
+      "oom_killed": false,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    }
+  },
+  "final": {
+    "n420soak-bootstrap": {
+      "oom_killed": false,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    },
+    "n420soak-validator-1": {
+      "oom_killed": false,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    },
+    "n420soak-validator-2": {
+      "oom_killed": false,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    },
+    "n420soak-validator-3": {
+      "oom_killed": false,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0
+    }
+  },
+  "finality_start": {
+    "n420soak-bootstrap": 837,
+    "n420soak-validator-1": 837,
+    "n420soak-validator-2": 837,
+    "n420soak-validator-3": 837
+  },
+  "finality_end": {
+    "n420soak-bootstrap": 1166,
+    "n420soak-validator-1": 1166,
+    "n420soak-validator-2": 1166,
+    "n420soak-validator-3": 1166
+  },
+  "samples": [
+    {
+      "at": 1792872834.4892883,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27949,
+          "halted": false,
+          "height": 841
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27931,
+          "halted": false,
+          "height": 841
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27904,
+          "halted": false,
+          "height": 841
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27932,
+          "halted": false,
+          "height": 841
+        }
+      }
+    },
+    {
+      "at": 1792872840.0675359,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28008,
+          "halted": false,
+          "height": 845
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28001,
+          "halted": false,
+          "height": 844
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27991,
+          "halted": false,
+          "height": 845
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28033,
+          "halted": false,
+          "height": 845
+        }
+      }
+    },
+    {
+      "at": 1792872845.6532416,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28044,
+          "halted": false,
+          "height": 848
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28049,
+          "halted": false,
+          "height": 848
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28005,
+          "halted": false,
+          "height": 848
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27914,
+          "halted": false,
+          "height": 848
+        }
+      }
+    },
+    {
+      "at": 1792872851.2208574,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27982,
+          "halted": false,
+          "height": 852
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27952,
+          "halted": false,
+          "height": 852
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27943,
+          "halted": false,
+          "height": 852
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27976,
+          "halted": false,
+          "height": 852
+        }
+      }
+    },
+    {
+      "at": 1792872856.7500813,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28068,
+          "halted": false,
+          "height": 856
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27957,
+          "halted": false,
+          "height": 856
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28026,
+          "halted": false,
+          "height": 856
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28033,
+          "halted": false,
+          "height": 856
+        }
+      }
+    },
+    {
+      "at": 1792872862.276919,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28337,
+          "halted": false,
+          "height": 859
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28081,
+          "halted": false,
+          "height": 859
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28113,
+          "halted": false,
+          "height": 859
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28149,
+          "halted": false,
+          "height": 859
+        }
+      }
+    },
+    {
+      "at": 1792872867.8176682,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28276,
+          "halted": false,
+          "height": 863
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28108,
+          "halted": false,
+          "height": 862
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28210,
+          "halted": false,
+          "height": 862
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28202,
+          "halted": false,
+          "height": 862
+        }
+      }
+    },
+    {
+      "at": 1792872873.3416197,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28093,
+          "halted": false,
+          "height": 865
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28091,
+          "halted": false,
+          "height": 865
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28080,
+          "halted": false,
+          "height": 865
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28058,
+          "halted": false,
+          "height": 865
+        }
+      }
+    },
+    {
+      "at": 1792872878.9620314,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28085,
+          "halted": false,
+          "height": 869
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28036,
+          "halted": false,
+          "height": 869
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28087,
+          "halted": false,
+          "height": 869
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28114,
+          "halted": false,
+          "height": 869
+        }
+      }
+    },
+    {
+      "at": 1792872884.500431,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28047,
+          "halted": false,
+          "height": 872
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28081,
+          "halted": false,
+          "height": 872
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28084,
+          "halted": false,
+          "height": 872
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28048,
+          "halted": false,
+          "height": 872
+        }
+      }
+    },
+    {
+      "at": 1792872890.1035087,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27985,
+          "halted": false,
+          "height": 876
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27993,
+          "halted": false,
+          "height": 875
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28010,
+          "halted": false,
+          "height": 875
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28042,
+          "halted": false,
+          "height": 876
+        }
+      }
+    },
+    {
+      "at": 1792872895.6462007,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27910,
+          "halted": false,
+          "height": 878
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27861,
+          "halted": false,
+          "height": 878
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27947,
+          "halted": false,
+          "height": 878
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28006,
+          "halted": false,
+          "height": 878
+        }
+      }
+    },
+    {
+      "at": 1792872901.531963,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 25158,
+          "halted": false,
+          "height": 881
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27721,
+          "halted": false,
+          "height": 881
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27847,
+          "halted": false,
+          "height": 881
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27170,
+          "halted": false,
+          "height": 882
+        }
+      }
+    },
+    {
+      "at": 1792872907.8745682,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 24089,
+          "halted": false,
+          "height": 885
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 23836,
+          "halted": false,
+          "height": 884
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 24638,
+          "halted": false,
+          "height": 885
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 24173,
+          "halted": false,
+          "height": 885
+        }
+      }
+    },
+    {
+      "at": 1792872914.1188986,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 23176,
+          "halted": false,
+          "height": 888
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 23008,
+          "halted": false,
+          "height": 888
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22803,
+          "halted": false,
+          "height": 888
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 23461,
+          "halted": false,
+          "height": 888
+        }
+      }
+    },
+    {
+      "at": 1792872920.4811652,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22586,
+          "halted": false,
+          "height": 890
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22462,
+          "halted": false,
+          "height": 890
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22386,
+          "halted": false,
+          "height": 890
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22219,
+          "halted": false,
+          "height": 890
+        }
+      }
+    },
+    {
+      "at": 1792872926.2925022,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22287,
+          "halted": false,
+          "height": 890
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27448,
+          "halted": false,
+          "height": 890
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27574,
+          "halted": false,
+          "height": 890
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27792,
+          "halted": false,
+          "height": 890
+        }
+      }
+    },
+    {
+      "at": 1792872932.3705146,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28216,
+          "halted": false,
+          "height": 890
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28015,
+          "halted": false,
+          "height": 890
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28077,
+          "halted": false,
+          "height": 890
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28190,
+          "halted": false,
+          "height": 890
+        }
+      }
+    },
+    {
+      "at": 1792872938.3535638,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28092,
+          "halted": false,
+          "height": 891
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28069,
+          "halted": false,
+          "height": 891
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28208,
+          "halted": false,
+          "height": 891
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28180,
+          "halted": false,
+          "height": 891
+        }
+      }
+    },
+    {
+      "at": 1792872944.0309157,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28047,
+          "halted": false,
+          "height": 892
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28318,
+          "halted": false,
+          "height": 892
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28287,
+          "halted": false,
+          "height": 892
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28092,
+          "halted": false,
+          "height": 892
+        }
+      }
+    },
+    {
+      "at": 1792872951.0872052,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28329,
+          "halted": false,
+          "height": 894
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28317,
+          "halted": false,
+          "height": 894
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28271,
+          "halted": false,
+          "height": 894
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28312,
+          "halted": false,
+          "height": 894
+        }
+      }
+    },
+    {
+      "at": 1792872957.651714,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28293,
+          "halted": false,
+          "height": 894
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28327,
+          "halted": false,
+          "height": 894
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28322,
+          "halted": false,
+          "height": 894
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28306,
+          "halted": false,
+          "height": 894
+        }
+      }
+    },
+    {
+      "at": 1792872964.7838619,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28217,
+          "halted": false,
+          "height": 895
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28173,
+          "halted": false,
+          "height": 895
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28141,
+          "halted": false,
+          "height": 895
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28123,
+          "halted": false,
+          "height": 895
+        }
+      }
+    },
+    {
+      "at": 1792872970.5899794,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28218,
+          "halted": false,
+          "height": 896
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28209,
+          "halted": false,
+          "height": 896
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28146,
+          "halted": false,
+          "height": 896
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28170,
+          "halted": false,
+          "height": 896
+        }
+      }
+    },
+    {
+      "at": 1792872976.23687,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28185,
+          "halted": false,
+          "height": 899
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28142,
+          "halted": false,
+          "height": 898
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28067,
+          "halted": false,
+          "height": 898
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27964,
+          "halted": false,
+          "height": 899
+        }
+      }
+    },
+    {
+      "at": 1792872981.9380171,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27809,
+          "halted": false,
+          "height": 900
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27876,
+          "halted": false,
+          "height": 900
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27733,
+          "halted": false,
+          "height": 900
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27694,
+          "halted": false,
+          "height": 900
+        }
+      }
+    },
+    {
+      "at": 1792872987.8325484,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 24935,
+          "halted": false,
+          "height": 902
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 24380,
+          "halted": false,
+          "height": 902
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27714,
+          "halted": false,
+          "height": 902
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 26355,
+          "halted": false,
+          "height": 902
+        }
+      }
+    },
+    {
+      "at": 1792872993.9166565,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 23548,
+          "halted": false,
+          "height": 904
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 23215,
+          "halted": false,
+          "height": 904
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 23042,
+          "halted": false,
+          "height": 903
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 23930,
+          "halted": false,
+          "height": 903
+        }
+      }
+    },
+    {
+      "at": 1792873000.1681361,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22450,
+          "halted": false,
+          "height": 905
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22408,
+          "halted": false,
+          "height": 904
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22395,
+          "halted": false,
+          "height": 905
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22280,
+          "halted": false,
+          "height": 904
+        }
+      }
+    },
+    {
+      "at": 1792873006.099662,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22120,
+          "halted": false,
+          "height": 906
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 21960,
+          "halted": false,
+          "height": 906
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 21926,
+          "halted": false,
+          "height": 906
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22402,
+          "halted": false,
+          "height": 906
+        }
+      }
+    },
+    {
+      "at": 1792873014.264733,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27227,
+          "halted": false,
+          "height": 906
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27263,
+          "halted": false,
+          "height": 906
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27285,
+          "halted": false,
+          "height": 906
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27237,
+          "halted": false,
+          "height": 906
+        }
+      }
+    },
+    {
+      "at": 1792873019.999622,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27316,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27384,
+          "halted": false,
+          "height": 906
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27394,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27433,
+          "halted": false,
+          "height": 906
+        }
+      }
+    },
+    {
+      "at": 1792873026.9120007,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27411,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27367,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27368,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27399,
+          "halted": false,
+          "height": 907
+        }
+      }
+    },
+    {
+      "at": 1792873034.1760979,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27431,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27444,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27447,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27435,
+          "halted": false,
+          "height": 907
+        }
+      }
+    },
+    {
+      "at": 1792873041.2270296,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27400,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27422,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27413,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27400,
+          "halted": false,
+          "height": 907
+        }
+      }
+    },
+    {
+      "at": 1792873048.3500955,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27513,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27603,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27345,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27490,
+          "halted": false,
+          "height": 907
+        }
+      }
+    },
+    {
+      "at": 1792873055.9759045,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27799,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27769,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27724,
+          "halted": false,
+          "height": 907
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27792,
+          "halted": false,
+          "height": 907
+        }
+      }
+    },
+    {
+      "at": 1792873061.573673,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27761,
+          "halted": false,
+          "height": 909
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27845,
+          "halted": false,
+          "height": 910
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27852,
+          "halted": false,
+          "height": 911
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27849,
+          "halted": false,
+          "height": 910
+        }
+      }
+    },
+    {
+      "at": 1792873067.2286153,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27493,
+          "halted": false,
+          "height": 912
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27502,
+          "halted": false,
+          "height": 913
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27476,
+          "halted": false,
+          "height": 913
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27477,
+          "halted": false,
+          "height": 912
+        }
+      }
+    },
+    {
+      "at": 1792873072.8658438,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27281,
+          "halted": false,
+          "height": 914
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27274,
+          "halted": false,
+          "height": 915
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27363,
+          "halted": false,
+          "height": 915
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27336,
+          "halted": false,
+          "height": 915
+        }
+      }
+    },
+    {
+      "at": 1792873078.4783556,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27690,
+          "halted": false,
+          "height": 918
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27686,
+          "halted": false,
+          "height": 919
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27561,
+          "halted": false,
+          "height": 918
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27634,
+          "halted": false,
+          "height": 918
+        }
+      }
+    },
+    {
+      "at": 1792873084.124044,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27695,
+          "halted": false,
+          "height": 920
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27706,
+          "halted": false,
+          "height": 922
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27700,
+          "halted": false,
+          "height": 921
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27664,
+          "halted": false,
+          "height": 920
+        }
+      }
+    },
+    {
+      "at": 1792873089.791992,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27709,
+          "halted": false,
+          "height": 922
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27686,
+          "halted": false,
+          "height": 924
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27690,
+          "halted": false,
+          "height": 923
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27658,
+          "halted": false,
+          "height": 922
+        }
+      }
+    },
+    {
+      "at": 1792873095.3755076,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27657,
+          "halted": false,
+          "height": 925
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27662,
+          "halted": false,
+          "height": 926
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27652,
+          "halted": false,
+          "height": 924
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27617,
+          "halted": false,
+          "height": 924
+        }
+      }
+    },
+    {
+      "at": 1792873100.9963307,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27618,
+          "halted": false,
+          "height": 928
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27582,
+          "halted": false,
+          "height": 929
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27616,
+          "halted": false,
+          "height": 927
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27598,
+          "halted": false,
+          "height": 927
+        }
+      }
+    },
+    {
+      "at": 1792873106.5602992,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27679,
+          "halted": false,
+          "height": 932
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27638,
+          "halted": false,
+          "height": 933
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27654,
+          "halted": false,
+          "height": 931
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27684,
+          "halted": false,
+          "height": 932
+        }
+      }
+    },
+    {
+      "at": 1792873112.1643791,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27617,
+          "halted": false,
+          "height": 935
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27645,
+          "halted": false,
+          "height": 935
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27641,
+          "halted": false,
+          "height": 934
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27642,
+          "halted": false,
+          "height": 934
+        }
+      }
+    },
+    {
+      "at": 1792873118.9862828,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27450,
+          "halted": false,
+          "height": 936
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27373,
+          "halted": false,
+          "height": 936
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27408,
+          "halted": false,
+          "height": 935
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27476,
+          "halted": false,
+          "height": 935
+        }
+      }
+    },
+    {
+      "at": 1792873124.6663508,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27346,
+          "halted": false,
+          "height": 937
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27075,
+          "halted": false,
+          "height": 938
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 26878,
+          "halted": false,
+          "height": 937
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 26643,
+          "halted": false,
+          "height": 937
+        }
+      }
+    },
+    {
+      "at": 1792873130.5813835,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 26502,
+          "halted": false,
+          "height": 940
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 26605,
+          "halted": false,
+          "height": 941
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 26324,
+          "halted": false,
+          "height": 940
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 25179,
+          "halted": false,
+          "height": 940
+        }
+      }
+    },
+    {
+      "at": 1792873137.049694,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22875,
+          "halted": false,
+          "height": 943
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 23451,
+          "halted": false,
+          "height": 944
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 23217,
+          "halted": false,
+          "height": 942
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22982,
+          "halted": false,
+          "height": 943
+        }
+      }
+    },
+    {
+      "at": 1792873143.4275756,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22296,
+          "halted": false,
+          "height": 946
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22131,
+          "halted": false,
+          "height": 946
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 21995,
+          "halted": false,
+          "height": 946
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22307,
+          "halted": false,
+          "height": 946
+        }
+      }
+    },
+    {
+      "at": 1792873149.7329156,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 21659,
+          "halted": false,
+          "height": 949
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 21737,
+          "halted": false,
+          "height": 949
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 21642,
+          "halted": false,
+          "height": 948
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 22149,
+          "halted": false,
+          "height": 948
+        }
+      }
+    },
+    {
+      "at": 1792873155.6435714,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 21624,
+          "halted": false,
+          "height": 951
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 21912,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27237,
+          "halted": false,
+          "height": 951
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27291,
+          "halted": false,
+          "height": 951
+        }
+      }
+    },
+    {
+      "at": 1792873162.4506361,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27363,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27343,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27406,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27437,
+          "halted": false,
+          "height": 951
+        }
+      }
+    },
+    {
+      "at": 1792873169.7090628,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27376,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27680,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27646,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27649,
+          "halted": false,
+          "height": 952
+        }
+      }
+    },
+    {
+      "at": 1792873177.4762535,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27772,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27777,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27781,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27758,
+          "halted": false,
+          "height": 952
+        }
+      }
+    },
+    {
+      "at": 1792873184.381782,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27786,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27796,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27788,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27739,
+          "halted": false,
+          "height": 952
+        }
+      }
+    },
+    {
+      "at": 1792873191.4416668,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27744,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27738,
+          "halted": false,
+          "height": 953
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27729,
+          "halted": false,
+          "height": 952
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27727,
+          "halted": false,
+          "height": 952
+        }
+      }
+    },
+    {
+      "at": 1792873197.0540447,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28134,
+          "halted": false,
+          "height": 953
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27763,
+          "halted": false,
+          "height": 953
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27738,
+          "halted": false,
+          "height": 953
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27732,
+          "halted": false,
+          "height": 953
+        }
+      }
+    },
+    {
+      "at": 1792873202.6602306,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28197,
+          "halted": false,
+          "height": 955
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28096,
+          "halted": false,
+          "height": 955
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28183,
+          "halted": false,
+          "height": 957
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28198,
+          "halted": false,
+          "height": 956
+        }
+      }
+    },
+    {
+      "at": 1792873208.2031043,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28143,
+          "halted": false,
+          "height": 958
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28154,
+          "halted": false,
+          "height": 957
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28187,
+          "halted": false,
+          "height": 960
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28204,
+          "halted": false,
+          "height": 959
+        }
+      }
+    },
+    {
+      "at": 1792873213.8471575,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28138,
+          "halted": false,
+          "height": 962
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28139,
+          "halted": false,
+          "height": 961
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28124,
+          "halted": false,
+          "height": 963
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28146,
+          "halted": false,
+          "height": 962
+        }
+      }
+    },
+    {
+      "at": 1792873219.6712294,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28143,
+          "halted": false,
+          "height": 964
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28148,
+          "halted": false,
+          "height": 964
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28138,
+          "halted": false,
+          "height": 965
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28136,
+          "halted": false,
+          "height": 965
+        }
+      }
+    },
+    {
+      "at": 1792873225.3131115,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28090,
+          "halted": false,
+          "height": 967
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28087,
+          "halted": false,
+          "height": 966
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28130,
+          "halted": false,
+          "height": 968
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28112,
+          "halted": false,
+          "height": 967
+        }
+      }
+    },
+    {
+      "at": 1792873230.9628775,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28176,
+          "halted": false,
+          "height": 969
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28177,
+          "halted": false,
+          "height": 968
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28195,
+          "halted": false,
+          "height": 969
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28199,
+          "halted": false,
+          "height": 970
+        }
+      }
+    },
+    {
+      "at": 1792873236.5743616,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28163,
+          "halted": false,
+          "height": 973
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28159,
+          "halted": false,
+          "height": 972
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28196,
+          "halted": false,
+          "height": 972
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28224,
+          "halted": false,
+          "height": 974
+        }
+      }
+    },
+    {
+      "at": 1792873242.1570659,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28184,
+          "halted": false,
+          "height": 977
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28174,
+          "halted": false,
+          "height": 976
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28184,
+          "halted": false,
+          "height": 976
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28168,
+          "halted": false,
+          "height": 978
+        }
+      }
+    },
+    {
+      "at": 1792873247.6765125,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28162,
+          "halted": false,
+          "height": 983
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28176,
+          "halted": false,
+          "height": 982
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28204,
+          "halted": false,
+          "height": 982
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28179,
+          "halted": false,
+          "height": 984
+        }
+      }
+    },
+    {
+      "at": 1792873253.277286,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28142,
+          "halted": false,
+          "height": 987
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28168,
+          "halted": false,
+          "height": 986
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28137,
+          "halted": false,
+          "height": 986
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28155,
+          "halted": false,
+          "height": 988
+        }
+      }
+    },
+    {
+      "at": 1792873258.9315052,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28184,
+          "halted": false,
+          "height": 991
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28139,
+          "halted": false,
+          "height": 990
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28163,
+          "halted": false,
+          "height": 990
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28150,
+          "halted": false,
+          "height": 992
+        }
+      }
+    },
+    {
+      "at": 1792873264.586676,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28138,
+          "halted": false,
+          "height": 997
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28138,
+          "halted": false,
+          "height": 996
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28146,
+          "halted": false,
+          "height": 996
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28126,
+          "halted": false,
+          "height": 997
+        }
+      }
+    },
+    {
+      "at": 1792873270.1586337,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28115,
+          "halted": false,
+          "height": 1001
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28124,
+          "halted": false,
+          "height": 1000
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28108,
+          "halted": false,
+          "height": 1000
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28121,
+          "halted": false,
+          "height": 1002
+        }
+      }
+    },
+    {
+      "at": 1792873275.681974,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28118,
+          "halted": false,
+          "height": 1009
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28082,
+          "halted": false,
+          "height": 1007
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28097,
+          "halted": false,
+          "height": 1008
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28085,
+          "halted": false,
+          "height": 1010
+        }
+      }
+    },
+    {
+      "at": 1792873281.2128353,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28119,
+          "halted": false,
+          "height": 1013
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28082,
+          "halted": false,
+          "height": 1012
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28072,
+          "halted": false,
+          "height": 1012
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28092,
+          "halted": false,
+          "height": 1015
+        }
+      }
+    },
+    {
+      "at": 1792873286.7250578,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28034,
+          "halted": false,
+          "height": 1021
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28057,
+          "halted": false,
+          "height": 1019
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28041,
+          "halted": false,
+          "height": 1019
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28034,
+          "halted": false,
+          "height": 1022
+        }
+      }
+    },
+    {
+      "at": 1792873292.3103874,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28001,
+          "halted": false,
+          "height": 1027
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28018,
+          "halted": false,
+          "height": 1026
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28044,
+          "halted": false,
+          "height": 1026
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28040,
+          "halted": false,
+          "height": 1028
+        }
+      }
+    },
+    {
+      "at": 1792873297.827362,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28016,
+          "halted": false,
+          "height": 1034
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28002,
+          "halted": false,
+          "height": 1033
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28053,
+          "halted": false,
+          "height": 1034
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28036,
+          "halted": false,
+          "height": 1035
+        }
+      }
+    },
+    {
+      "at": 1792873303.378532,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28022,
+          "halted": false,
+          "height": 1041
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 28000,
+          "halted": false,
+          "height": 1040
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27982,
+          "halted": false,
+          "height": 1040
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27992,
+          "halted": false,
+          "height": 1042
+        }
+      }
+    },
+    {
+      "at": 1792873308.954683,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27934,
+          "halted": false,
+          "height": 1047
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27973,
+          "halted": false,
+          "height": 1047
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27951,
+          "halted": false,
+          "height": 1047
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27987,
+          "halted": false,
+          "height": 1049
+        }
+      }
+    },
+    {
+      "at": 1792873314.4684467,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27884,
+          "halted": false,
+          "height": 1054
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27894,
+          "halted": false,
+          "height": 1052
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27898,
+          "halted": false,
+          "height": 1052
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27939,
+          "halted": false,
+          "height": 1054
+        }
+      }
+    },
+    {
+      "at": 1792873320.0447648,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27833,
+          "halted": false,
+          "height": 1059
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27878,
+          "halted": false,
+          "height": 1058
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27872,
+          "halted": false,
+          "height": 1058
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27867,
+          "halted": false,
+          "height": 1060
+        }
+      }
+    },
+    {
+      "at": 1792873325.5831542,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27872,
+          "halted": false,
+          "height": 1065
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27884,
+          "halted": false,
+          "height": 1065
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27855,
+          "halted": false,
+          "height": 1064
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27862,
+          "halted": false,
+          "height": 1067
+        }
+      }
+    },
+    {
+      "at": 1792873331.1350915,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27808,
+          "halted": false,
+          "height": 1072
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27800,
+          "halted": false,
+          "height": 1071
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27822,
+          "halted": false,
+          "height": 1071
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27802,
+          "halted": false,
+          "height": 1073
+        }
+      }
+    },
+    {
+      "at": 1792873336.736076,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27727,
+          "halted": false,
+          "height": 1078
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27779,
+          "halted": false,
+          "height": 1077
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27772,
+          "halted": false,
+          "height": 1077
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27731,
+          "halted": false,
+          "height": 1079
+        }
+      }
+    },
+    {
+      "at": 1792873342.301365,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27831,
+          "halted": false,
+          "height": 1085
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27730,
+          "halted": false,
+          "height": 1085
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27741,
+          "halted": false,
+          "height": 1085
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27775,
+          "halted": false,
+          "height": 1086
+        }
+      }
+    },
+    {
+      "at": 1792873347.9174159,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27768,
+          "halted": false,
+          "height": 1091
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27745,
+          "halted": false,
+          "height": 1090
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27774,
+          "halted": false,
+          "height": 1091
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27755,
+          "halted": false,
+          "height": 1091
+        }
+      }
+    },
+    {
+      "at": 1792873353.4857123,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27758,
+          "halted": false,
+          "height": 1096
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27760,
+          "halted": false,
+          "height": 1096
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27756,
+          "halted": false,
+          "height": 1096
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27740,
+          "halted": false,
+          "height": 1097
+        }
+      }
+    },
+    {
+      "at": 1792873359.0455446,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27706,
+          "halted": false,
+          "height": 1101
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27688,
+          "halted": false,
+          "height": 1101
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27680,
+          "halted": false,
+          "height": 1101
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27743,
+          "halted": false,
+          "height": 1102
+        }
+      }
+    },
+    {
+      "at": 1792873364.6585846,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27674,
+          "halted": false,
+          "height": 1106
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27677,
+          "halted": false,
+          "height": 1106
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27652,
+          "halted": false,
+          "height": 1106
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27643,
+          "halted": false,
+          "height": 1107
+        }
+      }
+    },
+    {
+      "at": 1792873370.251655,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27683,
+          "halted": false,
+          "height": 1112
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27687,
+          "halted": false,
+          "height": 1111
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27661,
+          "halted": false,
+          "height": 1112
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27683,
+          "halted": false,
+          "height": 1113
+        }
+      }
+    },
+    {
+      "at": 1792873375.7834525,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27750,
+          "halted": false,
+          "height": 1118
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27731,
+          "halted": false,
+          "height": 1117
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27706,
+          "halted": false,
+          "height": 1117
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27705,
+          "halted": false,
+          "height": 1118
+        }
+      }
+    },
+    {
+      "at": 1792873381.3417122,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27677,
+          "halted": false,
+          "height": 1122
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27699,
+          "halted": false,
+          "height": 1122
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27692,
+          "halted": false,
+          "height": 1122
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27687,
+          "halted": false,
+          "height": 1123
+        }
+      }
+    },
+    {
+      "at": 1792873386.9105573,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27659,
+          "halted": false,
+          "height": 1128
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27655,
+          "halted": false,
+          "height": 1127
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27656,
+          "halted": false,
+          "height": 1127
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27677,
+          "halted": false,
+          "height": 1128
+        }
+      }
+    },
+    {
+      "at": 1792873392.4809878,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27649,
+          "halted": false,
+          "height": 1133
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27657,
+          "halted": false,
+          "height": 1133
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27631,
+          "halted": false,
+          "height": 1132
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27629,
+          "halted": false,
+          "height": 1134
+        }
+      }
+    },
+    {
+      "at": 1792873398.0372097,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27592,
+          "halted": false,
+          "height": 1138
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27592,
+          "halted": false,
+          "height": 1138
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27616,
+          "halted": false,
+          "height": 1138
+        },
+        "n420soak-validator-3": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27617,
+          "halted": false,
+          "height": 1139
+        }
+      }
+    },
+    {
+      "at": 1792873403.5543516,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27525,
+          "halted": false,
+          "height": 1143
+        },
+        "n420soak-validator-1": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27531,
+          "halted": false,
+          "height": 1142
+        },
+        "n420soak-validator-2": {
+          "degraded": "normal",
+          "accepts_deploys": true,
+          "fallback_state": "normal",
+          "fallback_reason": "headroom above the admission floor",
+          "mem_available_mb": 27579,
+          "halted": false,
+          "height": 1142
+        },
+        "n420soak-validator-3": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27579,
+          "halted": false,
+          "height": 1143
+        }
+      }
+    },
+    {
+      "at": 1792873409.0943327,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27472,
+          "halted": false,
+          "height": 1148
+        },
+        "n420soak-validator-1": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27482,
+          "halted": false,
+          "height": 1148
+        },
+        "n420soak-validator-2": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27418,
+          "halted": false,
+          "height": 1148
+        },
+        "n420soak-validator-3": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27505,
+          "halted": false,
+          "height": 1149
+        }
+      }
+    },
+    {
+      "at": 1792873414.6352057,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27349,
+          "halted": false,
+          "height": 1153
+        },
+        "n420soak-validator-1": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27364,
+          "halted": false,
+          "height": 1152
+        },
+        "n420soak-validator-2": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27344,
+          "halted": false,
+          "height": 1152
+        },
+        "n420soak-validator-3": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27408,
+          "halted": false,
+          "height": 1153
+        }
+      }
+    },
+    {
+      "at": 1792873420.1840637,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27381,
+          "halted": false,
+          "height": 1157
+        },
+        "n420soak-validator-1": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27380,
+          "halted": false,
+          "height": 1156
+        },
+        "n420soak-validator-2": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27368,
+          "halted": false,
+          "height": 1156
+        },
+        "n420soak-validator-3": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27436,
+          "halted": false,
+          "height": 1157
+        }
+      }
+    },
+    {
+      "at": 1792873425.7322128,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27448,
+          "halted": false,
+          "height": 1161
+        },
+        "n420soak-validator-1": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27431,
+          "halted": false,
+          "height": 1161
+        },
+        "n420soak-validator-2": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27450,
+          "halted": false,
+          "height": 1161
+        },
+        "n420soak-validator-3": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27406,
+          "halted": false,
+          "height": 1162
+        }
+      }
+    },
+    {
+      "at": 1792873431.2681262,
+      "nodes": {
+        "n420soak-bootstrap": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27345,
+          "halted": false,
+          "height": 1167
+        },
+        "n420soak-validator-1": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27384,
+          "halted": false,
+          "height": 1167
+        },
+        "n420soak-validator-2": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27324,
+          "halted": false,
+          "height": 1167
+        },
+        "n420soak-validator-3": {
+          "degraded": "throttled",
+          "accepts_deploys": false,
+          "fallback_state": "throttled",
+          "fallback_reason": "headroom below the throttle floor",
+          "mem_available_mb": 27309,
+          "halted": false,
+          "height": 1168
+        }
+      }
+    }
+  ],
+  "non_claims": [
+    "a finite devnet witness, not a universal safety theorem",
+    "1 GiB is below the advised validator minimum; a pass is not a supported-tier claim",
+    "a transient throttled/critical interval is expected and recorded, not a failure"
+  ]
+}

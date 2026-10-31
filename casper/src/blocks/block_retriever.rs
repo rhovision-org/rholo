@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use rchain_comm::peer_node::PeerNode;
 use rchain_models::block_hash::BlockHash;
+use rchain_shared::lock::Unpoison;
 use rchain_shared::log::{Log, LogSource};
 use rchain_shared::time::current_millis;
 
@@ -19,6 +20,9 @@ use crate::protocol::comm_util::CommUtil;
 const MAX_REQUESTED_BLOCKS: usize = 10_000;
 /// Maximum waiting-list length per requested hash (H5).
 const MAX_WAITING_LIST_PER_HASH: usize = 32;
+/// How many capacity-refused hashes wait for a slot to free (F-U8-03). A bound on the overflow
+/// itself: an adversary cannot turn a full request map into an unbounded second map.
+const MAX_CAPACITY_OVERFLOW: usize = 4_096;
 /// Renewed child demand may retry an unresolved dependency once per default
 /// maintenance cadence, without waiting for the 240-second request-age timeout.
 const MISSING_DEPENDENCY_RETRY_MILLIS: i64 = 30_000;
@@ -212,6 +216,10 @@ pub fn admit_hash_state(
 /// Block retriever (port of `BlockRetriever[F]`).
 pub struct BlockRetriever {
     requested: tokio::sync::Mutex<BTreeMap<BlockHash, RequestState>>,
+    /// Hashes refused when the request map was at capacity. They retain their source peer and are
+    /// re-admitted as `ack_received` frees slots; bounded by [`MAX_CAPACITY_OVERFLOW`].
+    overflow: std::sync::Mutex<std::collections::VecDeque<(BlockHash, Option<PeerNode>)>>,
+    capacity_refusals: std::sync::atomic::AtomicU64,
     comm_util: Arc<CommUtil>,
     log: Arc<dyn Log>,
     log_source: LogSource,
@@ -221,6 +229,8 @@ impl BlockRetriever {
     pub fn new(comm_util: Arc<CommUtil>, log: Arc<dyn Log>) -> Self {
         BlockRetriever {
             requested: tokio::sync::Mutex::new(BTreeMap::new()),
+            overflow: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            capacity_refusals: std::sync::atomic::AtomicU64::new(0),
             comm_util,
             log,
             log_source: LogSource::new("casper.blocks.BlockRetriever"),
@@ -265,12 +275,28 @@ impl BlockRetriever {
                 );
             }
             AdmitHashStatus::CapacityReached => {
+                self.capacity_refusals
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let retained = {
+                    let mut overflow = self.overflow.lock().unpoison();
+                    if overflow.len() < MAX_CAPACITY_OVERFLOW {
+                        overflow.push_back((*hash, peer.cloned()));
+                        true
+                    } else {
+                        false
+                    }
+                };
                 self.log.warn(
                     self.log_source,
                     &format!(
-                        "Dropping {} hash: block-retriever request map is at capacity ({}).",
-                        hash.to_hex(),
-                        MAX_REQUESTED_BLOCKS
+                        "Block-retriever request map is at capacity ({}); {} hash {}",
+                        MAX_REQUESTED_BLOCKS,
+                        if retained {
+                            "retained for re-admission:"
+                        } else {
+                            "overflow is full, dropping"
+                        },
+                        hash.to_hex()
                     ),
                 );
             }
@@ -353,17 +379,44 @@ impl BlockRetriever {
         }
     }
 
+    /// How many hashes the request map refused for capacity. A visible counter for F-U8-03.
+    pub fn capacity_refusals(&self) -> u64 {
+        self.capacity_refusals
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Acknowledge that a block was received (port of `ackReceived`).
     pub async fn ack_received(&self, hash: &BlockHash) {
-        let mut state = self.requested.lock().await;
-        let old = state.clone();
-        state.remove(hash);
-        let is_received = *state != old;
-        if is_received {
+        let is_received = {
+            let mut state = self.requested.lock().await;
+            let old = state.clone();
+            state.remove(hash);
+            *state != old
+        };
+        if !is_received {
+            return;
+        }
+        self.log.info(
+            self.log_source,
+            &format!("Block {} marked as received.", hash.to_hex()),
+        );
+        // The freed slot is spent on the oldest capacity-refused hash, if any (F-U8-03). The
+        // admission happens outside the request-map guard so it cannot deadlock on it.
+        let next = self.overflow.lock().unpoison().pop_front();
+        if let Some((hash, peer)) = next {
             self.log.info(
                 self.log_source,
-                &format!("Block {} marked as received.", hash.to_hex()),
+                &format!(
+                    "Re-admitting capacity-refused hash {} after a slot freed.",
+                    hash.to_hex()
+                ),
             );
+            self.admit_hash(
+                &hash,
+                peer.as_ref(),
+                AdmitHashReason::MissingDependencyRequested,
+            )
+            .await;
         }
     }
 
@@ -472,6 +525,13 @@ mod tests {
 
     fn hash(byte: u8) -> BlockHash {
         BlockHash::new([byte; 32])
+    }
+
+    /// Distinct hashes for the capacity test (the u8 helper only gives 256).
+    fn numbered(value: usize) -> BlockHash {
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&(value as u64).to_le_bytes());
+        BlockHash::new(bytes)
     }
 
     fn peer(name: &str, port: u16) -> PeerNode {
@@ -641,6 +701,41 @@ mod tests {
         let (_, msg) = &broadcasts[0];
         let packet = rchain_comm::rp::protocol_helper::to_packet(msg).unwrap();
         assert_eq!(packet.type_id, "HasBlockRequest");
+    }
+
+    /// **F-U8-03: a capacity-refused hash is retained and re-admitted when a slot frees.** Before the
+    /// overflow queue, `CapacityReached` returned the state unchanged and the hash was forgotten.
+    #[tokio::test]
+    async fn a_capacity_refused_hash_is_retained_and_readmitted() {
+        let transport = Arc::new(MockTransport::default());
+        let local = peer("src", 40400);
+        let remote = peer("peer", 40400);
+        let retriever = retriever(transport.clone(), &local);
+
+        {
+            let mut requested = retriever.requested.lock().await;
+            for value in 0..MAX_REQUESTED_BLOCKS {
+                requested.insert(numbered(value), RequestState::new(0, None));
+            }
+        }
+        let refused = numbered(MAX_REQUESTED_BLOCKS);
+        let result = retriever
+            .admit_hash(
+                &refused,
+                Some(&remote),
+                AdmitHashReason::HasBlockMessageReceived,
+            )
+            .await;
+        assert_eq!(result.status, AdmitHashStatus::CapacityReached);
+        assert_eq!(retriever.capacity_refusals(), 1);
+        assert_eq!(retriever.overflow.lock().unpoison().len(), 1);
+
+        retriever.ack_received(&numbered(0)).await;
+        assert!(
+            retriever.requested.lock().await.contains_key(&refused),
+            "the freed slot re-admits the retained hash"
+        );
+        assert!(retriever.overflow.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

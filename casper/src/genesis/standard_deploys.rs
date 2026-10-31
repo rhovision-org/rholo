@@ -920,6 +920,12 @@ mod builder_tests {
             pos_multi_sig_quorum: 1,
             pos_vault_pub_key: "cd".repeat(65),
             dev_tax_vesting_blocks: NonNegI64::zero(),
+
+            liveness_absence_threshold: 0,
+            liveness_jail_after_boundaries: 0,
+            liveness_jail_epochs: 0,
+            liveness_vote_window: 0,
+            liveness_slash_severity: 0,
         };
         let deploy = StandardDeploys::pos_generator(&pos, "/root/child").expect("pos_generator");
         assert_standard(&deploy, "/root/child");

@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "source_dev_sha": "d8dd1163168b3c357fc4bccbd1853b820abbcecb",
-  "observed_date": "2026-10-24",
+  "source_dev_sha": "9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e",
+  "observed_date": "2026-10-30",
   "tracker": "#51",
   "boundary": "42 overlapping tracker obligations, not 42 defects. Maintainer deferrals are recorded with source links; this matrix grants no release authorization.",
   "items": [
@@ -796,6 +796,48 @@
       "smallest_corrective_action": "Keep #388 as the canonical implementation and record any later #372 governance decision without rewriting the merged code-track evidence.",
       "required_acceptance_test": "A landed protocol change must exercise both allowed/refused transitions and historical replay; a deferral must record its owner and reason.",
       "decision_owner": "@jimscarver",
+      "recorded_owner_reason_deferral": false
+    },
+    {
+      "id": "Audit:cost-tracks-work",
+      "classification": "IMPLEMENTED / EVIDENCE INCOMPLETE",
+      "exact_file_function_or_invariant": "rholang/src/accounting.rs::canonicalization_cost, union_cost and gov_censure_cost \u2014 the charges C345/C346 add, whose magnitude is Law 91",
+      "related_issue_pr": [
+        "#51",
+        "#514"
+      ],
+      "existing_evidence": {
+        "pr": 514,
+        "merge_commit": "78efd3fa1e6dbaf2a863fbf9da58325eccfb4e90",
+        "pass": "spec/audit/passes.md 149",
+        "law": "91a, 91b"
+      },
+      "missing_proof": "No pre-fork replay refusal, no populated-store upgrade and no second binary are established; the \u00a76 row and inventory re-pin are now recorded at this SHA, and every pinned genesis hash still has to be regenerated.",
+      "smallest_corrective_action": "Run the pre-fork replay refusal and a populated-store upgrade on a chain carrying the fix, replay identically on a second binary, and regenerate every pinned genesis hash.",
+      "required_acceptance_test": "A pre-fork block containing a conversion or a censure is refused at replay with replay_cost_mismatch, and a post-fork chain replays identically on two independent binaries.",
+      "decision_owner": "Jim / consensus",
+      "recorded_owner_reason_deferral": false
+    },
+    {
+      "id": "Audit:cost-insert-and-tally",
+      "classification": "IMPLEMENTED / EVIDENCE INCOMPLETE",
+      "exact_file_function_or_invariant": "rholang/src/reduce.rs::set_add and rholang/src/system_processes.rs::charge_gov_tally: the charges C353/C354 add (Law 91a/c)",
+      "related_issue_pr": [
+        "#51",
+        "#518",
+        "C353",
+        "C354"
+      ],
+      "existing_evidence": {
+        "pr": 518,
+        "merge_commit": "9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e",
+        "pass": "spec/audit/passes.md 150",
+        "register": "spec/COST.md"
+      },
+      "missing_proof": "The change is on dev; no pre-fork replay refusal, no populated-store upgrade and no second validator binary are established.",
+      "smallest_corrective_action": "Regenerate every pinned genesis hash and exercise a pre-fork block at replay on two binaries before a network arms the change.",
+      "required_acceptance_test": "A pre-fork block containing a set insertion or a tally is refused at replay with replay_cost_mismatch, and a post-fork chain replays identically on two independent binaries.",
+      "decision_owner": "Jim / consensus",
       "recorded_owner_reason_deferral": false
     }
   ],

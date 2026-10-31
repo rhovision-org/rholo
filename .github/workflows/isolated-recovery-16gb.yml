@@ -1,0 +1,171 @@
+name: Isolated N8 on 16GB GitHub runner
+
+on:
+  push:
+    branches:
+      - verify/isolated-recovery-16gb-20261030
+
+permissions:
+  contents: read
+
+concurrency:
+  group: isolated-n8-16gb-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  n8-16gb:
+    name: N8 partition/rejoin, 16GB VM, 1536MiB per validator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DEVNET_SKIP_JOINER_GRPC_PUBLISH: "1"
+      DEVNET_NODE_MEMORY: "1536m"
+      DEVNET_THREAD_POOL_SIZE: "2"
+      DEVNET_PREFIX: "acceptance"
+      DEVNET_NETWORK: "acceptance"
+      ACCEPTANCE_ARTIFACTS: "1"
+    steps:
+      - name: Checkout pinned candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+
+      - name: Record machine resources and fail closed below 14 GiB
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/isolated-16gb
+          git rev-parse HEAD | tee target/isolated-16gb/source-sha.txt
+          printf 'runner=%s\n' "${{ runner.name }}" | tee target/isolated-16gb/runner-name.txt
+          free -h | tee target/isolated-16gb/free-before.txt
+          df -h | tee target/isolated-16gb/disk-before.txt
+          cat /proc/meminfo > target/isolated-16gb/meminfo-before.txt
+          docker info > target/isolated-16gb/docker-info.txt
+          mem_kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+          printf 'memtotal_kib=%s\n' "$mem_kib" | tee target/isolated-16gb/capacity.txt
+          test "$mem_kib" -ge 14680064 || { echo 'FAIL: less than 14 GiB RAM; refusing to mislabel this as a 16GB trial'; exit 40; }
+          available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+          test "$available_kib" -ge 12582912 || { echo 'FAIL: less than 12 GiB available at start'; exit 41; }
+          echo 'PASS: 16GB-class runner preflight'
+
+      - name: Fail-closed harness controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p test_recovery_harness_controls.py -v 2>&1 | tee target/isolated-16gb/harness.log
+          python3 -m unittest discover -s tests -p test_post_restart_proposal.py -v 2>&1 | tee target/isolated-16gb/post-restart-units.log
+          python3 -m py_compile tests/consensus-partition-rejoin.py tests/test_recovery_harness_controls.py tests/consensus-post-restart-proposal.py tests/test_post_restart_proposal.py
+          git diff --check HEAD^ HEAD
+
+      - name: Build isolated node image
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/devnet.sh build 2>&1 | tee target/isolated-16gb/build.log
+          df -h | tee target/isolated-16gb/disk-after-build.txt
+
+      - name: Run real N8 isolated partition and rejoin
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p target/isolated-16gb
+          tools/devnet.sh up --validators 8 --fresh --no-autopropose --epoch-length 10 > target/isolated-16gb/start.log 2>&1
+          start_code=$?
+          trial_code=$start_code
+          if [ "$start_code" -eq 0 ]; then
+            trial_code=0
+            for i in $(seq 0 7); do
+              node="acceptance-validator-$i"
+              [ "$i" -ne 0 ] || node="acceptance-bootstrap"
+              actual=$(docker inspect -f '{{.HostConfig.Memory}}' "$node" 2>/dev/null) || actual=""
+              echo "$node memory_bytes=${actual:-missing}" | tee -a target/isolated-16gb/memory-limits.txt
+              if [ "$actual" != "1610612736" ]; then
+                echo "FAIL: $node does not have 1536MiB cap"
+                trial_code=42
+              fi
+            done
+            if [ "$trial_code" -eq 0 ]; then
+              python3 tests/consensus-partition-rejoin.py --validators 8 --out target/isolated-16gb/n8-partition > target/isolated-16gb/n8-campaign.log 2>&1
+              trial_code=$?
+            fi
+          fi
+          printf 'start=%s\npartition=%s\n' "$start_code" "$trial_code" | tee target/isolated-16gb/exit-codes.txt
+          exit "$trial_code"
+
+      - name: Prove same-volume validator actively proposes after two restarts
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The partition arm deliberately uses 1536 MiB per node. Restoring
+          # persisted state requires at least 2048 MiB of cgroup-available
+          # memory. Reserve 2304 MiB for the restart target only; leave the
+          # other seven at 1536 MiB. Total configured caps: 13056 MiB
+          # (12.75 GiB) on the 16GB-class disposable runner. Do not bypass
+          # resource-preflight, change consensus parameters, or touch live nodes.
+          target=acceptance-validator-7
+          docker update --memory 2304m --memory-swap 2304m "$target" \
+            > target/isolated-16gb/recovery-memory-update.txt
+          for i in $(seq 0 7); do
+            node="acceptance-validator-$i"
+            [ "$i" -ne 0 ] || node="acceptance-bootstrap"
+            expected=1610612736
+            [ "$i" -ne 7 ] || expected=2415919104
+            actual=$(docker inspect -f '{{.HostConfig.Memory}}' "$node")
+            swap=$(docker inspect -f '{{.HostConfig.MemorySwap}}' "$node")
+            printf '%s cap_bytes=%s swap_cap_bytes=%s expected_bytes=%s\n' \
+              "$node" "$actual" "$swap" "$expected" \
+              | tee -a target/isolated-16gb/recovery-memory-limits.txt
+            if [ "$actual" != "$expected" ] || [ "$swap" != "$expected" ]; then
+              echo "FAIL: $node has an unexpected recovery memory budget" >&2
+              exit 43
+            fi
+          done
+          printf 'restart_target_cap_mib=2304\nother_node_cap_mib=1536\ntotal_eight_node_caps_mib=13056\npreflight_override=false\n' \
+            | tee target/isolated-16gb/recovery-budget.txt
+          python3 tests/consensus-post-restart-proposal.py --validators 8 --cycles 2 --out target/isolated-16gb/n8-partition 2>&1 | tee target/isolated-16gb/post-restart.log
+
+      - name: Record complete failure or success diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p target/isolated-16gb
+          free -h > target/isolated-16gb/free-after.txt
+          df -h > target/isolated-16gb/disk-after.txt
+          docker ps -a > target/isolated-16gb/docker-ps.txt 2>&1 || true
+          docker stats --no-stream > target/isolated-16gb/docker-stats.txt 2>&1 || true
+          # Preserve exact per-validator readiness evidence before teardown.
+          # A green Docker healthcheck is not equivalent to the strict /health gate.
+          for i in $(seq 0 7); do
+            node="acceptance-validator-$i"
+            [ "$i" -ne 0 ] || node="acceptance-bootstrap"
+            health_port=$((40403 + 1000 * i))
+            operator_port=$((40405 + 1000 * i))
+            if ! curl --connect-timeout 2 --max-time 5 -fsS "http://127.0.0.1:${health_port}/health" \
+                -o "target/isolated-16gb/$node-health.json"; then
+              echo "health endpoint unavailable for $node" > "target/isolated-16gb/$node-health.error"
+            fi
+            if ! curl --connect-timeout 2 --max-time 5 -fsS "http://127.0.0.1:${operator_port}/api/v1/status/operator" \
+                -o "target/isolated-16gb/$node-operator.json"; then
+              echo "operator endpoint unavailable for $node" > "target/isolated-16gb/$node-operator.error"
+            fi
+          done
+          for i in $(seq 0 7); do
+            node="acceptance-validator-$i"
+            [ "$i" -ne 0 ] || node="acceptance-bootstrap"
+            docker logs "$node" > "target/isolated-16gb/$node.log" 2>&1 || true
+            docker inspect "$node" > "target/isolated-16gb/$node-inspect.json" 2>/dev/null || true
+          done
+
+      - name: Tear down disposable local test network
+        if: always()
+        shell: bash
+        run: tools/devnet.sh down -v || true
+
+      - name: Upload reproducible evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: isolated-n8-16gb-${{ github.run_id }}
+          path: target/isolated-16gb/
+          if-no-files-found: warn
+          retention-days: 14

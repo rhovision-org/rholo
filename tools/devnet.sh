@@ -23,6 +23,12 @@ IMAGE="${RNODE_IMAGE:-rnode:local}"
 # touching the running network's containers or volumes. `NETWORK` stays its own variable because the
 # default name is what other tooling and the docs expect.
 PREFIX="${DEVNET_PREFIX:-devnet}"
+
+# The shard id this devnet's deploys carry. `/root` is the node default; a devnet that mirrors a
+# named net (`/testnet`, `/playground`) sets it here, because a deploy is only accepted when its
+# `shardId` equals the node's own (`validate.rs`, `deploys_shard_identifier`) — a bare `root` or a
+# stale `/root` is refused outright.
+SHARD_ID="${DEVNET_SHARD_ID:-/root}"
 NETWORK="${DEVNET_NETWORK:-devnet}"
 BOOTSTRAP="${PREFIX}-bootstrap"
 
@@ -129,9 +135,13 @@ DEPLOYER_BALANCE=1000000000000
 # Contract sources are mounted read-only at /contracts; deploy/eval reference them by basename.
 CONTRACTS_DIR="$(pwd)/examples"
 
-GRPC_BASE=40402   # host port mapped to the bootstrap's deploy gRPC (in-container 40401)
-HTTP_BASE=40403   # host port mapped to the bootstrap's public HTTP API (in-container 40403)
-ADMIN_BASE=40405  # host port mapped to the bootstrap's admin HTTP API (in-container 40405)
+# **Overridable so two devnets can run on one host** (a second session, or an arm beside a measurement).
+# The defaults are the original fixed ports; a caller that starts a second network must set all three
+# (and `DEVNET_NETWORK`, or the two bridges see each other's peers) — validator `i` adds `i * 1000` to
+# each base, so the three values must be far enough apart to leave that range free.
+GRPC_BASE="${DEVNET_GRPC_BASE:-40402}"   # host port mapped to the bootstrap's deploy gRPC (in-container 40401)
+HTTP_BASE="${DEVNET_HTTP_BASE:-40403}"   # host port mapped to the bootstrap's public HTTP API (in-container 40403)
+ADMIN_BASE="${DEVNET_ADMIN_BASE:-40405}" # host port mapped to the bootstrap's admin HTTP API (in-container 40405)
 
 help() {
   cat >&2 <<'EOF'
@@ -464,7 +474,10 @@ docker_opts() {
     [[ "$spec" == *";"* ]] && sep=";"
     for pair in ${spec//$sep/ }; do envs="$envs -e $pair"; done
   fi
-  echo "-d --name $name --network $NETWORK $ports $limits $envs \
+  # Outbound bootstrap connections may start before every API listener binds.
+  # Keep their ephemeral source ports away from this container's service ports.
+  # This is namespaced to the disposable node, not a host or consensus setting.
+  echo "-d --name $name --network $NETWORK --sysctl net.ipv4.ip_local_reserved_ports=40400-40405 $ports $limits $envs \
     -v ${data}:/var/lib/rnode \
     -v ${CONTRACTS_DIR}:/contracts:ro"
 }
@@ -1009,7 +1022,7 @@ cmd_deploy() {
   node_cli "$node" deploy \
     --phlo-limit 1000000 --phlo-price 1 \
     --private-key "$DEPLOYER_PRIV" \
-    --shard-id /root \
+    --shard-id "$SHARD_ID" \
     --valid-after-block-number "${height:-0}" \
     "/contracts/$base"
 }
