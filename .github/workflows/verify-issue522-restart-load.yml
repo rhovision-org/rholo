@@ -1,0 +1,94 @@
+name: Issue 522 — isolated N4 restart-under-load verification
+
+on:
+  push:
+    branches:
+      - verify/issue522-current-dev-20261031
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue522-current-dev-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  n4-restart:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    env:
+      DEVNET_PREFIX: issue522
+      DEVNET_NETWORK: issue522
+      DEVNET_NODE_MEMORY: 2304m
+      DEVNET_THREAD_POOL_SIZE: "2"
+      CARGO_BUILD_JOBS: "4"
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          ref: e926fd7ca7fc8ef37c48366013c7420f87a2d06d
+      - name: Record source and available capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/issue522
+          test "$(git rev-parse HEAD)" = e926fd7ca7fc8ef37c48366013c7420f87a2d06d
+          git rev-parse HEAD | tee target/issue522/source-sha.txt
+          printf '%s\n' "${{ github.sha }}" > target/issue522/verification-driver-sha.txt
+          free -h | tee target/issue522/memory.txt
+          df -h | tee target/issue522/disk-before.txt
+          test "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)" -ge 14680064
+          test "$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)" -ge 12582912
+          git diff --check HEAD^ HEAD
+      - name: Require offline controls to reject false passes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p test_restart_under_load_harness.py -v | tee target/issue522/harness-tests.log
+          python3 tests/test_restart_under_load_controls.py | tee target/issue522/control-tests.log
+      - name: Build pinned disposable node
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/devnet.sh build 2>&1 | tee target/issue522/build.log
+          docker run --rm --entrypoint sha256sum rnode:local /usr/local/bin/rnode | tee target/issue522/binary-sha256.txt
+      - name: Boot four fresh bonded validators
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/devnet.sh up --validators 4 --fresh --autopropose --epoch-length 10 2>&1 | tee target/issue522/start.log
+      - name: Four parallel streams and non-master then genesis-master SIGKILL
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/consensus-restart-under-load.py --validators 4 --cycles 2 --window 240 --load-seconds 20 --out target/issue522 2>&1 | tee target/issue522/drill.log
+      - name: Preserve all diagnostics, including failed runs
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p target/issue522
+          docker ps -a > target/issue522/docker-ps.txt || true
+          docker stats --no-stream > target/issue522/docker-stats.txt || true
+          df -h > target/issue522/disk-after.txt
+          for i in 0 1 2 3; do
+            if [ "$i" = 0 ]; then node=issue522-bootstrap; else node=issue522-validator-$i; fi
+            docker inspect "$node" > "target/issue522/$node-inspect.json" 2>/dev/null || true
+            docker logs "$node" > "target/issue522/$node.log" 2>&1 || true
+            curl -fsS --max-time 8 "http://127.0.0.1:$((40403 + i * 1000))/health" > "target/issue522/$node-health.json" 2>/dev/null || true
+            curl -fsS --max-time 8 "http://127.0.0.1:$((40403 + i * 1000))/api/v1/status" > "target/issue522/$node-status.json" 2>/dev/null || true
+            curl -fsS --max-time 8 "http://127.0.0.1:$((40403 + i * 1000))/api/last-finalized-block" > "target/issue522/$node-finalized.json" 2>/dev/null || true
+          done
+      - name: Upload immutable test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: issue522-restart-under-load-${{ github.run_id }}
+          path: target/issue522/
+          retention-days: 90
+          if-no-files-found: warn
+      - name: Tear down ONLY the disposable issue522 network
+        if: always()
+        shell: bash
+        run: |
+          tools/devnet.sh down -v || true
