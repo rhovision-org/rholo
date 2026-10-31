@@ -2163,7 +2163,9 @@ mod tests {
             MAX_PENDING_BLOCKS, 1024,
             "this fixture pins the incident cap"
         );
-        let block = sample_block(hash(43));
+        let parent = sample_block(hash(99));
+        let mut block = sample_block(hash(43));
+        block.justifications.push(parent.block_hash);
         let block_store = block_store_with(&block).await;
         let ledger = store().await;
         let mut state = BlockReceiverState::<BlockHash>::new();
@@ -2208,6 +2210,39 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(4);
         let log: Arc<dyn Log> = Arc::new(rchain_shared::log::NopLog);
         let recheck_at = now_unix_millis().saturating_add(PENDING_PARENT_RECHECK_AGE_MS);
+
+        // Capacity is available again, but missing ancestry still forbids re-offer.
+        let before_parent = reoffer_ready_stored_pending_once(
+            &ledger,
+            &block_store,
+            &dag,
+            None,
+            &receiver,
+            &tx,
+            recheck_at,
+            log.as_ref(),
+        )
+        .await
+        .expect("sweep while parent is missing");
+        assert_eq!(
+            before_parent, 0,
+            "do not dispatch before parent is in the DAG"
+        );
+        assert!(rx.try_recv().is_err(), "no early dispatch");
+        assert!(matches!(
+            ledger.get(&block.block_hash).await.expect("durable row"),
+            Some(BlockDisposition::Pending {
+                stage: PendingStage::Stored,
+                ..
+            })
+        ));
+
+        dag.insert(
+            rchain_models::block_metadata::BlockMetadata::from_block(&parent),
+            parent.clone(),
+        )
+        .await
+        .expect("parent arrives in the DAG");
 
         for expected in [1, 0] {
             let dispatched = reoffer_ready_stored_pending_once(
