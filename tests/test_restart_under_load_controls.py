@@ -35,10 +35,10 @@ def test_a_deploy_that_is_not_resolved_fails():
 
 
 def test_health_rejects_each_fault_field():
-    good = {"pipelineFaults": 0, "orphanBodies": 0, "proposalHalted": False}
+    good = {"pipelineFaultsOutstanding": 0, "orphanBodies": 0, "proposalHalted": False}
     assert controls.health_verdict(good) is None
     for field, value in [
-        ("pipelineFaults", 1),
+        ("pipelineFaultsOutstanding", 1),
         ("orphanBodies", 1),
         ("proposalHalted", True),
     ]:

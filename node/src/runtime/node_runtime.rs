@@ -1089,6 +1089,7 @@ fn wire_block_processing_observed(
             parts.block_disposition.clone(),
             parts.block_store.clone(),
             parts.dag.clone(),
+            comm_state.block_retriever.clone(),
             reoffer_state,
             processor_input_tx_disposition.clone(),
             disposition_log.clone(),
@@ -2574,6 +2575,23 @@ pub async fn setup_shard(
         .await?,
     );
     let block_disposition = BlockDispositionStore::from_store(block_disposition_kv);
+    // **The durable obligation set is the fault latch's boot state** (U19). A process cell that
+    // starts empty while the ledger holds open faults would read a restarted node as ready; the
+    // seed is what makes `ready` a current view across restarts. An unreadable ledger fails closed.
+    match block_disposition.unsettled().await {
+        Ok(open) => rchain_casper::blocks::block_processor::seed_pipeline_faults(
+            open.into_iter().map(|(hash, _)| hash),
+        ),
+        Err(e) => {
+            rchain_casper::blocks::block_processor::mark_pipeline_fault_ledger_unreadable();
+            log.error(
+                LogSource::new("node.runtime.block_disposition"),
+                &format!(
+                    "block disposition ledger unreadable at startup; readiness fails closed: {e}"
+                ),
+            );
+        }
+    }
     let dag_kv = Arc::new(
         BlockDagKeyValueStorage::create(block_metadata_store, deploy_index, deploy_store)
             .await

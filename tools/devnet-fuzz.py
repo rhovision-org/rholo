@@ -454,7 +454,8 @@ def run_acceptance_campaign(trace=False):
             code = subprocess.run([sys.executable, "tools/consensus-acceptance-drill.py",
                                    "--validators", str(validators), "--out", str(out)], env=env).returncode
         except (OSError, subprocess.CalledProcessError) as error:
-            (out / "result.json").write_text(json.dumps({"result": "fail", "reason": str(error)}) + "\n")
+            (out / "workload-result.json").write_text(
+                json.dumps({"result": "fail", "reason": str(error)}) + "\n")
         finally:
             for i in range(validators):
                 node = "acceptance-bootstrap" if i == 0 else f"acceptance-validator-{i}"
@@ -464,7 +465,7 @@ def run_acceptance_campaign(trace=False):
                 subprocess.run(["docker", "logs", "--tail", "80", node], check=False)
             # The existing workflow has no upload step. Put machine-readable
             # observations in its retained log; refuse to silently truncate.
-            for path in (out / "result.json", out / "observations.jsonl"):
+            for path in (out / "workload-result.json", out / "observations.jsonl"):
                 if path.exists():
                     print(f"=== BEGIN {path} ===", flush=True)
                     if env.get("ACCEPTANCE_ARTIFACTS") == "1" and path.name == "observations.jsonl":

@@ -153,6 +153,31 @@ def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None) -
             good_text(item.get("blocker"), ident + ".blocker", 15)
             pending.append(ident)
     completed_audit = AUDIT_SIGNOFF_ID in verified
+    # **A pass must name an artifact, and one digest cannot both pass and fail.**
+    # The campaign writer in tests/consensus-partition-rejoin.py emits this shape
+    # (campaign.json); a green arm quoted beside a red one is a gate invalidation,
+    # not a sampling nuisance to be re-rolled.
+    records = raw.get("acceptance_records", [])
+    require(isinstance(records, list), "acceptance_records must be a list")
+    verdicts = {}
+    for record in records:
+        require(isinstance(record, dict), "every acceptance record must be an object")
+        gate = good_text(record.get("gate_id"), "acceptance gate_id")
+        source = record.get("source_sha")
+        binary = record.get("binary_sha256")
+        require(isinstance(source, str) and HEXSHA.fullmatch(source),
+                f"{gate}: acceptance source_sha must be a commit")
+        require(isinstance(binary, str) and SHA256.fullmatch(binary),
+                f"{gate}: acceptance binary_sha256 must be a digest")
+        aggregate = record.get("aggregate")
+        require(aggregate in ("PASS", "FAIL"),
+                f"{gate}: aggregate must be PASS or FAIL")
+        good_text(record.get("artifact"), f"{gate}.artifact")
+        key = (gate, source, binary)
+        verdicts.setdefault(key, set()).add(aggregate)
+        require(len(verdicts[key]) == 1,
+                f"{gate}: PASS/FAIL conflict at one source and binary digest "
+                "invalidates the gate; do not re-run to green")
     closeable = not pending and completed_audit and raw["closure_requested"] is True and verify_git
     return {
         "result": "CLOSEOUT_ELIGIBLE_FOR_INDEPENDENT_REVIEW" if closeable else "TRACKER_MUST_REMAIN_OPEN",

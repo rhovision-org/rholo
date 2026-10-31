@@ -574,5 +574,6 @@
   ],
   "close_clause_evidence": "https://github.com/rhovision-org/rholo/issues/51#issuecomment-6316299117",
   "deferral_decision_evidence": "https://github.com/rhovision-org/rholo/issues/51#issuecomment-6317072399",
-  "source_dev_base_sha": "ad77fb442de28df39ce913b79dde59973aae05b2"
+  "source_dev_base_sha": "ad77fb442de28df39ce913b79dde59973aae05b2",
+  "acceptance_records": []
 }

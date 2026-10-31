@@ -32,9 +32,57 @@ use crate::runtime_manager::RuntimeManager;
 /// the P0 loudness half; the disposition ledger (U19) is the durable per-shard half.
 static PIPELINE_FAULTS: AtomicU64 = AtomicU64::new(0);
 static LAST_PIPELINE_FAULT: Mutex<Option<String>> = Mutex::new(None);
+/// **The fault latch reads the current view, not its history** (Law 54a).
+///
+/// `PIPELINE_FAULTS` is a lifetime counter kept for evidence; the gates used to
+/// fold it into readiness, so one transient fault held `ready=false` and refused
+/// deploys for the rest of the process even after the block was retried and
+/// settled. The outstanding set is the obligation the node still owes: a fault
+/// inserts its block, a settled verdict removes it, and a restart seeds it from
+/// the durable disposition ledger.
+static PIPELINE_FAULTED_BLOCKS: std::sync::OnceLock<Mutex<BTreeSet<BlockHash>>> =
+    std::sync::OnceLock::new();
+static PIPELINE_FAULT_LEDGER_UNKNOWN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn faulted_blocks() -> &'static Mutex<BTreeSet<BlockHash>> {
+    PIPELINE_FAULTED_BLOCKS.get_or_init(|| Mutex::new(BTreeSet::new()))
+}
 
 pub fn pipeline_faults() -> u64 {
     PIPELINE_FAULTS.load(Ordering::Relaxed)
+}
+
+/// Blocks this process still owes a verdict for. This is what readiness and the
+/// propose/deploy gates read.
+pub fn pipeline_faults_outstanding() -> u64 {
+    // A ledger that could not be read is unknown, and unknown is not clean.
+    if PIPELINE_FAULT_LEDGER_UNKNOWN.load(Ordering::Relaxed) {
+        return 1;
+    }
+    faulted_blocks().lock().unpoison().len() as u64
+}
+
+pub fn clear_pipeline_fault(hash: &BlockHash) {
+    faulted_blocks().lock().unpoison().remove(hash);
+}
+
+pub fn pipeline_fault_is_outstanding(hash: &BlockHash) -> bool {
+    faulted_blocks().lock().unpoison().contains(hash)
+}
+
+/// Seed the latch from the durable ledger at startup, so a restart does not read
+/// a fresh empty process cell as a clean pipeline.
+pub fn seed_pipeline_faults(hashes: impl IntoIterator<Item = BlockHash>) {
+    faulted_blocks().lock().unpoison().extend(hashes);
+    PIPELINE_FAULT_LEDGER_UNKNOWN.store(false, Ordering::Relaxed);
+}
+
+/// The durable ledger could not be read at startup. Readiness fails closed:
+/// publishing a zero would claim there is no outstanding obligation when the
+/// record of one is unavailable.
+pub fn mark_pipeline_fault_ledger_unreadable() {
+    PIPELINE_FAULT_LEDGER_UNKNOWN.store(true, Ordering::Relaxed);
 }
 
 pub fn last_pipeline_fault() -> Option<String> {
@@ -43,6 +91,7 @@ pub fn last_pipeline_fault() -> Option<String> {
 
 pub(crate) fn note_pipeline_fault(block: &BlockMessage, stage: &str, error: &str) {
     PIPELINE_FAULTS.fetch_add(1, Ordering::Relaxed);
+    faulted_blocks().lock().unpoison().insert(block.block_hash);
     *LAST_PIPELINE_FAULT.lock().unpoison() = Some(format!(
         "{} at {}: {error}",
         block.block_hash.to_hex(),
@@ -196,15 +245,17 @@ async fn settle_block(
     log: &Arc<dyn Log>,
     source: LogSource,
 ) {
-    if let Err(e) = disposition.settle(block.block_hash).await {
-        log.warn(
+    match disposition.settle(block.block_hash).await {
+        // The obligation is discharged: the fault no longer blocks readiness.
+        Ok(_) => clear_pipeline_fault(&block.block_hash),
+        Err(e) => log.warn(
             source,
             &format!(
                 "could not settle the disposition of block {} after its verdict: {e}; the next \
                  start reconciles it from the DAG",
                 block.block_hash.to_hex()
             ),
-        );
+        ),
     }
 }
 
@@ -560,6 +611,24 @@ mod tests {
         );
     }
 
+    /// **The latch is a current obligation, not a lifetime count** (Law 54a). Seeding models the
+    /// durable ledger at startup; a repeated row is still one obligation; a settled verdict clears
+    /// it. Uses a synthetic hash so it cannot collide with the block fixture's obligations.
+    #[test]
+    fn the_fault_latch_is_a_current_obligation() {
+        let hash = BlockHash::new([0xcd; 32]);
+        assert!(!pipeline_fault_is_outstanding(&hash));
+        seed_pipeline_faults([hash]);
+        assert!(pipeline_fault_is_outstanding(&hash));
+        seed_pipeline_faults([hash]);
+        assert!(
+            pipeline_fault_is_outstanding(&hash),
+            "a repeated obligation is one obligation"
+        );
+        clear_pipeline_fault(&hash);
+        assert!(!pipeline_fault_is_outstanding(&hash));
+    }
+
     /// A minimal block for the fault/deadline tests. `block-storage`'s shared fixture is
     /// `#[cfg(test)]` inside that crate, so it is not reachable from here (CI caught exactly that).
     fn sample_block() -> BlockMessage {
@@ -689,6 +758,10 @@ mod tests {
         assert!(
             pipeline_faults() > before,
             "a timeout must be visible as a fault"
+        );
+        assert!(
+            pipeline_fault_is_outstanding(&block.block_hash),
+            "a faulted block is an outstanding obligation the gates read"
         );
         assert!(
             last_pipeline_fault().is_some_and(

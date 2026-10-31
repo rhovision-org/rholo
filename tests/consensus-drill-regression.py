@@ -30,7 +30,8 @@ class EvidenceTests(unittest.TestCase):
     def test_transient_drive_refusal_does_not_replace_finality_wait(self):
         with TemporaryDirectory() as out:
             run = drill.Drill(SimpleNamespace(out=out, validators=1, window=30))
-            ticks = iter([0, 1, 2])
+            import itertools
+            ticks = itertools.count()
             next_count = [0]
             def condition():
                 next_count[0] += 1
@@ -51,15 +52,20 @@ class EvidenceTests(unittest.TestCase):
                  patch.object(drill.causal_trace, "capture", side_effect=RuntimeError("capture failure")):
                 with self.assertRaisesRegex(RuntimeError, "primary failure"):
                     drill.main()
-            result = __import__("json").loads((Path(out) / "result.json").read_text())
+            result = __import__("json").loads((Path(out) / "workload-result.json").read_text())
             self.assertEqual(result["reason"], "primary failure")
 
     def test_original_finalized_snapshot_must_still_contain_the_marker(self):
         with TemporaryDirectory() as out:
             run = drill.Drill(SimpleNamespace(out=out, validators=1, window=30))
             identity = [{"node": 0, "hash": "ab" * 32}]
-            with patch.object(drill, "probe", return_value={"expr": [{"ExprInt": {"data": 42}}]}):
+            with patch.object(drill, "probe", return_value={"expr": [{"ExprInt": {"data": 42}}]}), \
+                 patch.object(run, "is_finalized", return_value=True):
                 run.fixed_snapshots(identity)
+            with patch.object(drill, "probe", return_value={"expr": [{"ExprInt": {"data": 42}}]}), \
+                 patch.object(run, "is_finalized", return_value=False):
+                with self.assertRaisesRegex(RuntimeError, "no longer reports its original finalized block"):
+                    run.fixed_snapshots(identity)
             with patch.object(drill, "probe", return_value={"expr": [{"ExprInt": {"data": 43}}]}):
                 with self.assertRaises(RuntimeError):
                     run.fixed_snapshots(identity)

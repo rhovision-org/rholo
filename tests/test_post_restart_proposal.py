@@ -41,7 +41,7 @@ class ProposalWitnessTests(unittest.TestCase):
                 m.durable_volume({'Mounts':mounts})
 
     def test_missing_divergence_and_orphan_counters_fail_closed(self):
-        health={'ready':True,'orphanBodies':0,'pipelineFaults':0,'proposalHalted':False}
+        health={'ready':True,'orphanBodies':0,'pipelineFaultsOutstanding':0,'proposalHalted':False}
         operator={'unrestorableRecords':0}
         with patch.object(m.a,'get',side_effect=lambda i,path,admin=False: operator if admin else health):
             self.assertTrue(m.healthy(7))
