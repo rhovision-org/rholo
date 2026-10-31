@@ -27,13 +27,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 2
-          ref: e926fd7ca7fc8ef37c48366013c7420f87a2d06d
+          ref: ad77fb442de28df39ce913b79dde59973aae05b2
       - name: Record source and available capacity
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p target/issue522
-          test "$(git rev-parse HEAD)" = e926fd7ca7fc8ef37c48366013c7420f87a2d06d
+          test "$(git rev-parse HEAD)" = ad77fb442de28df39ce913b79dde59973aae05b2
           git rev-parse HEAD | tee target/issue522/source-sha.txt
           printf '%s\n' "${{ github.sha }}" > target/issue522/verification-driver-sha.txt
           free -h | tee target/issue522/memory.txt
