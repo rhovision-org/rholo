@@ -1,6 +1,6 @@
 # Issue #51 — Hard-fork closeout ledger
 
-This packet follows the [close-clause decision of 21 October 2026](https://github.com/rhovision-org/rholo/issues/51#issuecomment-6316299117): each required row must be landed or deferred with a named decision owner and a one-line reason. A release name is optional. The upstream dev baseline is `d0fa65b12c9a6fbde386f7bde7bf31802f314fa4` (includes #529). The authored register snapshot is `0186933004152efb4d7e1d9bc1804786efd88b22`, a documentation-only child of that baseline; the JSON field `source_dev_sha` and every source-row URL pin this snapshot, while `source_dev_base_sha` records the upstream baseline.
+This packet follows the [close-clause decision of 21 October 2026](https://github.com/rhovision-org/rholo/issues/51#issuecomment-6316299117): each required row must be landed or deferred with a named decision owner and a one-line reason. A release name is optional. The upstream baseline and the register snapshot are both `ad77fb442de28df39ce913b79dde59973aae05b2`, the #532 merge commit, which carries the decimal removal and the dated §6 correction that records it; the JSON field `source_dev_sha` and every source-row URL pin this snapshot, while `source_dev_base_sha` records the same commit because no separate documentation-only child was needed.
 
 ## Current result
 
