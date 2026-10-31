@@ -48,6 +48,44 @@ def victim_indices(validators):
     return [validators - 1, 1]
 
 
+def online_validator_indices(validators, victim_index):
+    """The live set must omit the actual rotated victim, not always the last node."""
+    if not 1 <= victim_index < validators:
+        raise ValueError("the partition victim must be a non-bootstrap validator")
+    return [i for i in range(validators) if i != victim_index]
+
+
+def verify_isolated_tip_dwell(victim, observations, *, max_extra_samples=30):
+    """Prove an isolated tip is stable for three distinct polls.
+
+    In-flight messages queued before network disconnect can finish processing
+    after the cut. An immediate sample need not yet be frozen. Keep the original
+    three-sample requirement and fail if a bounded settling interval cannot
+    establish it; never accept an unobservable or still-moving victim.
+    """
+    def stable():
+        last = observations[-DWELL_MIN_SAMPLES:]
+        return (len(last) == DWELL_MIN_SAMPLES and
+                all(type(x.get("latest")) is int for x in last) and
+                len({x["latest"] for x in last}) == 1)
+
+    for _ in range(max_extra_samples + 1):
+        if stable():
+            return True
+        if _ == max_extra_samples:
+            break
+        time.sleep(2)
+        try:
+            sample = victim_sample(victim)
+            if sample.get("autopropose") is not False:
+                raise AssertionError("isolated victim began proposing")
+            observations.append({"latest": sample["latest"], "peers": sample["peers"],
+                                 "finalized_height": sample["finalized_height"]})
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            observations.append({"error": repr(error)})
+    return False
+
+
 def epoch_boundary_crossed(low, high, epoch):
     """Does the missing range (low, high] contain a multiple of the epoch length?"""
     if epoch <= 0 or high <= low:
@@ -216,7 +254,7 @@ class WorkloadDrill(a.Drill):
         return anchor_agreement(self, anchor, victim)
 
 
-def establish_healing_anchor(d, online, victim, cycle):
+def establish_healing_anchor(d, online, victim, cycle, victim_index=None):
     """Pick a block one side has finalized and the other has not.
 
     The anchor is a **finalization** boundary, not a storage boundary: the
@@ -242,7 +280,8 @@ def establish_healing_anchor(d, online, victim, cycle):
             if victim_view["finalized_height"] > low:
                 anchor = {"height": victim_view["finalized_height"],
                           "hash": victim_view["finalized_hash"],
-                          "node": d.args.validators - 1, "case": "victim-ahead"}
+                          "node": d.args.validators - 1 if victim_index is None else victim_index,
+                          "case": "victim-ahead"}
                 answers = [{"node": i, "answer": d.is_finalized(i, anchor["hash"])}
                            for i in online]
                 victim_answer = container_is_finalized(victim, anchor["hash"])
@@ -516,7 +555,9 @@ def main():
     capture_phase("before-partition")
     try:
         for cycle in range(2):
-            victim=a.node_name(victims[cycle])
+            victim_index = victims[cycle]
+            victim=a.node_name(victim_index)
+            online = online_validator_indices(args.validators, victim_index)
             record={"cycle":cycle+1,"isolated_validator":victim,"phase":"partition-install"}
             with record_cycle(d.out,rounds,record,capture_phase):
                 d.health_precondition("partition-install")
@@ -543,7 +584,7 @@ def main():
                 while time.monotonic()<deadline:
                     d.drive()
                     identities=[]
-                    for i in range(args.validators-1):
+                    for i in online:
                         height,hash_=a.finalized_identity(a.get(i,"/api/last-finalized-block"))
                         if not a.marker_present(a.probe(i,d.marker,hash_),d.value):
                             raise AssertionError("online validator lost finalized marker")
@@ -567,14 +608,25 @@ def main():
                 record["partition_progress_observed"]=advanced
                 if not advanced:
                     raise AssertionError("online supermajority did not advance in 300s")
-                tips=[x.get("latest") for x in frozen[-3:] if "latest" in x]
-                if len(tips) < 3 or len(set(tips)) != 1:
+                # Drain already-queued pre-cut messages before judging the frozen
+                # state. The three distinct stable polls are still mandatory.
+                if not verify_isolated_tip_dwell(victim, frozen):
                     raise AssertionError("partition leaked or the victim view was unobservable")
+                record["isolation_samples"]=frozen
+                (d.out/f"partition-{cycle+1}-live.json").write_text(json.dumps({
+                    "cycle":cycle+1,"before_height":before[0],"observations":observed,
+                    "isolation_samples":frozen},indent=2)+"\n")
+                # Prove the same physical network cut still holds *after* the
+                # settling dwell; a stable tip alone cannot certify isolation.
+                if json.loads(cmd("docker","inspect","-f",
+                                  "{{json .NetworkSettings.Networks}}",victim)):
+                    raise AssertionError("partition was reconnected before the healing phase")
                 if container_lifecycle(victim)!=lifecycle:
                     raise AssertionError("VICTIM_LIFECYCLE_CHANGED during the partition")
                 capture_phase(f"partition-{cycle+1}-before-healing")
                 record["phase"]="healing"
-                anchor=establish_healing_anchor(d, range(args.validators-1), victim, cycle+1)
+                anchor=establish_healing_anchor(
+                    d, online, victim, cycle+1, victim_index=victim_index)
                 record["healing_anchor"]=anchor
                 record["phase"]="rejoin"
                 cmd("docker","network","connect","acceptance",victim)

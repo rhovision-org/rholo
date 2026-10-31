@@ -344,6 +344,44 @@ class HealingWindowTests(unittest.TestCase):
         self.assertEqual(m.victim_indices(8), [7, 1])
         self.assertNotIn(0, m.victim_indices(8))
 
+    def test_rotated_victim_is_never_polled_as_online(self):
+        for victim in m.victim_indices(8):
+            online=m.online_validator_indices(8, victim)
+            self.assertEqual(len(online), 7)
+            self.assertNotIn(victim, online)
+            self.assertIn(0, online)
+            self.assertEqual(set(online) | {victim}, set(range(8)))
+        self.assertIn(7, m.online_validator_indices(8, 1))
+        with self.assertRaises(ValueError):
+            m.online_validator_indices(8, 0)
+
+    def test_queued_pre_cut_blocks_must_finish_before_stable_dwell(self):
+        from unittest.mock import patch
+        observations=[{"latest": 32}, {"latest": 33}, {"latest": 34}]
+        states=iter([
+            {"latest": 35, "peers": 1, "finalized_height": 25, "autopropose": False},
+            {"latest": 35, "peers": 1, "finalized_height": 25, "autopropose": False},
+            {"latest": 35, "peers": 1, "finalized_height": 25, "autopropose": False},
+        ])
+        with patch.object(m, "victim_sample", side_effect=lambda victim: next(states)), \
+             patch.object(m.time, "sleep") as pause:
+            self.assertTrue(m.verify_isolated_tip_dwell("acceptance-validator-7",observations,max_extra_samples=3))
+        self.assertEqual(pause.call_count,3)
+        self.assertEqual([x["latest"] for x in observations[-3:]],[35]*3)
+
+    def test_moving_or_unobservable_victim_never_passes(self):
+        from unittest.mock import patch
+        observations=[{"latest": 32}, {"latest": 33}, {"latest": 34}]
+        state=iter([{"latest": i, "peers": 1, "finalized_height": 25, "autopropose": False}
+                    for i in (35,36,37)])
+        with patch.object(m, "victim_sample", side_effect=lambda victim: next(state)), \
+             patch.object(m.time, "sleep"):
+            self.assertFalse(m.verify_isolated_tip_dwell("acceptance-validator-7",observations,max_extra_samples=3))
+        errors=[{"error": "Connection refused"}]*3
+        with patch.object(m, "victim_sample", side_effect=OSError("unreachable")), \
+             patch.object(m.time, "sleep"):
+            self.assertFalse(m.verify_isolated_tip_dwell("acceptance-validator-7",errors,max_extra_samples=3))
+
     def test_epoch_coverage_of_the_missing_range(self):
         self.assertTrue(m.epoch_boundary_crossed(45, 54, 10))
         self.assertFalse(m.epoch_boundary_crossed(51, 54, 10))
