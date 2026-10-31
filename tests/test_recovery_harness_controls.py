@@ -1,4 +1,5 @@
 import importlib.util
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 
@@ -23,131 +24,261 @@ class RecoveryHarnessTests(unittest.TestCase):
             with self.assertRaises(AssertionError):m.durable_state_volume({"Mounts":mounts})
 
 
+ANCHOR = {"height": 60, "hash": "ab" * 32, "node": 0, "case": "seven-ahead"}
+
+
+def healthy_status(node):
+    return {
+        "node": node, "ready": True, "orphan_bodies": 0, "orphan_detections": 0,
+        "pipeline_faults": 0, "last_pipeline_fault": None, "proposal_halted": False,
+        "proposal_halt_reason": None, "finality_stalled": False,
+        "finality_stall_episodes": 0, "latest": 70, "peers": 7,
+        "finality_counters_durable": True, "unrestorable_records": 0,
+        "unrestorable_block": None, "undelivered_sends": 0, "cgroup_oom_kills": 0,
+    }
+
+
 class RejoinAgreementTests(unittest.TestCase):
-    def drill(self, identities):
+    def drill(self, *, heads=None, statuses=None, is_finalized_fn=None):
         from types import SimpleNamespace
         from unittest.mock import Mock
         run = object.__new__(m.WorkloadDrill)
         run.args = SimpleNamespace(validators=8, window=150)
-        run.finalized_marker = Mock(return_value=identities)
+        run.marker = "marker"
+        run.value = 42
         run.drive = Mock()
+        run.record = Mock()
+        run.status_row = Mock(
+            side_effect=lambda i: dict(statuses[i]) if statuses is not None else healthy_status(i))
+        run.finalized_head = Mock(
+            side_effect=lambda i: (heads[i]["height"], heads[i]["hash"])
+            if heads is not None else (70, "ef" * 32))
+        run.is_finalized = Mock(side_effect=is_finalized_fn or (lambda i, h: True))
         return run
 
     def heads(self):
-        return [{"node":i,"height":70,"hash":"ab"*32} for i in range(8)]
+        return [{"node": i, "height": 70, "hash": "ef" * 32} for i in range(8)]
+
+    def settled(self, run):
+        """Drive the K-sample dwell and the anchored cross-checks."""
+        from unittest.mock import patch
+        blocks = [{"blockNumber": ANCHOR["height"], "blockHash": ANCHOR["hash"]}]
+        with patch.object(m.a, "get", return_value=blocks), \
+             patch.object(m.a, "probe", return_value={"expr": [{"ExprInt": {"data": 42}}]}):
+            values = [m.anchor_agreement(run, ANCHOR) for _ in range(3)]
+        return values
 
     def test_healing_wait_does_not_inject_helper_work(self):
         from unittest.mock import patch
-        run = self.drill(self.heads())
+        run = self.drill()
         with patch.object(m.a.Drill, "wait", return_value="aligned") as wait:
             self.assertEqual(run.wait_for_healing("rejoin", lambda: True), "aligned")
         wait.assert_called_once()
-        self.assertEqual(wait.call_args.kwargs, {"drive": False})
+        self.assertEqual(wait.call_args.kwargs, {"drive": False, "window": None})
         run.drive.assert_not_called()
 
-    def test_marker_retention_at_different_heights_is_not_agreement(self):
+    def test_different_finalized_heads_are_agreement_when_the_anchor_is_finalized(self):
         heads = self.heads()
-        heads[-1]["height"] = 60
-        self.assertIsNone(self.drill(heads).finalized_marker_agreement(60))
+        heads[-1] = {"node": 7, "height": 46, "hash": "cd" * 32}
+        run = self.drill(heads=heads)
+        values = self.settled(run)
+        self.assertEqual(values[-1], heads)
+        self.assertIsNone(values[0])
 
-    def test_equal_heights_with_different_hashes_are_not_agreement(self):
+    def test_anchor_not_finalized_on_the_victim_keeps_waiting(self):
+        run = self.drill(is_finalized_fn=lambda i, h: i != 7)
+        self.assertIsNone(run.anchor_agreement(ANCHOR))
+
+    def test_stable_anchor_false_on_an_online_validator_is_a_fork(self):
+        run = self.drill(is_finalized_fn=lambda i, h: i != 3)
+        for _ in range(2):
+            self.assertIsNone(run.anchor_agreement(ANCHOR))
+        with self.assertRaisesRegex(RuntimeError, "FAIL_FORK"):
+            run.anchor_agreement(ANCHOR)
+
+    def test_is_finalized_read_error_is_never_agreement(self):
+        def broken(i, h):
+            raise OSError("connection refused")
+        run = self.drill(is_finalized_fn=broken)
+        with self.assertRaises(OSError):
+            run.anchor_agreement(ANCHOR)
+
+    def test_same_height_conflicting_hash_is_still_a_fork(self):
         heads = self.heads()
-        heads[-1]["hash"] = "cd"*32
-        self.assertIsNone(self.drill(heads).finalized_marker_agreement(60))
-
-    def test_missing_or_duplicate_validator_cannot_prove_agreement(self):
-        heads = self.heads()
-        duplicate = self.heads()
-        duplicate[-1]["node"] = 0
-        for sample in [None, heads[:-1], duplicate]:
-            self.assertIsNone(self.drill(sample).finalized_marker_agreement(60))
-
-    def test_all_eight_matching_heads_preserve_the_marker_check(self):
-        heads = self.heads()
-        run = self.drill(heads)
-        self.assertEqual(run.finalized_marker_agreement(60), heads)
-        run.finalized_marker.assert_called_once_with(60, required=True)
-
-    def test_healing_requires_health_in_addition_to_matching_finality(self):
-        from unittest.mock import Mock, patch
-        operator = {
-            "latestBlockNumber": 70, "peers": 7, "finalityStall": None,
-            "unrestorableRecords": 0, "unrestorableBlock": None,
-            "undeliveredSends": 0,
-        }
-        healthy = {
-            "ready": True, "orphanBodies": 0,
-            "pipelineFaults": 0, "proposalHalted": False,
-        }
-        cases = [
-            (healthy, True),
-            ({**healthy, "ready": False}, False),
-            ({**healthy, "orphanBodies": 26}, False),
-            ({**healthy, "pipelineFaults": 1}, False),
-            ({**healthy, "proposalHalted": True}, False),
-            ({}, False),
-        ]
-        for health, expected in cases:
-            with self.subTest(health=health):
-                run = self.drill(self.heads())
-                run.events = object()
-                run.record = Mock()
-                def answer(i, path, admin=False):
-                    return operator if admin else health
-                with patch.object(m.a, "get", side_effect=answer):
-                    result = run.finalized_marker_agreement(60)
-                self.assertEqual(result == self.heads(), expected)
-                run.record.assert_called_once()
-                statuses = run.record.call_args.kwargs["nodes"]
-                self.assertEqual(len(statuses), 8)
-                self.assertEqual(statuses[-1]["orphan_bodies"], health.get("orphanBodies"))
+        heads[-1] = {"node": 7, "height": 70, "hash": "cd" * 32}
+        run = self.drill(heads=heads,
+                         is_finalized_fn=lambda i, h: h == ANCHOR["hash"])
+        with self.assertRaisesRegex(RuntimeError, "FAIL_FINALIZED_DISAGREEMENT"):
+            self.settled(run)
 
     def test_missing_divergence_counter_cannot_certify_rejoin(self):
-        from unittest.mock import Mock, patch
-        run = self.drill(self.heads())
-        run.events = object()
-        run.record = Mock()
-        operator = {
-            "latestBlockNumber": 70, "peers": 7, "finalityStall": None,
-            "unrestorableRecords": None, "unrestorableBlock": None,
-            "undeliveredSends": 0,
-        }
-        health = {
-            "ready": True, "orphanBodies": 0,
-            "pipelineFaults": 0, "proposalHalted": False,
-        }
-        with patch.object(m.a, "get", side_effect=lambda i, path, admin=False: operator if admin else health):
-            self.assertIsNone(run.finalized_marker_agreement(60))
-        run.finalized_marker.assert_not_called()
+        statuses = [healthy_status(i) for i in range(8)]
+        statuses[7]["unrestorable_records"] = None
+        run = self.drill(statuses=statuses)
+        self.assertIsNone(run.anchor_agreement(ANCHOR))
 
     def test_permanent_divergence_refuses_even_when_health_reports_ready(self):
-        from unittest.mock import Mock, patch
-        run = self.drill(self.heads())
-        run.events = object()
-        run.record = Mock()
-        operator = {
-            "latestBlockNumber": 70, "peers": 7, "finalityStall": None,
-            "unrestorableRecords": 1, "unrestorableBlock": "fatal-block",
-            "undeliveredSends": 0,
-        }
-        health = {
-            "ready": True, "orphanBodies": 0,
-            "pipelineFaults": 0, "proposalHalted": False,
-        }
-        with patch.object(m.a, "get", side_effect=lambda i, path, admin=False: operator if admin else health):
-            with self.assertRaisesRegex(RuntimeError, "PERMANENT_DIVERGENCE"):
-                run.finalized_marker_agreement(60)
-        run.finalized_marker.assert_not_called()
+        statuses = [healthy_status(i) for i in range(8)]
+        statuses[7]["unrestorable_records"] = 1
+        statuses[7]["unrestorable_block"] = "fatal-block"
+        run = self.drill(statuses=statuses)
+        with self.assertRaisesRegex(RuntimeError, "FAIL_PERMANENT_DIVERGENCE"):
+            run.anchor_agreement(ANCHOR)
 
-    def test_persistent_disagreement_fails_at_the_existing_healing_deadline(self):
+    def test_latched_pipeline_fault_is_a_named_precondition(self):
+        statuses = [healthy_status(i) for i in range(8)]
+        statuses[7]["pipeline_faults"] = 1
+        statuses[7]["last_pipeline_fault"] = "missing justification"
+        run = self.drill(statuses=statuses)
+        with self.assertRaisesRegex(RuntimeError, "FAIL_PRECONDITION_pipelineFaults"):
+            run.anchor_agreement(ANCHOR)
+
+    def test_proposal_halt_is_a_named_precondition(self):
+        statuses = [healthy_status(i) for i in range(8)]
+        statuses[7]["proposal_halted"] = True
+        run = self.drill(statuses=statuses)
+        with self.assertRaisesRegex(RuntimeError, "FAIL_PRECONDITION_proposalHalted"):
+            run.anchor_agreement(ANCHOR)
+
+    def test_the_stall_alarm_must_persist_before_it_fails(self):
+        statuses = [healthy_status(i) for i in range(8)]
+        statuses[7]["finality_stalled"] = True
+        run = self.drill(statuses=statuses)
+        self.assertIsNone(run.anchor_agreement(ANCHOR))
+        self.assertIsNone(run.anchor_agreement(ANCHOR))
+        with self.assertRaisesRegex(RuntimeError, "FAIL_STALLED"):
+            run.anchor_agreement(ANCHOR)
+
+    def test_timeout_without_a_victim_read_is_inconclusive(self):
+        run = self.drill()
+        run.healing_samples = []
+        self.assertEqual(run.classify_healing_timeout(), "INCONCLUSIVE_MEASUREMENT")
+
+    def test_timeout_with_a_flat_victim_is_a_stall(self):
+        run = self.drill()
+        run.healing_samples = [{"victim_height": 45}] * 3
+        self.assertEqual(run.classify_healing_timeout(), "FAIL_STALLED")
+
+    def test_timeout_with_an_advancing_victim_is_slow_progress(self):
+        run = self.drill()
+        run.healing_samples = [{"victim_height": h} for h in (45, 46, 47)]
+        self.assertEqual(run.classify_healing_timeout(), "INCONCLUSIVE_SLOW_PROGRESS")
+
+    def test_wait_for_healing_prefixes_the_timeout_with_its_class(self):
         from unittest.mock import patch
-        heads = self.heads()
-        heads[-1]["height"] = 60
-        run = self.drill(heads)
-        with patch.object(m.time,"monotonic",side_effect=[0,0,151]), \
-             patch.object(m.time,"sleep"):
-            with self.assertRaisesRegex(RuntimeError,"did not pass within 150s"):
-                run.wait("rejoined finalized identity",lambda:run.finalized_marker_agreement(60))
+        run = self.drill()
+
+        def timeout(*args, **kwargs):
+            run.healing_samples = [{"victim_height": 45}] * 3
+            raise m.a.WaitTimeout("window closed")
+
+        with patch.object(m.a.Drill, "wait", side_effect=timeout):
+            with self.assertRaisesRegex(RuntimeError, "FAIL_STALLED"):
+                run.wait_for_healing("rejoin", lambda: None)
+        self.assertEqual(run.healing_failure_class, "FAIL_STALLED")
+
+    def test_persistent_victim_lag_fails_at_the_existing_healing_deadline(self):
+        from unittest.mock import patch
+        run = self.drill(is_finalized_fn=lambda i, h: i != 7)
+        with patch.object(m.time, "monotonic", side_effect=[0, 0, 151, 151]), \
+             patch.object(m.time, "sleep"):
+            with self.assertRaisesRegex(m.a.WaitTimeout, "did not pass within 150s"):
+                run.wait("rejoined anchor", lambda: run.anchor_agreement(ANCHOR))
+
+
+class HealingAnchorTests(unittest.TestCase):
+    def drill(self, *, fences, victim, answers, victim_answer):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        run = object.__new__(m.WorkloadDrill)
+        run.args = SimpleNamespace(validators=8, window=150)
+        run.record = Mock()
+        run.finalized_head = Mock(side_effect=lambda i: (fences[i]["height"], fences[i]["hash"]))
+        run.is_finalized = Mock(side_effect=lambda i, h: answers[i])
+        return run, victim, victim_answer
+
+    def test_anchor_is_the_seven_ahead_minimum_fence(self):
+        from unittest.mock import patch
+        fences = [{"height": 54, "hash": "aa" * 32}, {"height": 53, "hash": "bb" * 32}] + \
+                 [{"height": 54, "hash": "aa" * 32}] * 5
+        run, _, _ = self.drill(fences=fences, victim=None, answers=[True] * 7, victim_answer=False)
+        with patch.object(m, "victim_sample",
+                          return_value={"finalized_height": 45, "finalized_hash": "cc" * 32,
+                                        "latest": 46}), \
+             patch.object(m, "container_is_finalized", return_value=False):
+            anchor = m.establish_healing_anchor(run, range(7), 7, 1)
+        self.assertEqual(anchor["height"], 53)
+        self.assertEqual(anchor["hash"], "bb" * 32)
+        self.assertEqual(anchor["case"], "seven-ahead")
+
+    def test_anchor_swaps_when_the_victim_fence_is_ahead(self):
+        from unittest.mock import patch
+        fences = [{"height": 54, "hash": "aa" * 32}] * 7
+        run, _, _ = self.drill(fences=fences, victim=None, answers=[False] * 7, victim_answer=True)
+        with patch.object(m, "victim_sample",
+                          return_value={"finalized_height": 60, "finalized_hash": "dd" * 32,
+                                        "latest": 61}), \
+             patch.object(m, "container_is_finalized", return_value=True):
+            anchor = m.establish_healing_anchor(run, range(7), 7, 1)
+        self.assertEqual(anchor["case"], "victim-ahead")
+        self.assertEqual(anchor["hash"], "dd" * 32)
+
+    def test_anchor_refuses_when_the_victim_already_finalized_it(self):
+        from unittest.mock import patch
+        fences = [{"height": 54, "hash": "aa" * 32}] * 7
+        run, _, _ = self.drill(fences=fences, victim=None, answers=[True] * 7, victim_answer=True)
+        with patch.object(m, "victim_sample",
+                          return_value={"finalized_height": 45, "finalized_hash": "cc" * 32,
+                                        "latest": 46}), \
+             patch.object(m, "container_is_finalized", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "INCONCLUSIVE_ANCHOR"):
+                m.establish_healing_anchor(run, range(7), 7, 1)
+
+    def test_anchor_refuses_a_same_height_hash_conflict(self):
+        from unittest.mock import patch
+        fences = [{"height": 54, "hash": "aa" * 32}] * 7
+        run, _, _ = self.drill(fences=fences, victim=None, answers=[True] * 7, victim_answer=False)
+        with patch.object(m, "victim_sample",
+                          return_value={"finalized_height": 54, "finalized_hash": "cc" * 32,
+                                        "latest": 55}), \
+             patch.object(m, "container_is_finalized", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "FAIL_FINALIZED_DISAGREEMENT"):
+                m.establish_healing_anchor(run, range(7), 7, 1)
+
+    def test_anchor_retries_a_transient_online_disagreement(self):
+        from unittest.mock import patch
+        fences = [{"height": 54, "hash": "aa" * 32}] * 7
+        answers = iter([False] * 7 + [True] * 7)
+        run = object.__new__(m.WorkloadDrill)
+        run.args = SimpleNamespace(validators=8, window=150)
+        run.record = __import__("unittest").mock.Mock()
+        run.finalized_head = __import__("unittest").mock.Mock(
+            side_effect=lambda i: (54, "aa" * 32))
+        run.is_finalized = __import__("unittest").mock.Mock(side_effect=lambda i, h: next(answers))
+        with patch.object(m, "victim_sample",
+                          return_value={"finalized_height": 45, "finalized_hash": "cc" * 32,
+                                        "latest": 46}), \
+             patch.object(m, "container_is_finalized", return_value=False), \
+             patch.object(m.time, "sleep"):
+            anchor = m.establish_healing_anchor(run, range(7), 7, 1)
+        self.assertEqual(anchor["case"], "seven-ahead")
+        attempts = [c.kwargs["attempt"] for c in run.record.call_args_list]
+        self.assertEqual(attempts, [1, 2])
+
+    def test_anchor_fails_after_the_attempt_budget(self):
+        from unittest.mock import patch
+        run = object.__new__(m.WorkloadDrill)
+        run.args = SimpleNamespace(validators=8, window=150)
+        run.record = __import__("unittest").mock.Mock()
+        run.finalized_head = __import__("unittest").mock.Mock(side_effect=lambda i: (54, "aa" * 32))
+        run.is_finalized = __import__("unittest").mock.Mock(side_effect=lambda i, h: False)
+        with patch.object(m, "victim_sample",
+                          return_value={"finalized_height": 45, "finalized_hash": "cc" * 32,
+                                        "latest": 46}), \
+             patch.object(m, "container_is_finalized", return_value=False), \
+             patch.object(m.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "FAIL_FORK"):
+                m.establish_healing_anchor(run, range(7), 7, 1)
 
 
 class ActiveRecoveryWitnessTests(unittest.TestCase):
@@ -171,6 +302,35 @@ class ActiveRecoveryWitnessTests(unittest.TestCase):
                 self.witness.active_proposal_witness(f"proposed and added block #6 (seq 5)\nproposed and added block #7 (seq {q})")
 
 
+
+class IncidentReplayTests(unittest.TestCase):
+    """The run that prompted the change, replayed from its committed trace."""
+    TRACE = ROOT/"spec/audit/evidence/rejoin-acceptance-20261031/run-41208692673-cycle2-trace.json"
+
+    def trace(self):
+        import json
+        return json.loads(self.TRACE.read_text())
+
+    def test_the_incident_is_slow_progress_not_a_stall(self):
+        trace = self.trace()
+        samples = [{"victim_height": p["latest"][-1]} for p in trace["probes"]
+                   if p["latest"][-1] is not None]
+        run = object.__new__(m.WorkloadDrill)
+        run.healing_samples = samples
+        self.assertEqual(run.classify_healing_timeout(), "INCONCLUSIVE_SLOW_PROGRESS")
+        self.assertGreater(len({x["victim_height"] for x in samples}), 5)
+
+    def test_the_online_nodes_never_had_one_identity(self):
+        final = self.trace()["probes"][-1]["latest"]
+        self.assertGreater(len(set(final[:-1])), 1)
+        self.assertLess(final[-1], max(final[:-1]))
+
+    def test_the_victim_finalized_the_anchor_inside_the_window(self):
+        trace = self.trace()
+        victim = [(r["utc"], r["height"]) for r in trace["finalized"] if r["node"] == 7]
+        anchor_height = 54
+        first = min(utc for utc, height in victim if height >= anchor_height)
+        self.assertLessEqual(first - trace["healing_start_utc"], 150)
 
 class PartitionFailureEvidenceTests(unittest.TestCase):
     def test_failure_preserves_cycle_progress_and_primary_error(self):
@@ -223,14 +383,17 @@ class PartitionFailureEvidenceTests(unittest.TestCase):
             self.assertEqual(result["rounds"][1]["rejoined"],[{"height":59}])
 
     def test_main_captures_healing_timeout_before_cleanup(self):
+        import itertools
         import json
         from tempfile import TemporaryDirectory
         from unittest.mock import Mock,patch
         with TemporaryDirectory() as directory:
             out=Path(directory)
-            (out/"result.json").write_text(json.dumps({"initial_finalized":[]}))
+            (out/"workload-result.json").write_text(json.dumps({"initial_finalized":[]}))
             run=Mock(out=out,marker="marker",value=42)
             run.wait_for_healing.side_effect=RuntimeError("healing timed out")
+            run.healing_failure_class="INCONCLUSIVE_SLOW_PROGRESS"
+            run.finalized_head.return_value=(13,"b"*64)
             captures=[]
             def capture(*args):
                 captures.append(run.out.name)
@@ -238,25 +401,35 @@ class PartitionFailureEvidenceTests(unittest.TestCase):
                               "Destination":"/var/lib/rnode","RW":True}]}
             def command(*args):
                 return "{}" if "-f" in args else json.dumps([mount])
+            clock=itertools.count()
+            sample={"latest":10,"autopropose":False,"peers":0,"finalized_height":9,
+                    "finalized_hash":"c"*64}
             with patch.dict(m.os.environ,{"GITHUB_ACTIONS":"true","RUNNER_ENVIRONMENT":"github-hosted",
                                           "DEVNET_PREFIX":"acceptance"}), \
                  patch("sys.argv",["partition","--validators","4","--out",directory]), \
                  patch.object(m,"WorkloadDrill",return_value=run), \
                  patch.object(m,"cmd",side_effect=command), \
+                 patch.object(m,"victim_sample",return_value=sample), \
+                 patch.object(m,"establish_healing_anchor",return_value=ANCHOR), \
                  patch.object(m.a,"get"),patch.object(m.a,"probe"), \
-                 patch.object(m.a,"finalized_identity",side_effect=[(10,"a"),(13,"b"),(13,"b"),(13,"b")]), \
+                 patch.object(m.a,"finalized_identity",
+                              side_effect=[(10,"a")] + [(11,"b")]*3 + [(12,"b")]*3 + [(13,"b")]*3), \
                  patch.object(m.a,"marker_present",return_value=True), \
-                 patch.object(m.time,"monotonic",side_effect=[0,1,2]), \
+                 patch.object(m.time,"monotonic",side_effect=lambda: next(clock)), \
+                 patch.object(m.time,"sleep"), \
                  patch.object(m.a.causal_trace,"capture",side_effect=capture), \
                  patch.object(m.subprocess,"run") as cleanup:
                 with self.assertRaisesRegex(RuntimeError,"healing timed out"):
                     m.main()
                 cleanup.assert_called_once()
                 self.assertEqual(cleanup.call_args.kwargs["timeout"],25)
-            self.assertEqual(captures,["before-partition","partition-1-before-healing","partition-1-healing-failed"])
+            self.assertEqual(captures,["before-partition","partition-1-before-healing",
+                                       "partition-1-rejoin-failed"])
             result=json.loads((out/"partition-result.json").read_text())
-            self.assertEqual(result["failed_phase"],"healing")
+            self.assertEqual(result["failed_phase"],"rejoin")
+            self.assertEqual(result["failure_class"],"INCONCLUSIVE_SLOW_PROGRESS")
             self.assertTrue(result["rounds"][0]["partition_progress_observed"])
+            self.assertEqual(result["rounds"][0]["healing_anchor"],ANCHOR)
             run.fixed_snapshots.assert_not_called()
 
 

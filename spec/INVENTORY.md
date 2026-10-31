@@ -16,6 +16,14 @@ enforcement (89), the published node hostlist (90), and the collection/censure c
 [`../docs/src/formal/laws.md`](../docs/src/formal/laws.md).
 Backfilling them here is open work; where this page and the register disagree, the register is right.
 
+**Owed by the rejoin acceptance (2026-10-31).** The acceptance harness's fixed-anchor limb is a
+**layer of protection**, not a proved law. It rests on Law 15's `seen_monotone_of_reaches` and, for the
+catch-up walk, Law 71; four statements are recorded as `candidate:` slugs with their witnesses in
+[`audit/evidence/rejoin-acceptance-20261031/README.md`](audit/evidence/rejoin-acceptance-20261031/README.md) —
+`finalized-membership-monotone`, the dual `rejoin-certificate-predicates-prefix`,
+`pairwise-finalized-imply-one-chain`, and `post-state-is-a-function-of-block`. No harness predicate is
+marked done here, and none should be until the first of those is proved.
+
 **Type system.** The port's own type discipline — the ρ-calculus embedded as the base sort of a
 Calculus of Constructions, with no silent partiality — is specified in [`TYPE-SYSTEM.md`](TYPE-SYSTEM.md),
 guided by `Rchain/Rho.lean` and `Rchain/Ty.lean`. It is **not** a new law and does not pre-empt Laws

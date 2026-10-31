@@ -181,9 +181,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: isolated-n8-quiet-finality-${{ github.run_id }}-${{ matrix.repetition }}
+          name: isolated-n8-quiet-finality-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.repetition }}
           path: target/quiet-finality-16gb/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 90
 
   n8-16gb:
@@ -232,6 +232,7 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s tests -p test_recovery_harness_controls.py -v 2>&1 | tee target/isolated-16gb/harness.log
           python3 -m unittest discover -s tests -p test_post_restart_proposal.py -v 2>&1 | tee target/isolated-16gb/post-restart-units.log
+          python3 tests/consensus-drill-regression.py 2>&1 | tee target/isolated-16gb/drill-regression.log
           python3 -m py_compile tests/consensus-partition-rejoin.py tests/test_recovery_harness_controls.py tests/consensus-post-restart-proposal.py tests/test_post_restart_proposal.py
           git diff --check HEAD^ HEAD
 
@@ -273,6 +274,10 @@ jobs:
             if [ "$trial_code" -eq 0 ]; then
               python3 tests/consensus-partition-rejoin.py --validators 8 --out target/isolated-16gb/n8-partition > target/isolated-16gb/n8-campaign.log 2>&1
               trial_code=$?
+              if [ "$trial_code" -eq 0 ] && ! test -s target/isolated-16gb/n8-partition/partition-result.json; then
+                echo "FAIL: a green arm left no verdict artifact"
+                trial_code=43
+              fi
             fi
           fi
           printf 'start=%s\npartition=%s\n' "$start_code" "$trial_code" | tee target/isolated-16gb/exit-codes.txt
@@ -351,7 +356,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: isolated-n8-16gb-${{ github.run_id }}-${{ matrix.repetition }}
+          name: isolated-n8-16gb-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.repetition }}
           path: target/isolated-16gb/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 90

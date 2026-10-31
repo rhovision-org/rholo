@@ -106,7 +106,7 @@ def signed_deploy_to_restarted_validator(index, name, cycle):
 
 
 def check_retained_snapshots(out):
-    original = json.loads((out/'result.json').read_text())
+    original = json.loads((out/'workload-result.json').read_text())
     events = (out/'observations.jsonl').read_text().splitlines()
     first = json.loads(events[0])
     marker, value = first['marker'], first['expected']

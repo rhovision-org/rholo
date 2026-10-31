@@ -42,18 +42,32 @@ def verified_health(health, operator):
     )
 
 
-def agreed_finality(rows, indices, min_height, require_marker):
-    """A finality witness requires exact hash agreement, not just heights."""
+def agreed_finality(rows, indices, min_height, require_marker, anchor=None):
+    """A finality witness is hash-anchored, not head-equality.
+
+    On a quiet chain the representatives are stable, so exact equality is a
+    valid *measurement* of this arm; a rejoin follows continued production, so
+    it passes a fixed ``anchor`` and asks only that every node has finalized it.
+    """
     if set(rows) != set(indices):
         return False
-    identities = [(rows[i]["height"], rows[i]["hash"]) for i in indices]
-    if len(set(identities)) != 1 or identities[0][0] < min_height:
+    if any(rows[i]["height"] < min_height for i in indices):
         return False
     if any(not rows[i]["healthy"] for i in indices):
         return False
     if require_marker and any(rows[i].get("marker_present") is not True for i in indices):
         return False
-    return True
+    if anchor is not None:
+        return True
+    identities = [(rows[i]["height"], rows[i]["hash"]) for i in indices]
+    return len(set(identities)) == 1
+
+
+def is_finalized(index, block_hash):
+    value = a.get(index, f"/api/is-finalized/{block_hash}")
+    if type(value) is not bool:
+        raise ValueError("is-finalized must return a JSON boolean")
+    return value
 
 
 def sample(index, marker=None, expected=None):
@@ -98,7 +112,7 @@ def verify_finality_progress(index, old, row):
             raise AssertionError(f"previous finalized block lost on validator {index}")
 
 
-def observe_until(out, label, indices, min_height, marker, expected, window):
+def observe_until(out, label, indices, min_height, marker, expected, window, anchor=None):
     deadline = time.monotonic() + window
     seen = {}
     attempts = []
@@ -128,15 +142,25 @@ def observe_until(out, label, indices, min_height, marker, expected, window):
         (out / f"{label}-observations.json").write_text(
             json.dumps({"phase": label, "target_min_finalized_height": min_height,
                         "attempts": attempts}, indent=2) + "\n")
-        if not errors and agreed_finality(rows, indices, min_height, marker is not None):
-            return {"height": rows[indices[0]]["height"],
-                    "hash": rows[indices[0]]["hash"],
+        anchor_ok = True
+        if anchor is not None and not errors:
+            try:
+                anchor_ok = all(is_finalized(i, anchor["hash"]) for i in indices)
+            except (OSError, ValueError) as exc:
+                errors["anchor"] = repr(exc)
+                anchor_ok = False
+        if not errors and agreed_finality(rows, indices, min_height, marker is not None,
+                                          anchor=anchor) and anchor_ok:
+            return {"height": anchor["height"] if anchor else rows[indices[0]]["height"],
+                    "hash": anchor["hash"] if anchor else rows[indices[0]]["hash"],
                     "samples": len(attempts),
-                    "marker_present": marker is not None}
+                    "marker_present": marker is not None,
+                    "anchored": anchor is not None}
         time.sleep(3)
     raise AssertionError(
-        f"{label}: exact finalized height/hash, healthy gate and marker not all proven "
-        f"within {window}s; see {label}-observations.json")
+        f"{label}: the finalized witness ({'anchor retention' if anchor else 'exact identity'}), "
+        f"healthy gate and marker were not all proven within {window}s; "
+        f"see {label}-observations.json")
 
 
 def verify_namespace():
@@ -229,9 +253,12 @@ def run(out, window):
         disconnected = False
         report["victim_reconnected_before_cleanup"] = True
         last = report["arms"][-1]
+        # The rejoin follows continued production: anchor on the last arm's
+        # agreed finalized block instead of requiring equal moving heads.
         report["rejoin"] = observe_until(
             out, "quiet-rejoin", list(range(8)), last["finality"]["height"],
-            last["marker"], 42, window)
+            last["marker"], 42, window,
+            anchor={"height": last["finality"]["height"], "hash": last["finality"]["hash"]})
         # Retain every arm's signed marker at the exact agreed finalized hash.
         report["retained_markers"] = {}
         for arm in report["arms"]:

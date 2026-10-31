@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Bounded same-volume partition/rejoin under explicit supporting deploy workload."""
+"""Bounded same-volume partition/rejoin under explicit supporting deploy workload.
+
+The healing verdict is a **fixed finalized anchor**, not equality of moving
+heads: the drill picks a block one side has finalized and the other has not
+(while both sides are observable), and requires the rejoining validator to
+finalize it. Head heights may differ — a correct victim converges through the
+anchor, and equality of last-finalized representatives is not a property of a
+producing chain (Law 15's seen-set monotonicity is Reaches-scoped; the fringe
+representative itself is not monotone).
+"""
 import argparse
 from contextlib import contextmanager
 import importlib.util
@@ -13,81 +22,67 @@ ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location("acceptance",ROOT/"tools/consensus-acceptance-drill.py")
 a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
 
-class WorkloadDrill(a.Drill):
-    def wait(self, description, condition, drive=True):
-        # This arm explicitly supplies work; it cannot establish quiet-chain liveness.
-        return super().wait(description,condition,drive=True)
+# The healing window is owned by a separate, measurement-led change; this arm
+# keeps the pre-registered bound and records the gap so that change can be
+# justified against the same evidence.
+ANCHOR_ATTEMPTS = 5
+ANCHOR_RETRY_SECONDS = 2.0
+DWELL_MIN_SAMPLES = 3
+CONSENSUS_PORTS = ("40401/tcp", "40402/tcp", "40404/tcp")
 
-    def wait_for_healing(self, description, condition):
-        # Online-partition progress is demonstrated while signed work is being
-        # supplied. Once the victim rejoins, adding Nil deploys on every retry
-        # changes the target faster than it can catch up. Certify retained
-        # finalized identity against a finite, quiescent workload instead.
-        # Preserve the original 150s bound and the strict all-node hash check.
-        return super().wait(description, condition, drive=False)
-
-    def finalized_marker_agreement(self, min_height):
-        # A stale finalized height and a permanent divergence are different
-        # failure classes. Record the gate's own health before every read, and
-        # fail early if the node has abandoned an irrecoverable block.
-        # Fixture-created drills have no live runner or events file. Do not touch
-        # network/admin endpoints in that offline identity-only regression.
-        # A real execution always passes through Drill.__init__ and must capture
-        # the operator's irreversible-divergence verdict before its marker read.
-        if getattr(self, "events", None) is not None:
-            statuses = []
-            for i in range(self.args.validators):
-                operator = a.get(i, "/api/v1/status/operator", admin=True)
-                health = a.get(i, "/health")
-                statuses.append({
-                    "node": i,
-                    "ready": health.get("ready"),
-                    "orphan_bodies": health.get("orphanBodies"),
-                    "pipeline_faults": health.get("pipelineFaults"),
-                    "proposal_halted": health.get("proposalHalted"),
-                    "latest": operator.get("latestBlockNumber"),
-                    "peers": operator.get("peers"),
-                    "finality_stall": operator.get("finalityStall"),
-                    "unrestorable_records": operator.get("unrestorableRecords"),
-                    "unrestorable_block": operator.get("unrestorableBlock"),
-                    "undelivered_sends": operator.get("undeliveredSends"),
-                })
-            self.record(phase="healing_probe", target_min_height=min_height, nodes=statuses)
-            # A missing counter is unknown, not proof of zero divergence.
-            if any(type(x["unrestorable_records"]) is not int for x in statuses):
-                return None
-            bad = [x for x in statuses if x["unrestorable_records"] > 0]
-            if bad:
-                details = [(x["node"], x["unrestorable_block"]) for x in bad]
-                raise RuntimeError(
-                    f"PERMANENT_DIVERGENCE: {details}; finalized agreement cannot be"
-                    " certified by extending the wait. See healing_probe evidence."
-                )
-        # A finalized hash match is not deployment readiness. The PR497 gate
-        # must also certify every node is healthy with no orphaned bodies.
-        # Absent health fields fail closed instead of silently passing.
-        if getattr(self, "events", None) is not None:
-            if any(
-                x["ready"] is not True
-                or x["orphan_bodies"] != 0
-                or x["pipeline_faults"] != 0
-                or x["proposal_halted"] is not False
-                for x in statuses
-            ):
-                return None
-        # Retaining the marker at different finalized heads is not yet rejoin
-        # agreement. Keep waiting inside the existing 150-second healing bound.
-        identities = self.finalized_marker(min_height, required=True)
-        if identities is None or len(identities) != self.args.validators:
-            return None
-        if {x["node"] for x in identities} != set(range(self.args.validators)):
-            return None
-        if len({(x["height"], x["hash"]) for x in identities}) != 1:
-            return None
-        return identities
 
 def cmd(*args):
     return subprocess.check_output(args,text=True,stderr=subprocess.STDOUT,timeout=25).strip()
+
+
+def container_get(node, path, admin=False, timeout=10):
+    """Read a node's own API through its container loopback.
+
+    The victim is network-isolated from its peers, not from itself: `rnode run`
+    binds 0.0.0.0, so the container's loopback answers while the partition is
+    installed. This is the only way to witness that the isolation held and that
+    the victim kept a consistent local view.
+    """
+    port = 40405 if admin else 40403
+    raw = subprocess.check_output(
+        ["docker", "exec", node, "curl", "-fsS", f"http://127.0.0.1:{port}{path}"],
+        text=True, stderr=subprocess.STDOUT, timeout=timeout)
+    return json.loads(raw)
+
+
+def container_is_finalized(node, block_hash):
+    answer = container_get(node, f"/api/is-finalized/{block_hash}")
+    if type(answer) is not bool:
+        raise ValueError(f"{node}: is-finalized did not answer a JSON boolean")
+    return answer
+
+
+def victim_sample(node):
+    status = container_get(node, "/api/v1/status")
+    health = container_get(node, "/health")
+    operator = container_get(node, "/api/v1/status/operator", admin=True)
+    height, block_hash = a.finalized_identity(container_get(node, "/api/last-finalized-block"))
+    return {
+        "latest": status.get("latestBlockNumber"),
+        "autopropose": status.get("autopropose"),
+        "peers": operator.get("peers"),
+        "finalized_height": height,
+        "finalized_hash": block_hash,
+        "ready": health.get("ready"),
+        "finality_stalled": health.get("finalityStalled"),
+        "unrestorable_records": operator.get("unrestorableRecords"),
+        "cgroup_oom_kills": (operator.get("resources") or {}).get("cgroupOomKills"),
+    }
+
+
+def container_lifecycle(node):
+    return cmd("docker", "inspect", "-f",
+               "{{.Id}} {{.State.StartedAt}} {{.RestartCount}} {{.State.OOMKilled}} {{json .Config.Cmd}}",
+               node)
+
+
+def published_ports(node):
+    return json.loads(cmd("docker", "inspect", "-f", "{{json .NetworkSettings.Ports}}", node))
 
 
 def durable_state_volume(container):
@@ -96,6 +91,225 @@ def durable_state_volume(container):
         raise AssertionError("exactly one durable state volume required")
     m=mounts[0]
     return (m["Type"],m["Name"],m["Source"],m["Destination"],m["RW"])
+
+
+class WorkloadDrill(a.Drill):
+    def wait(self, description, condition, drive=True, window=None):
+        # This arm explicitly supplies work; it cannot establish quiet-chain liveness.
+        return super().wait(description,condition,drive=True,window=window)
+
+    def wait_for_healing(self, description, condition, window=None):
+        # Online-partition progress is demonstrated while signed work is being
+        # supplied. Once the victim rejoins, adding Nil deploys on every retry
+        # changes the target faster than it can catch up, so healing certifies
+        # the anchor without injecting further work.
+        self.healing_samples = []
+        self.healing_failure_class = None
+        self.anchor_true_samples = 0
+        self.online_false_samples = {}
+        self.healing_stall_samples = 0
+        try:
+            return super().wait(description, condition, drive=False, window=window)
+        except a.WaitTimeout as error:
+            self.healing_failure_class = self.classify_healing_timeout()
+            if getattr(self, "events", None) is not None:
+                heights = [s["victim_height"] for s in self.healing_samples
+                           if s.get("victim_height") is not None]
+                self.record(phase="healing_verdict",
+                            failure_class=self.healing_failure_class,
+                            window_seconds=window if window is not None else self.args.window,
+                            samples=len(self.healing_samples),
+                            first_victim_height=heights[0] if heights else None,
+                            last_victim_height=heights[-1] if heights else None)
+            raise RuntimeError(f"{self.healing_failure_class}: {error}") from error
+
+    def classify_healing_timeout(self):
+        heights = [s["victim_height"] for s in getattr(self, "healing_samples", [])
+                   if s.get("victim_height") is not None]
+        if not heights:
+            return "INCONCLUSIVE_MEASUREMENT"
+        if len(heights) >= DWELL_MIN_SAMPLES and len(set(heights[-DWELL_MIN_SAMPLES:])) == 1:
+            return "FAIL_STALLED"
+        return "INCONCLUSIVE_SLOW_PROGRESS"
+
+    def note_healing_sample(self, sample):
+        if getattr(self, "healing_samples", None) is not None:
+            self.healing_samples.append(sample)
+
+    def anchor_agreement(self, anchor):
+        return anchor_agreement(self, anchor)
+
+
+def establish_healing_anchor(d, online, victim, cycle):
+    """Pick a block one side has finalized and the other has not.
+
+    The anchor is a **finalization** boundary, not a storage boundary: the
+    victim may hold the block in its DAG; what it must not have done is
+    finalize it. If the victim's own fence is ahead of the online group, the
+    roles swap and the seven must later finalize the victim's block.
+    """
+    last = None
+    for attempt in range(1, ANCHOR_ATTEMPTS + 1):
+        try:
+            fences = []
+            for i in online:
+                height, block_hash = d.finalized_head(i)
+                fences.append({"node": i, "height": height, "hash": block_hash})
+            victim_view = victim_sample(victim)
+            low = min(f["height"] for f in fences)
+            pick = next(f for f in fences if f["height"] == low)
+            if victim_view["finalized_height"] == low and victim_view["finalized_hash"] != pick["hash"]:
+                raise RuntimeError(
+                    "FAIL_FINALIZED_DISAGREEMENT: victim and online group finalized "
+                    f"different blocks at height {low} "
+                    f"({victim_view['finalized_hash']} vs {pick['hash']})")
+            if victim_view["finalized_height"] > low:
+                anchor = {"height": victim_view["finalized_height"],
+                          "hash": victim_view["finalized_hash"],
+                          "node": d.args.validators - 1, "case": "victim-ahead"}
+                answers = [{"node": i, "answer": d.is_finalized(i, anchor["hash"])}
+                           for i in online]
+                victim_answer = container_is_finalized(victim, anchor["hash"])
+                if any(row["answer"] is not False for row in answers) or victim_answer is not True:
+                    raise RuntimeError(
+                        "INCONCLUSIVE_ANCHOR: the victim is ahead but the sides are not separated "
+                        "on its block")
+            else:
+                anchor = {"height": low, "hash": pick["hash"], "node": pick["node"],
+                          "case": "seven-ahead"}
+                answers = [{"node": i, "answer": d.is_finalized(i, anchor["hash"])}
+                           for i in online]
+                victim_answer = container_is_finalized(victim, anchor["hash"])
+                if not all(row["answer"] is True for row in answers):
+                    last = "online nodes disagree on the anchor"
+                    raise a.WaitTimeout(last)
+                if victim_answer is not False:
+                    raise RuntimeError(
+                        "INCONCLUSIVE_ANCHOR: the victim has already finalized the online "
+                        "group's common anchor; the partition is not separating the sides")
+            d.record(phase="healing_anchor", cycle=cycle, attempt=attempt, anchor=anchor,
+                     online=fences, anchor_finalized=answers,
+                     victim_view=victim_view, victim_anchor_finalized=victim_answer)
+            return anchor
+        except a.WaitTimeout as error:
+            d.record(phase="healing_anchor", cycle=cycle, attempt=attempt,
+                     online=fences if "fences" in locals() else None, error=str(error))
+            time.sleep(ANCHOR_RETRY_SECONDS)
+        except (OSError, ValueError) as error:
+            last = repr(error)
+            d.record(phase="healing_anchor", cycle=cycle, attempt=attempt, error=last)
+            time.sleep(ANCHOR_RETRY_SECONDS)
+    raise RuntimeError(
+        f"FAIL_FORK: no separated finalized anchor after {ANCHOR_ATTEMPTS} attempts ({last})")
+
+
+def anchor_agreement(d, anchor):
+    """One poll of the healing predicate; returns identities only when settled.
+
+    Returns ``None`` while the predicate is not yet satisfied (the caller waits),
+    raises a named verdict when it can never be satisfied, and returns the
+    per-node heads once the anchor is retained on a dwell and the fork-sensitive
+    cross-checks pass.
+    """
+    victim = d.args.validators - 1
+    statuses = [d.status_row(i) for i in range(d.args.validators)]
+    victim_row = statuses[victim]
+    d.note_healing_sample({"victim_height": victim_row["latest"],
+                           "victim_finalized": None,
+                           "anchor_finalized": None})
+    # A latched fault is terminal for the process, not a transient reading.
+    pipeline_faults = victim_row["pipeline_faults"]
+    if type(pipeline_faults) is not int:
+        d.record(phase="healing_probe", anchor=anchor, nodes=statuses,
+                 victim_finalized=None, anchor_finalized=None)
+        return None
+    if pipeline_faults != 0:
+        raise RuntimeError(
+            "FAIL_PRECONDITION_pipelineFaults: node {} pipelineFaults={} lastPipelineFault={!r}"
+            .format(victim, pipeline_faults, victim_row["last_pipeline_fault"]))
+    if victim_row["proposal_halted"] is True:
+        raise RuntimeError(
+            "FAIL_PRECONDITION_proposalHalted: node {} reason={!r}"
+            .format(victim, victim_row["proposal_halt_reason"]))
+    if type(victim_row["unrestorable_records"]) is not int:
+        d.record(phase="healing_probe", anchor=anchor, nodes=statuses,
+                 victim_finalized=None, anchor_finalized=None)
+        return None
+    if victim_row["unrestorable_records"] > 0:
+        raise RuntimeError(
+            f"FAIL_PERMANENT_DIVERGENCE: node {victim} unrestorableRecords="
+            f"{victim_row['unrestorable_records']} block={victim_row['unrestorable_block']}")
+    if victim_row["finality_stalled"] is True:
+        d.healing_stall_samples = getattr(d, "healing_stall_samples", 0) + 1
+    else:
+        d.healing_stall_samples = 0
+    if getattr(d, "healing_stall_samples", 0) >= DWELL_MIN_SAMPLES:
+        raise RuntimeError(f"FAIL_STALLED: node {victim} reports a sustained finality stall")
+
+    answers = []
+    for i in range(d.args.validators):
+        answers.append({"node": i, "answer": d.is_finalized(i, anchor["hash"])})
+    try:
+        victim_height, victim_hash = d.finalized_head(victim)
+    except (OSError, ValueError):
+        victim_height, victim_hash = None, None
+    d.note_healing_sample({"victim_height": victim_row["latest"],
+                           "victim_finalized": victim_height,
+                           "anchor_finalized": all(x["answer"] is True for x in answers)})
+    d.record(phase="healing_probe", anchor=anchor, nodes=statuses,
+             victim_finalized={"height": victim_height, "hash": victim_hash},
+             anchor_finalized=answers)
+    if any(x["answer"] is not True for x in answers):
+        online_false = [x["node"] for x in answers if x["node"] != victim and x["answer"] is not True]
+        if online_false:
+            d.online_false_samples = getattr(d, "online_false_samples", {})
+            for node in online_false:
+                d.online_false_samples[node] = d.online_false_samples.get(node, 0) + 1
+            stable = [n for n, count in d.online_false_samples.items()
+                      if count >= DWELL_MIN_SAMPLES]
+            if stable:
+                raise RuntimeError(
+                    f"FAIL_FORK: online validator(s) {stable} do not report the anchor {anchor['hash']} finalized")
+        else:
+            d.online_false_samples = {}
+        d.anchor_true_samples = 0
+        return None
+    d.online_false_samples = {}
+    d.anchor_true_samples = getattr(d, "anchor_true_samples", 0) + 1
+    if d.anchor_true_samples < DWELL_MIN_SAMPLES:
+        return None
+
+    # The dwell holds. Now the cross-node state commitments.
+    height = anchor["height"]
+    for i in range(d.args.validators):
+        blocks = a.get(i, f"/api/blocks/{height}/{height}")
+        rows = [row for row in blocks if isinstance(row, dict) and row.get("blockNumber") == height] \
+            if isinstance(blocks, list) else []
+        if len(rows) != 1 or rows[0].get("blockHash") != anchor["hash"]:
+            raise RuntimeError(
+                f"FAIL_FINALIZED_DISAGREEMENT: validator {i} serves "
+                f"{len(rows)} block(s) at height {height}, not the anchor {anchor['hash']}")
+        answer = a.probe(i, d.marker, anchor["hash"])
+        d.record(node=i, anchor_marker_at=anchor["hash"], response=answer)
+        if not a.marker_present(answer, d.value):
+            raise RuntimeError(f"FAIL_ANCHOR_STATE: validator {i} cannot read the marker at the anchor")
+
+    heads = []
+    for i in range(d.args.validators):
+        ident_height, ident_hash = d.finalized_head(i)
+        heads.append({"node": i, "height": ident_height, "hash": ident_hash})
+    for row in heads:
+        for other in range(d.args.validators):
+            if other == row["node"]:
+                continue
+            other_height = next(h["height"] for h in heads if h["node"] == other)
+            if other_height >= row["height"] and d.is_finalized(other, row["hash"]) is not True:
+                raise RuntimeError(
+                    "FAIL_FINALIZED_DISAGREEMENT: node {} at height {} does not have node {}'s "
+                    "finalized block {} (heights {} >= {})".format(
+                        other, other_height, row["node"], row["hash"],
+                        other_height, row["height"]))
+    return heads
 
 
 @contextmanager
@@ -112,17 +326,55 @@ def record_cycle(out, rounds, record, capture_phase):
             capture_phase(f"partition-{record['cycle']}-{record['phase']}-failed")
         except Exception as capture_error:
             record["capture_error"] = str(capture_error)
-        (out/"partition-result.json").write_text(json.dumps({
+        document = {
             "result": "FAIL_BOUNDED_WORKLOAD_PARTITION_REJOIN",
             "partition_cycles_completed": sum(r.get("result") == "PASS" for r in rounds),
             "failed_cycle": record["cycle"], "failed_phase": record["phase"],
             "rounds": rounds,
+        }
+        if record.get("healing_failure_class"):
+            document["failure_class"] = record["healing_failure_class"]
+        (out/"partition-result.json").write_text(json.dumps(document, indent=2)+"\n")
+        try:
+            source_sha = cmd("git", "rev-parse", "HEAD")
+            binary_sha256 = cmd(
+                "docker", "exec", a.node_name(0), "sha256sum", "/usr/local/bin/rnode").split()[0]
+        except (OSError, subprocess.SubprocessError):
+            source_sha, binary_sha256 = None, None
+        (out/"campaign.json").write_text(json.dumps({
+            "gate_id": "n8-partition-rejoin",
+            "gate_version": 2,
+            "source_sha": source_sha,
+            "binary_sha256": binary_sha256,
+            "run_id": os.environ.get("GITHUB_RUN_ID"),
+            "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+            "aggregate": "FAIL",
+            "cycles": [{"cycle": r.get("cycle"), "result": r.get("result"),
+                        "failure_class": r.get("healing_failure_class")} for r in rounds],
         }, indent=2)+"\n")
         raise
     else:
         record["result"] = "PASS"
     finally:
         (out/"partition-observations.json").write_text(json.dumps(rounds, indent=2)+"\n")
+
+
+def write_campaign(d, args, result, source_sha, binary_sha256):
+    """One aggregate record, so a green arm cannot be quoted beside a red one."""
+    rounds = result.get("rounds", [])
+    campaign = {
+        "gate_id": "n8-partition-rejoin",
+        "gate_version": 2,
+        "source_sha": source_sha,
+        "binary_sha256": binary_sha256,
+        "run_id": os.environ.get("GITHUB_RUN_ID"),
+        "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+        "validators": args.validators,
+        "aggregate": result["result"],
+        "cycles": [{"cycle": r.get("cycle"), "result": r.get("result"),
+                    "failure_class": r.get("healing_failure_class")} for r in rounds],
+    }
+    (d.out/"campaign.json").write_text(json.dumps(campaign, indent=2)+"\n")
 
 
 def main():
@@ -134,7 +386,7 @@ def main():
     if os.environ.get("DEVNET_PREFIX")!="acceptance":
         raise SystemExit("unexpected namespace")
     d=WorkloadDrill(args);d.run()
-    original=json.loads((d.out/"result.json").read_text())
+    original=json.loads((d.out/"workload-result.json").read_text())
     victim=a.node_name(args.validators-1)
     volume_before=durable_state_volume(json.loads(cmd("docker","inspect",victim))[0])
     rounds=[]
@@ -151,14 +403,23 @@ def main():
         for cycle in range(2):
             record={"cycle":cycle+1,"isolated_validator":victim,"phase":"partition-install"}
             with record_cycle(d.out,rounds,record,capture_phase):
+                d.health_precondition("partition-install")
                 before=a.finalized_identity(a.get(0,"/api/last-finalized-block"))
                 cmd("docker","network","disconnect","acceptance",victim)
                 networks=json.loads(cmd("docker","inspect","-f","{{json .NetworkSettings.Networks}}",victim))
-                if "acceptance" in networks:raise AssertionError("partition was not installed")
+                if networks:raise AssertionError("partition was not installed: networks remain")
+                leaked=[p for p in published_ports(victim) if p in CONSENSUS_PORTS]
+                if leaked:raise AssertionError(f"partition leaked: consensus port(s) {leaked} published")
+                lifecycle=container_lifecycle(victim)
+                victim_before=victim_sample(victim)
+                if victim_before.get("autopropose") is not False:
+                    raise AssertionError("victim is not on a no-autopropose rig")
+                record["victim_view_at_install"]=victim_before
+                record["container_lifecycle_at_install"]=lifecycle
                 # Two 16-second escape/cadence cycles per N=8 sender plus margin:
                 # a pre-registered 300-second window, not an unbounded retry.
                 record["phase"]="online-progress"
-                deadline=time.monotonic()+300;advanced=False;observed=[]
+                deadline=time.monotonic()+300;advanced=False;observed=[];frozen=[]
                 record["before_height"]=before[0]
                 record["online_observations"]=observed
                 while time.monotonic()<deadline:
@@ -170,30 +431,60 @@ def main():
                             raise AssertionError("online validator lost finalized marker")
                         identities.append({"node":i,"height":height,"hash":hash_})
                     observed.append(identities)
+                    try:
+                        sample=victim_sample(victim)
+                        frozen.append({"latest": sample["latest"], "peers": sample["peers"],
+                                       "finalized_height": sample["finalized_height"]})
+                    except (OSError, ValueError, subprocess.SubprocessError) as error:
+                        frozen.append({"error": repr(error)})
+                    record["isolation_samples"]=frozen
                     (d.out/f"partition-{cycle+1}-live.json").write_text(json.dumps({
                         "cycle":cycle+1,"before_height":before[0],"observations":observed,
+                        "isolation_samples":frozen,
                         "remaining_seconds":max(0,deadline-time.monotonic())},indent=2)+"\n")
                     if all(x["height"]>=before[0]+3 for x in identities):
                         advanced=True;break
                     time.sleep(2)
                 record["partition_progress_observed"]=advanced
+                if not advanced:
+                    raise AssertionError("online supermajority did not advance in 300s")
+                tips=[x.get("latest") for x in frozen[-3:] if "latest" in x]
+                if len(tips) < 3 or len(set(tips)) != 1:
+                    raise AssertionError("partition leaked or the victim view was unobservable")
+                if container_lifecycle(victim)!=lifecycle:
+                    raise AssertionError("VICTIM_LIFECYCLE_CHANGED during the partition")
                 capture_phase(f"partition-{cycle+1}-before-healing")
                 record["phase"]="healing"
+                anchor=establish_healing_anchor(d, range(args.validators-1), victim, cycle+1)
+                record["healing_anchor"]=anchor
+                record["phase"]="rejoin"
                 cmd("docker","network","connect","acceptance",victim)
-                target=max(x["height"] for x in identities)
-                recovered=d.wait_for_healing("all validators agree on finalized height/hash and retain marker after partition healing",
-                                            lambda:d.finalized_marker_agreement(target))
+                try:
+                    victim_head=d.finalized_head(args.validators-1)
+                    record["victim_finalized_at_rejoin"]={"height": victim_head[0], "hash": victim_head[1]}
+                except (OSError, ValueError) as error:
+                    record["victim_finalized_at_rejoin"]=None
+                    d.record(phase="healing_rejoin_read", error=repr(error))
+                try:
+                    recovered=d.wait_for_healing(
+                        "all validators retain the healing anchor in finalized state after partition healing",
+                        lambda:anchor_agreement(d,anchor))
+                except RuntimeError:
+                    failure_class=getattr(d,"healing_failure_class",None)
+                    record["healing_failure_class"]=(
+                        failure_class if isinstance(failure_class,str) else "HEALING_FAILURE")
+                    raise
                 record["rejoined"]=recovered
+                record["healing_failure_class"]=getattr(d,"healing_failure_class",None)
                 record["phase"]="retention"
                 d.fixed_snapshots(original["initial_finalized"])
                 record["original_finalized_snapshots_retained"]=True
                 capture_phase(f"partition-{cycle+1}-healed")
                 if durable_state_volume(json.loads(cmd("docker","inspect",victim))[0])!=volume_before:
                     raise AssertionError("rejoin replaced the durable mounts")
+                if container_lifecycle(victim)!=lifecycle:
+                    raise AssertionError("VICTIM_LIFECYCLE_CHANGED across the heal")
                 record["same_volume"]=True
-                record["phase"]="online-progress-verdict"
-                if not advanced:
-                    raise AssertionError("online supermajority did not advance in 300s; healed recovery was checked separately")
     finally:
         try:
             subprocess.run(["docker","network","connect","acceptance",victim],capture_output=True,timeout=25)
@@ -204,8 +495,10 @@ def main():
     result={"result":"PASS_BOUNDED_WORKLOAD_PARTITION_REJOIN","source_sha":cmd("git","rev-parse","HEAD"),
         "validators":args.validators,"partition_cycles":len(rounds),"rounds":rounds,
         "resource_sample":memory,"quiet_chain_liveness":"NOT_ESTABLISHED",
-        "scope":"retention and finality progression in these executions; not universal CBC safety"}
+        "scope":"anchor retention and finality progression in these executions; not universal CBC safety"}
     (d.out/"partition-result.json").write_text(json.dumps(result,indent=2)+"\n")
+    binary_sha256=cmd("docker","exec",a.node_name(0),"sha256sum","/usr/local/bin/rnode").split()[0]
+    write_campaign(d,args,result,result["source_sha"],binary_sha256)
     print(json.dumps(result),flush=True)
 
 if __name__=="__main__":main()
