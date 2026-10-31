@@ -31,7 +31,8 @@ exists to certify (every validator had finalized the same block) already held at
 The criterion is now a **fixed finalized anchor**, chosen while the victim is still isolated: a block
 one side has finalized and the other has not. The victim may hold it; it must not have finalized it.
 After rejoin every node must answer `GET /api/is-finalized/{B*}` true on a K-sample dwell, the anchor
-height must serve a singleton block equal to `B*`, the marker must be readable **at `B*`**, and a
+height must serve `B*` among its blocks (a Casper height holds one block per sender), the marker must
+be readable **at `B*`**, and a
 pairwise finalization check (`is-finalized` of every node's own last-finalized hash on every other
 node) catches a fork above the anchor. Head heights may differ. A timeout is classified
 (`FAIL_STALLED`, `INCONCLUSIVE_SLOW_PROGRESS`, `INCONCLUSIVE_MEASUREMENT`, or a named precondition),

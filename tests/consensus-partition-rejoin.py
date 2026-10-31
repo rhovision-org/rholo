@@ -367,10 +367,13 @@ def anchor_agreement(d, anchor, victim=None):
         blocks = a.get(i, f"/api/blocks/{height}/{height}")
         rows = [row for row in blocks if isinstance(row, dict) and row.get("blockNumber") == height] \
             if isinstance(blocks, list) else []
-        if len(rows) != 1 or rows[0].get("blockHash") != anchor["hash"]:
+        # A Casper height holds one block per sender, so the anchor is *among* the
+        # blocks at its height, not the only one. The pairwise finalization check
+        # below is what excludes a different finalized block at the same height.
+        if anchor["hash"] not in {row.get("blockHash") for row in rows}:
             raise RuntimeError(
-                f"FAIL_FINALIZED_DISAGREEMENT: validator {i} serves "
-                f"{len(rows)} block(s) at height {height}, not the anchor {anchor['hash']}")
+                f"FAIL_FINALIZED_DISAGREEMENT: validator {i} serves {len(rows)} block(s) "
+                f"at height {height} and none is the anchor {anchor['hash']}")
         answer = a.probe(i, d.marker, anchor["hash"])
         d.record(node=i, anchor_marker_at=anchor["hash"], response=answer)
         if not a.marker_present(answer, d.value):
