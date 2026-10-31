@@ -37,25 +37,29 @@ pub const STORE_FORMAT_MARKER: &str = "store-format";
 // and its body are one transaction (C350). A v3 binary would look for the
 // ledger in `dagstorage`, find nothing, and treat every in-flight body as
 // unowned — the same orphan one directory over — so downgrade must refuse.
-// The move is followed by a re-scan (`LEGACY_BODY_SCAN_VERSION`), which adopts
-// every stored body the DAG does not hold into the new, empty ledger.
+// C355 copies the v3 ledger, including fault history, before the body re-scan.
+// The re-scan then adopts only bodies that still have no disposition.
 pub const STORE_FORMAT_VERSION: u32 = 4;
 
 /// **Where a shard records the blocks it still owes an outcome** (U19, `block_disposition`). Holds
 /// only `Pending`/`Faulted` rows — accepted and refused blocks are the DAG metadata — so it is
-/// bounded by in-flight work, not by chain height. Shares the DAG environment: these are facts
-/// about this shard's own ingestion, and one row per unsettled body does not earn a file.
+/// bounded by in-flight work, not by chain height. Shares the body's environment so ingestion
+/// commits the body and its first disposition together.
 pub const BLOCK_DISPOSITION_DB: &str = "block-disposition";
+
+/// Historical source of the v3 ledger, retained during migration. Its alias opens the physical name
+/// through the same manager as every other dagstorage DB (never a second LMDB environment handle).
+pub const LEGACY_BLOCK_DISPOSITION_DB: &str = "legacy-block-disposition-v3";
 
 /// The gateway's durable coordinator-record database ([`crate::gateway::ledger`]). Node-local: it
 /// is deliberately **not** part of a shard's content-addressed state, because a coordinator's votes
 /// and decision belong to one node and must not enter another shard's state hash.
 pub const GATEWAY_TXN_DB: &str = "gateway-txn";
 
-/// **Where a shard records a reset it performed** (F-U5-01's acting half, register C274). A restart
-/// reads it to repair a reset that crashed between its two store operations, and to re-enter the
-/// catch-up walk at the anchor rather than reconnecting to a deliberately truncated DAG. One literal
-/// key (`RESET_MARKER_KEY`, `block-storage`), and no rows at all on a shard that has never reset.
+/// Node-local control records: reset progress (F-U5-01, C274), health/audit markers and
+/// disposition-copy completion (C355). On restart the reset record repairs an interrupted rewind
+/// and resumes catch-up at its anchor. Separate literal keys distinguish the records; they are
+/// not block hashes or consensus state.
 pub const RESET_MARKER_DB: &str = "reset-marker";
 
 /// The data directory of the shard at `index` in the node's membership list.
@@ -118,6 +122,13 @@ pub fn rnode_db_mapping() -> Vec<(Db, LmdbEnvConfig)> {
         (
             Db::new(BLOCK_DISPOSITION_DB),
             LmdbEnvConfig::new("blockstorage", 1 * TB),
+        ),
+        (
+            Db {
+                id: LEGACY_BLOCK_DISPOSITION_DB.to_string(),
+                name_override: Some(BLOCK_DISPOSITION_DB.to_string()),
+            },
+            LmdbEnvConfig::new("dagstorage", 100 * GB),
         ),
         // Runtime mergeable store (cache of mergeable channels for block-merge)
         (
@@ -275,6 +286,19 @@ mod tests {
                 .map(|(_, c)| c.name.clone())
         };
         assert_eq!(env_of(BLOCK_DISPOSITION_DB), env_of("blocks"));
+        assert_eq!(
+            env_of(LEGACY_BLOCK_DISPOSITION_DB).as_deref(),
+            Some("dagstorage")
+        );
+        let legacy = mapping
+            .iter()
+            .find(|(db, _)| db.id == LEGACY_BLOCK_DISPOSITION_DB)
+            .expect("the historical ledger remains addressable");
+        assert_eq!(
+            legacy.0.name_override.as_deref(),
+            Some(BLOCK_DISPOSITION_DB)
+        );
+
         let marker = mapping
             .iter()
             .find(|(db, _)| db.id == RESET_MARKER_DB)

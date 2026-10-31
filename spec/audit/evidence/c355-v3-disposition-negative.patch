@@ -1,0 +1,83 @@
+--- a/casper/src/block_disposition.rs
++++ b/casper/src/block_disposition.rs
+@@ -1566,0 +1567,80 @@
++    /// A v3-shaped store uses the historical physical DB name in dagstorage.
++    /// Only the map size is reduced for the disposable fixture.
++    fn v3_upgrade_fixture() -> (std::path::PathBuf, BlockDisposition) {
++        let dir = std::env::temp_dir().join(format!(
++            "rchain-disposition-v3-upgrade-{}-{}",
++            std::process::id(),
++            now_unix_millis()
++        ));
++        let fault = BlockDisposition::Faulted {
++            block_number: height(3),
++            stage: "validation".to_string(),
++            reason: "retained terminal diagnostic".to_string(),
++            since_unix_ms: 1_700_000_000_001,
++            last_attempt_unix_ms: 1_700_000_000_009,
++            attempts: MAX_FAULT_RETRIES,
++        };
++        (dir, fault)
++    }
++
++    fn fixture_mapping(v3: bool) -> Vec<(
++        rchain_shared::store_manager::Db,
++        rchain_shared::store_manager::LmdbEnvConfig,
++    )> {
++        let mut mapping = crate::storage::rnode_db_mapping();
++        for (db, cfg) in &mut mapping {
++            cfg.max_env_size = 64 * 1024 * 1024;
++            if v3 && db.id == crate::storage::BLOCK_DISPOSITION_DB {
++                cfg.name = "dagstorage".to_string();
++            }
++        }
++        mapping
++    }
++
++    /// Upgrade must retain a terminal fault, including its exhausted retry budget.
++    /// Re-adopting its body as a fresh Pending row silently re-arms that budget.
++    #[tokio::test]
++    async fn v3_to_v4_preserves_fault_history_instead_of_adopting_it_as_pending() {
++        let (dir, expected) = v3_upgrade_fixture();
++        let block = sample_block(hash(91));
++        {
++            let manager = rchain_shared::lmdb::LmdbDirStoreManager::new(
++                &dir, fixture_mapping(true),
++            );
++            let legacy = database(
++                &manager,
++                crate::storage::BLOCK_DISPOSITION_DB,
++                Arc::new(BlockHashCodec),
++                Arc::new(BlockDispositionCodec),
++            ).await.expect("open the actual v3 DB location");
++            legacy.put(&[(block.block_hash, expected.clone())])
++                .await.expect("write historical fault");
++            let bodies = block_store::create(&manager).await.expect("body store");
++            bodies.put(&[(block.block_hash, block.clone())])
++                .await.expect("v3 body");
++            assert_eq!(legacy.get(&[block.block_hash]).await.unwrap(),
++                       vec![Some(expected.clone())]);
++        }
++
++        let manager = rchain_shared::lmdb::LmdbDirStoreManager::new(
++            &dir, fixture_mapping(false),
++        );
++        // This is the production node's pre-fix ledger-opening path.
++        let ledger = BlockDispositionStore::from_store(Arc::new(database(
++            &manager,
++            crate::storage::BLOCK_DISPOSITION_DB,
++            Arc::new(BlockHashCodec),
++            Arc::new(BlockDispositionCodec),
++        ).await.expect("open v4 ledger")));
++        let bodies = block_store::create(&manager).await.expect("reopen bodies");
++        let dag = empty_dag().await;
++        let log: Arc<dyn Log> = Arc::new(rchain_shared::log::NopLog);
++        scan_legacy_bodies(&ledger, &bodies, &dag, &log)
++            .await.expect("production adoption scan");
++        assert_eq!(
++            ledger.get(&block.block_hash).await.expect("read migrated disposition"),
++            Some(expected),
++            "moving the ledger must preserve the fault, diagnostic, timestamps and retry budget"
++        );
++    }
++

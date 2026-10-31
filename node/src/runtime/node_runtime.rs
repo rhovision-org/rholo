@@ -45,8 +45,8 @@ use rchain_casper::reporting::{rho_reporter, ReportingCasper};
 use rchain_casper::runtime_manager::RuntimeManager;
 use rchain_casper::state::ProposerState;
 use rchain_casper::storage::{
-    rnode_key_value_store_manager, shard_data_dir, BLOCK_DISPOSITION_DB, RESET_MARKER_DB,
-    SHARD_ID_MARKER, STORE_FORMAT_MARKER, STORE_FORMAT_VERSION,
+    rnode_key_value_store_manager, shard_data_dir, RESET_MARKER_DB, SHARD_ID_MARKER,
+    STORE_FORMAT_MARKER, STORE_FORMAT_VERSION,
 };
 use rchain_casper::validator_identity::ValidatorIdentity;
 use rchain_comm::discovery::grpc_kademlia_rpc::GrpcKademliaRpc;
@@ -115,9 +115,7 @@ use crate::web::http::{
 use crate::web::node_list::{NodeListConfig, NodeListProvider};
 use crate::web::pos_read::{PosReadApi, ShardPosRead};
 use crate::web::transaction::TransactionAPIImpl;
-use rchain_casper::block_disposition::{
-    BlockDisposition, BlockDispositionCodec, BlockDispositionStore,
-};
+use rchain_casper::block_disposition::{open_block_disposition_store, BlockDispositionStore};
 use rchain_casper::engine::node_phase::NodePhaseCell;
 use rchain_casper::gateway::ledger::TxnLedger;
 use rchain_casper::gateway::{GatewayTxn, LocalShard, LocalShardDeployService};
@@ -2564,16 +2562,9 @@ pub async fn setup_shard(
     );
     // **Every stored body this shard still owes an outcome** (U19). Written before dependency
     // resolution and settled by the processor on either verdict; only faults survive.
-    let block_disposition_kv: Arc<dyn KeyValueTypedStore<BlockHash, BlockDisposition>> = Arc::new(
-        database(
-            &store_manager,
-            BLOCK_DISPOSITION_DB,
-            Arc::new(BlockHashCodec),
-            Arc::new(BlockDispositionCodec),
-        )
-        .await?,
-    );
-    let block_disposition = BlockDispositionStore::from_store(block_disposition_kv);
+    let block_disposition = open_block_disposition_store(&store_manager)
+        .await
+        .map_err(|e| format!("cannot open/migrate the block disposition ledger: {e}"))?;
     let dag_kv = Arc::new(
         BlockDagKeyValueStorage::create(block_metadata_store, deploy_index, deploy_store)
             .await

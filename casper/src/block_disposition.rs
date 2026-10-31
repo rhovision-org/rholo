@@ -20,13 +20,10 @@
 //! second row would be a second truth. Settling — either outcome — deletes the row, so the ledger
 //! is bounded by the number of blocks the node currently owes an outcome, not by chain height.
 //!
-//! **What this cannot do, said rather than implied:** rows are written only by this build. A body
-//! stored by an older binary has no row, and finding it would mean decoding the whole block store at
-//! boot — the memory cost the resource work exists to avoid. The one-time legacy scan
-//! (`scan_legacy_bodies`, F-U19-07) walks the store's **keys** and adopts each body the DAG does not
-//! hold, without decoding a single body; it runs once per store, marker-gated, and re-runs on a
-//! `LEGACY_BODY_SCAN_VERSION` bump — which is what carried the ledger across the C350 move into the
-//! body's LMDB environment.
+//! **Older stores.** Startup first copies the v3 disposition ledger from its historical
+//! dagstorage location, preserving fault history and pending stages (C355). The one-time legacy
+//! body scan then adopts bodies with neither a DAG verdict nor a disposition, walking hashes and
+//! loading one unaccounted body at a time. Its versioned marker makes this a bounded upgrade walk.
 //!
 //! **The body and the first row are one write** (C350): [`BodyDispositionWriter`] commits both in one
 //! LMDB transaction, which is why the ledger shares the `blockstorage` environment.
@@ -44,7 +41,8 @@ use rchain_models::casper::protocol::casper_message::BlockMessage;
 use rchain_shared::chan;
 use rchain_shared::log::{Log, LogSource};
 use rchain_shared::refined::BlockHeight;
-use rchain_shared::typed_store::{Codec, KeyValueTypedStore};
+use rchain_shared::store_manager::database;
+use rchain_shared::typed_store::{BytesCodec, Codec, KeyValueTypedStore};
 use tokio::sync::mpsc;
 
 use crate::blocks::block_receiver::{BlockReceiverState, ReofferClaim};
@@ -317,6 +315,93 @@ impl<'a> Cursor<'a> {
 pub struct BlockDispositionStore {
     store: Arc<dyn KeyValueTypedStore<BlockHash, BlockDisposition>>,
     mutation: Arc<tokio::sync::Mutex<()>>,
+}
+
+const V3_MIGRATION_KEY: &[u8] = b"v3-ledger-copy";
+const V3_MIGRATION_COMPLETE: &[u8] = b"complete-v1";
+
+/// Open the production ledger, preserving the v3 ledger before any startup re-offer or body scan.
+///
+/// The historical codec is unchanged. Copy each missing row byte for byte, retaining stages,
+/// first-sighting/last-attempt timestamps, diagnostics and retry counts. Existing v4 rows win: this
+/// is an upgrade, not permission to roll newer processing back to an old diagnostic.
+///
+/// No ingestion task may start until this returns. A failed/interrupted copy has no completion
+/// record, so another boot resumes it without replacing rows already copied. Commit completion only
+/// after all target writes succeed; later boots must not resurrect a row that processing settled.
+/// The old DB remains untouched. This cannot reconstruct metadata discarded by an earlier v4 boot.
+pub async fn open_block_disposition_store(
+    manager: &rchain_shared::lmdb::LmdbDirStoreManager,
+) -> Result<BlockDispositionStore, String> {
+    use crate::storage::{BLOCK_DISPOSITION_DB, LEGACY_BLOCK_DISPOSITION_DB, RESET_MARKER_DB};
+    let ledger = BlockDispositionStore::from_store(Arc::new(
+        database(
+            manager,
+            BLOCK_DISPOSITION_DB,
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockDispositionCodec),
+        )
+        .await?,
+    ));
+    let completion = database(
+        manager,
+        RESET_MARKER_DB,
+        Arc::new(BytesCodec),
+        Arc::new(BytesCodec),
+    )
+    .await?;
+    match completion
+        .get(&[V3_MIGRATION_KEY.to_vec()])
+        .await?
+        .pop()
+        .flatten()
+    {
+        Some(value) if value == V3_MIGRATION_COMPLETE => return Ok(ledger),
+        Some(_) => {
+            return Err("unrecognized v3 disposition migration completion record".to_string())
+        }
+        None => {}
+    }
+    let legacy = database(
+        manager,
+        LEGACY_BLOCK_DISPOSITION_DB,
+        Arc::new(BlockHashCodec),
+        Arc::new(BytesCodec),
+    )
+    .await?;
+    let target_bytes = database(
+        manager,
+        BLOCK_DISPOSITION_DB,
+        Arc::new(BlockHashCodec),
+        Arc::new(BytesCodec),
+    )
+    .await?;
+    // Walk keys, then decode one disposition at a time; never decode/copy the block bodies.
+    for hash in legacy.keys().await? {
+        let row = legacy
+            .get(&[hash])
+            .await
+            .map_err(|e| format!("v3 disposition migration {}: {e}", hash.to_hex()))?
+            .pop()
+            .flatten()
+            .ok_or_else(|| {
+                format!(
+                    "v3 disposition disappeared during migration: {}",
+                    hash.to_hex()
+                )
+            })?;
+        BlockDispositionCodec
+            .decode(&row)
+            .map_err(|e| format!("v3 disposition migration {}: {e}", hash.to_hex()))?;
+        if ledger.get(&hash).await?.is_none() {
+            // Retain the exact bytes too; re-encoding must not trim a historical diagnostic.
+            target_bytes.put(&[(hash, row)]).await?;
+        }
+    }
+    completion
+        .put(&[(V3_MIGRATION_KEY.to_vec(), V3_MIGRATION_COMPLETE.to_vec())])
+        .await?;
+    Ok(ledger)
 }
 
 /// **The body and its disposition, in one transaction** (C350).
@@ -1562,6 +1647,309 @@ mod tests {
                 ),
             ],
         )
+    }
+
+    struct MigrationTestDir(std::path::PathBuf);
+
+    impl AsRef<std::path::Path> for MigrationTestDir {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for MigrationTestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn fixture_dispositions(
+        manager: &rchain_shared::lmdb::LmdbDirStoreManager,
+        name: &str,
+    ) -> rchain_shared::typed_store::KeyValueTypedStoreCodec<BlockHash, BlockDisposition> {
+        database(
+            manager,
+            name,
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockDispositionCodec),
+        )
+        .await
+        .expect("fixture ledger")
+    }
+
+    /// A v3-shaped store uses the historical physical DB name in dagstorage.
+    /// Only the map size is reduced for the disposable fixture.
+    fn v3_upgrade_fixture() -> (MigrationTestDir, BlockDisposition) {
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "rchain-disposition-v3-upgrade-{}-{}-{}",
+            std::process::id(),
+            now_unix_millis(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let fault = BlockDisposition::Faulted {
+            block_number: height(3),
+            stage: "validation".to_string(),
+            reason: "retained terminal diagnostic".to_string(),
+            since_unix_ms: 1_700_000_000_001,
+            last_attempt_unix_ms: 1_700_000_000_009,
+            attempts: MAX_FAULT_RETRIES,
+        };
+        (MigrationTestDir(dir), fault)
+    }
+
+    fn fixture_mapping(
+        v3: bool,
+    ) -> Vec<(
+        rchain_shared::store_manager::Db,
+        rchain_shared::store_manager::LmdbEnvConfig,
+    )> {
+        let mut mapping = crate::storage::rnode_db_mapping();
+        for (db, cfg) in &mut mapping {
+            cfg.max_env_size = 64 * 1024 * 1024;
+            if v3 && db.id == crate::storage::BLOCK_DISPOSITION_DB {
+                cfg.name = "dagstorage".to_string();
+            }
+        }
+        mapping
+    }
+
+    /// Upgrade must retain a terminal fault, including its exhausted retry budget.
+    /// Re-adopting its body as a fresh Pending row silently re-arms that budget.
+    #[tokio::test]
+    async fn v3_to_v4_preserves_fault_history_instead_of_adopting_it_as_pending() {
+        let (dir, expected) = v3_upgrade_fixture();
+        let block = sample_block(hash(91));
+        {
+            let manager =
+                rchain_shared::lmdb::LmdbDirStoreManager::new(&dir, fixture_mapping(true));
+            let legacy = database(
+                &manager,
+                crate::storage::BLOCK_DISPOSITION_DB,
+                Arc::new(BlockHashCodec),
+                Arc::new(BlockDispositionCodec),
+            )
+            .await
+            .expect("open the actual v3 DB location");
+            legacy
+                .put(&[(block.block_hash, expected.clone())])
+                .await
+                .expect("write historical fault");
+            let bodies = block_store::create(&manager).await.expect("body store");
+            bodies
+                .put(&[(block.block_hash, block.clone())])
+                .await
+                .expect("v3 body");
+            assert_eq!(
+                legacy.get(&[block.block_hash]).await.unwrap(),
+                vec![Some(expected.clone())]
+            );
+        }
+
+        let manager = rchain_shared::lmdb::LmdbDirStoreManager::new(&dir, fixture_mapping(false));
+        let ledger = open_block_disposition_store(&manager)
+            .await
+            .expect("open v4 ledger");
+        let bodies = block_store::create(&manager).await.expect("reopen bodies");
+        let dag = empty_dag().await;
+        let log: Arc<dyn Log> = Arc::new(rchain_shared::log::NopLog);
+        let report = scan_legacy_bodies(&ledger, &bodies, &dag, &log)
+            .await
+            .expect("production adoption scan");
+        assert_eq!(
+            report.adopted, 0,
+            "a migrated fault is already accounted for"
+        );
+        assert!(
+            ledger.due_retries(u64::MAX).await.unwrap().is_empty(),
+            "an exhausted v3 fault must not receive a fresh retry budget"
+        );
+        assert_eq!(
+            ledger
+                .get(&block.block_hash)
+                .await
+                .expect("read migrated disposition"),
+            Some(expected),
+            "moving the ledger must preserve the fault, diagnostic, timestamps and retry budget"
+        );
+        ledger
+            .settle(block.block_hash)
+            .await
+            .expect("later verdict");
+        drop(ledger);
+        drop(bodies);
+        drop(manager);
+        let manager = rchain_shared::lmdb::LmdbDirStoreManager::new(&dir, fixture_mapping(false));
+        let reopened = open_block_disposition_store(&manager)
+            .await
+            .expect("restart");
+        assert_eq!(
+            reopened.get(&block.block_hash).await.unwrap(),
+            None,
+            "restart must not resurrect a settled legacy fault"
+        );
+    }
+
+    #[tokio::test]
+    async fn v3_copy_preserves_pending_metadata_and_keeps_newer_v4_rows() {
+        use crate::storage::{BLOCK_DISPOSITION_DB, LEGACY_BLOCK_DISPOSITION_DB};
+        let (dir, historical_fault) = v3_upgrade_fixture();
+        let pending = BlockDisposition::Pending {
+            block_number: height(3),
+            stage: PendingStage::Validating,
+            since_unix_ms: 1_700_000_000_005,
+        };
+        let newer = BlockDisposition::Faulted {
+            block_number: height(3),
+            stage: "insert".to_string(),
+            reason: "newer v4 attempt".to_string(),
+            since_unix_ms: 1_700_000_000_001,
+            last_attempt_unix_ms: 1_700_000_000_100,
+            attempts: 4,
+        };
+        let manager = rchain_shared::lmdb::LmdbDirStoreManager::new(&dir, fixture_mapping(false));
+        let legacy = fixture_dispositions(&manager, LEGACY_BLOCK_DISPOSITION_DB).await;
+        legacy
+            .put(&[
+                (hash(92), pending.clone()),
+                (hash(93), historical_fault.clone()),
+            ])
+            .await
+            .unwrap();
+        // A durable prefix/newer v4 processing exists, but completion was never committed.
+        let current = fixture_dispositions(&manager, BLOCK_DISPOSITION_DB).await;
+        current.put(&[(hash(93), newer.clone())]).await.unwrap();
+        let ledger = open_block_disposition_store(&manager)
+            .await
+            .expect("resume copy");
+        assert_eq!(ledger.get(&hash(92)).await.unwrap(), Some(pending));
+        assert_eq!(ledger.get(&hash(93)).await.unwrap(), Some(newer));
+        assert_eq!(
+            legacy.get(&[hash(93)]).await.unwrap(),
+            vec![Some(historical_fault)],
+            "the historical source is retained, not rewritten"
+        );
+    }
+
+    #[tokio::test]
+    async fn v3_copy_error_leaves_no_completion_and_restarts_from_its_durable_prefix() {
+        use crate::storage::{BLOCK_DISPOSITION_DB, LEGACY_BLOCK_DISPOSITION_DB, RESET_MARKER_DB};
+        use rchain_shared::store_manager::KeyValueStoreManager;
+        let (dir, expected) = v3_upgrade_fixture();
+        let manager = rchain_shared::lmdb::LmdbDirStoreManager::new(&dir, fixture_mapping(false));
+        let legacy = fixture_dispositions(&manager, LEGACY_BLOCK_DISPOSITION_DB).await;
+        legacy.put(&[(hash(100), expected.clone())]).await.unwrap();
+        let raw = manager.store(LEGACY_BLOCK_DISPOSITION_DB).await.unwrap();
+        raw.lock()
+            .await
+            .put(vec![(BlockHashCodec.encode(&hash(101)), vec![255])])
+            .unwrap();
+
+        let error = match open_block_disposition_store(&manager).await {
+            Ok(_) => panic!("a corrupt historical row must refuse startup"),
+            Err(error) => error,
+        };
+        assert!(error.contains(&hash(101).to_hex()), "{error}");
+        let marker = database(
+            &manager,
+            RESET_MARKER_DB,
+            Arc::new(BytesCodec),
+            Arc::new(BytesCodec),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            marker.get(&[V3_MIGRATION_KEY.to_vec()]).await.unwrap(),
+            vec![None],
+            "failure cannot certify a completed copy"
+        );
+        let current = fixture_dispositions(&manager, BLOCK_DISPOSITION_DB).await;
+        assert_eq!(
+            current.get(&[hash(100)]).await.unwrap(),
+            vec![Some(expected.clone())],
+            "the successful prefix is durable"
+        );
+        // Repair only the injected fixture corruption; restarting must retain the prefix.
+        legacy.put(&[(hash(101), expected.clone())]).await.unwrap();
+        let ledger = open_block_disposition_store(&manager)
+            .await
+            .expect("retry migration");
+        assert_eq!(
+            ledger.get(&hash(100)).await.unwrap(),
+            Some(expected.clone())
+        );
+        assert_eq!(ledger.get(&hash(101)).await.unwrap(), Some(expected));
+        assert_eq!(
+            marker.get(&[V3_MIGRATION_KEY.to_vec()]).await.unwrap(),
+            vec![Some(V3_MIGRATION_COMPLETE.to_vec())]
+        );
+    }
+
+    #[tokio::test]
+    async fn v3_migration_with_no_legacy_rows_still_allows_preledger_body_adoption() {
+        let (dir, _) = v3_upgrade_fixture();
+        let manager = rchain_shared::lmdb::LmdbDirStoreManager::new(&dir, fixture_mapping(false));
+        let block = sample_block(hash(102));
+        let bodies = block_store::create(&manager).await.unwrap();
+        bodies
+            .put(&[(block.block_hash, block.clone())])
+            .await
+            .unwrap();
+        let ledger = open_block_disposition_store(&manager)
+            .await
+            .expect("pre-ledger upgrade");
+        assert_eq!(ledger.get(&block.block_hash).await.unwrap(), None);
+        let dag = empty_dag().await;
+        let log: Arc<dyn Log> = Arc::new(rchain_shared::log::NopLog);
+        let report = scan_legacy_bodies(&ledger, &bodies, &dag, &log)
+            .await
+            .unwrap();
+        assert_eq!(report.adopted, 1);
+        assert!(matches!(
+            ledger.get(&block.block_hash).await.unwrap(),
+            Some(BlockDisposition::Pending {
+                stage: PendingStage::Stored,
+                ..
+            })
+        ));
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+        #[test]
+        fn v3_copy_preserves_varied_disposition_payloads(
+            since in proptest::prelude::any::<u64>(),
+            delay in proptest::prelude::any::<u64>(),
+            attempts in proptest::prelude::any::<u32>(),
+            stage in "[a-z]{0,24}",
+            reason in "[a-z ]{0,100}",
+            pending_stage in 0u8..3u8,
+        ) {
+            let fault = BlockDisposition::Faulted {
+                block_number: height(3), stage, reason, since_unix_ms: since,
+                last_attempt_unix_ms: since.saturating_add(delay), attempts,
+            };
+            let pending = BlockDisposition::Pending {
+                block_number: height(4),
+                stage: PendingStage::from_byte(pending_stage).unwrap(),
+                since_unix_ms: since,
+            };
+            let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            let actual = runtime.block_on(async {
+                let (dir, _) = v3_upgrade_fixture();
+                let manager = rchain_shared::lmdb::LmdbDirStoreManager::new(
+                    &dir, fixture_mapping(false),
+                );
+                let legacy = fixture_dispositions(
+                    &manager, crate::storage::LEGACY_BLOCK_DISPOSITION_DB,
+                ).await;
+                legacy.put(&[(hash(103), fault.clone()), (hash(104), pending.clone())])
+                    .await.unwrap();
+                let ledger = open_block_disposition_store(&manager).await.unwrap();
+                (ledger.get(&hash(103)).await.unwrap(), ledger.get(&hash(104)).await.unwrap())
+            });
+            proptest::prop_assert_eq!(actual, (Some(fault), Some(pending)));
+        }
     }
 
     /// **The body and its pending row are one write, and a fault outranks re-pending** (C350).
