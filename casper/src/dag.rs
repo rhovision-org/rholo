@@ -213,8 +213,8 @@ pub struct BlockDagKeyValueStorage {
     /// **The shard's durable records** — the store a reset writes itself into (F-U5-01, register C274),
     /// the one an autopropose halt writes itself into (W-N10-01, F-U10-02), and the one this shard's
     /// monotone health counters write into (W-N10-02). One store, one reserved key each:
-    /// [`RESET_MARKER_KEY`], [`HALT_RECORD_KEY`], [`HEALTH_COUNTERS_KEY`] and
-    /// [`LEGACY_BODY_SCAN_KEY`], all literals so none can
+    /// [`RESET_MARKER_KEY`], [`HALT_RECORD_KEY`], [`HEALTH_COUNTERS_KEY`],
+    /// [`LEGACY_BODY_SCAN_KEY`] and disposition-copy completion, all literals so none can
     /// collide with a block entry or with the others.
     ///
     /// Attached by [`Self::with_reset_marker`], whose name records which record needed it first; `None`

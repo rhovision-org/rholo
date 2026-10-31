@@ -1,0 +1,27 @@
+C355 — v3 disposition metadata loss, negative control
+Source: ad77fb442de28df39ce913b79dde59973aae05b2
+Fixture: actual LMDB, historical block-disposition DB in dagstorage; body in blockstorage.
+Scope: reconstructed v3 layout; not an independently built v3 writer or full-chain replay.
+Toolchain: Termux aarch64 Android, cargo 1.99.1; release qualification remains separate.
+Historical fb32d6c2 and baseline disposition codecs were identical.
+Apply c355-v3-disposition-negative.patch to the source above with git apply --unidiff-zero, then:
+cargo test --locked -p rchain-casper --lib v3_to_v4_preserves_fault_history_instead_of_adopting_it_as_pending -- --nocapture
+Expected control outcome: one assertion failure (terminal Faulted becomes fresh Pending).
+
+running 1 test
+
+thread 'block_disposition::tests::v3_to_v4_preserves_fault_history_instead_of_adopting_it_as_pending' (3647) panicked at casper/src/block_disposition.rs:1640:9:
+assertion `left == right` failed: moving the ledger must preserve the fault, diagnostic, timestamps and retry budget
+  left: Some(Pending { block_number: BlockHeight(3), stage: Stored, since_unix_ms: 1793455864352 })
+ right: Some(Faulted { block_number: BlockHeight(3), stage: "validation", reason: "retained terminal diagnostic", since_unix_ms: 1700000000001, last_attempt_unix_ms: 1700000000009, attempts: 8 })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test block_disposition::tests::v3_to_v4_preserves_fault_history_instead_of_adopting_it_as_pending ... FAILED
+
+failures:
+
+failures:
+    block_disposition::tests::v3_to_v4_preserves_fault_history_instead_of_adopting_it_as_pending
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 581 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p rchain-casper --lib`
