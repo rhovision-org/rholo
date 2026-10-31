@@ -75,7 +75,8 @@ Freshness is the maximum age at which the reading is still `known`.
 | `finalityStalled` | finality | bool | L | S | ≤1 s | sustained refusals, not one partial layer; the field to alarm on |
 | `finalityStallEpisodes` | finality | integer | C | S | at read | durable, monotone; read with `finalityCountersDurable` |
 | `height` | progress | integer | G | S | ≤1 s | the latest **round** (not finalized, not a block count) |
-| `finalizedHeight` | progress | integer? | G | S | ≤1 s | the finalized fence; **null means unknown, never zero** |
+| `finalizedHeight` | progress | integer? | G | S | ≤1 s | the finalized fence; **null means unknown, never zero**; read `finalizedHeightError` for why |
+| `finalizedHeightError` | progress | string? | G | S | ≤1 s | the read error when the fence is unknown; null when the read answered. An erased error is the `silent` class the type-system gate forbids |
 | `finalizedLag` | progress | integer? | G | S | ≤1 s | `height − finalizedHeight`; a lag indicator, not a rate |
 | `degraded` | resource | string | G | H | ≤5 s | advisory word from the fallback machine; never a 503 |
 | `acceptsDeploys` | resource | bool | G | P | ≤1 s | pool capacity only (Law 86a) |

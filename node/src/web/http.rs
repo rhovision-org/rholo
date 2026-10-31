@@ -762,12 +762,14 @@ async fn api_health(State(state): State<HttpState>) -> Response {
     // **Finalized height, so lag is measurable.** `height` is the latest round, not the finalized
     // fence; a node that is producing but not finalizing looked identical to a healthy one on this
     // route. `None` when the finality read fails — absent is not last-finalized-at-zero.
-    let finalized_height = state
-        .web_api
-        .last_finalized_block()
-        .await
-        .ok()
-        .map(|block| block.block_info.block_number);
+    // The error is **named, not erased**: a `None` here means the finality read failed, which is a
+    // different answer from "the fence is at zero", and the diagnostic says which (the type-system
+    // gate's `silent` class, and the failure-mode worksheet's F-U8-01, are about exactly this).
+    let (finalized_height, finalized_height_error) =
+        match state.web_api.last_finalized_block().await {
+            Ok(block) => (Some(block.block_info.block_number), None),
+            Err(error) => (None, Some(error.0)),
+        };
     match state.web_api.status().await {
         Ok(status) => (
             StatusCode::OK,
@@ -790,6 +792,8 @@ async fn api_health(State(state): State<HttpState>) -> Response {
                 "acceptsDeploys": status.accepts_deploys,
                 "height": status.latest_block_number,
                 "finalizedHeight": finalized_height,
+                // Why the fence is unknown, when it is. Null when the read answered.
+                "finalizedHeightError": finalized_height_error,
                 // Heights are rounds in this node, so the difference is a round distance, not a
                 // block count; it is a lag indicator, not a rate. Null when the fence is unknown.
                 "finalizedLag": finalized_height.map(|f| status.latest_block_number - f),
@@ -1527,6 +1531,13 @@ pub const OPENAPI_JSON: &str = r##"{
           "finalityStalled": { "type": "boolean", "description": "Whether this node is stalled right now: the derivation has been refused for longer than a round (twice the partition, in consecutive blocks), so the refusals are no longer the ordinary partial layers of a producing chain. This is the field to alarm on; finalityStall above is its diagnosis" },
           "finalityStallEpisodes": { "type": "integer", "format": "int64", "description": "Times this shard has entered a finality stall — the sustained state finalityStalled reports — monotone, so 'stalled now' is distinguishable from 'stalled and recovered'. Persisted, so it survives the restart an operator's alarm would otherwise be cleared by; read it with finalityCountersDurable, which is false when the store could not be reached and the count is this process's instead (W-N10-02)" },
           "finalityCountersDurable": { "type": "boolean", "description": "Whether finalityStallEpisodes, nonQuietMergeReports and unrestorableRecords are the *shard's* history (true) or this process's running totals (false). False means the shard's record could not be read or written, so a restarted node would otherwise read as one that never stalled (W-N10-02)" },
+          "pipelineFaults": { "type": "integer", "format": "int64", "description": "Pipeline faults since process start. Evidence, not a gate: read pipelineFaultsOutstanding for the current obligation" },
+          "pipelineFaultsOutstanding": { "type": "integer", "format": "int64", "description": "Blocks this process still owes a verdict for. Zero clears the readiness term; a fault is removed when its verdict settles, and a restart seeds the set from the durable disposition ledger (an unreadable ledger fails closed)" },
+          "lastPipelineFault": { "type": "string", "nullable": true, "description": "The last pipeline fault's block and stage, as the public route renders it; null until one fires" },
+          "orphanBodies": { "type": "integer", "format": "int64", "description": "Confirmed orphan bodies: a stored block body with no DAG owner, confirmed over three consecutive audit samples rather than one look. Non-zero withholds readiness" },
+          "orphanDetections": { "type": "integer", "format": "int64", "description": "Orphan detections, monotone — the history beside the current count" },
+          "proposalHalted": { "type": "boolean", "description": "The proposer is isolated from the chain it can finalize on; production needs an operator resume" },
+          "proposalHaltReason": { "type": "string", "nullable": true, "description": "The machine-readable isolation reason beside proposalHalted; null when the proposer is not isolated" },
           "resetMarker": { "type": "string", "nullable": true, "description": "The reset marker this node is standing under: the durable record a self-reset writes, rendered with its phase, anchor and height. Null when the node is not mid-reset. The marker is cleared only when the catch-up frontier passes its anchor, so one that stands while the height does not move says the repair is not converging (F-U12-02)" },
           "nonQuietMergeReports": { "type": "integer", "format": "int64", "description": "Merges whose report was not quiet: a chain dropped, or an invariant violated. The log carries the detail; this is the count the live incident would have moved. Persisted with the stall episodes above, so the merge history is the shard's rather than the process's (W-N10-02)" },
           "sync": { "type": "object", "nullable": true, "description": "The LFS sync task's own state while this node is in NodeSyncing — how many attempts it has started and why the last one failed. Null means the sync task has returned, which covers both a restored state and a node that never had to sync; it does NOT mean 'synced fine'", "properties": { "attempts": { "type": "integer", "format": "int64", "description": "Attempts the sync task has started" }, "attemptsScope": { "type": "string", "description": "Always 'SinceProcessStart': the count is the sync task's own and the task restarts with the process, so persisting it would claim a continuity it does not have (W-N10-02). The *scope* half of that row deliberately does not apply here — LFS sync is shard-blind, so a per-shard reading of it would be an invention" }, "lastFailure": { "type": "string", "nullable": true, "description": "The last named sync failure, verbatim; null while the attempt now running has not failed" } } },
@@ -3548,10 +3559,12 @@ mod tests {
             json["diagVersion"],
             crate::diagnostics::health_contract::DIAG_VERSION
         );
-        // The fixture has no finalized block, and an unknown fence is null — not zero.
+        // The fixture has no finalized block, and an unknown fence is null — not zero — with the
+        // read error named rather than erased.
         assert!(json["readyReasons"].as_array().unwrap().is_empty());
         assert!(json["finalizedHeight"].is_null());
         assert!(json["finalizedLag"].is_null());
+        assert_eq!(json["finalizedHeightError"], "finalized block unavailable");
     }
 
     /// **A `ready = false` names its cause** — the boolean is the verdict, `readyReasons` is why.
@@ -3629,6 +3642,7 @@ mod tests {
         assert_eq!(json["height"], 1791);
         assert_eq!(json["finalizedHeight"], 1756);
         assert_eq!(json["finalizedLag"], 35);
+        assert!(json["finalizedHeightError"].is_null());
     }
 
     /// **The peer-liveness exception** (W-N3-01): `/health` may tell a peer that this validator is

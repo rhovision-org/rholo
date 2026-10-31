@@ -36,6 +36,7 @@ pub const PUBLIC_HEALTH_KEYS: &[&str] = &[
     "finalityStallEpisodes",
     "finalityStalled",
     "finalizedHeight",
+    "finalizedHeightError",
     "finalizedLag",
     "height",
     "lastPipelineFault",
