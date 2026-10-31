@@ -1,0 +1,94 @@
+name: Issue 522 - 16GiB receiver-capacity component evidence
+
+on:
+  push:
+    branches:
+      - verify/issue522-capacity-16gb-20261031
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue522-capacity-16gb-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  capacity-and-reoffer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: "4"
+      RUST_BACKTRACE: "1"
+    steps:
+      - name: Checkout the exact PR 538 runtime source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 0f1fdcb7971e9e4db75d9f9a99f11aa99839bc0c
+      - name: Validate identity and dedicated 16GiB runner capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/issue522-capacity
+          test "$(git rev-parse HEAD)" = 0f1fdcb7971e9e4db75d9f9a99f11aa99839bc0c
+          git rev-parse HEAD | tee target/issue522-capacity/source-sha.txt
+          echo "${{ github.sha }}" > target/issue522-capacity/driver-sha.txt
+          free -h | tee target/issue522-capacity/host-memory.txt
+          df -h | tee target/issue522-capacity/host-disk.txt
+          nproc | tee target/issue522-capacity/host-cpus.txt
+          test "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)" -ge 14680064
+          test "$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)" -ge 12582912
+          sha256sum casper/src/block_disposition.rs | tee target/issue522-capacity/fixture-sha256.txt
+      - name: Install pinned toolchain and protobuf compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y protobuf-compiler libprotobuf-dev
+      - name: Exercise actual 1024-slot refusal and durable exactly-once re-offer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p rchain-casper --lib a_capacity_refused_body_survives_the_full_receiver_and_reoffers_once -- --nocapture 2>&1 | tee target/issue522-capacity/full-capacity-reoffer.log
+          grep -F 'test block_disposition::tests::a_capacity_refused_body_survives_the_full_receiver_and_reoffers_once ... ok' target/issue522-capacity/full-capacity-reoffer.log
+      - name: Dependency headroom and missing-parent negative controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in a_full_receiver_admits_the_dependency_that_can_drain_it capacity_refusal_does_not_poison_the_hash_for_later_retry a_pending_body_waits_for_its_parent dependency_headroom_is_finite_and_unrelated_blocks_are_refused; do
+            cargo test --locked -p rchain-casper --lib "$name" -- --nocapture 2>&1 | tee "target/issue522-capacity/$name.log"
+            grep -F "test " "target/issue522-capacity/$name.log" | grep -F ' ... ok' >/dev/null
+          done
+          python3 -m unittest discover -s tests -p 'test_restart_under_load_harness.py' -v 2>&1 | tee target/issue522-capacity/harness-controls.log
+          python3 tests/test_restart_under_load_controls.py 2>&1 | tee target/issue522-capacity/predicate-controls.log
+      - name: Record evidence boundaries
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('target/issue522-capacity')
+          p.mkdir(parents=True,exist_ok=True)
+          item = {'source_sha': '0f1fdcb7971e9e4db75d9f9a99f11aa99839bc0c',
+                  'scope': 'direct 1024-entry BlockReceiverState refusal, retained disposition, sweep and retry; offline controls',
+                  'capacity_fixture': 'PASS' if (p/'full-capacity-reoffer.log').exists() and '... ok' in (p/'full-capacity-reoffer.log').read_text() else 'NOT_PROVEN',
+                  'network_1024_saturation': 'NOT_EXECUTED',
+                  'disposable_N4_restart_on_this_source': 'NOT_EXECUTED',
+                  'wrong_genesis_negative': 'NOT_EXECUTED',
+                  'incomplete_ancestry_negative': 'NOT_EXECUTED',
+                  'interrupted_restart_negative': 'NOT_EXECUTED',
+                  'issue_522_closeable': False}
+          (p/'scope.json').write_text(json.dumps(item, indent=2)+'\n')
+          PY
+      - name: Preserve evidence even if tests fail
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4.6.2
+        with:
+          name: issue522-capacity-16gb-${{ github.run_id }}
+          path: target/issue522-capacity/
+          retention-days: 90
+          if-no-files-found: error
