@@ -2150,6 +2150,99 @@ mod tests {
         ));
     }
 
+    /// The two halves of the receiver-saturation recovery must work together.
+    /// Exercise the real 1,024-entry state bound, not an empty receiver masquerading
+    /// as an overflow fixture. The stored body and its durable Pending obligation
+    /// remain available after the receiver releases its refused in-memory claim.
+    #[tokio::test]
+    async fn a_capacity_refused_body_survives_the_full_receiver_and_reoffers_once() {
+        use crate::engine::node_running::MAX_PENDING_BLOCKS;
+        use std::collections::BTreeSet;
+
+        assert_eq!(
+            MAX_PENDING_BLOCKS, 1024,
+            "this fixture pins the incident cap"
+        );
+        let block = sample_block(hash(43));
+        let block_store = block_store_with(&block).await;
+        let ledger = store().await;
+        let mut state = BlockReceiverState::<BlockHash>::new();
+        let mut first = None;
+        for n in 0..MAX_PENDING_BLOCKS {
+            let mut bytes = [0u8; 32];
+            bytes[..8].copy_from_slice(&(n as u64).to_le_bytes());
+            let id = BlockHash::new(bytes);
+            if first.is_none() {
+                first = Some(id);
+            }
+            let (begun, accepted) = state.begin_stored(id);
+            assert!(accepted, "unique body must reserve a receiver slot");
+            state = begun.end_stored(id, Vec::new()).expect("fill receiver").0;
+        }
+
+        let (begun, accepted) = state.begin_stored(block.block_hash);
+        assert!(accepted);
+        let refusal = begun
+            .end_stored(block.block_hash, Vec::new())
+            .expect_err("the receiver must refuse its 1,025th unrelated body");
+        assert!(
+            refusal.contains("block receiver state full (1024 blocks)"),
+            "capacity evidence must be explicit: {refusal}"
+        );
+        state = begun.abort_stored(&block.block_hash);
+        assert_eq!(
+            state.claim_reoffer(&block.block_hash),
+            ReofferClaim::NotHeld,
+            "the refused body must not retain an in-memory reservation"
+        );
+        ledger
+            .mark_pending(block.block_hash, block.block_number, PendingStage::Stored)
+            .await
+            .expect("persisted obligation");
+
+        let (released, _) = state
+            .finished(first.expect("first filled slot"), BTreeSet::new())
+            .expect("validation frees one slot");
+        let receiver = tokio::sync::Mutex::new(released);
+        let dag = empty_dag().await;
+        let (tx, mut rx) = mpsc::channel(4);
+        let log: Arc<dyn Log> = Arc::new(rchain_shared::log::NopLog);
+        let recheck_at = now_unix_millis().saturating_add(PENDING_PARENT_RECHECK_AGE_MS);
+
+        for expected in [1, 0] {
+            let dispatched = reoffer_ready_stored_pending_once(
+                &ledger,
+                &block_store,
+                &dag,
+                None,
+                &receiver,
+                &tx,
+                recheck_at,
+                log.as_ref(),
+            )
+            .await
+            .expect("runtime re-offer");
+            assert_eq!(dispatched, expected, "must not drop or double-dispatch");
+        }
+        assert_eq!(
+            rx.try_recv().expect("re-offered body").block_hash,
+            block.block_hash
+        );
+        assert!(rx.try_recv().is_err(), "no duplicate processor delivery");
+        assert!(matches!(
+            ledger.get(&block.block_hash).await.expect("durable row"),
+            Some(BlockDisposition::Pending {
+                stage: PendingStage::Retry,
+                ..
+            })
+        ));
+        ledger
+            .settle(block.block_hash)
+            .await
+            .expect("processor verdict");
+        assert_eq!(ledger.get(&block.block_hash).await.unwrap(), None);
+    }
+
     /// **The restart half.** A body whose parent is still absent is not dispatched, and the row
     /// stays `Pending` — the obligation survives, so a later sweep (when the parent arrives) can
     /// take it.
