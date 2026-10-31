@@ -113,6 +113,49 @@ api() {
         result, _ = self.run_case(phase="plan", mode="truncated")
         self.assertEqual(result.stdout.count("aa sender state 0 []"), 2)
 
+    def test_ranges_wider_than_the_api_window_are_chunked(self):
+        """The API answers "exceed the max limit 50" for a wider range, so the snapshot walks windows.
+
+        A single request for 0..MAXH therefore fails on every chain taller than 50 heights: the tool
+        prints the fallback NOTE and the audit degenerates into one request per height per node, which
+        is the cost this cache exists to remove. The fixture is 0..120 so the windows have to be real.
+        """
+        src = SCRIPT.read_text()
+        # `helpers` already spans blocks_at and refresh_block_ranges (both sit above the
+        # last-finalised marker), so this case calls the real function directly.
+        helpers = src[src.index("blocks_at() {"):src.index("# The last-finalised endpoint")]
+        code = 'refresh_block_ranges 120\nblocks_at A 1 0\nblocks_at A 1 50\n'
+        with tempfile.TemporaryDirectory(prefix="reconcile-window-test-") as directory:
+            root = Path(directory)
+            setup = '''set -uo pipefail
+NAMES=(A); declare -A HOST PORT
+HOST[A]=A; PORT[A]=1
+MAXH=120
+api() {
+  printf '%s %s\\n' "$1" "$3" >> "$API_LOG"
+  lo=${3#/api/blocks/}; lo=${lo%%/*}
+  printf '[{"blockHash":"h%s","blockNumber":%s,"sender":"s","postStateHash":"p","deployCount":0,"rejectedDeploys":[]}]' "$lo" "$lo"
+  return 0
+}
+'''
+            env = dict(os.environ, CACHE_DIR=directory, API_LOG=str(root / "requests"))
+            result = subprocess.run(["bash", "-c", setup + helpers + code], env=env,
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("using live per-height requests", result.stderr,
+                             "a chain taller than the API window fell back to per-height requests")
+            windows = []
+            for line in (root / "requests").read_text().splitlines():
+                _host, path = line.split()
+                lo, hi = (int(x) for x in path.rsplit("/", 2)[-2:])
+                windows.append((lo, hi))
+                self.assertLessEqual(hi - lo + 1, 50, f"window {path} exceeds the API limit")
+            covered = [h for lo, hi in windows for h in range(lo, hi + 1)]
+            self.assertEqual(sorted(covered), list(range(0, 121)), "windows do not tile 0..MAXH")
+            # and blocks_at must answer from the merged snapshot, not from a per-height request
+            self.assertIn("h0 s p 0 []", result.stdout)
+            self.assertIn("h50 s p 0 []", result.stdout)
+
     def test_invalid_list_elements_use_live_fallback(self):
         result, _ = self.run_case(phase="plan", mode="invalid-element")
         self.assertEqual(result.stdout.count("aa sender state 0 []"), 2)

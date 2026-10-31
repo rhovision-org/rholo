@@ -201,26 +201,57 @@ for x in b:
 # Refresh it after recovery and on every verification round: blocks already present do not change,
 # but the set a recovering node holds does. Failed/invalid refreshes discard the previous snapshot
 # and use live per-height requests instead of presenting stale or partial data as a current answer.
+# **The API refuses a wide range.** `/api/blocks/{start}/{end}` answers
+#   "Your request startBlockNumber 0 and endBlockNumber 968 exceed the max limit 50"
+# so a single request for `0..MAXH` only ever worked on a chain of fifty blocks or fewer. On anything
+# real it failed, printed the fallback NOTE, and issued one ssh per height for every height — the cost
+# the range cache exists to remove, restored silently. Walk the range in windows instead and merge the
+# arrays here, so `blocks_at` still reads one list. Any failed window discards the whole snapshot: a
+# partial inventory would look valid and answer for heights it never fetched.
+RANGE_CHUNK=${RECONCILE_RANGE_CHUNK:-50}
 refresh_block_ranges() { # inclusive upper height for this phase
   [ -z "${RECONCILE_NO_CACHE:-}" ] && [ -n "${CACHE_DIR:-}" ] || return 0
-  local upper="$1" n range_file pending
+  local upper="$1" n range_file pending lo hi ok
   for n in "${NAMES[@]}"; do
     range_file="$CACHE_DIR/blocks_${HOST[$n]}_${PORT[$n]}.json"
     pending="$range_file.pending"
-    rm -f -- "$range_file" "$pending"
-    if api "${HOST[$n]}" "${PORT[$n]}" "/api/blocks/0/$upper" > "$pending" 2>/dev/null \
-      && python3 -c '
+    rm -f -- "$range_file" "$pending" "$pending.merged"
+    : > "$pending"
+    ok=1
+    lo=0
+    while [ "$lo" -le "$upper" ]; do
+      hi=$(( lo + RANGE_CHUNK - 1 ))
+      [ "$hi" -gt "$upper" ] && hi=$upper
+      if ! api "${HOST[$n]}" "${PORT[$n]}" "/api/blocks/$lo/$hi" >> "$pending" 2>/dev/null; then
+        ok=0
+        break
+      fi
+      lo=$(( hi + 1 ))
+    done
+    if [ "$ok" = "1" ] && python3 -c '
 import json,sys
+# Each window is its own array, so the file is a concatenation of arrays ([...][...]) rather than
+# one document. Decode them in sequence and merge.
+raw=sys.stdin.read()
+data=[]; dec=json.JSONDecoder(); i=0
 try:
-    data=json.load(sys.stdin)
-    valid=isinstance(data,list) and bool(data) and all(isinstance(b,dict) and type(b.get("blockNumber")) is int for b in data)
+    while True:
+        while i < len(raw) and raw[i].isspace(): i += 1
+        if i >= len(raw): break
+        part, i = dec.raw_decode(raw, i)
+        if not isinstance(part, list): raise ValueError
+        data.extend(part)
+    valid=bool(data) and all(isinstance(b,dict) and type(b.get("blockNumber")) is int for b in data)
 except (ValueError,TypeError):
     valid=False
-sys.exit(0 if valid else 1)
-' < "$pending"; then
-      mv -- "$pending" "$range_file"
+if not valid:
+    sys.exit(1)
+# Emit ONE document, not the concatenation: `blocks_at` reads the cache with json.load.
+sys.stdout.write(json.dumps(data))
+' < "$pending" > "$pending.merged"; then
+      mv -- "$pending.merged" "$range_file"
     else
-      rm -f -- "$pending"
+      rm -f -- "$pending" "$pending.merged"
       echo "  NOTE: range snapshot unavailable or invalid for ${HOST[$n]}:${PORT[$n]}; using live per-height requests" >&2
     fi
   done
