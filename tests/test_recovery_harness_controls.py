@@ -344,6 +344,28 @@ class HealingWindowTests(unittest.TestCase):
         self.assertEqual(m.victim_indices(8), [7, 1])
         self.assertNotIn(0, m.victim_indices(8))
 
+    def test_the_online_set_is_every_validator_except_the_cycle_victim(self):
+        """A rotated victim must be excluded, not assumed to be the last index."""
+        self.assertEqual(m.online_indices(8, 7), list(range(7)))
+        self.assertEqual(m.online_indices(8, 1), [0, 2, 3, 4, 5, 6, 7])
+        for victim in m.victim_indices(8):
+            self.assertNotIn(victim, m.online_indices(8, victim))
+            self.assertEqual(len(m.online_indices(8, victim)), 7)
+
+    def test_isolation_is_a_frozen_finalized_fence_not_a_frozen_tip(self):
+        """The defect arm 2 of run 41219535778 exposed: a local proposal raises the tip."""
+        moving_tip = [{"latest": 34, "finalized_height": 25},
+                      {"latest": 34, "finalized_height": 25},
+                      {"latest": 35, "finalized_height": 25}]
+        self.assertTrue(m.finalized_fence_is_frozen(moving_tip, 25))
+        leaked = moving_tip + [{"latest": 36, "finalized_height": 26}]
+        self.assertFalse(m.finalized_fence_is_frozen(leaked, 25))
+        self.assertTrue(m.finalized_fence_is_frozen(
+            [{"latest": 1, "finalized_height": 25}] * 3, 25))
+        # A fence below the post-cut baseline is equally a moved fence.
+        self.assertFalse(m.finalized_fence_is_frozen(
+            [{"latest": 1, "finalized_height": 24}] * 3, 25))
+
     def test_epoch_coverage_of_the_missing_range(self):
         self.assertTrue(m.epoch_boundary_crossed(45, 54, 10))
         self.assertFalse(m.epoch_boundary_crossed(51, 54, 10))

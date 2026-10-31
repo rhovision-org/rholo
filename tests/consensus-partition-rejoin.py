@@ -48,6 +48,27 @@ def victim_indices(validators):
     return [validators - 1, 1]
 
 
+def online_indices(validators, victim):
+    """Every validator except this cycle's victim.
+
+    Not `range(validators - 1)`: that is only the online set when the victim is the last index.
+    Cycle 2 cuts a non-last validator, and reading the isolated one returns a connection refused
+    rather than an observation (run 41219535778, both N8 arms).
+    """
+    return [i for i in range(validators) if i != victim]
+
+
+def finalized_fence_is_frozen(samples, baseline):
+    """The victim may hold a rising tip; it may not move its finalized fence.
+
+    `baseline` is read *after* the cut, so any later finalization would need a quorum the isolated
+    validator does not have. A locally proposed block can raise `latest` without raising
+    `finalized_height` — arm 2 of run 41219535778 read 34, 34, 35 while finality stayed at 25.
+    """
+    return all(sample["finalized_height"] == baseline
+               for sample in samples if "finalized_height" in sample)
+
+
 def epoch_boundary_crossed(low, high, epoch):
     """Does the missing range (low, high] contain a multiple of the epoch length?"""
     if epoch <= 0 or high <= low:
@@ -216,7 +237,7 @@ class WorkloadDrill(a.Drill):
         return anchor_agreement(self, anchor, victim)
 
 
-def establish_healing_anchor(d, online, victim, cycle):
+def establish_healing_anchor(d, online, victim, cycle, victim_index=None):
     """Pick a block one side has finalized and the other has not.
 
     The anchor is a **finalization** boundary, not a storage boundary: the
@@ -242,7 +263,10 @@ def establish_healing_anchor(d, online, victim, cycle):
             if victim_view["finalized_height"] > low:
                 anchor = {"height": victim_view["finalized_height"],
                           "hash": victim_view["finalized_hash"],
-                          "node": d.args.validators - 1, "case": "victim-ahead"}
+                          # The victim rotates; its index is not `validators - 1` on every cycle.
+                          "node": (d.args.validators - 1 if victim_index is None
+                                   else victim_index),
+                          "case": "victim-ahead"}
                 answers = [{"node": i, "answer": d.is_finalized(i, anchor["hash"])}
                            for i in online]
                 victim_answer = container_is_finalized(victim, anchor["hash"])
@@ -536,6 +560,11 @@ def main():
                 # Two 16-second escape/cadence cycles per N=8 sender plus margin:
                 # a pre-registered 300-second window, not an unbounded retry.
                 record["phase"]="online-progress"
+                # The online set is every validator except this cycle's victim. It is not
+                # `range(validators - 1)`: cycle 2 cuts a non-last validator, and reading the
+                # isolated one is a connection refused, not an observation.
+                online=online_indices(args.validators, victims[cycle])
+                record["online_validators"]=online
                 d.online_finality_samples=[]
                 deadline=time.monotonic()+300;advanced=False;observed=[];frozen=[]
                 record["before_height"]=before[0]
@@ -543,7 +572,7 @@ def main():
                 while time.monotonic()<deadline:
                     d.drive()
                     identities=[]
-                    for i in range(args.validators-1):
+                    for i in online:
                         height,hash_=a.finalized_identity(a.get(i,"/api/last-finalized-block"))
                         if not a.marker_present(a.probe(i,d.marker,hash_),d.value):
                             raise AssertionError("online validator lost finalized marker")
@@ -567,14 +596,31 @@ def main():
                 record["partition_progress_observed"]=advanced
                 if not advanced:
                     raise AssertionError("online supermajority did not advance in 300s")
-                tips=[x.get("latest") for x in frozen[-3:] if "latest" in x]
-                if len(tips) < 3 or len(set(tips)) != 1:
-                    raise AssertionError("partition leaked or the victim view was unobservable")
+                # **The victim may hold a rising tip; it may not move its finalized fence.** An
+                # isolated validator can still propose locally (arm 2 of run 41219535778 read
+                # `latest` 34, 34, 35 while `finalized_height` stayed 25), so a frozen *tip* is not
+                # the invariant — and a three-sample snapshot of it is a coin flip. `victim_before`
+                # is read after the cut, so any later finalization would need a quorum this node
+                # does not have.
+                finalized=[x["finalized_height"] for x in frozen if "finalized_height" in x]
+                if len(finalized) < 3:
+                    raise AssertionError(
+                        "partition not observed: the victim's finalized height was unobservable")
+                baseline=victim_before["finalized_height"]
+                record["victim_finalized_while_isolated"]={"baseline":baseline,
+                                                           "samples":finalized}
+                record["victim_tip_while_isolated"]=sorted({x["latest"] for x in frozen
+                                                             if "latest" in x})
+                if not finalized_fence_is_frozen(frozen, baseline):
+                    raise AssertionError(
+                        "partition leaked: the victim finalized a block while isolated "
+                        f"(baseline {baseline}, samples {finalized})")
                 if container_lifecycle(victim)!=lifecycle:
                     raise AssertionError("VICTIM_LIFECYCLE_CHANGED during the partition")
                 capture_phase(f"partition-{cycle+1}-before-healing")
                 record["phase"]="healing"
-                anchor=establish_healing_anchor(d, range(args.validators-1), victim, cycle+1)
+                anchor=establish_healing_anchor(d, online, victim, cycle+1,
+                                                victim_index=victims[cycle])
                 record["healing_anchor"]=anchor
                 record["phase"]="rejoin"
                 cmd("docker","network","connect","acceptance",victim)

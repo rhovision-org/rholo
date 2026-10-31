@@ -66,6 +66,25 @@ the rest of the process, and a restarted node no longer reads a fresh zero as a 
 missing range must cross an epoch boundary; a run that does not is `INCONCLUSIVE_EPOCH_COVERAGE`
 rather than a pass of a different code path.
 
+## Second dispatch: two more snapshot defects
+
+Run [41219535778](https://github.com/rhovision-org/rholo/actions/runs/41219535778) on the anchor fix
+(`0aa57584`) passed cycle 1 in arm 1 and failed both arms in ways that are the **same class** as the
+defect being repaired — a check on a moving quantity, read once:
+
+- **The online set was hardcoded.** The progress loop iterated `range(validators - 1)`, which is the
+  online set only when the victim is the last index. The rotation added in the same change cuts
+  validator 1 in cycle 2, so the loop read the *isolated* victim (connection refused) and never read
+  node 7. Both arms failed here or on the next check.
+- **The isolation invariant tested the tip.** It required the victim's `latest` frozen in the last
+  three samples. An isolated validator may still propose locally: arm 2 read `latest` 34, 34, 35 while
+  `finalized_height` stayed 25. The safety property is that it cannot **finalize**. The check now
+  requires the finalized fence, read after the cut, to be unchanged across every sample; tip movement
+  is recorded, not gated.
+
+Both are now pure helpers with controls (`online_indices`, `finalized_fence_is_frozen`) and the
+rotation control asserts every cycle's online set has seven members and excludes its victim.
+
 ## The review
 
 `hazop-rows.json` is the full worksheet: 48 rows with guide word, deviation, RCA, consequence, class,
