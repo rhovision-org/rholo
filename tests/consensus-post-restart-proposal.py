@@ -66,7 +66,8 @@ def healthy(validator):
     # Missing fields are not evidence of readiness or non-divergence.
     return (health.get('ready') is True
         and type(health.get('orphanBodies')) is int and health['orphanBodies'] == 0
-        and type(health.get('pipelineFaults')) is int and health['pipelineFaults'] == 0
+        and type(health.get('pipelineFaultsOutstanding')) is int
+        and health['pipelineFaultsOutstanding'] == 0
         and health.get('proposalHalted') is False
         and type(operator.get('unrestorableRecords')) is int
         and operator['unrestorableRecords'] == 0)

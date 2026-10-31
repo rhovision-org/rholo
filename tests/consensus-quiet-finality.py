@@ -32,8 +32,8 @@ def verified_health(health, operator):
         health.get("ready") is True
         and type(health.get("orphanBodies")) is int
         and health["orphanBodies"] == 0
-        and type(health.get("pipelineFaults")) is int
-        and health["pipelineFaults"] == 0
+        and type(health.get("pipelineFaultsOutstanding")) is int
+        and health["pipelineFaultsOutstanding"] == 0
         and health.get("proposalHalted") is False
         and type(operator.get("unrestorableRecords")) is int
         and operator["unrestorableRecords"] == 0
@@ -82,7 +82,8 @@ def sample(index, marker=None, expected=None):
         "healthy": verified_health(health, operator),
         "health": {
             field: health.get(field) for field in
-            ["ready", "orphanBodies", "pipelineFaults", "proposalHalted"]
+            ["ready", "orphanBodies", "pipelineFaults", "pipelineFaultsOutstanding",
+             "proposalHalted"]
         },
         "operator": {
             field: operator.get(field) for field in

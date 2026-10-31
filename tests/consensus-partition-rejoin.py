@@ -29,10 +29,31 @@ ANCHOR_ATTEMPTS = 5
 ANCHOR_RETRY_SECONDS = 2.0
 DWELL_MIN_SAMPLES = 3
 CONSENSUS_PORTS = ("40401/tcp", "40402/tcp", "40404/tcp")
+# **The healing window is measured, not wished.** The floor is the node's own block-request
+# maintenance (`requested_blocks_timeout` 240 s plus the 30 s casper loop), not a measurement of
+# this net; the rest is k x the gap the victim must close x the finality interval observed on the
+# seven online nodes. `k = 2` is pre-registered. Never derive the rate from the victim: a blocked
+# victim's own rate is the quantity under test.
+HEALING_K = 2
+HEALING_FLOOR_SECONDS = 270
+HEALING_CEILING_SECONDS = 600
 
 
 def cmd(*args):
     return subprocess.check_output(args,text=True,stderr=subprocess.STDOUT,timeout=25).strip()
+
+
+def victim_indices(validators):
+    """Two cycles must cut two different validators, never the bootstrap."""
+    return [validators - 1, 1]
+
+
+def epoch_boundary_crossed(low, high, epoch):
+    """Does the missing range (low, high] contain a multiple of the epoch length?"""
+    if epoch <= 0 or high <= low:
+        return False
+    return any(low < epoch * k <= high
+               for k in range(low // epoch, high // epoch + 2))
 
 
 def container_get(node, path, admin=False, timeout=10):
@@ -94,6 +115,15 @@ def durable_state_volume(container):
 
 
 class WorkloadDrill(a.Drill):
+    def __init__(self, args):
+        super().__init__(args)
+        self.online_finality_samples = []
+        self.healing_samples = []
+        self.healing_failure_class = None
+        self.anchor_true_samples = 0
+        self.online_false_samples = {}
+        self.healing_stall_samples = 0
+
     def wait(self, description, condition, drive=True, window=None):
         # This arm explicitly supplies work; it cannot establish quiet-chain liveness.
         return super().wait(description,condition,drive=True,window=window)
@@ -124,20 +154,66 @@ class WorkloadDrill(a.Drill):
             raise RuntimeError(f"{self.healing_failure_class}: {error}") from error
 
     def classify_healing_timeout(self):
-        heights = [s["victim_height"] for s in getattr(self, "healing_samples", [])
+        """Separate a stalled victim from a slow one, using progress other than finality.
+
+        Finalized height alone is the quantity under test, so a victim blocked on
+        its peers can look 'stalled' there while its tip, peer count or
+        undelivered-send count still moves. A stall therefore needs every signal
+        flat across the dwell; monotone progress is inconclusive, not a defect.
+        """
+        samples = [s for s in getattr(self, "healing_samples", [])]
+        heights = [s.get("victim_height") for s in samples
                    if s.get("victim_height") is not None]
         if not heights:
             return "INCONCLUSIVE_MEASUREMENT"
-        if len(heights) >= DWELL_MIN_SAMPLES and len(set(heights[-DWELL_MIN_SAMPLES:])) == 1:
-            return "FAIL_STALLED"
+        tail = samples[-DWELL_MIN_SAMPLES:]
+        if len(tail) >= DWELL_MIN_SAMPLES:
+            signals = {(s.get("victim_height"), s.get("victim_peers"),
+                        s.get("victim_undelivered")) for s in tail}
+            if len(signals) == 1:
+                return "FAIL_STALLED"
         return "INCONCLUSIVE_SLOW_PROGRESS"
+
+    def record_online_finality(self, identities, at):
+        self.online_finality_samples.append(
+            (at, max(x["height"] for x in identities)))
+
+    def measured_finality_interval(self):
+        """Median seconds per finalized height on the seven, if measured enough.
+
+        The samples must span at least two intervals and contain at least three
+        advances; otherwise the measurement is not used and the floor stands.
+        """
+        series = getattr(self, "online_finality_samples", [])
+        changes = []
+        last_height, last_at = None, None
+        for at, height in series:
+            if last_height is not None and height > last_height:
+                changes.append((at - last_at) / (height - last_height))
+            if last_height is None or height > last_height:
+                last_height, last_at = height, at
+        if len(changes) < 3:
+            return None
+        interval = sorted(changes)[len(changes) // 2]
+        if interval <= 0 or series[-1][0] - series[0][0] < 2 * interval:
+            return None
+        return interval
+
+    def healing_window(self, anchor, victim_height):
+        gap = max(0, anchor["height"] - victim_height) if victim_height is not None else 0
+        interval = self.measured_finality_interval()
+        if interval is None or gap == 0:
+            return HEALING_FLOOR_SECONDS
+        scaled = HEALING_K * gap * interval
+        return int(min(HEALING_CEILING_SECONDS,
+                       max(HEALING_FLOOR_SECONDS, scaled)))
 
     def note_healing_sample(self, sample):
         if getattr(self, "healing_samples", None) is not None:
             self.healing_samples.append(sample)
 
-    def anchor_agreement(self, anchor):
-        return anchor_agreement(self, anchor)
+    def anchor_agreement(self, anchor, victim=None):
+        return anchor_agreement(self, anchor, victim)
 
 
 def establish_healing_anchor(d, online, victim, cycle):
@@ -203,7 +279,7 @@ def establish_healing_anchor(d, online, victim, cycle):
         f"FAIL_FORK: no separated finalized anchor after {ANCHOR_ATTEMPTS} attempts ({last})")
 
 
-def anchor_agreement(d, anchor):
+def anchor_agreement(d, anchor, victim=None):
     """One poll of the healing predicate; returns identities only when settled.
 
     Returns ``None`` while the predicate is not yet satisfied (the caller waits),
@@ -211,22 +287,26 @@ def anchor_agreement(d, anchor):
     per-node heads once the anchor is retained on a dwell and the fork-sensitive
     cross-checks pass.
     """
-    victim = d.args.validators - 1
+    victim = d.args.validators - 1 if victim is None else victim
     statuses = [d.status_row(i) for i in range(d.args.validators)]
     victim_row = statuses[victim]
     d.note_healing_sample({"victim_height": victim_row["latest"],
+                           "victim_peers": victim_row["peers"],
+                           "victim_undelivered": victim_row["undelivered_sends"],
                            "victim_finalized": None,
                            "anchor_finalized": None})
     # A latched fault is terminal for the process, not a transient reading.
-    pipeline_faults = victim_row["pipeline_faults"]
+    pipeline_faults = victim_row["pipeline_faults_outstanding"]
     if type(pipeline_faults) is not int:
         d.record(phase="healing_probe", anchor=anchor, nodes=statuses,
                  victim_finalized=None, anchor_finalized=None)
         return None
     if pipeline_faults != 0:
         raise RuntimeError(
-            "FAIL_PRECONDITION_pipelineFaults: node {} pipelineFaults={} lastPipelineFault={!r}"
-            .format(victim, pipeline_faults, victim_row["last_pipeline_fault"]))
+            "FAIL_PRECONDITION_pipelineFaultsOutstanding: node {} outstanding={} "
+            "cumulative={} lastPipelineFault={!r}".format(
+                victim, pipeline_faults, victim_row["pipeline_faults"],
+                victim_row["last_pipeline_fault"]))
     if victim_row["proposal_halted"] is True:
         raise RuntimeError(
             "FAIL_PRECONDITION_proposalHalted: node {} reason={!r}"
@@ -254,6 +334,8 @@ def anchor_agreement(d, anchor):
     except (OSError, ValueError):
         victim_height, victim_hash = None, None
     d.note_healing_sample({"victim_height": victim_row["latest"],
+                           "victim_peers": victim_row["peers"],
+                           "victim_undelivered": victim_row["undelivered_sends"],
                            "victim_finalized": victim_height,
                            "anchor_finalized": all(x["answer"] is True for x in answers)})
     d.record(phase="healing_probe", anchor=anchor, nodes=statuses,
@@ -359,6 +441,33 @@ def record_cycle(out, rounds, record, capture_phase):
         (out/"partition-observations.json").write_text(json.dumps(rounds, indent=2)+"\n")
 
 
+def record_attestations(d, anchor):
+    """Record each validator's signed finality claim at the PASS sample.
+
+    Evidence, not a gate: the attestation binds a validator key to the block the
+    node says it finalized, which a summary route cannot do. A refusal is
+    recorded as a refusal — this layer never turns a missing signature into a
+    pass or a fail of the predicate.
+    """
+    nonce = os.urandom(16).hex()
+    rows = []
+    for i in range(d.args.validators):
+        try:
+            attestation = a.get(i, f"/api/finality-attestation?nonce={nonce}")
+            _, head_hash = d.finalized_head(i)
+            rows.append({
+                "node": i,
+                "block_hash": attestation.get("blockHash"),
+                "matches_head": attestation.get("blockHash") == head_hash,
+                "nonce_echoed": attestation.get("nonce") == nonce,
+                "sig_algorithm": attestation.get("sigAlgorithm"),
+                "has_signature": bool(attestation.get("sig")),
+            })
+        except (OSError, ValueError) as error:
+            rows.append({"node": i, "error": repr(error)})
+    d.record(phase="finality_attestation", nonce=nonce, anchor=anchor, rows=rows)
+
+
 def write_campaign(d, args, result, source_sha, binary_sha256):
     """One aggregate record, so a green arm cannot be quoted beside a red one."""
     rounds = result.get("rounds", [])
@@ -380,6 +489,8 @@ def write_campaign(d, args, result, source_sha, binary_sha256):
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--validators",type=int,choices=[4,8],required=True)
+    ap.add_argument("--epoch-length",type=int,default=10,
+                    help="the devnet's epoch length, for missing-range coverage")
     ap.add_argument("--out",required=True);args=ap.parse_args();args.window=150
     if os.environ.get("GITHUB_ACTIONS")!="true" or os.environ.get("RUNNER_ENVIRONMENT")!="github-hosted":
         raise SystemExit("disposable hosted runner only")
@@ -387,8 +498,9 @@ def main():
         raise SystemExit("unexpected namespace")
     d=WorkloadDrill(args);d.run()
     original=json.loads((d.out/"workload-result.json").read_text())
-    victim=a.node_name(args.validators-1)
-    volume_before=durable_state_volume(json.loads(cmd("docker","inspect",victim))[0])
+    # **Rotate the victim.** Two cycles that cut the same node look like two witnesses and are one;
+    # cycle 1 cuts the last validator, cycle 2 a non-bootstrap one.
+    victims = victim_indices(args.validators)
     rounds=[]
     def capture_phase(label):
         # Raw accepted blocks, operator gate verdicts and binary identity; read-only.
@@ -401,9 +513,11 @@ def main():
     capture_phase("before-partition")
     try:
         for cycle in range(2):
+            victim=a.node_name(victims[cycle])
             record={"cycle":cycle+1,"isolated_validator":victim,"phase":"partition-install"}
             with record_cycle(d.out,rounds,record,capture_phase):
                 d.health_precondition("partition-install")
+                volume_before=durable_state_volume(json.loads(cmd("docker","inspect",victim))[0])
                 before=a.finalized_identity(a.get(0,"/api/last-finalized-block"))
                 cmd("docker","network","disconnect","acceptance",victim)
                 networks=json.loads(cmd("docker","inspect","-f","{{json .NetworkSettings.Networks}}",victim))
@@ -419,6 +533,7 @@ def main():
                 # Two 16-second escape/cadence cycles per N=8 sender plus margin:
                 # a pre-registered 300-second window, not an unbounded retry.
                 record["phase"]="online-progress"
+                d.online_finality_samples=[]
                 deadline=time.monotonic()+300;advanced=False;observed=[];frozen=[]
                 record["before_height"]=before[0]
                 record["online_observations"]=observed
@@ -431,6 +546,7 @@ def main():
                             raise AssertionError("online validator lost finalized marker")
                         identities.append({"node":i,"height":height,"hash":hash_})
                     observed.append(identities)
+                    d.record_online_finality(identities, time.monotonic())
                     try:
                         sample=victim_sample(victim)
                         frozen.append({"latest": sample["latest"], "peers": sample["peers"],
@@ -460,15 +576,21 @@ def main():
                 record["phase"]="rejoin"
                 cmd("docker","network","connect","acceptance",victim)
                 try:
-                    victim_head=d.finalized_head(args.validators-1)
+                    victim_head=d.finalized_head(victims[cycle])
                     record["victim_finalized_at_rejoin"]={"height": victim_head[0], "hash": victim_head[1]}
                 except (OSError, ValueError) as error:
                     record["victim_finalized_at_rejoin"]=None
                     d.record(phase="healing_rejoin_read", error=repr(error))
+                victim_height=(record["victim_finalized_at_rejoin"] or {}).get("height")
+                window=d.healing_window(anchor, victim_height)
+                record["healing_window_seconds"]=window
+                record["healing_gap"]=max(0, anchor["height"]-victim_height) if victim_height is not None else None
+                record["finality_interval_seconds"]=d.measured_finality_interval()
+                record["healing_k"]=HEALING_K
                 try:
                     recovered=d.wait_for_healing(
                         "all validators retain the healing anchor in finalized state after partition healing",
-                        lambda:anchor_agreement(d,anchor))
+                        lambda:anchor_agreement(d,anchor,victims[cycle]), window=window)
                 except RuntimeError:
                     failure_class=getattr(d,"healing_failure_class",None)
                     record["healing_failure_class"]=(
@@ -476,6 +598,17 @@ def main():
                     raise
                 record["rejoined"]=recovered
                 record["healing_failure_class"]=getattr(d,"healing_failure_class",None)
+                # The victim's missing range must cross an epoch boundary, or two runs at
+                # different production rates are not the same code path (D-CH-8).
+                if victim_height is not None:
+                    crosses=epoch_boundary_crossed(victim_height, anchor["height"],
+                                                   args.epoch_length)
+                    record["epoch_boundary_crossed"]=crosses
+                    if not crosses:
+                        raise RuntimeError(
+                            "INCONCLUSIVE_EPOCH_COVERAGE: the victim's missing range "
+                            f"({victim_height}, {anchor['height']}] does not cross an epoch boundary")
+                record_attestations(d, anchor)
                 record["phase"]="retention"
                 d.fixed_snapshots(original["initial_finalized"])
                 record["original_finalized_snapshots_retained"]=True
@@ -486,10 +619,12 @@ def main():
                     raise AssertionError("VICTIM_LIFECYCLE_CHANGED across the heal")
                 record["same_volume"]=True
     finally:
-        try:
-            subprocess.run(["docker","network","connect","acceptance",victim],capture_output=True,timeout=25)
-        except (OSError,subprocess.TimeoutExpired) as cleanup_error:
-            (d.out/"partition-cleanup-error.txt").write_text(str(cleanup_error)+"\n")
+        for victim_index in victims:
+            try:
+                subprocess.run(["docker","network","connect","acceptance",a.node_name(victim_index)],
+                               capture_output=True,timeout=25)
+            except (OSError,subprocess.TimeoutExpired) as cleanup_error:
+                (d.out/"partition-cleanup-error.txt").write_text(str(cleanup_error)+"\n")
         (d.out/"partition-observations.json").write_text(json.dumps(rounds,indent=2)+"\n")
     memory=cmd("docker","stats","--no-stream","--format","{{.Name}} {{.MemUsage}}")
     result={"result":"PASS_BOUNDED_WORKLOAD_PARTITION_REJOIN","source_sha":cmd("git","rev-parse","HEAD"),

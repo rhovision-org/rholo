@@ -44,6 +44,27 @@ at install and at the verdict. The base drill refuses a node with a latched pipe
 sustained finality-stall alarm or non-durable divergence counters at start, instead of reporting a
 later timeout.
 
+**The window is measured, not wished.** `W = clamp(270 s, 2 × gap × T_h, 600 s)`, where `gap` is the
+finalized distance the victim must close at rejoin and `T_h` is the median finality interval measured
+on the **seven online nodes** over at least three advances spanning two intervals. The floor is the
+node's own block-request maintenance (`requested_blocks_timeout` 240 s plus the 30 s casper loop); the
+ceiling is the drill's admissible maximum. The rate is never taken from the victim — a blocked
+victim's own rate is the quantity under test. A slow victim is `INCONCLUSIVE_SLOW_PROGRESS`; a stall
+needs every progress signal flat (finalized height, tip, peers, undelivered sends), not finalized
+height alone.
+
+**The node's fault latch is a current obligation.** `pipelineFaultsOutstanding` is the set of blocks
+this process still owes a verdict for: a fault inserts its block, a settled verdict removes it, and a
+restart seeds the set from the durable disposition ledger (an unreadable ledger fails closed). The
+lifetime `pipelineFaults` counter stays published for evidence. Readiness, deploy admission, proposal
+and the block-API gate read the outstanding set, so a transient fault no longer withholds a node for
+the rest of the process, and a restarted node no longer reads a fresh zero as a clean pipeline
+(Law 54a: the current view, not a history).
+
+**Coverage.** The two cycles cut two different validators (never the bootstrap), and the victim's
+missing range must cross an epoch boundary; a run that does not is `INCONCLUSIVE_EPOCH_COVERAGE`
+rather than a pass of a different code path.
+
 ## The review
 
 `hazop-rows.json` is the full worksheet: 48 rows with guide word, deviation, RCA, consequence, class,

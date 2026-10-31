@@ -234,9 +234,10 @@ fn create_with_retry(
 
                 // **A block-pipeline fault stops production.** A node that has dropped a
                 // dependency-free block cannot claim its own chain is the network's; the same
-                // fail-safe as a finality-gap halt, at the earlier event. The process-wide
-                // counter is cleared only by a restart/operator repair (U19).
-                if rchain_casper::blocks::block_processor::pipeline_faults() > 0 {
+                // fail-safe as a finality-gap halt, at the earlier event. The latch is the
+                // block's outstanding obligation: a settled verdict clears it, a restart
+                // re-seeds it from the durable disposition ledger (U19, Law 54a).
+                if rchain_casper::blocks::block_processor::pipeline_faults_outstanding() > 0 {
                     let result = (
                         ProposeResult {
                             propose_status: ProposeStatus::ResourcePressure("blocked".to_string()),

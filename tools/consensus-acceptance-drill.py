@@ -121,6 +121,7 @@ class Drill:
             "orphan_bodies": health.get("orphanBodies"),
             "orphan_detections": health.get("orphanDetections"),
             "pipeline_faults": health.get("pipelineFaults"),
+            "pipeline_faults_outstanding": health.get("pipelineFaultsOutstanding"),
             "last_pipeline_fault": health.get("lastPipelineFault"),
             "proposal_halted": health.get("proposalHalted"),
             "proposal_halt_reason": health.get("proposalHaltReason"),
@@ -144,7 +145,9 @@ class Drill:
         for row in rows:
             checks = (
                 ("ready", row["ready"] is True),
-                ("pipelineFaults", type(row["pipeline_faults"]) is int and row["pipeline_faults"] == 0),
+                ("pipelineFaultsOutstanding",
+                 type(row["pipeline_faults_outstanding"]) is int
+                 and row["pipeline_faults_outstanding"] == 0),
                 ("orphanBodies", type(row["orphan_bodies"]) is int and row["orphan_bodies"] == 0),
                 ("proposalHalted", row["proposal_halted"] is False),
                 ("finalityStalled", row["finality_stalled"] is False),

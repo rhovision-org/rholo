@@ -30,7 +30,8 @@ ANCHOR = {"height": 60, "hash": "ab" * 32, "node": 0, "case": "seven-ahead"}
 def healthy_status(node):
     return {
         "node": node, "ready": True, "orphan_bodies": 0, "orphan_detections": 0,
-        "pipeline_faults": 0, "last_pipeline_fault": None, "proposal_halted": False,
+        "pipeline_faults": 0, "pipeline_faults_outstanding": 0,
+        "last_pipeline_fault": None, "proposal_halted": False,
         "proposal_halt_reason": None, "finality_stalled": False,
         "finality_stall_episodes": 0, "latest": 70, "peers": 7,
         "finality_counters_durable": True, "unrestorable_records": 0,
@@ -127,11 +128,20 @@ class RejoinAgreementTests(unittest.TestCase):
 
     def test_latched_pipeline_fault_is_a_named_precondition(self):
         statuses = [healthy_status(i) for i in range(8)]
+        statuses[7]["pipeline_faults_outstanding"] = 1
         statuses[7]["pipeline_faults"] = 1
         statuses[7]["last_pipeline_fault"] = "missing justification"
         run = self.drill(statuses=statuses)
-        with self.assertRaisesRegex(RuntimeError, "FAIL_PRECONDITION_pipelineFaults"):
+        with self.assertRaisesRegex(RuntimeError,
+                                    "FAIL_PRECONDITION_pipelineFaultsOutstanding"):
             run.anchor_agreement(ANCHOR)
+
+    def test_a_settled_historical_fault_does_not_withhold_agreement(self):
+        statuses = [healthy_status(i) for i in range(8)]
+        statuses[7]["pipeline_faults"] = 3          # lifetime count: evidence only
+        statuses[7]["pipeline_faults_outstanding"] = 0
+        run = self.drill(statuses=statuses)
+        self.assertIsNone(run.anchor_agreement(ANCHOR))
 
     def test_proposal_halt_is_a_named_precondition(self):
         statuses = [healthy_status(i) for i in range(8)]
@@ -303,6 +313,44 @@ class ActiveRecoveryWitnessTests(unittest.TestCase):
 
 
 
+class HealingWindowTests(unittest.TestCase):
+    def drill(self, series=None):
+        run = object.__new__(m.WorkloadDrill)
+        run.args = SimpleNamespace(validators=8, window=150)
+        run.online_finality_samples = series or []
+        return run
+
+    def test_floor_without_a_measurement_or_a_gap(self):
+        run = self.drill()
+        self.assertEqual(run.healing_window(ANCHOR, 60), m.HEALING_FLOOR_SECONDS)
+        self.assertEqual(run.healing_window(ANCHOR, 54), m.HEALING_FLOOR_SECONDS)
+
+    def test_window_scales_with_the_gap_and_the_measured_interval(self):
+        run = self.drill([(i * 10.0, 10 + i) for i in range(7)])
+        self.assertAlmostEqual(run.measured_finality_interval(), 10.0)
+        self.assertEqual(run.healing_window(ANCHOR, 51), m.HEALING_FLOOR_SECONDS)
+        self.assertEqual(run.healing_window(ANCHOR, 40), 400)
+
+    def test_window_is_capped(self):
+        run = self.drill([(i * 60.0, 10 + i) for i in range(7)])
+        self.assertEqual(run.healing_window(ANCHOR, 0), m.HEALING_CEILING_SECONDS)
+
+    def test_a_short_series_is_not_used(self):
+        run = self.drill([(0.0, 10), (5.0, 11), (10.0, 12)])
+        self.assertIsNone(run.measured_finality_interval())
+        self.assertEqual(run.healing_window(ANCHOR, 0), m.HEALING_FLOOR_SECONDS)
+
+    def test_the_rotation_cuts_two_validators_and_never_the_bootstrap(self):
+        self.assertEqual(m.victim_indices(8), [7, 1])
+        self.assertNotIn(0, m.victim_indices(8))
+
+    def test_epoch_coverage_of_the_missing_range(self):
+        self.assertTrue(m.epoch_boundary_crossed(45, 54, 10))
+        self.assertFalse(m.epoch_boundary_crossed(51, 54, 10))
+        self.assertFalse(m.epoch_boundary_crossed(10, 19, 10))
+        self.assertTrue(m.epoch_boundary_crossed(9, 10, 10))
+
+
 class IncidentReplayTests(unittest.TestCase):
     """The run that prompted the change, replayed from its committed trace."""
     TRACE = ROOT/"spec/audit/evidence/rejoin-acceptance-20261031/run-41208692673-cycle2-trace.json"
@@ -394,6 +442,8 @@ class PartitionFailureEvidenceTests(unittest.TestCase):
             run.wait_for_healing.side_effect=RuntimeError("healing timed out")
             run.healing_failure_class="INCONCLUSIVE_SLOW_PROGRESS"
             run.finalized_head.return_value=(13,"b"*64)
+            run.measured_finality_interval.return_value=2.0
+            run.healing_window.return_value=270
             captures=[]
             def capture(*args):
                 captures.append(run.out.name)
@@ -421,8 +471,11 @@ class PartitionFailureEvidenceTests(unittest.TestCase):
                  patch.object(m.subprocess,"run") as cleanup:
                 with self.assertRaisesRegex(RuntimeError,"healing timed out"):
                     m.main()
-                cleanup.assert_called_once()
-                self.assertEqual(cleanup.call_args.kwargs["timeout"],25)
+                self.assertEqual(cleanup.call_count,2)
+                self.assertEqual([c.args[0][-1] for c in cleanup.call_args_list],
+                                 ["acceptance-validator-3","acceptance-validator-1"])
+                for call in cleanup.call_args_list:
+                    self.assertEqual(call.kwargs["timeout"],25)
             self.assertEqual(captures,["before-partition","partition-1-before-healing",
                                        "partition-1-rejoin-failed"])
             result=json.loads((out/"partition-result.json").read_text())
