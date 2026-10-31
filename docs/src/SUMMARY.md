@@ -53,6 +53,7 @@
 - [Local devnet (Docker)](node/devnet.md)
 - [The public testnet](node/testnet.md)
 - [Running a public testnet of your own](node/running-a-public-testnet.md)
+- [Updating a running validator](node/updating.md)
 - [The history chain](node/history-chain.md)
 - [Security audit (October 2026)](node/security-audit.md)
 - [Incident history](node/incident-history.md)
