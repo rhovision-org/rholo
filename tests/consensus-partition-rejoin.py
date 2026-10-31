@@ -86,6 +86,19 @@ def verify_isolated_tip_dwell(victim, observations, *, max_extra_samples=30):
     return False
 
 
+def finalized_fence_is_frozen(victim_before, observations):
+    """The isolated victim may hold a rising tip; it may not advance its finalized fence.
+
+    `victim_before` is read *after* the cut, so any later finalization would need a quorum the
+    isolated validator does not have. This is the sound invariant behind the tip dwell: a locally
+    proposed block raises `latest` without raising `finalized_height` (run 41219535778 arm 2 read
+    34, 34, 35 while finality stayed at 25).
+    """
+    baseline = victim_before["finalized_height"]
+    heights = [x["finalized_height"] for x in observations if "finalized_height" in x]
+    return len(heights) >= DWELL_MIN_SAMPLES and all(h == baseline for h in heights)
+
+
 def epoch_boundary_crossed(low, high, epoch):
     """Does the missing range (low, high] contain a multiple of the epoch length?"""
     if epoch <= 0 or high <= low:
@@ -161,6 +174,8 @@ class WorkloadDrill(a.Drill):
         self.anchor_true_samples = 0
         self.online_false_samples = {}
         self.healing_stall_samples = 0
+        self.healing_stall_signals = []
+        self.healing_poll_signals = []
 
     def wait(self, description, condition, drive=True, window=None):
         # This arm explicitly supplies work; it cannot establish quiet-chain liveness.
@@ -176,6 +191,8 @@ class WorkloadDrill(a.Drill):
         self.anchor_true_samples = 0
         self.online_false_samples = {}
         self.healing_stall_samples = 0
+        self.healing_stall_signals = []
+        self.healing_poll_signals = []
         try:
             return super().wait(description, condition, drive=False, window=window)
         except a.WaitTimeout as error:
@@ -204,12 +221,12 @@ class WorkloadDrill(a.Drill):
                    if s.get("victim_height") is not None]
         if not heights:
             return "INCONCLUSIVE_MEASUREMENT"
-        tail = samples[-DWELL_MIN_SAMPLES:]
-        if len(tail) >= DWELL_MIN_SAMPLES:
-            signals = {(s.get("victim_height"), s.get("victim_peers"),
-                        s.get("victim_undelivered")) for s in tail}
-            if len(signals) == 1:
-                return "FAIL_STALLED"
+        # One entry per poll: `healing_samples` takes two entries per poll, so its three-entry
+        # tail spans one and a half polls and cannot certify a dwell.
+        polls = [p for p in getattr(self, "healing_poll_signals", [])]
+        tail = polls[-DWELL_MIN_SAMPLES:]
+        if len(tail) >= DWELL_MIN_SAMPLES and len(set(tail)) == 1:
+            return "FAIL_STALLED"
         return "INCONCLUSIVE_SLOW_PROGRESS"
 
     def record_online_finality(self, identities, at):
@@ -329,6 +346,11 @@ def anchor_agreement(d, anchor, victim=None):
     victim = d.args.validators - 1 if victim is None else victim
     statuses = [d.status_row(i) for i in range(d.args.validators)]
     victim_row = statuses[victim]
+    # One entry per *poll*: the healing sample list above takes two entries per poll, so a
+    # three-entry tail is only one and a half polls.
+    d.healing_poll_signals = getattr(d, "healing_poll_signals", [])
+    d.healing_poll_signals.append((victim_row["latest"], victim_row["peers"],
+                                   victim_row["undelivered_sends"]))
     d.note_healing_sample({"victim_height": victim_row["latest"],
                            "victim_peers": victim_row["peers"],
                            "victim_undelivered": victim_row["undelivered_sends"],
@@ -358,12 +380,26 @@ def anchor_agreement(d, anchor, victim=None):
         raise RuntimeError(
             f"FAIL_PERMANENT_DIVERGENCE: node {victim} unrestorableRecords="
             f"{victim_row['unrestorable_records']} block={victim_row['unrestorable_block']}")
+    # **`finalityStalled` is a diagnosis, not a verdict** (Law 54a). A rejoining victim holds the
+    # latch while its derivation catches up, so the flag alone turns a recovering node into a coin
+    # flip — run 41225136080 arm 1 failed exactly here, while arm 2 passed the same code. A stall
+    # needs the alarm *and* every progress signal flat across the dwell, the same rule
+    # `classify_healing_timeout` uses: finalized height, tip, peers, undelivered sends.
     if victim_row["finality_stalled"] is True:
         d.healing_stall_samples = getattr(d, "healing_stall_samples", 0) + 1
+        d.healing_stall_signals = getattr(d, "healing_stall_signals", [])
+        d.healing_stall_signals.append((victim_row["latest"], victim_row["peers"],
+                                        victim_row["undelivered_sends"]))
     else:
         d.healing_stall_samples = 0
-    if getattr(d, "healing_stall_samples", 0) >= DWELL_MIN_SAMPLES:
-        raise RuntimeError(f"FAIL_STALLED: node {victim} reports a sustained finality stall")
+        d.healing_stall_signals = []
+    stall_tail = getattr(d, "healing_stall_signals", [])[-DWELL_MIN_SAMPLES:]
+    if (getattr(d, "healing_stall_samples", 0) >= DWELL_MIN_SAMPLES
+            and len(stall_tail) == DWELL_MIN_SAMPLES and len(set(stall_tail)) == 1):
+        raise RuntimeError(
+            f"FAIL_STALLED: node {victim} reports a sustained finality stall with no progress "
+            f"(tip {stall_tail[0][0]}, peers {stall_tail[0][1]}, "
+            f"undelivered {stall_tail[0][2]})")
 
     answers = []
     for i in range(d.args.validators):
@@ -612,6 +648,12 @@ def main():
                 # state. The three distinct stable polls are still mandatory.
                 if not verify_isolated_tip_dwell(victim, frozen):
                     raise AssertionError("partition leaked or the victim view was unobservable")
+                # The tip dwell is the practical settling check; the finalized fence is the
+                # sound one — finality cannot advance without a quorum the isolated node lacks.
+                if not finalized_fence_is_frozen(victim_before, frozen):
+                    raise AssertionError(
+                        "partition leaked: the victim advanced its finalized fence while "
+                        f"isolated (baseline {victim_before['finalized_height']})")
                 record["isolation_samples"]=frozen
                 (d.out/f"partition-{cycle+1}-live.json").write_text(json.dumps({
                     "cycle":cycle+1,"before_height":before[0],"observations":observed,

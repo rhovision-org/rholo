@@ -66,6 +66,22 @@ the rest of the process, and a restarted node no longer reads a fresh zero as a 
 missing range must cross an epoch boundary; a run that does not is `INCONCLUSIVE_EPOCH_COVERAGE`
 rather than a pass of a different code path.
 
+## Later dispatches, and the rule they teach
+
+Two further dispatches on 2026-10-31 failed, each on a check that read a **moving quantity once** —
+the same class as the defect this change repairs:
+
+| run | head | outcome | defect |
+|---|---|---|---|
+| [41219535778](https://github.com/rhovision-org/rholo/actions/runs/41219535778) | `0aa57584` | both arms failed | the progress loop and the anchor iterated `range(validators - 1)`, which is the online set only when the victim is the last index; the rotation cuts validator 1 in cycle 2 and the loop read the isolated victim |
+| [41225136080](https://github.com/rhovision-org/rholo/actions/runs/41225136080) | `412166377` | arm 2 passed; arm 1 failed at rejoin | `FAIL_STALLED` was raised on the victim's `finalityStalled` latch alone, while the rejoining victim was still catching up |
+
+The standing rule: **a check names the sound invariant, not a snapshot of a moving quantity.** The
+online set is the rotated complement (`online_validator_indices`); isolation is a frozen **finalized
+fence** (a local proposal raises the tip only) plus the bounded tip dwell; and a stall verdict needs
+the alarm *and* every progress signal flat across the dwell, the same rule
+`classify_healing_timeout` applies. Each has an offline control.
+
 ## The review
 
 `hazop-rows.json` is the full worksheet: 48 rows with guide word, deviation, RCA, consequence, class,
