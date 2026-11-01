@@ -166,6 +166,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The legacy figures are measured at the pinned revision `1b7583649`, not in the working
+          # tree; a depth-1 clone lacks it and would read as "legacy is empty" (2026-11-01 nightly).
+          fetch-depth: 0
 
       - name: Re-measure the tracked tree against the committed record
         run: tools/recount-artifact.sh --verify-live --no-binary
