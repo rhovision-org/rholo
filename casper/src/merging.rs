@@ -4934,6 +4934,36 @@ mod kept_effect_coverage_tests {
         }
     }
 
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+
+        #[test]
+        fn coverage_checks_every_serialized_occurrence(
+            payloads in proptest::collection::vec(
+                proptest::collection::vec(0u8..4, 0..5), 1..12),
+            remove_from_removed in proptest::prelude::any::<bool>(),
+        ) {
+            let diff = ChannelChange { added: payloads.clone(), removed: payloads };
+            let kept = StateChange {
+                datums_changes: BTreeMap::from([(hash(1), diff.clone())]),
+                kont_changes: BTreeMap::from([(vec![hash(2)], diff)]),
+                ..StateChange::default()
+            };
+            let mut combined = StateChange::combine(&kept, &kept);
+            for diff in combined.datums_changes.values_mut().chain(combined.kont_changes.values_mut()) {
+                diff.added.reverse();
+                diff.removed.reverse();
+            }
+            proptest::prop_assert!(kept_effect_coverage([&kept, &kept].into_iter(), &combined).is_empty());
+            for diff in combined.datums_changes.values_mut().chain(combined.kont_changes.values_mut()) {
+                if remove_from_removed { diff.removed.pop(); } else { diff.added.pop(); }
+            }
+            let coverage = kept_effect_coverage([&kept, &kept].into_iter(), &combined);
+            proptest::prop_assert_eq!(coverage.unapplied_kept_datums, vec![hash(1)]);
+            proptest::prop_assert_eq!(coverage.unapplied_kept_konts, vec![vec![hash(2)]]);
+        }
+    }
+
     #[test]
     fn disjoint_kept_changes_are_all_present() {
         let a = StateChange {
