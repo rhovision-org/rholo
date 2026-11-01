@@ -294,6 +294,11 @@ pub struct MergeReport {
     /// in `sdk/src/dag/merging.rs`), and the finalised chain's own effects are already in the base
     /// state. This is the ledger's missing row, not a lost write.
     pub final_scope_rejected_chains: usize,
+    /// **The deploy ids of those final-scope rejected chains** (M5-04). The count said a chain was
+    /// rejected; this says *which deploys rode on it*, so an operator can connect a
+    /// `ProcessedWithSuccess` deploy to the merge that dropped it. Deduplicated, because a deploy can
+    /// appear in more than one chain's cost set.
+    pub final_scope_rejected_deploys: Vec<Vec<u8>>,
     /// The native slots the **rejected** chains would have written, with the host that wrote each:
     /// the effects of a rejection, named. They had no name before this.
     pub dropped_native_slots: Vec<(Blake2b256Hash, (u8, Blake2b256Hash))>,
@@ -308,8 +313,84 @@ pub struct MergeReport {
     /// **I2 — every slot a kept chain wrote has its action in the merged batch.** A violation is a
     /// kept chain's write silently disappearing: the other half of the same injury. Must be empty.
     pub unapplied_kept_writes: Vec<(u8, Blake2b256Hash)>,
+    /// **I2's tuple-space half (M5-06).** Every kept chain's datum channel appears in the combined
+    /// `StateChange`, and every entry it added or removed survives the combine unless another kept
+    /// chain cancels it. `unapplied_kept_writes` covers native slots; this covers the data and
+    /// continuations, which is where the #420 incident's lost write actually lived. Must be empty.
+    pub unapplied_kept_datums: Vec<Blake2b256Hash>,
+    /// …the same for continuation channels. A key is a `Vec<Blake2b256Hash>`, so the list names
+    /// channels rather than a single hash. Must be empty.
+    pub unapplied_kept_konts: Vec<Vec<Blake2b256Hash>>,
     /// Who won each slot in the merged state. The map the incident had no way to read.
     pub native_writer_of_slot: BTreeMap<(u8, Blake2b256Hash), Blake2b256Hash>,
+}
+
+/// **I2's tuple-space coverage (M5-06)** — the channels of kept chains that the combined
+/// `StateChange` does not carry. Empty is the pass. It is computed where the combined change already
+/// exists (inside `compute_merged_state`) rather than by a second fold on the merge path, and it is
+/// requested through an out-parameter so a caller that does not build a report pays nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KeptEffectCoverage {
+    pub unapplied_kept_datums: Vec<Blake2b256Hash>,
+    pub unapplied_kept_konts: Vec<Vec<Blake2b256Hash>>,
+}
+
+impl KeptEffectCoverage {
+    pub fn is_empty(&self) -> bool {
+        self.unapplied_kept_datums.is_empty() && self.unapplied_kept_konts.is_empty()
+    }
+}
+
+/// Every datum/kont channel a kept chain touched must be in the combined change, with every entry
+/// the chain added or removed. `StateChange::combine` concatenates channel changes (it does not
+/// cancel an add against a later remove), so the strict containment is the correct invariant: if an
+/// entry is missing from the combined change, the fold dropped it. Keys are deduplicated so one loss
+/// is named once.
+fn kept_effect_coverage<'a>(
+    changes: impl Iterator<Item = &'a StateChange>,
+    combined: &StateChange,
+) -> KeptEffectCoverage {
+    let mut coverage = KeptEffectCoverage::default();
+    let mut seen_datums = BTreeSet::new();
+    let mut seen_konts = BTreeSet::new();
+
+    for change in changes {
+        for (channel, diff) in &change.datums_changes {
+            let survives = combined
+                .datums_changes
+                .get(channel)
+                .is_some_and(|combined_diff| {
+                    diff.added
+                        .iter()
+                        .all(|entry| combined_diff.added.contains(entry))
+                        && diff
+                            .removed
+                            .iter()
+                            .all(|entry| combined_diff.removed.contains(entry))
+                });
+            if !survives && seen_datums.insert(*channel) {
+                coverage.unapplied_kept_datums.push(*channel);
+            }
+        }
+        for (channel, diff) in &change.kont_changes {
+            let survives = combined
+                .kont_changes
+                .get(channel)
+                .is_some_and(|combined_diff| {
+                    diff.added
+                        .iter()
+                        .all(|entry| combined_diff.added.contains(entry))
+                        && diff
+                            .removed
+                            .iter()
+                            .all(|entry| combined_diff.removed.contains(entry))
+                });
+            if !survives && seen_konts.insert(channel.clone()) {
+                coverage.unapplied_kept_konts.push(channel.clone());
+            }
+        }
+    }
+    coverage
 }
 
 impl MergeReport {
@@ -323,6 +404,8 @@ impl MergeReport {
             && self.final_scope_rejected_chains == 0
             && self.rejections_without_a_conflict.is_empty()
             && self.unapplied_kept_writes.is_empty()
+            && self.unapplied_kept_datums.is_empty()
+            && self.unapplied_kept_konts.is_empty()
     }
 
     /// One line for the caller's log. The lists are capped: this is a per-merge `warn`, and a
@@ -343,6 +426,21 @@ impl MergeReport {
                 "; **{} chain(s) of the final scope rejected**: recorded final-scope rejection \
                  decisions retained in the merge base (C260)",
                 self.final_scope_rejected_chains
+            ));
+        }
+        // The deploy ids, not only the chain count (M5-04): the incident's question was *which*
+        // deploy's write disappeared, and a count cannot answer it.
+        if !self.final_scope_rejected_deploys.is_empty() {
+            line.push_str(&format!(
+                "; {} deploy(s) rode on a final-scope rejected chain ({})",
+                self.final_scope_rejected_deploys.len(),
+                describe_ids(
+                    &self
+                        .final_scope_rejected_deploys
+                        .iter()
+                        .map(|id| rchain_shared::base16::encode(id))
+                        .collect::<Vec<_>>()
+                )
             ));
         }
         if !self.dropped_native_slots.is_empty() {
@@ -371,6 +469,16 @@ impl MergeReport {
                 "; **I2 VIOLATED**: {} kept chain write(s) absent from the merged batch ({})",
                 self.unapplied_kept_writes.len(),
                 describe_plain_slots(&self.unapplied_kept_writes)
+            ));
+        }
+        // I2's tuple-space half (M5-06): a kept chain's datum/kont channel missing from the combined
+        // change is the #420 class at the layer where the incident's lost write lived.
+        if !self.unapplied_kept_datums.is_empty() || !self.unapplied_kept_konts.is_empty() {
+            line.push_str(&format!(
+                "; **I2 VIOLATED (tuple space)**: {} datum and {} continuation channel(s) of kept \
+                 chains absent from the combined change",
+                self.unapplied_kept_datums.len(),
+                self.unapplied_kept_konts.len()
             ));
         }
         line
@@ -2001,11 +2109,13 @@ impl MergeScope {
         .await?;
         let native_changes: Vec<NativeStoreAction> = native_changes.into_values().collect();
 
+        let mut coverage = KeptEffectCoverage::default();
         let new_state = MergeScope::compute_merged_state(
             &to_merge,
             base_state,
             history_repository,
             &native_changes,
+            Some(&mut coverage),
         )
         .await?;
         let rejected_ids: BTreeSet<Vec<u8>> = rejected
@@ -2023,6 +2133,12 @@ impl MergeScope {
             // names them. Computed in the loop over `final_indices` above, and until this field existed
             // the set was handed to `resolve_conflict_set_with_census` and reported by nothing.
             final_scope_rejected_chains: rejected_finally.len(),
+            final_scope_rejected_deploys: rejected_finally
+                .iter()
+                .flat_map(|c| c.deploys_with_cost.iter().map(|d| d.id.clone()))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
             dropped_native_slots: rejected
                 .iter()
                 .flat_map(|c| {
@@ -2063,6 +2179,9 @@ impl MergeScope {
                 .flat_map(|c| c.native_slots())
                 .filter(|slot| !native_changes.iter().any(|a| a.slot() == *slot))
                 .collect(),
+            // I2's tuple-space half, computed where the combined change exists (M5-06).
+            unapplied_kept_datums: coverage.unapplied_kept_datums,
+            unapplied_kept_konts: coverage.unapplied_kept_konts,
             native_writer_of_slot: winners.clone(),
         };
         Ok(MergeOutcome {
@@ -2084,6 +2203,10 @@ impl MergeScope {
         base_state: Blake2b256Hash,
         history_repository: &RhoHistoryRepository,
         native_changes: &[NativeStoreAction],
+        // **I2's tuple-space half (M5-06).** Asked for by the caller that builds a report; a caller
+        // that does not pays nothing. Computed here because `all_changes` is already in hand — a
+        // second fold on the merge path would be the cost this out-parameter exists to avoid.
+        coverage: Option<&mut KeptEffectCoverage>,
     ) -> Result<Blake2b256Hash, String> {
         let history_reader = history_repository.get_history_reader(base_state).await;
         let base_reader = history_reader.reader_binary();
@@ -2092,6 +2215,12 @@ impl MergeScope {
         let all_changes = to_merge.iter().fold(StateChange::empty(), |acc, b| {
             StateChange::combine(&acc, &b.state_changes)
         });
+        if let Some(slot) = coverage {
+            *slot = kept_effect_coverage(
+                to_merge.iter().map(|chain| &chain.state_changes),
+                &all_changes,
+            );
+        }
         let mut mergeable_diffs: NumberChannelsDiff = BTreeMap::new();
         for b in to_merge {
             for (k, v) in &b.event_log_index.number_channels_data {
@@ -4740,5 +4869,89 @@ mod index_stats_tests {
              an unrelated later child must not influence causal pruning.",
             scope_a, scope_b
         );
+    }
+}
+
+#[cfg(test)]
+mod kept_effect_coverage_tests {
+    use super::*;
+    use rchain_rspace::merger::channel_change::ChannelChange;
+
+    fn hash(byte: u8) -> Blake2b256Hash {
+        Blake2b256Hash::from_byte_array(&[byte; 32])
+    }
+
+    fn change(added: &[u8], removed: &[u8]) -> ChannelChange<Vec<u8>> {
+        ChannelChange {
+            added: added.iter().map(|b| vec![*b]).collect(),
+            removed: removed.iter().map(|b| vec![*b]).collect(),
+        }
+    }
+
+    #[test]
+    fn disjoint_kept_changes_are_all_present() {
+        let a = StateChange {
+            datums_changes: BTreeMap::from([(hash(1), change(&[7], &[]))]),
+            ..StateChange::default()
+        };
+        let b = StateChange {
+            datums_changes: BTreeMap::from([(hash(2), change(&[], &[8]))]),
+            ..StateChange::default()
+        };
+        let combined = StateChange::combine(&a, &b);
+        assert!(kept_effect_coverage([&a, &b].into_iter(), &combined).is_empty());
+    }
+
+    #[test]
+    fn a_dropped_channel_is_named() {
+        let a = StateChange {
+            datums_changes: BTreeMap::from([(hash(1), change(&[7], &[]))]),
+            ..StateChange::default()
+        };
+        let b = StateChange {
+            datums_changes: BTreeMap::from([(hash(2), change(&[8], &[]))]),
+            ..StateChange::default()
+        };
+        let mut combined = StateChange::combine(&a, &b);
+        combined.datums_changes.remove(&hash(1));
+        let coverage = kept_effect_coverage([&a, &b].into_iter(), &combined);
+        assert_eq!(
+            coverage.unapplied_kept_datums,
+            vec![hash(1)],
+            "a combine that drops a kept chain's channel is the I2 tuple-space violation"
+        );
+    }
+
+    #[test]
+    fn a_dropped_entry_is_named() {
+        let a = StateChange {
+            kont_changes: BTreeMap::from([(vec![hash(1)], change(&[7], &[]))]),
+            ..StateChange::default()
+        };
+        let mut combined = StateChange::combine(&a, &StateChange::empty());
+        combined
+            .kont_changes
+            .get_mut(&vec![hash(1)])
+            .expect("the channel is present")
+            .added
+            .clear();
+        let coverage = kept_effect_coverage([&a].into_iter(), &combined);
+        assert_eq!(coverage.unapplied_kept_konts, vec![vec![hash(1)]]);
+    }
+
+    #[test]
+    fn the_report_names_a_final_scope_deploy_and_the_tuple_space_violation() {
+        let mut report = MergeReport {
+            final_scope_rejected_chains: 1,
+            final_scope_rejected_deploys: vec![vec![0xab; 32]],
+            ..MergeReport::default()
+        };
+        assert!(!report.is_quiet());
+        assert!(report
+            .describe()
+            .contains("deploy(s) rode on a final-scope rejected chain"));
+        report.unapplied_kept_datums = vec![hash(9)];
+        assert!(!report.is_quiet());
+        assert!(report.describe().contains("I2 VIOLATED (tuple space)"));
     }
 }

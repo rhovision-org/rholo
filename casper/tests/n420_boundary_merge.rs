@@ -330,6 +330,26 @@ async fn a_boundary_round_merge_keeps_the_base_states_user_write() {
         "{:?}",
         r.unapplied_kept_writes
     );
+    // **I2's tuple-space half (M5-06)** on the boundary fixture: every kept chain's datum/kont
+    // channel and entry survives the combine. This is where the incident's lost write lived.
+    assert!(
+        r.unapplied_kept_datums.is_empty(),
+        "kept datum channels absent from the combined change: {:?}",
+        r.unapplied_kept_datums
+    );
+    assert!(
+        r.unapplied_kept_konts.is_empty(),
+        "kept continuation channels absent from the combined change: {:?}",
+        r.unapplied_kept_konts
+    );
+    // **M5-04:** a final-scope rejection names the deploy it carried, not only the chain count.
+    if r.final_scope_rejected_chains > 0 {
+        assert!(
+            !r.final_scope_rejected_deploys.is_empty(),
+            "{} final-scope rejected chain(s) named no deploys",
+            r.final_scope_rejected_chains
+        );
+    }
     if !kept_new {
         assert!(
             r.rejected_chains > 0,
@@ -704,4 +724,135 @@ async fn registered_values_survive_a_burst_and_read_the_same() {
         !format!("{base:?}").contains("alpha"),
         "the base must not carry the registration: {base:?}"
     );
+}
+
+/// **M5 `accepted_effects_preserved`, sibling-vs-sibling arm (M5-05).** Two blocks from **one
+/// pre-state**, each consuming and replacing the same hot cell, merged together. This is the shape
+/// the sequential/parallel arms do not cover: there the block's own post-state is the expected
+/// answer; here the answer is a *merge decision*, and exactly one value may survive.
+#[tokio::test]
+async fn sibling_hot_cell_merges_keep_one_value_and_name_a_rejection() {
+    let rm = build_runtime_manager_with_mode(EffectMode::Sequential).await;
+    let start = seed(&rm).await;
+    let base = play(
+        &rm,
+        0x91,
+        VALIDATORS[0],
+        start,
+        Some(r#"@"s"!({"a": 1})"#),
+        &[],
+    )
+    .await;
+    let left = play(
+        &rm,
+        0x92,
+        VALIDATORS[1],
+        base.post,
+        Some(r#"for (@m <- @"s") { @"s"!(m.set("left", 2)) }"#),
+        &[],
+    )
+    .await;
+    let right = play(
+        &rm,
+        0x93,
+        VALIDATORS[2],
+        base.post,
+        Some(r#"for (@m <- @"s") { @"s"!(m.set("right", 3)) }"#),
+        &[],
+    )
+    .await;
+
+    let indexes: BTreeMap<BlockHash, std::sync::Arc<BlockIndex>> = [&left, &right]
+        .into_iter()
+        .map(|b| (b.hash, std::sync::Arc::new(b.index.clone())))
+        .collect();
+    let lookup = move |h: BlockHash| {
+        let found = indexes.get(&h).cloned();
+        async move { found.ok_or_else(|| format!("no index for {h:?}")) }
+    };
+    let scope = MergeScope {
+        final_scope: BTreeSet::new(),
+        conflict_scope: [left.hash, right.hash].into_iter().collect(),
+        ancestry: BTreeMap::new(),
+    };
+    let outcome = MergeScope::merge(
+        &scope,
+        base.post,
+        &RejectionsMap::new(),
+        rm.get_history_repo(),
+        &lookup,
+        |_| 0,
+    )
+    .await
+    .expect("the sibling merge runs");
+
+    let merged = rm
+        .play_exploratory_deploy(
+            r#"for (@m <<- @"s") { @"out"!(m) }"#,
+            &StateHash::new(*outcome.state.as_bytes()),
+        )
+        .await
+        .expect("the merged-state read runs")
+        .data;
+    assert_eq!(
+        merged.len(),
+        1,
+        "two sibling replacements of one cell must leave exactly one value: {merged:?}"
+    );
+
+    let report = &outcome.report;
+    assert_eq!(
+        report.kept_chains + report.rejected_chains,
+        report.conflict_chains,
+        "every conflict-scope chain is either kept or rejected"
+    );
+    assert!(
+        report.rejections_without_a_conflict.is_empty(),
+        "I1: {:?}",
+        report.rejections_without_a_conflict
+    );
+    assert!(
+        report.unapplied_kept_writes.is_empty(),
+        "I2 native: {:?}",
+        report.unapplied_kept_writes
+    );
+    assert!(
+        report.unapplied_kept_datums.is_empty() && report.unapplied_kept_konts.is_empty(),
+        "I2 tuple space: datums={:?} konts={:?}",
+        report.unapplied_kept_datums,
+        report.unapplied_kept_konts
+    );
+    if report.rejected_chains > 0 {
+        assert!(
+            !outcome.rejected_deploys.is_empty(),
+            "a rejected sibling must name the deploy it carried"
+        );
+    }
+
+    // **M5-11: the report is not an input to the state.** Re-running the same merge produces the
+    // same post-state hash; a report-only change must never move it. (The pinned-constant form over
+    // the live 840/841 bytes belongs to the replay unit, M5-02.)
+    let indexes_again: BTreeMap<BlockHash, std::sync::Arc<BlockIndex>> = [&left, &right]
+        .into_iter()
+        .map(|b| (b.hash, std::sync::Arc::new(b.index.clone())))
+        .collect();
+    let lookup_again = move |h: BlockHash| {
+        let found = indexes_again.get(&h).cloned();
+        async move { found.ok_or_else(|| format!("no index for {h:?}")) }
+    };
+    let again = MergeScope::merge(
+        &scope,
+        base.post,
+        &RejectionsMap::new(),
+        rm.get_history_repo(),
+        &lookup_again,
+        |_| 0,
+    )
+    .await
+    .expect("the sibling merge re-runs");
+    assert_eq!(
+        again.state, outcome.state,
+        "a report-only change moved the merged state hash"
+    );
+    assert_eq!(again.report, outcome.report, "the report is deterministic");
 }

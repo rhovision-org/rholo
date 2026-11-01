@@ -1,5 +1,20 @@
 # Live recovery: canonical public genesis inputs
 
+> **Correction, 2026-11-01 — this is not an M3 off-host positive.** The observer was launched with
+> `--bootstrap-host 127.0.0.1`, and its advertised local peer in `acceptance.json` is
+> `rnode://6b70152e0dfe887101428710a5c5a14c9933a3d6@127.0.0.1?protocol=40400&discovery=40404`.
+> It is therefore a **configured-input diagnosis on loopback**, not evidence that a routable
+> off-host observer joins, receives and applies the approved fringe. It must not be cited for #428
+> M3's positive clause. The gate's negative clause — a `127.0.0.1` observer *from another host* must
+> fail clearly — is the control this run did **not** exercise.
+>
+> The raw logs, JSON and their digests are unchanged; this note is the correction. The
+> locality review that produced it is
+> [`spec/audit/evidence/m3-m5-pareto-20261101/README.md`](../m3-m5-pareto-20261101/README.md).
+
+**Evidence locality.** `loopback-diagnostic` — the observer's advertised peer is
+`rnode://…@127.0.0.1`, so this is a configured-input diagnosis, not an off-host positive.
+
 ## A. Root Cause
 
 The final #474 binary was exercised against the deployed `a5259969a7c5673ccdfc5dad97981d0a3607fcf0` network. The earlier 300-second campaign stopped during ancestry acquisition, not at a demonstrated protocol deadlock.
