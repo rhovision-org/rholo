@@ -273,6 +273,30 @@ class RejoinAgreementTests(unittest.TestCase):
 
 
 class HealingAnchorTests(unittest.TestCase):
+    def test_epoch_wait_drives_until_the_boundary_instead_of_accepting_false(self):
+        from unittest.mock import Mock, patch
+        run = object.__new__(m.WorkloadDrill)
+        run.args = SimpleNamespace(window=150)
+        run.record = Mock()
+        height = [68]
+        run.finalized_head = Mock(side_effect=lambda i: (height[0], "a" * 64))
+        run.drive = Mock(side_effect=lambda: height.__setitem__(0, height[0] + 1))
+        with patch.object(m.time, "monotonic", return_value=0), patch.object(m.time, "sleep"):
+            self.assertEqual(m.wait_for_epoch_boundary(run, range(7), 70), [70] * 7)
+        self.assertEqual(run.drive.call_count, 2)
+
+    def test_epoch_wait_expiry_is_an_inconclusive_coverage_result(self):
+        from unittest.mock import Mock, patch
+        run = object.__new__(m.WorkloadDrill)
+        run.args = SimpleNamespace(window=150)
+        run.record = Mock()
+        run.finalized_head = Mock(return_value=(68, "a" * 64))
+        run.drive = Mock()
+        with patch.object(m.time, "monotonic", side_effect=[0, 0, 301, 301]), \
+             patch.object(m.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "INCONCLUSIVE_EPOCH_COVERAGE"):
+                m.wait_for_epoch_boundary(run, range(7), 70)
+
     def test_epoch_target_requires_the_next_boundary_even_when_starting_on_one(self):
         for height, expected in [(9, 10), (10, 20), (60, 70), (68, 70)]:
             self.assertEqual(m.next_epoch_height(height, 10), expected)

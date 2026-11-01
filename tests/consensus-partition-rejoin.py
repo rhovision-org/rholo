@@ -100,6 +100,19 @@ def next_epoch_height(height, epoch):
     return (height // epoch + 1) * epoch
 
 
+def wait_for_epoch_boundary(d, online, target):
+    def progressed():
+        heads = [d.finalized_head(i)[0] for i in online]
+        d.record(phase="epoch_coverage", target_height=target, finalized_heights=heads)
+        # Drill.wait uses None for "keep waiting"; False would be accepted as a completed poll.
+        return heads if all(height >= target for height in heads) else None
+    try:
+        return d.wait("online validators finalize beyond the isolated victim's next epoch",
+                      progressed, window=300)
+    except a.WaitTimeout as error:
+        raise RuntimeError(f"INCONCLUSIVE_EPOCH_COVERAGE: {error}") from error
+
+
 def failure_class(error):
     prefix = str(error).split(":", 1)[0]
     return prefix if prefix.startswith(("FAIL_", "INCONCLUSIVE_", "MEASUREMENT_")) else "FAIL_UNCLASSIFIED"
@@ -650,9 +663,7 @@ def main():
                 record["phase"]="healing"
                 target=next_epoch_height(frozen[-1].get("finalized_height"), args.epoch_length)
                 record["epoch_target_height"]=target
-                d.wait("online validators finalize beyond the isolated victim's next epoch",
-                       lambda: all(d.finalized_head(i)[0] >= target for i in online),
-                       window=300)
+                wait_for_epoch_boundary(d, online, target)
                 anchor=establish_healing_anchor(
                     d, online, victim, cycle+1, victim_index=victim_index, minimum_height=target)
                 record["healing_anchor"]=anchor

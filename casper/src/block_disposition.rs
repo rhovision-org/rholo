@@ -2391,6 +2391,62 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn equal_store_and_dag_counts_do_not_hide_a_different_unowned_body() {
+        let stored = sample_block(hash(32));
+        let other = sample_block(hash(33));
+        let blocks = block_store_with(&stored).await;
+        let ledger = store().await;
+        let dag = empty_dag().await;
+        dag.insert(
+            rchain_models::block_metadata::BlockMetadata::from_block(&other),
+            other,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            blocks.count().await.unwrap(),
+            dag.get_representation().await.dag_set.len()
+        );
+        assert_eq!(
+            unaccounted_stored_bodies(&ledger, &blocks, &dag)
+                .await
+                .unwrap(),
+            BTreeSet::from([stored.block_hash])
+        );
+        dag.insert(
+            rchain_models::block_metadata::BlockMetadata::from_block(&stored),
+            stored,
+        )
+        .await
+        .unwrap();
+        assert!(unaccounted_stored_bodies(&ledger, &blocks, &dag)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_disposition_cannot_be_reported_as_clean_ownership() {
+        let block = sample_block(hash(34));
+        let blocks = block_store_with(&block).await;
+        let raw = in_memory();
+        raw.lock()
+            .await
+            .put(vec![(BlockHashCodec.encode(&block.block_hash), vec![0xff])])
+            .unwrap();
+        let ledger = BlockDispositionStore::from_store(Arc::new(KeyValueTypedStoreCodec::new(
+            raw,
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockDispositionCodec),
+        )));
+        assert!(
+            unaccounted_stored_bodies(&ledger, &blocks, &empty_dag().await)
+                .await
+                .is_err()
+        );
+    }
+
     /// **A stored body with no DAG entry is re-offered** rather than left for the next restart.
     #[tokio::test]
     async fn a_stored_body_without_a_dag_entry_is_reoffered() {
