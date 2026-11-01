@@ -656,6 +656,35 @@ mod tests {
         entries.iter().map(|e| e.node_id.as_str()).collect()
     }
 
+    /// **The advisory fence on the hostlist.** A served peer's `latestBlockNumber` and
+    /// `acceptsDeploys` are carried but never filtered or ranked on (Law 90b: there is no lag
+    /// oracle). A peer claiming the largest height and a peer claiming the smallest, with opposite
+    /// capacity claims, must produce the same ordered ids as honest bodies — if either value enters
+    /// the predicate or the order, this fails.
+    #[test]
+    fn a_lying_height_or_capacity_does_not_change_the_served_set_or_order() {
+        let a = peer("bb", "10.0.0.2", 40400);
+        let b = peer("cc", "10.0.0.3", 40400);
+        let honest = vec![
+            answer(&a, "testnet", "/root", true),
+            answer(&b, "testnet", "/root", true),
+        ];
+        let mut lying = honest.clone();
+        if let Some(status) = lying[0].answer.as_mut() {
+            status.latest_block_number = i64::MAX;
+            status.accepts_deploys = true;
+        }
+        if let Some(status) = lying[1].answer.as_mut() {
+            status.latest_block_number = i64::MIN;
+            status.accepts_deploys = false;
+        }
+        assert_eq!(
+            ids(&derive_hostlist(&own(true), &honest, 8)),
+            ids(&derive_hostlist(&own(true), &lying, 8)),
+            "a peer's self-report must not change the served set or its order"
+        );
+    }
+
     /// **Law 90a.** Dropping the `proposer` condition serves an observer that reports
     /// `manualPropose: true` — the exact ambiguity the `proposer` field exists to remove.
     #[test]

@@ -2420,6 +2420,9 @@ fn deploy_relay_from_env(
                 let Some(port) = deploy_relay_port(protocol_port, override_port) else {
                     continue;
                 };
+                // **Offered, then observed.** Both outcomes were discarded before this; the relay is
+                // a copy, so a failure is invisible to the sender and the count is the only trace.
+                rchain_comm::diagnostics::stats().note_relay_offer();
                 let Ok(client) = rchain_casper::protocol::client::GrpcDeployService::connect(
                     &host,
                     port,
@@ -2427,10 +2430,15 @@ fn deploy_relay_from_env(
                 )
                 .await
                 else {
+                    rchain_comm::diagnostics::stats().note_relay_failure();
                     continue;
                 };
-                let _ =
-                    rchain_casper::protocol::client::DeployService::deploy(&client, &deploy).await;
+                if rchain_casper::protocol::client::DeployService::deploy(&client, &deploy)
+                    .await
+                    .is_err()
+                {
+                    rchain_comm::diagnostics::stats().note_relay_failure();
+                }
             }
         });
     }))

@@ -548,6 +548,10 @@ pub async fn apply<F, Fut>(
             settle_block(&disposition, &block, &log, source).await;
             match status {
                 Ok(()) => {
+                    // **The block-age stamp.** Only a new highest height moves it (the cell compares),
+                    // so a same-height sibling or a backfilled block does not make an idle shard look
+                    // live. This is the writer `lastBlockAgeMs` reads.
+                    health.note_block_height(i64::from(block.block_number));
                     // **Awaiting, so a full queue backpressures this processor instead of growing**
                     // (C175). The queue is what the block receiver consumes to advance the round/fringe
                     // state, and the producer here is CPU-bound replay validation — exactly the shape R15

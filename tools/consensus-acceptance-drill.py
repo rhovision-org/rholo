@@ -20,6 +20,22 @@ spec = importlib.util.spec_from_file_location("devnet_fuzz", ROOT / "tools/devne
 fuzz = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fuzz)
 PREFIX = os.environ.get("DEVNET_PREFIX", "acceptance")
+
+# **The readiness vocabulary, mapped back to the verdict names the drill always used.** The node
+# owns the vocabulary (`ready_reasons` in `node/src/diagnostics/health_contract.rs`); this is only
+# the drill's naming of the same four terms, so a new reason a drill does not know surfaces as
+# `FAIL_PRECONDITION_readyReasons` rather than being silently called "not ready".
+def _is_positive(value):
+    """A gate is set for the readiness vocabulary: a positive count, or the boolean `true`."""
+    return value is True or (type(value) is int and value > 0)
+
+
+READY_REASON_VERDICT_NAMES = {
+    "shard_not_running": "shards",
+    "pipeline_fault_outstanding": "pipelineFaultsOutstanding",
+    "proposal_isolated": "proposalHalted",
+    "orphan_body": "orphanBodies",
+}
 trace_spec = importlib.util.spec_from_file_location("causal_trace", ROOT / "tools/consensus-causal-trace.py")
 causal_trace = importlib.util.module_from_spec(trace_spec)
 trace_spec.loader.exec_module(causal_trace)
@@ -113,21 +129,42 @@ class Drill:
         return finalized_identity(get(i, "/api/last-finalized-block", timeout=self.read_timeout()))
 
     def status_row(self, i):
+        """One row from the two bodies the drill already needs, each read from the surface that
+        declares it.
+
+        **The tip is `maxObservedHeight`, not `latestBlockNumber`.** The latter is one past the
+        highest observed height (`DagRepresentation::latest_block_number` returns
+        `max(height_map) + 1`); the diagnostics contract (`docs/src/spec/node-diagnostics.md` §4.1)
+        publishes the actual tip as `maxObservedHeight` and warns that `height` is not it. Using the
+        one-past value as a tip is the seam that made a lag of one look like a lag of two.
+
+        The two calls stay: `ready`/`readyReasons` are health-only by the operator seam test, and the
+        operator-only counters are not on `/health`. What changes is that no value is read twice.
+        """
         operator = get(i, "/api/v1/status/operator", admin=True, timeout=self.read_timeout())
         health = get(i, "/health", timeout=self.read_timeout())
         return {
             "node": i,
+            # Health view: readiness and the progress fence.
+            "diag_version": health.get("diagVersion"),
             "ready": health.get("ready"),
-            "orphan_bodies": health.get("orphanBodies"),
-            "orphan_detections": health.get("orphanDetections"),
-            "pipeline_faults": health.get("pipelineFaults"),
-            "pipeline_faults_outstanding": health.get("pipelineFaultsOutstanding"),
-            "last_pipeline_fault": health.get("lastPipelineFault"),
-            "proposal_halted": health.get("proposalHalted"),
-            "proposal_halt_reason": health.get("proposalHaltReason"),
-            "finality_stalled": health.get("finalityStalled"),
-            "finality_stall_episodes": health.get("finalityStallEpisodes"),
-            "latest": operator.get("latestBlockNumber"),
+            "ready_reasons": health.get("readyReasons"),
+            "tip": health.get("maxObservedHeight"),
+            "height": health.get("height"),
+            "finalized_height": health.get("finalizedHeight"),
+            "finalized_lag": health.get("finalizedLag"),
+            "finalized_height_error": health.get("finalizedHeightError"),
+            # Operator view: the gates the operator route carries, and operator-only state.
+            "orphan_bodies": operator.get("orphanBodies"),
+            "orphan_detections": operator.get("orphanDetections"),
+            "pipeline_faults": operator.get("pipelineFaults"),
+            "pipeline_faults_outstanding": operator.get("pipelineFaultsOutstanding"),
+            "last_pipeline_fault": operator.get("lastPipelineFault"),
+            "proposal_halted": operator.get("proposalHalted"),
+            "proposal_halt_reason": operator.get("proposalHaltReason"),
+            "finality_stalled": operator.get("finalityStalled"),
+            "finality_stall_episodes": operator.get("finalityStallEpisodes"),
+            "latest_block_number": operator.get("latestBlockNumber"),
             "peers": operator.get("peers"),
             "finality_counters_durable": operator.get("finalityCountersDurable"),
             "unrestorable_records": operator.get("unrestorableRecords"),
@@ -139,18 +176,69 @@ class Drill:
     def health_precondition(self, phase="drill"):
         """A node that is not a clean subject is a named precondition, not a timeout.
 
+        **Readiness is the node's answer, not the drill's re-derivation.** `ready` is the
+        four-term conjunction and `readyReasons` is its closed vocabulary
+        (`node/src/diagnostics/health_contract.rs`); the drill maps the code back to the field name
+        it always used in a verdict, so the vocabulary cannot drift from the verdicts.
+
         Fail-closed: a missing counter is unknown, and unknown is not clean.
         """
         rows = [self.status_row(i) for i in range(self.args.validators)]
         for row in rows:
+            reasons = row["ready_reasons"]
+            if not isinstance(reasons, list):
+                raise RuntimeError(
+                    f"FAIL_PRECONDITION_ready: {phase} node {row['node']} "
+                    f"ready={row['ready']!r} readyReasons={reasons!r} "
+                    f"finalizedHeightError={row['finalized_height_error']!r}")
+            # **Cross-checks, not re-derivations.** `ready` and `readyReasons` must agree, the tip
+            # must be `height - 1`, and each reason the node names must match the operator gate it
+            # points at. A mismatch means the diagnostics disagree with themselves; failing here
+            # keeps the drill from trusting either side.
+            if row["ready"] is True and reasons:
+                raise RuntimeError(
+                    f"FAIL_PRECONDITION_readyReasonsInconsistent: {phase} node {row['node']} "
+                    f"ready=true with reasons={reasons!r}")
+            if type(row["tip"]) is int and type(row["height"]) is int and row["height"] > 0:
+                if row["tip"] != row["height"] - 1:
+                    raise RuntimeError(
+                        f"FAIL_PRECONDITION_tipMismatch: {phase} node {row['node']} "
+                        f"maxObservedHeight={row['tip']} height={row['height']}")
+            # The lag is `max(0, tip - fence)`; a literal copied into a test cannot catch a route
+            # that computes it from the one-past `height` instead.
+            if (type(row["tip"]) is int and type(row["finalized_height"]) is int
+                    and type(row["finalized_lag"]) is int
+                    and row["finalized_lag"] != max(0, row["tip"] - row["finalized_height"])):
+                raise RuntimeError(
+                    f"FAIL_PRECONDITION_finalizedLag: {phase} node {row['node']} "
+                    f"finalizedLag={row['finalized_lag']} tip={row['tip']} "
+                    f"finalizedHeight={row['finalized_height']}")
+            for code, value in (
+                ("pipeline_fault_outstanding", row["pipeline_faults_outstanding"]),
+                ("proposal_isolated", row["proposal_halted"]),
+                ("orphan_body", row["orphan_bodies"]),
+            ):
+                if (code in reasons) != _is_positive(value):
+                    raise RuntimeError(
+                        f"FAIL_PRECONDITION_readyReasonsInconsistent: {phase} node {row['node']} "
+                        f"reason {code!r} does not match its operator gate {value!r}")
+            if row["ready"] is not True:
+                if reasons:
+                    name = READY_REASON_VERDICT_NAMES.get(reasons[0], "readyReasons")
+                    raise RuntimeError(
+                        f"FAIL_PRECONDITION_{name}: {phase} node {row['node']} "
+                        f"readyReasons={reasons!r} "
+                        f"lastPipelineFault={row['last_pipeline_fault']!r} "
+                        f"proposalHaltReason={row['proposal_halt_reason']!r}")
+                # False with no reason is the defect the closed vocabulary exists to forbid.
+                raise RuntimeError(
+                    f"FAIL_PRECONDITION_ready: {phase} node {row['node']} "
+                    f"ready=False with an empty readyReasons")
             checks = (
-                ("ready", row["ready"] is True),
-                ("pipelineFaultsOutstanding",
-                 type(row["pipeline_faults_outstanding"]) is int
-                 and row["pipeline_faults_outstanding"] == 0),
-                ("orphanBodies", type(row["orphan_bodies"]) is int and row["orphan_bodies"] == 0),
-                ("proposalHalted", row["proposal_halted"] is False),
+                # Not a readiness term: a stalled subject is still not a clean drill subject.
                 ("finalityStalled", row["finality_stalled"] is False),
+                # The tip is the contract's `maxObservedHeight`; unknown is not zero and not clean.
+                ("tipUnknown", type(row["tip"]) is int),
                 ("unrestorableRecords",
                  type(row["unrestorable_records"]) is int and row["unrestorable_records"] == 0),
                 ("finalityCountersDurable", row["finality_counters_durable"] is True),
@@ -161,6 +249,7 @@ class Drill:
                 if not ok:
                     raise RuntimeError(
                         f"FAIL_PRECONDITION_{name}: {phase} node {row['node']} "
+                        f"tip={row['tip']!r} height={row['height']!r} "
                         f"pipelineFaults={row['pipeline_faults']} "
                         f"lastPipelineFault={row['last_pipeline_fault']!r} "
                         f"finalityStalled={row['finality_stalled']} "

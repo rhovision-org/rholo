@@ -18,6 +18,75 @@ class EvidenceTests(unittest.TestCase):
             drill.get(2, "/api/v1/status/operator", admin=True)
             self.assertEqual(read.call_args.args[0], "http://127.0.0.1:42405/api/v1/status/operator")
 
+    def test_status_row_reads_the_contract_tip_not_the_one_past_height(self):
+        run = drill.Drill(SimpleNamespace(out=".", validators=1, window=30))
+        bodies = {
+            "/api/v1/status/operator": {"latestBlockNumber": 4, "pipelineFaultsOutstanding": 0,
+                                        "orphanBodies": 0, "proposalHalted": False,
+                                        "finalityStalled": False, "unrestorableRecords": 0,
+                                        "finalityCountersDurable": True,
+                                        "resources": {"cgroupOomKills": 0}},
+            "/health": {"maxObservedHeight": 3, "height": 4, "ready": True,
+                        "readyReasons": [], "finalizedHeight": 3, "finalizedLag": 0},
+        }
+        with patch.object(drill, "get", side_effect=lambda i, path, **kw: bodies[path]):
+            row = run.status_row(0)
+        # `latestBlockNumber` is one past the observed height; the tip is `maxObservedHeight`.
+        self.assertEqual(row["latest_block_number"], 4)
+        self.assertEqual(row["height"], 4)
+        self.assertEqual(row["tip"], 3)
+        self.assertEqual(row["finalized_height"], 3)
+        self.assertEqual(row["finalized_lag"], 0)
+
+    def test_an_unknown_tip_is_a_named_precondition_not_zero(self):
+        run = drill.Drill(SimpleNamespace(out=".", validators=1, window=30))
+        operator = {"pipelineFaultsOutstanding": 0, "orphanBodies": 0, "proposalHalted": False,
+                    "finalityStalled": False, "unrestorableRecords": 0,
+                    "finalityCountersDurable": True, "resources": {"cgroupOomKills": 0}}
+        health = {"ready": True, "readyReasons": [], "maxObservedHeight": None, "height": 0}
+        with patch.object(drill, "get",
+                          side_effect=lambda i, path, **kw: operator if "operator" in path else health):
+            with self.assertRaisesRegex(RuntimeError, "FAIL_PRECONDITION_tipUnknown"):
+                run.health_precondition("test")
+
+    def test_a_ready_reason_names_the_precondition(self):
+        run = drill.Drill(SimpleNamespace(out=".", validators=1, window=30))
+        operator = {"pipelineFaultsOutstanding": 0, "orphanBodies": 0, "proposalHalted": False,
+                    "finalityStalled": False, "unrestorableRecords": 0,
+                    "finalityCountersDurable": True, "resources": {"cgroupOomKills": 0}}
+        health = {"ready": False, "readyReasons": ["shard_not_running"],
+                  "maxObservedHeight": 3, "height": 4}
+        with patch.object(drill, "get",
+                          side_effect=lambda i, path, **kw: operator if "operator" in path else health):
+            with self.assertRaisesRegex(RuntimeError, "FAIL_PRECONDITION_shards"):
+                run.health_precondition("test")
+
+    def _precondition(self, health, operator=None):
+        run = drill.Drill(SimpleNamespace(out=".", validators=1, window=30))
+        body = {"pipelineFaultsOutstanding": 0, "orphanBodies": 0, "proposalHalted": False,
+                "finalityStalled": False, "unrestorableRecords": 0,
+                "finalityCountersDurable": True, "resources": {"cgroupOomKills": 0}}
+        body.update(operator or {})
+        with patch.object(drill, "get",
+                          side_effect=lambda i, path, **kw: body if "operator" in path else health):
+            return run.health_precondition("test")
+
+    def test_a_tip_that_is_not_height_minus_one_is_a_precondition(self):
+        with self.assertRaisesRegex(RuntimeError, "FAIL_PRECONDITION_tipMismatch"):
+            self._precondition({"ready": True, "readyReasons": [], "maxObservedHeight": 4,
+                                "height": 4, "finalizedHeight": 3, "finalizedLag": 0})
+
+    def test_a_ready_reason_that_contradicts_a_gate_is_a_precondition(self):
+        with self.assertRaisesRegex(RuntimeError, "FAIL_PRECONDITION_readyReasonsInconsistent"):
+            self._precondition({"ready": False, "readyReasons": ["pipeline_fault_outstanding"],
+                                "maxObservedHeight": 3, "height": 4,
+                                "finalizedHeight": 3, "finalizedLag": 0})
+
+    def test_a_lag_that_disagrees_with_the_fence_is_a_precondition(self):
+        with self.assertRaisesRegex(RuntimeError, "FAIL_PRECONDITION_finalizedLag"):
+            self._precondition({"ready": True, "readyReasons": [], "maxObservedHeight": 3,
+                                "height": 4, "finalizedHeight": 3, "finalizedLag": 1})
+
     def test_before_finalization_is_waiting_but_later_loss_fails(self):
         with TemporaryDirectory() as out:
             run = drill.Drill(SimpleNamespace(out=out, validators=1, window=30))

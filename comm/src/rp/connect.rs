@@ -48,7 +48,13 @@ pub fn add_conn(connections: &[PeerNode], to_be_added: &[PeerNode]) -> Vec<PeerN
         .collect();
     rest.extend(to_be_added.iter().cloned());
     if rest.len() > MAX_CONNECTIONS {
-        rest.drain(..rest.len() - MAX_CONNECTIONS);
+        let evicted = rest.len() - MAX_CONNECTIONS;
+        rest.drain(..evicted);
+        // A deliberately tolerant instrumentation of a pure function: the count is process-wide and
+        // advisory, and a relaxed atomic is cheaper than threading a counter through every caller.
+        for _ in 0..evicted {
+            crate::diagnostics::stats().note_eviction();
+        }
     }
     rest
 }
@@ -105,9 +111,13 @@ pub async fn clear_connections<T: TransportLayer + ?Sized>(
     let mut failed = 0usize;
     for peer in &to_ping {
         let hb = protocol_helper::heartbeat(&conf.local, &conf.network_id);
+        crate::diagnostics::stats().note_heartbeat_ping();
         match transport.send(peer, hb).await {
             Ok(_) => successful.push(peer.clone()),
-            Err(_) => failed += 1,
+            Err(_) => {
+                failed += 1;
+                crate::diagnostics::stats().note_heartbeat_failure();
+            }
         }
     }
     (to_ping, successful, failed)
@@ -140,16 +150,24 @@ pub async fn find_and_connect<T: TransportLayer + ?Sized>(
     // so the number of dials is not the number of connections gained. Whatever a round does not
     // reach is offered to the next one, which runs on `peers_discovery.lookup_interval`.
     let budget = dial_budget(peers.len(), connections.len());
+    let stats = crate::diagnostics::stats();
+    stats.note_connect_round();
     let deadline = std::time::Instant::now() + CONNECT_ROUND_BUDGET;
     let mut result = Vec::new();
+    let mut attempted = 0usize;
     for peer in peers.iter().take(budget) {
         if std::time::Instant::now() >= deadline {
             break;
         }
-        if connect(transport, conf, peer).await.is_ok() {
-            result.push(peer.clone());
+        attempted += 1;
+        stats.note_dial_attempt();
+        match connect(transport, conf, peer).await {
+            Ok(()) => result.push(peer.clone()),
+            Err(_) => stats.note_dial_failure(),
         }
     }
+    // A round cut short by its clock also leaves peers undialled; count them with the room shortfall.
+    stats.note_dial_budget_skipped(peers.len().saturating_sub(attempted));
     result
 }
 

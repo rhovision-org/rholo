@@ -55,6 +55,7 @@ use crate::web::pos_read::PosReadApi;
 use crate::web::reporting::transform_result;
 use crate::web::status_info;
 use crate::web::version_info;
+use rchain_shared::metrics::{Metrics, Source};
 
 /// Rate limit for the devnet faucet endpoint. Much stricter than the deploy route because each
 /// request transfers real (dev) REV.
@@ -783,13 +784,16 @@ async fn api_health(State(state): State<HttpState>) -> Response {
                 None
             };
             let finalized_lag = match (max_observed_height, finalized_height) {
-                (Some(max), Some(fence)) => Some(max - fence),
+                // Saturating: a fence ahead of the observed tip (catch-up, a reorg, a stale read
+                // ordering) is not a negative lag. `0` means "no gap", including at-or-ahead.
+                (Some(max), Some(fence)) => Some(max.saturating_sub(fence)),
                 _ => None,
             };
             (
             StatusCode::OK,
             Json(json!({
                 "diagVersion": crate::diagnostics::health_contract::DIAG_VERSION,
+                "bootId": crate::diagnostics::health_contract::boot_id(),
                 "ok": !blocked,
                 "ready": !blocked,
                 "readyReasons": ready_reasons,
@@ -818,16 +822,38 @@ async fn api_health(State(state): State<HttpState>) -> Response {
                 "pool": status.pool,
                 "finalityStalled": state.peer_liveness.finality_stall_sustained(),
                 "finalityStallEpisodes": state.peer_liveness.stall_episodes(),
+                // **How long since each progress signal last moved.** Null until this shard observes
+                // one, never zero: a fresh node has not observed anything. This is the field that
+                // tells "slow" from "stopped" without a second probe (the §5 gap, closed).
+                "lastBlockAgeMs": state.peer_liveness.block_age_ms(),
+                "lastFinalityAgeMs": state.peer_liveness.finality_age_ms(),
+                // Process scope: the last authenticated peer contact, from `comm`.
+                "lastPeerAgeMs": rchain_comm::diagnostics::peer_contact_age_ms(),
             })),
             )
                 .into_response()
         }
         Err(e) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"ok": false, "ready": false, "phase": "unavailable", "error": e.0})),
+            Json(unavailable_health_body(e.0)),
         )
             .into_response(),
     }
+}
+
+/// **The declared `503` body.** When the status read fails the snapshot cannot be assembled, so the
+/// body is the three fields it can still assert plus the read error — a different shape by
+/// necessity, declared in `UNAVAILABLE_HEALTH_KEYS` and §4.3. Extracted so a test can construct the
+/// arm the fixture's always-`Ok` status cannot reach.
+fn unavailable_health_body(error: String) -> serde_json::Value {
+    json!({"ok": false, "ready": false, "phase": "unavailable", "error": error})
+}
+
+/// A `u64` counter as a metric value, **clamped rather than wrapped**. These counters cannot reach
+/// `i64::MAX`; the clamp is the honest bound, and a silent wrap would publish a negative gauge.
+/// The cast is deliberate and bounded by the `min`.
+fn saturating_i64(value: u64) -> i64 {
+    std::cmp::min(value, i64::MAX as u64) as i64
 }
 
 async fn api_deploy(State(state): State<HttpState>, Json(req): Json<DeployRequest>) -> Response {
@@ -2473,6 +2499,34 @@ pub async fn acquire_http_server(
                             pool.deploys,
                             pool.bytes,
                         );
+                        // **Connection diagnostics** (`comm::diagnostics`). Advisory only: no dial,
+                        // eviction, retrieval or relay decision reads these. `/metrics` is the
+                        // surface because adding them to the operator envelope would move Law 43
+                        // for counters that have no consumer yet.
+                        let conn = rchain_comm::diagnostics::snapshot();
+                        let source = Source::base().sub("connection");
+                        // Counters carry `_total`; the depth is a gauge. The standard's §2 rule 6.
+                        for (name, value) in [
+                            ("connect_rounds_total", conn.connect_rounds),
+                            ("dial_attempts_total", conn.dial_attempts),
+                            ("dial_failures_total", conn.dial_failures),
+                            ("dial_budget_skipped_total", conn.dial_budget_skipped),
+                            ("evictions_total", conn.evictions),
+                            ("heartbeat_pings_total", conn.heartbeat_pings),
+                            ("heartbeat_failures_total", conn.heartbeat_failures),
+                            ("relay_offers_total", conn.relay_offers),
+                            ("relay_failures_total", conn.relay_failures),
+                            ("routing_queue_depth", conn.routing_queue_depth),
+                        ] {
+                            metrics_registry.set_gauge(&source, name, saturating_i64(value));
+                        }
+                        if let Some(age) = conn.peer_contact_age_ms {
+                            metrics_registry.set_gauge(
+                                &source,
+                                "peer_contact_age_ms",
+                                saturating_i64(age),
+                            );
+                        }
                     }
                 }
             }
@@ -2620,7 +2674,8 @@ mod tests {
     use rchain_comm::rp::rp_conf::ClearConnectionsConf;
     use rchain_models::casper::protocol::deploy_service::{BlockInfo, LightBlockInfo};
     use rchain_models::casper::protocol::report::BlockEventInfo;
-    use rchain_shared::metrics::Metrics as _;
+    // `Metrics` is imported at module scope for the connection publisher; `use super::*` brings it
+    // into this module, so a second alias here is an unused import.
     use rchain_shared::store::InMemoryKeyValueStore;
     use rchain_shared::typed_store::{Codec, KeyValueTypedStoreCodec, SharedStore};
     use std::collections::BTreeMap;
@@ -3578,6 +3633,14 @@ mod tests {
             json["diagVersion"],
             crate::diagnostics::health_contract::DIAG_VERSION
         );
+        assert!(
+            json["bootId"].as_str().is_some_and(|id| !id.is_empty()),
+            "a sample must name the process that produced it"
+        );
+        // A fresh cell has observed nothing: null, never zero.
+        assert!(json["lastBlockAgeMs"].is_null());
+        assert!(json["lastFinalityAgeMs"].is_null());
+        assert!(json["lastPeerAgeMs"].is_null() || json["lastPeerAgeMs"].is_number());
         // The fixture has no finalized block, and an unknown fence is null — not zero — with the
         // read error named rather than erased.
         assert!(json["readyReasons"].as_array().unwrap().is_empty());
@@ -3587,6 +3650,26 @@ mod tests {
         // `height` is one past the observed height; the observed height is its own field.
         assert_eq!(json["height"], 4);
         assert_eq!(json["maxObservedHeight"], 3);
+    }
+
+    /// **The `503` arm is a declared shape, and it is constructed here.** The fixture's status is
+    /// always `Ok`, so the route cannot reach the error arm in a request test; this pins the body
+    /// the handler renders, and the disjointness test in the contract pins the rest.
+    #[test]
+    fn the_unavailable_body_matches_its_declared_key_set() {
+        let body = unavailable_health_body("status read failed".to_string());
+        let mut served: Vec<&str> = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        served.sort_unstable();
+        let mut declared = crate::diagnostics::health_contract::UNAVAILABLE_HEALTH_KEYS.to_vec();
+        declared.sort_unstable();
+        assert_eq!(served, declared);
+        assert_eq!(body["error"], "status read failed");
+        assert_eq!(body["ready"], false);
     }
 
     /// **A `ready = false` names its cause** — the boolean is the verdict, `readyReasons` is why.

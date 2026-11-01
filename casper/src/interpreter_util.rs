@@ -246,7 +246,7 @@ const STALL_LOG_INTERVAL: i64 = 100;
 /// writer here is shard-*bearing* and already holds the shard it is validating (`validate_checks` takes
 /// `shard_id`), so a process-wide map would put a lock on the block-validation path to re-derive a key
 /// that was about to be dropped anyway.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ShardHealth {
     /// The last finality verdict this shard observed, for the **machine-readable** surface — C249's
     /// F-U10-01, and the reason this cell is not `LAST_STALL_DESC`.
@@ -305,11 +305,66 @@ pub struct ShardHealth {
     /// store could not be reached, in which case the surface says so rather than letting a restart read
     /// as a shard that never stalled.
     counters_durable: Arc<AtomicBool>,
+    /// **When this shard last observed finality advance**, monotonic nanos since process start; `0`
+    /// means it has not observed one yet. Published as `lastFinalityAgeMs` — the field that tells a
+    /// reader "slow" from "stopped" without a second probe (`node-diagnostics.md` §5).
+    last_advance_at: Arc<AtomicI64>,
+    /// When this shard last observed a **new highest** block height; `0` until one is accepted.
+    last_height_at: Arc<AtomicI64>,
+    /// The highest observed height. `i64::MIN` until one is accepted, so genesis height `0` is an
+    /// observation rather than a sentinel.
+    last_height: Arc<AtomicI64>,
 }
 
 impl ShardHealth {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            current_stall_reason: Arc::new(std::sync::Mutex::new(None)),
+            consecutive_refusals: Arc::new(AtomicU64::new(0)),
+            current_stall_sustained: Arc::new(AtomicBool::new(false)),
+            stall_episodes: Arc::new(AtomicU64::new(0)),
+            non_quiet_merge_reports: Arc::new(AtomicU64::new(0)),
+            unrestorable_records: Arc::new(AtomicU64::new(0)),
+            current_unrestorable: Arc::new(std::sync::Mutex::new(None)),
+            counters_durable: Arc::new(AtomicBool::new(false)),
+            last_advance_at: Arc::new(AtomicI64::new(i64::MIN)),
+            last_height_at: Arc::new(AtomicI64::new(i64::MIN)),
+            last_height: Arc::new(AtomicI64::new(i64::MIN)),
+        }
+    }
+
+    /// **When this shard last observed finality advance**, in milliseconds; `None` until the first
+    /// observation. A fresh `ShardHealth` is therefore `unknown`, never zero — the failure the §5
+    /// gap register names ("distinguishes slow from stopped without a second probe").
+    pub fn finality_age_ms(&self) -> Option<u64> {
+        age_ms(self.last_advance_at.load(Ordering::Relaxed))
+    }
+
+    /// …and when it last observed a new highest block height. `None` until one is accepted.
+    pub fn block_age_ms(&self) -> Option<u64> {
+        age_ms(self.last_height_at.load(Ordering::Relaxed))
+    }
+
+    /// Record an accepted block. The stamp moves only when the height is a **new maximum**: a
+    /// same-height sibling or a backfilled older block is not progress, and re-stamping on those
+    /// would make an idle shard look live.
+    pub fn note_block_height(&self, height: i64) {
+        let mut current = self.last_height.load(Ordering::Relaxed);
+        while height > current {
+            match self.last_height.compare_exchange_weak(
+                current,
+                height,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.last_height_at
+                        .store(rchain_shared::time::nano_time(), Ordering::Relaxed);
+                    break;
+                }
+                Err(actual) => current = actual,
+            }
+        }
     }
 
     /// **Seed the three persisted counters from the shard's own record at boot** (W-N10-02) — the read
@@ -373,6 +428,15 @@ impl ShardHealth {
             None => {
                 self.consecutive_refusals.store(0, Ordering::Relaxed);
                 self.current_stall_sustained.store(false, Ordering::Relaxed);
+                // **`AlreadyPublished` is not an advance.** It shares the `partition == None` arm
+                // (it is neither Coverage nor Support), but the derivation would publish the fringe
+                // that is already finalized — the fence has not moved. Stamping there would make
+                // `lastFinalityAgeMs` reset on a quiet chain, which is exactly the false "healthy"
+                // reading this field exists to prevent.
+                if reason.is_none() {
+                    self.last_advance_at
+                        .store(rchain_shared::time::nano_time(), Ordering::Relaxed);
+                }
             }
             Some(partition) => {
                 let run = self.consecutive_refusals.fetch_add(1, Ordering::Relaxed) + 1;
@@ -479,6 +543,25 @@ impl ShardHealth {
     /// (`false`) — the surface says which rather than implying durability it does not have.
     pub fn counters_durable(&self) -> bool {
         self.counters_durable.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for ShardHealth {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Milliseconds since a monotonic stamp; `None` when the stamp is unset (`0`), **never zero** — a
+/// fresh cell has observed nothing, and "0 ms ago" would be a claim it has not earned.
+fn age_ms(stamp: i64) -> Option<u64> {
+    // `i64::MIN` is the unset sentinel. A real stamp may legitimately be `0` (`nano_time`'s first
+    // reading), and treating that as "never observed" would be the 0/unknown collision the
+    // diagnostics contract forbids.
+    if stamp < 0 {
+        None
+    } else {
+        Some(((rchain_shared::time::nano_time() - stamp).max(0) / 1_000_000) as u64)
     }
 }
 
@@ -1486,6 +1569,51 @@ mod tests {
     /// What it pins, in #318's terms: a single refusal on a producing chain is **pacing**, not a stall —
     /// the derivation advances at least once per round, so a run shorter than twice the partition is
     /// what a healthy net shows and what used to be counted here.
+    #[test]
+    fn a_fresh_cell_has_no_progress_age_and_only_an_advance_stamps_finality() {
+        let health = ShardHealth::new();
+        assert_eq!(health.finality_age_ms(), None);
+        assert_eq!(health.block_age_ms(), None);
+
+        let refusal = NoAdvance::Support {
+            supporting: 100,
+            total: 400,
+            full_partitions: 1,
+            candidates: 1,
+            partition: 4,
+        };
+        health.note_finality_stall(Some(&refusal));
+        assert_eq!(
+            health.finality_age_ms(),
+            None,
+            "a refusal is not an advance and must not stamp"
+        );
+        // **`AlreadyPublished` shares the `partition == None` arm but is not an advance.** If it
+        // stamped, a producing-but-not-finalising chain would report a fresh age — the false
+        // "healthy" reading this field exists to prevent.
+        health.note_finality_stall(Some(&NoAdvance::AlreadyPublished));
+        assert_eq!(
+            health.finality_age_ms(),
+            None,
+            "AlreadyPublished must not stamp the finality age"
+        );
+        health.note_finality_stall(None);
+        assert!(health.finality_age_ms().is_some());
+
+        health.note_block_height(10);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        health.note_block_height(10);
+        assert!(
+            health.block_age_ms().unwrap() >= 10,
+            "a same-height sibling reset the block-age stamp"
+        );
+        health.note_block_height(11);
+        assert!(
+            health.block_age_ms().unwrap() < 20,
+            "a new highest height must reset the block-age stamp"
+        );
+    }
+
     #[test]
     fn a_stall_is_a_run_of_refusals_and_the_run_scales_with_the_partition() {
         // The measurement #318 recorded, as a verdict: one validator's candidate, seen by the whole

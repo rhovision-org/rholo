@@ -996,6 +996,14 @@ mod tests {
         assert_eq!(json["orphanDetections"], 5);
         assert_eq!(json["proposalHalted"], true);
         assert_eq!(json["proposalHaltReason"], "height gap");
+        // The test used to hardcode the seven names, so a constant drift could pass while the
+        // envelope and the declared gate set diverged. Pin the set itself.
+        for key in crate::diagnostics::health_contract::OPERATOR_GATE_KEYS {
+            assert!(
+                json.get(*key).is_some(),
+                "{key} is declared as a gate but the operator envelope omits it"
+            );
+        }
         // **The seam is the opposite claim, and it is tested too.** The operator envelope is a
         // superset of `PublicStatus`, not of `/health`: the health-only diagnostic fields are not
         // here, and this asserts the documented difference rather than a superset that does not
