@@ -66,8 +66,8 @@ def verify_isolated_tip_dwell(victim, observations, *, max_extra_samples=30):
     def stable():
         last = observations[-DWELL_MIN_SAMPLES:]
         return (len(last) == DWELL_MIN_SAMPLES and
-                all(type(x.get("latest")) is int for x in last) and
-                len({x["latest"] for x in last}) == 1)
+                all(type(x.get("tip")) is int for x in last) and
+                len({x["tip"] for x in last}) == 1)
 
     for _ in range(max_extra_samples + 1):
         if stable():
@@ -79,7 +79,7 @@ def verify_isolated_tip_dwell(victim, observations, *, max_extra_samples=30):
             sample = victim_sample(victim)
             if sample.get("autopropose") is not False:
                 raise AssertionError("isolated victim began proposing")
-            observations.append({"latest": sample["latest"], "peers": sample["peers"],
+            observations.append({"tip": sample["tip"], "peers": sample["peers"],
                                  "finalized_height": sample["finalized_height"]})
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             observations.append({"error": repr(error)})
@@ -122,12 +122,17 @@ def victim_sample(node):
     operator = container_get(node, "/api/v1/status/operator", admin=True)
     height, block_hash = a.finalized_identity(container_get(node, "/api/last-finalized-block"))
     return {
-        "latest": status.get("latestBlockNumber"),
+        # The contract's tip: `maxObservedHeight` (`height - 1`), not `latestBlockNumber`, which is
+        # one past the highest observed height (`node-diagnostics.md` §4.1).
+        "tip": health.get("maxObservedHeight"),
+        "height": health.get("height"),
         "autopropose": status.get("autopropose"),
         "peers": operator.get("peers"),
         "finalized_height": height,
         "finalized_hash": block_hash,
         "ready": health.get("ready"),
+        "ready_reasons": health.get("readyReasons"),
+        "finalized_lag": health.get("finalizedLag"),
         "finality_stalled": health.get("finalityStalled"),
         "unrestorable_records": operator.get("unrestorableRecords"),
         "cgroup_oom_kills": (operator.get("resources") or {}).get("cgroupOomKills"),
@@ -329,7 +334,7 @@ def anchor_agreement(d, anchor, victim=None):
     victim = d.args.validators - 1 if victim is None else victim
     statuses = [d.status_row(i) for i in range(d.args.validators)]
     victim_row = statuses[victim]
-    d.note_healing_sample({"victim_height": victim_row["latest"],
+    d.note_healing_sample({"victim_height": victim_row["tip"],
                            "victim_peers": victim_row["peers"],
                            "victim_undelivered": victim_row["undelivered_sends"],
                            "victim_finalized": None,
@@ -372,7 +377,7 @@ def anchor_agreement(d, anchor, victim=None):
         victim_height, victim_hash = d.finalized_head(victim)
     except (OSError, ValueError):
         victim_height, victim_hash = None, None
-    d.note_healing_sample({"victim_height": victim_row["latest"],
+    d.note_healing_sample({"victim_height": victim_row["tip"],
                            "victim_peers": victim_row["peers"],
                            "victim_undelivered": victim_row["undelivered_sends"],
                            "victim_finalized": victim_height,
@@ -593,7 +598,7 @@ def main():
                     d.record_online_finality(identities, time.monotonic())
                     try:
                         sample=victim_sample(victim)
-                        frozen.append({"latest": sample["latest"], "peers": sample["peers"],
+                        frozen.append({"tip": sample["tip"], "peers": sample["peers"],
                                        "finalized_height": sample["finalized_height"]})
                     except (OSError, ValueError, subprocess.SubprocessError) as error:
                         frozen.append({"error": repr(error)})

@@ -146,6 +146,11 @@ pub async fn handle<T: TransportLayer + ?Sized>(
         INBOUND,
         &format!("Received {} from {}", message_name(&proto), sender.id),
     );
+    // **Contact is an authenticated, same-network message — not a table entry.** `lastPeerAgeMs`
+    // reads this stamp; a row in `PeerTable` and a row in the connection table are both memory.
+    if check_peer_on_same_network(conf, &sender) {
+        crate::diagnostics::stats().note_peer_contact();
+    }
     match proto.message {
         Some(protocol::Message::Heartbeat(_)) => {
             // A receiver can restart while its peers still consider the old connection live.
@@ -185,6 +190,11 @@ pub async fn handle<T: TransportLayer + ?Sized>(
             // handshake path's outbound send) inside the RPC handler's critical path. What a packet
             // needs is not to be lost; what an ack means for every other message on this path is
             // "taken into the pipeline", and that is what it still means.
+            // **Sampled before the send**: the occupancy the packet is about to join, including a
+            // full queue. Sampling after a successful send cannot see saturation — it sees the
+            // queue that just drained.
+            crate::diagnostics::stats()
+                .set_routing_queue_depth(crate::diagnostics::queue_depth(routing_queue));
             match routing_queue
                 .send(RoutingMessage {
                     peer: sender.clone(),

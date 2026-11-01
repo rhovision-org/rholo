@@ -7,6 +7,79 @@ ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location("partition",ROOT/"tests/consensus-partition-rejoin.py")
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
+class ConsumerContractTests(unittest.TestCase):
+    """**The harness may only read declared fields.**
+
+    A rename in the diagnostics contract should fail this suite, not a live acceptance run. The
+    health side is checked against `PUBLIC_HEALTH_KEYS`; the operator side against
+    `OPERATOR_GATE_KEYS` plus the operator-only state the harness legitimately needs; the public
+    status side is restricted to `autopropose` (the only field it is for, now that the tip comes from
+    `/health`).
+    """
+
+    HARNESS = [
+        ROOT / "tools/consensus-acceptance-drill.py",
+        ROOT / "tests/consensus-partition-rejoin.py",
+        # The other live /health consumers in the tree; a rename must fail this suite for them too.
+        ROOT / "tests/consensus-quiet-finality.py",
+    ]
+    OPERATOR_ONLY = {
+        "latestBlockNumber", "peers", "finalityCountersDurable", "unrestorableRecords",
+        "unrestorableBlock", "undeliveredSends", "resources", "cgroupOomKills",
+        # Published on the operator surface beside the gates, but not readiness terms.
+        "finalityStalled", "finalityStallEpisodes",
+    }
+    # `autopropose` is the mode flag; `shardId` and `latestBlockNumber` are what the deploy CLI
+    # needs (`--shard-id`, `--valid-after-block-number`), not a tip reading.
+    PUBLIC_STATUS_FIELDS = {"autopropose", "latestBlockNumber", "shardId"}
+
+    def declared(self):
+        import re
+        source = (ROOT / "node/src/diagnostics/health_contract.rs").read_text()
+
+        def names(constant):
+            match = re.search(rf"pub const {constant}: &\[&str\] = &\[(.*?)\];", source, re.S)
+            self.assertIsNotNone(match, constant)
+            return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+        return names("PUBLIC_HEALTH_KEYS"), names("OPERATOR_GATE_KEYS")
+
+    def reads(self, receiver):
+        import re
+        found = set()
+        for path in self.HARNESS:
+            text = path.read_text()
+            found.update(re.findall(rf'{receiver}\.get\("([^"]+)"\)', text))
+            # A subscript read is the same claim as `.get`; the first version of this scan missed
+            # `status["latestBlockNumber"]` and gave false assurance.
+            found.update(re.findall(rf'{receiver}\["([^"]+)"\]', text))
+        return found
+
+    def test_every_health_field_the_harness_reads_is_declared(self):
+        public, _ = self.declared()
+        self.assertTrue(self.reads("health"), "the scan must not be vacuous")
+        self.assertEqual(self.reads("health") - public, set())
+
+    def test_every_operator_field_the_harness_reads_is_declared_or_operator_only(self):
+        _, gates = self.declared()
+        self.assertTrue(self.reads("operator"))
+        self.assertEqual(self.reads("operator") - gates - self.OPERATOR_ONLY, set())
+
+    def test_the_public_status_read_is_only_the_mode_flag(self):
+        self.assertEqual(self.reads("status") - self.PUBLIC_STATUS_FIELDS, set())
+
+    def test_the_harness_readiness_vocabulary_is_the_nodes(self):
+        """The drill maps the node's codes to its own verdict names; the two sets must be equal."""
+        import re
+        rust = (ROOT / "node/src/diagnostics/health_contract.rs").read_text()
+        body = rust.split("pub fn ready_reasons", 1)[1].split("\n}", 1)[0]
+        codes = set(re.findall(r'reasons\.push\("([^"]+)"\)', body))
+        py = (ROOT / "tools/consensus-acceptance-drill.py").read_text()
+        block = py.split("READY_REASON_VERDICT_NAMES = {", 1)[1].split("}", 1)[0]
+        names = set(re.findall(r'"([^"]+)":', block))
+        self.assertEqual(names, codes, "the drill's readiness vocabulary drifted from the node's")
+
+
 class RecoveryHarnessTests(unittest.TestCase):
     def fixture(self):
         return {"Mounts":[
@@ -33,7 +106,8 @@ def healthy_status(node):
         "pipeline_faults": 0, "pipeline_faults_outstanding": 0,
         "last_pipeline_fault": None, "proposal_halted": False,
         "proposal_halt_reason": None, "finality_stalled": False,
-        "finality_stall_episodes": 0, "latest": 70, "peers": 7,
+        "finality_stall_episodes": 0, "tip": 69, "height": 70,
+        "ready_reasons": [], "finalized_height": 70, "finalized_lag": 0, "peers": 7,
         "finality_counters_durable": True, "unrestorable_records": 0,
         "unrestorable_block": None, "undelivered_sends": 0, "cgroup_oom_kills": 0,
     }
@@ -357,22 +431,22 @@ class HealingWindowTests(unittest.TestCase):
 
     def test_queued_pre_cut_blocks_must_finish_before_stable_dwell(self):
         from unittest.mock import patch
-        observations=[{"latest": 32}, {"latest": 33}, {"latest": 34}]
+        observations=[{"tip": 32}, {"tip": 33}, {"tip": 34}]
         states=iter([
-            {"latest": 35, "peers": 1, "finalized_height": 25, "autopropose": False},
-            {"latest": 35, "peers": 1, "finalized_height": 25, "autopropose": False},
-            {"latest": 35, "peers": 1, "finalized_height": 25, "autopropose": False},
+            {"tip": 35, "peers": 1, "finalized_height": 25, "autopropose": False},
+            {"tip": 35, "peers": 1, "finalized_height": 25, "autopropose": False},
+            {"tip": 35, "peers": 1, "finalized_height": 25, "autopropose": False},
         ])
         with patch.object(m, "victim_sample", side_effect=lambda victim: next(states)), \
              patch.object(m.time, "sleep") as pause:
             self.assertTrue(m.verify_isolated_tip_dwell("acceptance-validator-7",observations,max_extra_samples=3))
         self.assertEqual(pause.call_count,3)
-        self.assertEqual([x["latest"] for x in observations[-3:]],[35]*3)
+        self.assertEqual([x["tip"] for x in observations[-3:]],[35]*3)
 
     def test_moving_or_unobservable_victim_never_passes(self):
         from unittest.mock import patch
-        observations=[{"latest": 32}, {"latest": 33}, {"latest": 34}]
-        state=iter([{"latest": i, "peers": 1, "finalized_height": 25, "autopropose": False}
+        observations=[{"tip": 32}, {"tip": 33}, {"tip": 34}]
+        state=iter([{"tip": i, "peers": 1, "finalized_height": 25, "autopropose": False}
                     for i in (35,36,37)])
         with patch.object(m, "victim_sample", side_effect=lambda victim: next(state)), \
              patch.object(m.time, "sleep"):
@@ -490,8 +564,8 @@ class PartitionFailureEvidenceTests(unittest.TestCase):
             def command(*args):
                 return "{}" if "-f" in args else json.dumps([mount])
             clock=itertools.count()
-            sample={"latest":10,"autopropose":False,"peers":0,"finalized_height":9,
-                    "finalized_hash":"c"*64}
+            sample={"tip":10,"height":11,"autopropose":False,"peers":0,"finalized_height":9,
+                    "finalized_hash":"c"*64,"ready":True,"ready_reasons":[]}
             with patch.dict(m.os.environ,{"GITHUB_ACTIONS":"true","RUNNER_ENVIRONMENT":"github-hosted",
                                           "DEVNET_PREFIX":"acceptance"}), \
                  patch("sys.argv",["partition","--validators","4","--out",directory]), \

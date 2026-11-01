@@ -9,6 +9,7 @@
 //! discovery protocol is implemented in `upnp` (`gateway.rs`: SSDP M-SEARCH, device-description
 //! fetch, and SOAP port-forwarding).
 
+pub mod diagnostics;
 pub mod discovery;
 pub mod errors;
 pub mod peer_node;

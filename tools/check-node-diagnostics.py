@@ -32,8 +32,8 @@ PAGE = ROOT / "docs/src/spec/node-diagnostics.md"
 CONTRACT = ROOT / "node/src/diagnostics/health_contract.rs"
 
 FIELDS_HEADER = ("| field | group | type | regime | scope | freshness | invariant |",)
-REQUIRED_SECTIONS = ("## 2. The rules", "## 4. The field standard", "## 5. The gap register",
-                     "## 7. Non-claims")
+REQUIRED_SECTIONS = ("## 2. The rules", "## 4. The field standard",
+                     "### 4.3 The unavailable body", "## 5. The gap register", "## 7. Non-claims")
 REGIMES = {"G", "C", "A", "L"}
 SCOPES = {"S", "P", "N", "H"}
 
@@ -113,6 +113,27 @@ def main() -> int:
     for name in rust_keys(contract, "OPERATOR_GATE_KEYS"):
         if name not in page:
             problems.append(f"{name}: an operator gate the page never names")
+
+    for name in rust_keys(contract, "UNAVAILABLE_HEALTH_KEYS"):
+        if name not in page:
+            problems.append(f"{name}: in the 503 body but the page never names it")
+
+    # **The advisory fence, checked at the source.** Connection diagnostics are observation only;
+    # a consensus-path module naming them would be the first step to a peer/connection value
+    # becoming an input to validity or finality. The list is the call graph a review must extend.
+    for rel in (
+        "casper/src/validate.rs",
+        "casper/src/merging.rs",
+        "casper/src/interpreter_util.rs",
+        "casper/src/multi_parent_casper.rs",
+        "casper/src/blocks/proposer/proposer.rs",
+        "block-storage/src/dag/finalizer.rs",
+        "rholang/src/native_state.rs",
+    ):
+        text = (ROOT / rel).read_text()
+        for needle in ("rchain_comm::diagnostics", "ConnectionStats"):
+            if needle in text:
+                problems.append(f"{rel}: names {needle}; connection diagnostics must stay advisory")
 
     print(f"check-node-diagnostics: {len(rows)} field(s), {len(declared)} declared public key(s), "
           f"{len(problems)} violation(s)")

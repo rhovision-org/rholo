@@ -27,10 +27,27 @@
 /// the fields it knew, with their old names and types.
 pub const DIAG_VERSION: u32 = 2;
 
+/// **The process's own identity**, stable within a process and different after a restart.
+///
+/// Every counter on the surface says "since process start"; this is the field that lets a reader
+/// tie a sample to the process that produced it, instead of inferring an epoch from prose. It is
+/// not a security token and is not authenticated — it exists for correlation.
+pub fn boot_id() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| {
+        format!(
+            "{}-{}",
+            std::process::id(),
+            rchain_shared::time::current_millis()
+        )
+    })
+}
+
 /// **The exact key set of `GET /health`.** Kept sorted so the comparison in the route's test has no
 /// ordering to argue about.
 pub const PUBLIC_HEALTH_KEYS: &[&str] = &[
     "acceptsDeploys",
+    "bootId",
     "degraded",
     "diagVersion",
     "finalityStallEpisodes",
@@ -39,6 +56,9 @@ pub const PUBLIC_HEALTH_KEYS: &[&str] = &[
     "finalizedHeightError",
     "finalizedLag",
     "height",
+    "lastBlockAgeMs",
+    "lastFinalityAgeMs",
+    "lastPeerAgeMs",
     "lastPipelineFault",
     "maxObservedHeight",
     "nodePhase",
@@ -55,6 +75,13 @@ pub const PUBLIC_HEALTH_KEYS: &[&str] = &[
     "readyReasons",
     "shardPhases",
 ];
+
+/// **The shape of the `503` body.** When the status read fails, `/health` cannot assemble the
+/// snapshot and answers `{ok:false, ready:false, phase:"unavailable", error}`. That is a **different
+/// key set**, and it is the one deliberate exception to rule 1: the snapshot is the thing that could
+/// not be produced. Declared here so a reader — and the checker — can tell the exception from drift.
+/// Sorted.
+pub const UNAVAILABLE_HEALTH_KEYS: &[&str] = &["error", "ok", "phase", "ready"];
 
 /// **The process gates an operator surface must carry.** These are the fields that decide
 /// `ready`; publishing them only on the public route made the admin route unable to explain a
@@ -129,6 +156,31 @@ mod tests {
                 "{key} is an operator gate but not a /health field; the two surfaces disagree"
             );
         }
+    }
+
+    #[test]
+    fn the_unavailable_contract_is_sorted_and_adds_only_the_error() {
+        let mut sorted = UNAVAILABLE_HEALTH_KEYS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted, UNAVAILABLE_HEALTH_KEYS);
+        // The 503 body keeps the three fields it can still assert and adds `error`; everything
+        // else is absent because the snapshot could not be assembled.
+        let extra: Vec<&&str> = UNAVAILABLE_HEALTH_KEYS
+            .iter()
+            .filter(|key| !PUBLIC_HEALTH_KEYS.contains(key))
+            .collect();
+        assert_eq!(extra, vec![&"error"]);
+    }
+
+    #[test]
+    fn the_boot_id_is_stable_within_a_process() {
+        assert!(!boot_id().is_empty());
+        assert_eq!(
+            boot_id(),
+            boot_id(),
+            "a sample must name one process consistently"
+        );
     }
 
     #[test]
