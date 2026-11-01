@@ -334,6 +334,7 @@ const V3_MIGRATION_COMPLETE: &[u8] = b"complete-v1";
 /// The old DB remains untouched. This cannot reconstruct metadata discarded by an earlier v4 boot.
 pub async fn open_block_disposition_store(
     manager: &rchain_shared::lmdb::LmdbDirStoreManager,
+    dag: &Arc<dyn BlockDagStorage>,
 ) -> Result<BlockDispositionStore, String> {
     use crate::storage::{BLOCK_DISPOSITION_DB, LEGACY_BLOCK_DISPOSITION_DB, RESET_MARKER_DB};
     let ledger = BlockDispositionStore::from_store(Arc::new(
@@ -345,6 +346,15 @@ pub async fn open_block_disposition_store(
         )
         .await?,
     ));
+    // A durable DAG verdict supersedes either ledger. A previous v4 boot may have settled a
+    // legacy obligation before this migration existed, or crashed before deleting its active row.
+    // Reconcile before the completion fast path and before the caller seeds outstanding faults.
+    let repr = dag.get_representation().await;
+    for hash in ledger.store.keys().await? {
+        if repr.contains(&hash) {
+            ledger.settle(hash).await?;
+        }
+    }
     let completion = database(
         manager,
         RESET_MARKER_DB,
@@ -380,6 +390,9 @@ pub async fn open_block_disposition_store(
     .await?;
     // Walk keys, then decode one disposition at a time; never decode/copy the block bodies.
     for hash in legacy.keys().await? {
+        if repr.contains(&hash) || ledger.get(&hash).await?.is_some() {
+            continue;
+        }
         let row = legacy
             .get(&[hash])
             .await
@@ -395,10 +408,8 @@ pub async fn open_block_disposition_store(
         BlockDispositionCodec
             .decode(&row)
             .map_err(|e| format!("v3 disposition migration {}: {e}", hash.to_hex()))?;
-        if ledger.get(&hash).await?.is_none() {
-            // Retain the exact bytes too; re-encoding must not trim a historical diagnostic.
-            target_bytes.put(&[(hash, row)]).await?;
-        }
+        // Retain the exact bytes too; re-encoding must not trim a historical diagnostic.
+        target_bytes.put(&[(hash, row)]).await?;
     }
     completion
         .put(&[(V3_MIGRATION_KEY.to_vec(), V3_MIGRATION_COMPLETE.to_vec())])
@@ -1800,7 +1811,7 @@ mod tests {
         }
 
         let manager = rchain_shared::lmdb::LmdbDirStoreManager::new(&dir, fixture_mapping(false));
-        let ledger = open_block_disposition_store(&manager)
+        let ledger = open_block_disposition_store(&manager, &empty_dag().await)
             .await
             .expect("open v4 ledger");
         let bodies = block_store::create(&manager).await.expect("reopen bodies");
@@ -1833,7 +1844,7 @@ mod tests {
         drop(bodies);
         drop(manager);
         let manager = rchain_shared::lmdb::LmdbDirStoreManager::new(&dir, fixture_mapping(false));
-        let reopened = open_block_disposition_store(&manager)
+        let reopened = open_block_disposition_store(&manager, &empty_dag().await)
             .await
             .expect("restart");
         assert_eq!(
@@ -1841,6 +1852,118 @@ mod tests {
             None,
             "restart must not resurrect a settled legacy fault"
         );
+    }
+
+    async fn persisted_fixture_dag(
+        manager: &rchain_shared::lmdb::LmdbDirStoreManager,
+    ) -> Arc<dyn BlockDagStorage> {
+        let metadata = Arc::new(
+            CasperMetadataStore::create(Arc::new(
+                database(
+                    manager,
+                    "block-metadata",
+                    Arc::new(BlockHashCodec),
+                    Arc::new(BlockMetadataCodec),
+                )
+                .await
+                .unwrap(),
+            ))
+            .await
+            .unwrap(),
+        );
+        let deploy_index: Arc<dyn KeyValueTypedStore<DeployId, BlockHash>> = Arc::new(
+            database(
+                manager,
+                "deploy-index",
+                Arc::new(BytesCodec),
+                Arc::new(BlockHashCodec),
+            )
+            .await
+            .unwrap(),
+        );
+        let deploy_store: Arc<dyn KeyValueTypedStore<DeployId, SignedDeployData>> = Arc::new(
+            database(
+                manager,
+                "deploy-pool",
+                Arc::new(BytesCodec),
+                Arc::new(SignedDeployDataCodec),
+            )
+            .await
+            .unwrap(),
+        );
+        Arc::new(
+            BlockDagKeyValueStorage::create(metadata, deploy_index, deploy_store)
+                .await
+                .unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn v3_copy_never_revives_a_durable_accepted_or_refused_verdict() {
+        for refused in [false, true] {
+            for active_stale_row in [false, true] {
+                let (dir, historical) = v3_upgrade_fixture();
+                let block = sample_block(hash(95));
+                {
+                    let manager =
+                        rchain_shared::lmdb::LmdbDirStoreManager::new(&dir, fixture_mapping(true));
+                    let legacy =
+                        fixture_dispositions(&manager, crate::storage::BLOCK_DISPOSITION_DB).await;
+                    legacy
+                        .put(&[(block.block_hash, historical.clone())])
+                        .await
+                        .unwrap();
+                    let blocks = block_store::create(&manager).await.unwrap();
+                    blocks
+                        .put(&[(block.block_hash, block.clone())])
+                        .await
+                        .unwrap();
+                    let dag = persisted_fixture_dag(&manager).await;
+                    let mut metadata =
+                        rchain_models::block_metadata::BlockMetadata::from_block(&block);
+                    metadata.validated = true;
+                    metadata.validation_failed = refused;
+                    dag.insert(metadata, block.clone()).await.unwrap();
+                }
+                let manager =
+                    rchain_shared::lmdb::LmdbDirStoreManager::new(&dir, fixture_mapping(false));
+                if active_stale_row {
+                    fixture_dispositions(&manager, crate::storage::BLOCK_DISPOSITION_DB)
+                        .await
+                        .put(&[(block.block_hash, historical.clone())])
+                        .await
+                        .unwrap();
+                }
+                let dag = persisted_fixture_dag(&manager).await;
+                assert!(dag.get_representation().await.contains(&block.block_hash));
+                let ledger = open_block_disposition_store(&manager, &dag).await.unwrap();
+                assert!(
+                    ledger.unsettled().await.unwrap().is_empty(),
+                    "a durable verdict must not become an outstanding legacy fault"
+                );
+                let blocks = block_store::create(&manager).await.unwrap();
+                let (tx, _rx) = mpsc::channel(1);
+                let log: Arc<dyn Log> = Arc::new(rchain_shared::log::NopLog);
+                let report = reoffer_unsettled(ledger.clone(), blocks, dag.clone(), tx, log)
+                    .await
+                    .unwrap();
+                assert_eq!(report.quarantined, 0);
+                // Completion does not excuse a stale active row left after a later verdict.
+                ledger
+                    .mark_terminal_fault(block.block_hash, block.block_number, "stale", "settled")
+                    .await
+                    .unwrap();
+                let reopened = open_block_disposition_store(&manager, &dag).await.unwrap();
+                assert!(reopened.unsettled().await.unwrap().is_empty());
+                let source =
+                    fixture_dispositions(&manager, crate::storage::LEGACY_BLOCK_DISPOSITION_DB)
+                        .await;
+                assert_eq!(
+                    source.get(&[block.block_hash]).await.unwrap(),
+                    vec![Some(historical)]
+                );
+            }
+        }
     }
 
     #[tokio::test]
@@ -1872,7 +1995,7 @@ mod tests {
         // A durable prefix/newer v4 processing exists, but completion was never committed.
         let current = fixture_dispositions(&manager, BLOCK_DISPOSITION_DB).await;
         current.put(&[(hash(93), newer.clone())]).await.unwrap();
-        let ledger = open_block_disposition_store(&manager)
+        let ledger = open_block_disposition_store(&manager, &empty_dag().await)
             .await
             .expect("resume copy");
         assert_eq!(ledger.get(&hash(92)).await.unwrap(), Some(pending));
@@ -1898,7 +2021,7 @@ mod tests {
             .put(vec![(BlockHashCodec.encode(&hash(101)), vec![255])])
             .unwrap();
 
-        let error = match open_block_disposition_store(&manager).await {
+        let error = match open_block_disposition_store(&manager, &empty_dag().await).await {
             Ok(_) => panic!("a corrupt historical row must refuse startup"),
             Err(error) => error,
         };
@@ -1924,7 +2047,7 @@ mod tests {
         );
         // Repair only the injected fixture corruption; restarting must retain the prefix.
         legacy.put(&[(hash(101), expected.clone())]).await.unwrap();
-        let ledger = open_block_disposition_store(&manager)
+        let ledger = open_block_disposition_store(&manager, &empty_dag().await)
             .await
             .expect("retry migration");
         assert_eq!(
@@ -1948,7 +2071,7 @@ mod tests {
             .put(&[(block.block_hash, block.clone())])
             .await
             .unwrap();
-        let ledger = open_block_disposition_store(&manager)
+        let ledger = open_block_disposition_store(&manager, &empty_dag().await)
             .await
             .expect("pre-ledger upgrade");
         assert_eq!(ledger.get(&block.block_hash).await.unwrap(), None);
@@ -1998,7 +2121,7 @@ mod tests {
                 ).await;
                 legacy.put(&[(hash(103), fault.clone()), (hash(104), pending.clone())])
                     .await.unwrap();
-                let ledger = open_block_disposition_store(&manager).await.unwrap();
+                let ledger = open_block_disposition_store(&manager, &empty_dag().await).await.unwrap();
                 (ledger.get(&hash(103)).await.unwrap(), ledger.get(&hash(104)).await.unwrap())
             });
             proptest::prop_assert_eq!(actual, (Some(fault), Some(pending)));
@@ -2394,7 +2517,8 @@ mod tests {
     #[tokio::test]
     async fn equal_store_and_dag_counts_do_not_hide_a_different_unowned_body() {
         let stored = sample_block(hash(32));
-        let other = sample_block(hash(33));
+        let mut other = sample_block(hash(33));
+        other.sender = Validator::new([0x22; 65]);
         let blocks = block_store_with(&stored).await;
         let ledger = store().await;
         let dag = empty_dag().await;

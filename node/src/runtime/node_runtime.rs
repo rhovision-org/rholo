@@ -2570,9 +2570,24 @@ pub async fn setup_shard(
         )
         .await?,
     );
+    let dag_kv = Arc::new(
+        BlockDagKeyValueStorage::create(block_metadata_store, deploy_index, deploy_store)
+            .await
+            .map_err(|e| e.to_string())?
+            // The shard's DAG publishes its gauges into the node's registry (`/metrics`).
+            .with_metrics(metrics)
+            // `0` (the default, and the only value a non-dev node can hold — see
+            // `check_merge_divergence_injection`) injects nothing.
+            .with_merge_divergence_injection(conf.casper.merge_divergence_injection)
+            .with_deployer_index(deployer_index)
+            .await?
+            .with_reset_marker(reset_marker),
+    );
+    let block_dag_storage: Arc<dyn BlockDagStorage> = dag_kv.clone();
+
     // **Every stored body this shard still owes an outcome** (U19). Written before dependency
     // resolution and settled by the processor on either verdict; only faults survive.
-    let block_disposition = open_block_disposition_store(&store_manager)
+    let block_disposition = open_block_disposition_store(&store_manager, &block_dag_storage)
         .await
         .map_err(|e| format!("cannot open/migrate the block disposition ledger: {e}"))?;
     // Seed the outstanding-fault latch from the migrated durable ledger before admission.
@@ -2591,20 +2606,6 @@ pub async fn setup_shard(
             );
         }
     }
-    let dag_kv = Arc::new(
-        BlockDagKeyValueStorage::create(block_metadata_store, deploy_index, deploy_store)
-            .await
-            .map_err(|e| e.to_string())?
-            // The shard's DAG publishes its gauges into the node's registry (`/metrics`).
-            .with_metrics(metrics)
-            // `0` (the default, and the only value a non-dev node can hold — see
-            // `check_merge_divergence_injection`) injects nothing.
-            .with_merge_divergence_injection(conf.casper.merge_divergence_injection)
-            .with_deployer_index(deployer_index)
-            .await?
-            .with_reset_marker(reset_marker),
-    );
-    let block_dag_storage: Arc<dyn BlockDagStorage> = dag_kv.clone();
 
     // Runtime manager (play + replay runtimes + mergeable store). The configured effect-scheduler
     // mode (Laws 20–22) applies to the play runtime and is recorded on the manager for the

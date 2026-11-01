@@ -12119,7 +12119,9 @@ stage, reason, both timestamps and retry history disappear. The
 
 **Fixed.** open_block_disposition_store reads the historical physical database through an alias in
 the existing manager, validates and copies each missing row byte for byte, and runs before ingestion
-starts. Existing v4 rows remain authoritative. A dedicated key in the existing control-record
+starts. Existing unsettled v4 rows remain authoritative; durable DAG verdicts supersede either
+ledger before outstanding faults are seeded, including when a prior v4 boot already settled a
+legacy row. Accepted/refused LMDB restart controls cover both stale source and active rows. A dedicated key in the existing control-record
 database certifies completion only after every target write succeeds. An interrupted copy resumes
 from its durable prefix; a later restart cannot resurrect a disposition that processing settled.
 The source rows are retained, and a decode/write failure refuses initialization.
@@ -12171,3 +12173,11 @@ Pending/Faulted ownership and distinguish rotating bodies from persistent identi
 and measurement; it does not certify mainnet readiness, manufacture the missing 840/841 Root.keys
 input, refresh a release-binary census from a different executable, or replace the migration,
 off-host, physical-failure and governance acceptance records required by #520/#522/#428.
+
+**Bounded N8 witness for §152.** [Run 41310750609](evidence/rejoin-acceptance-20261031/run-41310750609.json)
+passed both rotated same-volume partition/rejoin cycles at source eb57ad608d and binary
+317d920c4f368d2cc37bc699674534e1a43a9ca304a6252dae39f39961babd97. The isolated
+finalized ranges were (27,36] and (44,52]; both cross an epoch-length-10 boundary. This is a
+local-devnet witness for that pin, before the later settled-ledger guard; it does not close the
+mainnet release gates or certify later source changes. The record retains the source, binary,
+artifact digest/expiry and raw partition-result digest.
