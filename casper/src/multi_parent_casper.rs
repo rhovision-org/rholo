@@ -545,6 +545,19 @@ where
             + conflict_merge.report.rejected_chains,
         final_scope_rejected_chains: fringe_merge.report.final_scope_rejected_chains
             + conflict_merge.report.final_scope_rejected_chains,
+        final_scope_rejected_deploys: {
+            let mut ids = fringe_merge.report.final_scope_rejected_deploys.clone();
+            ids.extend(
+                conflict_merge
+                    .report
+                    .final_scope_rejected_deploys
+                    .iter()
+                    .cloned(),
+            );
+            ids.sort_unstable();
+            ids.dedup();
+            ids
+        },
         dropped_native_slots: fringe_merge
             .report
             .dropped_native_slots
@@ -568,7 +581,35 @@ where
             .chain(conflict_merge.report.unapplied_kept_writes.iter())
             .copied()
             .collect(),
-        native_writer_of_slot: conflict_merge.report.native_writer_of_slot.clone(),
+        // I2's tuple-space half (M5-06), aggregated the same way as the native half.
+        unapplied_kept_datums: {
+            let mut channels = fringe_merge.report.unapplied_kept_datums.clone();
+            channels.extend(conflict_merge.report.unapplied_kept_datums.iter().copied());
+            channels.sort_unstable();
+            channels.dedup();
+            channels
+        },
+        unapplied_kept_konts: {
+            let mut channels = fringe_merge.report.unapplied_kept_konts.clone();
+            channels.extend(conflict_merge.report.unapplied_kept_konts.iter().cloned());
+            channels.sort_unstable();
+            channels.dedup();
+            channels
+        },
+        // **Both scopes' winners** (M5-04). The conflict scope merges on the fringe state, so its
+        // winner is the later write and overrides where both name a slot; the fringe's winners used
+        // to be dropped here while every other field chained them.
+        native_writer_of_slot: {
+            let mut winners = fringe_merge.report.native_writer_of_slot.clone();
+            winners.extend(
+                conflict_merge
+                    .report
+                    .native_writer_of_slot
+                    .iter()
+                    .map(|(slot, host)| (*slot, *host)),
+            );
+            winners
+        },
     };
 
     Ok(ParentsMergedState {

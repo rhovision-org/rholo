@@ -1926,7 +1926,8 @@ impl RuntimeManager {
         }
         let set: BTreeSet<Arc<DeployChainIndex>> = chains.iter().cloned().collect();
         let actions: Vec<NativeStoreAction> = batch_native.values().flatten().cloned().collect();
-        *base = MergeScope::compute_merged_state(&set, *base, history_repo, &actions)
+        // This path builds no report; the coverage check is requested only by `MergeScope::merge`.
+        *base = MergeScope::compute_merged_state(&set, *base, history_repo, &actions, None)
             .await
             .map_err(RuntimeRunError::Other)?;
         results.append(batch_results);

@@ -270,6 +270,12 @@ jobs:
         # be a declared key. The route's own test compares the served JSON to the same list.
         run: python3 tools/check-node-diagnostics.py --gate
 
+      - name: Evidence locality gate
+        # #428 M3 asks for an off-host observer. A record that claims it may not carry a loopback
+        # advertised peer, and a loopback diagnostic must say what it is not. The corrected
+        # 2026-10-29 record is the first negative fixture.
+        run: python3 tools/check-evidence-locality.py --gate
+
       - name: Artefact-producing build paths are pin-locked and unparameterised
         # Two wargame rows name a gate rather than a test, and neither existed: `every build path
         # passes --locked` (the lock file is a promise the build has to keep) and `the shipped
