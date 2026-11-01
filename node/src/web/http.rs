@@ -849,6 +849,13 @@ fn unavailable_health_body(error: String) -> serde_json::Value {
     json!({"ok": false, "ready": false, "phase": "unavailable", "error": error})
 }
 
+/// A `u64` counter as a metric value, **clamped rather than wrapped**. These counters cannot reach
+/// `i64::MAX`; the clamp is the honest bound, and a silent wrap would publish a negative gauge.
+/// The cast is deliberate and bounded by the `min`.
+fn saturating_i64(value: u64) -> i64 {
+    std::cmp::min(value, i64::MAX as u64) as i64
+}
+
 async fn api_deploy(State(state): State<HttpState>, Json(req): Json<DeployRequest>) -> Response {
     // **A shard outside its serving phases does not claim it can include work.** The pool may have
     // room; the shard still cannot produce a block from it. Judge the shard the deploy names, so one
@@ -2511,17 +2518,13 @@ pub async fn acquire_http_server(
                             ("relay_failures_total", conn.relay_failures),
                             ("routing_queue_depth", conn.routing_queue_depth),
                         ] {
-                            metrics_registry.set_gauge(
-                                &source,
-                                name,
-                                match i64::try_from(value) { Ok(v) => v, Err(_) => i64::MAX },
-                            );
+                            metrics_registry.set_gauge(&source, name, saturating_i64(value));
                         }
                         if let Some(age) = conn.peer_contact_age_ms {
                             metrics_registry.set_gauge(
                                 &source,
                                 "peer_contact_age_ms",
-                                match i64::try_from(age) { Ok(v) => v, Err(_) => i64::MAX },
+                                saturating_i64(age),
                             );
                         }
                     }
@@ -2671,7 +2674,8 @@ mod tests {
     use rchain_comm::rp::rp_conf::ClearConnectionsConf;
     use rchain_models::casper::protocol::deploy_service::{BlockInfo, LightBlockInfo};
     use rchain_models::casper::protocol::report::BlockEventInfo;
-    use rchain_shared::metrics::Metrics as _;
+    // `Metrics` is imported at module scope for the connection publisher; `use super::*` brings it
+    // into this module, so a second alias here is an unused import.
     use rchain_shared::store::InMemoryKeyValueStore;
     use rchain_shared::typed_store::{Codec, KeyValueTypedStoreCodec, SharedStore};
     use std::collections::BTreeMap;
