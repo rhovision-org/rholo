@@ -134,10 +134,40 @@ fn the_node_serves_a_block_a_client_can_verify_and_attests_its_finality() {
         // up by the next round.
 
         let finalized = wait_for_finality(&client, &base, 1).await;
-        let hash = finalized["blockInfo"]["blockHash"]
+        // --- the attestation, bound to this run's nonce -----------------------------------------
+        let n = nonce();
+        let attestation: Value = client
+            .get(format!("{base}/api/v1/finality-attestation?nonce={n}"))
+            .send()
+            .await
+            .expect("GET attestation")
+            .json()
+            .await
+            .expect("attestation json");
+        let proved_attestation = recovery_verify::verify_attestation(&attestation.to_string(), &n)
+            .expect("the node's own attestation must verify against the nonce it was asked for");
+        let att: Value = serde_json::from_str(&proved_attestation).expect("the verdict is JSON");
+
+        assert_eq!(att["verified"], Value::Bool(true));
+        // Bind both artefacts to the attestation's fixed block. Autopropose may advance the
+        // last-finalized representative between requests, while this identity remains stable.
+        let hash = att["blockHash"]
             .as_str()
-            .expect("the finalised block has a hash")
+            .expect("attested hash")
             .to_string();
+        let is_finalized: Value = client
+            .get(format!("{base}/api/is-finalized/{hash}"))
+            .send()
+            .await
+            .expect("GET attested block finality")
+            .json()
+            .await
+            .expect("finality JSON");
+        assert_eq!(
+            is_finalized,
+            Value::Bool(true),
+            "the attested block is finalized"
+        );
 
         // --- the raw preimage, verified with the node's own hash and signature rules -------------
         let raw: Value = client
@@ -153,6 +183,11 @@ fn the_node_serves_a_block_a_client_can_verify_and_attests_its_finality() {
         let proved: Value = serde_json::from_str(&verdict).expect("the verdict is JSON");
 
         assert_eq!(proved["verified"], Value::Bool(true));
+        assert!(
+            proved["blockNumber"].as_i64().unwrap()
+                >= finalized["blockInfo"]["blockNumber"].as_i64().unwrap(),
+            "the attested finalized block does not predate the observed finality"
+        );
         assert_eq!(
             proved["blockHash"].as_str().unwrap(),
             hash,
@@ -187,26 +222,6 @@ fn the_node_serves_a_block_a_client_can_verify_and_attests_its_finality() {
             "a finalised block carries the bond map the meet weighs stake with: {proved}"
         );
 
-        // --- the attestation, bound to this run's nonce -----------------------------------------
-        let n = nonce();
-        let attestation: Value = client
-            .get(format!("{base}/api/v1/finality-attestation?nonce={n}"))
-            .send()
-            .await
-            .expect("GET attestation")
-            .json()
-            .await
-            .expect("attestation json");
-        let proved_attestation = recovery_verify::verify_attestation(&attestation.to_string(), &n)
-            .expect("the node's own attestation must verify against the nonce it was asked for");
-        let att: Value = serde_json::from_str(&proved_attestation).expect("the verdict is JSON");
-
-        assert_eq!(att["verified"], Value::Bool(true));
-        assert_eq!(
-            att["blockHash"].as_str().unwrap(),
-            hash,
-            "the attested block is the node's last finalised block"
-        );
         // The signature is by a validator this shard bonds — the test's validator key, which is also
         // the sender of every block a one-validator shard produces.
         let validator_pub = {

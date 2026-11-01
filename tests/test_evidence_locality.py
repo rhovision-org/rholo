@@ -1,6 +1,7 @@
 import importlib.util
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +11,33 @@ spec.loader.exec_module(locality)
 
 
 class EvidenceLocalityTests(unittest.TestCase):
+    def test_loopback_aliases_and_unspecified_advertised_hosts_fail(self):
+        for host in ("127.0.0.2", "127.255.1.2", "[::1]", "[::ffff:127.0.0.1]",
+                     "0.0.0.0", "[::]", "LOCALHOST."):
+            for command in (f"rnode://6b70@{host}?protocol=40400", f"--host={host}"):
+                with self.subTest(command=command):
+                    problems = self.check(
+                        "M3\n**Evidence locality.** off-host-claim — hosts\ndial-back ok\n",
+                        acceptance=command)
+                    self.assertTrue(any("loopback" in p for p in problems), problems)
+
+    def test_json_argv_and_api_locality_are_distinguished(self):
+        directory = self.record("M3\n**Evidence locality.** off-host-claim — hosts\ndial-back ok\n",
+                                '["--host", "127.0.0.2"]')
+        self.assertTrue(locality.check(directory))
+        (directory / "acceptance.json").write_text(
+            '{"api":"http://127.0.0.2:40403", "peer":"rnode://aa@203.0.113.7?protocol=40400"}')
+        self.assertEqual(locality.check(directory), [])
+        self.assertFalse(locality.local_address("localhost.example.org"))
+
+    def test_gate_reports_missing_readme_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "missing-readme"
+            record.mkdir()
+            (record / "run.json").write_text("{}")
+            with patch("sys.argv", ["locality", "--gate", directory]):
+                self.assertEqual(locality.main(), 1)
+
     def record(self, readme, acceptance="{}"):
         directory = Path(tempfile.mkdtemp())
         (directory / "README.md").write_text(readme)
