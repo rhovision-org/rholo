@@ -956,6 +956,21 @@ fn wire_block_processing_observed(
     let receiver_state = Arc::new(tokio::sync::Mutex::new(
         BlockReceiverState::<BlockHash>::new(),
     ));
+    // **The receiver-cap gauge** (#522). Sample `blocks_st` — the queue the 1024 cap is on, not the
+    // validated mpsc queue — into the process cell `/health` reads. Advisory: nothing gates on it.
+    // A `Weak` handle ends the sampler when the shard's receiver is dropped.
+    {
+        let weak = Arc::downgrade(&receiver_state);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                tick.tick().await;
+                let Some(state) = weak.upgrade() else { break };
+                let pending = state.lock().await.pending_blocks();
+                rchain_casper::blocks::block_receiver::observe_pending(pending);
+            }
+        });
+    }
     let put_to_incoming_queue: Arc<dyn Fn(BlockMessage) + Send + Sync> = Arc::new({
         let incoming_blocks_tx = incoming_blocks_tx.clone();
         let log = log.clone();

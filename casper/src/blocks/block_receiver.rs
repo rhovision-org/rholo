@@ -6,6 +6,7 @@
 
 use rchain_shared::chan;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use rchain_block_storage::block_store::BlockStore;
@@ -24,6 +25,27 @@ use crate::validate::{block_hash, block_signature, format_of_fields};
 /// Reserved capacity for missing parents of blocks already pending in the receiver.
 /// Finite: an attacker can never turn pending dependencies into unbounded state.
 const MAX_DEPENDENCY_HEADROOM: usize = 32;
+
+/// **The live receiver-cap reading.** Sampled by the node's 5 s ticker from the receiver state it
+/// already owns (see `BlockReceiverState::pending_blocks`); `/health` publishes it as
+/// `blockPipeline` and nothing gates on it. This is the queue the 1024 cap applies to — not the
+/// validated mpsc queue the stage observers measure.
+static PENDING_BLOCKS: AtomicUsize = AtomicUsize::new(0);
+static PEAK_PENDING_BLOCKS: AtomicUsize = AtomicUsize::new(0);
+
+/// Record a sample. Advisory: no readiness term, no gate consumption.
+pub fn observe_pending(pending: usize) {
+    PENDING_BLOCKS.store(pending, Ordering::Relaxed);
+    PEAK_PENDING_BLOCKS.fetch_max(pending, Ordering::Relaxed);
+}
+
+/// `(pending, sampled peak)` — the last sample and the high-water mark since process start.
+pub fn pending_sample() -> (usize, usize) {
+    (
+        PENDING_BLOCKS.load(Ordering::Relaxed),
+        PEAK_PENDING_BLOCKS.load(Ordering::Relaxed),
+    )
+}
 
 /// Block-receive status (port of `RecvStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +95,13 @@ impl<MId: Ord + Clone + std::fmt::Debug> BlockReceiverState<MId> {
             receive_st: BTreeMap::new(),
             child_relations: BTreeMap::new(),
         }
+    }
+
+    /// **The queue the 1024 cap is on.** `"block receiver state full (1024 blocks)"` is emitted
+    /// when this count reaches `MAX_PENDING_BLOCKS`; the validated mpsc queue that the stage
+    /// observers measure is a **different** queue. #522 needs this one (M5-06's audit correction).
+    pub fn pending_blocks(&self) -> usize {
+        self.blocks_st.len()
     }
 
     /// Begin storing a block, marking it to prevent duplicate threads storing the same block. The
@@ -913,6 +942,35 @@ pub fn apply_with_queue_observer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_blocks_counts_the_blocks_st_queue_the_cap_is_on() {
+        let state = BlockReceiverState::<String>::new();
+        assert_eq!(state.pending_blocks(), 0);
+        let (state, proceed) = state.begin_stored("b".to_string());
+        assert!(proceed);
+        let (state, released) = state
+            .end_stored_awaiting("b".to_string(), Vec::new(), BTreeSet::new())
+            .expect("admitted");
+        assert!(released.is_empty());
+        assert_eq!(state.pending_blocks(), 1);
+        let (state, _ready) = state
+            .finished("b".to_string(), BTreeSet::new())
+            .expect("finished");
+        assert_eq!(state.pending_blocks(), 0);
+    }
+
+    #[test]
+    fn the_gauge_records_the_sample_and_keeps_a_peak() {
+        observe_pending(3);
+        let (pending, peak) = pending_sample();
+        assert_eq!(pending, 3);
+        assert!(peak >= 3);
+        observe_pending(1);
+        let (pending, after) = pending_sample();
+        assert_eq!(pending, 1);
+        assert_eq!(after, peak, "the peak does not fall");
+    }
 
     #[tokio::test]
     async fn queue_observer_sees_backlog_while_processing_waits_and_keeps_order() {

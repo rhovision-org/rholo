@@ -820,6 +820,13 @@ async fn api_health(State(state): State<HttpState>) -> Response {
                 // when either side is unknown. A lag indicator, not a rate.
                 "finalizedLag": finalized_lag,
                 "pool": status.pool,
+                // **The queue the 1024 cap is on** (#522): `BlockReceiverState.blocks_st`, not the
+                // validated mpsc queue the stage observers measure. Advisory only.
+                "blockPipeline": {
+                    "capacity": rchain_casper::engine::node_running::MAX_PENDING_BLOCKS,
+                    "pending": rchain_casper::blocks::block_receiver::pending_sample().0,
+                    "sampledPeak": rchain_casper::blocks::block_receiver::pending_sample().1,
+                },
                 "finalityStalled": state.peer_liveness.finality_stall_sustained(),
                 "finalityStallEpisodes": state.peer_liveness.stall_episodes(),
                 // **How long since each progress signal last moved.** Null until this shard observes
@@ -3646,6 +3653,10 @@ mod tests {
         assert!(json["readyReasons"].as_array().unwrap().is_empty());
         assert!(json["finalizedHeight"].is_null());
         assert!(json["finalizedLag"].is_null());
+        // The cap is on `BlockReceiverState.blocks_st`; this is that queue, not the mpsc stage one.
+        assert_eq!(json["blockPipeline"]["capacity"], 1024);
+        assert!(json["blockPipeline"]["pending"].is_number());
+        assert!(json["blockPipeline"]["sampledPeak"].is_number());
         assert_eq!(json["finalizedHeightError"], "finalized block unavailable");
         // `height` is one past the observed height; the observed height is its own field.
         assert_eq!(json["height"], 4);
