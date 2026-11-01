@@ -1,6 +1,6 @@
 # Aria's testing workflow: the Pareto audit, 2026-11-01
 
-A review of improvements to **Aria's (aixaria0) pre-production testing job** across her open issues
+A review of improvements to **Aria's (aixaria0) pre-production testing job** across his open issues
 (#520, #487, #428, #412, #339, #522) and the harness/evidence workflow. Rewards here are **operator
 time and evidence risk removed**, not gate closure — a deliberately different objective from the
 M3/M5 audit.
