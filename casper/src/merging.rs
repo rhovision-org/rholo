@@ -344,53 +344,62 @@ impl KeptEffectCoverage {
 /// Every datum/kont channel a kept chain touched must be in the combined change, with every entry
 /// the chain added or removed. `StateChange::combine` concatenates channel changes (it does not
 /// cancel an add against a later remove), so the strict containment is the correct invariant: if an
-/// entry is missing from the combined change, the fold dropped it. Keys are deduplicated so one loss
-/// is named once.
+/// occurrence is missing from the combined change, the fold dropped it. Aggregate the kept chains
+/// before checking: two chains can contribute identical bytes on the same channel. Count borrowed
+/// entries once per channel, rather than repeatedly searching a growing vector.
 fn kept_effect_coverage<'a>(
     changes: impl Iterator<Item = &'a StateChange>,
     combined: &StateChange,
 ) -> KeptEffectCoverage {
     let mut coverage = KeptEffectCoverage::default();
-    let mut seen_datums = BTreeSet::new();
-    let mut seen_konts = BTreeSet::new();
+    let mut expected_datums = BTreeMap::new();
+    let mut expected_konts = BTreeMap::new();
 
     for change in changes {
         for (channel, diff) in &change.datums_changes {
-            let survives = combined
-                .datums_changes
-                .get(channel)
-                .is_some_and(|combined_diff| {
-                    diff.added
-                        .iter()
-                        .all(|entry| combined_diff.added.contains(entry))
-                        && diff
-                            .removed
-                            .iter()
-                            .all(|entry| combined_diff.removed.contains(entry))
-                });
-            if !survives && seen_datums.insert(*channel) {
-                coverage.unapplied_kept_datums.push(*channel);
-            }
+            let expected = expected_datums
+                .entry(*channel)
+                .or_insert_with(|| (Vec::new(), Vec::new()));
+            expected.0.extend(diff.added.iter().map(Vec::as_slice));
+            expected.1.extend(diff.removed.iter().map(Vec::as_slice));
         }
         for (channel, diff) in &change.kont_changes {
-            let survives = combined
-                .kont_changes
-                .get(channel)
-                .is_some_and(|combined_diff| {
-                    diff.added
-                        .iter()
-                        .all(|entry| combined_diff.added.contains(entry))
-                        && diff
-                            .removed
-                            .iter()
-                            .all(|entry| combined_diff.removed.contains(entry))
-                });
-            if !survives && seen_konts.insert(channel.clone()) {
-                coverage.unapplied_kept_konts.push(channel.clone());
-            }
+            let expected = expected_konts
+                .entry(channel.clone())
+                .or_insert_with(|| (Vec::new(), Vec::new()));
+            expected.0.extend(diff.added.iter().map(Vec::as_slice));
+            expected.1.extend(diff.removed.iter().map(Vec::as_slice));
+        }
+    }
+    for (channel, (added, removed)) in expected_datums {
+        if !combined.datums_changes.get(&channel).is_some_and(|diff| {
+            covers_occurrences(&added, &diff.added) && covers_occurrences(&removed, &diff.removed)
+        }) {
+            coverage.unapplied_kept_datums.push(channel);
+        }
+    }
+    for (channel, (added, removed)) in expected_konts {
+        if !combined.kont_changes.get(&channel).is_some_and(|diff| {
+            covers_occurrences(&added, &diff.added) && covers_occurrences(&removed, &diff.removed)
+        }) {
+            coverage.unapplied_kept_konts.push(channel);
         }
     }
     coverage
+}
+
+fn covers_occurrences(expected: &[&[u8]], actual: &[Vec<u8>]) -> bool {
+    let mut counts = BTreeMap::<&[u8], usize>::new();
+    for entry in actual {
+        *counts.entry(entry.as_slice()).or_default() += 1;
+    }
+    for entry in expected {
+        match counts.get_mut(entry) {
+            Some(count) if *count > 0 => *count -= 1,
+            _ => return false,
+        }
+    }
+    true
 }
 
 impl MergeReport {
@@ -4885,6 +4894,73 @@ mod kept_effect_coverage_tests {
         ChannelChange {
             added: added.iter().map(|b| vec![*b]).collect(),
             removed: removed.iter().map(|b| vec![*b]).collect(),
+        }
+    }
+
+    #[test]
+    fn coverage_preserves_duplicate_occurrences_within_and_across_kept_chains() {
+        for copies in 1..8 {
+            let a = StateChange {
+                datums_changes: BTreeMap::from([(
+                    hash(1),
+                    change(&vec![7; copies], &vec![8; copies]),
+                )]),
+                kont_changes: BTreeMap::from([(
+                    vec![hash(2)],
+                    change(&vec![9; copies], &vec![10; copies]),
+                )]),
+                ..StateChange::default()
+            };
+            let combined = StateChange::combine(&a, &a);
+            assert!(kept_effect_coverage([&a, &a].into_iter(), &combined).is_empty());
+            for removed in [false, true] {
+                let mut lost = combined.clone();
+                let diff = lost.datums_changes.get_mut(&hash(1)).unwrap();
+                if removed {
+                    diff.removed.pop();
+                } else {
+                    diff.added.pop();
+                }
+                let diff = lost.kont_changes.get_mut(&vec![hash(2)]).unwrap();
+                if removed {
+                    diff.removed.pop();
+                } else {
+                    diff.added.pop();
+                }
+                let coverage = kept_effect_coverage([&a, &a].into_iter(), &lost);
+                assert_eq!(coverage.unapplied_kept_datums, vec![hash(1)]);
+                assert_eq!(coverage.unapplied_kept_konts, vec![vec![hash(2)]]);
+            }
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+
+        #[test]
+        fn coverage_checks_every_serialized_occurrence(
+            payloads in proptest::collection::vec(
+                proptest::collection::vec(0u8..4, 0..5), 1..12),
+            remove_from_removed in proptest::prelude::any::<bool>(),
+        ) {
+            let diff = ChannelChange { added: payloads.clone(), removed: payloads };
+            let kept = StateChange {
+                datums_changes: BTreeMap::from([(hash(1), diff.clone())]),
+                kont_changes: BTreeMap::from([(vec![hash(2)], diff)]),
+                ..StateChange::default()
+            };
+            let mut combined = StateChange::combine(&kept, &kept);
+            for diff in combined.datums_changes.values_mut().chain(combined.kont_changes.values_mut()) {
+                diff.added.reverse();
+                diff.removed.reverse();
+            }
+            proptest::prop_assert!(kept_effect_coverage([&kept, &kept].into_iter(), &combined).is_empty());
+            for diff in combined.datums_changes.values_mut().chain(combined.kont_changes.values_mut()) {
+                if remove_from_removed { diff.removed.pop(); } else { diff.added.pop(); }
+            }
+            let coverage = kept_effect_coverage([&kept, &kept].into_iter(), &combined);
+            proptest::prop_assert_eq!(coverage.unapplied_kept_datums, vec![hash(1)]);
+            proptest::prop_assert_eq!(coverage.unapplied_kept_konts, vec![vec![hash(2)]]);
         }
     }
 

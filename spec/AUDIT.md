@@ -102,9 +102,9 @@ on the rows that are not reads.
 
 ## Check-off
 
-**Findings  TODO 0 · IN PROGRESS 4 · DONE 385** &nbsp;&nbsp;·&nbsp;&nbsp; **Coverage  all 89 T1 modules read**
+**Findings  TODO 0 · IN PROGRESS 4 · DONE 387** &nbsp;&nbsp;·&nbsp;&nbsp; **Coverage  all 89 T1 modules read**
 
-**Laws  183 of 389 findings name one** (ceiling 206; 206 done row(s) unclassified)
+**Laws  185 of 391 findings name one** (ceiling 206; 206 done row(s) unclassified)
 
 **Both halves are closed.** A `done` row is settled -- fixed, assessed faithful, a
 deliberate deviation, or refuted -- and names what holds it where there is evidence to
@@ -112,7 +112,7 @@ name. What that does *not* mean is stated under each half below.
 
 ### Findings — closed
 
-All 389 are settled: **325 name the evidence that holds them** and **64 do not** — the
+All 391 are settled: **327 name the evidence that holds them** and **64 do not** — the
 second number is the honest residual, and a column rather than an implication. A `done`
 row says the fix is in the tree or that the decision was taken; it does not say either is
 right. Read a row that matters at the § its account cites.
@@ -133,7 +133,7 @@ defects this register had not recorded (C164, C165).
 | `C343` | **A stored block can have no acceptance disposition and a proposer can run a private chain.** The live build stored block bodies through height 250 on B/C/D while its DAG stayed at height 5, and A reached 267 against finality 3. The RCA found the processor's no-insert arms, the partial-insert short-circuit, the missing failed-parent release and the absent finality gate; dev #494 closed the receiver begin-lease leak. This pass adds Law 88a/88b, a per-shard phase, the start-up audit before Running, and the keys-only legacy body scan with its durable marker; the remaining evidence is the live status/operator and block-6 logs. | U19/U20 disposition ledger, boot/periodic audit, validation watchdog, failed-parent release and halt falsifiers; operator status/operator on B/C/D | §145 |
 | `C344` | **A stuck validator is not priced, and the first liveness response could take a bond through no fault.** A validator absent from the advancing finality set keeps its bond, counts in the denominator and (with absence-slack 0) is paid; RCHIP #55 adds an automatic bond-preserving jail and a >2/3 active-stake vote that alone may slash and permanently eject. The mechanism is default-off, genesis-armed, and its live testnet arm (jail, vote-slash, partition negative, restart/expiry) is owed; H-RS-17 and HAZOP U21 record the residuals, including the boundary-CloseBlock skip.  | owed: live testnet jail/vote-slash and partition arms; a validity rule requiring CloseBlock at a boundary | §147 |
 
-### DONE (385)
+### DONE (387)
 
 | id | what | evidence | account |
 |---|---|---|---|
@@ -436,6 +436,8 @@ defects this register had not recorded (C164, C165).
 | `C352` | Barrier B46 says `Running` requires no unresolved orphan; the code gates readiness (`/health`, `orphan_bodies`), not the phase | docs/src/spec/resource-safety-case.md | §148 |
 | `C353` | `set.add` and `set + x` charge a flat 3 phlo while they clone the set and re-canonicalise it, so a fold of N insertions buys O(N^2 log N) work for O(N) phlo | rholang/src/reduce.rs::a_set_add_charges_the_set_it_rebuilds | §150 |
 | `C354` | The two `rho:gov:tally` modes charge `(ballots + weights)^2` and do not count the ranked or approved option lists at all, while the work is linear in them and round-multiplied by the longest ballot | rholang/src/system_processes.rs::a_tally_charges_the_option_lists_it_scans/rholang/src/accounting.rs::the_tally_charges_are_the_models | §150 |
+| `C355` | The v3 to v4 ledger move discards fault history and retry budgets by adopting old bodies as fresh Pending rows | casper/src/block_disposition.rs::v3_to_v4_preserves_fault_history_instead_of_adopting_it_as_pending/casper/src/block_disposition.rs::v3_copy_error_leaves_no_completion_and_restarts_from_its_durable_prefix/casper/src/block_disposition.rs::v3_copy_preserves_varied_disposition_payloads/casper/src/block_disposition.rs::v3_copy_never_revives_a_durable_accepted_or_refused_verdict/spec/audit/evidence/c355-v3-disposition-negative.txt | §151 |
+| `C356` | Acceptance can bless a different block or a loopback peer, lose duplicate kept effects, or misclassify incomplete recovery evidence | tests/test_n420_root_capture.py/tests/test_evidence_locality.py/tests/test_recovery_harness_controls.py/tests/test_recount_artifact.py/casper/src/merging.rs::coverage_preserves_duplicate_occurrences_within_and_across_kept_chains/casper/src/block_disposition.rs::stored_pending_and_faulted_bodies_are_owned_without_a_dag_entry | §152 |
 | `F1` | The interpreter core is a mechanical Scala port. `rholang/src/reduce.rs` (1773 lines) | — | §9 |
 | `F2` | The blessed genesis contracts re-implement a HashMap trie in interpreted rholang | — | §9 |
 | `F3` | Silent partiality hides the failure. `compute_bonds` (`casper/src/runtime_manager.rs:503-509`) | — | §9 |

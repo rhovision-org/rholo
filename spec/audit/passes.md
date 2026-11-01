@@ -12107,3 +12107,78 @@ and the post-#514 closeout performed for that unit: the cost-deviation row in §
 cover the set-insertion and tally charges, and the inventory, matrix and ledger are re-pinned to the
 merge commit `9e93c3d1f`, with the inventory's digests, lines and URLs regenerated. The ledger's
 `Audit:cost-insert-and-tally` reads `merged` (#518).
+
+## 151. Retaining the v3 disposition ledger through the v4 move (C355)
+
+**Found.** The C350 relocation put the active ledger in the body's LMDB environment, but its
+replacement body scan never read the historical ledger in dagstorage. A reconstructed v3-shaped
+LMDB fixture on ad77fb442 turns an exhausted Faulted row (eight attempts) into fresh Pending:
+stage, reason, both timestamps and retry history disappear. The
+[negative control](evidence/c355-v3-disposition-negative.txt) records the assertion failure; its
+[fixture patch](evidence/c355-v3-disposition-negative.patch) applies to that exact baseline.
+
+**Fixed.** open_block_disposition_store reads the historical physical database through an alias in
+the existing manager, validates and copies each missing row byte for byte, and runs before ingestion
+starts. Existing unsettled v4 rows remain authoritative; durable DAG verdicts supersede either
+ledger before outstanding faults are seeded, including when a prior v4 boot already settled a
+legacy row. Accepted/refused LMDB restart controls cover both stale source and active rows. A dedicated key in the existing control-record
+database certifies completion only after every target write succeeds. An interrupted copy resumes
+from its durable prefix; a later restart cannot resurrect a disposition that processing settled.
+The source rows are retained, and a decode/write failure refuses initialization.
+
+**Witnesses.** Real LMDB tests retain terminal fault quarantine, pending stage and first-sighting
+time, preserve newer v4 rows, fail and resume a partial copy, and leave pre-ledger body adoption
+working. A 16-case property checks varied timestamps, diagnostics, stages and attempt counts.
+
+**Scope.** This fixes the metadata relocation; it is not an independently built v3 writer, old-cost
+full-history replay, multi-node migration qualification, or reconstruction of history an earlier v4
+boot already discarded. Those acceptance obligations remain in #520. The active row codec and its
+blockstorage environment are unchanged; completion uses an existing node-local database, and adds
+no consensus value or wire format.
+
+## 152. Binding acceptance to identities and the registered window (C356)
+
+**Found.** The block capture accepted any successful verifier exit, including a verified block
+other than the requested hash. The locality check recognized only a few literal loopbacks. Tuple
+coverage used membership rather than multiplicity, so one entry could stand for two kept writes.
+The acceptance drill did not consistently preserve classified recovery failures and epoch
+coverage. A constant store/DAG count difference also treated legitimate Pending/Faulted work
+as a persistent orphan, without tracking the body identities (Law 88a).
+
+**Fixed.** Raw and summary responses must name the requested full hash, and the verifier must
+return a positive JSON verdict. Captures retain every endpoint error and explicitly leave the
+Root.keys/parent replay witness incomplete. Advertised addresses are parsed, including IPv4-mapped
+IPv6, 127/8, unspecified addresses and JSON argv. Tuple coverage aggregates occurrence counts
+across every kept chain, without cloning payloads or quadratic vector searches.
+
+Healing retains the existing upstream finality-stall dwell controls and immediate terminal-fault
+checks, classifies unresolved timeouts from per-poll progress evidence, and preserves named
+inconclusive/precondition outcomes in campaign.json.
+The online group is driven to the isolated victim's next epoch before choosing an anchor; epoch
+coverage uses the pre-reconnect finalized identity. The ownership audit compares stored keys
+against both durable owners, confirms the same unowned hashes across samples, rechecks concurrent
+settlement and fails closed on an unreadable audit. Boot uses the same ownership predicate.
+
+The existing attestation-first HTTP recovery test (#543) is retained without modification.
+The artifact census now safeguards its pinned historical tree in shallow checkouts, refuses
+unavailable inputs, propagates failed legacy-count pipelines, and compares binary sizes correctly.
+The already merged artifact workflow and stall-latch corrections (#544, #545) are not repeated.
+
+**Witnesses.** Python controls reject wrong hashes, malformed verdicts, local advertised addresses
+and missing locality records; replay the progressing victim; retain failure classes; enforce epoch
+targets; and exercise real shallow Git checkouts with present, fetched and unavailable legacy input.
+Rust controls remove one duplicate occurrence from both datum/continuation add/remove lists, retain
+Pending/Faulted ownership and distinguish rotating bodies from persistent identities.
+
+**Scope.** C355's migration fix is included in this consolidated change. This pass corrects code
+and measurement; it does not certify mainnet readiness, manufacture the missing 840/841 Root.keys
+input, refresh a release-binary census from a different executable, or replace the migration,
+off-host, physical-failure and governance acceptance records required by #520/#522/#428.
+
+**Bounded N8 witness for §152.** [Run 41310750609](evidence/rejoin-acceptance-20261031/run-41310750609.json)
+passed both rotated same-volume partition/rejoin cycles at source eb57ad608d and binary
+317d920c4f368d2cc37bc699674534e1a43a9ca304a6252dae39f39961babd97. The isolated
+finalized ranges were (27,36] and (44,52]; both cross an epoch-length-10 boundary. This is a
+local-devnet witness for that pin, before the later settled-ledger guard; it does not close the
+mainnet release gates or certify later source changes. The record retains the source, binary,
+artifact digest/expiry and raw partition-result digest.

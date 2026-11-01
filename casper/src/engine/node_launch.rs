@@ -406,19 +406,17 @@ pub async fn apply<I: RSpaceImporter + Send + 'static, E: RSpaceExporter>(
         .into_iter()
         .next()
         .flatten();
-    // **A body count above the DAG count is an orphan signal, not a fact to ignore.** This is a
-    // cheap boot observation (no body decode): a store with bodies the DAG does not hold is the
-    // shape the live testnet showed on B/C/D. The periodic audit waits for three runtime samples;
-    // a mismatch seen at boot is already evidence and must block readiness immediately.
-    let stored_bodies = block_store.count().await?;
-    if crate::block_disposition::observe_boot_orphan_gap(stored_bodies, repr.dag_set.len()) > 0 {
+    // A pending/faulted body is owned by its ledger row (Law 88a). Block immediately only for
+    // identities that have neither durable owner; cardinality alone also counts ordinary work.
+    let unaccounted =
+        crate::block_disposition::unaccounted_stored_bodies(&block_disposition, &block_store, &dag)
+            .await?;
+    if crate::block_disposition::observe_boot_orphans(unaccounted.len()) > 0 {
         log.warn(
             source,
             &format!(
-                "boot: the block store holds {stored_bodies} bodies but the DAG holds {}; {} \
-                 stored body(ies) have no DAG entry — possible orphans (U19/B46)",
-                repr.dag_set.len(),
-                stored_bodies.saturating_sub(repr.dag_set.len())
+                "boot: {} stored bodies have neither a DAG entry nor a disposition (U19/B46)",
+                unaccounted.len()
             ),
         );
     }

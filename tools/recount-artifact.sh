@@ -31,7 +31,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 JSON="$ROOT/tools/artifact-counts.json"
-LEGACY_REV="${LEGACY_REV:-1b7583649}"
+LEGACY_REV="${LEGACY_REV:-1b7583649dad33cd56fb4ecbc952224781018698}"
 
 FILES=(
   "$ROOT/README.md"
@@ -106,6 +106,17 @@ legacy_bytes() {
   git -C "$ROOT" ls-tree -r -l "$LEGACY_REV" legacy \
     | awk '{s += $4} END {printf "%d", s}'
 }
+
+ensure_legacy_revision() {
+  if ! git -C "$ROOT" cat-file -e "$LEGACY_REV^{tree}" 2>/dev/null; then
+    warn "fetching the pinned legacy tree missing from this checkout"
+    GIT_TERMINAL_PROMPT=0 git -C "$ROOT" -c credential.interactive=false \
+      fetch --no-tags --depth=1 origin "$LEGACY_REV" \
+      || fail "cannot fetch legacy tree $LEGACY_REV; no census was recorded"
+  fi
+  git -C "$ROOT" cat-file -e "$LEGACY_REV^{tree}" \
+    || fail "legacy tree $LEGACY_REV is unavailable; no census was recorded"
+}
 # `legacy/...` and `legacy/<path>` are how the prose *names* the convention, not citations to a path;
 # they are filtered so the count does not change every time a sentence about it is edited.
 legacy_citations() {
@@ -126,6 +137,7 @@ last_code_commit_epoch() {
 
 collect() {
   local out="$1"
+  ensure_legacy_revision
   : > "$out"
   local files lines
   files="$(rs_files_all)"; lines="$(rs_lines_all)"
@@ -158,12 +170,12 @@ collect() {
   printf 'workspace.files\t%s\n' "$wf" >> "$out"
   printf 'workspace.lines\t%s\n' "$wl" >> "$out"
 
-  # Checked **here**, not inside the substitutions below: `fail` in a `$(…)` exits the subshell and
-  # the parent would keep going with an empty value (measured 2026-11-01: a bogus revision produced a
-  # Python `str - int` instead of this message).
-  legacy_rev_present || fail "the pinned legacy revision $LEGACY_REV is not in this clone; fetch full history (fetch-depth: 0) — a shallow clone must not read as legacy 0 files"
-  printf 'legacy.files\t%s\n' "$(legacy_files)" >> "$out"
-  printf 'legacy.bytes\t%s\n' "$(legacy_bytes)" >> "$out"
+  # A substitution passed directly to printf can hide a failed pipeline under set -e.
+  local legacy_file_count legacy_byte_count
+  legacy_file_count="$(legacy_files)" || fail "could not count the pinned legacy files"
+  legacy_byte_count="$(legacy_bytes)" || fail "could not count the pinned legacy bytes"
+  printf 'legacy.files\t%s\n' "$legacy_file_count" >> "$out"
+  printf 'legacy.bytes\t%s\n' "$legacy_byte_count" >> "$out"
   printf 'legacy.citation_paths\t%s\n' "$(legacy_citation_paths)" >> "$out"
   printf 'legacy.citation_refs\t%s\n' "$(legacy_citation_refs)" >> "$out"
 
@@ -467,7 +479,7 @@ for name, c in (rec.get("per_crate") or {}).items():
     cmp(f"{name} files", c.get("files"), live.get(f"crate.{name}.files"))
 for k in ("files", "bytes", "citation_paths", "citation_refs"):
     cmp(f"legacy {k}", rec.get("legacy", {}).get(k), live.get(f"legacy.{k}"))
-if "binary" in live and rec.get("binary"):
+if "binary.bytes" in live and rec.get("binary"):
     cmp("binary bytes", rec["binary"].get("bytes"), live["binary.bytes"])
 if bad:
     print("FAIL  the artifact record has aged — run tools/recount-artifact.sh --record:", file=sys.stderr)

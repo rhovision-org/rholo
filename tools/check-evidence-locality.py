@@ -35,6 +35,8 @@ Usage: tools/check-evidence-locality.py [--gate] [<evidence-dir>]
 """
 from __future__ import annotations
 
+import ipaddress
+import json
 import re
 import sys
 from pathlib import Path
@@ -45,12 +47,10 @@ EVIDENCE = ROOT / "spec/audit/evidence"
 RUN_ARTEFACTS = ("acceptance.json", "run.json", "result.json")
 RUN_PREFIXES = ("journal", "observations", "progress-samples")
 LABELS = ("off-host-claim", "loopback-diagnostic", "local-devnet", "not-a-run")
-LOOPBACK = r"(?:127\.0\.0\.1|localhost|\[::1\]|::1|0\.0\.0\.0)"
 ADVERTISED = [
-    re.compile(rf"rnode://[0-9a-zA-Z]+@({LOOPBACK})"),
-    re.compile(rf"--host[= ]+({LOOPBACK})"),
-    re.compile(rf"--bootstrap-host[= ]+({LOOPBACK})"),
-    re.compile(rf"--bootstrap[= ]+\S*@({LOOPBACK})"),
+    re.compile(r"rnode://[0-9a-zA-Z]+@(\[[^\]]+\]|[^\s?:/\"',}]+)"),
+    re.compile(r"--(?:host|bootstrap-host)[=\s]+[\"']?(\[[^\]]+\]|[^\s\"',}]+)"),
+    re.compile(r"--bootstrap[=\s]+[^\s@]*@(\[[^\]]+\]|[^\s?:/\"',}]+)"),
 ]
 LABEL_RE = re.compile(r"\*\*Evidence locality\.\*\*\s*`?([a-z-]+)`?\s*[—-]?")
 
@@ -77,10 +77,38 @@ def loopback_claims(directory: Path) -> list[str]:
             text = path.read_text(errors="replace")
         except OSError:
             continue
-        for pattern in ADVERTISED:
-            for match in pattern.finditer(text):
-                found.append(f"{path.name}: {match.group(0)}")
+        # Run records may store argv as a JSON array rather than a shell command.
+        texts = [text]
+        try:
+            def strings(value):
+                if isinstance(value, str):
+                    return [value]
+                if isinstance(value, list):
+                    return [s for v in value for s in strings(v)]
+                if isinstance(value, dict):
+                    return [s for v in value.values() for s in strings(v)]
+                return []
+            texts.append(" ".join(strings(json.loads(text))))
+        except ValueError:
+            pass
+        for value in texts:
+            for pattern in ADVERTISED:
+                for match in pattern.finditer(value):
+                    if local_address(match.group(1)):
+                        found.append(f"{path.name}: {match.group(0)}")
     return found
+
+
+def local_address(host: str) -> bool:
+    host = host.strip("[]").lower().rstrip(".")
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    address = getattr(address, "ipv4_mapped", None) or address
+    return address.is_loopback or address.is_unspecified
 
 
 def mentions_m3(readme: str) -> bool:
@@ -146,7 +174,8 @@ def main() -> int:
     if not records:
         problems.append("no run records were examined (the scan would be vacuous)")
 
-    claims = sum(1 for d in records if mentions_m3((d / "README.md").read_text(errors="replace")))
+    claims = sum(1 for d in records if (d / "README.md").is_file()
+                 and mentions_m3((d / "README.md").read_text(errors="replace")))
     print(
         f"check-evidence-locality: {len(records)} run record(s), {claims} M3/off-host "
         f"claim(s), {len(problems)} violation(s)"

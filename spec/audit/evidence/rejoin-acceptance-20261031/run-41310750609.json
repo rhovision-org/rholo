@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "evidence_locality": "local-devnet",
+  "run_url": "https://github.com/aixaria0/rchain-rust/actions/runs/41310750609",
+  "artifact_id": 13085706688,
+  "artifact_name": "isolated-n8-partition-41310750609",
+  "artifact_digest_reported_by_github": "sha256:54a1a3eeb2bf282bdcd19fe12daad6d0d735f81e86b39a79190bff9235fb37a7",
+  "artifact_expires_at": "2026-11-15T13:35:04Z",
+  "partition_result_sha256": "3a6b8f0d9079922c987af9a911678a9ac8a148f3d05d7d8247c23070ccf6774c",
+  "campaign": {
+    "gate_id": "n8-partition-rejoin",
+    "gate_version": 2,
+    "source_sha": "eb57ad608d467f224400028ed65c4d7e2a871cad",
+    "binary_sha256": "317d920c4f368d2cc37bc699674534e1a43a9ca304a6252dae39f39961babd97",
+    "run_id": "41310750609",
+    "run_attempt": "1",
+    "validators": 8,
+    "aggregate": "PASS_BOUNDED_WORKLOAD_PARTITION_REJOIN",
+    "cycles": [
+      {
+        "cycle": 1,
+        "result": "PASS",
+        "failure_class": null
+      },
+      {
+        "cycle": 2,
+        "result": "PASS",
+        "failure_class": null
+      }
+    ]
+  },
+  "rounds": [
+    {
+      "cycle": 1,
+      "result": "PASS",
+      "epoch_boundary_crossed": true,
+      "healing_anchor": {
+        "height": 36,
+        "hash": "c072dd798b0de0dcb5c83f5514fa021164fc4bee56edc495165a4ccc0663e1d8",
+        "node": 0,
+        "case": "seven-ahead",
+        "victim_finalized_height": 27
+      },
+      "healing_failure_class": null,
+      "same_volume": true,
+      "victim_finalized_at_rejoin": {
+        "height": 27,
+        "hash": "f496071ae6afba01f9641b93eea2738f3a113258f6d8e6aa92bb57e5f633f8fa"
+      },
+      "healing_window_seconds": 270
+    },
+    {
+      "cycle": 2,
+      "result": "PASS",
+      "epoch_boundary_crossed": true,
+      "healing_anchor": {
+        "height": 52,
+        "hash": "fdfcd1967b67997219227aa897772572782ebb09e7e00214b454f222e7159a5c",
+        "node": 0,
+        "case": "seven-ahead",
+        "victim_finalized_height": 44
+      },
+      "healing_failure_class": null,
+      "same_volume": true,
+      "victim_finalized_at_rejoin": {
+        "height": 44,
+        "hash": "f14d4574112d2df6be6e3f36184aac5e645e00cdbe1168e584c70b705806ccdc"
+      },
+      "healing_window_seconds": 270
+    }
+  ],
+  "scope": "Two bounded same-volume partition/rejoin cycles on the named source and binary in a disposable hosted Docker network. This does not qualify off-host reachability, historical replay, mainnet capacity or later source changes."
+}
