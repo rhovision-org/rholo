@@ -10,9 +10,9 @@
     "strip": "not stripped"
   },
   "code_dirty": false,
-  "date": "2026-10-30",
-  "git_commit": "78efd3fa1",
-  "git_dirty": true,
+  "date": "2026-11-01",
+  "git_commit": "61d8c6e1e",
+  "git_dirty": false,
   "known_stale": [
     "39102784",
     "47065056",
@@ -20,11 +20,13 @@
     "197000",
     "203000",
     "226974",
+    "231044",
     "43.6",
     "461",
     "467",
     "474",
-    "508"
+    "508",
+    "513"
   ],
   "legacy": {
     "bytes": 27425437,
@@ -36,15 +38,15 @@
   "per_crate": {
     "block-storage": {
       "files": 17,
-      "lines": 5073
+      "lines": 5225
     },
     "casper": {
       "files": 98,
-      "lines": 74600
+      "lines": 75362
     },
     "comm": {
-      "files": 38,
-      "lines": 9206
+      "files": 39,
+      "lines": 9530
     },
     "crypto": {
       "files": 27,
@@ -55,24 +57,24 @@
       "lines": 837
     },
     "models": {
-      "files": 38,
-      "lines": 13187
+      "files": 37,
+      "lines": 12832
     },
     "node": {
-      "files": 99,
-      "lines": 43424
+      "files": 100,
+      "lines": 44234
     },
     "ocapn": {
       "files": 30,
-      "lines": 12019
+      "lines": 12007
     },
     "qucalc": {
       "files": 4,
       "lines": 1087
     },
     "rholang": {
-      "files": 53,
-      "lines": 41610
+      "files": 54,
+      "lines": 41658
     },
     "rspace": {
       "files": 59,
@@ -92,8 +94,8 @@
     }
   },
   "schema": 1,
-  "tracked_rs_files": 513,
-  "tracked_rs_lines": 231044,
+  "tracked_rs_files": 515,
+  "tracked_rs_lines": 232773,
   "workspace": {
     "files": 2,
     "lines": 281

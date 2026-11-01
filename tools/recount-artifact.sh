@@ -31,7 +31,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 JSON="$ROOT/tools/artifact-counts.json"
-LEGACY_REV="1b7583649"
+LEGACY_REV="${LEGACY_REV:-1b7583649}"
 
 FILES=(
   "$ROOT/README.md"
@@ -92,8 +92,17 @@ rs_lines_all() { git -C "$ROOT" ls-files -- '*.rs' | xargs wc -l | tail -1 | awk
 crate_files() { git -C "$ROOT" ls-files -- "$1/*.rs" | wc -l | tr -d ' '; }
 crate_lines() { git -C "$ROOT" ls-files -- "$1/*.rs" | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1+0}'; }
 
-legacy_files() { git -C "$ROOT" ls-tree -r --name-only "$LEGACY_REV" legacy | wc -l | tr -d ' '; }
+# **A shallow clone must not read as "legacy is empty".** The legacy figures are measured at the
+# pinned revision, not in the working tree; when that revision is absent (the nightly's default
+# `fetch-depth: 1`), `git ls-tree` fails and the counter would report 0 against a record of 1,596
+# files — a false drift that looks like the corpus vanished. Fail with the cause instead.
+legacy_rev_present() { git -C "$ROOT" cat-file -e "${LEGACY_REV}^{commit}" 2>/dev/null; }
+legacy_files() {
+  legacy_rev_present || fail "the pinned legacy revision $LEGACY_REV is not in this clone; fetch full history (fetch-depth: 0) — a shallow clone must not read as legacy 0 files"
+  git -C "$ROOT" ls-tree -r --name-only "$LEGACY_REV" legacy | wc -l | tr -d ' '
+}
 legacy_bytes() {
+  legacy_rev_present || fail "the pinned legacy revision $LEGACY_REV is not in this clone; fetch full history (fetch-depth: 0) — a shallow clone must not read as legacy 0 bytes"
   git -C "$ROOT" ls-tree -r -l "$LEGACY_REV" legacy \
     | awk '{s += $4} END {printf "%d", s}'
 }
@@ -149,6 +158,10 @@ collect() {
   printf 'workspace.files\t%s\n' "$wf" >> "$out"
   printf 'workspace.lines\t%s\n' "$wl" >> "$out"
 
+  # Checked **here**, not inside the substitutions below: `fail` in a `$(…)` exits the subshell and
+  # the parent would keep going with an empty value (measured 2026-11-01: a bogus revision produced a
+  # Python `str - int` instead of this message).
+  legacy_rev_present || fail "the pinned legacy revision $LEGACY_REV is not in this clone; fetch full history (fetch-depth: 0) — a shallow clone must not read as legacy 0 files"
   printf 'legacy.files\t%s\n' "$(legacy_files)" >> "$out"
   printf 'legacy.bytes\t%s\n' "$(legacy_bytes)" >> "$out"
   printf 'legacy.citation_paths\t%s\n' "$(legacy_citation_paths)" >> "$out"

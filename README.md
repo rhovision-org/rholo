@@ -17,9 +17,9 @@ memory-safety bugs are unwritable rather than mitigated. The October 2026 advers
 Solana (Agave), Sui and Bitcoin SV at pinned revisions: no chain split, no fund loss, no remote code
 execution here.
 
-**A small artifact, deliberately**: recounted <!-- recount:date -->2026-10-30<!-- recount:end -->,
-<!-- recount:rs-lines -->231,044<!-- recount:end --> lines of Rust across
-<!-- recount:rs-files -->513<!-- recount:end --> files compile to a single
+**A small artifact, deliberately**: recounted <!-- recount:date -->2026-11-01<!-- recount:end -->,
+<!-- recount:rs-lines -->232,773<!-- recount:end --> lines of Rust across
+<!-- recount:rs-files -->515<!-- recount:end --> files compile to a single
 **<!-- recount:binary-mib -->47.0<!-- recount:end --> MiB** native binary
 (<!-- recount:binary-bytes -->49,317,360<!-- recount:end --> bytes) — nothing to boot but the process,
 and no collector inside it to pause — so the node runs on a commodity laptop with an NVMe. A
@@ -88,8 +88,8 @@ code, and a stop-the-world collector is safe Rust — we simply do not ship one.
 engineering concern either way, and this node measures its own (see
 [hardware requirements](docs/src/node/validator-requirements.md)).
 
-**Decentralization.** Recounted <!-- recount:date -->2026-10-30<!-- recount:end -->,
-<!-- recount:rs-lines -->231,044<!-- recount:end --> lines of Rust compile to a single
+**Decentralization.** Recounted <!-- recount:date -->2026-11-01<!-- recount:end -->,
+<!-- recount:rs-lines -->232,773<!-- recount:end --> lines of Rust compile to a single
 <!-- recount:binary-mib -->47.0<!-- recount:end --> MiB native binary
 (<!-- recount:binary-bytes -->49,317,360<!-- recount:end --> bytes) — no JVM and no collector in the
 process — so the node runs on any modern desktop or laptop with an
