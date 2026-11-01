@@ -491,6 +491,11 @@ def record_cycle(out, rounds, record, capture_phase):
             capture_phase(f"partition-{record['cycle']}-{record['phase']}-failed")
         except Exception as capture_error:
             record["capture_error"] = str(capture_error)
+        # **The structured envelope** (M): the class and phase beside the legacy result string.
+        a.failure_envelope.write(
+            out, "FAIL", error, phase=str(record.get("phase")), arm="partition-rejoin",
+            node=record.get("isolated_validator"),
+            artifact_refs=["partition-result.json", "campaign.json"])
         document = {
             "result": "FAIL_BOUNDED_WORKLOAD_PARTITION_REJOIN",
             "partition_cycles_completed": sum(r.get("result") == "PASS" for r in rounds),

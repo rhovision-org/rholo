@@ -39,6 +39,9 @@ READY_REASON_VERDICT_NAMES = {
 trace_spec = importlib.util.spec_from_file_location("causal_trace", ROOT / "tools/consensus-causal-trace.py")
 causal_trace = importlib.util.module_from_spec(trace_spec)
 trace_spec.loader.exec_module(causal_trace)
+envelope_spec = importlib.util.spec_from_file_location("failure_envelope", ROOT / "tools/failure_envelope.py")
+failure_envelope = importlib.util.module_from_spec(envelope_spec)
+envelope_spec.loader.exec_module(failure_envelope)
 
 
 class WaitTimeout(RuntimeError):
@@ -448,6 +451,12 @@ def main():
     try:
         drill.run()
     except Exception as error:
+        # **The structured envelope, before the legacy string** — and a failed health capture is
+        # recorded beside the primary error, never instead of it.
+        health, capture_error = failure_envelope.best_effort_health(
+            drill.status_row, range(args.validators))
+        failure_envelope.write(drill.out, "FAIL", error, phase="workload",
+                               health=health, capture_error=capture_error)
         (drill.out / "workload-result.json").write_text(
             json.dumps({"result": "fail", "reason": str(error)}) + "\n")
         raise

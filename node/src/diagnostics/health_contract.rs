@@ -47,6 +47,7 @@ pub fn boot_id() -> &'static str {
 /// ordering to argue about.
 pub const PUBLIC_HEALTH_KEYS: &[&str] = &[
     "acceptsDeploys",
+    "blockPipeline",
     "bootId",
     "degraded",
     "diagVersion",

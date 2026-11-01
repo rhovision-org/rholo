@@ -316,6 +316,17 @@ def main():
             run_cycle(args, victim, cycle, events)
         result = {"verdict": "PASS", "cycles": args.cycles, "validators": args.validators}
     except Exception as error:  # noqa: BLE001 - the verdict is the output
+        # **The structured envelope** (M): class, arm, phase, the health rows at the failure and the
+        # last observations. A capture failure is data, never a replacement for the primary error.
+        rows, capture_error = drill.failure_envelope.best_effort_health(
+            health, range(args.validators))
+        try:
+            last_events = events.read_text().splitlines()[-20:]
+        except OSError:
+            last_events = []
+        drill.failure_envelope.write(
+            out, "FAIL", error, phase="restart-under-load", arm="restart-under-load",
+            health=rows, events=last_events, capture_error=capture_error)
         result = {"verdict": "FAIL", "error": str(error)}
     (out / "result.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result))

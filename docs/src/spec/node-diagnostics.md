@@ -98,6 +98,7 @@ shard's reading must say which.
 | `degraded` | resource | string | G | H | ≤5 s | advisory word from the fallback machine; never a 503 |
 | `acceptsDeploys` | resource | bool | G | P | ≤1 s | pool capacity only (Law 86a) |
 | `pool` | resource | object | G | P | ≤1 s | depth and bounds, so `acceptsDeploys = false` is explainable |
+| `blockPipeline` | ingestion | object | G | S | ≤5 s | `{capacity, pending, sampledPeak}` for the **block-receiver `blocks_st` queue** — the one the 1024 cap is on. `pending` is the last 5 s sample; `sampledPeak` is the process high-water mark. Advisory: no readiness term. The validated/incoming **mpsc** stage queues are separate and stay on `/metrics` |
 
 ### 4.2 Operator additions and the seam
 
