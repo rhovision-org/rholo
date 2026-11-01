@@ -31,6 +31,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -46,7 +47,13 @@ def get(endpoint: str, path: str, timeout: float = 30.0):
         return None, repr(error)
 
 
-def verify(rnode: str, data: bytes):
+def block_hash(value: str) -> str:
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        raise argparse.ArgumentTypeError("a block must be a full 64-digit hex hash")
+    return value.lower()
+
+
+def verify(rnode: str, data: bytes, requested: str):
     """Run `rnode verify-block` over the bytes; (ok, output). A missing binary is not a pass."""
     try:
         result = subprocess.run(
@@ -58,14 +65,20 @@ def verify(rnode: str, data: bytes):
     except (OSError, subprocess.SubprocessError) as error:
         return False, repr(error)
     output = (result.stdout + result.stderr).decode(errors="replace").strip()
-    return result.returncode == 0, output
+    try:
+        verdict = json.loads(result.stdout)
+        ok = (result.returncode == 0 and verdict.get("verified") is True
+              and block_hash(verdict.get("blockHash", "")) == requested)
+    except (ValueError, TypeError, AttributeError, argparse.ArgumentTypeError):
+        ok = False
+    return ok, output
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True)
     parser.add_argument("--endpoint", action="append", required=True)
-    parser.add_argument("--block", action="append", required=True)
+    parser.add_argument("--block", action="append", required=True, type=block_hash)
     parser.add_argument("--rnode", default="rnode")
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
@@ -76,7 +89,9 @@ def main() -> int:
     os.makedirs(raw_dir, exist_ok=True)
     os.makedirs(light_dir, exist_ok=True)
 
-    capture = {"endpoints": args.endpoint, "blocks": args.block, "entries": [], "complete": True}
+    capture = {"endpoints": args.endpoint, "blocks": args.block, "entries": [], "complete": True,
+               "m5_witness_complete": False,
+               "scope": "hash-bound block capture; Root.keys reads and parent replay remain required"}
     for endpoint in args.endpoint:
         tag = endpoint.replace("://", "_").replace("/", "_").replace(":", "_")
         for block in args.block:
@@ -90,7 +105,7 @@ def main() -> int:
                 with open(path, "wb") as handle:
                     handle.write(data)
                 entry["raw_bytes_sha256"] = hashlib.sha256(data).hexdigest()
-                ok, output = verify(args.rnode, data)
+                ok, output = verify(args.rnode, data, block)
                 entry["verify_ok"] = ok
                 entry["verify_output"] = output
                 if not ok:
@@ -102,10 +117,17 @@ def main() -> int:
             else:
                 with open(os.path.join(light_dir, f"{tag}-{block}.json"), "wb") as handle:
                     handle.write(light)
+                try:
+                    summary = json.loads(light)
+                    if block_hash(summary["blockInfo"]["blockHash"]) != block:
+                        raise ValueError("summary hash does not match the requested block")
+                except (ValueError, TypeError, KeyError, argparse.ArgumentTypeError) as error:
+                    entry["light_error"] = str(error)
+                    capture["complete"] = False
             capture["entries"].append(entry)
         finalized, error = get(endpoint, "/api/last-finalized-block", args.timeout)
         if finalized is None:
-            capture["finalized_error"] = {endpoint: error}
+            capture.setdefault("finalized_error", {})[endpoint] = error
             capture["complete"] = False
         else:
             with open(os.path.join(light_dir, f"{tag}-finalized.json"), "wb") as handle:

@@ -107,6 +107,30 @@ def epoch_boundary_crossed(low, high, epoch):
                for k in range(low // epoch, high // epoch + 2))
 
 
+def next_epoch_height(height, epoch):
+    if type(height) is not int or epoch <= 0:
+        raise RuntimeError("INCONCLUSIVE_EPOCH_COVERAGE: no valid isolated finalized height/epoch")
+    return (height // epoch + 1) * epoch
+
+
+def wait_for_epoch_boundary(d, online, target):
+    def progressed():
+        heads = [d.finalized_head(i)[0] for i in online]
+        d.record(phase="epoch_coverage", target_height=target, finalized_heights=heads)
+        # Drill.wait uses None for "keep waiting"; False would be accepted as a completed poll.
+        return heads if all(height >= target for height in heads) else None
+    try:
+        return d.wait("online validators finalize beyond the isolated victim's next epoch",
+                      progressed, window=300)
+    except a.WaitTimeout as error:
+        raise RuntimeError(f"INCONCLUSIVE_EPOCH_COVERAGE: {error}") from error
+
+
+def failure_class(error):
+    prefix = str(error).split(":", 1)[0]
+    return prefix if prefix.startswith(("FAIL_", "INCONCLUSIVE_", "MEASUREMENT_")) else "FAIL_UNCLASSIFIED"
+
+
 def container_get(node, path, admin=False, timeout=10):
     """Read a node's own API through its container loopback.
 
@@ -230,7 +254,11 @@ class WorkloadDrill(a.Drill):
         # tail spans one and a half polls and cannot certify a dwell.
         polls = [p for p in getattr(self, "healing_poll_signals", [])]
         tail = polls[-DWELL_MIN_SAMPLES:]
-        if len(tail) >= DWELL_MIN_SAMPLES and len(set(tail)) == 1:
+        if len(tail) < DWELL_MIN_SAMPLES:
+            return "INCONCLUSIVE_SLOW_PROGRESS"
+        if any(not all(type(v) is int for v in row) for row in tail):
+            return "INCONCLUSIVE_MEASUREMENT"
+        if len(set(tail)) == 1:
             return "FAIL_STALLED"
         return "INCONCLUSIVE_SLOW_PROGRESS"
 
@@ -276,7 +304,7 @@ class WorkloadDrill(a.Drill):
         return anchor_agreement(self, anchor, victim)
 
 
-def establish_healing_anchor(d, online, victim, cycle, victim_index=None):
+def establish_healing_anchor(d, online, victim, cycle, victim_index=None, minimum_height=None):
     """Pick a block one side has finalized and the other has not.
 
     The anchor is a **finalization** boundary, not a storage boundary: the
@@ -293,6 +321,10 @@ def establish_healing_anchor(d, online, victim, cycle, victim_index=None):
                 fences.append({"node": i, "height": height, "hash": block_hash})
             victim_view = victim_sample(victim)
             low = min(f["height"] for f in fences)
+            if minimum_height is not None and low < minimum_height:
+                last = f"online finalized height {low} is below epoch target {minimum_height}"
+                d.drive()
+                raise a.WaitTimeout(last)
             pick = next(f for f in fences if f["height"] == low)
             if victim_view["finalized_height"] == low and victim_view["finalized_hash"] != pick["hash"]:
                 raise RuntimeError(
@@ -327,6 +359,7 @@ def establish_healing_anchor(d, online, victim, cycle, victim_index=None):
             d.record(phase="healing_anchor", cycle=cycle, attempt=attempt, anchor=anchor,
                      online=fences, anchor_finalized=answers,
                      victim_view=victim_view, victim_anchor_finalized=victim_answer)
+            anchor["victim_finalized_height"] = victim_view["finalized_height"]
             return anchor
         except a.WaitTimeout as error:
             d.record(phase="healing_anchor", cycle=cycle, attempt=attempt,
@@ -413,11 +446,10 @@ def anchor_agreement(d, anchor, victim=None):
         victim_height, victim_hash = d.finalized_head(victim)
     except (OSError, ValueError):
         victim_height, victim_hash = None, None
-    d.note_healing_sample({"victim_height": victim_row["tip"],
-                           "victim_peers": victim_row["peers"],
-                           "victim_undelivered": victim_row["undelivered_sends"],
-                           "victim_finalized": victim_height,
-                           "anchor_finalized": all(x["answer"] is True for x in answers)})
+    # One status poll is one sample; enrich it rather than counting the same instant twice.
+    if getattr(d, "healing_samples", None):
+        d.healing_samples[-1].update(victim_finalized=victim_height,
+                                    anchor_finalized=all(x["answer"] is True for x in answers))
     d.record(phase="healing_probe", anchor=anchor, nodes=statuses,
              victim_finalized={"height": victim_height, "hash": victim_hash},
              anchor_finalized=answers)
@@ -484,7 +516,9 @@ def record_cycle(out, rounds, record, capture_phase):
     try:
         yield record
     except Exception as error:
-        record["result"] = "FAIL"
+        failure = record.get("healing_failure_class") or failure_class(error)
+        record["failure_class"] = failure
+        record["result"] = "INCONCLUSIVE" if failure.startswith("INCONCLUSIVE_") else "FAIL"
         record["error"] = {"type": type(error).__name__, "message": str(error)}
         # Capture the failure state before the outer cleanup reconnects the victim.
         try:
@@ -497,8 +531,7 @@ def record_cycle(out, rounds, record, capture_phase):
             "failed_cycle": record["cycle"], "failed_phase": record["phase"],
             "rounds": rounds,
         }
-        if record.get("healing_failure_class"):
-            document["failure_class"] = record["healing_failure_class"]
+        document["failure_class"] = failure
         (out/"partition-result.json").write_text(json.dumps(document, indent=2)+"\n")
         try:
             source_sha = cmd("git", "rev-parse", "HEAD")
@@ -513,9 +546,9 @@ def record_cycle(out, rounds, record, capture_phase):
             "binary_sha256": binary_sha256,
             "run_id": os.environ.get("GITHUB_RUN_ID"),
             "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
-            "aggregate": "FAIL",
+            "aggregate": record["result"],
             "cycles": [{"cycle": r.get("cycle"), "result": r.get("result"),
-                        "failure_class": r.get("healing_failure_class")} for r in rounds],
+                        "failure_class": r.get("failure_class")} for r in rounds],
         }, indent=2)+"\n")
         raise
     else:
@@ -672,8 +705,11 @@ def main():
                     raise AssertionError("VICTIM_LIFECYCLE_CHANGED during the partition")
                 capture_phase(f"partition-{cycle+1}-before-healing")
                 record["phase"]="healing"
+                target=next_epoch_height(frozen[-1].get("finalized_height"), args.epoch_length)
+                record["epoch_target_height"]=target
+                wait_for_epoch_boundary(d, online, target)
                 anchor=establish_healing_anchor(
-                    d, online, victim, cycle+1, victim_index=victim_index)
+                    d, online, victim, cycle+1, victim_index=victim_index, minimum_height=target)
                 record["healing_anchor"]=anchor
                 record["phase"]="rejoin"
                 cmd("docker","network","connect","acceptance",victim)
@@ -693,23 +729,26 @@ def main():
                     recovered=d.wait_for_healing(
                         "all validators retain the healing anchor in finalized state after partition healing",
                         lambda:anchor_agreement(d,anchor,victims[cycle]), window=window)
-                except RuntimeError:
-                    failure_class=getattr(d,"healing_failure_class",None)
+                except RuntimeError as error:
+                    healing_class=getattr(d,"healing_failure_class",None)
                     record["healing_failure_class"]=(
-                        failure_class if isinstance(failure_class,str) else "HEALING_FAILURE")
+                        healing_class if isinstance(healing_class,str) else failure_class(error))
                     raise
                 record["rejoined"]=recovered
                 record["healing_failure_class"]=getattr(d,"healing_failure_class",None)
                 # The victim's missing range must cross an epoch boundary, or two runs at
                 # different production rates are not the same code path (D-CH-8).
-                if victim_height is not None:
-                    crosses=epoch_boundary_crossed(victim_height, anchor["height"],
+                isolated_height=anchor.get("victim_finalized_height", frozen[-1].get("finalized_height"))
+                if type(isolated_height) is int:
+                    crosses=epoch_boundary_crossed(isolated_height, anchor["height"],
                                                    args.epoch_length)
                     record["epoch_boundary_crossed"]=crosses
                     if not crosses:
                         raise RuntimeError(
                             "INCONCLUSIVE_EPOCH_COVERAGE: the victim's missing range "
-                            f"({victim_height}, {anchor['height']}] does not cross an epoch boundary")
+                            f"({isolated_height}, {anchor['height']}] does not cross an epoch boundary")
+                else:
+                    raise RuntimeError("INCONCLUSIVE_EPOCH_COVERAGE: isolated finality was not measured")
                 record_attestations(d, anchor)
                 record["phase"]="retention"
                 d.fixed_snapshots(original["initial_finalized"])

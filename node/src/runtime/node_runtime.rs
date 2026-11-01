@@ -45,8 +45,8 @@ use rchain_casper::reporting::{rho_reporter, ReportingCasper};
 use rchain_casper::runtime_manager::RuntimeManager;
 use rchain_casper::state::ProposerState;
 use rchain_casper::storage::{
-    rnode_key_value_store_manager, shard_data_dir, BLOCK_DISPOSITION_DB, RESET_MARKER_DB,
-    SHARD_ID_MARKER, STORE_FORMAT_MARKER, STORE_FORMAT_VERSION,
+    rnode_key_value_store_manager, shard_data_dir, RESET_MARKER_DB, SHARD_ID_MARKER,
+    STORE_FORMAT_MARKER, STORE_FORMAT_VERSION,
 };
 use rchain_casper::validator_identity::ValidatorIdentity;
 use rchain_comm::discovery::grpc_kademlia_rpc::GrpcKademliaRpc;
@@ -115,9 +115,7 @@ use crate::web::http::{
 use crate::web::node_list::{NodeListConfig, NodeListProvider};
 use crate::web::pos_read::{PosReadApi, ShardPosRead};
 use crate::web::transaction::TransactionAPIImpl;
-use rchain_casper::block_disposition::{
-    BlockDisposition, BlockDispositionCodec, BlockDispositionStore,
-};
+use rchain_casper::block_disposition::{open_block_disposition_store, BlockDispositionStore};
 use rchain_casper::engine::node_phase::NodePhaseCell;
 use rchain_casper::gateway::ledger::TxnLedger;
 use rchain_casper::gateway::{GatewayTxn, LocalShard, LocalShardDeployService};
@@ -1103,9 +1101,10 @@ fn wire_block_processing_observed(
         disposition_log.clone(),
     ));
     // A stored body the DAG never accounts for is loud even when no ledger row names it (a body
-    // written by a pre-ledger build). The audit is a count comparison, not a block scan.
+    // written by a pre-ledger build). The audit compares keys and durable owners, without decoding bodies.
     tokio::spawn(rchain_casper::block_disposition::audit_stored_bodies(
         parts.phase.clone(),
+        parts.block_disposition.clone(),
         parts.block_store.clone(),
         parts.dag.clone(),
         disposition_log,
@@ -2571,35 +2570,6 @@ pub async fn setup_shard(
         )
         .await?,
     );
-    // **Every stored body this shard still owes an outcome** (U19). Written before dependency
-    // resolution and settled by the processor on either verdict; only faults survive.
-    let block_disposition_kv: Arc<dyn KeyValueTypedStore<BlockHash, BlockDisposition>> = Arc::new(
-        database(
-            &store_manager,
-            BLOCK_DISPOSITION_DB,
-            Arc::new(BlockHashCodec),
-            Arc::new(BlockDispositionCodec),
-        )
-        .await?,
-    );
-    let block_disposition = BlockDispositionStore::from_store(block_disposition_kv);
-    // **The durable obligation set is the fault latch's boot state** (U19). A process cell that
-    // starts empty while the ledger holds open faults would read a restarted node as ready; the
-    // seed is what makes `ready` a current view across restarts. An unreadable ledger fails closed.
-    match block_disposition.unsettled().await {
-        Ok(open) => rchain_casper::blocks::block_processor::seed_pipeline_faults(
-            open.into_iter().map(|(hash, _)| hash),
-        ),
-        Err(e) => {
-            rchain_casper::blocks::block_processor::mark_pipeline_fault_ledger_unreadable();
-            log.error(
-                LogSource::new("node.runtime.block_disposition"),
-                &format!(
-                    "block disposition ledger unreadable at startup; readiness fails closed: {e}"
-                ),
-            );
-        }
-    }
     let dag_kv = Arc::new(
         BlockDagKeyValueStorage::create(block_metadata_store, deploy_index, deploy_store)
             .await
@@ -2614,6 +2584,28 @@ pub async fn setup_shard(
             .with_reset_marker(reset_marker),
     );
     let block_dag_storage: Arc<dyn BlockDagStorage> = dag_kv.clone();
+
+    // **Every stored body this shard still owes an outcome** (U19). Written before dependency
+    // resolution and settled by the processor on either verdict; only faults survive.
+    let block_disposition = open_block_disposition_store(&store_manager, &block_dag_storage)
+        .await
+        .map_err(|e| format!("cannot open/migrate the block disposition ledger: {e}"))?;
+    // Seed the outstanding-fault latch from the migrated durable ledger before admission.
+    // Unknown ledger state must never be exposed as ready or willing to accept deploys.
+    match block_disposition.unsettled().await {
+        Ok(open) => rchain_casper::blocks::block_processor::seed_pipeline_faults(
+            open.into_iter().map(|(hash, _)| hash),
+        ),
+        Err(e) => {
+            rchain_casper::blocks::block_processor::mark_pipeline_fault_ledger_unreadable();
+            log.error(
+                LogSource::new("node.runtime.block_disposition"),
+                &format!(
+                    "block disposition ledger unreadable at startup; readiness fails closed: {e}"
+                ),
+            );
+        }
+    }
 
     // Runtime manager (play + replay runtimes + mergeable store). The configured effect-scheduler
     // mode (Laws 20–22) applies to the play runtime and is recorded on the manager for the

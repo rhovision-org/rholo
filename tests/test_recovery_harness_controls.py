@@ -224,14 +224,16 @@ class RejoinAgreementTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "FAIL_PRECONDITION_proposalHalted"):
             run.anchor_agreement(ANCHOR)
 
-    def test_the_stall_alarm_must_persist_before_it_fails(self):
+    def test_a_persistent_finality_alarm_does_not_abort_the_healing_window(self):
         statuses = [healthy_status(i) for i in range(8)]
         statuses[7]["finality_stalled"] = True
-        run = self.drill(statuses=statuses)
-        self.assertIsNone(run.anchor_agreement(ANCHOR))
-        self.assertIsNone(run.anchor_agreement(ANCHOR))
-        with self.assertRaisesRegex(RuntimeError, "FAIL_STALLED"):
-            run.anchor_agreement(ANCHOR)
+        run = self.drill(statuses=statuses, is_finalized_fn=lambda i, h: i != 7)
+        run.healing_samples = []
+        for height in (45, 46, 47, 48):
+            statuses[7]["tip"] = height
+            self.assertIsNone(run.anchor_agreement(ANCHOR))
+        self.assertEqual(len(run.healing_samples), 4, "one poll must count once")
+        self.assertEqual(run.classify_healing_timeout(), "INCONCLUSIVE_SLOW_PROGRESS")
 
     def test_a_stall_latch_does_not_fail_a_victim_that_is_still_progressing(self):
         """Run 41225136080 arm 1: the rejoining victim held the latch while catching up."""
@@ -293,6 +295,36 @@ class RejoinAgreementTests(unittest.TestCase):
 
 
 class HealingAnchorTests(unittest.TestCase):
+    def test_epoch_wait_drives_until_the_boundary_instead_of_accepting_false(self):
+        from unittest.mock import Mock, patch
+        run = object.__new__(m.WorkloadDrill)
+        run.args = SimpleNamespace(window=150)
+        run.record = Mock()
+        height = [68]
+        run.finalized_head = Mock(side_effect=lambda i: (height[0], "a" * 64))
+        run.drive = Mock(side_effect=lambda: height.__setitem__(0, height[0] + 1))
+        with patch.object(m.time, "monotonic", return_value=0), patch.object(m.time, "sleep"):
+            self.assertEqual(m.wait_for_epoch_boundary(run, range(7), 70), [70] * 7)
+        self.assertEqual(run.drive.call_count, 2)
+
+    def test_epoch_wait_expiry_is_an_inconclusive_coverage_result(self):
+        from unittest.mock import Mock, patch
+        run = object.__new__(m.WorkloadDrill)
+        run.args = SimpleNamespace(window=150)
+        run.record = Mock()
+        run.finalized_head = Mock(return_value=(68, "a" * 64))
+        run.drive = Mock()
+        with patch.object(m.time, "monotonic", side_effect=[0, 0, 301, 301]), \
+             patch.object(m.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "INCONCLUSIVE_EPOCH_COVERAGE"):
+                m.wait_for_epoch_boundary(run, range(7), 70)
+
+    def test_epoch_target_requires_the_next_boundary_even_when_starting_on_one(self):
+        for height, expected in [(9, 10), (10, 20), (60, 70), (68, 70)]:
+            self.assertEqual(m.next_epoch_height(height, 10), expected)
+        with self.assertRaisesRegex(RuntimeError, "INCONCLUSIVE_EPOCH_COVERAGE"):
+            m.next_epoch_height(None, 10)
+
     def drill(self, *, fences, victim, answers, victim_answer):
         from types import SimpleNamespace
         from unittest.mock import Mock
@@ -529,6 +561,19 @@ class IncidentReplayTests(unittest.TestCase):
         self.assertLessEqual(first - trace["healing_start_utc"], 150)
 
 class PartitionFailureEvidenceTests(unittest.TestCase):
+    def test_named_inconclusive_and_precondition_failures_survive_campaign_serialization(self):
+        import json
+        from tempfile import TemporaryDirectory
+        from unittest.mock import Mock, patch
+        for code in ["INCONCLUSIVE_EPOCH_COVERAGE", "FAIL_PRECONDITION_orphanBodies"]:
+            with TemporaryDirectory() as directory, patch.object(m, "cmd", side_effect=OSError):
+                with self.assertRaises(RuntimeError):
+                    with m.record_cycle(Path(directory), [], {"cycle": 1, "phase": "healing"}, Mock()):
+                        raise RuntimeError(f"{code}: details")
+                campaign=json.loads((Path(directory)/"campaign.json").read_text())
+                self.assertEqual(campaign["cycles"][0]["failure_class"], code)
+                self.assertEqual(campaign["aggregate"], "INCONCLUSIVE" if code.startswith("INCONCLUSIVE_") else "FAIL")
+
     def test_failure_preserves_cycle_progress_and_primary_error(self):
         import json
         from tempfile import TemporaryDirectory

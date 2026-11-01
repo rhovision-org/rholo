@@ -83,7 +83,7 @@ split, a fund loss, or remote code execution.
 
 **Carried findings from September**, re-derived rather than reopened:
 
-| September item | State today |
+| September item | State at the audit pin |
 |---|---|
 | The gas model does not bound work (P1) | **Partially re-opened.** The September instances are fixed (§3); the *class* recurred in the collection conversions, the union asymmetry and `censure` (C345, C346). |
 | The DAG can wedge silently after a crash (P2) | **Moot.** The fringe-data record retired (`casper/src/dag.rs:1439-1482`); the write-order finding and its silent-restore arm have nothing left to order against. |
@@ -97,6 +97,14 @@ split, a fund loss, or remote code execution.
 an accepted residual), so the gas-model row's "partially re-opened" instance is now charged — output
 size for the conversions, both operands for the union, `(U+1)³` for `censure` (Law 91) — and the
 "underpriced" reading of `censure` is answered by the cube.
+
+**The timestamp rule changed after this pin (#529).** The header carries the proposer's signed,
+unverified wall clock; it is never a block-validity input. The former parent-relative lower bound
+was removed because a future-dated parent could make honest descendants invalid until wall time
+caught up. `casper/src/validate.rs::a_block_timestamp_is_never_a_validity_input` checks stamps before
+and after the parent, zero and `i64::MAX`. The older §6 timestamp-bound row is historical; it does not
+state the active validation rule. The local attestation skew window is a separate policy (#43,
+W-N14-02).
 
 The P3 signing exception is a **decision, not work**: the release emits an `sha256sum` and no
 signature or SBOM, because a signature needs a trust root this repository has not chosen.
@@ -328,8 +336,10 @@ These are decisions, not defects.
 - **The charge's shape at the margin.** The conversions are linear for `O(n log n)` work, so a phlo buys
   work bounded by `charge · log charge`. Bounded is the requirement the defect violated; an exact price
   of a comparison is a larger decision.
-- **A far-future block timestamp.** The lower bound landed; the future direction is still accepted by
-  design (#223). The decision is open.
+- **Contract dependence on header clocks.** Under #529 the block timestamp is informational in
+  both directions. A signed header proves who supplied the value, not its accuracy as wall time;
+  contracts reading `rho:block:data` must account for that trust limit. See the timestamp test above
+  and [the contract reference](../rholang/reference.md).
 - **The transaction API's amount.** Decided as a residual (§149): no API cap, and the operator caps the
   coordinator's vault. If a network later wants a sub-balance bound, it is a policy on top of the
   chain's, and it is a decision rather than a fix.
