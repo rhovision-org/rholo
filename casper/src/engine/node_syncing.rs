@@ -1445,6 +1445,34 @@ mod tests {
         assert_eq!(dag.get_representation().await.latest_block_number(), n);
     }
 
+    /// **Law 83, C338: a fringe row for a block the walk did not download** is a claim the joiner
+    /// cannot check at all, so it is refused before anything is written.
+    #[test]
+    fn an_ancestry_entry_for_an_unknown_block_is_refused() {
+        let downloaded: BTreeSet<BlockHash> = [hash(0)].into_iter().collect();
+        let entry = BlockFringe {
+            block_hash: hash(9),
+            fringe: BTreeSet::new(),
+            fringe_state_hash: StateHash::new([0u8; 32]),
+        };
+        let err = check_ancestry_shape(&[entry], &downloaded)
+            .expect_err("an entry for an undownloaded block must be refused");
+        assert!(err.contains("did not download"), "{err}");
+    }
+
+    #[test]
+    fn two_ancestry_entries_for_one_block_are_refused() {
+        let downloaded: BTreeSet<BlockHash> = [hash(0)].into_iter().collect();
+        let entry = BlockFringe {
+            block_hash: hash(0),
+            fringe: BTreeSet::new(),
+            fringe_state_hash: StateHash::new([0u8; 32]),
+        };
+        let err = check_ancestry_shape(&[entry.clone(), entry], &downloaded)
+            .expect_err("duplicate ancestry rows must be refused");
+        assert!(err.contains("two ancestry entries"), "{err}");
+    }
+
     /// **The derivable field is refused when it lies**: a block's `fringe` is recomputed from its
     /// justifications (`latest_fringe`), so a bootstrap cannot choose it.
     #[tokio::test]

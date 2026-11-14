@@ -441,6 +441,10 @@ mod tests {
             restore_attempts: 2,
             fringe: [block_hash(5)].into_iter().collect(),
             fringe_state_hash: StateHash::new([9u8; 32]),
+            pre_state_hash: StateHash::new([6u8; 32]),
+            post_state_hash: StateHash::new([7u8; 32]),
+            sig: vec![4u8; 64],
+            sig_algorithm: "secp256k1".to_string(),
             member_of_fringe: Some(Blake2b256Hash::from_bytes([8u8; 32])),
         };
         let decoded = BlockMetadata::from_bytes(&meta.to_bytes()).unwrap();

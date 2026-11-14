@@ -536,6 +536,8 @@ mod tests {
             nodes: 4,
             min_phlo_price: 5,
             latest_block_number: 6,
+            history_availability: "available".to_string(),
+            checkpoint_age: None,
         })
         .expect("ser");
         for key in [

@@ -49,6 +49,10 @@ import Rchain.Sync.Trust
 import Rchain.Sync.Redundancy
 import Rchain.Sync.ReplayState
 import Rchain.Sync.Serve
+import Rchain.Sync.Checkpoint
+import Rchain.Sync.Separation
+import Rchain.Sync.Audit
+import Rchain.Sync.Availability
 import Rchain.Casper.Stake
 import Rchain.Proto
 import Rchain.Casper.Dag

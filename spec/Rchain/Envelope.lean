@@ -66,7 +66,8 @@ def envelopeCatalog : List EnvelopeRow :=
   [ { name := "ApiStatus", endpoint := "GET /api/v1/status",
       keys := ["version", "address", "networkId", "shardId", "peers", "nodes", "minPhloPrice",
         "latestBlockNumber", "autopropose", "proposeOnDeploy", "manualPropose", "devMode",
-        "proposer", "degraded", "acceptsDeploys", "pool"] }
+        "proposer", "degraded", "acceptsDeploys", "pool", "historyAvailability",
+        "checkpointAge"] }
   -- **The operator half, on its own endpoint** (W-N3-01). The row above used to carry every key
   -- below, and served them on a public listener; the split *is* the finding, so the catalog splits
   -- with it. A superset of the row above by construction: `OperatorStatus` flattens `PublicStatus`
@@ -74,7 +75,8 @@ def envelopeCatalog : List EnvelopeRow :=
   , { name := "OperatorStatus", endpoint := "GET /api/v1/status/operator",
       keys := ["version", "address", "networkId", "shardId", "peers", "nodes", "minPhloPrice",
         "latestBlockNumber", "autopropose", "proposeOnDeploy", "manualPropose", "devMode",
-        "proposer", "degraded", "acceptsDeploys", "pool",
+        "proposer", "degraded", "acceptsDeploys", "pool", "historyAvailability",
+        "checkpointAge",
         "adminHttp",
         "consecutiveSelfValidationFailures", "selfValidationRefusal", "poolQuarantined",
         "autoproposeTimerHalted",
@@ -93,7 +95,7 @@ def envelopeCatalog : List EnvelopeRow :=
         "shards", "resources"] }
   , { name := "NodeCapabilities", endpoint := "GET /api/v1/capabilities",
       keys := ["autopropose", "proposeOnDeploy", "manualPropose", "adminHttp", "devMode",
-        "proposer", "nodeList", "faucet", "faucetRemaining"] }
+        "proposer", "nodeList", "faucet", "faucetRemaining", "history"] }
   -- **The deploy hostlist** (Law 90): the response a client spreads deploys over. Declared here so
   -- the shape a wallet parses is the shape this node serves, not a coincidence of two writers.
   , { name := "NodeListResponse", endpoint := "GET /api/v1/nodes",
