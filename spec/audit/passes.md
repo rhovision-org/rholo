@@ -10813,6 +10813,15 @@ a registry lookup reaches `extractState` — the arm whose only job is `ret!({"a
 whether an attacker can rebuild the exact term `bundle0{(*_authKey, shape)}` from a name received over
 a channel. Rholang has no term splice, and the answer is a genesis-replay arm. **Reading it is the
 first thing the next pass does.**
+
+**C301 disposition (2026-11-14).** The row stays `in progress`, and the reason is now explicit rather
+than a queue position. The A1 arm cannot be written as an engineering task alone: whether the adapted
+`bundle+` registration in `registry_epilogue_adapted` is intended is a contracts/protocol-owner
+decision, and if it is not, the repair is a genesis/hard-fork-class change rather than a test. The
+other eighteen findings require a contract-layer reviewer for the thirty system processes the review
+ledger still records as `T3 deferred`; the ledger's own roster row is part of that surface. Neither a
+public-validator run nor a live-genesis operation is in scope, and no part of the nineteen is claimed
+as armed here.
 ## 122. One devnet boot, sixteen falsifiers, and the four that came back different (C304–C307)
 
 The wargame's 97 rows carry 92 `owed:` falsifiers. Classification of the run's full text gives 26 that
@@ -11738,6 +11747,20 @@ implemented and the restore suite refuted it; it was removed rather than kept as
 peer that sends no ancestry rows keeps the existing per-block WARN fallback, so the check does not
 refuse older implementations. Law 83 is the trust model this is an instance of.
 
+**The mature-chain replay campaign (2026-11-14).** `tools/c339_mature_replay.py` built a
+four-validator chain to 2,436+ observed heights, stopped validator 3, wiped its volume and restarted
+it empty against the bootstrap (restore anchor: finalized 2,432). The restore did **not** complete
+inside the 45-minute budget: the joiner was still `NodeSyncing` (`height: 0`, `ready: false`), and
+after the budget it continued at about **3 blocks/min** (replay at `close_block 461`, store 31.5 MB
+against the bootstrap's 47.4 MB at height 2,582). The host was co-resident with another session's
+Rust build and the `darkwow` devnet (load ~29 on 24 CPUs), and the joiner logged **eight**
+`No tuple space state responses for 30s. Resending requests` stalls. The record is
+`evidence/c339-mature-replay-20261114/` (`local-devnet`, **INCONCLUSIVE**). This is neither a pass nor
+a code failure: the restore is confounded by host contention and by unanswered LFS windows, so the
+observed rate is a lower bound. The restart and wrong-pin controls were not reached. The
+`n479-native-join-20261029` 756-record record remains the completed control. C339 stays `in progress`
+until a rerun on an idle host completes the restore and the controls.
+
 ## 142. A memory gate in front of a bounded pool (C340, #477)
 
 The public testnet settled into `degraded: throttled` at height 1688 with 547 MiB available and
@@ -11879,6 +11902,18 @@ block-6 phase still needs the old hosts' `status/operator` and logs. `pipelineFa
 `proposalHalted`, `orphanBodies` and `sync_state` remain process-wide. No live-net arm was run. C343
 stays `in progress`; the HAZOP/safety-case debt is re-counted from their gates.
 
+**The isolation halt/resume arm (2026-11-14).** The end-to-end falsifier U20-01/07/09/11 named is now
+on a local four-validator devnet: `tools/proposer_isolation_drill.py` stops validators 1–3, lets the
+bootstrap's tip reach `finalizedLag = 32`, and records all twelve assertions in
+`evidence/c343-proposer-isolation-20261114/` (`local-devnet`, PASS). `/health` reported
+`proposalHalted`, `ready: false`, `readyReasons: ["proposal_isolated"]` and the reason string
+`tip 37 is 33 heights beyond last finalized 4 (bound 32)`; the operator route carried the same gate;
+the tip stayed flat and an explicit propose added no block; `POST /api/v1/proposer/resume` answered
+with the clear message, the cleared moment was observed, and the next proposal re-latched because
+finality was still frozen. **C343 still stays `in progress`**: the live B/C/D `status/operator` and
+block-6 journal evidence, and U19-11's aggregate backlog surface, are external. The drill is a
+bounded local witness, not the live incident's phase diagnosis.
+
 ## 147. Liveness enforcement: jail and the stake vote (C344, RCHIP #55)
 
 **Found.** A validator that stops is paid and holds the finality denominator for ever; the 2026-10-02
@@ -11904,6 +11939,22 @@ the Lean witnesses.
 restart/expiry, exact threshold); no mainnet arming (#428); no unban; the inactivity leak remains #149
 and @aixaria0's; a boundary block can omit `CloseBlock`, so the epoch transition is skippable until a
 validity rule lands. §6 records the hard fork; C344 stays `in progress`.
+
+**The devnet arm exposes an anchor-persistence defect (2026-11-14).** `tools/liveness-enforcement-drill.py`
+armed the mechanism on four local validators (genesis keys in one shared `network.conf`; stakes
+700/100/100/100, epoch 3, absence threshold 1, jail after 2, jail 10, vote window 6, severity
+`misdemeanour`), stopped validator 3 at about height 20, and polled `rho:rchain:pos`'s `getLiveness`.
+Over 420 seconds the surviving three advanced the chain to **height 305 / finalized 302** and the map
+stayed empty: **no jail was imposed**. The record is
+`evidence/c344-liveness-enforcement-20261114/` (`local-devnet`, FAIL). An instrumented build (not
+retained) showed the prelude running with `jail_after=2` and a three-validator participation map, but
+`liveness_anchor()` returning `None` at every boundary after the first armed one — the
+`pos:liveness-anchor` write made at a boundary is not visible in the next boundary block's merged
+pre-state on this path. The absence counter therefore never advances past the first comparison point.
+The unit tests share one in-memory store across boundaries and do not exercise the block merge, which
+is why they pass. Whether the merge drops the close chain's slot or the write never reaches the
+sidecar is **not** established here. The live testnet arms, the partition arm and a repair of the
+anchor persistence remain owed; C344 stays `in progress`.
 
 ## 148. The October 2026 re-audit: cost, new ingress and the OCapN surface (C345–C352)
 
@@ -12221,6 +12272,16 @@ ordering candidates are still unexcluded.
 exclusion and the subsequent proposal without the set; durable persistence of the refusal and the
 exclusion across restart; and the `recover-pool` tool/runbook action. None of them is claimed by this
 pass.
+
+**C357 disposition (2026-11-14).** The local half is now delivered: §155–§158 record the recovery
+state machine, the automatic post-catch-up resume, the three injected arms, the natural pending-peek
+trigger on the integrated build, and the pinned-binary qualification. What remains is not local
+engineering: independent compatibility acceptance and a lockstep `section 6` rollout with no complete
+accepted-history sweep; the live/selected-candidate operational acceptance; and the incident
+operator's unrecovered rejected block/trace bytes. The row stays `in progress` until a named release
+owner supplies the candidate and every validator activates it in lockstep (or a coordinated new
+genesis), an independent reviewer signs the category-A compatibility claim, and the live acceptance
+runs. The 2026-11-13 pinned-binary record is explicitly not that acceptance.
 
 ## 154. The self-replay cost refusal: adversarial audit, representability RCA, HAZOP (C357–C359, #564)
 

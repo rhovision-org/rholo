@@ -9281,4 +9281,46 @@ mod liveness_tests {
         assert!(native.liveness_anchor().await.unwrap().is_none());
         assert!(native.vote_windows().await.unwrap().is_empty());
     }
+
+    /// **U21-09's debt: a passing vote must not leave a staged withdrawal behind.**
+    ///
+    /// The genesis invariant `vote_window * epoch_length <= quarantine_length` makes a jailed
+    /// validator's withdrawal entry unreachable in a coherent configuration — the bond cannot leave
+    /// the pool while the window is open. The invariant is enforced at genesis, but a vote must still
+    /// remove the entry if one is present: leaving it would let the next holder of the key inherit a
+    /// claim that was priced against a bond the slash has already taken. This pins the removal and the
+    /// bond removal together (the HAZOP row F-U21-09 named the missing test).
+    #[tokio::test]
+    async fn a_passing_vote_removes_a_staged_withdrawal() {
+        let native = four(armed_params()).await;
+        jail_v4(&native).await;
+        let v4 = validator(4);
+        native.set_pending_withdrawers(&BTreeMap::from([(v4, 50)]));
+        assert!(
+            native
+                .pending_withdrawers()
+                .await
+                .unwrap()
+                .contains_key(&v4),
+            "the staged withdrawal must be in the store before the vote"
+        );
+        for voter in 1..=3 {
+            native
+                .cast_vote(&validator(voter), &v4, true)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        boundary(&native, 40, &[(1, 40), (2, 40), (3, 40)]).await;
+        assert!(
+            !native
+                .pending_withdrawers()
+                .await
+                .unwrap()
+                .contains_key(&v4),
+            "a slash removes the staged withdrawal with the bond"
+        );
+        assert!(!native.bonds().await.unwrap().contains_key(&v4));
+        assert!(native.banished().await.unwrap().contains(&v4));
+    }
 }

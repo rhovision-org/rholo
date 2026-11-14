@@ -76,10 +76,18 @@ register row 89, the HAZOP U21 and safety-case B48/B49/H-RS-17.
 A four-validator devnet and then a live testnet must show: jail after two advancing boundaries with the
 bond unchanged; a >2/3 vote slash and permanent ejection with replay agreement; a partition that jails
 but does not slash without a vote; a stall that moves neither clock; a restart during jail that returns
-at expiry and renews while silent; the exact 2/3 boundary. **The devnet harness and evidence
-contract are still owed.** The proposed `tests/liveness-enforcement.py` harness does not exist in
-this branch; acceptance evidence under `spec/audit/evidence/` and the live testnet arm remain
-unverified. No live arm was run.
+at expiry and renews while silent; the exact 2/3 boundary.
+
+**The harness exists and its first arm failed (2026-11-14).** `tools/liveness-enforcement-drill.py`
+stages the devnet with the five genesis keys in one shared `network.conf`, stops a validator and reads
+`getLiveness`/`getBonds`/`getVotes` through `rho:rchain:pos`. On the first run the three survivors
+advanced to height 305 while the stopped validator was never jailed: an instrumented build showed
+`liveness_anchor()` returning `None` at every boundary after the first armed one, so the absence
+counter never advances past the first comparison point. The `pos:liveness-anchor` write is not
+visible in the next boundary's merged pre-state on this path. The record is
+`spec/audit/evidence/c344-liveness-enforcement-20261114/` (verdict FAIL). The unit tests share one
+in-memory store and do not exercise the block merge. **Acceptance is not met**: the anchor
+persistence must be repaired before the remaining arms and the live testnet run can be evidenced.
 
 ## 8. Known residuals
 
