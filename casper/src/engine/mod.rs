@@ -5,6 +5,7 @@
 //! `NodeLaunch`'s genesis-from-config helpers + `apply` mode-dispatch are ported.
 
 pub mod catchup;
+pub mod checkpoint_source;
 pub mod lfs_block_requester;
 pub mod lfs_tuple_space_requester;
 pub mod node_launch;

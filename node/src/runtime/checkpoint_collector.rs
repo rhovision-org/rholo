@@ -29,8 +29,10 @@ use rchain_casper::api::block_api::BlockApi;
 use rchain_casper::checkpoint::{
     check_bond_set_unchanged, checkpoint_digest, verify_genesis_rooted_certificate,
 };
+use rchain_casper::engine::checkpoint_source::CheckpointSource;
 use rchain_casper::protocol::comm_util::CommUtil;
 use rchain_casper::runtime_manager::RuntimeManager;
+use rchain_comm::peer_node::PeerNode;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::casper::protocol::checkpoint::{CheckpointAttestation, CheckpointCertificate};
@@ -53,6 +55,75 @@ const MAX_ATTESTATION_PEERS: usize = 32;
 
 /// The body cap for one attestation response.
 const MAX_ATTESTATION_BYTES: usize = 8 * 1024;
+
+/// The body cap for one certificate response. A certificate carries one attestation per bonded
+/// validator; the cap is generous and still independent of what a peer chooses to send.
+const MAX_CERTIFICATE_BYTES: usize = 1024 * 1024;
+
+/// **The production source**: the bootstrap's `/api/v1/checkpoint`, on its client port.
+pub struct HttpCheckpointSource {
+    client: reqwest::Client,
+    url: String,
+}
+
+impl HttpCheckpointSource {
+    /// The bootstrap's HTTP endpoint is the protocol port plus the published offset — the same
+    /// derivation the node list and the peer probe use, so a node published there is the one asked.
+    pub fn from_bootstrap(peer: &PeerNode) -> Result<Self, String> {
+        let port = u16::from(peer.endpoint.tcp_port)
+            .checked_add(NODE_LIST_HTTP_PORT_OFFSET)
+            .ok_or_else(|| {
+                format!(
+                    "bootstrap {}'s client port overflows u16",
+                    peer.endpoint.host
+                )
+            })?;
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .connect_timeout(ATTESTATION_TIMEOUT)
+            .timeout(ATTESTATION_TIMEOUT)
+            .user_agent(concat!("rchain-rnode/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|e| format!("checkpoint source client: {e}"))?;
+        Ok(HttpCheckpointSource {
+            client,
+            url: format!("http://{}:{}/api/v1/checkpoint", peer.endpoint.host, port),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl CheckpointSource for HttpCheckpointSource {
+    async fn fetch_certificate(&self) -> Result<CheckpointCertificate, String> {
+        let response = self
+            .client
+            .get(&self.url)
+            .send()
+            .await
+            .map_err(|e| format!("GET {}: {e}", self.url))?;
+        if !response.status().is_success() {
+            return Err(format!("GET {}: status {}", self.url, response.status()));
+        }
+        let mut response = response;
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| format!("GET {}: {e}", self.url))?
+        {
+            if body.len() + chunk.len() > MAX_CERTIFICATE_BYTES {
+                return Err(format!(
+                    "GET {}: the certificate exceeds the {MAX_CERTIFICATE_BYTES}-byte cap",
+                    self.url
+                ));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice(&body)
+            .map_err(|e| format!("GET {}: not a checkpoint certificate: {e}", self.url))
+    }
+}
 
 pub struct CheckpointCollector {
     block_api: Arc<dyn BlockApi>,

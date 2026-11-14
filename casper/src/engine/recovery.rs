@@ -28,6 +28,11 @@ use crate::merging::BlockIndex;
 use crate::runtime_manager::RuntimeManager;
 
 /// Production replay context; built by NodeLaunch from this shard's runtime/config.
+///
+/// **The name is now half wrong and deliberately kept** for one commit at a time: `verify` is the
+/// replay the audit path still uses, and the sync path uses the same context for the runtime (the
+/// bond read) and for the certificate source. Splitting the type is a rename, not a behaviour
+/// change, and is left until the audit command lands.
 #[derive(Clone)]
 pub struct RecoveryReplay {
     pub runtime: Arc<RuntimeManager>,
@@ -36,6 +41,13 @@ pub struct RecoveryReplay {
     pub max_number_of_parents: i32,
     pub expected_genesis: Option<BlockHash>,
     pub anchor: Option<BlockHash>,
+    /// **Where sync fetches the certificate that makes the served state acceptable.** `None` fails
+    /// the sync closed: an unsigned fringe is not a state root a node may start from.
+    pub checkpoint_source: Option<Arc<dyn crate::engine::checkpoint_source::CheckpointSource>>,
+    /// **Where an accepted certificate is persisted**, so boot can re-verify the accepted fringe
+    /// and the node can serve the certificate to the next joiner. `None` in a fixture that never
+    /// accepts one.
+    pub checkpoint_store: Option<rchain_block_storage::checkpoint_store::CheckpointStore>,
 }
 
 /// Only replay can construct this value. Publishing never consumes wire metadata.

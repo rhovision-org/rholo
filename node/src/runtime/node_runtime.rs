@@ -2249,6 +2249,28 @@ async fn setup_shard_runtime(
     // This shard's slice of the peer-message stream (fed by the router).
     let (peer_tx, peer_message_rx) = mpsc::channel::<PeerMessage>(50);
 
+    // **Where this shard's joiner fetches its checkpoint certificate** (sync/verification
+    // separation). The sync engine has no HTTP client, so the node builds the source here from the
+    // bootstrap's published client port. A node with no bootstrap (a genesis producer) starts from
+    // its own genesis and never syncs; `None` is honest there and refusal on a joiner.
+    let checkpoint_source: Option<
+        Arc<dyn rchain_casper::engine::checkpoint_source::CheckpointSource>,
+    > = match comm_state.rp_conf.bootstrap.as_ref() {
+        Some(peer) => {
+            match crate::runtime::checkpoint_collector::HttpCheckpointSource::from_bootstrap(peer) {
+                Ok(source) => Some(Arc::new(source)),
+                Err(e) => {
+                    log.warn(
+                        LogSource::new("coop.rchain.node.runtime.Setup"),
+                        &format!("no checkpoint source for {shard_id}: {e}"),
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+
     // Node launch mode dispatch (genesis → syncing → running over the peer-message stream).
     let node_launch = node_launch::apply(
         peer_message_rx,
@@ -2282,12 +2304,14 @@ async fn setup_shard_runtime(
         parts.runtime_manager.clone(),
         parts.block_store.clone(),
         parts.approved_store.clone(),
+        parts.checkpoint_store.clone(),
         parts.dag.clone(),
         parts.block_disposition.clone(),
         handles.processor_input,
         importer,
         exporter,
         parts.phase.clone(),
+        checkpoint_source,
         log.clone(),
     );
     let node_launch_log = log.clone();
