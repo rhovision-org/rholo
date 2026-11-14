@@ -10813,6 +10813,15 @@ a registry lookup reaches `extractState` — the arm whose only job is `ret!({"a
 whether an attacker can rebuild the exact term `bundle0{(*_authKey, shape)}` from a name received over
 a channel. Rholang has no term splice, and the answer is a genesis-replay arm. **Reading it is the
 first thing the next pass does.**
+
+**C301 disposition (2026-11-14).** The row stays `in progress`, and the reason is now explicit rather
+than a queue position. The A1 arm cannot be written as an engineering task alone: whether the adapted
+`bundle+` registration in `registry_epilogue_adapted` is intended is a contracts/protocol-owner
+decision, and if it is not, the repair is a genesis/hard-fork-class change rather than a test. The
+other eighteen findings require a contract-layer reviewer for the thirty system processes the review
+ledger still records as `T3 deferred`; the ledger's own roster row is part of that surface. Neither a
+public-validator run nor a live-genesis operation is in scope, and no part of the nineteen is claimed
+as armed here.
 ## 122. One devnet boot, sixteen falsifiers, and the four that came back different (C304–C307)
 
 The wargame's 97 rows carry 92 `owed:` falsifiers. Classification of the run's full text gives 26 that
@@ -12221,6 +12230,16 @@ ordering candidates are still unexcluded.
 exclusion and the subsequent proposal without the set; durable persistence of the refusal and the
 exclusion across restart; and the `recover-pool` tool/runbook action. None of them is claimed by this
 pass.
+
+**C357 disposition (2026-11-14).** The local half is now delivered: §155–§158 record the recovery
+state machine, the automatic post-catch-up resume, the three injected arms, the natural pending-peek
+trigger on the integrated build, and the pinned-binary qualification. What remains is not local
+engineering: independent compatibility acceptance and a lockstep `section 6` rollout with no complete
+accepted-history sweep; the live/selected-candidate operational acceptance; and the incident
+operator's unrecovered rejected block/trace bytes. The row stays `in progress` until a named release
+owner supplies the candidate and every validator activates it in lockstep (or a coordinated new
+genesis), an independent reviewer signs the category-A compatibility claim, and the live acceptance
+runs. The 2026-11-13 pinned-binary record is explicitly not that acceptance.
 
 ## 154. The self-replay cost refusal: adversarial audit, representability RCA, HAZOP (C357–C359, #564)
 
