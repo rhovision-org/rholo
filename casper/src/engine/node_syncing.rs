@@ -22,13 +22,14 @@ use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{
-    BlockFringe, BlockMessage, CasperMessage, FinalizedFringe, StoreItemsMessage,
+    BlockFringe, BlockMessage, BlockMetadataMessage, CasperMessage, FinalizedFringe,
+    StoreItemsMessage,
 };
 use rchain_rspace::state::RSpaceImporter;
 use rchain_shared::lock::Unpoison;
 use rchain_shared::log::{Log, LogSource};
 
-use super::lfs_block_requester::{request_blocks, BlockRequestLog};
+use super::lfs_block_requester::BlockRequestLog;
 use super::lfs_tuple_space_requester::{
     request_tuple_space, request_tuple_space_roots, REQUEST_TIMEOUT,
 };
@@ -61,6 +62,10 @@ pub struct NodeSyncing<I: RSpaceImporter> {
     block_requests: Arc<tokio::sync::Mutex<BlockRequestLog>>,
     tuple_space_tx: tokio::sync::mpsc::Sender<StoreItemsMessage>,
     tuple_space_rx: Option<tokio::sync::mpsc::Receiver<StoreItemsMessage>>,
+    /// Metadata answers for the header walk (sync/verification separation). A sibling of the block
+    /// and tuple-space paths: the walker owns the receiver, this engine forwards what arrives.
+    metadata_tx: tokio::sync::mpsc::Sender<BlockMetadataMessage>,
+    metadata_rx: Option<tokio::sync::mpsc::Receiver<BlockMetadataMessage>>,
     start_requester: bool,
     initial_fringe_received: Arc<tokio::sync::Notify>,
     finished: Arc<tokio::sync::Notify>,
@@ -174,6 +179,7 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
     ) -> Self {
         let (incoming_blocks_tx, incoming_blocks_rx) = tokio::sync::mpsc::channel(50);
         let (tuple_space_tx, tuple_space_rx) = tokio::sync::mpsc::channel(50);
+        let (metadata_tx, metadata_rx) = tokio::sync::mpsc::channel(50);
         NodeSyncing {
             transport,
             conf,
@@ -192,6 +198,8 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             block_requests: Arc::new(tokio::sync::Mutex::new(BlockRequestLog::default())),
             tuple_space_tx,
             tuple_space_rx: Some(tuple_space_rx),
+            metadata_tx,
+            metadata_rx: Some(metadata_rx),
             start_requester: true,
             initial_fringe_received: Arc::new(tokio::sync::Notify::new()),
             finished: Arc::new(tokio::sync::Notify::new()),
@@ -251,6 +259,10 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                     ),
                 );
                 chan::send(&self.tuple_space_tx, s.clone()).await;
+                Ok(())
+            }
+            CasperMessage::BlockMetadataMessage(m) => {
+                chan::send(&self.metadata_tx, m.clone()).await;
                 Ok(())
             }
             CasperMessage::BlockMessage(b) => {
@@ -426,6 +438,18 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                     );
                 }
             };
+            let metadata_rx = match self.metadata_rx.take() {
+                Some(rx) => rx,
+                None => {
+                    self.log.error(
+                        self.log_source,
+                        "LFS sync requested twice; metadata receiver already taken",
+                    );
+                    return Err(
+                        "LFS sync already started: metadata receiver already taken".to_string()
+                    );
+                }
+            };
             // **The retry lives inside the task, because nothing outside it can re-arm the attempt.**
             // The importer and both receivers are moved in here and have no inverse: `handle` holds
             // only the senders, `self` never reaches the task, and `finished` carries no payload.
@@ -437,6 +461,7 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                 let mut importer = importer;
                 let mut incoming_blocks_rx = incoming_blocks_rx;
                 let mut tuple_space_rx = tuple_space_rx;
+                let mut metadata_rx = metadata_rx;
                 let mut attempts: u32 = 0;
                 // The attempt count the *status surface* names, separate from `attempts` above, which
                 // is the retry bound's failure count. They agree at every failure and differ only
@@ -476,7 +501,7 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                         &mut importer,
                         &mut incoming_blocks_rx,
                         &mut tuple_space_rx,
-                        &block_requests,
+                        &mut metadata_rx,
                         replay.as_ref(),
                         &approved_store,
                     )
@@ -614,7 +639,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     importer: &mut I,
     incoming_blocks_rx: &mut tokio::sync::mpsc::Receiver<BlockMessage>,
     tuple_space_rx: &mut tokio::sync::mpsc::Receiver<StoreItemsMessage>,
-    block_requests: &Arc<tokio::sync::Mutex<BlockRequestLog>>,
+    metadata_rx: &mut tokio::sync::mpsc::Receiver<BlockMetadataMessage>,
     replay: Option<&RecoveryReplay>,
     approved_store: &ApprovedStore,
 ) -> Result<(), String> {
@@ -637,20 +662,42 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     )
     .await?;
     let checkpoint_root = checkpoint_state_root(&verified.checkpoint)?;
+    let anchor = decode_hash(&verified.checkpoint.anchor, "certificate anchor")?;
 
-    let block_fut = request_blocks(
-        fringe,
-        incoming_blocks_rx,
-        Duration::from_secs(30),
-        &block_store,
+    // **The history is walked by headers** (sync/verification separation). The certificate made
+    // this history acceptable; the walk learns its shape — every block's parents, fringe claim and
+    // state roots — and no body is downloaded for it. The walk's local checks are the ones a header
+    // can support: the hash it was requested by, one parentless genesis, parents older than
+    // children, and agreement between duplicates.
+    let walk = super::lfs_metadata_requester::request_metadata(
+        anchor,
+        metadata_rx,
+        transport.as_ref(),
+        &conf,
         comm_util.as_ref(),
         log.as_ref(),
-        block_requests,
-    );
-    // The page walk asks the bootstrap plus a connected peer per path (C339 performance); a snapshot
-    // of the connection set is enough, because the fan-out is a hedge, not a topology statement.
+    )
+    .await?;
+    let (entries, fringe_state_root) =
+        certified_metadata_entries(&walk, &verified.checkpoint, checkpoint_root)?;
+
+    // **Two roots are hydrated, and only two.** The checkpoint's post-state is the state this node
+    // starts from; the max fringe member's `fringe_state_hash` is the state the proposer's next
+    // block starts from. Both are claims of the same signed statement. The old path walked the
+    // whole trie for every ancestry claim and every block's pre/post root — O(height) full walks,
+    // measured at ~2.5 minutes for 316 roots (C339) — and replay then recomputed all of it.
+    let mut required_roots = BTreeSet::from([checkpoint_root, fringe_state_root]);
+    required_roots.insert(Blake2b256Hash::from_byte_array(
+        fringe.state_hash.as_bytes(),
+    ));
+    crate::engine::sync_metrics::census().add_state_roots(required_roots.len() as u64);
+
+    // The anchored fringe's own root is the checkpoint root (`node_running` answers an anchored
+    // request with the anchor's post-state), so this walk hydrates it; any other root is a second
+    // walk. `request_tuple_space` is the first because its exit state is the one the C271 guard
+    // below reads.
     let page_peers = comm_util.connected_peers().await;
-    let tuple_fut = request_tuple_space(
+    let tuple_st = request_tuple_space(
         fringe,
         tuple_space_rx,
         REQUEST_TIMEOUT,
@@ -659,24 +706,12 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         &page_peers,
         importer,
         log.as_ref(),
-    );
-
-    let (block_st, tuple_res) = tokio::join!(block_fut, tuple_fut);
-    // **The tuple leg's state is bound, not dropped** (C271). This used to be
-    // `tuple_res.map_err(|e| e.to_string())?;` — the error was propagated and the state thrown away, so
-    // a walk that stopped early was indistinguishable from one that completed. Law 69
-    // (`spec/Rchain/Sync/Walk.lean`) is a statement about the walk's *exit*, and the consumer's half of
-    // it is reading the state that exit returned.
-    let tuple_st = tuple_res.map_err(|e| e.to_string())?;
-    // A store failure while walking the blocks fails the sync attempt (the oracle's stream fails
-    // the same way) rather than leaving a block marked done that was never persisted (AUDIT C65).
-    let block_st = block_st.map_err(|e| e.to_string())?;
-
-    // **An unfinished page walk is not a restored state** (C271) — the tuple leg's twin of the block
-    // guard below, in the same shape: what was expected, what was found. `request_tuple_space_roots`
-    // now refuses its own non-completion exits by name (Law 69), so this is the consumer's independent
-    // reading of the same contract, and it documents at the call site what "restored" means: a node that
-    // left `NodeSyncing` on anything but a complete state would serve an API over a partial one.
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    // **An unfinished page walk is not a restored state** (C271): what was expected, what was
+    // found. `request_tuple_space_roots` refuses its own non-completion exits by name (Law 69), so
+    // this is the consumer's independent reading of the same contract.
     if !tuple_st.is_finished() {
         return Err(format!(
             "the tuple-space walk finished without completing every page: {} key(s) still \
@@ -686,47 +721,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         ));
     }
 
-    // **A finished walk that received nothing is not a restored state** (issue #100). The block walk
-    // starts from the fringe's own hashes, so any fringe that names a block records at least that block
-    // — `LfsState::received` writes a `height_map` entry only for a key it actually requested, and a
-    // non-empty `latest` cannot empty without one. So an empty map means the fringe we synced to named
-    // nothing, and the caller must fail: otherwise the node enters `NodeRunning` on an empty DAG and
-    // logs "LFS state is successfully restored." having restored nothing. AUDIT C68's claim that the
-    // notify handle fires "only when the state was actually restored" was implemented as `is_ok()`
-    // only, and this is the check that makes it true.
-    if block_st.height_map.is_empty() {
-        return Err(format!(
-            "the block walk finished without receiving a single block: the fringe ({} hash(es)) named \
-             no state to sync to",
-            fringe.hashes.len()
-        ));
-    }
-
-    // Validate the bootstrap's ancestry *before* using its state claims to drive extra
-    // trie requests. No undownloaded block may nominate arbitrary state roots.
-    let downloaded: BTreeSet<BlockHash> = block_st
-        .height_map
-        .values()
-        .flat_map(|s| s.iter().copied())
-        .collect();
-    check_ancestry_shape(&fringe.ancestry, &downloaded)?;
-
-    // **Two roots, and no other state is external.** Sync no longer replays, so the state it starts
-    // from is the **checkpoint's** anchor post-state — the root the quorum signed. The served
-    // fringe root is kept because the proposer's next block starts from it (the max member's
-    // `fringe_state_hash`), and it is a claim of the same signed statement rather than a second
-    // authority. The old manifest walked the whole trie for every ancestry `fringe_state_hash` and
-    // every block's pre/post root — O(height) full trie walks, measured at ~2.5 minutes for 316
-    // roots (C339) — and replay then recomputed all of it.
     let fringe_root = Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes());
-    let required_roots = required_state_roots(
-        &block_store,
-        &block_st.height_map,
-        fringe_root,
-        checkpoint_root,
-    )
-    .await?;
-    crate::engine::sync_metrics::census().add_state_roots(required_roots.len() as u64);
     let extra_roots: Vec<Blake2b256Hash> = required_roots
         .into_iter()
         .filter(|root| *root != fringe_root)
@@ -757,10 +752,35 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         .map_err(|e| e.to_string())?;
     }
 
+    // **The genesis is the one body this path fetches** — the plan's exception. It anchors the
+    // operator's genesis pin and is the only block whose body this node will need before a
+    // backfill; fetching it here also *content-verifies* it, which no header can be.
+    let genesis = walk
+        .headers
+        .values()
+        .find(|h| h.justifications.is_empty())
+        .map(|h| h.block_hash)
+        .ok_or_else(|| "the metadata walk produced no genesis".to_string())?;
+    if let Some(pin) = replay.expected_genesis.filter(|pin| *pin != genesis) {
+        return Err(format!(
+            "the certified history's genesis {} differs from the pinned genesis {}",
+            genesis.to_hex(),
+            pin.to_hex()
+        ));
+    }
+    fetch_genesis_body(
+        &block_store,
+        genesis,
+        incoming_blocks_rx,
+        comm_util.as_ref(),
+        log.as_ref(),
+    )
+    .await?;
+
     // **The bond drift check is the last gate.** The signatures were weighed against the genesis
     // active bonds; if the anchor state's active bonds differ, those signatures were cast under a
-    // different partition and counting them here would be weighing the wrong stake. This runs after
-    // the state walk because the bond set is read from the state the certificate names.
+    // different partition and counting them here would weigh the wrong stake. This runs after the
+    // state walk because the bond set is read from the state the certificate names.
     let anchor_bonds = replay
         .runtime
         .compute_bonds(&StateHash::from_slice(checkpoint_root.as_bytes()))
@@ -768,32 +788,13 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         .map_err(|e| format!("the checkpoint state's bonds are unavailable: {e}"))?;
     check_bond_set_unchanged(&trusted_bonds, &anchor_bonds).map_err(|e| e.to_string())?;
 
-    // **The anchor the certificate names is the anchor this history actually has.** The statement
-    // is verified above; this ties it to the bodies, so a quorum signature over a statement this
-    // walk cannot reproduce is refused before anything is published.
-    verify_certified_anchor(
-        &block_store,
-        &block_st.height_map,
-        &verified.checkpoint,
-        checkpoint_root,
-    )
-    .await?;
-    let entries = certified_history(
-        &block_store,
-        &block_st.height_map,
-        &fringe.ancestry,
-        &replay.shard_id,
-        replay.expected_genesis,
-    )
-    .await?;
-
     mark_recovery_pending(approved_store, fringe).await?;
-    super::recovery::publish_verified_blocks(dag.as_ref(), &block_store, &entries).await?;
+    super::recovery::publish_certified_metadata(dag.as_ref(), &entries).await?;
     log.info(
         source,
         &format!(
             "LFS state accepted under the checkpoint certificate at anchor {} ({} of {} stake \
-             signed): published {} block(s) and replayed none.",
+             signed): published {} header(s), downloaded one body (genesis), replayed none.",
             verified.checkpoint.anchor_height,
             verified.supporting_stake,
             verified.total_stake,
@@ -911,203 +912,172 @@ pub(super) fn tie_certificate_to_fringe(
     Ok(())
 }
 
-/// **The anchor is the fringe's max `(height, hash)` member and the body says what the statement
-/// says.** The anchor rule is the one `current_checkpoint` uses, so a node that computes the
-/// statement and a node that checks it agree on which block it names.
-async fn verify_certified_anchor(
-    block_store: &BlockStore,
-    height_map: &BTreeMap<i64, BTreeSet<BlockHash>>,
+/// **Metadata for a history accepted under the quorum**, plus the fringe state root to hydrate.
+///
+/// The per-block validator is deliberately not run: that is the audit's job, and running it here is
+/// the replay this design removes. What this checks is what a header supports — the anchor's height
+/// and post-state against the certificate, the fringe's max `(height, hash)` rule, and the walk's
+/// own shape. `validated` means "accepted into this node's DAG under the certificate", not "this
+/// node executed it".
+pub(super) fn certified_metadata_entries(
+    walk: &super::lfs_metadata_requester::MetadataWalk,
     checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
     checkpoint_root: Blake2b256Hash,
-) -> Result<(), String> {
+) -> Result<(Vec<(BlockHash, BlockMetadata)>, Blake2b256Hash), String> {
     let anchor = decode_hash(&checkpoint.anchor, "certificate anchor")?;
-    let body = block_store
-        .get(&[anchor])
-        .await?
-        .into_iter()
-        .flatten()
-        .next()
-        .ok_or_else(|| {
-            format!(
-                "the certificate's anchor {} was not downloaded",
-                anchor.to_hex()
-            )
-        })?;
-    if i64::from(body.block_number) != checkpoint.anchor_height {
+    let anchor_header = walk.headers.get(&anchor).ok_or_else(|| {
+        format!(
+            "the metadata walk did not reach the certificate's anchor {}",
+            anchor.to_hex()
+        )
+    })?;
+    if i64::from(anchor_header.block_num) != checkpoint.anchor_height {
         return Err(format!(
-            "the certificate says the anchor is at height {}, but the body is at {}",
-            checkpoint.anchor_height, body.block_number
+            "the certificate says the anchor is at height {}, but the header is at {}",
+            checkpoint.anchor_height, anchor_header.block_num
         ));
     }
-    if Blake2b256Hash::from_byte_array(body.post_state_hash.as_bytes()) != checkpoint_root {
+    if Blake2b256Hash::from_byte_array(anchor_header.post_state_hash.as_bytes()) != checkpoint_root
+    {
         return Err(format!(
-            "the certificate names post-state {}, but the anchor body's post-state is {}",
+            "the certificate names post-state {}, but the anchor header's post-state is {}",
             checkpoint_root.to_hex(),
-            rchain_shared::base16::encode(body.post_state_hash.as_bytes())
+            rchain_shared::base16::encode(anchor_header.post_state_hash.as_bytes())
         ));
     }
 
+    // **The anchor rule is max `(height, hash)` among the fringe members the walk holds.** A
+    // sibling fringe member is not an ancestor of the anchor and is not walked; the certificate is
+    // still signed over it, and the anchor's state is what this node executes from.
     let certified: BTreeSet<BlockHash> = checkpoint
         .fringe_hashes
         .iter()
         .map(|h| decode_hash(h, "certificate fringe hash"))
         .collect::<Result<_, _>>()?;
     let mut best: Option<(i64, BlockHash)> = None;
-    for (height, hashes) in height_map {
-        for hash in hashes.iter().filter(|h| certified.contains(h)) {
-            if best.is_none_or(|b| (*height, *hash) > b) {
-                best = Some((*height, *hash));
-            }
+    for header in walk
+        .headers
+        .values()
+        .filter(|h| certified.contains(&h.block_hash))
+    {
+        let candidate = (i64::from(header.block_num), header.block_hash);
+        if best.is_none_or(|b| candidate > b) {
+            best = Some(candidate);
         }
     }
     match best {
-        Some((height, hash)) if height == checkpoint.anchor_height && hash == anchor => Ok(()),
-        Some((height, hash)) => Err(format!(
-            "the certificate's anchor is {} at height {}, but the fringe's max (height, hash) \
-             member is {} at height {}",
-            anchor.to_hex(),
-            checkpoint.anchor_height,
-            hash.to_hex(),
-            height
-        )),
-        None => Err(
-            "none of the certificate's fringe members was downloaded, so the anchor rule cannot be \
-             checked"
-                .to_string(),
-        ),
-    }
-}
-
-/// **Metadata for a history accepted under the quorum.** The per-block validator is deliberately
-/// not run: that is the audit's job, and running it here is the replay this design removes. What
-/// this function *does* check is that each body is the block it was requested by (hash and field
-/// format), that the shard and index agree, and that every block carries the bootstrap's ancestry
-/// claim for its `fringe`/`fringe_state_hash` — the derivable fields a metadata-only path cannot
-/// recompute. `validated` means "accepted into this node's DAG under the certificate", not "this
-/// node executed it".
-pub(super) async fn certified_history(
-    block_store: &BlockStore,
-    height_map: &BTreeMap<i64, BTreeSet<BlockHash>>,
-    ancestry: &[BlockFringe],
-    shard_id: &str,
-    expected_genesis: Option<BlockHash>,
-) -> Result<Vec<(BlockHash, BlockMetadata)>, String> {
-    let claims: BTreeMap<BlockHash, &BlockFringe> =
-        ancestry.iter().map(|bf| (bf.block_hash, bf)).collect();
-    let genesis_hashes = height_map.get(&0).cloned().unwrap_or_default();
-    if genesis_hashes.len() != 1 {
-        return Err(format!(
-            "a certified history needs exactly one height-zero genesis, found {}",
-            genesis_hashes.len()
-        ));
-    }
-    let genesis = *genesis_hashes.iter().next().expect("one genesis");
-    if let Some(pin) = expected_genesis.filter(|pin| *pin != genesis) {
-        return Err(format!(
-            "the synced genesis {} differs from the pinned genesis {}",
-            genesis.to_hex(),
-            pin.to_hex()
-        ));
-    }
-    let downloaded: BTreeSet<BlockHash> = height_map
-        .values()
-        .flat_map(|hashes| hashes.iter().copied())
-        .collect();
-
-    let mut entries = Vec::with_capacity(downloaded.len());
-    for (height, hashes) in height_map {
-        for hash in hashes {
-            let block = block_store
-                .get(&[*hash])
-                .await?
-                .into_iter()
-                .flatten()
-                .next()
-                .ok_or_else(|| format!("synced block body missing: {}", hash.to_hex()))?;
-            if block.block_hash != *hash
-                || i64::from(block.block_number) != *height
-                || block.shard_id != shard_id
-                || !crate::validate::format_of_fields(&block)
-                || !crate::validate::block_hash(&block)
-            {
-                return Err(format!(
-                    "synced block {} is not the block the walk requested (hash, height, shard or \
-                     field format)",
-                    hash.to_hex()
-                ));
-            }
-            let mut meta = BlockMetadata::from_block(&block);
-            meta.validated = true;
-            meta.validation_failed = false;
-            if *height == 0 {
-                if !block.justifications.is_empty() {
-                    return Err("the synced genesis names parents".to_string());
-                }
-                meta.fringe = BTreeSet::new();
-                meta.fringe_state_hash = block.pre_state_hash;
-            } else {
-                let claim = claims.get(hash).ok_or_else(|| {
-                    format!(
-                        "the bootstrap sent no ancestry claim for block {}, so its fringe state \
-                         cannot be checked against a statement",
-                        hash.to_hex()
-                    )
-                })?;
-                for parent in &block.justifications {
-                    if !downloaded.contains(parent) {
-                        return Err(format!(
-                            "block {} names parent {}, which the walk did not download",
-                            hash.to_hex(),
-                            parent.to_hex()
-                        ));
-                    }
-                }
-                meta.fringe = claim.fringe.clone();
-                meta.fringe_state_hash = claim.fringe_state_hash;
-            }
-            entries.push((*hash, meta));
+        Some((height, hash)) if height == checkpoint.anchor_height && hash == anchor => {}
+        Some((height, hash)) => {
+            return Err(format!(
+                "the certificate's anchor is {} at height {}, but the fringe's max (height, hash) \
+                 member the walk holds is {} at height {}",
+                anchor.to_hex(),
+                checkpoint.anchor_height,
+                hash.to_hex(),
+                height
+            ))
+        }
+        None => {
+            return Err(
+                "none of the certificate's fringe members was walked, so the anchor rule cannot \
+                 be checked"
+                    .to_string(),
+            )
         }
     }
-    Ok(entries)
+
+    let mut entries = Vec::with_capacity(walk.headers.len());
+    for header in walk.headers.values() {
+        entries.push((
+            header.block_hash,
+            BlockMetadata {
+                block_hash: header.block_hash,
+                block_num: header.block_num,
+                sender: header.sender,
+                seq_num: header.seq_num,
+                justifications: header.justifications.clone(),
+                bonds_map: header.bonds_map.clone(),
+                validated: true,
+                validation_failed: false,
+                slashable: false,
+                failure_cause: None,
+                slash_severity: rchain_models::block_metadata::SlashSeverity::Unspecified,
+                restore_attempts: 0,
+                fringe: header.fringe.clone(),
+                fringe_state_hash: header.fringe_state_hash,
+                pre_state_hash: header.pre_state_hash,
+                post_state_hash: header.post_state_hash,
+                sig: header.sig.clone(),
+                sig_algorithm: header.sig_algorithm.clone(),
+                member_of_fringe: None,
+            },
+        ));
+    }
+    // Parents before children for the insert; the DAG refuses a block whose justifications are
+    // absent, and the walk's own shape check has already guaranteed the order exists.
+    entries.sort_by_key(|(hash, meta)| (i64::from(meta.block_num), *hash));
+    Ok((
+        entries,
+        Blake2b256Hash::from_byte_array(anchor_header.fringe_state_hash.as_bytes()),
+    ))
 }
 
-/// **The two state roots a mature sync hydrates: the checkpoint's and the fringe's.**
-///
-/// Sync no longer replays blocks, so no intermediate state is derived locally: the state the node
-/// starts from is the root the quorum signed (`checkpoint_root`), and the state the proposer's next
-/// block starts from is the max fringe member's `fringe_state_hash` (`fringe_root`, itself a claim
-/// in the same signed statement). Nothing else is external.
-///
-/// The genesis block must still be present: it anchors `check_expected_genesis` and the first
-/// history walk, and a walk that did not reach it is not a history this node can accept. Its
-/// post-state is not hydrated — there is no block to execute from it on this path.
-///
-/// Ancestor membership is validated by `check_ancestry_shape` before this call.
-async fn required_state_roots(
+/// **Fetch and content-verify the genesis body.** The one body the certified path downloads: the
+/// operator's genesis pin is a claim about *this* block, and a hash of a header is not a check of
+/// it (`hash_block` covers deploy payloads, which a header does not carry).
+async fn fetch_genesis_body(
     block_store: &BlockStore,
-    height_map: &BTreeMap<i64, BTreeSet<BlockHash>>,
-    fringe_root: Blake2b256Hash,
-    checkpoint_root: Blake2b256Hash,
-) -> Result<BTreeSet<Blake2b256Hash>, String> {
-    let genesis = height_map
-        .get(&0)
-        .and_then(|hashes| hashes.iter().next())
-        .ok_or_else(|| {
-            "the block walk did not reach the height-0 genesis; the certified history has no root"
-                .to_string()
-        })?;
-    let present = block_store
-        .get(&[*genesis])
-        .await?
-        .into_iter()
-        .flatten()
-        .next()
-        .is_some();
-    if !present {
-        return Err(format!("missing genesis block {}", genesis.to_hex()));
+    genesis: BlockHash,
+    incoming_blocks_rx: &mut tokio::sync::mpsc::Receiver<BlockMessage>,
+    comm_util: &CommUtil,
+    log: &dyn Log,
+) -> Result<(), String> {
+    let _ = comm_util.request_lfs_block_from(&genesis, &[]).await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(format!(
+                "the genesis body {} was requested but did not arrive within 30s",
+                genesis.to_hex()
+            ));
+        }
+        match tokio::time::timeout(remaining, incoming_blocks_rx.recv()).await {
+            Ok(Some(block)) => {
+                if block.block_hash != genesis {
+                    continue;
+                }
+                if i64::from(block.block_number) != 0
+                    || !crate::validate::format_of_fields(&block)
+                    || !crate::validate::block_hash(&block)
+                {
+                    return Err(format!(
+                        "the body served for genesis {} is not that block (hash, height or field \
+                         format)",
+                        genesis.to_hex()
+                    ));
+                }
+                block_store.put(&[(genesis, block)]).await?;
+                log.info(
+                    LogSource::new("casper.engine.NodeSyncing"),
+                    &format!(
+                        "genesis body {} fetched and content-verified",
+                        genesis.to_hex()
+                    ),
+                );
+                return Ok(());
+            }
+            Ok(None) => {
+                return Err("the block ingress closed before the genesis arrived".to_string())
+            }
+            Err(_) => {
+                return Err(format!(
+                    "the genesis body {} did not arrive before the deadline",
+                    genesis.to_hex()
+                ))
+            }
+        }
     }
-
-    Ok(BTreeSet::from([fringe_root, checkpoint_root]))
 }
 
 /// **The ancestry's shape** (Law 83, C338): one entry per downloaded block and no duplicates. A
@@ -1163,7 +1133,7 @@ mod tests {
     use rchain_models::block::state_hash::StateHash;
     use rchain_models::block_metadata::BlockMetadata;
     use rchain_models::casper::protocol::casper_message::{
-        BlockMessage, RholangState, SignedDeployData,
+        BlockHeader, BlockMessage, RholangState, SignedDeployData,
     };
     use rchain_models::comm::protocol::Protocol;
     use rchain_models::validator::Validator;
@@ -1461,89 +1431,6 @@ mod tests {
 
         // The whole chain is in the DAG, so the latest block number equals the chain length.
         assert_eq!(dag.get_representation().await.latest_block_number(), n);
-    }
-
-    /// **The certified manifest** (C339 performance, sync/verification separation): the fringe root
-    /// and the checkpoint root, and nothing else. The old manifest walked the whole trie for every
-    /// ancestry `fringe_state_hash` and every block's pre/post root — O(height) full trie walks
-    /// (measured ~2.5 minutes for 316 roots) — and replay then recomputed all of it. Neither the
-    /// genesis post-state nor any per-block state is external on this path.
-    #[tokio::test]
-    async fn restore_root_manifest_is_the_fringe_and_the_checkpoint() {
-        let mut genesis = chain_block(0, None);
-        genesis.pre_state_hash = StateHash::new([0x11; 32]);
-        genesis.post_state_hash = StateHash::new([0x22; 32]);
-        let mut child = chain_block(1, Some(genesis.block_hash));
-        child.pre_state_hash = genesis.post_state_hash;
-        child.post_state_hash = StateHash::new([0x33; 32]);
-
-        let block_store: BlockStore = Arc::new(KeyValueTypedStoreCodec::new(
-            in_memory(),
-            Arc::new(BlockHashCodec),
-            Arc::new(BlockMessageCodec),
-        ));
-        for block in [&genesis, &child] {
-            block_store
-                .put(&[(block.block_hash, block.clone())])
-                .await
-                .unwrap();
-        }
-        let height_map = BTreeMap::from([
-            (0, BTreeSet::from([genesis.block_hash])),
-            (1, BTreeSet::from([child.block_hash])),
-        ]);
-        let fringe_root = Blake2b256Hash::from_byte_array(&[0x44; 32]);
-        let checkpoint_root = Blake2b256Hash::from_byte_array(&[0x55; 32]);
-        let roots = required_state_roots(&block_store, &height_map, fringe_root, checkpoint_root)
-            .await
-            .unwrap();
-        assert_eq!(
-            roots,
-            BTreeSet::from([fringe_root, checkpoint_root]),
-            "the fringe and the checkpoint are the only external roots"
-        );
-        for historical in [0x11u8, 0x22, 0x33] {
-            assert!(
-                !roots.contains(&Blake2b256Hash::from_byte_array(&[historical; 32])),
-                "neither a replay-derived nor the genesis post-state root {historical:02x} is \
-                 requested on the certified path"
-            );
-        }
-
-        // A walk that did not reach genesis cannot name a history the certificate anchors.
-        let no_genesis = BTreeMap::from([(1, BTreeSet::from([child.block_hash]))]);
-        let err = required_state_roots(&block_store, &no_genesis, fringe_root, checkpoint_root)
-            .await
-            .expect_err("a manifest without the genesis block must be refused");
-        assert!(err.contains("height-0 genesis"), "{err}");
-    }
-
-    /// **Law 83, C338: a fringe row for a block the walk did not download** is a claim the joiner
-    /// cannot check at all, so it is refused before anything is written.
-    #[test]
-    fn an_ancestry_entry_for_an_unknown_block_is_refused() {
-        let downloaded: BTreeSet<BlockHash> = [hash(0)].into_iter().collect();
-        let entry = BlockFringe {
-            block_hash: hash(9),
-            fringe: BTreeSet::new(),
-            fringe_state_hash: StateHash::new([0u8; 32]),
-        };
-        let err = check_ancestry_shape(&[entry], &downloaded)
-            .expect_err("an entry for an undownloaded block must be refused");
-        assert!(err.contains("did not download"), "{err}");
-    }
-
-    #[test]
-    fn two_ancestry_entries_for_one_block_are_refused() {
-        let downloaded: BTreeSet<BlockHash> = [hash(0)].into_iter().collect();
-        let entry = BlockFringe {
-            block_hash: hash(0),
-            fringe: BTreeSet::new(),
-            fringe_state_hash: StateHash::new([0u8; 32]),
-        };
-        let err = check_ancestry_shape(&[entry.clone(), entry], &downloaded)
-            .expect_err("duplicate ancestry rows must be refused");
-        assert!(err.contains("two ancestry entries"), "{err}");
     }
 
     /// **The derivable field is refused when it lies**: a block's `fringe` is recomputed from its
@@ -2561,136 +2448,162 @@ mod tests {
         assert!(err.contains("not the fringe the bootstrap served"), "{err}");
     }
 
-    #[tokio::test]
-    async fn a_history_without_an_ancestry_claim_is_refused() {
-        let genesis = sealed_block(0, None);
-        let child = sealed_block(1, Some(genesis.block_hash));
-        let store = store_of(&[genesis.clone(), child.clone()]).await;
-        let heights = BTreeMap::from([
-            (0, BTreeSet::from([genesis.block_hash])),
-            (1, BTreeSet::from([child.block_hash])),
-        ]);
-        let err = certified_history(&store, &heights, &[], "root", None)
-            .await
-            .expect_err("a block whose fringe the bootstrap did not claim is not checkable");
-        assert!(err.contains("no ancestry claim"), "{err}");
+    fn header_of(height: i64, parent: Option<BlockHash>) -> BlockHeader {
+        let mut block = sealed_block(height, parent);
+        rchain_models::casper::protocol::casper_message::BlockHeader {
+            block_hash: block.block_hash,
+            block_num: block.block_number,
+            sender: block.sender,
+            seq_num: block.seq_num,
+            justifications: block.justifications.iter().copied().collect(),
+            bonds_map: block.bonds.clone(),
+            fringe: BTreeSet::new(),
+            fringe_state_hash: block.post_state_hash,
+            pre_state_hash: block.pre_state_hash,
+            post_state_hash: block.post_state_hash,
+            body_available: false,
+            sig: block.sig.clone(),
+            sig_algorithm: block.sig_algorithm.clone(),
+        }
     }
 
-    #[tokio::test]
-    async fn a_certified_history_carries_the_quorums_claim_on_each_block() {
-        let genesis = sealed_block(0, None);
-        let child = sealed_block(1, Some(genesis.block_hash));
-        let store = store_of(&[genesis.clone(), child.clone()]).await;
-        let heights = BTreeMap::from([
-            (0, BTreeSet::from([genesis.block_hash])),
-            (1, BTreeSet::from([child.block_hash])),
-        ]);
-        let claim = BlockFringe {
-            block_hash: child.block_hash,
-            fringe: BTreeSet::from([genesis.block_hash]),
-            fringe_state_hash: genesis.post_state_hash,
-        };
-        let entries = certified_history(&store, &heights, &[claim], "root", None)
-            .await
-            .expect("a complete claimed history is published");
-        assert_eq!(entries.len(), 2);
-        let (hash, meta) = entries.last().expect("child entry");
-        assert_eq!(*hash, child.block_hash);
-        assert!(meta.validated, "accepted under the certificate");
-        assert!(!meta.validation_failed);
-        assert_eq!(meta.fringe, BTreeSet::from([genesis.block_hash]));
-        assert_eq!(meta.fringe_state_hash, genesis.post_state_hash);
-        // The genesis entry is the `insert_genesis` shape: no fringe, its pre-state as the claim.
-        let (_, genesis_meta) = entries.first().expect("genesis entry");
-        assert!(genesis_meta.fringe.is_empty());
-        assert_eq!(genesis_meta.fringe_state_hash, genesis.pre_state_hash);
+    fn walk_of(headers: Vec<BlockHeader>) -> crate::engine::lfs_metadata_requester::MetadataWalk {
+        crate::engine::lfs_metadata_requester::MetadataWalk {
+            headers: headers.into_iter().map(|h| (h.block_hash, h)).collect(),
+        }
     }
 
-    #[tokio::test]
-    async fn a_body_that_is_not_the_requested_block_is_refused() {
-        let genesis = sealed_block(0, None);
-        let child = sealed_block(1, Some(genesis.block_hash));
-        let store = store_of(&[genesis.clone(), child.clone()]).await;
-        // The store row is keyed by a hash the body does not have.
-        store
-            .put(&[(hash(9), child.clone())])
-            .await
-            .expect("fixture put");
-        let heights = BTreeMap::from([
-            (0, BTreeSet::from([genesis.block_hash])),
-            (1, BTreeSet::from([hash(9)])),
-        ]);
-        let claim = BlockFringe {
-            block_hash: hash(9),
-            fringe: BTreeSet::from([genesis.block_hash]),
-            fringe_state_hash: genesis.post_state_hash,
-        };
-        let err = certified_history(&store, &heights, &[claim], "root", None)
-            .await
-            .expect_err("the body must be the block the walk asked for");
-        assert!(err.contains("not the block the walk requested"), "{err}");
+    fn certified_checkpoint_over(
+        anchor: BlockHash,
+        post: StateHash,
+        fringe: Vec<BlockHash>,
+    ) -> Checkpoint {
+        Checkpoint {
+            shard_id: "root".to_string(),
+            anchor: base16::encode(anchor.as_bytes()),
+            anchor_height: 2,
+            anchor_post_state: base16::encode(post.as_bytes()),
+            fringe_hashes: fringe
+                .iter()
+                .map(|h| base16::encode(h.as_bytes()))
+                .collect(),
+            parent_digest: None,
+            epoch: 0,
+        }
     }
 
-    #[tokio::test]
-    async fn a_history_without_exactly_one_genesis_is_refused() {
-        let genesis = sealed_block(0, None);
-        let child = sealed_block(1, Some(genesis.block_hash));
-        let store = store_of(&[genesis.clone(), child.clone()]).await;
-        let heights = BTreeMap::from([
-            (0, BTreeSet::from([genesis.block_hash, hash(8)])),
-            (1, BTreeSet::from([child.block_hash])),
-        ]);
-        let err = certified_history(&store, &heights, &[], "root", None)
-            .await
-            .expect_err("two height-zero blocks are not a history");
-        assert!(err.contains("exactly one height-zero genesis"), "{err}");
-    }
-
-    #[tokio::test]
-    async fn a_certified_anchor_must_be_the_fringes_maximum_member() {
-        let genesis = sealed_block(0, None);
-        let child = sealed_block(1, Some(genesis.block_hash));
-        let grandchild = sealed_block(2, Some(child.block_hash));
-        let store = store_of(&[genesis.clone(), child.clone(), grandchild.clone()]).await;
-        let heights = BTreeMap::from([
-            (0, BTreeSet::from([genesis.block_hash])),
-            (1, BTreeSet::from([child.block_hash])),
-            (2, BTreeSet::from([grandchild.block_hash])),
-        ]);
-        let root = Blake2b256Hash::from_byte_array(child.post_state_hash.as_bytes());
-
-        // The certificate names the height-1 block while the fringe's max member is height 2.
-        let mut checkpoint = statement(
-            child.block_hash,
-            vec![child.block_hash, grandchild.block_hash],
-        );
-        checkpoint.anchor_post_state = base16::encode(child.post_state_hash.as_bytes());
-        let err = verify_certified_anchor(&store, &heights, &checkpoint, root)
-            .await
-            .expect_err("the anchor rule is max (height, hash)");
-        assert!(err.contains("max (height, hash)"), "{err}");
-
-        // The max member is accepted, and its body must carry the certificate's post-state.
-        let mut checkpoint = statement(
+    #[test]
+    fn a_certified_metadata_history_carries_the_quorums_claim_on_each_block() {
+        let genesis = header_of(0, None);
+        let child = header_of(1, Some(genesis.block_hash));
+        let mut grandchild = header_of(2, Some(child.block_hash));
+        grandchild.fringe = BTreeSet::from([child.block_hash]);
+        let walk = walk_of(vec![genesis.clone(), child.clone(), grandchild.clone()]);
+        let checkpoint = certified_checkpoint_over(
             grandchild.block_hash,
-            vec![child.block_hash, grandchild.block_hash],
+            grandchild.post_state_hash,
+            vec![grandchild.block_hash],
         );
-        checkpoint.anchor_height = 2;
-        checkpoint.anchor_post_state = base16::encode(grandchild.post_state_hash.as_bytes());
-        let root = Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes());
-        verify_certified_anchor(&store, &heights, &checkpoint, root)
-            .await
-            .expect("the max member anchors the history");
+        let (entries, fringe_root) = certified_metadata_entries(
+            &walk,
+            &checkpoint,
+            Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
+        )
+        .expect("a certified header set publishes");
+        assert_eq!(entries.len(), 3);
+        assert!(
+            entries
+                .windows(2)
+                .all(|w| w[0].1.block_num <= w[1].1.block_num),
+            "parents are published before children"
+        );
+        let (_, anchor_meta) = entries.last().expect("anchor entry");
+        assert!(anchor_meta.validated, "accepted under the certificate");
+        assert!(!anchor_meta.validation_failed);
+        assert_eq!(anchor_meta.fringe, BTreeSet::from([child.block_hash]));
+        assert_eq!(anchor_meta.sig, grandchild.sig, "the signature survives");
+        assert_eq!(
+            fringe_root,
+            Blake2b256Hash::from_byte_array(grandchild.fringe_state_hash.as_bytes())
+        );
+    }
 
-        checkpoint.anchor_post_state = base16::encode(&[0xAB; 32]);
-        let err = verify_certified_anchor(
-            &store,
-            &heights,
+    #[test]
+    fn a_metadata_anchor_must_be_the_fringes_maximum_member() {
+        let genesis = header_of(0, None);
+        let child = header_of(1, Some(genesis.block_hash));
+        let grandchild = header_of(2, Some(child.block_hash));
+        let walk = walk_of(vec![genesis.clone(), child.clone(), grandchild.clone()]);
+        let checkpoint = Checkpoint {
+            anchor: base16::encode(child.block_hash.as_bytes()),
+            anchor_height: 1,
+            anchor_post_state: base16::encode(child.post_state_hash.as_bytes()),
+            fringe_hashes: vec![
+                base16::encode(child.block_hash.as_bytes()),
+                base16::encode(grandchild.block_hash.as_bytes()),
+            ],
+            parent_digest: None,
+            epoch: 0,
+            shard_id: "root".to_string(),
+        };
+        let err = certified_metadata_entries(
+            &walk,
+            &checkpoint,
+            Blake2b256Hash::from_byte_array(child.post_state_hash.as_bytes()),
+        )
+        .expect_err("the anchor rule is max (height, hash)");
+        assert!(err.contains("max (height, hash)"), "{err}");
+    }
+
+    #[test]
+    fn a_metadata_anchor_must_carry_the_certified_post_state() {
+        let genesis = header_of(0, None);
+        let child = header_of(1, Some(genesis.block_hash));
+        let walk = walk_of(vec![genesis.clone(), child.clone()]);
+        let checkpoint = Checkpoint {
+            anchor: base16::encode(child.block_hash.as_bytes()),
+            anchor_height: 1,
+            anchor_post_state: base16::encode(&[0xAB; 32]),
+            fringe_hashes: vec![base16::encode(child.block_hash.as_bytes())],
+            parent_digest: None,
+            epoch: 0,
+            shard_id: "root".to_string(),
+        };
+        let err = certified_metadata_entries(
+            &walk,
             &checkpoint,
             Blake2b256Hash::from_byte_array(&[0xAB; 32]),
         )
-        .await
-        .expect_err("the anchor body must carry the certified post-state");
+        .expect_err("the header's post-state must be the certificate's");
         assert!(err.contains("post-state"), "{err}");
+    }
+
+    #[test]
+    fn a_metadata_walk_needs_exactly_one_genesis_and_ordered_parents() {
+        let genesis = header_of(0, None);
+        let child = header_of(1, Some(genesis.block_hash));
+        crate::engine::lfs_metadata_requester::check_walk_shape(&walk_of(vec![
+            genesis.clone(),
+            child.clone(),
+        ]))
+        .expect("one genesis, ordered parents");
+
+        // A second parentless header is not a history.
+        let mut another_root = header_of(0, None);
+        another_root.block_hash = hash(9);
+        let err = crate::engine::lfs_metadata_requester::check_walk_shape(&walk_of(vec![
+            genesis.clone(),
+            another_root,
+        ]))
+        .expect_err("two parentless blocks are refused");
+        assert!(err.contains("exactly one parentless"), "{err}");
+
+        // A missing parent is refused by name.
+        let orphan = header_of(2, Some(hash(8)));
+        let err = crate::engine::lfs_metadata_requester::check_walk_shape(&walk_of(vec![
+            genesis, child, orphan,
+        ]))
+        .expect_err("a header naming an absent parent is refused");
+        assert!(err.contains("did not receive"), "{err}");
     }
 }

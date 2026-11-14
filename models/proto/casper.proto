@@ -293,7 +293,42 @@ message StoreItemsMessageProto {
   repeated StoreItemProto dataItems       = 4;
 }
 
-// --------- End Last finalized state  --------
+// --------- Metadata-only sync (sync/verification separation) ---------
+//
+// A joiner walks the finalized DAG by **headers**, not bodies: the checkpoint certificate makes
+// the history acceptable, and block bodies are backfilled later (or not at all, on a light node).
+// The header carries what the DAG store and the proposer need, and `bodyAvailable` lets a peer
+// advertise which headers it can also back with a content-verifiable body.
+
+message BlockMetadataRequestProto {
+  repeated bytes hashes = 1;
+}
+
+message BlockHeaderProto {
+  bytes blockHash               = 1;
+  int64 blockNum                = 2;
+  bytes sender                  = 3;
+  int64 seqNum                  = 4;
+  repeated bytes justifications = 5;
+  repeated BondProto bonds      = 6;
+  repeated bytes fringe         = 7;
+  bytes fringeStateHash         = 8;
+  bytes preStateHash            = 9;
+  bytes postStateHash           = 10;
+  // 11 was `shardId` in a draft; a header carries no shard because the certificate pins it.
+  bool bodyAvailable            = 12;
+  // The signature over the block hash. Carried so an equivocation detected on the metadata path
+  // can produce evidence a peer can check (`is_signed_by` needs only the hash, sender and sig) —
+  // no body required.
+  bytes sig                     = 13;
+  string sigAlgorithm           = 14;
+}
+
+message BlockMetadataMessageProto {
+  repeated BlockHeaderProto headers = 1;
+}
+
+// --------- End Metadata-only sync  --------
 
 // --------- Internal types ---------
 
@@ -322,6 +357,15 @@ message BlockMetadataProto {
   repeated bytes fringe         = 30;
   bytes fringeStateHash         = 31;
   bytes memberOfFringe          = 40;
+  // **The block's state roots.** A node that synced metadata-only holds no body to read them
+  // from, and the boot guards (validation bounds, dev vesting, restoration) read the post-state.
+  // Written by every producer; absent in a record from an earlier build (zeroed on decode).
+  bytes preStateHash            = 50;
+  bytes postStateHash           = 51;
+  // The signature over the block hash, carried so equivocation evidence survives a metadata-only
+  // sync (the evidence checker needs the hash, sender and signature, not the body).
+  bytes sig                     = 52;
+  string sigAlgorithm           = 53;
 }
 
 // `FringeDataProto` retired with the `fringe-data` store (Law 66/68; C250's residue, C270): the

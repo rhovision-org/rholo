@@ -669,6 +669,10 @@ mod tests {
                 fringe_state_hash:
                     rchain_crypto::hash::blake2b256_hash::Blake2b256Hash::from_bytes([0u8; 32])
                         .into(),
+                pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+                post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+                sig: Vec::new(),
+                sig_algorithm: String::new(),
             })
         }
 

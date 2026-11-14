@@ -307,6 +307,45 @@ impl VerifiedRecovery {
     }
 }
 
+/// **Publish a history this node holds no body for** (sync/verification separation).
+///
+/// The same prefix and agreement rules as [`publish_verified_blocks`], but each record is written
+/// through `insert_metadata`: a block accepted under the checkpoint certificate need not have its
+/// body here. The deploy index and pool release are the body-dependent steps this path skips; the
+/// backfill fills them when a body arrives.
+pub(super) async fn publish_certified_metadata(
+    dag: &dyn BlockDagStorage,
+    entries: &[(BlockHash, BlockMetadata)],
+) -> Result<(), String> {
+    let certified_hashes: BTreeSet<_> = entries.iter().map(|(hash, _)| *hash).collect();
+    if !dag
+        .get_representation()
+        .await
+        .dag_set
+        .is_subset(&certified_hashes)
+    {
+        return Err(
+            "the existing DAG is not a prefix of the certified metadata history".to_string(),
+        );
+    }
+    for (hash, meta) in entries {
+        if let Some(known) = dag.lookup(hash).await? {
+            if known.fringe != meta.fringe
+                || known.fringe_state_hash != meta.fringe_state_hash
+                || !known.validated
+                || known.validation_failed
+            {
+                return Err(format!(
+                    "existing metadata disagrees with the certified history: {}",
+                    hash.to_hex()
+                ));
+            }
+        }
+        dag.insert_metadata(meta.clone()).await?;
+    }
+    Ok(())
+}
+
 pub(super) async fn publish_verified_blocks(
     dag: &dyn BlockDagStorage,
     store: &BlockStore,

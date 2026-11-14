@@ -213,7 +213,51 @@ pub struct BlockMetadata {
 
     pub fringe: BTreeSet<BlockHash>,
     pub fringe_state_hash: StateHash,
+
+    /// **The block's own state roots** (sync/verification separation). `fringe_state_hash` is the
+    /// state after the block's *fringe*; these are the pre- and post-state of the block itself, and
+    /// on a metadata-only node they are the only copy — it holds no body to read them from. The
+    /// boot guards read the post-state. Zero for a record written before they were carried, which
+    /// is distinguishable because a real state root is never all-zero.
+    pub pre_state_hash: StateHash,
+    pub post_state_hash: StateHash,
+
+    /// The signature over the block hash and the algorithm that produced it. `metadata` alone is
+    /// what a metadata-only node holds, and an equivocation's evidence is checkable from these
+    /// three values without the body (`EquivocationEvidence::is_signed_by`).
+    pub sig: Vec<u8>,
+    pub sig_algorithm: String,
+
     pub member_of_fringe: Option<Blake2b256Hash>,
+}
+
+/// **The zero record**, for fixtures and `..Default::default()` in a constructor that predates a
+/// field. It is not a valid block: every hash and root is zero. A production writer names every
+/// field it means, and the store's readers refuse a zero state root where one must be real.
+impl Default for BlockMetadata {
+    fn default() -> Self {
+        BlockMetadata {
+            block_hash: BlockHash::new([0u8; 32]),
+            block_num: BlockHeight::try_from(0).expect("zero is a valid height"),
+            sender: Validator::new([0u8; 65]),
+            seq_num: SeqNum::zero(),
+            justifications: BTreeSet::new(),
+            bonds_map: BTreeMap::new(),
+            validated: false,
+            validation_failed: false,
+            slashable: false,
+            failure_cause: None,
+            slash_severity: SlashSeverity::Unspecified,
+            restore_attempts: 0,
+            fringe: BTreeSet::new(),
+            fringe_state_hash: StateHash::new([0u8; 32]),
+            pre_state_hash: StateHash::new([0u8; 32]),
+            post_state_hash: StateHash::new([0u8; 32]),
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
+            member_of_fringe: None,
+        }
+    }
 }
 
 // BlockMetadata is uniquely identified by its block hash (per the Scala).
@@ -258,6 +302,12 @@ impl BlockMetadata {
                 .iter()
                 .map(|f| BlockHash::try_from(f.as_slice()))
                 .collect::<Result<BTreeSet<BlockHash>, crate::errors::ModelsError>>()?,
+            // An empty/absent field decodes to the zero root: a record from an earlier build. It is
+            // not a valid state root, and saying so is the reader's job, not this codec's.
+            pre_state_hash: state_hash_or_zero(&b.pre_state_hash)?,
+            post_state_hash: state_hash_or_zero(&b.post_state_hash)?,
+            sig: b.sig.clone(),
+            sig_algorithm: b.sig_algorithm.clone(),
             // The Scala `StateHash` is a `ByteString`, so `fromBlock` can produce an empty
             // `fringeStateHash`; the Rust fixed-width `StateHash` maps that to zero-fill (the empty
             // value is a transient pre-validation placeholder, never a real hash).
@@ -301,6 +351,10 @@ impl BlockMetadata {
             restore_attempts: self.restore_attempts,
             fringe: self.fringe.iter().map(|f| f.as_bytes().to_vec()).collect(),
             fringe_state_hash: self.fringe_state_hash.as_bytes().to_vec(),
+            pre_state_hash: self.pre_state_hash.as_bytes().to_vec(),
+            post_state_hash: self.post_state_hash.as_bytes().to_vec(),
+            sig: self.sig.clone(),
+            sig_algorithm: self.sig_algorithm.clone(),
             member_of_fringe: self
                 .member_of_fringe
                 .as_ref()
@@ -336,8 +390,26 @@ impl BlockMetadata {
             restore_attempts: 0,
             fringe: BTreeSet::new(),
             fringe_state_hash: StateHash::new([0u8; 32]),
+            // The body's own roots: the only copy a metadata-only node will have.
+            pre_state_hash: b.pre_state_hash,
+            post_state_hash: b.post_state_hash,
+            sig: b.sig.clone(),
+            sig_algorithm: b.sig_algorithm.clone(),
             member_of_fringe: None,
         }
+    }
+}
+
+/// Decode a state-root field, treating an absent one as the zero root (a record from a build that
+/// did not carry it). A non-empty field that is not 32 bytes is malformed, not a zero.
+fn state_hash_or_zero(bytes: &[u8]) -> Result<StateHash, crate::errors::ModelsError> {
+    match bytes.len() {
+        0 => Ok(StateHash::new([0u8; 32])),
+        32 => Ok(StateHash::from_slice(bytes)),
+        other => Err(crate::errors::ModelsError::Length {
+            got: other,
+            expected: 32,
+        }),
     }
 }
 

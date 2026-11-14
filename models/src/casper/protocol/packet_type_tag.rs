@@ -21,6 +21,9 @@ pub enum PacketTypeTag {
     FinalizedFringe,
     StoreItemsMessageRequest,
     StoreItemsMessage,
+    // Metadata-only sync (sync/verification separation).
+    BlockMetadataRequest,
+    BlockMetadataMessage,
 }
 
 impl PacketTypeTag {
@@ -39,6 +42,8 @@ impl PacketTypeTag {
             PacketTypeTag::FinalizedFringe => "FinalizedFringe",
             PacketTypeTag::StoreItemsMessageRequest => "StoreItemsMessageRequest",
             PacketTypeTag::StoreItemsMessage => "StoreItemsMessage",
+            PacketTypeTag::BlockMetadataRequest => "BlockMetadataRequest",
+            PacketTypeTag::BlockMetadataMessage => "BlockMetadataMessage",
         }
     }
 
@@ -57,6 +62,8 @@ impl PacketTypeTag {
             "FinalizedFringe" => Some(PacketTypeTag::FinalizedFringe),
             "StoreItemsMessageRequest" => Some(PacketTypeTag::StoreItemsMessageRequest),
             "StoreItemsMessage" => Some(PacketTypeTag::StoreItemsMessage),
+            "BlockMetadataRequest" => Some(PacketTypeTag::BlockMetadataRequest),
+            "BlockMetadataMessage" => Some(PacketTypeTag::BlockMetadataMessage),
             _ => None,
         }
     }

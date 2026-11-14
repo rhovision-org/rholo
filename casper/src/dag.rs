@@ -1048,6 +1048,179 @@ impl BlockDagKeyValueStorage {
         self.pooled_term_bytes
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    /// **Accept a block this node holds no body for** (sync/verification separation).
+    ///
+    /// The metadata-only sync path publishes a history the checkpoint certificate accepted; the
+    /// bodies are backfilled later (or never, on a light node). This is the consensus write without
+    /// the two body-dependent steps: the deploy index and the pool release need `state.deploys`,
+    /// which the wire header does not carry (and which `hash_block` covers, so a header's version of
+    /// them would not be content-verifiable anyway). Everything else — the H-1 equivocation gate,
+    /// the fringe derivation and marks, and the representation commit — is the same sequence
+    /// `insert` runs, and `a_metadata_insert_produces_the_representation_a_body_insert_would` pins
+    /// that the two agree.
+    async fn insert_metadata(&self, block_metadata: BlockMetadata) -> Result<(), String> {
+        let metadata_known = self
+            .block_metadata_store
+            .contains(&block_metadata.block_hash)
+            .await;
+        if metadata_known
+            && self
+                .representation
+                .read()
+                .await
+                .contains(&block_metadata.block_hash)
+        {
+            return Ok(());
+        }
+
+        let (reservation, fringe_diff, fringe_hash) = {
+            let _guard = self.lock.lock().await;
+
+            // H-1: the same gate as `insert`, with evidence read from the metadata (which now
+            // carries the signature) rather than from a body.
+            {
+                let repr = self.representation.read().await;
+                let equivocating = repr.dag_message_state.msg_map.values().any(|m| {
+                    m.sender == block_metadata.sender && m.sender_seq == block_metadata.seq_num
+                });
+                if equivocating {
+                    self.equivocations.lock().await.insert(
+                        block_metadata.sender,
+                        rchain_models::casper::protocol::casper_message::EquivocationEvidence::from_metadata(
+                            &block_metadata,
+                        )
+                        .encode(),
+                    );
+                    return Err(format!(
+                        "{EQUIVOCATION_PREFIX}: sender produced two blocks with the same sequence \
+                         number"
+                    ));
+                }
+            }
+
+            let key = (block_metadata.sender, block_metadata.seq_num);
+            {
+                let mut hashes = self.insert_hashes.lock().unpoison();
+                if !hashes.insert(block_metadata.block_hash) {
+                    return Ok(());
+                }
+            }
+            {
+                let mut claims = self.insert_equivocations.lock().unpoison();
+                if !claims.insert(key) {
+                    self.insert_hashes
+                        .lock()
+                        .unpoison()
+                        .remove(&block_metadata.block_hash);
+                    return Err(format!(
+                        "{EQUIVOCATION_PREFIX}: sender produced two blocks with the same sequence \
+                         number"
+                    ));
+                }
+            }
+            let reservation = InsertReservation {
+                hashes: &self.insert_hashes,
+                equivocations: &self.insert_equivocations,
+                hash: block_metadata.block_hash,
+                key,
+            };
+
+            let fringe_hash = rchain_models::block_metadata::fringe_hash_of(&block_metadata.fringe);
+            let fringe_diff: BTreeSet<BlockHash> = {
+                let repr = self.representation.read().await;
+                let msg_map = &repr.dag_message_state.msg_map;
+                let mut justifications: BTreeSet<Message<BlockHash, Validator>> = BTreeSet::new();
+                for j in &block_metadata.justifications {
+                    let msg = msg_map
+                        .get(j)
+                        .ok_or_else(|| "justification not present in message map".to_string())?;
+                    justifications.insert(msg.clone());
+                }
+                let prev_fringe = message_map::latest_fringe(msg_map, &justifications);
+                let mut fringe_seen: BTreeSet<BlockHash> = BTreeSet::new();
+                for f in &block_metadata.fringe {
+                    let msg = msg_map
+                        .get(f)
+                        .ok_or_else(|| "fringe block not present in message map".to_string())?;
+                    fringe_seen.extend(msg.seen.iter().copied());
+                }
+                let prev_seen: BTreeSet<BlockHash> = prev_fringe
+                    .iter()
+                    .flat_map(|m| m.seen.iter().copied())
+                    .collect();
+                fringe_seen.difference(&prev_seen).copied().collect()
+            };
+
+            (reservation, fringe_diff, fringe_hash)
+        };
+
+        self.block_metadata_store
+            .add(block_metadata.clone())
+            .await?;
+
+        for h in &fringe_diff {
+            let meta = self.block_metadata_store.get_unchecked(h).await?;
+            let updated = BlockMetadata {
+                member_of_fringe: Some(fringe_hash),
+                ..meta
+            };
+            self.block_metadata_store.add(updated).await?;
+        }
+
+        let mut prune_cache_ids: Vec<BlockHash> = Vec::new();
+        let latest_block_number: i64;
+        {
+            let _guard = self.lock.lock().await;
+            let dag_set = self.block_metadata_store.dag_set().await;
+            let child_map = self.block_metadata_store.child_map_data().await;
+            let height_map = self.block_metadata_store.height_map().await;
+            {
+                let mut guard = self.representation.write().await;
+                let repr = Arc::make_mut(&mut *guard);
+                let msg =
+                    message_from_block_metadata(&block_metadata, &repr.dag_message_state.msg_map)
+                        .ok_or_else(|| "justification not present in message map".to_string())?;
+                if block_metadata.validation_failed {
+                    repr.dag_message_state.insert_msg_without_latest_mut(&msg);
+                } else {
+                    repr.dag_message_state.insert_msg_mut(&msg);
+                }
+                repr.dag_set = dag_set;
+                repr.child_map = child_map;
+                repr.height_map = height_map;
+
+                if !fringe_diff.is_empty() {
+                    let msg_map = &repr.dag_message_state.msg_map;
+                    let latest_msgs: BTreeSet<_> = repr
+                        .dag_message_state
+                        .latest_msgs
+                        .values()
+                        .cloned()
+                        .collect();
+                    let lowest = message_map::lowest_fringe(msg_map, &latest_msgs);
+                    let lowest_ids: BTreeSet<BlockHash> = lowest.iter().map(|m| m.id).collect();
+                    let prunable = message_map::prune_fringe(msg_map, &lowest_ids, &repr.child_map);
+                    prune_cache_ids = prunable.iter().map(|m| m.id).collect();
+                }
+                latest_block_number = repr.latest_block_number();
+                self.set_gauges(
+                    repr.message_count(),
+                    repr.seen_entries(),
+                    repr.index_entries(),
+                    repr.logical_bytes(),
+                );
+                self.set_merge_shape_gauges();
+                self.set_soft_checkpoint_gauges();
+                self.set_read_path_gauges();
+            }
+        }
+        drop(reservation);
+
+        BlockIndex::prune_cache(&prune_cache_ids);
+        self.expire_deploys(latest_block_number).await?;
+        Ok(())
+    }
 }
 
 /// The shared prefix of the two equivocation rejections — the H-1 gate on `insert`, and the
@@ -1118,6 +1291,13 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
     /// refused to rewind on exactly the node that needed it.
     async fn drop_above(&self, height: BlockHeight) -> Result<Vec<BlockHash>, String> {
         BlockDagKeyValueStorage::drop_above(self, height).await
+    }
+
+    /// **The forward, for the same reason as `drop_above`'s.** The sync path holds the DAG as
+    /// `&dyn BlockDagStorage`; the trait's default refuses, so without this a metadata-only sync
+    /// would be refused on exactly the storage that can perform it.
+    async fn insert_metadata(&self, block_metadata: BlockMetadata) -> Result<(), String> {
+        BlockDagKeyValueStorage::insert_metadata(self, block_metadata).await
     }
 
     /// **The forward, for the same reason as `drop_above`'s.** The boot guard and the reset bracket hold
@@ -1925,6 +2105,10 @@ mod tests {
             restore_attempts: 0,
             fringe: BTreeSet::new(),
             fringe_state_hash: StateHash::new([0u8; 32]),
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
             member_of_fringe: None,
         }
     }
@@ -2253,6 +2437,58 @@ mod tests {
         );
         assert!(storage.lookup(&hash(9)).await.unwrap().is_none());
         assert!(storage.get_representation().await.contains(&genesis_hash));
+    }
+
+    /// **The two insert paths agree** (sync/verification separation): a metadata-only sync must
+    /// produce the same DAG a body-carrying insert of the same records would. They run the same H-1
+    /// gate, fringe derivation and representation commit; the body path additionally fills the deploy
+    /// index and releases pool slots, which a metadata record has no payload for. If this drifts, a
+    /// node that synced metadata-only would propose from a different view than one that replayed —
+    /// the exact divergence the redesign exists to make impossible by construction.
+    #[tokio::test]
+    async fn a_metadata_insert_produces_the_representation_a_body_insert_would() {
+        let body_dag = build_storage().await;
+        let metadata_dag = build_storage().await;
+        let mut chain: Vec<BlockHash> = Vec::new();
+        for n in 0..4u8 {
+            let h = hash(n);
+            let mut m = meta(h, &chain, i64::from(n));
+            m.seq_num = i64::from(n).try_into().unwrap();
+            m.fringe = chain.iter().copied().collect();
+            m.fringe_state_hash = rchain_models::block::state_hash::StateHash::new([n; 32]);
+            body_dag
+                .insert(m.clone(), block(h))
+                .await
+                .expect("the body path inserts");
+            metadata_dag
+                .insert_metadata(m)
+                .await
+                .expect("the metadata path inserts");
+            chain = vec![h];
+        }
+
+        let with_bodies = body_dag.get_representation().await;
+        let with_metadata = metadata_dag.get_representation().await;
+        assert_eq!(with_bodies.dag_set, with_metadata.dag_set);
+        assert_eq!(with_bodies.height_map, with_metadata.height_map);
+        assert_eq!(
+            with_bodies.latest_block_number(),
+            with_metadata.latest_block_number(),
+            "the proposer's height control is the same number"
+        );
+        assert_eq!(with_bodies.latest_fringe(), with_metadata.latest_fringe());
+        assert_eq!(
+            with_bodies.message_count(),
+            with_metadata.message_count(),
+            "the proposal view has the same messages"
+        );
+        for n in 0..4u8 {
+            assert_eq!(
+                body_dag.lookup(&hash(n)).await.unwrap(),
+                metadata_dag.lookup(&hash(n)).await.unwrap(),
+                "and the stored record for block {n} is identical"
+            );
+        }
     }
 
     #[tokio::test]

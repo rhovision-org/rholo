@@ -20,9 +20,9 @@ use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::{
-    BlockFringe, BlockMessage, BlockRange, BlockRangeRequest, BlockRequest, CasperMessage,
-    FinalizedFringe, FinalizedFringeRequest, HasBlock, HasBlockRequest, StoreItemsMessage,
-    StoreItemsMessageRequest,
+    BlockFringe, BlockHeader, BlockMessage, BlockMetadataMessage, BlockMetadataRequest, BlockRange,
+    BlockRangeRequest, BlockRequest, CasperMessage, FinalizedFringe, FinalizedFringeRequest,
+    HasBlock, HasBlockRequest, StoreItemsMessage, StoreItemsMessageRequest,
 };
 use rchain_models::casper::protocol::packet_type_tag::ToPacket;
 use rchain_rspace::state::RSpaceExporter;
@@ -33,7 +33,8 @@ use crate::blocks::block_receiver::not_validated;
 use crate::blocks::block_retriever::{AdmitHashReason, BlockRetriever};
 use crate::engine::catchup::CatchupWindow;
 use crate::protocol::casper_message_protocol::{
-    BlockMessageSerde, BlockRangeSerde, FinalizedFringeSerde, HasBlockSerde, StoreItemsMessageSerde,
+    BlockMessageSerde, BlockMetadataMessageSerde, BlockRangeSerde, FinalizedFringeSerde,
+    HasBlockSerde, StoreItemsMessageSerde,
 };
 use crate::validator_identity::ValidatorIdentity;
 
@@ -263,6 +264,70 @@ pub async fn handle_has_block_request(
             );
         }
     }
+}
+
+/// **Answer a metadata request**: the headers this node holds for the named hashes, with
+/// `body_available` read from the block store.
+///
+/// A hash this node does not hold is simply absent — the same answer a block request for an unknown
+/// hash gives — so a walk asks another peer rather than failing. The response is streamed: a request
+/// is answered in one message and a batch of headers can exceed a single packet.
+pub async fn handle_block_metadata_request(
+    transport: &dyn TransportLayer,
+    conf: &RPConf,
+    dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
+    log: &dyn Log,
+    source: LogSource,
+    peer: &PeerNode,
+    req: &BlockMetadataRequest,
+) {
+    let mut headers = Vec::new();
+    for hash in &req.hashes {
+        let meta = match dag.lookup(hash).await {
+            Ok(Some(meta)) => meta,
+            Ok(None) => continue,
+            Err(e) => {
+                log.warn(
+                    source,
+                    &format!("metadata request: lookup of {} failed: {e}", hash.to_hex()),
+                );
+                continue;
+            }
+        };
+        let body_available = block_store
+            .contains(&[*hash])
+            .await
+            .ok()
+            .and_then(|found| found.first().copied())
+            .unwrap_or(false);
+        headers.push(BlockHeader {
+            block_hash: meta.block_hash,
+            block_num: meta.block_num,
+            sender: meta.sender,
+            seq_num: meta.seq_num,
+            justifications: meta.justifications,
+            bonds_map: meta.bonds_map,
+            fringe: meta.fringe,
+            fringe_state_hash: meta.fringe_state_hash,
+            pre_state_hash: meta.pre_state_hash,
+            post_state_hash: meta.post_state_hash,
+            body_available,
+            sig: meta.sig,
+            sig_algorithm: meta.sig_algorithm,
+        });
+    }
+    if headers.is_empty() {
+        return;
+    }
+    let answer = BlockMetadataMessage { headers };
+    transport_layer_syntax::stream_to_peer(
+        transport,
+        conf,
+        peer,
+        BlockMetadataMessageSerde.mk_packet(&answer),
+    )
+    .await;
 }
 
 /// Respond to a peer's fork-choice-tip request (port of `handleForkChoiceTipRequest`).
@@ -1313,6 +1378,21 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                 )
                 .await;
             }
+            CasperMessage::BlockMetadataRequest(req) => {
+                handle_block_metadata_request(
+                    self.transport.as_ref(),
+                    &self.conf,
+                    self.dag.as_ref(),
+                    &self.block_store,
+                    self.log.as_ref(),
+                    self.log_source,
+                    peer,
+                    req,
+                )
+                .await;
+            }
+            // A metadata answer is consumed by a syncing walker, not by the running engine.
+            CasperMessage::BlockMetadataMessage(_) => {}
             CasperMessage::StoreItemsMessage(_) => {}
             CasperMessage::FinalizedFringe(_) => {}
         }

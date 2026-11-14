@@ -332,6 +332,10 @@ impl BlockApi for TestShardApi {
                 [0u8; 32],
             )
             .into(),
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
         })
     }
 
