@@ -11926,6 +11926,22 @@ restart/expiry, exact threshold); no mainnet arming (#428); no unban; the inacti
 and @aixaria0's; a boundary block can omit `CloseBlock`, so the epoch transition is skippable until a
 validity rule lands. §6 records the hard fork; C344 stays `in progress`.
 
+**The devnet arm exposes an anchor-persistence defect (2026-11-14).** `tools/liveness-enforcement-drill.py`
+armed the mechanism on four local validators (genesis keys in one shared `network.conf`; stakes
+700/100/100/100, epoch 3, absence threshold 1, jail after 2, jail 10, vote window 6, severity
+`misdemeanour`), stopped validator 3 at about height 20, and polled `rho:rchain:pos`'s `getLiveness`.
+Over 420 seconds the surviving three advanced the chain to **height 305 / finalized 302** and the map
+stayed empty: **no jail was imposed**. The record is
+`evidence/c344-liveness-enforcement-20261114/` (`local-devnet`, FAIL). An instrumented build (not
+retained) showed the prelude running with `jail_after=2` and a three-validator participation map, but
+`liveness_anchor()` returning `None` at every boundary after the first armed one — the
+`pos:liveness-anchor` write made at a boundary is not visible in the next boundary block's merged
+pre-state on this path. The absence counter therefore never advances past the first comparison point.
+The unit tests share one in-memory store across boundaries and do not exercise the block merge, which
+is why they pass. Whether the merge drops the close chain's slot or the write never reaches the
+sidecar is **not** established here. The live testnet arms, the partition arm and a repair of the
+anchor persistence remain owed; C344 stays `in progress`.
+
 ## 148. The October 2026 re-audit: cost, new ingress and the OCapN surface (C345–C352)
 
 **Found.** A full pass over `dev@be5016682` (2026-10-30), report-only, in the shape of the September

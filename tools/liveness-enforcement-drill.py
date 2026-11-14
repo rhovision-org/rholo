@@ -117,14 +117,14 @@ def read_map(term: str):
 def liveness() -> dict:
     return read_map(
         'new pos(`rho:rchain:pos`), ret in { pos!("getLiveness", [*ret]) | '
-        'for (@m <- ret) { @"out"!(*m) } }'
+        'for (@m <- ret) { @"out"!(m) } }'
     )
 
 
 def bonds() -> dict:
     return read_map(
         'new pos(`rho:rchain:pos`), ret in { pos!("getBonds", [*ret]) | '
-        'for (@m <- ret) { @"out"!(*m) } }'
+        'for (@m <- ret) { @"out"!(m) } }'
     )
 
 
@@ -189,8 +189,8 @@ def main() -> int:
              "--epoch-length", str(EPOCH_LENGTH), "--stakes", stakes,
              "--liveness-absence-threshold", "1",
              "--liveness-jail-after-boundaries", "2",
-             "--liveness-jail-epochs", "5",
-             "--liveness-vote-window", "3",
+             "--liveness-jail-epochs", "10",
+             "--liveness-vote-window", "6",
              "--liveness-slash-severity", "misdemeanour"])
 
     def ready():
@@ -206,26 +206,36 @@ def main() -> int:
         baseline_stake = target_record(baseline_bonds, target)
 
         run(["tools/devnet.sh", "stop", "3"])
-        jailed = wait_until(
-            lambda: (lambda record: record if record and int(record[1]) > 0 else None)(
-                target_record(liveness(), target)),
-            args.timeout, args.poll, "validator 3 jailed")
-        observations["jail_record"] = jailed
-        checks["jailed"] = int(jailed[1]) > 0
-        checks["bond_untouched_by_jail"] = target_record(bonds(), target) == baseline_stake
+        try:
+            jailed = wait_until(
+                lambda: (lambda record: record if record and int(record[1]) > 0 else None)(
+                    target_record(liveness(), target)),
+                args.timeout, args.poll, "validator 3 jailed")
+            observations["jail_record"] = jailed
+            checks["jailed"] = int(jailed[1]) > 0
+            checks["bond_untouched_by_jail"] = target_record(bonds(), target) == baseline_stake
 
-        vote = (
-            'new pos(`rho:rchain:pos`), deployerId(`rho:rchain:deployerId`), ret in { '
-            f'pos!("voteSlash", [*deployerId, "{target}".hexToBytes(), true, *ret]) | '
-            'for (@r <- ret) { @"out"!(*r) } }'
-        )
-        submit_signed(vote, http_json(HTTP_BASE, "/api/status").get("latestBlockNumber", 1))
-        http_json(ADMIN_BASE, "/api/v1/propose", method="POST")
-        slashed = wait_until(
-            lambda: True if target_record(bonds(), target) in (None, 0) else None,
-            args.timeout, args.poll, "passing vote slashes the bond")
-        observations["bonds_after_vote"] = bonds()
-        checks["vote_slashed_the_bond"] = slashed is True
+            vote = (
+                'new pos(`rho:rchain:pos`), deployerId(`rho:rchain:deployerId`), ret in { '
+                f'pos!("voteSlash", [*deployerId, "{target}".hexToBytes(), true, *ret]) | '
+                'for (@r <- ret) { @"out"!(*r) } }'
+            )
+            submit_signed(vote, http_json(HTTP_BASE, "/api/status").get("latestBlockNumber", 1))
+            http_json(ADMIN_BASE, "/api/v1/propose", method="POST")
+            slashed = wait_until(
+                lambda: True if target_record(bonds(), target) in (None, 0) else None,
+                args.timeout, args.poll, "passing vote slashes the bond")
+            observations["bonds_after_vote"] = bonds()
+            checks["vote_slashed_the_bond"] = slashed is True
+        except TimeoutError as exc:
+            # A failed arm is a result, not a missing record: keep the evidence that shows why.
+            observations["jail_timeout"] = str(exc)
+            observations["liveness_at_timeout"] = liveness()
+            observations["health_at_timeout"] = http_json(HTTP_BASE, "/health")
+            observations["bonds_at_timeout"] = bonds()
+            checks["jailed"] = False
+            checks["bond_untouched_by_jail"] = target_record(bonds(), target) == baseline_stake
+            checks["vote_slashed_the_bond"] = False
     else:
         for i in (1, 2, 3):
             run(["tools/devnet.sh", "stop", str(i)])
