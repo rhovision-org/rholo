@@ -1,0 +1,100 @@
+2026-11-14T16:50:58.383Z WARN  [casper.interpreter.validate] merge search: 3528 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1743, 1736, 49, 0, 0] · cost buckets [3528, 0, 0, 0, 0]
+[pos] close_block 451 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:50:59.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 452 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+[pos] close_block 452 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:01.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:03.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:03.666Z WARN  [casper.interpreter.validate] merge search: 3534 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1746, 1739, 49, 0, 0] · cost buckets [3534, 0, 0, 0, 0]
+[pos] close_block 452 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+[pos] close_block 452 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:05.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 453 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:07.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 453 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:09.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:09.801Z WARN  [casper.interpreter.validate] merge search: 3542 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1750, 1743, 49, 0, 0] · cost buckets [3542, 0, 0, 0, 0]
+[pos] close_block 453 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+[pos] close_block 453 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:11.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 454 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:13.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 454 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:15.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:15.655Z WARN  [casper.interpreter.validate] merge search: 3550 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1754, 1747, 49, 0, 0] · cost buckets [3550, 0, 0, 0, 0]
+[pos] close_block 454 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:17.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 454 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:19.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 455 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:21.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:22.472Z WARN  [casper.interpreter.validate] merge search: 3556 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1757, 1750, 49, 0, 0] · cost buckets [3556, 0, 0, 0, 0]
+[pos] close_block 455 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:23.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 455 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:25.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:27.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:29.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:30.848Z WARN  [casper.interpreter.validate] merge search: 3560 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1759, 1752, 49, 0, 0] · cost buckets [3560, 0, 0, 0, 0]
+[pos] close_block 455 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:31.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 456 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:33.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 456 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:35.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:35.848Z WARN  [casper.interpreter.validate] merge search: 3566 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1762, 1755, 49, 0, 0] · cost buckets [3566, 0, 0, 0, 0]
+[pos] close_block 456 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:37.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 456 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:39.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 457 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:41.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:43.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:45.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:46.014Z WARN  [casper.interpreter.validate] merge search: 3572 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1765, 1758, 49, 0, 0] · cost buckets [3572, 0, 0, 0, 0]
+[pos] close_block 457 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:47.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 457 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:49.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:51.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:52.698Z WARN  [casper.interpreter.validate] merge search: 3576 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1767, 1760, 49, 0, 0] · cost buckets [3576, 0, 0, 0, 0]
+2026-11-14T16:51:53.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 457 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:55.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:57.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:51:58.007Z WARN  [casper.interpreter.validate] merge search: 3578 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1768, 1761, 49, 0, 0] · cost buckets [3578, 0, 0, 0, 0]
+[pos] close_block 458 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:51:59.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 458 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:52:01.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:52:03.427Z WARN  [casper.interpreter.validate] merge search: 3582 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1770, 1763, 49, 0, 0] · cost buckets [3582, 0, 0, 0, 0]
+2026-11-14T16:52:03.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 458 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:52:05.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 458 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:52:07.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:52:09.118Z WARN  [casper.interpreter.validate] merge search: 3586 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1772, 1765, 49, 0, 0] · cost buckets [3586, 0, 0, 0, 0]
+[pos] close_block 459 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:52:09.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:52:11.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 459 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:52:13.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 459 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:52:15.096Z WARN  [casper.interpreter.validate] merge search: 3592 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1775, 1768, 49, 0, 0] · cost buckets [3592, 0, 0, 0, 0]
+[pos] close_block 459 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:52:15.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 460 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+[pos] close_block 460 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:52:17.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:52:19.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 460 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:52:21.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:52:22.021Z WARN  [casper.interpreter.validate] merge search: 3600 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1779, 1772, 49, 0, 0] · cost buckets [3600, 0, 0, 0, 0]
+[pos] close_block 460 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:52:23.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:52:25.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+[pos] close_block 461 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-14T16:52:27.545Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:52:29.544Z WARN  [coop.rchain.node.instances.ProposerInstance] propose withheld: the node is not-running and is not producing (resource fallback,                      unit C)
+2026-11-14T16:52:30.518Z WARN  [casper.interpreter.validate] merge search: 3604 merges · widest scope 52 chains / 2 conflict pairs / 0 asymmetric · most states expanded on one merge 53 · width buckets [1781, 1774, 49, 0, 0] · cost buckets [3604, 0, 0, 0, 0]
+[pos] close_block 461 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]

@@ -11747,6 +11747,20 @@ implemented and the restore suite refuted it; it was removed rather than kept as
 peer that sends no ancestry rows keeps the existing per-block WARN fallback, so the check does not
 refuse older implementations. Law 83 is the trust model this is an instance of.
 
+**The mature-chain replay campaign (2026-11-14).** `tools/c339_mature_replay.py` built a
+four-validator chain to 2,436+ observed heights, stopped validator 3, wiped its volume and restarted
+it empty against the bootstrap (restore anchor: finalized 2,432). The restore did **not** complete
+inside the 45-minute budget: the joiner was still `NodeSyncing` (`height: 0`, `ready: false`), and
+after the budget it continued at about **3 blocks/min** (replay at `close_block 461`, store 31.5 MB
+against the bootstrap's 47.4 MB at height 2,582). The host was co-resident with another session's
+Rust build and the `darkwow` devnet (load ~29 on 24 CPUs), and the joiner logged **eight**
+`No tuple space state responses for 30s. Resending requests` stalls. The record is
+`evidence/c339-mature-replay-20261114/` (`local-devnet`, **INCONCLUSIVE**). This is neither a pass nor
+a code failure: the restore is confounded by host contention and by unanswered LFS windows, so the
+observed rate is a lower bound. The restart and wrong-pin controls were not reached. The
+`n479-native-join-20261029` 756-record record remains the completed control. C339 stays `in progress`
+until a rerun on an idle host completes the restore and the controls.
+
 ## 142. A memory gate in front of a bounded pool (C340, #477)
 
 The public testnet settled into `degraded: throttled` at height 1688 with 547 MiB available and

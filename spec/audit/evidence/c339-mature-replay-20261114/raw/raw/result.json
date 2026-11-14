@@ -1,0 +1,51 @@
+{
+  "tool": "c339_mature_replay.py",
+  "campaign": "mature-chain cold restore",
+  "verdict_hint": "INCONCLUSIVE",
+  "reason": "The wiped validator was still in NodeSyncing when the 45-minute restore budget expired, and it continued replaying at about 3 blocks/min afterwards. The host was co-resident with another session's Rust build and the darkwow devnet (load average ~29 on 24 CPUs), and the joiner logged 8 'No tuple space state responses for 30s' stalls. The run therefore measures a restore cost under contention, not a completed exact-source mature-chain restore.",
+  "source_sha": "6964e875bb878c7d9d22b4360815de2d8ab19674",
+  "image_id": "sha256:39cd4afd07e6b9f598371d5f2307c04f4db854c2be7b0ab13dc04a068c0e85bd",
+  "binary_sha256": "cf186f4d6358a1b007963895187c2ab1634cc2660ff6f91d19f561acaa93980b",
+  "target_height": 2436,
+  "chain_at_reset": {
+    "bootstrap_max_observed_height": 2447,
+    "bootstrap_finalized_height": 2442,
+    "restore_anchor_finalized_height": 2432
+  },
+  "reset": {
+    "validator": 3,
+    "started_utc": "2026-11-14T15:53:25Z",
+    "phase_at_budget_expiry": "syncing",
+    "height_at_budget_expiry": 0,
+    "max_observed_height_at_budget_expiry": null,
+    "ready": false,
+    "ready_reasons": ["shard_not_running"]
+  },
+  "progress_at_2026-11-14T16:52Z": {
+    "phase": "syncing",
+    "replay_close_block_last": 461,
+    "joiner_store_mb": 31.46,
+    "bootstrap_store_mb": 47.4,
+    "bootstrap_max_observed_height": 2582,
+    "bootstrap_finalized_height": 2550,
+    "observed_replay_rate_blocks_per_minute": 3,
+    "lfs_idle_stall_warnings": 8
+  },
+  "host_contention": {
+    "load_average": 29.06,
+    "cpus": 24,
+    "co_resident": [
+      "another session's cargo/rustc build (ChemEng --worktrees/dexpi-t3)",
+      "darkwow devnet containers (dwow-node0/1/observer)"
+    ]
+  },
+  "controls_not_reached": [
+    "restart with the restored persistent state",
+    "wrong-genesis-pin refusal"
+  ],
+  "compatibility": {
+    "arm": "exact-source-to-exact-source",
+    "note": "The joiner image is the image the chain was built with. No prior-binary mixed-version arm was run."
+  },
+  "execution_proven": false
+}

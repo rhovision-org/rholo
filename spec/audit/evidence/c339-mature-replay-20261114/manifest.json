@@ -1,0 +1,46 @@
+{
+  "arms": [],
+  "binary_sha256": "cf186f4d6358a1b007963895187c2ab1634cc2660ff6f91d19f561acaa93980b",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 2147,
+      "kind": "json",
+      "path": "raw/raw/result.json",
+      "sha256": "ea8db233a4e2e27ab7efbb4a5347df5e70cdb485826e73c68b5c4676350ed6d8"
+    },
+    {
+      "bytes": 1376,
+      "kind": "log",
+      "path": "raw/raw/stall.log",
+      "sha256": "adad58305972c40b23e2c565a976bf0337c23dc1204d5cbb18ce7ba6ed87d0b7"
+    },
+    {
+      "bytes": 1446985,
+      "kind": "log",
+      "path": "raw/raw/startup.log",
+      "sha256": "8bb0dd97e66042b239397385eca5e8746d20274c71e1c20a82c2c65e2e5f253a"
+    },
+    {
+      "bytes": 16563,
+      "kind": "log",
+      "path": "raw/raw/tail.log",
+      "sha256": "1b46e8ea3cbe0d533fd207ffd25dbb8bd34dcd4ae3b513374ff5bf28b1710c95"
+    }
+  ],
+  "gate_id": "C339",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-14T16:52:55+00:00",
+    "tool": "evidence-pack",
+    "version": 1
+  },
+  "redactions": [],
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "6964e875bb878c7d9d22b4360815de2d8ab19674",
+  "verdict": "INCONCLUSIVE"
+}
