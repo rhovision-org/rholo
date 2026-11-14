@@ -15,6 +15,7 @@ use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::private_key::PrivateKey;
 use rchain_models::ast::Expr;
 use rchain_models::casper::protocol::casper_message::SignedDeployData;
+use rchain_models::casper::protocol::checkpoint::{Checkpoint, CheckpointAttestation};
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, DeployExecStatus as CasperDeployExecStatus, FinalityAttestation, LightBlockInfo,
     RawBlock,
@@ -1440,6 +1441,31 @@ impl WebApi for WebApiImpl {
         }
         self.block_api
             .finality_attestation(nonce)
+            .await
+            .map_err(BlockApiException)
+    }
+
+    async fn current_checkpoint(&self) -> Result<Checkpoint, BlockApiException> {
+        self.block_api
+            .current_checkpoint()
+            .await
+            .map_err(BlockApiException)
+    }
+
+    async fn checkpoint_attestation(&self) -> Result<CheckpointAttestation, BlockApiException> {
+        // The same pre-signature gate as the finality attestation: a node that has stopped producing
+        // does not attest. The statement is different (a durable checkpoint digest, not a nonce-bound
+        // block claim), the entitlement rule is not.
+        let snapshot = self.resources.snapshot();
+        if snapshot.fallback.stops_production() {
+            return Err(BlockApiException(format!(
+                "the node is {} ({}); it is not attesting",
+                snapshot.fallback.as_str(),
+                snapshot.fallback_reason
+            )));
+        }
+        self.block_api
+            .checkpoint_attestation()
             .await
             .map_err(BlockApiException)
     }
