@@ -12267,6 +12267,16 @@ The `recover-pool` tool and the signed pool fields (`signature`, `sigAlgorithm`,
 are the operational fallback; the durable refusal record and the local fault halt remain owed (C359,
 F-U22-08/09/10).
 
+**C358 closed (2026-11-14).** The protocol decision this pass left open is taken as **A — keep the
+refusal**: a state-correct block with a wrong recorded cost remains invalid, the port follows the
+Scala oracle, option B is not adopted and no hard fork or lockstep rollout is required. The decision
+is recorded in `evidence/n564-self-replay/cost-criticality.md`. The trace-mask arm is measured by
+`casper/tests/determinism.rs::a_cost_refusal_masks_the_trace_check_and_the_shadow_reports_it`: the
+fixture duplicates a recorded COMM and raises the cost, the enforcing replay reports only
+`ReplayCostMismatch` (never `UnusedCommEvent`), and the cost-ignoring shadow reaches
+`check_replay_data_with_fix` and reports the masked unused COMM. This closes the condition analysis;
+it does not recover the original incident body or establish RC-B/RC1, which remain C357's subject.
+
 ## 155. The self-replay recovery: the safe exit the incident lacked (C357, C359, C361–C365, #564)
 
 The trigger pass (§154) found why the block was refused. This pass is the incident's other half: why

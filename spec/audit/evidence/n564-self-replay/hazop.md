@@ -62,7 +62,7 @@ The machine-checked rows are U22 (`F-U22-01…12`). Their measured/reasoned stat
 | row | word | known | severity | likelihood | steelman |
 |---|---|---|---|---|---|
 | F-U22-01 | NO | read + cost-only tamper test | S1 (chain halt when this validator is the producer) | L-D (needs a cost-side disagreement) | fails: no safeguard checked the state |
-| F-U22-02 | EARLY | read; trace mask owed a test | S2 | L-D | fails: the trace check is unreachable behind the cost return |
+| F-U22-02 | EARLY | measured (trace-mask test) | S2 | L-D | fails: the trace check is unreachable behind the cost return; `a_cost_refusal_masks_the_trace_check_and_the_shadow_reports_it` shows the enforcing path reports only `ReplayCostMismatch` and the cost-ignoring shadow reports the unused COMM |
 | F-U22-03 | AS WELL AS | measured (shadow test) | S2 | L-D | fixed: the shadow computes the verdict |
 | F-U22-04 | PART OF | read | S2 | L-D | fails as a protocol reading; the decision is recorded |
 | F-U22-05 | OTHER THAN | measured (classification test) | S2 | L-D | fixed by Law 92 |
@@ -71,7 +71,7 @@ The machine-checked rows are U22 (`F-U22-01…12`). Their measured/reasoned stat
 | F-U22-08 | LATE | read; halt owed | S2 | L-C | open until the fault halt |
 | F-U22-09 | BEFORE | read; durable body owed | S2 | L-C | open until the durable record |
 | F-U22-10 | AFTER | read; prune/cap owed | S3 | L-C | open until the prune/cap |
-| F-U22-11 | REVERSE | measured (cost-only test) | S1 | L-D | the protocol decision is the close |
+| F-U22-11 | REVERSE | decided (A — keep the refusal) | S1 | L-D | closed by the decision record in `cost-criticality.md`; no hard fork |
 | F-U22-12 | REVERSE | read; peer test owed | S2 | L-D | the runbook residual |
 
 ## §5 Table B — barriers that held

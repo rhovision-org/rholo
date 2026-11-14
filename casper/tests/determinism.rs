@@ -14,7 +14,7 @@ use rchain_casper::interpreter_util::ReplayVerdict;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_crypto::public_key::PublicKey;
 use rchain_models::casper::protocol::casper_message::{
-    DeployData, ProcessedDeploy, ProcessedSystemDeploy, SignedDeployData,
+    DeployData, Event, ProcessedDeploy, ProcessedSystemDeploy, SignedDeployData,
 };
 use rchain_rholang::native_state::{NativeSystemState, PosGenesis};
 use rchain_rholang::system_processes::BlockData;
@@ -838,6 +838,155 @@ async fn a_cost_only_tamper_is_refused_before_the_state_hash_is_compared() {
         );
     }
     set_cost_census_enabled(false);
+}
+
+/// **C358's trace-mask falsifier.** The cost check runs inside `replay_deploy_eval`, before
+/// `check_replay_data_with_fix` compares the trace, so a replay that disagrees on both the recorded
+/// cost and the trace can only ever report `ReplayCostMismatch` — the trace difference is masked,
+/// not measured. This test makes the trace disagree independently of the cost and shows both halves:
+/// the enforcing replay refuses on the cost (never `UnusedCommEvent`), while the diagnostic shadow
+/// (which ignores the cost check) reaches the trace check and reports the unused COMM.
+///
+/// Red before the fix: moving the trace check ahead of the cost return makes the enforcing arm
+/// return `UnusedCommEvent`; removing the shadow's `Ignore` makes the shadow return
+/// `ReplayCostMismatch`. Either change fails this test.
+#[tokio::test]
+async fn a_cost_refusal_masks_the_trace_check_and_the_shadow_reports_it() {
+    use rchain_rholang::accounting::set_cost_census_enabled;
+    use rchain_rholang::runtime::ReplayCostCheck;
+
+    let rm = common::build_runtime_manager().await;
+    let rand = Blake2b512Random::from_init(&[0u8; 32]);
+    let (_pre, post, _) = rm
+        .compute_genesis(
+            &[],
+            &rand,
+            BlockData::empty(),
+            &PosGenesis::default(),
+            &[seeded_vault()],
+        )
+        .await
+        .expect("compute_genesis");
+    let target = RevAddress::from_public_key(&PublicKey::new(vec![3u8; 65]))
+        .expect("target")
+        .to_base58();
+    let term = format!(
+        r#"new revVault(`rho:rchain:revVault`), deployerId(`rho:rchain:deployerId`), r in {{ revVault!("transfer", *deployerId, "{target}", 30000000, *r) | for (_ <- r) {{ Nil }} }}"#
+    );
+
+    set_cost_census_enabled(true);
+    let (post_state, user_results, sys_results) = rm
+        .compute_state(
+            &post,
+            &[deploy(&term)],
+            &[],
+            &rand,
+            BlockData::empty(),
+            &fringe_state(1),
+        )
+        .await
+        .expect("play compute_state");
+    set_cost_census_enabled(false);
+    let processed: Vec<ProcessedDeploy> = user_results.into_iter().map(|r| r.deploy).collect();
+    let processed_sys: Vec<ProcessedSystemDeploy> =
+        sys_results.into_iter().map(|r| r.deploy).collect();
+    let recorded = processed[0].cost.cost;
+    assert!(recorded > 0);
+
+    // The transfer records at least one COMM. Duplicating one leaves the replay with a binding the
+    // deploy's execution never consumes; the enforcing path must never get far enough to report it.
+    let comm = processed[0]
+        .deploy_log
+        .iter()
+        .find(|event| matches!(event, Event::Comm(_)))
+        .expect("the transfer deploy records a COMM event")
+        .clone();
+    let mut masked = processed.clone();
+    masked[0].deploy_log.push(comm);
+    masked[0].cost.cost = recorded + 274;
+
+    let refused = rm
+        .replay_compute_state(
+            &post,
+            &masked,
+            &processed_sys,
+            &rand,
+            BlockData::empty(),
+            &fringe_state(1),
+            &BTreeMap::new(),
+            true,
+            &PosGenesis::default(),
+            &[],
+        )
+        .await;
+    match refused {
+        Err(rchain_casper::rholang::ReplayFailure::ReplayCostMismatch {
+            initial_cost,
+            replay_cost,
+        }) => {
+            assert_eq!(initial_cost, i64::try_from(recorded + 274).unwrap());
+            assert_eq!(replay_cost, i64::try_from(recorded).unwrap());
+        }
+        other => panic!(
+            "the enforcing replay must refuse on the cost before the trace check, got {other:?}"
+        ),
+    }
+
+    // Control: the untouched record replays to the declared state, so the unused COMM below is the
+    // only difference the duplicated event introduces.
+    let (clean_hash, _) = rm
+        .replay_compute_state(
+            &post,
+            &processed,
+            &processed_sys,
+            &rand,
+            BlockData::empty(),
+            &fringe_state(1),
+            &BTreeMap::new(),
+            true,
+            &PosGenesis::default(),
+            &[],
+        )
+        .await
+        .expect("a clean replay");
+    assert_eq!(clean_hash, post_state);
+
+    // The shadow lets the cost mismatch through, reaches `check_replay_data_with_fix`, and reports
+    // the masked trace difference as an unused COMM. A clean replay here would mean the trace did
+    // not disagree, and the fixture would not be measuring the mask.
+    set_cost_census_enabled(true);
+    let shadow = rm
+        .fork_replay_runtime(post)
+        .await
+        .expect("fork a replay runtime");
+    shadow.set_replay_cost_check(ReplayCostCheck::Ignore);
+    let shadow_result = rm
+        .replay_compute_state_with(
+            &shadow,
+            &post,
+            &masked,
+            &processed_sys,
+            &rand,
+            BlockData::empty(),
+            &fringe_state(1),
+            &BTreeMap::new(),
+            true,
+            &PosGenesis::default(),
+            &[],
+        )
+        .await;
+    set_cost_census_enabled(false);
+    match shadow_result {
+        Err(rchain_casper::rholang::ReplayFailure::UnusedCommEvent(cause)) => {
+            assert!(
+                !cause.is_empty(),
+                "the shadow names the unused COMM it found"
+            );
+        }
+        other => panic!(
+            "the cost-ignoring shadow must reach the trace check and report the unused COMM, got {other:?}"
+        ),
+    }
 }
 
 #[tokio::test]
