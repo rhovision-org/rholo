@@ -85,6 +85,14 @@ def main() -> int:
     parser.add_argument("--skip-up", action="store_true", help="use the devnet already running")
     parser.add_argument("--skip-chain", action="store_true",
                         help="skip the chain build and measure against the current chain")
+    parser.add_argument("--bootstrap-volume", default=None,
+                        help="start the bootstrap from this retained data volume (no chain build)")
+    parser.add_argument("--no-autopropose", action="store_true",
+                        help="start without autopropose (measure only, no competing production)")
+    parser.add_argument("--no-propose-on-deploy", action="store_true",
+                        help="disable propose-on-deploy for the measured run")
+    parser.add_argument("--validators", type=int, default=4,
+                        help="devnet validators (needs 4 for the default validator 3)")
     parser.add_argument("--chain-timeout", type=float, default=4 * 60 * 60,
                         help="seconds allowed for the chain to reach the target (default 4h)")
     parser.add_argument("--restore-timeout", type=float, default=45 * 60,
@@ -109,7 +117,16 @@ def main() -> int:
 
     started = time.monotonic()
     if not args.skip_up:
-        run(["tools/devnet.sh", "up", "--validators", "4", "--fresh", "--autopropose", "--admin"])
+        up = ["tools/devnet.sh", "up", "--validators", str(args.validators), "--fresh", "--admin"]
+        if not args.no_autopropose:
+            up.append("--autopropose")
+        if args.no_propose_on_deploy:
+            up.append("--no-propose-on-deploy")
+        if args.bootstrap_volume:
+            # `--fresh` clears the standard volumes but deliberately leaves the named artifact
+            # alone, so a retained chain is measured rather than rebuilt.
+            up += ["--data-volume", args.bootstrap_volume]
+        run(up)
 
     if not args.skip_chain:
         chain = wait_for(

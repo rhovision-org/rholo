@@ -2259,6 +2259,10 @@ async fn setup_shard_runtime(
         // #564, F-U23-11: the walk wakes this shard's self-replay latch once it passes the anchor.
         Arc::new(propose_health.clone()),
         conf.protocol_server.disable_state_exporter,
+        // The inbound consumer pool's width. Parsed since the port but never consumed: the shard
+        // loop handled one message at a time, so a large store-items page blocked every other sync
+        // request behind it. `0` is clamped to the serial old behaviour rather than refusing.
+        usize::try_from(conf.protocol_server.max_message_consumers).unwrap_or(0),
         parts.validator_identity_opt.clone(),
         conf.standalone,
         conf.dev_mode,

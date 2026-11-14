@@ -8,6 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use rchain_comm::peer_node::PeerNode;
+use rchain_comm::rp::connect::random_connections;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_comm::transport::transport_layer::TransportLayer;
 use rchain_comm::transport::transport_layer_syntax;
@@ -27,6 +29,11 @@ pub type StatePartPath = Vec<(Blake2b256Hash, Option<u8>)>;
 
 /// Number of nodes in an LFS sync data-transfer chunk (port of `pageSize`).
 pub const PAGE_SIZE: i32 = 750;
+
+/// **How many peers one page path is requested from in a round** (bootstrap included). Two makes
+/// a silent primary recoverable within the next answer rather than the 30 s idle window; the page
+/// is content-addressed, so the peers are interchangeable, and a duplicate answer is ignored.
+pub const LFS_PAGE_FANOUT: usize = 2;
 
 /// Request status (port of `LfsTupleSpaceRequester.ReqStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -329,6 +336,7 @@ async fn request_next(
     st: &Arc<tokio::sync::Mutex<LfsTupleSpaceState<StatePartPath>>>,
     transport: &dyn TransportLayer,
     conf: &RPConf,
+    peers: &[PeerNode],
     log: &dyn Log,
     source: LogSource,
     resend: bool,
@@ -346,28 +354,55 @@ async fn request_next(
             // indistinguishable from one that is not asking at all unless the path is visible: the
             // capture that found `Sending 29 history and 230 data store items` 440 times on the
             // responder side had no requester-side counterpart to compare it with (C268, pass §94).
-            log.info(
-                source,
-                &format!("Sending StoreItemsRequest to bootstrap for path {id:?}"),
-            );
             let req = StoreItemsMessageRequest {
                 start_path: id.clone(),
                 skip: 0,
                 take: PAGE_SIZE,
             };
-            if let Err(e) = transport_layer_syntax::send_to_bootstrap(
-                transport,
-                conf,
-                StoreItemsMessageRequestSerde.mk_packet(&req),
-            )
-            .await
-            {
-                log.warn(
-                    source,
-                    &format!(
-                        "could not ask the bootstrap peer for store items: {e} (AUDIT C254's E6b)"
-                    ),
-                );
+            // **Redundant page fetch** (C339 performance): the bootstrap first, then up to
+            // `LFS_PAGE_FANOUT - 1` connected peers. A page is content-addressed and
+            // `validate_state_items` refuses any node that does not hash to its key, so which peer
+            // answers is not an input to the restored state; a silent bootstrap no longer costs the
+            // whole 30 s idle window. A duplicate answer for an already-received path is ignored by
+            // the state machine (`received` accepts only `Requested`).
+            let mut targets: Vec<PeerNode> = Vec::new();
+            if let Some(bootstrap) = &conf.bootstrap {
+                targets.push(bootstrap.clone());
+            }
+            let candidates: Vec<PeerNode> = peers
+                .iter()
+                .filter(|p| p.id != conf.local.id)
+                .filter(|p| !targets.iter().any(|q| q.id == p.id))
+                .cloned()
+                .collect();
+            targets.extend(random_connections(
+                &candidates,
+                LFS_PAGE_FANOUT.saturating_sub(targets.len()),
+            ));
+            log.info(
+                source,
+                &format!(
+                    "Sending StoreItemsRequest to {} peer(s) for path {id:?}",
+                    targets.len()
+                ),
+            );
+            for peer in &targets {
+                if let Err(e) = transport_layer_syntax::send_to_peer(
+                    transport,
+                    conf,
+                    peer,
+                    StoreItemsMessageRequestSerde.mk_packet(&req),
+                )
+                .await
+                {
+                    log.warn(
+                        source,
+                        &format!(
+                            "could not ask {} for store items: {e} (AUDIT C254's E6b)",
+                            peer
+                        ),
+                    );
+                }
             }
         }
     }
@@ -442,6 +477,7 @@ pub async fn request_tuple_space<I: RSpaceImporter>(
     request_timeout: Duration,
     transport: &dyn TransportLayer,
     conf: &RPConf,
+    peers: &[PeerNode],
     importer: &mut I,
     log: &dyn Log,
 ) -> Result<LfsTupleSpaceState<StatePartPath>, TupleSpaceWalkError> {
@@ -452,6 +488,7 @@ pub async fn request_tuple_space<I: RSpaceImporter>(
         request_timeout,
         transport,
         conf,
+        peers,
         importer,
         log,
     )
@@ -468,6 +505,7 @@ pub async fn request_tuple_space_roots<I: RSpaceImporter>(
     request_timeout: Duration,
     transport: &dyn TransportLayer,
     conf: &RPConf,
+    peers: &[PeerNode],
     importer: &mut I,
     log: &dyn Log,
 ) -> Result<LfsTupleSpaceState<StatePartPath>, TupleSpaceWalkError> {
@@ -567,7 +605,7 @@ pub async fn request_tuple_space_roots<I: RSpaceImporter>(
                     true
                 }
             };
-            request_next(&st, transport, conf, log, source, resend).await;
+            request_next(&st, transport, conf, peers, log, source, resend).await;
             if error.lock().await.is_some() {
                 return;
             }
@@ -766,7 +804,16 @@ mod stream_tests {
         let transport = Arc::new(RecordingTransport::default());
         let conf = test_conf();
 
-        request_next(&st, transport.as_ref(), &conf, &NopLog, source(), false).await;
+        request_next(
+            &st,
+            transport.as_ref(),
+            &conf,
+            &[],
+            &NopLog,
+            source(),
+            false,
+        )
+        .await;
 
         let sends = transport.sends.lock().unwrap();
         assert_eq!(sends.len(), 1, "one request for the one pending path");
@@ -786,11 +833,54 @@ mod stream_tests {
         // A finished state asks for nothing.
         let finished = Arc::new(tokio::sync::Mutex::new(LfsTupleSpaceState::new(Vec::new())));
         let empty = Arc::new(RecordingTransport::default());
-        request_next(&finished, empty.as_ref(), &conf, &NopLog, source(), false).await;
+        request_next(
+            &finished,
+            empty.as_ref(),
+            &conf,
+            &[],
+            &NopLog,
+            source(),
+            false,
+        )
+        .await;
         assert!(
             empty.sends.lock().unwrap().is_empty(),
             "a finished requester sends nothing"
         );
+    }
+
+    /// **Redundant page fetch** (C339 performance): the bootstrap and a connected peer are asked for
+    /// the same path. The page is content-addressed and validated, so either answer is accepted; a
+    /// silent bootstrap no longer costs the whole idle window.
+    #[tokio::test]
+    async fn request_next_asks_the_bootstrap_and_a_connected_peer_for_a_page() {
+        let (message, _) = valid_chunk(vec![1, 2, 3]);
+        let st = pending_state(message.start_path.clone());
+        let transport = Arc::new(RecordingTransport::default());
+        let conf = test_conf();
+        let other = test_peer("peer-2");
+
+        request_next(
+            &st,
+            transport.as_ref(),
+            &conf,
+            &[other.clone()],
+            &NopLog,
+            source(),
+            false,
+        )
+        .await;
+
+        let sends = transport.sends.lock().unwrap();
+        assert_eq!(
+            sends.len(),
+            2,
+            "the bootstrap and the connected peer are asked"
+        );
+        assert!(sends
+            .iter()
+            .any(|(p, _)| Some(p) == conf.bootstrap.as_ref()));
+        assert!(sends.iter().any(|(p, _)| p.id == other.id));
     }
 
     /// **An unrequested chunk is ignored.** A `StoreItemsMessage` for a path this node never asked
@@ -891,6 +981,17 @@ mod stream_tests {
 
     fn source() -> LogSource {
         LogSource::new("casper.engine.LfsTupleSpaceRequester.test")
+    }
+
+    fn test_peer(name: &str) -> PeerNode {
+        use rchain_comm::peer_node::NodeIdentifier;
+        use rchain_shared::refined::Port;
+        PeerNode::from(
+            NodeIdentifier::new(name.as_bytes().to_vec()),
+            "127.0.0.1".to_string(),
+            Port::new(40400),
+            Port::new(40404),
+        )
     }
 
     fn test_conf() -> RPConf {
@@ -994,6 +1095,7 @@ mod stream_tests {
                 REQUEST_TIMEOUT,
                 &transport,
                 &test_conf(),
+                &[],
                 &mut importer,
                 &NopLog,
             ),
@@ -1051,6 +1153,7 @@ mod stream_tests {
                 Duration::from_secs(30),
                 &transport,
                 &test_conf(),
+                &[],
                 &mut importer,
                 &NopLog,
             ),
@@ -1168,6 +1271,7 @@ mod stream_tests {
                 Duration::from_secs(5),
                 &transport,
                 &test_conf(),
+                &[],
                 &mut importer,
                 &NopLog,
             ),
@@ -1228,6 +1332,7 @@ mod stream_tests {
                 REQUEST_TIMEOUT,
                 &transport,
                 &test_conf(),
+                &[],
                 &mut importer,
                 &NopLog,
             ),

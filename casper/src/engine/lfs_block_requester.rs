@@ -78,6 +78,14 @@ impl BlockRequestLog {
         self.answered.entry(*hash).or_default().insert(peer.clone());
     }
 
+    /// The peers this hash has already been requested from, so a resend or hedge excludes them.
+    pub(crate) fn sent_peers(&self, hash: &BlockHash) -> Vec<PeerNode> {
+        self.sent
+            .get(hash)
+            .map(|peers| peers.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// The peers `hash` was requested from that never delivered it, named. An answer for a
     /// **different** hash does not clear this one, and a connected-but-unselected peer never appears.
     pub(crate) fn unanswered(&self, hash: &BlockHash) -> Vec<String> {
@@ -261,7 +269,10 @@ async fn request_next(
     }
     if !is_end && !missing.is_empty() {
         for h in &missing {
-            let peers = comm_util.request_lfs_block(h).await;
+            // Exclude peers already asked for this hash, so a resend hedges to a *new* peer rather
+            // than amplifying the same request; the per-hash log bounds the fan-out.
+            let already_asked = block_requests.lock().await.sent_peers(h);
+            let peers = comm_util.request_lfs_block_from(h, &already_asked).await;
             block_requests.lock().await.record_sent(h, &peers);
         }
     }
@@ -958,8 +969,103 @@ mod tests {
         assert!(state.is_finished());
         assert_eq!(state.finished.len(), blocks.len());
         let asked = transport.asked.lock().unwrap();
-        assert_eq!(asked.len(), blocks.len(), "one request per required block");
-        assert!(asked.iter().all(|p| p.id == bootstrap.id));
+        assert_eq!(
+            asked.iter().filter(|p| p.id == bootstrap.id).count(),
+            blocks.len(),
+            "the admitted bootstrap is asked once per required block"
+        );
+        assert!(
+            asked.len() <= blocks.len() * crate::protocol::comm_util::LFS_BLOCK_FANOUT,
+            "the redundant fetch stays within the per-block fan-out"
+        );
+        // The other peers are asked as a hedge by design; their silence must not stop the walk,
+        // which is what the completion above establishes.
+    }
+
+    /// **Redundant fetch** (C339 performance): the bootstrap is silent, and a connected peer answers
+    /// the same request. The walk completes without waiting for the bootstrap's idle window, and the
+    /// answer is accepted because a block is content-addressed — which peer sent it is not an input.
+    #[tokio::test]
+    async fn a_connected_non_bootstrap_peer_can_serve_a_block_the_bootstrap_ignores() {
+        struct HedgedTransport {
+            answering: PeerNode,
+            blocks: BTreeMap<BlockHash, BlockMessage>,
+            incoming: tokio::sync::mpsc::Sender<BlockMessage>,
+        }
+
+        #[async_trait]
+        impl TransportLayer for HedgedTransport {
+            async fn send(&self, peer: &PeerNode, msg: Protocol) -> CommErr<()> {
+                if peer.id != self.answering.id {
+                    return Ok(());
+                }
+                if let Some(rchain_models::comm::protocol::protocol::Message::Packet(packet)) =
+                    msg.message
+                {
+                    if let Ok(request) = BlockRequestSerde.parse(&packet.content) {
+                        if let Some(block) = self.blocks.get(&request.hash) {
+                            chan::send(&self.incoming, block.clone()).await;
+                        }
+                    }
+                }
+                Ok(())
+            }
+
+            async fn broadcast(&self, peers: &[PeerNode], msg: Protocol) -> Vec<CommErr<()>> {
+                let mut outcomes = Vec::new();
+                for peer in peers {
+                    outcomes.push(self.send(peer, msg.clone()).await);
+                }
+                outcomes
+            }
+
+            async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+        }
+
+        let blocks = chain(12);
+        let bootstrap = peer("bootstrap");
+        let answering = peer("peer-2");
+        let store = store().await;
+        let (incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel(64);
+        let transport = Arc::new(HedgedTransport {
+            answering: answering.clone(),
+            blocks: blocks.iter().map(|b| (b.block_hash, b.clone())).collect(),
+            incoming: incoming_tx,
+        });
+        let conf = RPConf {
+            local: peer("local"),
+            network_id: "testnet".to_string(),
+            bootstrap: Some(bootstrap),
+            default_timeout: Duration::from_secs(10),
+            max_num_of_connections: 10,
+            clear_connections: ClearConnectionsConf {
+                num_of_connections_pinged: 10,
+            },
+        };
+        let connections: ConnectionsCell = Arc::new(tokio::sync::RwLock::new(vec![answering]));
+        let comm = CommUtil::new(transport, conf, connections, Arc::new(NopLog));
+        let fringe = FinalizedFringe {
+            hashes: vec![blocks.last().unwrap().block_hash],
+            state_hash: StateHash::new([0; 32]),
+            ancestry: Vec::new(),
+        };
+        let state = tokio::time::timeout(
+            Duration::from_secs(2),
+            request_blocks(
+                &fringe,
+                &mut incoming_rx,
+                Duration::from_millis(300),
+                &store,
+                &comm,
+                &NopLog,
+                &no_requests(),
+            ),
+        )
+        .await
+        .expect("the hedged peer must not leave the walk waiting")
+        .expect("a connected peer's verified answer completes the walk");
+        assert!(state.is_finished());
+        assert_eq!(state.finished.len(), blocks.len());
     }
 
     /// **U13's instrument (AUDIT C62's serving term): the LFS block walk advances on *responses*, not

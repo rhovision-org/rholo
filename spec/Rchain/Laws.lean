@@ -5909,6 +5909,40 @@ def lawsC : List Law := [
       primary-first probe and the unrouted-default are the router's policy, mirrored by the Rust \
       table, not a liveness claim, and health fan-out and finality reads are out of the model \
       (`node/src/api/shard_routing.rs:40-113`)." },
+
+  { number := 101, layer := "Sync",
+    statement := "**A verified sync answer is peer-independent.** A block or state page is accepted \
+      only when its body hashes to the key it was requested under, so two verified answers for one \
+      key carry the same body and the announcing peer is not an input to acceptance. A redundant \
+      request (a hedge) completes no key of its own, so it is a stutter on the walk's completed \
+      measure, and the per-key fan-out bounds the redundant requests.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Redundancy.any_verified_answer_is_the_answer,
+      `Rchain.Sync.Redundancy.peer_is_not_an_input,
+      `Rchain.Sync.Redundancy.hedging_is_a_stutter,
+      `Rchain.Sync.Redundancy.hedging_is_bounded],
+    axioms := [],
+    rust := ["casper/src/protocol/comm_util.rs",
+      "casper/src/engine/lfs_block_requester.rs",
+      "casper/src/engine/lfs_tuple_space_requester.rs"],
+    rustWitness := [
+      "casper/src/engine/lfs_block_requester.rs:a_connected_non_bootstrap_peer_can_serve_a_block_the_bootstrap_ignores",
+      "casper/src/engine/lfs_tuple_space_requester.rs:request_next_asks_the_bootstrap_and_a_connected_peer_for_a_page"],
+    witness := [`Rchain.Sync.Redundancy.any_verified_answer_is_the_answer,
+      `Rchain.Sync.Redundancy.hedging_is_a_stutter],
+    falsifiable := "Delete injectivity of the content hash and `any_verified_answer_is_the_answer` \
+      is false: two bodies can hash to one key, so the redundant answers differ. Make acceptance \
+      read the announcing peer and `peer_is_not_an_input` is false. Make a hedge advance the \
+      completed measure and `hedging_is_a_stutter` is false, which would also break Law 69's \
+      pacing. The Rust witnesses pin both directions: the block walk completes from a non-bootstrap \
+      peer whose answer the bootstrap never sent, and the page walk sends the same path to the \
+      bootstrap and a connected peer.",
+    note := "**Injectivity is a hypothesis, not a theorem.** `hcf` is the same assumption Law 19 \
+      makes about `blake2b256`; it is not an axiom of this file, so the row's `axioms` stays empty \
+      and the register's axiom accounting is unchanged. The law does not claim that a second peer \
+      answers, that any peer is honest, or that the walk finishes: those are Law 69's fairness \
+      hypotheses and Law 83's trust residual. `hedging_is_bounded` is the per-key fan-out \
+      (`LFS_BLOCK_FANOUT`/`LFS_PAGE_FANOUT`, each 2), not a global request budget." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC
