@@ -11888,6 +11888,18 @@ block-6 phase still needs the old hosts' `status/operator` and logs. `pipelineFa
 `proposalHalted`, `orphanBodies` and `sync_state` remain process-wide. No live-net arm was run. C343
 stays `in progress`; the HAZOP/safety-case debt is re-counted from their gates.
 
+**The isolation halt/resume arm (2026-11-14).** The end-to-end falsifier U20-01/07/09/11 named is now
+on a local four-validator devnet: `tools/proposer_isolation_drill.py` stops validators 1–3, lets the
+bootstrap's tip reach `finalizedLag = 32`, and records all twelve assertions in
+`evidence/c343-proposer-isolation-20261114/` (`local-devnet`, PASS). `/health` reported
+`proposalHalted`, `ready: false`, `readyReasons: ["proposal_isolated"]` and the reason string
+`tip 37 is 33 heights beyond last finalized 4 (bound 32)`; the operator route carried the same gate;
+the tip stayed flat and an explicit propose added no block; `POST /api/v1/proposer/resume` answered
+with the clear message, the cleared moment was observed, and the next proposal re-latched because
+finality was still frozen. **C343 still stays `in progress`**: the live B/C/D `status/operator` and
+block-6 journal evidence, and U19-11's aggregate backlog surface, are external. The drill is a
+bounded local witness, not the live incident's phase diagnosis.
+
 ## 147. Liveness enforcement: jail and the stake vote (C344, RCHIP #55)
 
 **Found.** A validator that stops is paid and holds the finality denominator for ever; the 2026-10-02

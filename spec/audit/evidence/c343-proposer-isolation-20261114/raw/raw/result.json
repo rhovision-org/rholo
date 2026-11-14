@@ -1,0 +1,165 @@
+{
+  "bound": 32,
+  "checks": {
+    "explicit_propose_adds_no_block": true,
+    "finality_advancing_before_stop": true,
+    "halt_latched": true,
+    "halt_reason_names_bound": true,
+    "lag_at_bound": true,
+    "operator_names_isolation": true,
+    "operator_reports_halt": true,
+    "ready_false": true,
+    "ready_reason_names_isolation": true,
+    "rehalts_after_resume": true,
+    "resume_clears_latch": true,
+    "tip_flat_while_halted": true
+  },
+  "execution_proven": false,
+  "observations": {
+    "after_resume": {
+      "acceptsDeploys": true,
+      "blockPipeline": {
+        "capacity": 1024,
+        "pending": 0,
+        "sampledPeak": 1
+      },
+      "bootId": "1-1794663529661",
+      "degraded": "normal",
+      "diagVersion": 2,
+      "finalityStallEpisodes": 3,
+      "finalityStalled": true,
+      "finalizedHeight": 2,
+      "finalizedHeightError": null,
+      "finalizedLag": 32,
+      "height": 35,
+      "lastBlockAgeMs": 484300,
+      "lastFinalityAgeMs": 484228,
+      "lastPeerAgeMs": 483978,
+      "lastPipelineFault": null,
+      "maxObservedHeight": 34,
+      "nodePhase": "running",
+      "ok": false,
+      "orphanBodies": 0,
+      "orphanDetections": 0,
+      "phase": "running",
+      "pipelineFaults": 0,
+      "pipelineFaultsOutstanding": 0,
+      "pool": {
+        "bytes": 0,
+        "deploys": 0,
+        "maxBytes": 67108864,
+        "maxDeploys": 10000
+      },
+      "proposalHaltReason": "tip 35 is 33 heights beyond last finalized 2 (bound 32)",
+      "proposalHalted": true,
+      "ready": false,
+      "readyReasons": [
+        "proposal_isolated"
+      ],
+      "selfValidationRefusal": null,
+      "shardPhases": {
+        "/root": "running"
+      }
+    },
+    "before_stop": {
+      "acceptsDeploys": true,
+      "blockPipeline": {
+        "capacity": 1024,
+        "pending": 0,
+        "sampledPeak": 1
+      },
+      "bootId": "1-1794663529661",
+      "degraded": "normal",
+      "diagVersion": 2,
+      "finalityStallEpisodes": 2,
+      "finalityStalled": false,
+      "finalizedHeight": 2,
+      "finalizedHeightError": null,
+      "finalizedLag": 3,
+      "height": 6,
+      "lastBlockAgeMs": 2722,
+      "lastFinalityAgeMs": 412,
+      "lastPeerAgeMs": 70,
+      "lastPipelineFault": null,
+      "maxObservedHeight": 5,
+      "nodePhase": "running",
+      "ok": true,
+      "orphanBodies": 0,
+      "orphanDetections": 0,
+      "phase": "running",
+      "pipelineFaults": 0,
+      "pipelineFaultsOutstanding": 0,
+      "pool": {
+        "bytes": 0,
+        "deploys": 0,
+        "maxBytes": 67108864,
+        "maxDeploys": 10000
+      },
+      "proposalHaltReason": null,
+      "proposalHalted": false,
+      "ready": true,
+      "readyReasons": [],
+      "selfValidationRefusal": null,
+      "shardPhases": {
+        "/root": "running"
+      }
+    },
+    "flat": {
+      "after_propose": 34,
+      "end": 34,
+      "start": 34
+    },
+    "halt_health": {
+      "acceptsDeploys": true,
+      "blockPipeline": {
+        "capacity": 1024,
+        "pending": 0,
+        "sampledPeak": 1
+      },
+      "bootId": "1-1794663529661",
+      "degraded": "normal",
+      "diagVersion": 2,
+      "finalityStallEpisodes": 3,
+      "finalityStalled": true,
+      "finalizedHeight": 2,
+      "finalizedHeightError": null,
+      "finalizedLag": 32,
+      "height": 35,
+      "lastBlockAgeMs": 464888,
+      "lastFinalityAgeMs": 464816,
+      "lastPeerAgeMs": 464566,
+      "lastPipelineFault": null,
+      "maxObservedHeight": 34,
+      "nodePhase": "running",
+      "ok": false,
+      "orphanBodies": 0,
+      "orphanDetections": 0,
+      "phase": "running",
+      "pipelineFaults": 0,
+      "pipelineFaultsOutstanding": 0,
+      "pool": {
+        "bytes": 0,
+        "deploys": 0,
+        "maxBytes": 67108864,
+        "maxDeploys": 10000
+      },
+      "proposalHaltReason": "tip 35 is 33 heights beyond last finalized 2 (bound 32)",
+      "proposalHalted": true,
+      "ready": false,
+      "readyReasons": [
+        "proposal_isolated"
+      ],
+      "selfValidationRefusal": null,
+      "shardPhases": {
+        "/root": "running"
+      }
+    },
+    "proposal_attempts": 443,
+    "resume_response": {
+      "message": "proposal isolation cleared; the next proposal re-checks the finality bound"
+    }
+  },
+  "source_sha": "5f1848ecb765b514677f019f456c8fbd15794fdf",
+  "tool": "proposer_isolation_drill.py",
+  "verdict_hint": "PASS"
+}
