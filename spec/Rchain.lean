@@ -47,6 +47,8 @@ import Rchain.Sync.Join
 import Rchain.Sync.Transfer
 import Rchain.Sync.Trust
 import Rchain.Sync.Redundancy
+import Rchain.Sync.ReplayState
+import Rchain.Sync.Serve
 import Rchain.Casper.Stake
 import Rchain.Proto
 import Rchain.Casper.Dag

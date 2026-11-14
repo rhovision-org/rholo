@@ -701,6 +701,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     let fringe_root = Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes());
     let required_roots =
         required_state_roots(&block_store, &block_st.height_map, fringe_root).await?;
+    crate::engine::sync_metrics::census().add_state_roots(required_roots.len() as u64);
     let extra_roots: Vec<Blake2b256Hash> = required_roots
         .into_iter()
         .filter(|root| *root != fringe_root)

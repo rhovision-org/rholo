@@ -53,6 +53,14 @@ type St = LfsState<BlockHash>;
 /// provisional number.
 pub const MAX_IDLE_ROUNDS: u32 = 3;
 
+/// **How often an unanswered frontier is re-asked before the give-up window.** The old loop slept for
+/// the whole `request_timeout` (30 s) between resends, so a peer that went silent cost 30 s per key
+/// even though a second peer had already been asked (C339's eight silent windows). The resend is now
+/// short; the *give-up* is still `request_timeout × MAX_IDLE_ROUNDS` of no progress, so the pace rule
+/// is unchanged and a slow-but-progressing walk is not abandoned. The resend set is the walk's
+/// `latest` frontier, not every outstanding key, so the shorter interval cannot amplify an old walk.
+pub const SYNC_HEDGE_INTERVAL: Duration = Duration::from_secs(2);
+
 /// **The per-hash request log** (#457's attribution, after review). A connected peer is not
 /// necessarily asked — `request_next` broadcasts to a random subset (the walk uses `Some(1)`) — and a
 /// `BlockMessage` is not necessarily an answer (it may be gossip for another hash). So the give-up
@@ -220,6 +228,7 @@ async fn process_block(
     let is_valid = validate_received_block(st, block, log, source).await;
     if is_valid {
         save_block(st, block_store, block).await?;
+        crate::engine::sync_metrics::census().add_blocks_received(1);
         // Only a completed block can expose new ancestry. A delayed duplicate or
         // an unsolicited/invalid body must not resend every outstanding hash:
         // those replies create more duplicates and reset the idle failure timer.
@@ -273,6 +282,7 @@ async fn request_next(
             // than amplifying the same request; the per-hash log bounds the fan-out.
             let already_asked = block_requests.lock().await.sent_peers(h);
             let peers = comm_util.request_lfs_block_from(h, &already_asked).await;
+            crate::engine::sync_metrics::census().add_block_requests(peers.len() as u64);
             block_requests.lock().await.record_sent(h, &peers);
         }
     }
@@ -312,17 +322,21 @@ pub async fn request_blocks(
     // Request loop: pull request triggers (or resend on idle timeout) and request next blocks,
     // terminating once all blocks are finished.
     let request_loop = async {
-        // The give-up rule's state: how many blocks the walk had completed at the last idle round that
-        // saw progress, and how many consecutive idle rounds have seen none since.
+        // **Short resends, long give-up.** The walk re-asks the `latest` frontier every
+        // `resend_interval` (2 s in production, the whole timeout in a test that sets it shorter),
+        // and gives up only after `give_up_after` with no completed block. The measure is still
+        // progress, not wall-clock duration: a slow walk that completes a block resets the clock.
+        let resend_interval = request_timeout.min(SYNC_HEDGE_INTERVAL);
+        let give_up_after = request_timeout * MAX_IDLE_ROUNDS;
         let mut last_finished: usize = 0;
-        let mut idle_rounds: u32 = 0;
+        let mut last_progress = std::time::Instant::now();
         loop {
             let resend = tokio::select! {
                 r = request_rx.recv() => match r {
                     Some(r) => r,
                     None => return Ok::<(), String>(()),
                 },
-                _ = tokio::time::sleep(request_timeout) => {
+                _ = tokio::time::sleep(resend_interval) => {
                     // An idle round: a whole resend interval with no block response. Whether it is
                     // *stuck* is a different question from whether it is *quiet*, and `finished` is
                     // the measure that answers it.
@@ -336,58 +350,57 @@ pub async fn request_blocks(
                             .collect();
                         (guard.finished.len(), guard.outstanding_breakdown(), sample)
                     };
-                    if finished == last_finished {
-                        idle_rounds += 1;
-                        if idle_rounds >= MAX_IDLE_ROUNDS {
-                            let (outstanding_hashes, connected) = {
-                                let guard = st.lock().await;
-                                (
-                                    guard.d.keys().copied().take(8).collect::<Vec<_>>(),
-                                    guard.d.len(),
-                                )
-                            };
-                            let log = block_requests.lock().await;
-                            let attributed: Vec<String> = outstanding_hashes
-                                .iter()
-                                .filter_map(|hash| {
-                                    let silent = log.unanswered(hash);
-                                    (!silent.is_empty()).then(|| {
-                                        format!("{}: [{}]", hash.to_hex(), silent.join(", "))
-                                    })
-                                })
-                                .collect();
-                            let attribution = if attributed.is_empty() {
-                                "no recorded request to a peer is unanswered".to_string()
-                            } else {
-                                attributed.join("; ")
-                            };
-                            let peers = comm_util.connected_peers().await.len();
-                            return Err(format!(
-                                "no block finished in {idle_rounds} consecutive idle rounds of \
-                                 {request_timeout:?} ({finished} block(s) finished; outstanding: \
-                                 {init} init, {requested} requested, {received} received; \
-                                 first outstanding: [{}]; {connected} outstanding hash(es), \
-                                 {peers} connected peer(s)). For the outstanding hashes, no block \
-                                 was received from the peers they were requested from: [{attribution}]. \
-                                 The fringe names state no peer is serving, every answer is being \
-                                 refused, or the peers cannot answer this node: a joiner whose \
-                                 protocol and discovery ports admit only its bootstrap gets \
-                                 exactly this — they gossip to it and cannot dial in \
-                                 (#457/#458)",
-                                sample.join(", ")
-                            ));
-                        }
-                    } else {
-                        idle_rounds = 0;
+                    if finished != last_finished {
                         last_finished = finished;
+                        last_progress = std::time::Instant::now();
+                    } else if last_progress.elapsed() >= give_up_after {
+                        let (outstanding_hashes, connected) = {
+                            let guard = st.lock().await;
+                            (
+                                guard.d.keys().copied().take(8).collect::<Vec<_>>(),
+                                guard.d.len(),
+                            )
+                        };
+                        let log = block_requests.lock().await;
+                        let attributed: Vec<String> = outstanding_hashes
+                            .iter()
+                            .filter_map(|hash| {
+                                let silent = log.unanswered(hash);
+                                (!silent.is_empty()).then(|| {
+                                    format!("{}: [{}]", hash.to_hex(), silent.join(", "))
+                                })
+                            })
+                            .collect();
+                        let attribution = if attributed.is_empty() {
+                            "no recorded request to a peer is unanswered".to_string()
+                        } else {
+                            attributed.join("; ")
+                        };
+                        let peers = comm_util.connected_peers().await.len();
+                        return Err(format!(
+                            "no block finished in {:?} of no progress across {resend_interval:?} \
+                             resends ({finished} block(s) finished; outstanding: {init} init, \
+                             {requested} requested, {received} received; first outstanding: [{}]; \
+                             {connected} outstanding hash(es), {peers} connected peer(s)). For the \
+                             outstanding hashes, no block was received from the peers they were \
+                             requested from: [{attribution}]. The fringe names state no peer is \
+                             serving, every answer is being refused, or the peers cannot answer \
+                             this node: a joiner whose protocol and discovery ports admit only its \
+                             bootstrap gets exactly this — they gossip to it and cannot dial in \
+                             (#457/#458)",
+                            last_progress.elapsed(),
+                            sample.join(", ")
+                        ));
                     }
                     log.warn(
                         source,
                         &format!(
-                            "No block responses for {request_timeout:?}. Resending requests \
-                             ({idle_rounds}/{MAX_IDLE_ROUNDS} idle rounds without a finished block)."
+                            "No block responses for {resend_interval:?}. Resending requests \
+                             ({:?} without a finished block).",
+                            last_progress.elapsed()
                         ),
                     );
+                    crate::engine::sync_metrics::census().add_resend();
                     true
                 }
             };

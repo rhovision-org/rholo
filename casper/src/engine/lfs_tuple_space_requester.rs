@@ -27,8 +27,13 @@ use crate::protocol::casper_message_protocol::StoreItemsMessageRequestSerde;
 /// (port of `StatePartPath`).
 pub type StatePartPath = Vec<(Blake2b256Hash, Option<u8>)>;
 
-/// Number of nodes in an LFS sync data-transfer chunk (port of `pageSize`).
-pub const PAGE_SIZE: i32 = 750;
+/// Number of nodes requested in an LFS sync data-transfer chunk (port of `pageSize`).
+///
+/// 750 was the Scala's page size; the Rust responder already bounds a page at
+/// `MAX_STORE_ITEMS_TAKE = 10_000` nodes and 32 MiB, and now serves a **byte-capped prefix** rather
+/// than refusing an oversized page. A larger page is therefore safe and cuts the round trips on a
+/// large trie by more than 5×.
+pub const PAGE_SIZE: i32 = 4_000;
 
 /// **How many peers one page path is requested from in a round** (bootstrap included). Two makes
 /// a silent primary recoverable within the next answer rather than the 30 s idle window; the page
@@ -386,6 +391,7 @@ async fn request_next(
                     targets.len()
                 ),
             );
+            crate::engine::sync_metrics::census().add_pages_requested(targets.len() as u64);
             for peer in &targets {
                 if let Err(e) = transport_layer_syntax::send_to_peer(
                     transport,
@@ -464,6 +470,13 @@ async fn process_store_items<I: RSpaceImporter>(
             let mut guard = st.lock().await;
             *guard = guard.done(start_path.clone());
         }
+        let bytes: u64 = msg
+            .history_items
+            .iter()
+            .map(|(_, v)| v.len() as u64)
+            .chain(msg.data_items.iter().map(|(_, v)| v.len() as u64))
+            .sum();
+        crate::engine::sync_metrics::census().add_pages_received(1, bytes);
         chan::send(request_tx, false).await;
     }
     Ok(())
@@ -543,8 +556,15 @@ pub async fn request_tuple_space_roots<I: RSpaceImporter>(
     // (`lfs_block_requester.rs:236-238`): how many pages were finished at the last idle round that saw
     // progress, and how many consecutive idle rounds have seen none since.
     let request_loop = async {
+        // **Short resends, long give-up** (the block leg's rule, C339 performance): re-ask the
+        // outstanding paths every `resend_interval` (2 s in production) and give up only after
+        // `request_timeout × MAX_IDLE_ROUNDS` with no completed page, so a silent peer costs a
+        // resend rather than a whole 30-second window while the pace measure is unchanged.
+        let resend_interval =
+            request_timeout.min(crate::engine::lfs_block_requester::SYNC_HEDGE_INTERVAL);
+        let give_up_after = request_timeout * MAX_IDLE_ROUNDS;
         let mut last_finished: usize = 0;
-        let mut idle_rounds: u32 = 0;
+        let mut last_progress = std::time::Instant::now();
         loop {
             let resend = tokio::select! {
                 r = request_rx.recv() => match r {
@@ -565,43 +585,38 @@ pub async fn request_tuple_space_roots<I: RSpaceImporter>(
                         return;
                     }
                 },
-                _ = tokio::time::sleep(request_timeout) => {
-                    // An idle round: a whole resend interval with no page completed. Whether the walk
-                    // is *stuck* is a different question from whether it is *quiet*, and the count of
-                    // finished pages is the measure that answers it.
+                _ = tokio::time::sleep(resend_interval) => {
                     let (finished, outstanding) = {
                         let guard = st.lock().await;
                         (guard.finished_count(), guard.outstanding_count())
                     };
-                    if finished == last_finished {
-                        idle_rounds += 1;
-                        if idle_rounds >= MAX_IDLE_ROUNDS {
-                            // **The give-up** (Law 69): the walk has completed nothing across
-                            // `MAX_IDLE_ROUNDS` whole resend intervals, so the peer is not answering
-                            // and no node-side rule can make an answer arrive. This is the block leg's
-                            // rule (`lfs_block_requester.rs:255-261`) with the page walk's measure, and
-                            // it spends the attempt rather than spinning for ever in `NodeSyncing`
-                            // (C268/C271).
-                            *error.lock().await = Some(TupleSpaceWalkError::Abandoned(format!(
-                                "no tuple-space state page finished in {idle_rounds} consecutive \
-                                 idle rounds of {request_timeout:?} ({finished} page(s) finished, \
-                                 {outstanding} key(s) still outstanding): the peer is not answering, \
-                                 so the walk cannot complete"
-                            )));
-                            return;
-                        }
-                    } else {
-                        idle_rounds = 0;
+                    if finished != last_finished {
                         last_finished = finished;
+                        last_progress = std::time::Instant::now();
+                    } else if last_progress.elapsed() >= give_up_after {
+                        // **The give-up** (Law 69): no page has finished across
+                        // `request_timeout × MAX_IDLE_ROUNDS`, so the peer is not answering and no
+                        // node-side rule can make an answer arrive. The resend interval is shorter
+                        // than the window, so this is still a pace condition on *progress*, not a
+                        // wall-clock deadline on a slow walk.
+                        *error.lock().await = Some(TupleSpaceWalkError::Abandoned(format!(
+                            "no tuple-space state page finished in {:?} of no progress across \
+                             {resend_interval:?} resends ({finished} page(s) finished, {outstanding} \
+                             key(s) still outstanding): the peer is not answering, so the walk \
+                             cannot complete",
+                            last_progress.elapsed()
+                        )));
+                        return;
                     }
                     log.warn(
                         source,
                         &format!(
-                            "No tuple space state responses for {request_timeout:?}. Resending \
-                             requests ({idle_rounds}/{MAX_IDLE_ROUNDS} idle rounds without a \
-                             finished page)."
+                            "No tuple space state responses for {resend_interval:?}. Resending \
+                             requests ({:?} without a finished page).",
+                            last_progress.elapsed()
                         ),
                     );
+                    crate::engine::sync_metrics::census().add_resend();
                     true
                 }
             };

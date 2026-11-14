@@ -58,7 +58,9 @@ height_now() { # <http base>
 }
 
 build_chain() { # <height>
-  local h="$1" prefix="synbuild${h}" vol="${prefix}-bootstrap-data" i
+  local h="$1" i
+  local prefix="synbuild${h}"
+  local vol="${prefix}-bootstrap-data"
   if $REBUILD; then docker volume rm "$vol" >/dev/null 2>&1 || true; fi
   if docker volume inspect "$vol" >/dev/null 2>&1; then
     echo "==> ${h}: retained chain ${vol} present"

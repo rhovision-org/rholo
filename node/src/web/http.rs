@@ -332,7 +332,38 @@ pub async fn metrics(State(state): State<HttpState>) -> String {
     // registry: each scrape added the running totals to themselves, so the merge histogram read
     // `_count 7617` against a census of 101 and the factor was how often someone scraped. See
     // `NewPrometheusReporter::render`.
-    state.reporter.render(&state.metrics.snapshot())
+    let mut out = state.reporter.render(&state.metrics.snapshot());
+    out.push_str(&render_sync_census());
+    out
+}
+
+/// **The sync census on the scrape** (C339 performance): the counters the state-sync path kept only in
+/// its journal. They are process-global cumulative values; `sync_in_flight_pages` is a gauge.
+fn render_sync_census() -> String {
+    let c = rchain_casper::engine::sync_metrics::census().snapshot();
+    let counters = [
+        ("sync_pages_requested", c.sync_pages_requested),
+        ("sync_pages_received", c.sync_pages_received),
+        ("sync_page_bytes_received", c.sync_page_bytes_received),
+        ("sync_pages_served", c.sync_pages_served),
+        ("sync_page_bytes_served", c.sync_page_bytes_served),
+        ("sync_page_serve_nanos", c.sync_page_serve_nanos),
+        ("sync_block_requests", c.sync_block_requests),
+        ("sync_blocks_received", c.sync_blocks_received),
+        ("sync_resends", c.sync_resends),
+        ("sync_state_roots_requested", c.sync_state_roots_requested),
+        ("sync_replay_blocks", c.sync_replay_blocks),
+        ("sync_replay_nanos", c.sync_replay_nanos),
+    ];
+    let mut out = String::new();
+    for (name, value) in counters {
+        out.push_str(&format!("# TYPE {name} counter\n{name} {value}\n"));
+    }
+    out.push_str(&format!(
+        "# TYPE sync_in_flight_pages gauge\nsync_in_flight_pages {}\n",
+        c.sync_in_flight_pages
+    ));
+    out
 }
 
 /// `GET /status` (port of `StatusInfo.service`): the node address, version, and peer/node counts.
@@ -4374,8 +4405,16 @@ mod tests {
             "a scrape publishes a snapshot, so the placeholder is never the body"
         );
         assert!(
-            out.is_empty(),
-            "an empty registry renders no series: {out:?}"
+            out.contains("sync_pages_requested"),
+            "the sync census is on the scrape: {out:?}"
+        );
+        assert!(
+            out.contains("sync_in_flight_pages"),
+            "the in-flight gauge is on the scrape: {out:?}"
+        );
+        assert!(
+            !out.contains("syncReplayNanos"),
+            "the scrape uses the prometheus keys, not the JSON camelCase ones: {out:?}"
         );
     }
 

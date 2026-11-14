@@ -12855,6 +12855,26 @@ falsifier is `restore_root_manifest_is_the_genesis_and_the_served_fringe`: it as
 contains only those two roots and refuses a walk that did not reach genesis by name. Laws 83 and 85
 still bound what replay does and does not verify.
 
+**Page size, the byte cap, and the watchdog.** A page is now requested at `PAGE_SIZE = 4_000` nodes
+(the responder's own bound is 10,000 nodes / 32 MiB), and a page over the byte cap is served as a
+**valid prefix** rather than refused: `validate_state_items` already accepts a page shorter than the
+requested `take`, and the continuation is the last included node's `last_path`, so the walk keeps
+moving instead of stalling on one large leaf (`a_page_over_the_byte_cap_is_served_as_a_valid_prefix`).
+Both walks now re-ask their outstanding frontier every 2 seconds (`SYNC_HEDGE_INTERVAL`) while the
+give-up remains `request_timeout × MAX_IDLE_ROUNDS` of **no progress**, so silence is detected in
+seconds and a slow-but-progressing walk is still never abandoned.
+
+**Metrics and laws.** `casper/src/engine/sync_metrics.rs` counts pages requested/received/served,
+bytes, in-flight pages, block requests/received, resends, state roots and replay blocks/nanos; the
+census is on `/metrics` as `sync_*` series. Laws 102
+(`spec/Rchain/Sync/ReplayState.lean`: a linked chain replays, a wrong pre-state is refused) and 103
+(`spec/Rchain/Sync/Serve.lean`: an answer is a function of its request, the peer is not an input, and
+the pool is bounded) join Law 101, registered and tied to the Rust witnesses. **Demand-paged history
+has no reachable trigger in this tree**: replay-forward persists every state root it derives, so a
+historical read opens a local root; the reader's existing *unreadable-root* behavior (AUDIT C53) is
+the explicit-unavailable path, never an empty value. Adding a second importer/page-walk for a root the
+node cannot hold would be dead code, so it is not added.
+
 **The measurement is now cheap.** `tools/sync-bench.sh` builds each ladder point (256 / 756 / 2,432
 heights) once, retains the bootstrap volume, and runs `tools/c339_mature_replay.py` against it with
 autopropose off and `DEVNET_NODE_MEMORY=8g`, so a run measures the restore rather than a chain build

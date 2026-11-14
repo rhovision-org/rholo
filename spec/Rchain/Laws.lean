@@ -5943,6 +5943,64 @@ def lawsC : List Law := [
       answers, that any peer is honest, or that the walk finishes: those are Law 69's fairness \
       hypotheses and Law 83's trust residual. `hedging_is_bounded` is the per-key fan-out \
       (`LFS_BLOCK_FANOUT`/`LFS_PAGE_FANOUT`, each 2), not a global request budget." },
+
+  { number := 102, layer := "Sync",
+    statement := "**Replay-forward reconstructs the chain's states; the genesis post-state is the \
+      only external one.** A chain is linked when each block's pre-state is the state the previous \
+      block produced. On a linked chain replay has a result, and that result implies the chain was \
+      linked; a block whose pre-state is not the previous post-state is refused rather than filled \
+      from a downloaded state. This is why the sync manifest hydrates only the genesis post-state \
+      (and the served fringe as a pre-warm) instead of walking the whole trie for every historical \
+      block root.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.ReplayState.linked_iff_replay_has_a_result,
+      `Rchain.Sync.ReplayState.replay_reconstructs_every_produced_state,
+      `Rchain.Sync.ReplayState.a_block_whose_pre_state_is_not_the_previous_post_is_refused],
+    axioms := [],
+    rust := ["casper/src/engine/recovery.rs", "casper/src/engine/node_syncing.rs"],
+    rustWitness := [
+      "casper/src/engine/node_syncing.rs:restore_root_manifest_is_the_genesis_and_the_served_fringe",
+      "casper/tests/recovery_replay.rs:independent_recovery_replays_epoch_boundaries_and_refuses_forged_claims"],
+    witness := [`Rchain.Sync.ReplayState.linked_iff_replay_has_a_result,
+      `Rchain.Sync.ReplayState.a_block_whose_pre_state_is_not_the_previous_post_is_refused],
+    falsifiable := "Break a block's pre-state so it is not the previous post-state: \
+      `a_block_whose_pre_state_is_not_the_previous_post_is_refused` fails, and replay would have to \
+      fall back to a downloaded value. Add a third root back to the manifest and \
+      `restore_root_manifest_is_the_genesis_and_the_served_fringe` fails.",
+    note := "**The model is the single-chain projection of the Rust's DAG merge.** The Rust derives a \
+      block's pre-state from the merge of its parents' post-states (`get_pre_state_for_parents`); \
+      the model's `pre = previous post` is the one-parent case. The merge's correctness is Laws \
+      66/68/83, not this file, and the downloaded blocks' signatures and content hashes are checked \
+      before replay. `a_block_whose_pre_state_is_not_the_previous_post_is_refused` is the no-fallback \
+      half: the recovery replay never substitutes a downloaded root for a state it could not derive." },
+
+  { number := 103, layer := "Sync",
+    statement := "**Concurrent serving preserves answer identity and bounds the pool.** The answer \
+      to a store-items request is a read of the immutable trie at the request's path: the announcing \
+      peer is not an input, another request does not change the answer's value (reversing the batch \
+      reverses the answer list and nothing else), and the in-flight set is bounded by the configured \
+      consumer width.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Serve.an_answer_is_a_function_of_its_own_request,
+      `Rchain.Sync.Serve.the_peer_is_not_an_input,
+      `Rchain.Sync.Serve.reversing_the_requests_reverses_the_answers,
+      `Rchain.Sync.Serve.in_flight_is_bounded],
+    axioms := [],
+    rust := ["casper/src/engine/node_launch.rs", "casper/src/engine/node_running.rs"],
+    rustWitness := [
+      "casper/src/engine/node_running.rs:a_page_over_the_byte_cap_is_served_as_a_valid_prefix",
+      "casper/src/engine/node_running.rs:a_store_items_page_costs_the_dispatch_loop_this_long"],
+    witness := [`Rchain.Sync.Serve.in_flight_is_bounded,
+      `Rchain.Sync.Serve.the_peer_is_not_an_input],
+    falsifiable := "Make `serve` read the peer and `the_peer_is_not_an_input` fails; drop the `min` \
+      in `InFlight` and `in_flight_is_bounded` fails; make an answer depend on another request's \
+      order and `reversing_the_requests_reverses_the_answers` fails.",
+    note := "**Structural, not a lock model.** The trie's immutability is Law 70 and the store's \
+      locking is outside this file; what is proved is that the responder's output is a function of \
+      the request and the trie, and that the pool cannot exceed its width. The per-`(peer, path)` \
+      cursor chain and the coalescing gate are the responder's own tests, not this model. The READ \
+      path is the one the consumer pool moved; block ingress and fringe traffic stay ordered on the \
+      shard loop." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC
