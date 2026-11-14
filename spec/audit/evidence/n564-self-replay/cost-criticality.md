@@ -34,3 +34,21 @@ plan. The matrix and the next live occurrence's `stateHashMatched` are the input
 **Who decides.** The protocol owner (the oracle's rule is the default). The PR's job is to make the
 condition visible, contain it, and leave the node/network a safe fallback; it is not to change
 consensus.
+
+## Decision (2026-11-14) — A, keep the refusal
+
+The protocol owner's decision is **A — keep the refusal**. A block whose replayed per-deploy cost
+differs from `ProcessedDeploy.cost` remains invalid even when its post-state hash matches: the
+recorded cost is consensus-carried and drives the refund and executor payment, so a wrong cost is a
+false accounting claim rather than a state disagreement. The port follows the Scala oracle. **Option B
+is not adopted**: no acceptance rule changes, no hard fork and no lockstep rollout is required, and a
+node that accepts while a peer refuses would be the fragment the option warned about.
+
+Option C's verification half remains and is what makes the decision safe: canonical play cost, the
+state verdict beside the cost verdict, the trace/cost census, the durable refused body, the bounded
+retry, the fault halt and the `recover-pool` fallback. The trace-mask test
+`casper/tests/determinism.rs::a_cost_refusal_masks_the_trace_check_and_the_shadow_reports_it` pins the
+one diagnostic consequence the decision accepts: the enforcing replay reports only
+`ReplayCostMismatch`, while the cost-ignoring shadow reaches `check_replay_data_with_fix` and reports
+the `UnusedCommEvent` the enforcing path masks. This closes C358; it does not recover the original
+incident body or establish RC-B/RC1, which remain C357's.
