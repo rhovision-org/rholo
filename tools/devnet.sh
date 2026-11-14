@@ -91,6 +91,14 @@ EFFECT_SCHEDULER=""
 POS_EPOCH_LENGTH=""
 POS_ACTIVE_VALIDATORS=""
 POS_STAKES=""
+# Liveness enforcement (RCHIP #55, Law 89). Five genesis parameters, off when all are empty. They are
+# written into a shared `network.conf` mounted at /genesis and handed to every bonded node, because a
+# genesis parameter given to one node and not another is a different chain (AUDIT C46).
+POS_LIVENESS_ABSENCE_THRESHOLD=""
+POS_LIVENESS_JAIL_AFTER_BOUNDARIES=""
+POS_LIVENESS_JAIL_EPOCHS=""
+POS_LIVENESS_VOTE_WINDOW=""
+POS_LIVENESS_SLASH_SEVERITY=""
 FRESH=false
 N=1
 M=0
@@ -215,6 +223,12 @@ Commands:
   --active-validators N          the active-set draw's cap. Below the validator count the draw
                                  *selects*, which is the only way to watch randomised selection do
                                  anything on a live chain (default 100, i.e. no selection at 1-3)
+  --liveness-absence-threshold N --liveness-jail-after-boundaries N --liveness-jail-epochs N
+  --liveness-vote-window N --liveness-slash-severity NAME
+                                 arm RCHIP #55 / Law 89 liveness enforcement. Written into one shared
+                                 `network.conf` mounted at /genesis and read by every bonded node, so
+                                 the genesis post-state cannot diverge (AUDIT C46). All five must be
+                                 set for a working mechanism; an empty set is the shipped off state
   --deployer-key HEX | --no-deployer
                                  fund the deployer wallet + enable dev-mode dummy-deploy keepalive
                                  (default: on for devnet, using validator[0]'s key)
@@ -295,6 +309,33 @@ genesis_files() {
     echo "$DEPLOYER_REV_ADDR,$DEPLOYER_BALANCE" > "$dir/wallets.txt"
   else
     : > "$dir/wallets.txt"
+  fi
+  # Liveness enforcement (RCHIP #55, Law 89) is a *genesis* parameter block. It is written into the
+  # same mounted directory as the bonds and wallets files and handed to every bonded node as
+  # `--config-file /genesis/network.conf`, so the network cannot start with a per-node disagreement
+  # (AUDIT C46): a divergent liveness block is a different genesis post-state.
+  if [[ -n "${POS_LIVENESS_ABSENCE_THRESHOLD}${POS_LIVENESS_JAIL_AFTER_BOUNDARIES}${POS_LIVENESS_JAIL_EPOCHS}${POS_LIVENESS_VOTE_WINDOW}${POS_LIVENESS_SLASH_SEVERITY}" ]]; then
+    {
+      echo 'casper {'
+      echo '  genesis-block-data {'
+      if [[ -n "$POS_LIVENESS_ABSENCE_THRESHOLD" ]]; then
+        echo "    liveness-absence-threshold = $POS_LIVENESS_ABSENCE_THRESHOLD"
+      fi
+      if [[ -n "$POS_LIVENESS_JAIL_AFTER_BOUNDARIES" ]]; then
+        echo "    liveness-jail-after-boundaries = $POS_LIVENESS_JAIL_AFTER_BOUNDARIES"
+      fi
+      if [[ -n "$POS_LIVENESS_JAIL_EPOCHS" ]]; then
+        echo "    liveness-jail-epochs = $POS_LIVENESS_JAIL_EPOCHS"
+      fi
+      if [[ -n "$POS_LIVENESS_VOTE_WINDOW" ]]; then
+        echo "    liveness-vote-window = $POS_LIVENESS_VOTE_WINDOW"
+      fi
+      if [[ -n "$POS_LIVENESS_SLASH_SEVERITY" ]]; then
+        echo "    liveness-slash-severity = $POS_LIVENESS_SLASH_SEVERITY"
+      fi
+      echo '  }'
+      echo '}'
+    } > "$dir/network.conf"
   fi
   # The containers read these as the image's `rnode` uid (1000), which is not necessarily the uid
   # that created the directory. On a CI runner whose temp dir is not world-traversable the bootstrap
@@ -545,6 +586,15 @@ rnode_run_common() {
   if [[ -n "$POS_ACTIVE_VALIDATORS" ]]; then
     flags="$flags --number-of-active-validators $POS_ACTIVE_VALIDATORS"
   fi
+  # Liveness enforcement travels as a config *file*, not as flags: the five keys live under
+  # `casper.genesis-block-data` and the node reads them from its HOCON layer. `genesis_files` writes
+  # the file into the mounted /genesis directory, and every bonded node reads the same bytes; an
+  # observer mounts no genesis directory and gets no flag.
+  if [[ -n "${POS_LIVENESS_ABSENCE_THRESHOLD}${POS_LIVENESS_JAIL_AFTER_BOUNDARIES}${POS_LIVENESS_JAIL_EPOCHS}${POS_LIVENESS_VOTE_WINDOW}${POS_LIVENESS_SLASH_SEVERITY}" ]]; then
+    if [[ "$name" != *-observer-* ]]; then
+      flags="$flags --config-file /genesis/network.conf"
+    fi
+  fi
   # **Per-node extra `rnode run` flags.** The flag string above is deliberately *shared*, because a
   # genesis parameter handed to one node and not another is a different chain (AUDIT C46) — but a
   # measurement of what a **config mismatch** does needs exactly the opposite: one node set differently
@@ -593,6 +643,11 @@ cmd_up() {
   POS_EPOCH_LENGTH=""   # default: the node's own (10000) — see `rnode_run_common`
   POS_ACTIVE_VALIDATORS=""
   POS_STAKES=""   # default: 100 each; `--stakes` sets them per validator
+  POS_LIVENESS_ABSENCE_THRESHOLD=""
+  POS_LIVENESS_JAIL_AFTER_BOUNDARIES=""
+  POS_LIVENESS_JAIL_EPOCHS=""
+  POS_LIVENESS_VOTE_WINDOW=""
+  POS_LIVENESS_SLASH_SEVERITY=""
   FRESH=false
 
   while [[ $# -gt 0 ]]; do
@@ -608,6 +663,11 @@ cmd_up() {
       --epoch-length) POS_EPOCH_LENGTH="${2:?}"; shift 2 ;;
       --active-validators) POS_ACTIVE_VALIDATORS="${2:?}"; shift 2 ;;
       --stakes) POS_STAKES="${2:?}"; shift 2 ;;
+      --liveness-absence-threshold) POS_LIVENESS_ABSENCE_THRESHOLD="${2:?}"; shift 2 ;;
+      --liveness-jail-after-boundaries) POS_LIVENESS_JAIL_AFTER_BOUNDARIES="${2:?}"; shift 2 ;;
+      --liveness-jail-epochs) POS_LIVENESS_JAIL_EPOCHS="${2:?}"; shift 2 ;;
+      --liveness-vote-window) POS_LIVENESS_VOTE_WINDOW="${2:?}"; shift 2 ;;
+      --liveness-slash-severity) POS_LIVENESS_SLASH_SEVERITY="${2:?}"; shift 2 ;;
       --effect-scheduler)
         EFFECT_SCHEDULER="${2:?}"
         case "$EFFECT_SCHEDULER" in
@@ -833,6 +893,11 @@ write_up_state() { # <n> <m>
     echo "POS_EPOCH_LENGTH=$POS_EPOCH_LENGTH"
     echo "POS_ACTIVE_VALIDATORS=$POS_ACTIVE_VALIDATORS"
     echo "POS_STAKES=$POS_STAKES"
+    echo "POS_LIVENESS_ABSENCE_THRESHOLD=$POS_LIVENESS_ABSENCE_THRESHOLD"
+    echo "POS_LIVENESS_JAIL_AFTER_BOUNDARIES=$POS_LIVENESS_JAIL_AFTER_BOUNDARIES"
+    echo "POS_LIVENESS_JAIL_EPOCHS=$POS_LIVENESS_JAIL_EPOCHS"
+    echo "POS_LIVENESS_VOTE_WINDOW=$POS_LIVENESS_VOTE_WINDOW"
+    echo "POS_LIVENESS_SLASH_SEVERITY=$POS_LIVENESS_SLASH_SEVERITY"
     echo "EFFECT_SCHEDULER=$EFFECT_SCHEDULER"
   } > "$UP_STATE"
 }
@@ -851,6 +916,11 @@ read_up_state() {
       POS_EPOCH_LENGTH) POS_EPOCH_LENGTH="$v" ;;
       POS_ACTIVE_VALIDATORS) POS_ACTIVE_VALIDATORS="$v" ;;
       POS_STAKES) POS_STAKES="$v" ;;
+      POS_LIVENESS_ABSENCE_THRESHOLD) POS_LIVENESS_ABSENCE_THRESHOLD="$v" ;;
+      POS_LIVENESS_JAIL_AFTER_BOUNDARIES) POS_LIVENESS_JAIL_AFTER_BOUNDARIES="$v" ;;
+      POS_LIVENESS_JAIL_EPOCHS) POS_LIVENESS_JAIL_EPOCHS="$v" ;;
+      POS_LIVENESS_VOTE_WINDOW) POS_LIVENESS_VOTE_WINDOW="$v" ;;
+      POS_LIVENESS_SLASH_SEVERITY) POS_LIVENESS_SLASH_SEVERITY="$v" ;;
       EFFECT_SCHEDULER) EFFECT_SCHEDULER="$v" ;;
     esac
   done < "$UP_STATE"
