@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 
 use rchain_casper::api::block_api::DeployerInfo;
+use rchain_models::casper::protocol::checkpoint::{Checkpoint, CheckpointAttestation};
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, FinalityAttestation, LightBlockInfo, RawBlock,
 };
@@ -96,6 +97,21 @@ pub trait WebApi: Send + Sync {
         &self,
         _nonce: &str,
     ) -> Result<FinalityAttestation, BlockApiException> {
+        Err(BlockApiException(
+            "this surface holds no validator identity to attest with".to_string(),
+        ))
+    }
+
+    /// `GET /api/v1/checkpoint` — the finalised checkpoint this node would serve to a joiner.
+    async fn current_checkpoint(&self) -> Result<Checkpoint, BlockApiException> {
+        Err(BlockApiException(
+            "this surface serves no checkpoint".to_string(),
+        ))
+    }
+
+    /// `GET /api/v1/checkpoint-attestation` — this node's signature over its **own** current
+    /// checkpoint digest. It never signs a caller-chosen digest; that would be a signing oracle.
+    async fn checkpoint_attestation(&self) -> Result<CheckpointAttestation, BlockApiException> {
         Err(BlockApiException(
             "this surface holds no validator identity to attest with".to_string(),
         ))

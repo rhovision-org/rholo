@@ -1018,6 +1018,19 @@ struct FinalityAttestationQuery {
     nonce: String,
 }
 
+/// `GET /api/v1/checkpoint` — the finalised checkpoint this node serves to a joining node
+/// (sync/verification separation). It is the anchor block, its post-state, the finalized fringe, the
+/// parent digest and the epoch; the quorum certificate is assembled from validators' attestations.
+async fn api_checkpoint(State(state): State<HttpState>) -> Response {
+    json_result(state.web_api.current_checkpoint().await)
+}
+
+/// `GET /api/v1/checkpoint-attestation` — this node's signature over **its own** current checkpoint
+/// digest. No caller input: a digest chosen by the caller would make the route a signing oracle.
+async fn api_checkpoint_attestation(State(state): State<HttpState>) -> Response {
+    json_result(state.web_api.checkpoint_attestation().await)
+}
+
 async fn api_get_blocks(State(state): State<HttpState>) -> Response {
     json_result(state.web_api.get_blocks(1).await)
 }
@@ -2265,6 +2278,11 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/block/{hash}", get(api_get_block))
         .route("/api/block/{hash}/raw", get(api_get_raw_block))
         .route("/api/finality-attestation", get(api_finality_attestation))
+        .route("/api/checkpoint", get(api_checkpoint))
+        .route(
+            "/api/checkpoint-attestation",
+            get(api_checkpoint_attestation),
+        )
         .route("/api/blocks", get(api_get_blocks))
         .route("/api/blocks/{start}/{end}", get(api_get_blocks_by_heights))
         .route("/api/blocks/{depth}", get(api_get_blocks_by_depth))
@@ -2298,6 +2316,11 @@ pub fn router(state: HttpState) -> Router {
         .route(
             "/api/v1/finality-attestation",
             get(api_finality_attestation),
+        )
+        .route("/api/v1/checkpoint", get(api_checkpoint))
+        .route(
+            "/api/v1/checkpoint-attestation",
+            get(api_checkpoint_attestation),
         )
         .route("/api/v1/openapi.json", get(api_v1_openapi))
         .merge(deploy_routes)
@@ -3093,6 +3116,37 @@ mod tests {
 
         async fn proposer_health(&self) -> rchain_casper::api::block_api::ProposerHealth {
             self.proposer_health.clone()
+        }
+
+        async fn current_checkpoint(
+            &self,
+        ) -> Result<rchain_models::casper::protocol::checkpoint::Checkpoint, BlockApiException>
+        {
+            Ok(rchain_models::casper::protocol::checkpoint::Checkpoint {
+                shard_id: "root".to_string(),
+                anchor: "00".repeat(32),
+                anchor_height: 7,
+                anchor_post_state: "11".repeat(32),
+                fringe_hashes: vec!["00".repeat(32)],
+                parent_digest: None,
+                epoch: 0,
+            })
+        }
+
+        async fn checkpoint_attestation(
+            &self,
+        ) -> Result<
+            rchain_models::casper::protocol::checkpoint::CheckpointAttestation,
+            BlockApiException,
+        > {
+            Ok(
+                rchain_models::casper::protocol::checkpoint::CheckpointAttestation {
+                    checkpoint_digest: "22".repeat(32),
+                    sender: "33".repeat(65),
+                    sig_algorithm: "secp256k1".to_string(),
+                    sig: "44".repeat(64),
+                },
+            )
         }
 
         async fn deploy(&self, _: &DeployRequest) -> Result<String, BlockApiException> {
@@ -4308,6 +4362,27 @@ mod tests {
     ///
     /// Falsified against this tree (2026-09-24): with that one call removed — the shape before this
     /// stage — the body is exactly the placeholder string and both assertions below fail.
+    /// **The checkpoint pair is on the public surface** (sync/verification separation): the statement
+    /// a joiner verifies, and the node's signature over its own current digest. The route takes no
+    /// caller input — a digest chosen by a caller would be a signing oracle.
+    #[tokio::test]
+    async fn checkpoint_routes_serve_the_statement_and_its_attestation() {
+        let response = api_checkpoint(State(state())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["shardId"], "root");
+        assert_eq!(json["anchorHeight"], 7);
+        assert_eq!(json["fringeHashes"].as_array().unwrap().len(), 1);
+
+        let response = api_checkpoint_attestation(State(state())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["checkpointDigest"], "22".repeat(32));
+        assert_eq!(json["sigAlgorithm"], "secp256k1");
+    }
+
     #[tokio::test]
     async fn the_metrics_route_serves_the_registrys_own_numbers() {
         let state = state();

@@ -11,6 +11,7 @@ use rchain_block_storage::dag::dag_storage::DeployId;
 use rchain_models::ast::Par;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
+use rchain_models::casper::protocol::checkpoint::{Checkpoint, CheckpointAttestation};
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, BondInfo, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
     FinalityAttestation, LightBlockInfo, RawBlock, Status,
@@ -959,6 +960,19 @@ pub trait BlockApi: Send + Sync {
     /// finality claim attributable to a bonded validator rather than a node-local assertion. Default
     /// refuses: a surface with no validator identity cannot attest for anyone.
     async fn finality_attestation(&self, _nonce: &str) -> ApiErr<FinalityAttestation> {
+        Err("this surface holds no validator identity to attest with".to_string())
+    }
+
+    /// **The node's current checkpoint** (sync/verification separation): the finalized anchor, its
+    /// post-state, the fringe, the parent digest and the epoch. Default refuses.
+    async fn current_checkpoint(&self) -> ApiErr<Checkpoint> {
+        Err("this surface serves no checkpoint".to_string())
+    }
+
+    /// **This node's signature over its current checkpoint digest.** Default refuses, and the
+    /// implementation signs only its own current checkpoint — never a caller-chosen digest, which
+    /// would be a signing oracle.
+    async fn checkpoint_attestation(&self) -> ApiErr<CheckpointAttestation> {
         Err("this surface holds no validator identity to attest with".to_string())
     }
 

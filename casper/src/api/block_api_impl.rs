@@ -18,6 +18,7 @@ use rchain_models::ast::Par;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
+use rchain_models::casper::protocol::checkpoint::{Checkpoint, CheckpointAttestation};
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
     FinalityAttestation, LightBlockInfo, RawBlock, Status, VersionInfo, WaitingContinuationInfo,
@@ -1072,6 +1073,62 @@ impl BlockApi for BlockApiImpl {
         Ok(FinalityAttestation {
             block_hash: base16::encode(hash.as_bytes()),
             nonce: nonce.to_string(),
+            sender: base16::encode(identity.public_key.bytes()),
+            sig_algorithm: identity.sig_algorithm.clone(),
+            sig: base16::encode(&sig),
+        })
+    }
+
+    async fn current_checkpoint(&self) -> ApiErr<Checkpoint> {
+        let dag = self.dag.get_representation().await;
+        let fringe = dag.latest_fringe();
+        let anchor = fringe
+            .iter()
+            .max_by_key(|m| (m.height, m.id))
+            .ok_or_else(|| "the DAG has no finalized fringe to checkpoint".to_string())?;
+        let anchor_hash = anchor.id;
+        let block = self
+            .block_store
+            .get(&[anchor_hash])
+            .await?
+            .into_iter()
+            .flatten()
+            .next()
+            .ok_or_else(|| format!("the checkpoint anchor {} has no body", anchor_hash.to_hex()))?;
+        let epoch_length = self.runtime.genesis_pos().params.epoch_length.max(1);
+        let anchor_height = i64::from(anchor.height);
+        Ok(Checkpoint {
+            shard_id: self.shard_id.clone(),
+            anchor: base16::encode(anchor_hash.as_bytes()),
+            anchor_height,
+            anchor_post_state: base16::encode(block.post_state_hash.as_bytes()),
+            fringe_hashes: fringe
+                .iter()
+                .map(|m| base16::encode(m.id.as_bytes()))
+                .collect(),
+            // The certificate store chains the parent digest in the next unit; a genesis-rooted or
+            // operator-pinned checkpoint verifies with `None`.
+            parent_digest: None,
+            epoch: anchor_height / epoch_length,
+        })
+    }
+
+    async fn checkpoint_attestation(&self) -> ApiErr<CheckpointAttestation> {
+        let Some(identity) = self.validator_opt.as_ref() else {
+            return Err("this node has no validator identity to attest with".to_string());
+        };
+        // Before the signature, not after: reuses the same admission rule as the finality
+        // attestation. The node signs **only its own current checkpoint** — a caller cannot choose a
+        // digest, so this cannot become a signing oracle.
+        attestation_is_admissible(&self.dag, identity.public_key.bytes()).await?;
+        let checkpoint = self.current_checkpoint().await?;
+        let digest =
+            crate::checkpoint::checkpoint_digest(&checkpoint).map_err(|e| e.to_string())?;
+        let sig = identity
+            .attest_checkpoint(&digest)
+            .map_err(|e| e.to_string())?;
+        Ok(CheckpointAttestation {
+            checkpoint_digest: digest.to_hex(),
             sender: base16::encode(identity.public_key.bytes()),
             sig_algorithm: identity.sig_algorithm.clone(),
             sig: base16::encode(&sig),
