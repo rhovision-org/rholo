@@ -975,6 +975,13 @@ pub trait BlockApi: Send + Sync {
     /// for exactly that digest. `digest` names a stored certificate; `None` serves the certificate
     /// for the node's current checkpoint (or, before a quorum has been collected, the statement with
     /// whatever attestations it has and no more). Default refuses.
+    /// **The lowest height whose body this node holds** (sync/verification separation). `0` is
+    /// full history; a checkpoint joiner reports its backfill frontier here. Default `0` is the
+    /// honest answer for a surface with no history tier.
+    async fn history_floor(&self) -> i64 {
+        0
+    }
+
     async fn checkpoint_certificate(&self, _digest: Option<&str>) -> ApiErr<CheckpointCertificate> {
         Err("this surface holds no checkpoint certificate".to_string())
     }

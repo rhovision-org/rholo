@@ -57,6 +57,11 @@ pub struct WebApiImpl {
     /// `GET /api/v1/nodes` is mounted (`api-server.publish-node-list`). A capability fact, so a
     /// client can tell "this node does not publish a hostlist" from "the route failed".
     node_list: bool,
+    /// The operator's history tier (`api-server.archive*`). A capability, not a policy: the
+    /// challenge route is how a client checks the claim.
+    history: crate::web::archives::HistoryConfig,
+    /// Whether the last challenge this node served was complete (`None` = none served).
+    last_challenge_success: Arc<Mutex<Option<bool>>>,
 }
 
 impl WebApiImpl {
@@ -77,6 +82,33 @@ impl WebApiImpl {
             recovering_faucet_drips: Mutex::new(HashSet::new()),
             resources,
             node_list: false,
+            history: crate::web::archives::HistoryConfig::default(),
+            last_challenge_success: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// **Set the history tier** (`api-server.archive*`). A builder for the same reason
+    /// [`Self::with_node_list`] is one: every test constructor would otherwise pass a default it
+    /// does not care about.
+    pub fn with_history(mut self, history: crate::web::archives::HistoryConfig) -> Self {
+        self.history = history;
+        self
+    }
+
+    /// The history tier, measured rather than asserted: the body floor comes from the block API's
+    /// backfill marker, and `last_challenge_success` from the last challenge this node answered.
+    async fn history_capabilities(&self) -> super::dto::HistoryCapabilities {
+        let latest = self.block_api.status().await.latest_block_number;
+        super::dto::HistoryCapabilities {
+            archive: self.history.archive,
+            bodies_from: self.block_api.history_floor().await,
+            bodies_to: (latest > 0).then(|| latest - 1),
+            retention: self.history.history_retention,
+            challenge_endpoint: self
+                .history
+                .archive
+                .then(|| "/api/v1/history/challenge".to_string()),
+            last_challenge_success: *self.last_challenge_success.lock().unpoison(),
         }
     }
 
@@ -1182,17 +1214,78 @@ impl WebApi for WebApiImpl {
 
     async fn capabilities(&self) -> Result<NodeCapabilities, BlockApiException> {
         let caps = self.block_api.capabilities().await;
-        let ledger = self.faucet_ledger.lock().unpoison();
-        let remaining = FAUCET_TOTAL_BUDGET.saturating_sub(ledger.spent);
+        // The guard is dropped before the history capability awaits: a `std` guard held across an
+        // await makes the future non-Send.
+        let remaining = {
+            let ledger = self.faucet_ledger.lock().unpoison();
+            FAUCET_TOTAL_BUDGET.saturating_sub(ledger.spent)
+        };
         // A dry faucet is not advertised: r-wallet can stop offering it without probing a write.
         let faucet =
             caps.dev_mode && self.deployer_key.is_some() && remaining >= faucet::FAUCET_AMOUNT;
+        let history = self.history_capabilities().await;
         Ok(to_node_capabilities(
             &caps,
             faucet,
             remaining,
             self.node_list,
+            history,
         ))
+    }
+
+    async fn history_challenge(
+        &self,
+        nonce: &str,
+        count: usize,
+        max_height: Option<i64>,
+    ) -> Result<super::dto::HistoryChallenge, BlockApiException> {
+        let latest = self.block_api.status().await.latest_block_number;
+        let max = max_height
+            .unwrap_or_else(|| latest.saturating_sub(1))
+            .max(0);
+        let heights = crate::web::archives::sample_heights(nonce, count, max);
+        let mut entries = Vec::with_capacity(heights.len());
+        let mut complete = true;
+        for height in heights {
+            match self
+                .block_api
+                .get_blocks_by_heights(height, height)
+                .await
+                .map_err(BlockApiException)?
+                .into_iter()
+                .next()
+            {
+                Some(info) => {
+                    let body = self
+                        .block_api
+                        .get_raw_block(&info.block_hash)
+                        .await
+                        .map_err(BlockApiException)?;
+                    entries.push(super::dto::HistoryChallengeEntry {
+                        height,
+                        block_hash: Some(info.block_hash),
+                        body: Some(body),
+                    });
+                }
+                // The sampled height has no block *here*: that is the gap the challenge exists to
+                // find, and it is reported per height rather than as a failed request.
+                None => {
+                    complete = false;
+                    entries.push(super::dto::HistoryChallengeEntry {
+                        height,
+                        block_hash: None,
+                        body: None,
+                    });
+                }
+            }
+        }
+        *self.last_challenge_success.lock().unpoison() = Some(complete);
+        Ok(super::dto::HistoryChallenge {
+            nonce: nonce.to_string(),
+            max_height: max,
+            complete,
+            entries,
+        })
     }
 
     async fn deploy_status(&self, deploy_id: &str) -> Result<DeployExecStatus, BlockApiException> {

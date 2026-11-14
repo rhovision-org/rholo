@@ -273,6 +273,7 @@ pub fn to_node_capabilities(
     faucet: bool,
     faucet_remaining: i64,
     node_list: bool,
+    history: super::dto::HistoryCapabilities,
 ) -> NodeCapabilities {
     NodeCapabilities {
         autopropose: caps.autopropose,
@@ -284,6 +285,7 @@ pub fn to_node_capabilities(
         node_list,
         faucet,
         faucet_remaining,
+        history,
     }
 }
 

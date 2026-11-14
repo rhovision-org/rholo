@@ -156,6 +156,15 @@ pub struct ApiServer {
     ///
     /// A non-Shared field, like `enable_txn_api` beside it: the Scala `ApiServer` has no OCapN
     /// listener, and this port's is opt-in rather than always-on for the reason above.
+    /// **Advertise this node as a history archive** (sync/verification separation). An archive
+    /// serves bodies for the heights it holds and the challenge route, and earns service fees from
+    /// validators and light nodes. Off by default: an archive is a service commitment.
+    pub archive: bool,
+    /// How many heights of history this node retains when it is an archive (`0` = all).
+    pub history_retention: i64,
+    /// Archive endpoints this node may backfill from, as `http://host:port` URLs. The challenge
+    /// route is how a client verifies an archive actually holds what it advertises.
+    pub archive_peers: Vec<String>,
     pub ocapn_listen: Option<String>,
     /// Bind the **`unix`** OCapN listener at this socket path, or `None` for none (issue #249). A
     /// transport rather than a second address for the one above, and the one the node offers that is

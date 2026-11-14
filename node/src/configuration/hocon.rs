@@ -251,6 +251,24 @@ fn api_server_from_hocon(h: &Hocon) -> Result<ApiServer, String> {
         max_connection_age: to_duration(get(h, "max-connection-age")?)?,
         max_connection_age_grace: to_duration(get(h, "max-connection-age-grace")?)?,
         // Absent (or empty) means no OCapN listener — see `ApiServer::ocapn_listen`.
+        // **The history tier** (sync/verification separation): an archive is a service
+        // commitment, so it is opt-in.
+        archive: match get_opt(h, "archive") {
+            Some(v) => to_bool(v)?,
+            None => false,
+        },
+        history_retention: match get_opt(h, "history-retention") {
+            Some(v) => to_i64(v)?,
+            None => 0,
+        },
+        archive_peers: to_optional_string(h, "archive-peers")?
+            .map(|s| {
+                s.split(',')
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default(),
         ocapn_listen: to_optional_string(h, "ocapn-listen")?.filter(|s| !s.is_empty()),
         // The `unix` transport, same shape: absent or empty means the node does not listen on UDS.
         ocapn_listen_unix: to_optional_string(h, "ocapn-listen-unix")?.filter(|s| !s.is_empty()),

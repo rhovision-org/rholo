@@ -484,6 +484,8 @@ pub struct NodeProgram {
     grpc_max_recv_message_size: usize,
     max_connection_idle: Duration,
     enable_reporting: bool,
+    // The history tier (`api-server.archive*`): the archives route and the challenge route.
+    history: crate::web::archives::HistoryConfig,
     // Whether the faucet routes are mounted (AUDIT R34): dev mode and a deployer key, resolved where
     // both are known and passed through to `acquire_http_server`.
     faucet_enabled: bool,
@@ -555,6 +557,7 @@ impl NodeProgram {
             grpc_max_recv_message_size,
             max_connection_idle,
             enable_reporting,
+            history,
             enable_txn_api,
             enable_devnet_cors,
             enable_devnet_admin_public,
@@ -631,6 +634,7 @@ impl NodeProgram {
                     peer_liveness,
                     max_connection_idle,
                     enable_reporting,
+                    history,
                     faucet_enabled,
                     node_list,
                     stop,
@@ -1572,7 +1576,12 @@ pub async fn setup_node_program(
             resources.clone(),
         )
         .with_persistent_faucet_ledger(conf.storage.data_dir.join("faucet-ledger.json"))?
-        .with_node_list(conf.api_server.publish_node_list),
+        .with_node_list(conf.api_server.publish_node_list)
+        .with_history(crate::web::archives::HistoryConfig {
+            archive: conf.api_server.archive,
+            history_retention: conf.api_server.history_retention,
+            archive_peers: conf.api_server.archive_peers.clone(),
+        }),
     );
     // The PoS read (AUDIT C148): the primary shard's live native state through the runtime manager
     // that owns it, plus the status API for the head's height — one definition of "latest block".
@@ -1654,6 +1663,11 @@ pub async fn setup_node_program(
             .map_err(|e| e.to_string())?,
         max_connection_idle: conf.api_server.max_connection_idle,
         enable_reporting: conf.api_server.enable_reporting,
+        history: crate::web::archives::HistoryConfig {
+            archive: conf.api_server.archive,
+            history_retention: conf.api_server.history_retention,
+            archive_peers: conf.api_server.archive_peers.clone(),
+        },
         faucet_enabled,
         enable_txn_api: conf.api_server.enable_txn_api,
         enable_devnet_cors: conf.api_server.enable_devnet_cors,

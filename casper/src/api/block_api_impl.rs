@@ -1205,6 +1205,10 @@ impl BlockApi for BlockApiImpl {
         })
     }
 
+    async fn history_floor(&self) -> i64 {
+        BlockApiImpl::history_floor(self).await
+    }
+
     async fn checkpoint_certificate(&self, digest: Option<&str>) -> ApiErr<CheckpointCertificate> {
         if let Some(digest) = digest {
             let bytes = base16::decode(digest)

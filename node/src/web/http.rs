@@ -258,6 +258,9 @@ pub struct HttpState {
     pub node_list: Option<Arc<NodeListProvider>>,
     /// Rate limiter for the hostlist route. See [`NODE_LIST_RATE_LIMIT_PER_SEC`].
     pub node_list_rate_limiter: Arc<KeyedRateLimiter>,
+    /// The operator's history tier (`api-server.archive*`), served by `/api/v1/archives` and the
+    /// challenge route.
+    pub history: crate::web::archives::HistoryConfig,
 }
 
 /// State shared by the admin HTTP server (port of the `adminWebApiRoutes` argument of
@@ -1038,6 +1041,44 @@ async fn api_checkpoint_by_digest(
 /// digest. No caller input: a digest chosen by the caller would make the route a signing oracle.
 async fn api_checkpoint_attestation(State(state): State<HttpState>) -> Response {
     json_result(state.web_api.checkpoint_attestation().await)
+}
+
+#[derive(serde::Deserialize)]
+struct HistoryChallengeQuery {
+    nonce: String,
+    count: Option<usize>,
+    max_height: Option<i64>,
+}
+
+/// `GET /api/v1/history/challenge` — the archive tier's proof of possession: a deterministic sample
+/// of bodies at the caller's nonce. A missing body is reported per height, because that is the gap
+/// the caller is testing for.
+async fn api_history_challenge(
+    State(state): State<HttpState>,
+    Query(query): Query<HistoryChallengeQuery>,
+) -> Response {
+    let count = query
+        .count
+        .unwrap_or(crate::web::archives::DEFAULT_CHALLENGE_COUNT);
+    json_result(
+        state
+            .web_api
+            .history_challenge(&query.nonce, count, query.max_height)
+            .await,
+    )
+}
+
+/// `GET /api/v1/archives` — this node's history capability and the archives it was configured with.
+/// Liveness is not claimed; the challenge route is how a client checks one.
+async fn api_archives(State(state): State<HttpState>) -> Response {
+    let archives = state.history.archive_peers.clone();
+    match state.web_api.capabilities().await {
+        Ok(caps) => json_result(Ok(crate::api::dto::ArchivesResponse {
+            this_node: caps.history,
+            archives,
+        })),
+        Err(e) => json_result(Err::<crate::api::dto::ArchivesResponse, _>(e)),
+    }
 }
 
 async fn api_get_blocks(State(state): State<HttpState>) -> Response {
@@ -1955,7 +1996,15 @@ pub const OPENAPI_JSON: &str = r##"{
           "proposer": { "type": "boolean", "description": "This node holds a validator identity and can propose at all; an unkeyed observer reports false" },
           "nodeList": { "type": "boolean", "description": "GET /api/v1/nodes is mounted (api-server.publish-node-list)" },
           "faucet": { "type": "boolean" },
-        "faucetRemaining": { "type": "integer", "format": "int64" }
+        "faucetRemaining": { "type": "integer", "format": "int64" },
+          "history": { "type": "object", "description": "The history tier: archive | light | full, as measured (bodiesFrom/bodiesTo) and advertised (archive), with the challenge endpoint a client uses to check it", "properties": {
+            "archive": { "type": "boolean" },
+            "bodiesFrom": { "type": "integer", "format": "int64" },
+            "bodiesTo": { "type": "integer", "format": "int64", "nullable": true },
+            "retention": { "type": "integer", "format": "int64" },
+            "challengeEndpoint": { "type": "string", "nullable": true },
+            "lastChallengeSuccess": { "type": "boolean", "nullable": true }
+          } }
         }
       },
       "PooledDeploy": {
@@ -2333,6 +2382,8 @@ pub fn router(state: HttpState) -> Router {
         )
         .route("/api/v1/checkpoint", get(api_checkpoint))
         .route("/api/v1/checkpoint/{digest}", get(api_checkpoint_by_digest))
+        .route("/api/v1/archives", get(api_archives))
+        .route("/api/v1/history/challenge", get(api_history_challenge))
         .route(
             "/api/v1/checkpoint-attestation",
             get(api_checkpoint_attestation),
@@ -2582,6 +2633,8 @@ pub async fn acquire_http_server(
     peer_liveness: ShardHealth,
     max_connection_idle: Duration,
     enable_reporting: bool,
+    // The history tier (`api-server.archive*`): advertised by /api/v1/archives and the challenge.
+    history: crate::web::archives::HistoryConfig,
     // Whether to mount the faucet routes (AUDIT R34): dev mode **and** a deployer key, resolved by
     // the caller because that is where both are known.
     faucet_enabled: bool,
@@ -2698,6 +2751,7 @@ pub async fn acquire_http_server(
             NODE_LIST_RATE_LIMIT_PER_SEC,
             MAX_TRACKED_PEERS,
         )),
+        history,
     })
     .layer(TimeoutLayer::with_status_code(
         StatusCode::REQUEST_TIMEOUT,
@@ -3204,7 +3258,20 @@ mod tests {
         }
 
         async fn capabilities(&self) -> Result<NodeCapabilities, BlockApiException> {
-            unimplemented!()
+            // The route tests read the shape, not the configuration; a default capability keeps
+            // `/api/v1/archives` (which reads this) testable without a node.
+            Ok(NodeCapabilities {
+                autopropose: false,
+                propose_on_deploy: false,
+                manual_propose: false,
+                admin_http: false,
+                dev_mode: false,
+                proposer: false,
+                node_list: false,
+                faucet: false,
+                faucet_remaining: 0,
+                history: Default::default(),
+            })
         }
 
         async fn faucet(&self, _: &str) -> Result<FaucetResponse, BlockApiException> {
@@ -3340,6 +3407,7 @@ mod tests {
             // On by default in the tests, because the router tests drive the faucet route; the
             // off case is pinned by its own test below.
             faucet_enabled: true,
+            history: Default::default(),
         }
     }
 
@@ -4425,6 +4493,32 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["checkpointDigest"], "22".repeat(32));
         assert_eq!(json["sigAlgorithm"], "secp256k1");
+    }
+
+    #[tokio::test]
+    async fn the_archives_route_serves_the_capability_and_the_configured_archives() {
+        let mut st = state();
+        st.history = crate::web::archives::HistoryConfig {
+            archive: true,
+            history_retention: 0,
+            archive_peers: vec!["http://archive.example:40403".to_string()],
+        };
+        let response = api_archives(State(st)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json["archives"][0], "http://archive.example:40403",
+            "the configured archives are listed; liveness is not claimed for them"
+        );
+        assert!(
+            json["self"]["bodiesFrom"].is_number(),
+            "the capability reports the measured body floor: {json}"
+        );
+        assert!(
+            json["self"].get("lastChallengeSuccess").is_some(),
+            "the key is always present (null until a challenge is served)"
+        );
     }
 
     #[tokio::test]

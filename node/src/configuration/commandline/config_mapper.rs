@@ -332,6 +332,21 @@ pub fn from_options(options: &Options) -> Hocon {
         if run.no_backfill_bodies {
             e.push(("casper.backfill-bodies".to_string(), Hocon::Boolean(false)));
         }
+        if run.archive {
+            e.push(("api-server.archive".to_string(), Hocon::Boolean(true)));
+        }
+        if let Some(heights) = run.history_retention {
+            e.push((
+                "api-server.history-retention".to_string(),
+                Hocon::Integer(heights),
+            ));
+        }
+        if let Some(peers) = &run.archive_peers {
+            e.push((
+                "api-server.archive-peers".to_string(),
+                Hocon::String(peers.clone()),
+            ));
+        }
         if let Some(mode) = &run.self_replay_injection {
             e.push((
                 "casper.self-replay-injection".to_string(),

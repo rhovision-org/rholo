@@ -704,6 +704,19 @@ pub struct Run {
     #[arg(long = "no-backfill-bodies")]
     pub no_backfill_bodies: bool,
 
+    /// **Advertise and serve this node as a history archive** (sync/verification separation). An
+    /// archive answers the challenge route and can be listed at `/api/v1/archives`; it is a service
+    /// commitment, not a consensus role.
+    #[arg(long = "archive")]
+    pub archive: bool,
+    /// How many heights of history to retain when archiving (`0` = all).
+    #[arg(long = "history-retention", value_name = "HEIGHTS")]
+    pub history_retention: Option<i64>,
+    /// Archive endpoints to list (comma-separated `http://host:port` URLs). The challenge route is
+    /// how a client checks one actually holds what it advertises.
+    #[arg(long = "archive-peers", value_name = "URLS")]
+    pub archive_peers: Option<String>,
+
     /// **Inject a deterministic self-replay refusal into this node's own blocks** (#564). A devnet
     /// measurement instrument, not an operating mode: `deploy[:N]` refuses deploy-bearing blocks,
     /// `all[:N]` also refuses the attestation-only fallback, and `N` spends the injection after N

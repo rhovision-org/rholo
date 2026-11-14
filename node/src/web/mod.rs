@@ -1,5 +1,6 @@
 //! Node web layer (port of `coop.rchain.node.web`).
 
+pub mod archives;
 pub mod http;
 pub mod node_list;
 pub mod pos_read;

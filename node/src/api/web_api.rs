@@ -122,6 +122,20 @@ pub trait WebApi: Send + Sync {
         ))
     }
 
+    /// `GET /api/v1/history/challenge` — a deterministic sample of bodies at the caller's nonce
+    /// (the archive tier's proof of possession). The default refuses: a surface with no history
+    /// tier cannot answer for one.
+    async fn history_challenge(
+        &self,
+        _nonce: &str,
+        _count: usize,
+        _max_height: Option<i64>,
+    ) -> Result<super::dto::HistoryChallenge, BlockApiException> {
+        Err(BlockApiException(
+            "this surface keeps no history to challenge".to_string(),
+        ))
+    }
+
     /// `GET /api/v1/checkpoint-attestation` — this node's signature over its **own** current
     /// checkpoint digest. It never signs a caller-chosen digest; that would be a signing oracle.
     async fn checkpoint_attestation(&self) -> Result<CheckpointAttestation, BlockApiException> {

@@ -552,6 +552,60 @@ pub struct NodeCapabilities {
     pub faucet: bool,
     /// Faucet transfer budget still available, in REV drops. Clients can hide a dry faucet.
     pub faucet_remaining: i64,
+    /// **The history tier this node offers** (sync/verification separation). A light node and an
+    /// archive differ only here; the deploy hostlist is not widened by it.
+    pub history: HistoryCapabilities,
+}
+
+/// **What history this node can serve, and how to check it.**
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryCapabilities {
+    /// The operator has advertised this node as an archive (`--archive`).
+    pub archive: bool,
+    /// The lowest height whose body this node holds. `0` is full history from genesis.
+    pub bodies_from: i64,
+    /// The highest height whose body it holds, or `null` before the first block.
+    pub bodies_to: Option<i64>,
+    /// The retention policy this archive advertises (`0` = all history).
+    pub retention: i64,
+    /// The challenge route, mounted only on an archive.
+    pub challenge_endpoint: Option<String>,
+    /// Whether the last challenge this node served was complete (every sampled body present);
+    /// `null` if it has served none. Evidence of possession at challenge time, not a retention
+    /// guarantee.
+    pub last_challenge_success: Option<bool>,
+}
+
+/// One sampled height in a history challenge. `body` is absent when this node does not hold it —
+/// which is exactly what the client is testing for.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryChallengeEntry {
+    pub height: i64,
+    pub block_hash: Option<String>,
+    pub body: Option<rchain_models::casper::protocol::deploy_service::RawBlock>,
+}
+
+/// `GET /api/v1/history/challenge` — a deterministic sample of bodies at the caller's nonce.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryChallenge {
+    pub nonce: String,
+    pub max_height: i64,
+    /// `true` when every sampled body was present.
+    pub complete: bool,
+    pub entries: Vec<HistoryChallengeEntry>,
+}
+
+/// `GET /api/v1/archives` — this node's history capability and the archives it was configured
+/// with. Liveness is not claimed: the challenge route is how a client checks an archive.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchivesResponse {
+    #[serde(rename = "self")]
+    pub this_node: HistoryCapabilities,
+    pub archives: Vec<String>,
 }
 
 /// A pooled (not-yet-included) deploy (an entry in the `/api/v1/deploys` response).
