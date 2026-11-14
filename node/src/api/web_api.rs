@@ -3,7 +3,9 @@
 use async_trait::async_trait;
 
 use rchain_casper::api::block_api::DeployerInfo;
-use rchain_models::casper::protocol::checkpoint::{Checkpoint, CheckpointAttestation};
+use rchain_models::casper::protocol::checkpoint::{
+    Checkpoint, CheckpointAttestation, CheckpointCertificate,
+};
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, FinalityAttestation, LightBlockInfo, RawBlock,
 };
@@ -106,6 +108,17 @@ pub trait WebApi: Send + Sync {
     async fn current_checkpoint(&self) -> Result<Checkpoint, BlockApiException> {
         Err(BlockApiException(
             "this surface serves no checkpoint".to_string(),
+        ))
+    }
+
+    /// `GET /api/v1/checkpoint[/{digest}]` — the certificate a joiner accepts. `None` is this
+    /// node's current checkpoint; `Some(digest)` is the stored certificate for that exact statement.
+    async fn checkpoint_certificate(
+        &self,
+        _digest: Option<&str>,
+    ) -> Result<CheckpointCertificate, BlockApiException> {
+        Err(BlockApiException(
+            "this surface holds no checkpoint certificate".to_string(),
         ))
     }
 

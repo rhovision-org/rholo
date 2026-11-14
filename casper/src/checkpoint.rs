@@ -49,6 +49,11 @@ pub enum CheckpointError {
     NoBonds,
     /// An attestation's digest or signature does not verify.
     BadSignature(String),
+    /// The anchor state's active bonds differ from the bond set the verifier trusts. Weighing the
+    /// signatures against the old set would count the wrong stake, so the certificate is refused.
+    /// A bond-set transition needs the checkpoint chain (each certificate verified against its
+    /// parent's state); until that rule exists this node refuses rather than guessing.
+    BondSetDrifted { genesis: usize, anchor: usize },
 }
 
 impl std::fmt::Display for CheckpointError {
@@ -71,6 +76,12 @@ impl std::fmt::Display for CheckpointError {
             ),
             CheckpointError::NoBonds => write!(f, "there is no bonded stake to verify against"),
             CheckpointError::BadSignature(why) => write!(f, "bad checkpoint attestation: {why}"),
+            CheckpointError::BondSetDrifted { genesis, anchor } => write!(
+                f,
+                "the anchor state's active bond set ({anchor} validator(s)) differs from the \
+                 genesis trust anchor's ({genesis}); a certificate signed over one partition \
+                 cannot be weighed under the other"
+            ),
         }
     }
 }
@@ -251,6 +262,49 @@ pub fn verify_checkpoint_certificate(
         supporting_stake: supporting,
         total_stake: total,
     })
+}
+
+/// **Verify a certificate whose parent must be absent.** Every checkpoint this build produces is
+/// genesis-rooted (`parent_digest: None`), and the trusted bond set is the genesis active set. A
+/// certificate that names a parent is one this verifier cannot chain, so it is refused by name
+/// rather than verified as if it were the root.
+pub fn verify_genesis_rooted_certificate(
+    certificate: &CheckpointCertificate,
+    bonds: &BTreeMap<Validator, NonNegI64>,
+) -> Result<VerifiedCheckpoint, CheckpointError> {
+    if let Some(parent) = named_parent(certificate) {
+        return Err(CheckpointError::WrongParent {
+            expected: None,
+            found: Some(parent),
+        });
+    }
+    verify_checkpoint_certificate(certificate, bonds, None)
+}
+
+fn named_parent(certificate: &CheckpointCertificate) -> Option<Blake2b256Hash> {
+    certificate
+        .checkpoint
+        .parent_digest
+        .as_ref()
+        .and_then(|hex| base16::decode(hex))
+        .and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok())
+        .map(|bytes| Blake2b256Hash::from_byte_array(&bytes))
+}
+
+/// **Refuse a certificate whose anchor state is not governed by the trusted bond set.** The
+/// certificate is weighed against `trusted`; if the anchor post-state's active bonds differ from it,
+/// those signatures were cast under a different partition and cannot be counted here.
+pub fn check_bond_set_unchanged(
+    trusted: &BTreeMap<Validator, NonNegI64>,
+    at_anchor: &BTreeMap<Validator, NonNegI64>,
+) -> Result<(), CheckpointError> {
+    if trusted != at_anchor {
+        return Err(CheckpointError::BondSetDrifted {
+            genesis: trusted.len(),
+            anchor: at_anchor.len(),
+        });
+    }
+    Ok(())
 }
 
 /// Serialize an attestation for the HTTP surface.
@@ -440,6 +494,52 @@ mod tests {
         assert!(matches!(
             verify_checkpoint_certificate(&cert, &bonds, None),
             Err(CheckpointError::BadSignature(_))
+        ));
+    }
+
+    #[test]
+    fn a_genesis_rooted_verifier_refuses_a_checkpoint_that_names_a_parent() {
+        let (v1, k1) = validator(1);
+        let bonds: BTreeMap<Validator, NonNegI64> = [(v1, NonNegI64::try_from(100).unwrap())]
+            .into_iter()
+            .collect();
+        let mut c = checkpoint();
+        c.parent_digest = Some(hash(7));
+        let cert = CheckpointCertificate {
+            checkpoint: c.clone(),
+            attestations: vec![attest(&c, &k1)],
+        };
+        // `verify_checkpoint_certificate` would accept it: its signer is every bonded validator.
+        assert!(verify_checkpoint_certificate(&cert, &bonds, None).is_ok());
+        assert!(matches!(
+            verify_genesis_rooted_certificate(&cert, &bonds),
+            Err(CheckpointError::WrongParent {
+                expected: None,
+                found: Some(_)
+            })
+        ));
+    }
+
+    #[test]
+    fn a_bond_set_that_drifted_from_the_trust_anchor_is_refused() {
+        let (v1, _k1) = validator(1);
+        let (v2, _k2) = validator(2);
+        let one: BTreeMap<Validator, NonNegI64> = [(v1, NonNegI64::try_from(100).unwrap())]
+            .into_iter()
+            .collect();
+        let two: BTreeMap<Validator, NonNegI64> = [
+            (v1, NonNegI64::try_from(100).unwrap()),
+            (v2, NonNegI64::try_from(100).unwrap()),
+        ]
+        .into_iter()
+        .collect();
+        assert!(check_bond_set_unchanged(&one, &one).is_ok());
+        assert!(matches!(
+            check_bond_set_unchanged(&one, &two),
+            Err(CheckpointError::BondSetDrifted {
+                genesis: 1,
+                anchor: 2
+            })
         ));
     }
 

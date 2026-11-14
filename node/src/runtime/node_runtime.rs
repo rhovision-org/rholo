@@ -20,6 +20,7 @@ use tokio::sync::watch;
 
 use rchain_block_storage::approved_store::{self, ApprovedStore};
 use rchain_block_storage::block_store::{self, BlockStore};
+use rchain_block_storage::checkpoint_store::{self, CheckpointStore};
 use rchain_block_storage::dag::codecs::{
     BlockHashCodec, BlockMetadataCodec, SignedDeployDataCodec,
 };
@@ -797,6 +798,10 @@ pub struct ShardParts {
     pub phase: NodePhaseCell,
     pub runtime_manager: Arc<RuntimeManager>,
     pub approved_store: ApprovedStore,
+    /// **The certificates this shard has accepted** (sync/verification separation). A joiner accepts
+    /// the finalized state by verifying a quorum over the checkpoint statement; this is the record
+    /// the collector writes and the API serves.
+    pub checkpoint_store: CheckpointStore,
     /// **When this shard's proposer first saw each piece of unfinalised work** (#583). Local and
     /// non-consensus: it ages the prompt-attestation licence, so an advancing fringe cannot renew
     /// the same work.
@@ -2302,6 +2307,30 @@ async fn setup_shard_runtime(
         }
     });
 
+    // **The checkpoint-attestation collector** (sync/verification separation). Validators sign
+    // their own current checkpoint; this task gathers those signatures from connected peers and
+    // stores the first quorate certificate, which `GET /api/v1/checkpoint` then serves to joiners.
+    // A node with no identity still collects: an observer can hold and serve a certificate.
+    {
+        use crate::runtime::checkpoint_collector::CheckpointCollector;
+        match CheckpointCollector::new(
+            parts.block_api.clone(),
+            parts.checkpoint_store.clone(),
+            parts.runtime_manager.clone(),
+            comm_state.comm_util.clone(),
+            log.clone(),
+            shard_id.clone(),
+        ) {
+            Ok(collector) => {
+                collector.spawn();
+            }
+            Err(e) => log.warn(
+                LogSource::new("coop.rchain.node.runtime.Setup"),
+                &format!("{shard_id}: checkpoint collector not started: {e}"),
+            ),
+        }
+    }
+
     // Proposer stream (port of `proposerStream` in `Setup.setupNodeProgram`). Runs only when a
     // validator identity is configured; the propose trigger + state were wired into `BlockApiImpl`
     // by [`setup_shard`].
@@ -2600,6 +2629,7 @@ pub async fn setup_shard(
     // Block store + DAG storage.
     let block_store = block_store::create(&store_manager).await?;
     let approved_store = approved_store::create(&store_manager).await?;
+    let checkpoint_store = checkpoint_store::CheckpointStore::open(&store_manager).await?;
     let work_seen = work_seen::create(&store_manager).await?;
     let block_metadata_kv: Arc<dyn KeyValueTypedStore<BlockHash, BlockMetadata>> = Arc::new(
         database(
@@ -2909,6 +2939,7 @@ pub async fn setup_shard(
         shard_health,
         phase.clone(),
         deploy_relay_from_env(connections.clone()),
+        checkpoint_store.clone(),
     ));
 
     let report_store: Arc<dyn KeyValueTypedStore<BlockHash, BlockEventInfo>> = Arc::new(
@@ -2996,6 +3027,7 @@ pub async fn setup_shard(
         phase,
         runtime_manager,
         approved_store,
+        checkpoint_store,
         work_seen,
         store_manager,
         validator_identity_opt: validator_opt,

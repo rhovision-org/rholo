@@ -1018,11 +1018,20 @@ struct FinalityAttestationQuery {
     nonce: String,
 }
 
-/// `GET /api/v1/checkpoint` — the finalised checkpoint this node serves to a joining node
-/// (sync/verification separation). It is the anchor block, its post-state, the finalized fringe, the
-/// parent digest and the epoch; the quorum certificate is assembled from validators' attestations.
+/// `GET /api/v1/checkpoint[/{digest}]` — the certificate this node serves to a joining node
+/// (sync/verification separation): the checkpoint statement plus the attestations this node holds
+/// for exactly that digest. The route serves the **certificate**, not the bare statement, because a
+/// statement with no signatures is not something a joiner may act on.
 async fn api_checkpoint(State(state): State<HttpState>) -> Response {
-    json_result(state.web_api.current_checkpoint().await)
+    json_result(state.web_api.checkpoint_certificate(None).await)
+}
+
+/// `GET /api/v1/checkpoint/{digest}` — a stored certificate by the digest it signs.
+async fn api_checkpoint_by_digest(
+    State(state): State<HttpState>,
+    Path(digest): Path<String>,
+) -> Response {
+    json_result(state.web_api.checkpoint_certificate(Some(&digest)).await)
 }
 
 /// `GET /api/v1/checkpoint-attestation` — this node's signature over **its own** current checkpoint
@@ -2279,6 +2288,7 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/block/{hash}/raw", get(api_get_raw_block))
         .route("/api/finality-attestation", get(api_finality_attestation))
         .route("/api/checkpoint", get(api_checkpoint))
+        .route("/api/checkpoint/{digest}", get(api_checkpoint_by_digest))
         .route(
             "/api/checkpoint-attestation",
             get(api_checkpoint_attestation),
@@ -2318,6 +2328,7 @@ pub fn router(state: HttpState) -> Router {
             get(api_finality_attestation),
         )
         .route("/api/v1/checkpoint", get(api_checkpoint))
+        .route("/api/v1/checkpoint/{digest}", get(api_checkpoint_by_digest))
         .route(
             "/api/v1/checkpoint-attestation",
             get(api_checkpoint_attestation),
@@ -3116,6 +3127,25 @@ mod tests {
 
         async fn proposer_health(&self) -> rchain_casper::api::block_api::ProposerHealth {
             self.proposer_health.clone()
+        }
+
+        async fn checkpoint_certificate(
+            &self,
+            _digest: Option<&str>,
+        ) -> Result<
+            rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
+            BlockApiException,
+        > {
+            Ok(
+                rchain_models::casper::protocol::checkpoint::CheckpointCertificate {
+                    checkpoint: self.current_checkpoint().await?,
+                    attestations: self
+                        .checkpoint_attestation()
+                        .await
+                        .map(|a| vec![a])
+                        .unwrap_or_default(),
+                },
+            )
         }
 
         async fn current_checkpoint(
@@ -4366,14 +4396,22 @@ mod tests {
     /// a joiner verifies, and the node's signature over its own current digest. The route takes no
     /// caller input — a digest chosen by a caller would be a signing oracle.
     #[tokio::test]
-    async fn checkpoint_routes_serve_the_statement_and_its_attestation() {
+    async fn checkpoint_routes_serve_the_certificate_and_its_attestation() {
         let response = api_checkpoint(State(state())).await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["shardId"], "root");
-        assert_eq!(json["anchorHeight"], 7);
-        assert_eq!(json["fringeHashes"].as_array().unwrap().len(), 1);
+        assert_eq!(json["checkpoint"]["shardId"], "root");
+        assert_eq!(json["checkpoint"]["anchorHeight"], 7);
+        assert_eq!(
+            json["checkpoint"]["fringeHashes"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(
+            json["attestations"].as_array().unwrap().len(),
+            1,
+            "the route serves the certificate, not the bare statement"
+        );
 
         let response = api_checkpoint_attestation(State(state())).await;
         assert_eq!(response.status(), StatusCode::OK);

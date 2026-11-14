@@ -2807,6 +2807,7 @@ dependencies = [
  "rchain-models",
  "rchain-sdk",
  "rchain-shared",
+ "serde_json",
  "tokio",
 ]
 

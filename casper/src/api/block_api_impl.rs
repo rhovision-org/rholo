@@ -13,12 +13,15 @@ use async_trait::async_trait;
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
 use rchain_block_storage::dag::representation::DagRepresentation;
+use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_graphz::ListSerializer;
 use rchain_models::ast::Par;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
-use rchain_models::casper::protocol::checkpoint::{Checkpoint, CheckpointAttestation};
+use rchain_models::casper::protocol::checkpoint::{
+    Checkpoint, CheckpointAttestation, CheckpointCertificate,
+};
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
     FinalityAttestation, LightBlockInfo, RawBlock, Status, VersionInfo, WaitingContinuationInfo,
@@ -100,6 +103,9 @@ pub struct BlockApiImpl {
     phase: NodePhaseCell,
     /// The pending-work relay, when the operator enabled it (Law 86e). `None` admits locally only.
     relay: Option<RelayFunction>,
+    /// **The certificates this node has accepted** (sync/verification separation). A joiner fetches
+    /// a certificate, not a bare fringe; the collector writes here and this surface reads it.
+    checkpoint_store: rchain_block_storage::checkpoint_store::CheckpointStore,
 }
 
 /// The block a **no-hash** `explore-deploy` reads (AUDIT C129, #554).
@@ -326,6 +332,7 @@ impl BlockApiImpl {
         shard_health: ShardHealth,
         phase: NodePhaseCell,
         relay: Option<RelayFunction>,
+        checkpoint_store: rchain_block_storage::checkpoint_store::CheckpointStore,
     ) -> Self {
         BlockApiImpl {
             dag,
@@ -350,6 +357,7 @@ impl BlockApiImpl {
             shard_health,
             phase,
             relay,
+            checkpoint_store,
         }
     }
 
@@ -1106,8 +1114,12 @@ impl BlockApi for BlockApiImpl {
                 .iter()
                 .map(|m| base16::encode(m.id.as_bytes()))
                 .collect(),
-            // The certificate store chains the parent digest in the next unit; a genesis-rooted or
-            // operator-pinned checkpoint verifies with `None`.
+            // **Every checkpoint this build produces is genesis-rooted.** A parent link must be a
+            // statement every signer derives identically or their digests differ and their
+            // attestations cannot combine; the deterministic epoch-parent rule is not implemented
+            // yet, so the chain is one link long and the genesis active bonds are the trust anchor.
+            // `checkpoint::verify_genesis_rooted_bonds` refuses a certificate whose anchor state has
+            // drifted from those bonds rather than weighing signatures against the wrong set.
             parent_digest: None,
             epoch: anchor_height / epoch_length,
         })
@@ -1132,6 +1144,44 @@ impl BlockApi for BlockApiImpl {
             sender: base16::encode(identity.public_key.bytes()),
             sig_algorithm: identity.sig_algorithm.clone(),
             sig: base16::encode(&sig),
+        })
+    }
+
+    async fn checkpoint_certificate(&self, digest: Option<&str>) -> ApiErr<CheckpointCertificate> {
+        if let Some(digest) = digest {
+            let bytes = base16::decode(digest)
+                .ok_or_else(|| format!("checkpoint digest is not valid hex: {digest}"))?;
+            if bytes.len() != 32 {
+                return Err(format!(
+                    "a checkpoint digest is 32 bytes, got {}",
+                    bytes.len()
+                ));
+            }
+            let digest = Blake2b256Hash::from_byte_array(bytes.as_slice());
+            return self.checkpoint_store.get(&digest).await?.ok_or_else(|| {
+                format!(
+                    "this node holds no certificate for checkpoint {}",
+                    digest.to_hex()
+                )
+            });
+        }
+
+        let checkpoint = self.current_checkpoint().await?;
+        let digest =
+            crate::checkpoint::checkpoint_digest(&checkpoint).map_err(|e| e.to_string())?;
+        if let Some(certificate) = self.checkpoint_store.get(&digest).await? {
+            return Ok(certificate);
+        }
+        // No quorum has been assembled for the *current* statement yet. Serve the statement with
+        // this node's own attestation when it has an identity: a caller then sees a partial
+        // certificate rather than a bare claim, and a joiner refuses it by its own quorum rule.
+        let attestations = match self.checkpoint_attestation().await {
+            Ok(attestation) => vec![attestation],
+            Err(_) => Vec::new(),
+        };
+        Ok(CheckpointCertificate {
+            checkpoint,
+            attestations,
         })
     }
 

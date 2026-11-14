@@ -11,7 +11,9 @@ use rchain_block_storage::dag::dag_storage::DeployId;
 use rchain_models::ast::Par;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
-use rchain_models::casper::protocol::checkpoint::{Checkpoint, CheckpointAttestation};
+use rchain_models::casper::protocol::checkpoint::{
+    Checkpoint, CheckpointAttestation, CheckpointCertificate,
+};
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, BondInfo, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
     FinalityAttestation, LightBlockInfo, RawBlock, Status,
@@ -967,6 +969,14 @@ pub trait BlockApi: Send + Sync {
     /// post-state, the fringe, the parent digest and the epoch. Default refuses.
     async fn current_checkpoint(&self) -> ApiErr<Checkpoint> {
         Err("this surface serves no checkpoint".to_string())
+    }
+
+    /// **The certificate a joiner accepts** — the checkpoint plus the attestations this node holds
+    /// for exactly that digest. `digest` names a stored certificate; `None` serves the certificate
+    /// for the node's current checkpoint (or, before a quorum has been collected, the statement with
+    /// whatever attestations it has and no more). Default refuses.
+    async fn checkpoint_certificate(&self, _digest: Option<&str>) -> ApiErr<CheckpointCertificate> {
+        Err("this surface holds no checkpoint certificate".to_string())
     }
 
     /// **This node's signature over its current checkpoint digest.** Default refuses, and the
