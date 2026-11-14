@@ -329,6 +329,9 @@ pub fn from_options(options: &Options) -> Hocon {
                 Hocon::Boolean(false),
             ));
         }
+        if run.no_backfill_bodies {
+            e.push(("casper.backfill-bodies".to_string(), Hocon::Boolean(false)));
+        }
         if let Some(mode) = &run.self_replay_injection {
             e.push((
                 "casper.self-replay-injection".to_string(),

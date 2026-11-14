@@ -28,6 +28,10 @@ pub struct SyncCensus {
     pub state_roots_requested: AtomicU64,
     pub replay_blocks: AtomicU64,
     pub replay_nanos: AtomicU64,
+    /// Bodies the backfill attached (sync/verification separation).
+    pub backfilled_bodies: AtomicU64,
+    /// Body requests the backfill sent, including retries.
+    pub backfill_requests: AtomicU64,
 }
 
 impl SyncCensus {
@@ -64,6 +68,14 @@ impl SyncCensus {
         self.state_roots_requested.fetch_add(n, Ordering::Relaxed);
     }
 
+    pub fn add_backfilled(&self, n: u64) {
+        self.backfilled_bodies.fetch_add(n, Ordering::Relaxed);
+    }
+
+    pub fn add_backfill_request(&self) {
+        self.backfill_requests.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn add_replay(&self, blocks: u64, nanos: u64) {
         self.replay_blocks.fetch_add(blocks, Ordering::Relaxed);
         self.replay_nanos.fetch_add(nanos, Ordering::Relaxed);
@@ -86,6 +98,8 @@ impl SyncCensus {
             sync_state_roots_requested: load(&self.state_roots_requested),
             sync_replay_blocks: load(&self.replay_blocks),
             sync_replay_nanos: load(&self.replay_nanos),
+            sync_backfilled_bodies: load(&self.backfilled_bodies),
+            sync_backfill_requests: load(&self.backfill_requests),
         }
     }
 }
@@ -108,6 +122,8 @@ pub fn census() -> &'static SyncCensus {
         state_roots_requested: AtomicU64::new(0),
         replay_blocks: AtomicU64::new(0),
         replay_nanos: AtomicU64::new(0),
+        backfilled_bodies: AtomicU64::new(0),
+        backfill_requests: AtomicU64::new(0),
     };
     &CENSUS
 }
@@ -130,6 +146,8 @@ pub struct SyncCensusSnapshot {
     pub sync_state_roots_requested: u64,
     pub sync_replay_blocks: u64,
     pub sync_replay_nanos: u64,
+    pub sync_backfilled_bodies: u64,
+    pub sync_backfill_requests: u64,
 }
 
 #[cfg(test)]

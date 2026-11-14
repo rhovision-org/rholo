@@ -993,6 +993,9 @@ pub struct NodeRunning<E: RSpaceExporter> {
     /// receiver. `apply` swaps the sender in — dropping the previous one, which is what tells the walk
     /// that ended to stop.
     block_range_tx: BlockRangeDoor,
+    /// **Where a body the DAG already knows by metadata goes** (sync/verification separation). The
+    /// backfill owns the receiver; `None` when the operator disabled it (light-node mode).
+    backfill: Option<tokio::sync::mpsc::Sender<BlockMessage>>,
 }
 
 /// **The catch-up walk's door** — see [`NodeRunning::block_range_tx`]. Shared with `apply`, which swaps
@@ -1014,6 +1017,7 @@ impl<E: RSpaceExporter> NodeRunning<E> {
         disable_state_exporter: bool,
         catchup: Arc<CatchupWindow>,
         block_range_tx: BlockRangeDoor,
+        backfill: Option<tokio::sync::mpsc::Sender<BlockMessage>>,
     ) -> Self {
         NodeRunning {
             transport,
@@ -1032,6 +1036,7 @@ impl<E: RSpaceExporter> NodeRunning<E> {
             )),
             exporter,
             disable_state_exporter,
+            backfill,
         }
     }
 
@@ -1064,6 +1069,30 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                 .await;
             }
             CasperMessage::BlockMessage(b) => {
+                // **A body for a block this node accepted by metadata is the backfill's**, not the
+                // processor's: the block is already in the DAG under the certificate, and handing it
+                // to the validator would replay exactly what the checkpoint replaced.
+                if let Some(tx) = &self.backfill {
+                    if self
+                        .dag
+                        .lookup(&b.block_hash)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some()
+                    {
+                        if tx.try_send(b.clone()).is_err() {
+                            self.log.warn(
+                                self.log_source,
+                                &format!(
+                                    "backfill ingress full; dropping a body for {} (it will be                                      re-requested)",
+                                    b.block_hash.to_hex()
+                                ),
+                            );
+                        }
+                        return;
+                    }
+                }
                 if let Some(id) = &self.validator_id {
                     if b.sender.as_bytes().as_slice() == id.public_key.bytes() {
                         self.log.warn(
@@ -1998,6 +2027,7 @@ mod tests {
             false,
             window.clone(),
             block_range_tx,
+            None,
         );
 
         // A block far above the node's frontier: the gap, not the window.
@@ -2066,6 +2096,7 @@ mod tests {
             false,
             Arc::new(CatchupWindow::new(crate::engine::catchup::WINDOW_HEIGHTS)),
             block_range_tx,
+            None,
         );
 
         let first = block(hash(11));
@@ -2125,6 +2156,7 @@ mod tests {
             false,
             Arc::new(CatchupWindow::new(crate::engine::catchup::WINDOW_HEIGHTS)),
             block_range_tx,
+            None,
         );
 
         // An unseen block is handed to the block-processing queue — this is the node's ingress.

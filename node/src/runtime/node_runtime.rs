@@ -2283,6 +2283,8 @@ async fn setup_shard_runtime(
         conf.casper.self_reset,
         // #564: the self-replay fault's reset is safe by construction and on by default.
         conf.casper.self_replay_reset,
+        // The body backfill's operator switch (default on; `--no-backfill-bodies` is light mode).
+        conf.casper.backfill_bodies,
         // #564, F-U23-11: the walk wakes this shard's self-replay latch once it passes the anchor.
         Arc::new(propose_health.clone()),
         conf.protocol_server.disable_state_exporter,

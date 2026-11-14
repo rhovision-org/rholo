@@ -697,6 +697,13 @@ pub struct Run {
     #[arg(long = "no-self-replay-reset")]
     pub no_self_replay_reset: bool,
 
+    /// **Do not backfill the bodies of a certified history** (light-node mode). The backfill is on
+    /// by default: after a checkpoint join the node walks the missing heights from genesis upward,
+    /// content-verifies each body and indexes its deploys. Leaving it off keeps the node metadata-only
+    /// below its floor (`historyAvailability: unavailable`) and it relies on an archive for history.
+    #[arg(long = "no-backfill-bodies")]
+    pub no_backfill_bodies: bool,
+
     /// **Inject a deterministic self-replay refusal into this node's own blocks** (#564). A devnet
     /// measurement instrument, not an operating mode: `deploy[:N]` refuses deploy-bearing blocks,
     /// `all[:N]` also refuses the attestation-only fallback, and `N` spends the injection after N

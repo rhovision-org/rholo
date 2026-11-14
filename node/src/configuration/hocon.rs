@@ -555,6 +555,13 @@ fn casper_conf_from_hocon(h: &Hocon) -> Result<CasperConf, String> {
             Some(v) => SelfReplayInjection::parse(&to_string(v)?)?,
             None => SelfReplayInjection::Off,
         },
+        // **On by default**: a joiner that accepted a checkpoint holds headers only, and the
+        // backfill is what makes its history answerable. `--no-backfill-bodies` is the light-node
+        // opt-out.
+        backfill_bodies: match get_opt(h, "backfill-bodies") {
+            Some(v) => to_bool(v)?,
+            None => true,
+        },
         effect_mode: to_optional_string(h, "effect-scheduler")?
             .unwrap_or_else(|| "dfs".to_string()),
     })

@@ -1221,6 +1221,84 @@ impl BlockDagKeyValueStorage {
         self.expire_deploys(latest_block_number).await?;
         Ok(())
     }
+
+    /// **Attach a body to a block the DAG already accepted** (sync/verification separation).
+    ///
+    /// A metadata-only sync publishes the header first; the backfill later fetches the body. This is
+    /// the write `insert` cannot be for the same reason `update_metadata` is not: `insert`
+    /// short-circuits on a known hash, and the block is known. The body is content-checked against
+    /// the header it claims to carry before anything is indexed, and only the two derived-index
+    /// writes `insert_metadata` deliberately skipped are performed — the DAG representation, the
+    /// fringe marks and the height map are unchanged, because the header already supplied them.
+    ///
+    /// **It does not validate the block.** Execution is the audit's job (`rnode audit`); the body
+    /// here is evidence for a deploy lookup, and its hash is the only property this node can check
+    /// without replaying it.
+    pub async fn attach_body(
+        &self,
+        block_metadata: &BlockMetadata,
+        block: &BlockMessage,
+    ) -> Result<(), String> {
+        if block.block_hash != block_metadata.block_hash {
+            return Err(format!(
+                "a body for {} hashes to {}",
+                block_metadata.block_hash.to_hex(),
+                block.block_hash.to_hex()
+            ));
+        }
+        if block.block_number != block_metadata.block_num
+            || block.sender != block_metadata.sender
+            || block.seq_num != block_metadata.seq_num
+            || block
+                .justifications
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                != block_metadata.justifications
+        {
+            return Err(format!(
+                "the body for {} disagrees with the accepted header",
+                block.block_hash.to_hex()
+            ));
+        }
+
+        // The deployer index is data too, and it is written before the block's payload becomes
+        // servable — the same order `insert` uses, for the same crash reason.
+        if let Some(index) = &self.deployer_index {
+            index_deployers(index.as_ref(), block).await?;
+        }
+
+        let deploy_hashes: Vec<DeployId> = block
+            .state
+            .deploys
+            .iter()
+            .map(|d| d.deploy.sig.clone())
+            .collect();
+        if !deploy_hashes.is_empty() {
+            let pooled_here = self.deploy_store.get(&deploy_hashes).await?;
+            let released: Vec<Vec<u8>> = pooled_here
+                .iter()
+                .flatten()
+                .map(|d| d.deployer.clone())
+                .collect();
+            let released_bytes: usize = pooled_here
+                .iter()
+                .flatten()
+                .map(|d| d.data.term.len())
+                .sum();
+            let pairs: Vec<(DeployId, BlockHash)> = deploy_hashes
+                .iter()
+                .map(|h| (h.clone(), block.block_hash))
+                .collect();
+            self.deploy_index.put(&pairs).await?;
+            self.deploy_store.delete(&deploy_hashes).await?;
+            self.return_pooled_bytes(released_bytes);
+            for deployer in &released {
+                release_deployer_slot(&self.pooled_by_deployer, deployer);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The shared prefix of the two equivocation rejections — the H-1 gate on `insert`, and the
@@ -1298,6 +1376,15 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
     /// would be refused on exactly the storage that can perform it.
     async fn insert_metadata(&self, block_metadata: BlockMetadata) -> Result<(), String> {
         BlockDagKeyValueStorage::insert_metadata(self, block_metadata).await
+    }
+
+    /// The forward, for the same `dyn` reason as `insert_metadata`'s.
+    async fn attach_body(
+        &self,
+        block_metadata: &BlockMetadata,
+        block: &BlockMessage,
+    ) -> Result<(), String> {
+        BlockDagKeyValueStorage::attach_body(self, block_metadata, block).await
     }
 
     /// **The forward, for the same reason as `drop_above`'s.** The boot guard and the reset bracket hold
@@ -2489,6 +2576,42 @@ mod tests {
                 "and the stored record for block {n} is identical"
             );
         }
+    }
+
+    /// **The backfill's write checks the body against the accepted header.** A body is evidence for
+    /// a deploy lookup, and the only property a node can check without replaying it is that it is
+    /// the block the header describes. A mismatch is refused by name, and the accepted pair is
+    /// attached without touching the DAG (the header already supplied it).
+    #[tokio::test]
+    async fn attach_body_checks_the_body_against_the_accepted_header() {
+        let storage = build_storage().await;
+        let h = hash(1);
+        storage
+            .insert_metadata(meta(h, &[], 0))
+            .await
+            .expect("the header is accepted");
+        let accepted = storage.lookup(&h).await.unwrap().expect("the record");
+
+        let good = block(h);
+        storage
+            .attach_body(&accepted, &good)
+            .await
+            .expect("the matching body attaches");
+
+        let mut wrong_height = block(h);
+        wrong_height.block_number = BlockHeight::try_from(3).unwrap();
+        let err = storage
+            .attach_body(&accepted, &wrong_height)
+            .await
+            .expect_err("a body at another height is not this header's");
+        assert!(err.contains("disagrees with the accepted header"), "{err}");
+
+        let other = block(hash(2));
+        let err = storage
+            .attach_body(&accepted, &other)
+            .await
+            .expect_err("a body with another hash is not this header's");
+        assert!(err.contains("hashes to"), "{err}");
     }
 
     #[tokio::test]

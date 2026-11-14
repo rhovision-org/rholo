@@ -587,12 +587,14 @@ impl BlockApi for BlockApiImpl {
             nodes: net.nodes,
             min_phlo_price: self.min_phlo_price,
             latest_block_number,
-            // U6's backfill will report `backfilling` while its walk runs; until then a floor above
-            // genesis is a gap the node is not closing, so it says `unavailable`.
-            history_availability: if history_floor > 0 {
-                "unavailable".to_string()
-            } else {
+            // A floor of 0 is full coverage. A floor above 0 is a gap: `backfilling` while the
+            // backfill is walking, `unavailable` when it is off (a light node) or stalled.
+            history_availability: if history_floor <= 0 {
                 "available".to_string()
+            } else if crate::engine::backfill::backfill_active() {
+                "backfilling".to_string()
+            } else {
+                "unavailable".to_string()
             },
             checkpoint_age,
         }

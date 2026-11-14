@@ -354,6 +354,9 @@ pub async fn apply<
     // **May a self-replay fault reset this node?** (#564) On by default; see
     // `CasperConf::self_replay_reset` for the constructive safety case. Off means the fault halts.
     self_replay_reset: bool,
+    // **Fetch the bodies of a certified history in the background** (default on). Off is the
+    // light-node mode: the node serves from the checkpoint state and reports its history floor.
+    backfill_bodies: bool,
     // **The wake a completed self-replay reset needs** (#564, F-U23-11). The running loop owns the
     // moment the catch-up walk passes the anchor it rewound to; the health cell behind the operator
     // surface owns the latch. This is the narrow seam, not a process-wide cell.
@@ -947,6 +950,23 @@ pub async fn apply<
     // The permit is acquired *before* the spawn, which is the backpressure: a full pool parks the
     // receive loop instead of building an unbounded task list. A packet refused by the pool would
     // be a message the peer must resend anyway; parking the loop is the same delay with no drop.
+    // **The body backfill** (sync/verification separation). A certified joiner holds headers only;
+    // this task closes the gap in the background, lowest height first. Off is the light-node mode.
+    let backfill_tx = if backfill_bodies {
+        let (tx, rx) = tokio::sync::mpsc::channel(50);
+        crate::engine::backfill::spawn(
+            dag.clone(),
+            block_store.clone(),
+            checkpoint_store.clone(),
+            comm_util.clone(),
+            spec.shard_id.to_string(),
+            log.clone(),
+            rx,
+        );
+        Some(tx)
+    } else {
+        None
+    };
     let engine = std::sync::Arc::new(NodeRunning::new(
         transport.clone(),
         rp_conf.clone(),
@@ -960,6 +980,7 @@ pub async fn apply<
         disable_state_exporter,
         catchup.clone(),
         block_range_door.clone(),
+        backfill_tx,
     ));
     let consumer_slots =
         std::sync::Arc::new(tokio::sync::Semaphore::new(max_message_consumers.max(1)));

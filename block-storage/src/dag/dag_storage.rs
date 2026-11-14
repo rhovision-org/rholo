@@ -585,6 +585,20 @@ pub trait BlockDagStorage: Send + Sync {
         ))
     }
 
+    /// **Attach a body to a block already accepted by metadata** (the backfill's write). The
+    /// default refuses: a backend that cannot index a body must say so rather than let a backfill
+    /// believe it closed a gap.
+    async fn attach_body(
+        &self,
+        block_metadata: &BlockMetadata,
+        _block: &BlockMessage,
+    ) -> Result<(), String> {
+        Err(format!(
+            "this DAG storage cannot attach a body to {} (no `attach_body` impl)",
+            block_metadata.block_hash.to_hex()
+        ))
+    }
+
     /// **Update the record of a block the DAG already holds** — the write the restoring rule needs, and
     /// `insert` is not it (AUDIT C193).
     ///

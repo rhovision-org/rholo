@@ -4,6 +4,7 @@
 //! `LfsBlockRequester`/`LfsTupleSpaceRequester`/`NodeSyncing`/`NodeRunning` machines, and
 //! `NodeLaunch`'s genesis-from-config helpers + `apply` mode-dispatch are ported.
 
+pub mod backfill;
 pub mod catchup;
 pub mod checkpoint_source;
 pub mod lfs_block_requester;

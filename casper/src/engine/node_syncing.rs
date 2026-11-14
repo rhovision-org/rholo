@@ -790,13 +790,17 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
 
     mark_recovery_pending(approved_store, fringe).await?;
     super::recovery::publish_certified_metadata(dag.as_ref(), &entries).await?;
-    // **Record where deploy-index coverage begins** (sync/verification separation). The history
-    // below the anchor is metadata only: its bodies and its deploy rows are not here, and a reader
-    // must read "not indexed below this height", not "no such deploy". A backfill lowers this.
+    // **Record the first height whose body is missing** (sync/verification separation). Only the
+    // genesis body was fetched, so height 1 is the backfill's starting point (0 when the certified
+    // anchor is genesis itself: nothing is missing). The backfill advances this marker, and a reader
+    // must read "not indexed below this height", not "no such deploy".
     if let Some(store) = replay.checkpoint_store.as_ref() {
-        store
-            .set_history_from(verified.checkpoint.anchor_height.saturating_add(1))
-            .await?;
+        let floor = if verified.checkpoint.anchor_height > 0 {
+            1
+        } else {
+            0
+        };
+        store.set_history_from(floor).await?;
     }
     log.info(
         source,
