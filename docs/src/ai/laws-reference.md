@@ -30,7 +30,7 @@ citation error.
 |---|---|---|
 | `Law N` | a stable law number, 1–100. Numbers are never reused. | the register |
 | `Law Nx` | a **clause** of a law whose parts differ in status or support (`14a`, `16b`). | the register |
-| an **entry** | one row of the register; a law with clauses has one row per clause. <!-- counts:laws-entries -->100 laws and 155 entries<!-- counts:end -->. | `spec/laws.tsv` |
+| an **entry** | one row of the register; a law with clauses has one row per clause. <!-- counts:laws-entries -->103 laws and 158 entries<!-- counts:end -->. | `spec/laws.tsv` |
 | `C###` | an **audit finding** (`C1`, `C337`). Never a law. | `spec/findings.tsv` |
 | `S#`, `F#`, `H#`, `M#`, `R#`, `TS#` | earlier finding series in the same register (for example `TS` is the type-system pass). Same file, same `todo`/`in progress`/`done` states as `C###`. | `spec/findings.tsv` |
 | `F-U<n>-<m>` | a **HAZOP deviation row**: guide word, study node `U<n>`, row `m` (`F-U5-03`). | [`failure-mode HAZOP`](../spec/failure-hazop.md) |

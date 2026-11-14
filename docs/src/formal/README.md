@@ -11,7 +11,7 @@ its Rust realization. These pages point at those rather than restating them.
 
 | Document | Laws | What it is about |
 |---|---|---|
-| [The laws](laws.md) | <!-- counts:laws -->100 laws<!-- counts:end --> | the full set, grouped by layer, each row mapped to the feature it pins and the file it lives in |
+| [The laws](laws.md) | <!-- counts:laws -->103 laws<!-- counts:end --> | the full set, grouped by layer, each row mapped to the feature it pins and the file it lives in |
 | [The cost model, and the gate that keeps it honest](cost-model.md) | 91 | the register of every priced operation and the shape of its charge, the census and shape test that refuse an undeclared or flat one, and what the gate cannot see |
 | [The decimal type, withdrawn](decimal-removed.md) | 87 (retired) | the decision record for the removal of the exact decimal value type, the archived algebra, and what a future attempt must do differently |
 | [Grammar and sorts](grammar-sorts.md) | 2, 3, 6 | the ρ-calculus as the base sort of a Calculus of Constructions: what a name, a pattern and a process *are*, and which of them a binder may mention |

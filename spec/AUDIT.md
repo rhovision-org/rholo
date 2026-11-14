@@ -206,7 +206,7 @@ defects this register had not recorded (C164, C165).
 | `C70` | the gate could not see a nested comment, and the widened token set is the only check that | check_rust_witnesses | §19 |
 | `C71` | the matcher's padding is reachable from a well-formed term, so U10's refusal was refuted by | spatial_match_result/resolve_match_pads_a_level_the_pattern_does_not_bind/rho_match_pads_a_free_count_its_pattern_does_not_bind | §19 |
 | `C72` | four register cells, three prose paragraphs and two citations called something owed while the | RSpaceImporter::get_history_item/RNodeStateManager::is_empty | §19 |
-| `C73` | a store-items page had a cap on its *count* and none on its *bytes*, so one request bought tens | validate_state_items/a_page_over_the_byte_cap_is_dropped_not_truncated | §19 |
+| `C73` | a store-items page had a cap on its *count* and none on its *bytes*, so one request bought tens | validate_state_items/a_page_over_the_byte_cap_is_served_as_a_valid_prefix | §19 |
 | `C74` | the name-shape vocabulary is a convention, not a predicate, and the measurement says which half | reduce_not_deterministic | §19 |
 | `C75` | the gate could not see a Lean module at the top of `spec/`, so a `sorry` there was invisible to | — | §19 |
 | `C120` | a deploy's `deployer` is unauthenticated on the block-validation path | a_block_whose_deploy_is_not_signed_by_its_named_deployer_is_refused | §21 |
