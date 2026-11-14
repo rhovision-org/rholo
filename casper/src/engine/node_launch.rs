@@ -1138,14 +1138,10 @@ async fn restored_native_state_root(
         let hash = hashes.first().ok_or_else(|| {
             "restored DAG has a newest height without any block hashes".to_string()
         })?;
-        let block = block_store
-            .get(&[*hash])
-            .await?
-            .into_iter()
-            .next()
-            .flatten()
-            .ok_or_else(|| "newest restored DAG block is missing from block storage".to_string())?;
-        return Ok(block.post_state_hash);
+        // **The metadata is the record, and a metadata-only sync has no body** (sync/verification
+        // separation). A record written before the field existed carries the zero root; only then
+        // is the body the sole copy, and a node that holds neither refuses by name.
+        return post_state_of(dag, block_store, hash).await;
     }
     // Only a synthetic, empty DAG has no block post-state to inspect.
     // Never silently substitute a fringe root when the DAG names a missing block.
@@ -1208,14 +1204,38 @@ async fn genesis_post_state_hash(
     else {
         return Ok(None);
     };
+    post_state_of(dag, block_store, genesis_hash)
+        .await
+        .map(Some)
+}
+
+/// **A block's post-state, from the metadata when it has one.** The certified sync path holds no
+/// body for the history it accepted; the record carries the root, and only a pre-field record falls
+/// back to the body. A node that holds neither says so rather than substituting a fringe root.
+async fn post_state_of(
+    dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
+    hash: &BlockHash,
+) -> Result<StateHash, String> {
+    if let Some(meta) = dag.lookup(hash).await? {
+        if meta.post_state_hash != StateHash::new([0u8; 32]) {
+            return Ok(meta.post_state_hash);
+        }
+    }
     block_store
-        .get(&[*genesis_hash])
+        .get(&[*hash])
         .await?
         .into_iter()
         .next()
         .flatten()
-        .ok_or_else(|| "genesis block missing after restore".to_string())
-        .map(|block| Some(block.post_state_hash))
+        .map(|block| block.post_state_hash)
+        .ok_or_else(|| {
+            format!(
+                "block {} has neither a recorded post-state nor a body, so the restore guard \
+                 cannot read it",
+                hash.to_hex()
+            )
+        })
 }
 
 /// Check the restored developer allocation before admission and proposal enter the running phase.

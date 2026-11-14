@@ -138,6 +138,13 @@ pub struct Status {
     pub nodes: i32,
     pub min_phlo_price: i64,
     pub latest_block_number: i64,
+    /// **Where this node's history begins** (sync/verification separation): `available` when it
+    /// holds the chain from genesis, `backfilling` while a body backfill is closing a checkpoint
+    /// gap, `unavailable` when it started from a checkpoint and holds no earlier bodies, and
+    /// `unknown` for a transport that does not carry the field.
+    pub history_availability: String,
+    /// Latest block minus the served checkpoint's anchor, or `None` when no certificate is stored.
+    pub checkpoint_age: Option<i64>,
 }
 
 /// Post-block continuations plus the block they belong to (port of

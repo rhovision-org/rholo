@@ -1622,7 +1622,9 @@ pub const OPENAPI_JSON: &str = r##"{
             "bytes": { "type": "integer" },
             "maxDeploys": { "type": "integer" },
             "maxBytes": { "type": "integer" }
-          } }
+          } },
+          "historyAvailability": { "type": "string", "description": "Where this node's body history begins: available | backfilling | unavailable | unknown (a transport that does not carry the field). unavailable means the node joined at a checkpoint and holds no earlier bodies; ask for a block below the checkpoint only after reading this" },
+          "checkpointAge": { "type": "integer", "format": "int64", "nullable": true, "description": "The distance from the served checkpoint's anchor to the latest observed block, or null when no checkpoint certificate is stored" }
         }
       },
       "OperatorStatus": {
@@ -1650,6 +1652,8 @@ pub const OPENAPI_JSON: &str = r##"{
             "maxDeploys": { "type": "integer" },
             "maxBytes": { "type": "integer" }
           } },
+          "historyAvailability": { "type": "string", "description": "Where this node's body history begins: available | backfilling | unavailable | unknown (a transport that does not carry the field). unavailable means the node joined at a checkpoint and holds no earlier bodies; ask for a block below the checkpoint only after reading this" },
+          "checkpointAge": { "type": "integer", "format": "int64", "nullable": true, "description": "The distance from the served checkpoint's anchor to the latest observed block, or null when no checkpoint certificate is stored" },
           "adminHttp": { "type": "boolean", "description": "The admin HTTP surface is published" },
           "consecutiveSelfValidationFailures": { "type": "integer", "format": "int64", "description": "Self-validation failures the proposer has recorded in a row; cleared by a successful propose" },
           "selfValidationRefusal": { "$ref": "#/components/schemas/SelfValidationRefusalDto" },
@@ -3047,6 +3051,8 @@ mod tests {
             nodes: 2,
             min_phlo_price: 3,
             latest_block_number: 4,
+            history_availability: "available".to_string(),
+            checkpoint_age: None,
             autopropose: true,
             propose_on_deploy: true,
             manual_propose: false,
@@ -5109,6 +5115,8 @@ mod tests {
                 nodes: 0,
                 min_phlo_price: 1,
                 latest_block_number: if self.shard_id == "/root" { 7 } else { 3 },
+                history_availability: "available".to_string(),
+                checkpoint_age: None,
             }
         }
         async fn deploy_status(

@@ -307,6 +307,8 @@ mod tests {
                 nodes: 0,
                 min_phlo_price: 0,
                 latest_block_number: 0,
+                history_availability: "available".to_string(),
+                checkpoint_age: None,
             }
         }
         async fn deploy(&self, _deploy: &SignedDeployData) -> ApiErr<String> {

@@ -27,6 +27,28 @@ use crate::dag::codecs::{Blake2b256HashCodec, ByteCodec};
 /// The latest accepted certificate's key in the `checkpoint-head` store.
 pub const CHECKPOINT_HEAD_KEY: u8 = 44;
 
+/// **The lowest height from which this node holds bodies and deploy-index rows.** Written when a
+/// certified sync accepts a checkpoint (the history below its anchor is metadata only), lowered by
+/// a backfill. Absent means *from genesis* — a node that never joined at a checkpoint.
+pub const HISTORY_FROM_KEY: u8 = 45;
+
+/// Big-endian `i64` codec for the history marker.
+#[derive(Default)]
+pub struct I64Codec;
+
+impl Codec<i64> for I64Codec {
+    fn encode(&self, value: &i64) -> Vec<u8> {
+        value.to_be_bytes().to_vec()
+    }
+
+    fn decode(&self, bytes: &[u8]) -> Result<i64, String> {
+        let arr: [u8; 8] = bytes
+            .try_into()
+            .map_err(|_| format!("expected 8 bytes, got {}", bytes.len()))?;
+        Ok(i64::from_be_bytes(arr))
+    }
+}
+
 /// JSON codec for a certificate. The wire type is already the signed statement's serialization;
 /// persisting it as JSON keeps the store readable by an operator and avoids a second protobuf
 /// schema whose only reader would be this store.
@@ -45,19 +67,22 @@ impl Codec<CheckpointCertificate> for CheckpointCertificateCodec {
 
 type DigestRow = Arc<dyn KeyValueTypedStore<Blake2b256Hash, CheckpointCertificate>>;
 type HeadRow = Arc<dyn KeyValueTypedStore<u8, CheckpointCertificate>>;
+type HistoryRow = Arc<dyn KeyValueTypedStore<u8, i64>>;
 
 /// The certificate store: a digest-keyed record plus the latest-accepted pointer.
 #[derive(Clone)]
 pub struct CheckpointStore {
     certificates: DigestRow,
     head: HeadRow,
+    history: HistoryRow,
 }
 
 impl CheckpointStore {
-    /// Open (or create) both named stores over the same manager.
+    /// Open (or create) the named stores over the same manager.
     pub async fn open(kvm: &dyn KeyValueStoreManager) -> Result<Self, String> {
         let certificates = kvm.store("checkpoint-certificates").await?;
         let head = kvm.store("checkpoint-head").await?;
+        let history = kvm.store("checkpoint-history").await?;
         Ok(CheckpointStore {
             certificates: Arc::new(KeyValueTypedStoreCodec::new(
                 certificates,
@@ -69,7 +94,33 @@ impl CheckpointStore {
                 Arc::new(ByteCodec),
                 Arc::new(CheckpointCertificateCodec),
             )),
+            history: Arc::new(KeyValueTypedStoreCodec::new(
+                history,
+                Arc::new(ByteCodec),
+                Arc::new(I64Codec),
+            )),
         })
+    }
+
+    /// The lowest height whose body and deploy-index rows this node holds, or `None` for a node
+    /// that never joined at a checkpoint (coverage from genesis).
+    pub async fn history_from(&self) -> Result<Option<i64>, String> {
+        Ok(self
+            .history
+            .get(&[HISTORY_FROM_KEY])
+            .await?
+            .into_iter()
+            .next()
+            .flatten())
+    }
+
+    /// Record the history floor. Written read-back like every other accepted fact in this store.
+    pub async fn set_history_from(&self, height: i64) -> Result<(), String> {
+        self.history.put(&[(HISTORY_FROM_KEY, height)]).await?;
+        if self.history.get(&[HISTORY_FROM_KEY]).await? != vec![Some(height)] {
+            return Err("checkpoint history marker read-back mismatch".to_string());
+        }
+        Ok(())
     }
 
     /// Persist a certificate under its digest **and** make it the served head.
@@ -173,6 +224,25 @@ mod tests {
             reopened.latest().await.expect("latest"),
             Some(cert),
             "the head survives a reopen"
+        );
+    }
+
+    /// **The history floor is a durable, read-back fact.** It is what turns "this node has no deploy
+    /// row for that id" into "this node does not index that height", so a lost or unread marker
+    /// would silently restore the old, misleading answer.
+    #[tokio::test]
+    async fn the_history_floor_survives_a_reopen_and_is_absent_until_written() {
+        let kvm = InMemoryStoreManager::default();
+        let store = CheckpointStore::open(&kvm).await.expect("open");
+        assert_eq!(store.history_from().await.expect("read"), None);
+
+        store.set_history_from(2_433).await.expect("write");
+        assert_eq!(store.history_from().await.expect("read"), Some(2_433));
+        let reopened = CheckpointStore::open(&kvm).await.expect("reopen");
+        assert_eq!(
+            reopened.history_from().await.expect("read"),
+            Some(2_433),
+            "the floor is in the store, not in the process"
         );
     }
 

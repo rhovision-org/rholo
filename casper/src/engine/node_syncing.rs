@@ -790,6 +790,14 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
 
     mark_recovery_pending(approved_store, fringe).await?;
     super::recovery::publish_certified_metadata(dag.as_ref(), &entries).await?;
+    // **Record where deploy-index coverage begins** (sync/verification separation). The history
+    // below the anchor is metadata only: its bodies and its deploy rows are not here, and a reader
+    // must read "not indexed below this height", not "no such deploy". A backfill lowers this.
+    if let Some(store) = replay.checkpoint_store.as_ref() {
+        store
+            .set_history_from(verified.checkpoint.anchor_height.saturating_add(1))
+            .await?;
+    }
     log.info(
         source,
         &format!(
@@ -2295,18 +2303,6 @@ mod tests {
         b.sig = vec![1u8; 64];
         b.block_hash = crate::proto_util::hash_block(&b);
         b
-    }
-
-    async fn store_of(blocks: &[BlockMessage]) -> BlockStore {
-        let store: BlockStore = Arc::new(KeyValueTypedStoreCodec::new(
-            in_memory(),
-            Arc::new(BlockHashCodec),
-            Arc::new(BlockMessageCodec),
-        ));
-        let pairs: Vec<(BlockHash, BlockMessage)> =
-            blocks.iter().map(|b| (b.block_hash, b.clone())).collect();
-        store.put(&pairs).await.expect("fixture put");
-        store
     }
 
     fn signed_certificate(

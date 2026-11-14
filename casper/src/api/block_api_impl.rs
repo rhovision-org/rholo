@@ -279,6 +279,19 @@ impl BlockApiImpl {
         Ok((out, len))
     }
 
+    /// **The lowest height this node can answer deploy questions for** (sync/verification
+    /// separation). A certified sync leaves the history below its anchor as metadata only, and the
+    /// store records that floor; `0` means coverage from genesis. A read failure is `0` — the
+    /// conservative answer is "not gapped", never a floor the node cannot support.
+    async fn history_floor(&self) -> i64 {
+        self.checkpoint_store
+            .history_from()
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+    }
+
     /// The height of the last finalised block, or `None` on a DAG that has finalised nothing.
     ///
     /// **The floor a read of chain data has to have** (W-N3-04). `height_map` is the whole DAG,
@@ -537,6 +550,31 @@ impl BlockApi for BlockApiImpl {
         // Latest block number from the DAG (height map), not a hardcoded 0 — the devnet's autopropose
         // (dummy deploys) advances it continuously.
         let latest_block_number = self.dag.get_representation().await.latest_block_number();
+        // **Where the history begins, and how old the served checkpoint is** (sync/verification
+        // separation). A certified sync leaves the history below its anchor as metadata only; the
+        // marker records that floor, and a reader must not mistake "no earlier body" for "no such
+        // block". A node that never joined at a checkpoint has no marker and is `available`.
+        let history_floor = self
+            .checkpoint_store
+            .history_from()
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+        let checkpoint_age =
+            self.checkpoint_store
+                .latest()
+                .await
+                .ok()
+                .flatten()
+                .map(|certificate| {
+                    // `latest_block_number` is one past the highest observed height (an empty DAG is
+                    // `0`), so the tip is one below it; the age is the tip minus the anchor.
+                    latest_block_number
+                        .saturating_sub(1)
+                        .max(0)
+                        .saturating_sub(certificate.checkpoint.anchor_height)
+                });
         Status {
             version: VersionInfo {
                 api: 1.to_string(),
@@ -549,6 +587,14 @@ impl BlockApi for BlockApiImpl {
             nodes: net.nodes,
             min_phlo_price: self.min_phlo_price,
             latest_block_number,
+            // U6's backfill will report `backfilling` while its walk runs; until then a floor above
+            // genesis is a gap the node is not closing, so it says `unavailable`.
+            history_availability: if history_floor > 0 {
+                "unavailable".to_string()
+            } else {
+                "available".to_string()
+            },
+            checkpoint_age,
         }
     }
 
@@ -1014,10 +1060,20 @@ impl BlockApi for BlockApiImpl {
                 let block = self.get_block_unsafe(&h).await?;
                 Ok(get_light_block_info(&block))
             }
-            None => Err(format!(
-                "Couldn't find block containing deploy with id: {}",
-                base16::encode(id)
-            )),
+            // **"Not indexed yet" is not "not found"** (sync/verification separation). A node that
+            // joined at a checkpoint holds no deploy rows below its anchor; saying "couldn't find"
+            // there would tell a wallet the deploy never landed.
+            None => match self.history_floor().await {
+                floor if floor > 0 => Err(format!(
+                    "this node indexes deploys from height {floor} (it joined at a checkpoint); \
+                     deploy {} is not indexed below that height",
+                    base16::encode(id)
+                )),
+                _ => Err(format!(
+                    "Couldn't find block containing deploy with id: {}",
+                    base16::encode(id)
+                )),
+            },
         }
     }
 
@@ -1029,7 +1085,7 @@ impl BlockApi for BlockApiImpl {
         };
         Ok(DeployerInfo {
             block,
-            indexed_from_height: lookup.indexed_from,
+            indexed_from_height: lookup.indexed_from.max(self.history_floor().await),
         })
     }
 

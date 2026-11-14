@@ -142,6 +142,13 @@ pub struct PublicStatus {
     pub accepts_deploys: bool,
     /// The pool's depth and bounds, so a client can see *why* `acceptsDeploys` is false.
     pub pool: DeployPoolStatus,
+    /// **Where this node's history begins** (sync/verification separation): `available` from
+    /// genesis, `backfilling` while bodies are being fetched toward the checkpoint, or
+    /// `unavailable` when the node joined at a checkpoint and holds no earlier bodies. A client
+    /// that needs history reads this before asking for a block below the checkpoint.
+    pub history_availability: String,
+    /// Latest block minus the served checkpoint's anchor, or `None` when no certificate exists.
+    pub checkpoint_age: Option<i64>,
 }
 
 /// **The deploy pool's public capacity answer** (Law 86a). Counts and bytes only; per-deployer keys
@@ -650,6 +657,8 @@ mod tests {
             nodes: 2,
             min_phlo_price: 3,
             latest_block_number: 4,
+            history_availability: "available".to_string(),
+            checkpoint_age: None,
             autopropose: true,
             propose_on_deploy: true,
             manual_propose: false,

@@ -485,6 +485,8 @@ mod tests {
                 nodes: 0,
                 min_phlo_price: 1,
                 latest_block_number: 1,
+                history_availability: "available".to_string(),
+                checkpoint_age: None,
             }
         }
         async fn proposer_health(&self) -> ProposerHealth {
