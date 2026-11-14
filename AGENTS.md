@@ -136,7 +136,7 @@ recorded in the Scala-deviation register, [`spec/audit/passes.md`](spec/audit/pa
 ## The target, and how work is tracked
 
 **The oracle is done.** `spec/laws.tsv` reads **0 `owed`, 1 `open`** across
-<!-- counts:entries -->155 entries<!-- counts:end --> — <!-- counts:proved-model-entries -->110<!-- counts:end --> `proved-model`, <!-- counts:proved-tied-entries -->31<!-- counts:end -->
+<!-- counts:entries -->158 entries<!-- counts:end --> — <!-- counts:proved-model-entries -->113<!-- counts:end --> `proved-model`, <!-- counts:proved-tied-entries -->31<!-- counts:end -->
 `proved-tied`, <!-- counts:axioms -->10 axioms<!-- counts:end --> (9 crypto by design, 1 named) — the single open row
 (law 63a, a bridged deploy's attribution) being a cross-implementation relay this tree cannot reach
 rather than a proof debt, so the mathematical programme the prime directive sets is finished. Adding a
