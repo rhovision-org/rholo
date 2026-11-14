@@ -93,8 +93,9 @@ def main() -> int:
     parser.add_argument("--out", required=True, help="run directory (gitignored target/... )")
     parser.add_argument("--skip-up", action="store_true", help="use the devnet already running")
     parser.add_argument("--validators", type=int, default=4, help="devnet validators (default 4)")
-    parser.add_argument("--proposals", type=int, default=120, help="max explicit proposals to send")
-    parser.add_argument("--poll", type=float, default=0.5, help="poll interval in seconds")
+    parser.add_argument("--halt-timeout", type=float, default=30 * 60,
+                        help="seconds allowed for the tip to outrun finality (default 30m)")
+    parser.add_argument("--poll", type=float, default=1.0, help="poll interval in seconds")
     parser.add_argument("--timeout", type=float, default=30 * 60, help="overall bounded wait (s)")
     parser.add_argument("--flat-window", type=float, default=15.0,
                         help="seconds the halted tip must stay flat (default 15)")
@@ -111,15 +112,17 @@ def main() -> int:
     checks: dict[str, bool] = {}
     observations: dict = {}
 
-    # 1. A healthy four-validator network with advancing finality.
+    # 1. A healthy four-validator network with advancing finality. Wait for an actual advance rather
+    # than sampling twice 2 s apart: a fresh network can sit at the same finalized height for a tick.
     first = wait_for(HTTP_BASE, "/health",
                      lambda body: body.get("ready") is True
                      and body.get("finalizedHeight") not in (None, 0),
                      args.timeout, args.poll, "four-validator network ready")
-    time.sleep(2)
-    second = http_json(HTTP_BASE, "/health")
-    checks["finality_advancing_before_stop"] = (
-        second.get("finalizedHeight") or 0) > (first.get("finalizedHeight") or 0)
+    floor = first.get("finalizedHeight") or 0
+    second = wait_for(HTTP_BASE, "/health",
+                      lambda body: (body.get("finalizedHeight") or 0) > floor,
+                      60, 0.5, "finality advancing before the stop")
+    checks["finality_advancing_before_stop"] = True
     observations["before_stop"] = second
     capture(raw / "health-before-stop.json", second)
 
@@ -127,24 +130,32 @@ def main() -> int:
     for i in range(1, args.validators):
         run(["tools/devnet.sh", "stop", str(i)])
 
+    # The surviving validator advances one round-escape block every ~15 s (the round cannot close
+    # without the stopped peers), so the wait is a time bound, not a proposal count. Explicit
+    # proposals do not speed it up; the autopropose timer and the round escape do the work.
     latest = http_json(HTTP_BASE, "/health")
-    proposals_sent = 0
-    halted = False
-    while proposals_sent < args.proposals:
+    deadline = time.monotonic() + args.halt_timeout
+    attempts = 0
+    while time.monotonic() < deadline:
         lag = latest.get("finalizedLag")
-        if latest.get("proposalHalted") or (lag is not None and lag > FINALITY_BOUND):
-            halted = True
+        if latest.get("proposalHalted"):
             break
-        try:
-            http_json(ADMIN_BASE, "/api/v1/propose", method="POST")
-        except urllib.error.HTTPError:
-            # A refused propose is an observation, not a reason to abort: the next poll reads the
-            # gate the refusal came from.
-            pass
-        proposals_sent += 1
+        if lag is not None and lag >= FINALITY_BOUND:
+            # The gate measures the next height, so a tip at the bound is the last admitted tip;
+            # one more proposal attempt is what trips the latch and records the reason.
+            try:
+                http_json(ADMIN_BASE, "/api/v1/propose", method="POST")
+            except urllib.error.HTTPError:
+                pass
+        if attempts % 5 == 0:
+            try:
+                http_json(ADMIN_BASE, "/api/v1/propose", method="POST")
+            except urllib.error.HTTPError:
+                pass
+        attempts += 1
         time.sleep(args.poll)
         latest = http_json(HTTP_BASE, "/health")
-    observations["proposals_sent"] = proposals_sent
+    observations["proposal_attempts"] = attempts
     observations["halt_health"] = latest
     capture(raw / "health-halted.json", latest)
 
@@ -153,7 +164,10 @@ def main() -> int:
     checks["ready_reason_names_isolation"] = "proposal_isolated" in (latest.get("readyReasons") or [])
     reason = latest.get("proposalHaltReason") or ""
     checks["halt_reason_names_bound"] = str(FINALITY_BOUND) in reason or "beyond" in reason.lower()
-    checks["lag_exceeds_bound"] = (latest.get("finalizedLag") or 0) > FINALITY_BOUND
+    # The gate measures the *next* height (tip + 1), so the last admitted tip leaves the observable
+    # lag at exactly the bound; the refused attempt is one beyond it. At or above the bound is the
+    # honest assertion, and the reason text names the refused gap.
+    checks["lag_at_bound"] = (latest.get("finalizedLag") or 0) >= FINALITY_BOUND
 
     # 3. The operator route carries the same gate.
     try:
@@ -185,12 +199,22 @@ def main() -> int:
     observations["flat"] = {"start": flat_start, "end": flat_end, "after_propose": after_propose}
 
     # 5. The operator resume clears the latch; the next proposal re-halts while finality is frozen.
-    http_json(ADMIN_BASE, "/api/v1/proposer/resume", method="POST")
-    time.sleep(1)
+    # The clear is synchronous in the handler, but the autopropose tick can re-latch within its 2 s
+    # period, so read fast enough to see the cleared moment rather than sampling after a sleep.
+    resume = http_json(ADMIN_BASE, "/api/v1/proposer/resume", method="POST")
+    observations["resume_response"] = resume
     after_resume = http_json(HTTP_BASE, "/health")
-    checks["resume_clears_latch"] = after_resume.get("proposalHalted") is False
+    cleared = after_resume.get("proposalHalted") is False
+    for _ in range(40):
+        if cleared:
+            break
+        time.sleep(0.05)
+        after_resume = http_json(HTTP_BASE, "/health")
+        cleared = after_resume.get("proposalHalted") is False
+    checks["resume_clears_latch"] = cleared
     captured_relatch = False
-    for _ in range(args.proposals):
+    relatch_deadline = time.monotonic() + 120
+    while time.monotonic() < relatch_deadline:
         if after_resume.get("proposalHalted"):
             captured_relatch = True
             break
