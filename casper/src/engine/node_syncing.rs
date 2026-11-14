@@ -625,12 +625,16 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         log.as_ref(),
         block_requests,
     );
+    // The page walk asks the bootstrap plus a connected peer per path (C339 performance); a snapshot
+    // of the connection set is enough, because the fan-out is a hedge, not a topology statement.
+    let page_peers = comm_util.connected_peers().await;
     let tuple_fut = request_tuple_space(
         fringe,
         tuple_space_rx,
         REQUEST_TIMEOUT,
         transport.as_ref(),
         &conf,
+        &page_peers,
         importer,
         log.as_ref(),
     );
@@ -685,21 +689,20 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         .collect();
     check_ancestry_shape(&fringe.ancestry, &downloaded)?;
 
-    // The initial tuple-space leg hydrates only the finalized-fringe root. The block
-    // walk supplies every block's pre/post root, but validation and proposing also
-    // read each restored block's fringe_state_hash (the state finalized by its
-    // fringe). That intermediate merge root need not equal any downloaded block's
-    // pre/post root. Hydrating only the latter lets LFS report success and enter
-    // Running, then fail immediately at compute_bonds() because pos:active is
-    // absent in the unopened fringe trie (issue #457).
-    //
-    // Request the complete, deduplicated manifest while the bootstrap still serves
-    // state. An unserved ancestry root must fail the join, not silently produce a
-    // Running node with incomplete replay state.
+    // **Replay-forward: the walk hydrates the served fringe and the genesis post-state, and nothing
+    // else.** `RecoveryReplay` replays every block in ascending height through the full validator,
+    // which derives each block's pre-state from its parents' post-states and computes its post-state;
+    // every intermediate state is then persisted by the replay's checkpoints. The only state replay
+    // cannot produce is the genesis post-state (`insert_genesis` records metadata; there is no block
+    // to execute before block 0), so that root is hydrated. The previous manifest walked the whole
+    // trie for every ancestry `fringe_state_hash` and every block's pre/post root — O(height) full
+    // trie walks, measured at ~2.5 minutes for 316 roots and the reason a mature restore did not
+    // complete (C339).
     let fringe_root = Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes());
-    let block_roots =
-        collect_block_state_roots(&block_store, &block_st.height_map, &fringe.ancestry).await?;
-    let extra_roots: Vec<Blake2b256Hash> = block_roots
+    let required_roots =
+        required_state_roots(&block_store, &block_st.height_map, fringe_root).await?;
+    crate::engine::sync_metrics::census().add_state_roots(required_roots.len() as u64);
+    let extra_roots: Vec<Blake2b256Hash> = required_roots
         .into_iter()
         .filter(|root| *root != fringe_root)
         .collect();
@@ -721,6 +724,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
             REQUEST_TIMEOUT,
             transport.as_ref(),
             &conf,
+            &page_peers,
             importer,
             log.as_ref(),
         )
@@ -738,38 +742,41 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     Ok(())
 }
 
-/// Collect the state roots used by both the downloaded block bodies and their
-/// restored per-block fringe claims. The latter are not necessarily block pre/post
-/// roots, but are accessed by consensus as soon as the node leaves NodeSyncing.
-/// Ancestor membership is validated by check_ancestry_shape before this call.
-async fn collect_block_state_roots(
+/// **The state roots replay cannot produce, and therefore the only roots the walk hydrates.**
+///
+/// `RecoveryReplay` replays blocks in ascending height and derives each pre-state from its parents'
+/// post-states; the replay's checkpoints persist every intermediate state. The sole external state
+/// input is the **genesis post-state**: there is no block before height 0 to execute, and
+/// `insert_genesis` records metadata rather than computing state. The served fringe root is kept as
+/// a pre-warm of what the node answers immediately after restore.
+///
+/// Ancestor membership is validated by `check_ancestry_shape` before this call.
+async fn required_state_roots(
     block_store: &BlockStore,
     height_map: &BTreeMap<i64, BTreeSet<BlockHash>>,
-    ancestry: &[BlockFringe],
+    fringe_root: Blake2b256Hash,
 ) -> Result<BTreeSet<Blake2b256Hash>, String> {
     let mut roots = BTreeSet::new();
+    roots.insert(fringe_root);
 
-    for bf in ancestry {
-        roots.insert(Blake2b256Hash::from_byte_array(
-            bf.fringe_state_hash.as_bytes(),
-        ));
-    }
-
-    for hash in height_map.values().flat_map(|s| s.iter().copied()) {
-        let block = block_store
-            .get(&[hash])
-            .await?
-            .into_iter()
-            .flatten()
-            .next()
-            .ok_or_else(|| format!("missing block {}", hash.to_hex()))?;
-        roots.insert(Blake2b256Hash::from_byte_array(
-            block.pre_state_hash.as_bytes(),
-        ));
-        roots.insert(Blake2b256Hash::from_byte_array(
-            block.post_state_hash.as_bytes(),
-        ));
-    }
+    let genesis = height_map
+        .get(&0)
+        .and_then(|hashes| hashes.iter().next())
+        .ok_or_else(|| {
+            "the block walk did not reach the height-0 genesis; replay has no genesis state to \
+             start from"
+                .to_string()
+        })?;
+    let block = block_store
+        .get(&[*genesis])
+        .await?
+        .into_iter()
+        .flatten()
+        .next()
+        .ok_or_else(|| format!("missing genesis block {}", genesis.to_hex()))?;
+    roots.insert(Blake2b256Hash::from_byte_array(
+        block.post_state_hash.as_bytes(),
+    ));
 
     Ok(roots)
 }
@@ -1127,12 +1134,12 @@ mod tests {
         assert_eq!(dag.get_representation().await.latest_block_number(), n);
     }
 
-    /// #457: block pre/post tries are not a complete post-LFS replay manifest.
-    /// A per-block finalised-fringe claim can name a distinct, intermediate
-    /// merge root. Restoring without that root makes the subsequent active-bonds
-    /// lookup fail even when LFS reaches Running and every block was downloaded.
+    /// **Replay-forward** (C339 performance): the manifest is the served fringe plus the genesis
+    /// post-state. `RecoveryReplay` derives every other pre/post state while replaying; the old
+    /// manifest walked the whole trie for every ancestry `fringe_state_hash` and every block's pre
+    /// and post root, which is O(height) full trie walks (measured ~2.5 minutes for 316 roots).
     #[tokio::test]
-    async fn restore_root_manifest_includes_distinct_ancestry_fringe_state() {
+    async fn restore_root_manifest_is_the_genesis_and_the_served_fringe() {
         let mut genesis = chain_block(0, None);
         genesis.pre_state_hash = StateHash::new([0x11; 32]);
         genesis.post_state_hash = StateHash::new([0x22; 32]);
@@ -1155,44 +1162,31 @@ mod tests {
             (0, BTreeSet::from([genesis.block_hash])),
             (1, BTreeSet::from([child.block_hash])),
         ]);
-        // Child's fringe root (0x44) is neither the pre nor the post
-        // state root of either downloaded block. Genesis repeats 0x11:
-        // deduplication must still hold.
-        let ancestry = vec![
-            BlockFringe {
-                block_hash: genesis.block_hash,
-                fringe: BTreeSet::new(),
-                fringe_state_hash: genesis.pre_state_hash,
-            },
-            BlockFringe {
-                block_hash: child.block_hash,
-                fringe: BTreeSet::new(),
-                fringe_state_hash: StateHash::new([0x44; 32]),
-            },
-        ];
-        let downloaded: BTreeSet<BlockHash> = height_map
-            .values()
-            .flat_map(|s| s.iter().copied())
-            .collect();
-        check_ancestry_shape(&ancestry, &downloaded).unwrap();
-        let roots = collect_block_state_roots(&block_store, &height_map, &ancestry)
+        let fringe_root = Blake2b256Hash::from_byte_array(&[0x44; 32]);
+        let roots = required_state_roots(&block_store, &height_map, fringe_root)
             .await
             .unwrap();
-        assert_eq!(roots.len(), 4, "state roots must be deduplicated");
-        for required in [0x11, 0x22, 0x33, 0x44] {
+        assert_eq!(
+            roots.len(),
+            2,
+            "only the fringe and the genesis post-state are external"
+        );
+        assert!(roots.contains(&fringe_root));
+        assert!(roots.contains(&Blake2b256Hash::from_byte_array(&[0x22; 32])));
+        for historical in [0x11u8, 0x33] {
             assert!(
-                roots.contains(&Blake2b256Hash::from_byte_array(&[required; 32])),
-                "omitted required root {required:02x}"
+                !roots.contains(&Blake2b256Hash::from_byte_array(&[historical; 32])),
+                "a replay-derived root {historical:02x} must not be requested"
             );
         }
 
-        // No ancestry is legitimate for older peers, but it must not
-        // introduce a fake root or silently fabricate fringe history.
-        let legacy = collect_block_state_roots(&block_store, &height_map, &[])
+        // A walk that did not reach genesis cannot name the state replay starts from: refuse by name
+        // rather than letting replay fail later with an unrecognisable store error.
+        let no_genesis = BTreeMap::from([(1, BTreeSet::from([child.block_hash]))]);
+        let err = required_state_roots(&block_store, &no_genesis, fringe_root)
             .await
-            .unwrap();
-        assert!(!legacy.contains(&Blake2b256Hash::from_byte_array(&[0x44; 32])));
-        assert_eq!(legacy.len(), 3);
+            .expect_err("a manifest without the genesis state must be refused");
+        assert!(err.contains("height-0 genesis"), "{err}");
     }
 
     /// **Law 83, C338: a fringe row for a block the walk did not download** is a claim the joiner

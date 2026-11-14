@@ -13,6 +13,7 @@ pub mod node_running;
 pub mod node_syncing;
 pub mod recovery;
 pub mod reset;
+pub mod sync_metrics;
 
 use std::collections::{BTreeMap, BTreeSet};
 

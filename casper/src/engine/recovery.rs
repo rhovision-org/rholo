@@ -146,6 +146,7 @@ impl RecoveryReplay {
         target: &FinalizedFringe,
         log: &Arc<dyn Log>,
     ) -> Result<VerifiedRecovery, String> {
+        let started = std::time::Instant::now();
         let downloaded: BTreeSet<_> = heights
             .values()
             .flat_map(|hashes| hashes.iter().copied())
@@ -278,6 +279,8 @@ impl RecoveryReplay {
                 entries.len()
             ),
         );
+        crate::engine::sync_metrics::census()
+            .add_replay(entries.len() as u64, started.elapsed().as_nanos() as u64);
         Ok(VerifiedRecovery { entries })
     }
 }

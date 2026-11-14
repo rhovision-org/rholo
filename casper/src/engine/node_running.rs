@@ -694,6 +694,7 @@ pub async fn handle_store_items_request<E: RSpaceExporter>(
     req: &StoreItemsMessageRequest,
     disable_state_exporter: bool,
 ) {
+    let started = std::time::Instant::now();
     if disable_state_exporter {
         log.info(
             log_source,
@@ -763,26 +764,52 @@ pub async fn handle_store_items_request<E: RSpaceExporter>(
             return;
         }
     };
-    // The byte cap (AUDIT C73): see `MAX_STORE_ITEMS_BYTES` for why this refuses rather than truncates.
-    // It is checked here, after assembly and before the response exists, so an oversized page is never
-    // serialised and never sent.
-    let page_bytes: usize = history_items
-        .iter()
-        .map(|(_, v)| v.len())
-        .chain(data_items.iter().map(|(_, v)| v.len()))
-        .sum();
-    if page_bytes > MAX_STORE_ITEMS_BYTES {
-        log.error(
-            log_source,
-            &format!(
-                "Dropping store-items request: the page is {page_bytes} bytes > \
-                 {MAX_STORE_ITEMS_BYTES} — refusing rather than truncating, since a short page is a \
-                 wrong state claim (the requester recomputes it)"
-            ),
-        );
-        return;
+    // **The byte cap is a valid prefix, not a refusal** (C339 performance; AUDIT C73's reading was
+    // too strong). `validate_state_items` accepts a page shorter than the requested `take`
+    // (`received < chunk_size` is end-of-page), and the continuation is the last included node's
+    // `last_path`, so a prefix is a complete, checkable answer and the walk continues from it.
+    // Refusing the whole page made a single large leaf stall the walk for the requester's idle
+    // window; the prefix keeps the cap and the progress.
+    let history_by_hash: BTreeMap<Blake2b256Hash, Vec<u8>> =
+        history_items.iter().cloned().collect();
+    let data_by_hash: BTreeMap<Blake2b256Hash, Vec<u8>> = data_items.iter().cloned().collect();
+    let mut included = Vec::new();
+    let mut page_bytes = 0usize;
+    for node in &nodes {
+        let item = if node.is_leaf {
+            data_by_hash.get(&node.hash)
+        } else {
+            history_by_hash.get(&node.hash)
+        };
+        let size = item.map_or(0, |v| v.len());
+        // Always include the first node, even if it alone exceeds the cap: a zero-node page makes
+        // no progress and would repeat for ever.
+        if !included.is_empty() && page_bytes + size > MAX_STORE_ITEMS_BYTES {
+            break;
+        }
+        page_bytes += size;
+        included.push(node);
     }
-    let last_path = nodes.last().map(|n| n.path.clone()).unwrap_or_default();
+    let included_history: BTreeSet<Blake2b256Hash> = included
+        .iter()
+        .filter(|n| !n.is_leaf)
+        .map(|n| n.hash)
+        .collect();
+    let included_data: BTreeSet<Blake2b256Hash> = included
+        .iter()
+        .filter(|n| n.is_leaf)
+        .map(|n| n.hash)
+        .collect();
+    let history_items: Vec<(Blake2b256Hash, Vec<u8>)> = history_items
+        .into_iter()
+        .filter(|(h, _)| included_history.contains(h))
+        .collect();
+    let data_items: Vec<(Blake2b256Hash, Vec<u8>)> = data_items
+        .into_iter()
+        .filter(|(h, _)| included_data.contains(h))
+        .collect();
+    let truncated = included.len() < nodes.len();
+    let last_path = included.last().map(|n| n.path.clone()).unwrap_or_default();
 
     let response = StoreItemsMessage {
         start_path: req.start_path.clone(),
@@ -790,6 +817,17 @@ pub async fn handle_store_items_request<E: RSpaceExporter>(
         history_items,
         data_items,
     };
+    if truncated {
+        log.info(
+            log_source,
+            &format!(
+                "Serving a byte-capped store-items prefix: {} of {} node(s), {page_bytes} bytes \
+                 (cap {MAX_STORE_ITEMS_BYTES}); the continuation is the last included path",
+                included.len(),
+                nodes.len()
+            ),
+        );
+    }
     log.info(
         log_source,
         &format!(
@@ -798,6 +836,11 @@ pub async fn handle_store_items_request<E: RSpaceExporter>(
             response.data_items.len(),
             peer.endpoint.host
         ),
+    );
+    crate::engine::sync_metrics::census().add_pages_served(
+        included.len() as u64,
+        page_bytes as u64,
+        started.elapsed().as_nanos() as u64,
     );
     // Stream the response (matching Scala's `streamToPeer`); the unary `send_to_peer` path does
     // not deliver to the syncing peer, which stalls LFS state sync.
@@ -1342,6 +1385,7 @@ mod tests {
     use rchain_comm::rp::rp_conf::{ClearConnectionsConf, RPConf};
     use rchain_comm::transport::chunker::Blob;
     use rchain_comm::transport::transport_layer::TransportLayer;
+    use rchain_models::casper::protocol::packet_type_tag::FromPacket;
     use rchain_models::comm::protocol::Protocol;
     use rchain_models::validator::Validator;
     use rchain_shared::log::NopLog;
@@ -2089,21 +2133,22 @@ mod tests {
         let packet = rchain_comm::rp::protocol_helper::to_packet(&sends[0].1).unwrap();
         assert_eq!(packet.type_id, "BlockRequest");
     }
-    /// **AUDIT C73**: a page over the byte cap is refused — dropped, never truncated.
+    /// **AUDIT C73, revised by the C339 performance pass**: a page over the byte cap is served as a
+    /// **valid prefix**, never as a wrong state claim.
     ///
     /// `MAX_STORE_ITEMS_TAKE` bounds how many nodes a request may name; nothing bounded how much data
-    /// they carry, so the maximal `take` with fat values is tens of megabytes of the responder's memory
-    /// per request, per peer. The page is now dropped rather than shortened: the requester recomputes
-    /// the page it expects and requires the received keys to match (`validate_state_items`), so a short
-    /// page is a wrong state claim rather than a smaller answer — the same policy this handler already
-    /// applies to an unreadable store (C63) and to an over-large `take`.
+    /// they carry, so the maximal `take` with fat values is tens of megabytes of the responder's
+    /// memory per request, per peer. The old policy dropped the page, which is safe but stalls the
+    /// walk for the requester's whole idle window. `validate_state_items` already accepts a page
+    /// shorter than the requested `take` (`received < chunk_size` is end-of-page) and the
+    /// continuation is the last included node's `last_path`, so a byte-bounded **prefix** is a
+    /// complete, checkable answer and the walk continues from it.
     ///
-    /// Both directions in one test, so neither can pass vacuously: the over-cap page must not be sent,
-    /// and a legitimate page must still be served (the drop cannot be "this handler stopped working").
-    /// Falsified against this tree: with the cap's check removed, the over-cap page is streamed and the
-    /// first assertion fails.
+    /// Both directions in one test: the over-cap request must produce a non-empty prefix whose bytes
+    /// are within the cap (a single node may exceed it, and then that node is served alone), and a
+    /// legitimate page must still be served.
     #[tokio::test]
-    async fn a_page_over_the_byte_cap_is_dropped_not_truncated() {
+    async fn a_page_over_the_byte_cap_is_served_as_a_valid_prefix() {
         let local = peer("src", 40400);
         let remote = peer("peer", 40400);
 
@@ -2136,11 +2181,32 @@ mod tests {
             false,
         )
         .await;
-        assert!(
-            transport.streams.lock().unwrap().is_empty(),
-            "an over-cap page must be dropped: a truncated page is a wrong state claim, and the peer \
-             cannot tell it from a real one"
+        let streams = transport.streams.lock().unwrap();
+        assert_eq!(
+            streams.len(),
+            1,
+            "the byte-capped prefix is served, not dropped"
         );
+        let page = StoreItemsMessageSerde
+            .parse(&streams[0].1.packet.content)
+            .expect("a store-items page");
+        let served = page.history_items.len() + page.data_items.len();
+        assert!(served > 0, "a prefix must make progress");
+        assert!(
+            served < FAT_NODES,
+            "the over-cap request must be a strict prefix ({served} of {FAT_NODES} nodes)"
+        );
+        let prefix_bytes: usize = page
+            .history_items
+            .iter()
+            .map(|(_, v)| v.len())
+            .chain(page.data_items.iter().map(|(_, v)| v.len()))
+            .sum();
+        assert!(
+            prefix_bytes <= MAX_STORE_ITEMS_BYTES,
+            "the prefix carries {prefix_bytes} bytes, over the cap"
+        );
+        drop(streams);
 
         // Under the cap: the largest legitimate page (`PAGE_SIZE = 750` × 4 KiB ≈ 3 MB) is served.
         let transport = Arc::new(MockTransport::default());

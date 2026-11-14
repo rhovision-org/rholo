@@ -8,6 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use rchain_comm::peer_node::PeerNode;
+use rchain_comm::rp::connect::random_connections;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_comm::transport::transport_layer::TransportLayer;
 use rchain_comm::transport::transport_layer_syntax;
@@ -25,8 +27,18 @@ use crate::protocol::casper_message_protocol::StoreItemsMessageRequestSerde;
 /// (port of `StatePartPath`).
 pub type StatePartPath = Vec<(Blake2b256Hash, Option<u8>)>;
 
-/// Number of nodes in an LFS sync data-transfer chunk (port of `pageSize`).
-pub const PAGE_SIZE: i32 = 750;
+/// Number of nodes requested in an LFS sync data-transfer chunk (port of `pageSize`).
+///
+/// 750 was the Scala's page size; the Rust responder already bounds a page at
+/// `MAX_STORE_ITEMS_TAKE = 10_000` nodes and 32 MiB, and now serves a **byte-capped prefix** rather
+/// than refusing an oversized page. A larger page is therefore safe and cuts the round trips on a
+/// large trie by more than 5×.
+pub const PAGE_SIZE: i32 = 4_000;
+
+/// **How many peers one page path is requested from in a round** (bootstrap included). Two makes
+/// a silent primary recoverable within the next answer rather than the 30 s idle window; the page
+/// is content-addressed, so the peers are interchangeable, and a duplicate answer is ignored.
+pub const LFS_PAGE_FANOUT: usize = 2;
 
 /// Request status (port of `LfsTupleSpaceRequester.ReqStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -329,6 +341,7 @@ async fn request_next(
     st: &Arc<tokio::sync::Mutex<LfsTupleSpaceState<StatePartPath>>>,
     transport: &dyn TransportLayer,
     conf: &RPConf,
+    peers: &[PeerNode],
     log: &dyn Log,
     source: LogSource,
     resend: bool,
@@ -346,28 +359,56 @@ async fn request_next(
             // indistinguishable from one that is not asking at all unless the path is visible: the
             // capture that found `Sending 29 history and 230 data store items` 440 times on the
             // responder side had no requester-side counterpart to compare it with (C268, pass §94).
-            log.info(
-                source,
-                &format!("Sending StoreItemsRequest to bootstrap for path {id:?}"),
-            );
             let req = StoreItemsMessageRequest {
                 start_path: id.clone(),
                 skip: 0,
                 take: PAGE_SIZE,
             };
-            if let Err(e) = transport_layer_syntax::send_to_bootstrap(
-                transport,
-                conf,
-                StoreItemsMessageRequestSerde.mk_packet(&req),
-            )
-            .await
-            {
-                log.warn(
-                    source,
-                    &format!(
-                        "could not ask the bootstrap peer for store items: {e} (AUDIT C254's E6b)"
-                    ),
-                );
+            // **Redundant page fetch** (C339 performance): the bootstrap first, then up to
+            // `LFS_PAGE_FANOUT - 1` connected peers. A page is content-addressed and
+            // `validate_state_items` refuses any node that does not hash to its key, so which peer
+            // answers is not an input to the restored state; a silent bootstrap no longer costs the
+            // whole 30 s idle window. A duplicate answer for an already-received path is ignored by
+            // the state machine (`received` accepts only `Requested`).
+            let mut targets: Vec<PeerNode> = Vec::new();
+            if let Some(bootstrap) = &conf.bootstrap {
+                targets.push(bootstrap.clone());
+            }
+            let candidates: Vec<PeerNode> = peers
+                .iter()
+                .filter(|p| p.id != conf.local.id)
+                .filter(|p| !targets.iter().any(|q| q.id == p.id))
+                .cloned()
+                .collect();
+            targets.extend(random_connections(
+                &candidates,
+                LFS_PAGE_FANOUT.saturating_sub(targets.len()),
+            ));
+            log.info(
+                source,
+                &format!(
+                    "Sending StoreItemsRequest to {} peer(s) for path {id:?}",
+                    targets.len()
+                ),
+            );
+            crate::engine::sync_metrics::census().add_pages_requested(targets.len() as u64);
+            for peer in &targets {
+                if let Err(e) = transport_layer_syntax::send_to_peer(
+                    transport,
+                    conf,
+                    peer,
+                    StoreItemsMessageRequestSerde.mk_packet(&req),
+                )
+                .await
+                {
+                    log.warn(
+                        source,
+                        &format!(
+                            "could not ask {} for store items: {e} (AUDIT C254's E6b)",
+                            peer
+                        ),
+                    );
+                }
             }
         }
     }
@@ -429,6 +470,13 @@ async fn process_store_items<I: RSpaceImporter>(
             let mut guard = st.lock().await;
             *guard = guard.done(start_path.clone());
         }
+        let bytes: u64 = msg
+            .history_items
+            .iter()
+            .map(|(_, v)| v.len() as u64)
+            .chain(msg.data_items.iter().map(|(_, v)| v.len() as u64))
+            .sum();
+        crate::engine::sync_metrics::census().add_pages_received(1, bytes);
         chan::send(request_tx, false).await;
     }
     Ok(())
@@ -442,6 +490,7 @@ pub async fn request_tuple_space<I: RSpaceImporter>(
     request_timeout: Duration,
     transport: &dyn TransportLayer,
     conf: &RPConf,
+    peers: &[PeerNode],
     importer: &mut I,
     log: &dyn Log,
 ) -> Result<LfsTupleSpaceState<StatePartPath>, TupleSpaceWalkError> {
@@ -452,6 +501,7 @@ pub async fn request_tuple_space<I: RSpaceImporter>(
         request_timeout,
         transport,
         conf,
+        peers,
         importer,
         log,
     )
@@ -468,6 +518,7 @@ pub async fn request_tuple_space_roots<I: RSpaceImporter>(
     request_timeout: Duration,
     transport: &dyn TransportLayer,
     conf: &RPConf,
+    peers: &[PeerNode],
     importer: &mut I,
     log: &dyn Log,
 ) -> Result<LfsTupleSpaceState<StatePartPath>, TupleSpaceWalkError> {
@@ -505,8 +556,15 @@ pub async fn request_tuple_space_roots<I: RSpaceImporter>(
     // (`lfs_block_requester.rs:236-238`): how many pages were finished at the last idle round that saw
     // progress, and how many consecutive idle rounds have seen none since.
     let request_loop = async {
+        // **Short resends, long give-up** (the block leg's rule, C339 performance): re-ask the
+        // outstanding paths every `resend_interval` (2 s in production) and give up only after
+        // `request_timeout × MAX_IDLE_ROUNDS` with no completed page, so a silent peer costs a
+        // resend rather than a whole 30-second window while the pace measure is unchanged.
+        let resend_interval =
+            request_timeout.min(crate::engine::lfs_block_requester::SYNC_HEDGE_INTERVAL);
+        let give_up_after = request_timeout * MAX_IDLE_ROUNDS;
         let mut last_finished: usize = 0;
-        let mut idle_rounds: u32 = 0;
+        let mut last_progress = std::time::Instant::now();
         loop {
             let resend = tokio::select! {
                 r = request_rx.recv() => match r {
@@ -527,47 +585,42 @@ pub async fn request_tuple_space_roots<I: RSpaceImporter>(
                         return;
                     }
                 },
-                _ = tokio::time::sleep(request_timeout) => {
-                    // An idle round: a whole resend interval with no page completed. Whether the walk
-                    // is *stuck* is a different question from whether it is *quiet*, and the count of
-                    // finished pages is the measure that answers it.
+                _ = tokio::time::sleep(resend_interval) => {
                     let (finished, outstanding) = {
                         let guard = st.lock().await;
                         (guard.finished_count(), guard.outstanding_count())
                     };
-                    if finished == last_finished {
-                        idle_rounds += 1;
-                        if idle_rounds >= MAX_IDLE_ROUNDS {
-                            // **The give-up** (Law 69): the walk has completed nothing across
-                            // `MAX_IDLE_ROUNDS` whole resend intervals, so the peer is not answering
-                            // and no node-side rule can make an answer arrive. This is the block leg's
-                            // rule (`lfs_block_requester.rs:255-261`) with the page walk's measure, and
-                            // it spends the attempt rather than spinning for ever in `NodeSyncing`
-                            // (C268/C271).
-                            *error.lock().await = Some(TupleSpaceWalkError::Abandoned(format!(
-                                "no tuple-space state page finished in {idle_rounds} consecutive \
-                                 idle rounds of {request_timeout:?} ({finished} page(s) finished, \
-                                 {outstanding} key(s) still outstanding): the peer is not answering, \
-                                 so the walk cannot complete"
-                            )));
-                            return;
-                        }
-                    } else {
-                        idle_rounds = 0;
+                    if finished != last_finished {
                         last_finished = finished;
+                        last_progress = std::time::Instant::now();
+                    } else if last_progress.elapsed() >= give_up_after {
+                        // **The give-up** (Law 69): no page has finished across
+                        // `request_timeout × MAX_IDLE_ROUNDS`, so the peer is not answering and no
+                        // node-side rule can make an answer arrive. The resend interval is shorter
+                        // than the window, so this is still a pace condition on *progress*, not a
+                        // wall-clock deadline on a slow walk.
+                        *error.lock().await = Some(TupleSpaceWalkError::Abandoned(format!(
+                            "no tuple-space state page finished in {:?} of no progress across \
+                             {resend_interval:?} resends ({finished} page(s) finished, {outstanding} \
+                             key(s) still outstanding): the peer is not answering, so the walk \
+                             cannot complete",
+                            last_progress.elapsed()
+                        )));
+                        return;
                     }
                     log.warn(
                         source,
                         &format!(
-                            "No tuple space state responses for {request_timeout:?}. Resending \
-                             requests ({idle_rounds}/{MAX_IDLE_ROUNDS} idle rounds without a \
-                             finished page)."
+                            "No tuple space state responses for {resend_interval:?}. Resending \
+                             requests ({:?} without a finished page).",
+                            last_progress.elapsed()
                         ),
                     );
+                    crate::engine::sync_metrics::census().add_resend();
                     true
                 }
             };
-            request_next(&st, transport, conf, log, source, resend).await;
+            request_next(&st, transport, conf, peers, log, source, resend).await;
             if error.lock().await.is_some() {
                 return;
             }
@@ -766,7 +819,16 @@ mod stream_tests {
         let transport = Arc::new(RecordingTransport::default());
         let conf = test_conf();
 
-        request_next(&st, transport.as_ref(), &conf, &NopLog, source(), false).await;
+        request_next(
+            &st,
+            transport.as_ref(),
+            &conf,
+            &[],
+            &NopLog,
+            source(),
+            false,
+        )
+        .await;
 
         let sends = transport.sends.lock().unwrap();
         assert_eq!(sends.len(), 1, "one request for the one pending path");
@@ -786,11 +848,54 @@ mod stream_tests {
         // A finished state asks for nothing.
         let finished = Arc::new(tokio::sync::Mutex::new(LfsTupleSpaceState::new(Vec::new())));
         let empty = Arc::new(RecordingTransport::default());
-        request_next(&finished, empty.as_ref(), &conf, &NopLog, source(), false).await;
+        request_next(
+            &finished,
+            empty.as_ref(),
+            &conf,
+            &[],
+            &NopLog,
+            source(),
+            false,
+        )
+        .await;
         assert!(
             empty.sends.lock().unwrap().is_empty(),
             "a finished requester sends nothing"
         );
+    }
+
+    /// **Redundant page fetch** (C339 performance): the bootstrap and a connected peer are asked for
+    /// the same path. The page is content-addressed and validated, so either answer is accepted; a
+    /// silent bootstrap no longer costs the whole idle window.
+    #[tokio::test]
+    async fn request_next_asks_the_bootstrap_and_a_connected_peer_for_a_page() {
+        let (message, _) = valid_chunk(vec![1, 2, 3]);
+        let st = pending_state(message.start_path.clone());
+        let transport = Arc::new(RecordingTransport::default());
+        let conf = test_conf();
+        let other = test_peer("peer-2");
+
+        request_next(
+            &st,
+            transport.as_ref(),
+            &conf,
+            &[other.clone()],
+            &NopLog,
+            source(),
+            false,
+        )
+        .await;
+
+        let sends = transport.sends.lock().unwrap();
+        assert_eq!(
+            sends.len(),
+            2,
+            "the bootstrap and the connected peer are asked"
+        );
+        assert!(sends
+            .iter()
+            .any(|(p, _)| Some(p) == conf.bootstrap.as_ref()));
+        assert!(sends.iter().any(|(p, _)| p.id == other.id));
     }
 
     /// **An unrequested chunk is ignored.** A `StoreItemsMessage` for a path this node never asked
@@ -891,6 +996,17 @@ mod stream_tests {
 
     fn source() -> LogSource {
         LogSource::new("casper.engine.LfsTupleSpaceRequester.test")
+    }
+
+    fn test_peer(name: &str) -> PeerNode {
+        use rchain_comm::peer_node::NodeIdentifier;
+        use rchain_shared::refined::Port;
+        PeerNode::from(
+            NodeIdentifier::new(name.as_bytes().to_vec()),
+            "127.0.0.1".to_string(),
+            Port::new(40400),
+            Port::new(40404),
+        )
     }
 
     fn test_conf() -> RPConf {
@@ -994,6 +1110,7 @@ mod stream_tests {
                 REQUEST_TIMEOUT,
                 &transport,
                 &test_conf(),
+                &[],
                 &mut importer,
                 &NopLog,
             ),
@@ -1051,6 +1168,7 @@ mod stream_tests {
                 Duration::from_secs(30),
                 &transport,
                 &test_conf(),
+                &[],
                 &mut importer,
                 &NopLog,
             ),
@@ -1168,6 +1286,7 @@ mod stream_tests {
                 Duration::from_secs(5),
                 &transport,
                 &test_conf(),
+                &[],
                 &mut importer,
                 &NopLog,
             ),
@@ -1228,6 +1347,7 @@ mod stream_tests {
                 REQUEST_TIMEOUT,
                 &transport,
                 &test_conf(),
+                &[],
                 &mut importer,
                 &NopLog,
             ),

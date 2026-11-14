@@ -35,6 +35,14 @@ pub type ConnectionsCell = Arc<tokio::sync::RwLock<Vec<PeerNode>>>;
 /// Scala's `keepOnRequestingTillRunning` retries forever.
 const MAX_BOOTSTRAP_RETRIES: u32 = 10;
 
+/// **How many peers one LFS block hash is requested from in a round** (bootstrap included).
+///
+/// Two is the smallest redundant set: a silent bootstrap no longer costs a full idle round before
+/// the walk tries anyone else, and the extra request is bounded per hash (the per-hash request log
+/// excludes peers already asked). The answer is content-verified, so which peer answers is not an
+/// input to the restored state.
+pub const LFS_BLOCK_FANOUT: usize = 2;
+
 /// A standalone (bootstrap) node tried to send to the bootstrap node (port of
 /// `StandaloneNodeSendToBootstrapError`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,14 +204,44 @@ impl CommUtil {
     /// the discovery connection set. Block hashes are still verified by the walk,
     /// and an unserved block still fails under its existing bounded retry policy.
     pub async fn request_lfs_block(&self, hash: &BlockHash) -> Vec<PeerNode> {
-        if let Some(bootstrap) = &self.conf.bootstrap {
-            self.request_for_block(bootstrap, hash).await;
-            vec![bootstrap.clone()]
-        } else {
-            // Standalone callers have no admitted bootstrap; retain their
-            // peer-based block walk rather than inventing a state source.
-            self.broadcast_request_for_block(hash, Some(1)).await
+        self.request_lfs_block_from(hash, &[]).await
+    }
+
+    /// **Redundant block fetch** (C339 performance): ask the bootstrap and up to
+    /// `LFS_BLOCK_FANOUT - 1` other connected peers for the same hash. Answers are content-verified
+    /// by `validate_received_block` and replay, so any peer's block is interchangeable; a silent
+    /// bootstrap no longer costs an idle round before failover. `already_asked` is the per-hash
+    /// request log, which bounds the fan-out across resends instead of re-asking the same set.
+    pub async fn request_lfs_block_from(
+        &self,
+        hash: &BlockHash,
+        already_asked: &[PeerNode],
+    ) -> Vec<PeerNode> {
+        let Some(bootstrap) = &self.conf.bootstrap else {
+            // Standalone callers have no admitted bootstrap; retain their peer-based block walk
+            // (and its walk-measure semantics) rather than inventing a state source.
+            return self
+                .broadcast_request_for_block(hash, Some(LFS_BLOCK_FANOUT))
+                .await;
+        };
+        // The primary is re-asked on every round, including a resend: `already_asked` bounds the
+        // *additional* peers, not the source the walk depends on.
+        let mut chosen: Vec<PeerNode> = Vec::new();
+        self.request_for_block(bootstrap, hash).await;
+        chosen.push(bootstrap.clone());
+        let connected = self.connections.read().await.clone();
+        let candidates: Vec<PeerNode> = connected
+            .into_iter()
+            .filter(|p| p.id != self.conf.local.id)
+            .filter(|p| !already_asked.iter().any(|q| q.id == p.id))
+            .filter(|p| !chosen.iter().any(|q| q.id == p.id))
+            .collect();
+        let extra = LFS_BLOCK_FANOUT.saturating_sub(chosen.len());
+        for peer in random_connections(&candidates, extra) {
+            self.request_for_block(&peer, hash).await;
+            chosen.push(peer);
         }
+        chosen
     }
 
     /// Ask a peer for the blocks at heights `[from, to]` (C259's catch-up — see

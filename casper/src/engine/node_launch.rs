@@ -335,7 +335,10 @@ async fn create_store_broadcast_genesis(
 
 /// The node launch mode dispatch (port of `NodeLaunch.apply`).
 #[allow(clippy::too_many_arguments)]
-pub async fn apply<I: RSpaceImporter + Send + 'static, E: RSpaceExporter>(
+pub async fn apply<
+    I: RSpaceImporter + Send + 'static,
+    E: RSpaceExporter + Send + Sync + 'static,
+>(
     mut packet_rx: mpsc::Receiver<PeerMessage>,
     incoming_blocks: mpsc::Sender<BlockMessage>,
     spec: ShardSpec,
@@ -358,6 +361,11 @@ pub async fn apply<I: RSpaceImporter + Send + 'static, E: RSpaceExporter>(
     // Operator switch, threaded to `NodeRunning`: when set, this node refuses store-items
     // (state-sync) requests (port of the Scala's `disableStateExporter`).
     disable_state_exporter: bool,
+    // **The inbound consumer pool's width** (`protocol-server.max-message-consumers`). The Scala
+    // answered peer messages with N concurrent consumers; the Rust port handled them one at a time
+    // under the shard loop, so one store-items page or one block stream blocked every other sync
+    // request behind it. `0` is clamped to 1 (serial, the old behaviour).
+    max_message_consumers: usize,
     validator_identity_opt: Option<ValidatorIdentity>,
     standalone: bool,
     // **Whether the node was started in dev mode.** Consulted only at the genesis-creation branch
@@ -790,7 +798,12 @@ pub async fn apply<I: RSpaceImporter + Send + 'static, E: RSpaceExporter>(
             }
         ),
     );
-    let engine = NodeRunning::new(
+    // **The consumer pool** (max-message-consumers). `NodeRunning::handle` takes `&self`, so the
+    // engine is shared behind an `Arc` and each packet is handled by its own task under a permit.
+    // The permit is acquired *before* the spawn, which is the backpressure: a full pool parks the
+    // receive loop instead of building an unbounded task list. A packet refused by the pool would
+    // be a message the peer must resend anyway; parking the loop is the same delay with no drop.
+    let engine = std::sync::Arc::new(NodeRunning::new(
         transport.clone(),
         rp_conf.clone(),
         block_store.clone(),
@@ -803,7 +816,9 @@ pub async fn apply<I: RSpaceImporter + Send + 'static, E: RSpaceExporter>(
         disable_state_exporter,
         catchup.clone(),
         block_range_door.clone(),
-    );
+    ));
+    let consumer_slots =
+        std::sync::Arc::new(tokio::sync::Semaphore::new(max_message_consumers.max(1)));
     log.info(source, "Making a transition to Running state.");
 
     // **The anchor this running phase walks to**: the operator's at boot, or the one a reset rewound to.
@@ -840,7 +855,44 @@ pub async fn apply<I: RSpaceImporter + Send + 'static, E: RSpaceExporter>(
                     tokio::select! {
                         packet = packet_rx.recv() => {
                             let Some(pm) = packet else { break; };
-                            engine.handle(&pm.peer, &pm.message).await;
+                            // **Two lanes** (the Scala consumer pool, ported). The expensive
+                            // read/answer kinds run in the pool; block ingress, fringe traffic and
+                            // the range answers the catch-up walk depends on stay on this loop, in
+                            // arrival order. A read request that finds the pool full is dropped
+                            // rather than parking the loop — its requester retries, and the
+                            // ordering-sensitive lane must keep moving.
+                            let (pooled, kind) = match &pm.message {
+                                CasperMessage::StoreItemsMessageRequest(_) => (true, "store-items request"),
+                                CasperMessage::BlockRequest(_) => (true, "block request"),
+                                CasperMessage::HasBlockRequest(_) => (true, "has-block request"),
+                                CasperMessage::ForkChoiceTipRequest(_) => (true, "fork-choice-tip request"),
+                                _ => (false, "message"),
+                            };
+                            if pooled {
+                                match consumer_slots.clone().try_acquire_owned() {
+                                    Ok(permit) => {
+                                        let engine = engine.clone();
+                                        tokio::spawn(async move {
+                                            engine.handle(&pm.peer, &pm.message).await;
+                                            drop(permit);
+                                        });
+                                    }
+                                    Err(_) => {
+                                        log.warn(
+                                            source,
+                                            &format!(
+                                                "Inbound consumer pool at capacity ({}); a {} from {} \
+                                                 was dropped and its requester will retry",
+                                                max_message_consumers,
+                                                kind,
+                                                pm.peer,
+                                            ),
+                                        );
+                                    }
+                                }
+                            } else {
+                                engine.handle(&pm.peer, &pm.message).await;
+                            }
                         }
                         _ = tip_refresh.tick() => {
                             // A connected-but-previously-unreachable validator

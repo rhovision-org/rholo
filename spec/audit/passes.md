@@ -12817,3 +12817,68 @@ marker finalised on all four validators and retained through two epoch boundarie
 proposer timestamp (#528). It does not persist the tap's per-sender `answered` map: that reset is a
 pacing bound, not the freshness property, and literal replays do not reach the tap. It does not close
 #33 or #428, and it is not evidence for #584's frozen live four-validator gate.
+
+## 165. Sync throughput: a consumer pool, redundant peers, and replay-forward state (C374–C376)
+
+The 2026-11-14 mature-chain restore measured ~3 blocks/min and eight `No tuple space state responses
+for 30s` windows. Three independent design choices produced that, and each is now a separate fix.
+
+**C374 — the responder was serialized.** `node_launch.rs`'s running loop awaited
+`NodeRunning::handle` inline on the per-shard packet loop, and `protocol-server.max-message-consumers`
+was parsed (`hocon.rs`) and never consumed — the Scala consumer pool was not ported. One store-items
+page (up to 32 MiB) or one block stream therefore blocked every other sync request behind it. The loop
+now has two lanes: the expensive read/answer kinds (`StoreItemsMessageRequest`, `BlockRequest`,
+`HasBlockRequest`, `ForkChoiceTipRequest`) run in a bounded spawned pool sized by the configured
+consumer count, while block ingress, fringe traffic and catch-up range answers stay ordered on the
+loop. A read that finds the pool full is dropped (the requester retries); parking the ordering lane
+behind it is worse than one retry. The `a_store_items_page_costs_the_dispatch_loop_this_long` test
+keeps the per-page cost visible.
+
+**C375 — sync had no peer redundancy.** `request_lfs_block` asked only `conf.bootstrap`, and page
+requests used `send_to_bootstrap`; silence was re-asked to the same peer until the 90-second give-up.
+Blocks now ask the bootstrap and up to one additional connected peer per hash
+(`comm_util::LFS_BLOCK_FANOUT`), pages ask the bootstrap and one connected peer per path
+(`lfs_tuple_space_requester::LFS_PAGE_FANOUT`), and the per-hash block-request log excludes peers
+already asked so a resend hedges instead of amplifying. Answers are accepted only when their body
+hashes to the requested key (`validate_received_block`, `validate_state_items`), so the announcing
+peer is not an input to the restored state: this is **Law 101**, `spec/Rchain/Sync/Redundancy.lean`,
+with the block and page hedge tests as its Rust witnesses.
+
+**C376 — the joiner eagerly hydrated every historical state root.** After the block walk,
+`collect_block_state_roots` gathered every ancestry `fringe_state_hash` and every downloaded block's
+pre/post root, and `request_tuple_space_roots` walked each entire trie; dedup was only inside one
+attempt. `RecoveryReplay` already derives each block's pre-state from its parents' post-states and
+persists every computed state through its checkpoints, so the only external state is the **genesis
+post-state** (there is no block before height 0 to execute). `required_state_roots` now returns the
+genesis post-state plus the served fringe root (a pre-warm), and the O(height) manifest is gone. The
+falsifier is `restore_root_manifest_is_the_genesis_and_the_served_fringe`: it asserts the manifest
+contains only those two roots and refuses a walk that did not reach genesis by name. Laws 83 and 85
+still bound what replay does and does not verify.
+
+**Page size, the byte cap, and the watchdog.** A page is now requested at `PAGE_SIZE = 4_000` nodes
+(the responder's own bound is 10,000 nodes / 32 MiB), and a page over the byte cap is served as a
+**valid prefix** rather than refused: `validate_state_items` already accepts a page shorter than the
+requested `take`, and the continuation is the last included node's `last_path`, so the walk keeps
+moving instead of stalling on one large leaf (`a_page_over_the_byte_cap_is_served_as_a_valid_prefix`).
+Both walks now re-ask their outstanding frontier every 2 seconds (`SYNC_HEDGE_INTERVAL`) while the
+give-up remains `request_timeout × MAX_IDLE_ROUNDS` of **no progress**, so silence is detected in
+seconds and a slow-but-progressing walk is still never abandoned.
+
+**Metrics and laws.** `casper/src/engine/sync_metrics.rs` counts pages requested/received/served,
+bytes, in-flight pages, block requests/received, resends, state roots and replay blocks/nanos; the
+census is on `/metrics` as `sync_*` series. Laws 102
+(`spec/Rchain/Sync/ReplayState.lean`: a linked chain replays, a wrong pre-state is refused) and 103
+(`spec/Rchain/Sync/Serve.lean`: an answer is a function of its request, the peer is not an input, and
+the pool is bounded) join Law 101, registered and tied to the Rust witnesses. **Demand-paged history
+has no reachable trigger in this tree**: replay-forward persists every state root it derives, so a
+historical read opens a local root; the reader's existing *unreadable-root* behavior (AUDIT C53) is
+the explicit-unavailable path, never an empty value. Adding a second importer/page-walk for a root the
+node cannot hold would be dead code, so it is not added.
+
+**The measurement is now cheap.** `tools/sync-bench.sh` builds each ladder point (256 / 756 / 2,432
+heights) once, retains the bootstrap volume, and runs `tools/c339_mature_replay.py` against it with
+autopropose off and `DEVNET_NODE_MEMORY=8g`, so a run measures the restore rather than a chain build
+on a contended host. **No benchmark has been run in this pass**: C339 remains `in progress` until a
+complete 2,432-height restore and the restart/wrong-pin controls are recorded. These fixes change no
+block validity, no consensus rule and no anchor claim; the state bytes still come from content-verified
+pages and replay still checks the anchor's claim.
