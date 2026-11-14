@@ -4,6 +4,7 @@
 
 pub mod casper_message;
 pub mod casper_message_protocol;
+pub mod checkpoint;
 pub mod deploy_service;
 pub mod packet_type_tag;
 pub mod propose_service;
