@@ -13,6 +13,7 @@ use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_crypto::hash::{blake2b256, keccak256, sha256};
 use rchain_crypto::public_key::PublicKey;
 use rchain_crypto::signatures::ed25519::Ed25519;
+use rchain_crypto::signatures::p256::P256;
 use rchain_crypto::signatures::secp256k1::Secp256k1;
 use rchain_models::ast::{GPrivate, Par};
 use rchain_models::casper::protocol::casper_message::BlockMessage;
@@ -174,6 +175,11 @@ impl FixedChannels {
     pub fn ertp_ledger() -> Par {
         byte_name(32)
     }
+    /// P-256 ECDSA verification (issue #560). Byte 33 is the next free channel after the ERTP
+    /// ledger; the dispatch table's next free id is 34 (`BodyRefs::P256_VERIFY`).
+    pub fn p256_verify() -> Par {
+        byte_name(33)
+    }
 }
 
 /// The dispatch-table ids (port of `SystemProcesses.BodyRefs`).
@@ -211,6 +217,7 @@ impl BodyRefs {
     pub const TXN: i64 = 31;
     pub const HTTP: i64 = 32;
     pub const ERTP_LEDGER: i64 = 33;
+    pub const P256_VERIFY: i64 = 34;
 }
 
 /// Per-block data exposed to the `rho:block:data` contract (port of `SystemProcesses.BlockData`).
@@ -830,6 +837,22 @@ impl SystemProcesses {
                 body_ref: BodyRefs::ED25519_VERIFY,
                 handler: self.ed25519_verify(),
             },
+            // **A coordinated upgrade, not a state migration — with one replay caveat to check.**
+            // The install itself is not checkpointed (`InMemHotStore::changes` excludes
+            // `installed_continuations`/`installed_joins`), so no historical post-state root moves.
+            // But this URN enters `urn_map`, so a *pre-upgrade* block carrying a failed deploy that
+            // bound the name `rho:crypto:p256Verify` in a `new` would now resolve instead of
+            // erroring, and replay compares `is_failed` (`casper/src/runtime_replay.rs`). Upgrade all
+            // validators together only after confirming the chain's history has no such deploy; old
+            // binaries cannot validate a block that calls this process. Issue #560 records the caveat.
+            Definition {
+                urn: "rho:crypto:p256Verify".to_string(),
+                fixed_channel: FixedChannels::p256_verify(),
+                arity: 4,
+                remainder: false,
+                body_ref: BodyRefs::P256_VERIFY,
+                handler: self.p256_verify(),
+            },
             Definition {
                 urn: "rho:qucalc:zfa".to_string(),
                 fixed_channel: FixedChannels::qucalc_zfa(),
@@ -1081,6 +1104,13 @@ impl SystemProcesses {
 
     fn ed25519_verify(&self) -> ScalaBodyFn {
         self.verify_signature_contract("ed25519Verify", Ed25519::verify_bytes)
+    }
+
+    /// **The message is hashed with SHA-256 inside `P256::verify_bytes`**, unlike `secp256k1Verify`
+    /// whose `data` is already a 32-byte prehash. That is WebCrypto's ES256 semantics, and it is
+    /// what lets a contract check a browser-produced DID or passkey signature (issue #560).
+    fn p256_verify(&self) -> ScalaBodyFn {
+        self.verify_signature_contract("p256Verify", P256::verify_bytes)
     }
 
     fn sha256_hash(&self) -> ScalaBodyFn {
@@ -3584,6 +3614,79 @@ mod tests {
         assert!(
             format!("{types:?}").contains("(all as byte arrays)"),
             "and refuses a non-byte-array argument: {types:?}"
+        );
+    }
+
+    /// **`rho:crypto:p256Verify` is wired to the verifier, not merely listed** (issue #560). The
+    /// crypto crate's tests prove the algorithm; this one proves the definition a deploy resolves
+    /// reaches it with the same arity-4 shape as the other two verifiers, and that the data is the
+    /// *message* (the fixture's 59 bytes) whose SHA-256 is what WebCrypto signed. The fixture is the
+    /// WebCrypto one from `crypto/src/signatures/p256.rs` — a real browser-generated raw `r || s`.
+    #[tokio::test]
+    async fn the_p256_contract_is_registered_and_answers_over_the_message() {
+        const PUBKEY: &str = "04e5afd086093b7e48b087683b8e1d3416d3dc8fc80c2a9fbf6080ed223602b49b9d0cc80f98afc9b1e738944a49517c322cce297f9c5c2072b7942143425684e3";
+        const SIGNATURE: &str = "8e4492b9c343eac74a0b3c973e0e1a0f418256dcf1bad4f7481a6f66da500db38774f4c9159debb82a5f125107ca9e24beb7cdbd6042e9cbe13f2e208bc3a5e4";
+        const MESSAGE: &[u8] = b"BYOID DID create event: {\"seq\":1,\"type\":\"create\"}";
+
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+        let p256 = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::P256_VERIFY)
+            .expect("p256Verify definition");
+        assert_eq!(p256.urn, "rho:crypto:p256Verify");
+        assert_eq!(p256.arity, 4);
+        assert_eq!(p256.fixed_channel, FixedChannels::p256_verify());
+
+        let reply = || -> Par {
+            let produced = mock.produced.lock().unpoison();
+            produced[0].1.pars[0].as_par().clone()
+        };
+        let clear = || {
+            mock.produced.lock().unpoison().clear();
+        };
+        let ack = FixedChannels::stdout();
+        let call = |data: &[u8]| {
+            vec![lpw(vec![
+                RhoByteArray::apply(data.to_vec()),
+                RhoByteArray::apply(rchain_shared::base16::unsafe_decode(SIGNATURE)),
+                RhoByteArray::apply(rchain_shared::base16::unsafe_decode(PUBKEY)),
+                ack.clone(),
+            ])]
+        };
+
+        // The control: the WebCrypto signature verifies through the system process.
+        (p256.handler)(call(MESSAGE), DfsPath::root())
+            .await
+            .unwrap();
+        assert_eq!(
+            reply(),
+            RhoBoolean::apply(true),
+            "the browser-generated P-256 signature must verify through rho:crypto:p256Verify"
+        );
+        clear();
+
+        // The same signature over a different message is `false` — the verdict depends on the data.
+        (p256.handler)(call(b"a different message"), DfsPath::root())
+            .await
+            .unwrap();
+        assert_eq!(reply(), RhoBoolean::apply(false));
+        clear();
+
+        // And the arity refusal names the new contract, as the other verifiers' do.
+        let arity = (p256.handler)(
+            vec![lpw(vec![
+                RhoByteArray::apply(MESSAGE.to_vec()),
+                ack.clone(),
+            ])],
+            DfsPath::root(),
+        )
+        .await;
+        assert!(
+            format!("{arity:?}").contains("p256Verify expects data, signature, public key"),
+            "the refusal names p256Verify and what it wants: {arity:?}"
         );
     }
 

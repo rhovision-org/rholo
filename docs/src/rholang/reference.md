@@ -105,8 +105,41 @@ do differently are in [the decimal type, withdrawn](../formal/decimal-removed.md
 | `rho:block:data` | the current block's number, sender and informational timestamp (the proposer's wall clock, unverified — validators never judge it) |
 | `rho:io:http` | the deterministic HTTP-result oracle: `record` (first writer wins), `get`, `check`, `height` |
 | `rho:txn` | the cross-shard two-phase-commit participant (`prepare` / `commit` / `abort`) |
-| `rho:crypto:blake2b256Hash` / `keccak256Hash` | hashing |
-| `rho:crypto:secp256k1Verify` / `ed25519Verify` | signature verification |
+| `rho:crypto:blake2b256Hash` / `keccak256Hash` / `sha256Hash` | hashing |
+| `rho:crypto:secp256k1Verify` / `ed25519Verify` / `p256Verify` | signature verification (see below) |
+
+### Crypto system processes
+
+The hash contracts take `(data, *ack)` and answer the 32-byte digest. The verify contracts take
+`(data, signature, publicKey, *ack)` and answer `true` or `false`. They differ in what `data` is and
+in how the signature and key are encoded:
+
+| Contract | `data` | `signature` | `publicKey` |
+|---|---|---|---|
+| `secp256k1Verify` | a 32-byte prehash (for example a `sha256Hash` output) | DER | SEC1, compressed (33 bytes) or uncompressed (65) |
+| `ed25519Verify` | the message, any length | 64 bytes | 32 bytes |
+| `p256Verify` | the message, any length; hashed with SHA-256 | raw 64-byte `r \|\| s` (WebCrypto/ES256) or DER | SEC1, compressed (33 bytes) or uncompressed (65) |
+
+**`p256Verify` hashes the message with SHA-256** because WebCrypto's ECDSA does:
+`crypto.subtle.verify({name: "ECDSA", hash: "SHA-256"}, key, signature, data)` verifies over
+`SHA-256(data)`. Pass the same bytes to both sides. A P-256 JWK public key has 32-byte `x` and `y`
+coordinates; the uncompressed SEC1 form the contract wants is `0x04 || x || y`, and the compressed
+form is also accepted. `p256Verify` is the only verifier that checks browser-generated P-256
+signatures, which is what BYOID DID keys and passkeys use (issue #560).
+
+`p256Verify` accepts high-S signatures, because ECDSA verification does not require low-S and
+WebCrypto does not normalise S: `(r, s)` and `(r, n - s)` are both valid. Do not use signature bytes
+as a unique identifier. Malformed data, signature or key answers `false`; a malformed *call* (wrong
+arity, or an argument that is not a byte array) is an error, as with the hash contracts.
+
+**Rollout on an existing chain.** Installing the definition is not checkpointed, so adding it does
+not move any historical post-state root. The URN is still consensus-visible: a node without this
+process cannot validate a block that calls it, and a historical block containing a *failed* deploy
+that bound the name in ``new x(`rho:crypto:p256Verify`)`` would replay differently, because the name
+used to be an error and now resolves (replay checks the deploy's failed flag). Upgrade every
+validator together, and confirm the chain's history contains no such deploy before using it. On a
+fresh testnet or the playground this is a normal coordinated upgrade; it does not require a genesis
+reset.
 
 ## Known limitations
 
