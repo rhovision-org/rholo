@@ -7,6 +7,7 @@ pub mod dto;
 pub mod faucet;
 pub mod grpc;
 pub mod ocapn;
+pub mod raw_block;
 pub mod rho_expr;
 pub mod shard_routing;
 pub mod web_api;

@@ -136,6 +136,17 @@ pub trait WebApi: Send + Sync {
         ))
     }
 
+    /// `POST /api/v1/history/range` — the bodies at a bounded window of heights. The default
+    /// refuses: a surface with no history tier cannot answer for one.
+    async fn history_range(
+        &self,
+        _request: &super::dto::HistoryRangeRequest,
+    ) -> Result<super::dto::HistoryRange, BlockApiException> {
+        Err(BlockApiException(
+            "this surface keeps no history to serve".to_string(),
+        ))
+    }
+
     /// `GET /api/v1/checkpoint-attestation` — this node's signature over its **own** current
     /// checkpoint digest. It never signs a caller-chosen digest; that would be a signing oracle.
     async fn checkpoint_attestation(&self) -> Result<CheckpointAttestation, BlockApiException> {

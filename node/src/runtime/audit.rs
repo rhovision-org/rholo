@@ -25,11 +25,10 @@ use rchain_block_storage::block_store::{self, BlockStore};
 use rchain_casper::api::block_api::ProposeHealth;
 use rchain_casper::engine::recovery::RecoveryReplay;
 use rchain_casper::interpreter_util::ShardHealth;
-use rchain_casper::proto_util::hash_block;
 use rchain_casper::protocol::comm_util::ConnectionsCell;
 use rchain_comm::discovery::node_discovery::NodeDiscovery;
 use rchain_models::block_hash::BlockHash;
-use rchain_models::casper::protocol::casper_message::{BlockMessage, FinalizedFringe};
+use rchain_models::casper::protocol::casper_message::{BlockHeader, FinalizedFringe};
 use rchain_models::casper::protocol::checkpoint::CheckpointCertificate;
 use rchain_models::casper::protocol::deploy_service::{LightBlockInfo, RawBlock};
 use rchain_shared::base16;
@@ -84,6 +83,131 @@ fn required_heights(anchor_height: i64) -> std::ops::RangeInclusive<i64> {
     0..=anchor_height
 }
 
+/// Heights one audit body request asks for. The history range caps a response at 64 heights; the
+/// per-height fallback uses the same window so the two paths are interchangeable.
+const MAX_AUDIT_BODY_BATCH: i64 = 64;
+
+/// The closed height windows an audit fetches, in order: `0..=anchor`, 64 heights at a time.
+fn audit_batches(last_height: i64) -> Vec<(i64, i64)> {
+    let mut batches = Vec::new();
+    let mut height = 0i64;
+    while height <= last_height {
+        let to = (height + MAX_AUDIT_BODY_BATCH - 1).min(last_height);
+        batches.push((height, to));
+        height = to + 1;
+    }
+    batches
+}
+
+/// The bodies for `[from, to]` from the history service, when the node serves one complete range.
+/// `None` means "use the per-height route": an older node, a refusal, or a gap. The range is a
+/// transport optimization; every body is reconstructed and re-hashed by the caller.
+async fn fetch_history_range(
+    client: &reqwest::Client,
+    base: &str,
+    from: i64,
+    to: i64,
+) -> Option<BTreeMap<i64, Vec<RawBlock>>> {
+    let response = client
+        .post(format!("{base}/api/v1/history/range"))
+        .json(&serde_json::json!({
+            "from": from,
+            "to": to,
+            "authorization": serde_json::Value::Null,
+        }))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let range: crate::api::dto::HistoryRange = response.json().await.ok()?;
+    if !range.complete {
+        return None;
+    }
+    let mut by_height: BTreeMap<i64, Vec<RawBlock>> = BTreeMap::new();
+    for entry in range.entries {
+        if let Some(body) = entry.body {
+            by_height.entry(entry.height).or_default().push(body);
+        }
+    }
+    if (from..=to).any(|height| !by_height.contains_key(&height)) {
+        return None;
+    }
+    Some(by_height)
+}
+
+/// One height's bodies via the per-height route: the block list at the height, then each body.
+async fn fetch_height_bodies(
+    client: &reqwest::Client,
+    base: &str,
+    height: i64,
+) -> Result<Vec<RawBlock>, String> {
+    let infos: Vec<LightBlockInfo> =
+        get_json(client, &format!("{base}/api/v1/blocks/{height}/{height}"))
+            .await
+            .map_err(|e| format!("height {height}: {e}"))?;
+    let mut bodies = Vec::new();
+    for info in infos {
+        bodies.push(
+            get_json::<RawBlock>(
+                client,
+                &format!("{base}/api/v1/block/{}/raw", info.block_hash),
+            )
+            .await
+            .map_err(|e| format!("body {}: {e}", info.block_hash))?,
+        );
+    }
+    Ok(bodies)
+}
+
+/// Record one height's bodies: reconstruct and re-hash each, check its height, build the header the
+/// certificate commits to, and store the body. An empty set is INCOMPLETE, not agreement.
+async fn record_height(
+    store: &BlockStore,
+    height: i64,
+    raws: Vec<RawBlock>,
+    headers: &mut Vec<BlockHeader>,
+    heights: &mut BTreeMap<i64, BTreeSet<BlockHash>>,
+) -> Result<(), String> {
+    let mut at_height = BTreeSet::new();
+    for raw in raws {
+        let block = reconstruct_block(&raw)?;
+        if i64::from(block.block_number) != height {
+            return Err(format!(
+                "body {} is at height {}",
+                block.block_hash.to_hex(),
+                block.block_number
+            ));
+        }
+        headers.push(BlockHeader {
+            block_hash: block.block_hash,
+            block_num: block.block_number,
+            sender: block.sender,
+            seq_num: block.seq_num,
+            justifications: block.justifications.iter().copied().collect(),
+            bonds_map: block.bonds.clone(),
+            fringe: BTreeSet::new(),
+            fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            pre_state_hash: block.pre_state_hash,
+            post_state_hash: block.post_state_hash,
+            body_available: true,
+            sig: block.sig.clone(),
+            sig_algorithm: block.sig_algorithm.clone(),
+        });
+        store
+            .put(&[(block.block_hash, block.clone())])
+            .await
+            .map_err(|e| format!("the staging block store refused a body: {e}"))?;
+        at_height.insert(block.block_hash);
+    }
+    if at_height.is_empty() {
+        return Err(format!("no block at height {height}"));
+    }
+    heights.insert(height, at_height);
+    Ok(())
+}
+
 /// **The anchor's transitive justification closure**, from the bodies an audit downloaded. A block
 /// that merely shares a height with a certified ancestor is not part of the certified metadata set;
 /// a root over every body at every height would falsely disagree with a correct certificate. The
@@ -115,29 +239,10 @@ fn ancestor_closure(
     Ok(closure)
 }
 
-/// Reconstruct the full block from a node's `RawBlock` response: the encoded preimage has the hash
-/// zeroed and the signature emptied by construction (`to_bytes_cleared`), so both are restored from
-/// the response's separate fields. The result is the block `hash_block` was taken over.
-pub fn reconstruct_block(raw: &RawBlock) -> Result<BlockMessage, String> {
-    let encoded = base16::decode(&raw.encoded)
-        .ok_or_else(|| "the raw block's `encoded` is not base16".to_string())?;
-    let mut block = BlockMessage::from_bytes(&encoded)
-        .map_err(|e| format!("the raw preimage does not decode as a block: {e}"))?;
-    let hash = base16::decode(&raw.block_hash)
-        .ok_or_else(|| "the raw block's `blockHash` is not base16".to_string())?;
-    block.block_hash = BlockHash::try_from(hash.as_slice())
-        .map_err(|e| format!("the raw block's `blockHash` is not a hash: {e}"))?;
-    block.sig = base16::decode(&raw.sig)
-        .ok_or_else(|| "the raw block's `sig` is not base16".to_string())?;
-    block.sig_algorithm = raw.sig_algorithm.clone();
-    if hash_block(&block) != block.block_hash {
-        return Err(format!(
-            "the reconstructed body does not hash to {}",
-            block.block_hash.to_hex()
-        ));
-    }
-    Ok(block)
-}
+/// **Reconstruct a block from a node's `RawBlock` response.** The implementation lives in
+/// [`crate::api::raw_block`], shared with the history service; the re-export keeps the audit's
+/// callers (and its own tests) naming the operation they use.
+pub use crate::api::raw_block::reconstruct_block;
 
 /// Run the audit. The caller prints the verdict and exits by it.
 pub async fn run(
@@ -225,82 +330,39 @@ pub async fn run(
     // The headers the certificate committed to, reconstructed from the bodies it serves. The
     // projection ignores `fringe`/`fringe_state_hash` (absent from a body); the replay bounds the
     // state those fields describe.
-    let mut headers: Vec<rchain_models::casper::protocol::casper_message::BlockHeader> = Vec::new();
-    for height in required_heights(certificate.checkpoint.anchor_height) {
-        let infos: Vec<LightBlockInfo> =
-            match get_json(&client, &format!("{base}/api/v1/blocks/{height}/{height}")).await {
-                Ok(infos) => infos,
-                Err(e) => {
-                    return Ok(incomplete(
-                        &verified,
-                        height,
-                        format!("height {height}: {e}"),
-                    ))
+    let mut headers: Vec<BlockHeader> = Vec::new();
+    // **Bodies in bounded batches.** A node that serves the history range answers a batch in one
+    // request; any other node, refusal or gap falls back to the per-height route. Either way every
+    // body is reconstructed and re-hashed, and a batch is processed before the next is fetched, so
+    // the audit never holds the whole chain in memory.
+    let last_height = *required_heights(certificate.checkpoint.anchor_height).end();
+    for (height, to) in audit_batches(last_height) {
+        match fetch_history_range(&client, &base, height, to).await {
+            Some(mut bodies) => {
+                for at in height..=to {
+                    let raws = bodies.remove(&at).unwrap_or_default();
+                    if let Err(reason) =
+                        record_height(&store, at, raws, &mut headers, &mut heights).await
+                    {
+                        return Ok(incomplete(&verified, at, reason));
+                    }
                 }
-            };
-        let mut at_height = BTreeSet::new();
-        for info in infos {
-            let raw: RawBlock = match get_json(
-                &client,
-                &format!("{base}/api/v1/block/{}/raw", info.block_hash),
-            )
-            .await
-            {
-                Ok(raw) => raw,
-                Err(e) => {
-                    return Ok(incomplete(
-                        &verified,
-                        height,
-                        format!("body {}: {e}", info.block_hash),
-                    ))
-                }
-            };
-            let block = match reconstruct_block(&raw) {
-                Ok(block) => block,
-                Err(e) => return Ok(incomplete(&verified, height, e)),
-            };
-            if i64::from(block.block_number) != height {
-                return Ok(incomplete(
-                    &verified,
-                    height,
-                    format!(
-                        "body {} is at height {}",
-                        block.block_hash.to_hex(),
-                        block.block_number
-                    ),
-                ));
             }
-            headers.push(
-                rchain_models::casper::protocol::casper_message::BlockHeader {
-                    block_hash: block.block_hash,
-                    block_num: block.block_number,
-                    sender: block.sender,
-                    seq_num: block.seq_num,
-                    justifications: block.justifications.iter().copied().collect(),
-                    bonds_map: block.bonds.clone(),
-                    fringe: BTreeSet::new(),
-                    fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
-                    pre_state_hash: block.pre_state_hash,
-                    post_state_hash: block.post_state_hash,
-                    body_available: true,
-                    sig: block.sig.clone(),
-                    sig_algorithm: block.sig_algorithm.clone(),
-                },
-            );
-            store
-                .put(&[(block.block_hash, block.clone())])
-                .await
-                .map_err(|e| format!("the staging block store refused a body: {e}"))?;
-            at_height.insert(block.block_hash);
+            None => {
+                for at in height..=to {
+                    match fetch_height_bodies(&client, &base, at).await {
+                        Ok(raws) => {
+                            if let Err(reason) =
+                                record_height(&store, at, raws, &mut headers, &mut heights).await
+                            {
+                                return Ok(incomplete(&verified, at, reason));
+                            }
+                        }
+                        Err(reason) => return Ok(incomplete(&verified, at, reason)),
+                    }
+                }
+            }
         }
-        if at_height.is_empty() {
-            return Ok(incomplete(
-                &verified,
-                height,
-                format!("no block at height {height}"),
-            ));
-        }
-        heights.insert(height, at_height);
     }
 
     // **The certificate's commitment to the metadata the replay consumed.** A mismatch is a
@@ -508,8 +570,9 @@ impl NodeDiscovery for StubDiscovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rchain_casper::proto_util::hash_block;
     use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
-    use rchain_models::casper::protocol::casper_message::RholangState;
+    use rchain_models::casper::protocol::casper_message::{BlockMessage, RholangState};
 
     fn body(hash_byte: u8, height: i64) -> BlockMessage {
         BlockMessage {
@@ -564,6 +627,32 @@ mod tests {
     fn an_audit_covers_every_height_including_genesis() {
         assert_eq!(required_heights(3).collect::<Vec<_>>(), vec![0, 1, 2, 3]);
         assert_eq!(required_heights(0).collect::<Vec<_>>(), vec![0]);
+    }
+
+    /// **The audit's body reads are batched, and the batches tile the chain exactly.** A mature
+    /// audit asks for 64-height windows; every height is covered once and none twice, so the range
+    /// fast path and the per-height fallback see the same heights.
+    #[test]
+    fn the_audit_batches_body_reads_in_bounded_height_windows() {
+        assert_eq!(audit_batches(0), vec![(0, 0)]);
+        assert_eq!(audit_batches(1), vec![(0, 1)]);
+        assert_eq!(
+            audit_batches(63),
+            vec![(0, 63)],
+            "one full window below the cap"
+        );
+        assert_eq!(audit_batches(64), vec![(0, 63), (64, 64)]);
+        assert_eq!(audit_batches(150), vec![(0, 63), (64, 127), (128, 150)]);
+        // The batches tile 0..=last exactly.
+        let last = 2_798;
+        let covered: Vec<i64> = audit_batches(last)
+            .into_iter()
+            .flat_map(|(from, to)| from..=to)
+            .collect();
+        assert_eq!(covered, (0..=last).collect::<Vec<_>>());
+        assert!(audit_batches(last)
+            .iter()
+            .all(|(from, to)| to - from + 1 <= MAX_AUDIT_BODY_BATCH));
     }
 
     /// The digest the report names is the certificate's, not the anchor's.

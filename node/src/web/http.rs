@@ -1068,6 +1068,15 @@ async fn api_history_challenge(
     )
 }
 
+/// `POST /api/v1/history/range` — a bounded window of bodies. The body names the window and,
+/// for a metered archive, carries the payer's authorization.
+async fn api_history_range(
+    State(state): State<HttpState>,
+    Json(request): Json<crate::api::dto::HistoryRangeRequest>,
+) -> Response {
+    json_result(state.web_api.history_range(&request).await)
+}
+
 /// `GET /api/v1/archives` — this node's history capability and the archives it was configured with.
 /// Liveness is not claimed; the challenge route is how a client checks one.
 async fn api_archives(State(state): State<HttpState>) -> Response {
@@ -2384,6 +2393,7 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/v1/checkpoint/{digest}", get(api_checkpoint_by_digest))
         .route("/api/v1/archives", get(api_archives))
         .route("/api/v1/history/challenge", get(api_history_challenge))
+        .route("/api/v1/history/range", post(api_history_range))
         .route(
             "/api/v1/checkpoint-attestation",
             get(api_checkpoint_attestation),
