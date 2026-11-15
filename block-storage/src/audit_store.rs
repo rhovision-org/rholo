@@ -63,12 +63,20 @@ pub struct AuditResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "row", rename_all = "camelCase")]
 enum ClaimRow {
-    Attestation { attestation: AuditAttestation },
-    Head { head: AuditHead },
-    Nonce { digest: String },
+    Attestation {
+        attestation: AuditAttestation,
+    },
+    Head {
+        head: AuditHead,
+    },
+    Nonce {
+        digest: String,
+    },
     /// A completed replay with no signed claim still consumes its nonce.
     UnattestedNonce,
-    Response { response: AuditResponse },
+    Response {
+        response: AuditResponse,
+    },
 }
 
 #[derive(Default)]
@@ -240,7 +248,10 @@ impl AuditStore {
     ) -> Result<(), String> {
         if response.attestation.is_some()
             || !matches!(
-                response.report.get("verdict").and_then(serde_json::Value::as_str),
+                response
+                    .report
+                    .get("verdict")
+                    .and_then(serde_json::Value::as_str),
                 Some("INCOMPLETE" | "DISAGREE")
             )
         {
@@ -588,7 +599,10 @@ mod tests {
                 reopened.response(&signer, &nonce).await.expect("response"),
                 Some(answer.clone())
             );
-            assert!(reopened.nonce_seen(&signer, &nonce).await.expect("spent nonce"));
+            assert!(reopened
+                .nonce_seen(&signer, &nonce)
+                .await
+                .expect("spent nonce"));
             assert!(reopened.head(&signer).await.expect("head").is_none());
             assert!(reopened.accepted().await.expect("claims").is_empty());
             assert!(reopened
@@ -611,7 +625,10 @@ mod tests {
             .record_unattested_response(&signer, "n", &reply)
             .await
             .is_err());
-        assert!(!store.nonce_seen(&signer, "n").await.expect("nonce remains unused"));
+        assert!(!store
+            .nonce_seen(&signer, "n")
+            .await
+            .expect("nonce remains unused"));
     }
 
     /// A conflict is durable evidence and is not an accepted claim.
