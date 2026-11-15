@@ -61,10 +61,7 @@ impl Codec<CheckpointCertificate> for CheckpointCertificateCodec {
         // runtime condition: the type is a fixed set of strings, lists and options. An empty row is
         // refused by `decode`, so a hypothetical failure surfaces as an unreadable certificate
         // rather than a panic in a store write.
-        match serde_json::to_vec(value) {
-            Ok(bytes) => bytes,
-            Err(_) => Vec::new(),
-        }
+        serde_json::to_vec(value).unwrap_or_default()
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<CheckpointCertificate, String> {
