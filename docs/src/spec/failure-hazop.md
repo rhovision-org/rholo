@@ -785,6 +785,38 @@ Read: `casper/src/blocks/proposer/proposer.rs` (the refusal arm, the tracker, `c
 reset tests; `tools/check-hazop-worksheet.sh`. The incident's store, terms and refused body are
 unavailable; the 45-hour timeline is a reported fact.
 
+### U24 — The anchored join, the metered archive and the attested audit
+
+**Design intent.** A running node's state is anchored and its post-anchor validation reads only the
+certified window; a history range is debited before a body leaves; and an audit claim is stored only
+after the node reproduces it. Every deviation lands in a refusal or a defined fallback — Syncing, a
+terminal stop, a `402`/`429`, or a conflict record — never in a served state the node cannot
+attribute.
+
+**Guide words.** row: NO, MORE, LESS, OTHER THAN, REVERSE, BEFORE, AFTER · folded: AS WELL AS → MORE, PART OF → LESS, EARLY → BEFORE, LATE → AFTER
+
+**Table A — deviations**
+
+| ID | Guide word | Deviation | RCA → causal chain | Current behaviour | Class | Disposition | Falsifier |
+|---|---|---|---|---|---|---|---|
+| **F-U24-01** | NO | **A populated DAG with no verified certificate is booted as if it had an anchor** — the removed `CURRENT_ROOT` heuristic republished a DAG/tip root and ran | the running phase read the root from the tip rather than from the accepted anchor → a node could run one finality step behind the state it accepted, and nothing named the missing anchor | silent: the node serves and proposes from an unattributable state. **Closed 2026-11-15 (Laws 105/108, §168)**: `AcceptedState` is the only way into Running and the boot refuses a non-genesis DAG with no verified stored certificate | Drift | R1 | casper/src/engine/anchor.rs::a_genesis_anchor_must_match_the_pin |
+| **F-U24-02** | MORE | **A peer serves more headers than the certificate committed to** — an extra ancestor, a sibling fringe member, or a fabricated branch | the metadata walk admits headers from several peers → without the statement's `metadataRoot` the extra header is indistinguishable from the committed set | loud: the walked set recomputes to another root and is refused. The joiner retries another peer and then stops in Syncing/terminal | Drift | R2 | casper/src/checkpoint.rs::a_metadata_commitment_is_bound_and_verifies |
+| **F-U24-03** | LESS | **A range answer omits an ancestor the walk needs**, or a validation-window root cannot be hydrated | a peer answers the range but drops a parent → the hash-frontier fallback asks for it by hash; a window root that cannot be hydrated is a refusal before Running | loud: fallback for the transport case, refusal for the window case; the window is never widened | Drift | R2 | casper/src/engine/lfs_metadata_requester.rs::a_peer_that_ignores_the_range_is_reported_as_unsupported |
+| **F-U24-04** | OTHER THAN | **An audit claim signed by another key, for another checkpoint, or with a derived root the local replay did not produce** | a signed claim is not a fact → acceptance is reproduction: the verifier compares every claimed fact with the node's own run and the signature with the named signer | loud: refused and recorded as conflict evidence; the accepted store's type has no public constructor | Drift | R2 | casper/src/audit.rs::an_attestation_from_another_key_is_refused |
+| **F-U24-05** | REVERSE | **A credit invoice or a range nonce is replayed** to credit or serve twice | the meter's read-modify-write is serialized and the invoice/nonce sets are durable → a second use is refused | loud: `ReplayedInvoice`/`ReplayedNonce`; no second debit or credit | Drift | R2 | block-storage/src/history_meter.rs::a_replayed_range_nonce_is_refused |
+| **F-U24-06** | BEFORE | **A body leaves before its range is debited** — the charge placed after the response is built and sent | the route built the range, then charged; a failure after the body was sent is uncollectable | closed by construction: the handler builds, charges, and only then answers, so a refused range sends nothing | Drift | R1 | block-storage/src/history_meter.rs::a_range_without_credit_is_refused_before_a_body_is_read |
+| **F-U24-07** | AFTER | **A failed possession challenge settles nothing**, so the archive keeps its fee and stays selected | the challenge outcome was not wired to settlement → an archive that cannot serve keeps its place | loud: `settle_period(false)` forfeits the period and marks the peer; the selector excludes it for a cooldown | Drift | R2 | block-storage/src/history_meter.rs::a_failed_challenge_forfeits_the_period_and_marks_the_peer |
+
+**Table C — law coverage**
+
+| deviation | law that captures it, or the law owed | why |
+|---|---|---|
+| U24-01 | Law 108 and Law 105 | the running state carries its anchor and root by construction; a failed sync is not running |
+| U24-02, U24-03 | Law 105 and Law 109 | the metadata set and the validation window are the statement's commitments; the joiner refuses rather than widening |
+| U24-04 | Law 112 | an accepted claim is one this node reproduced; the claim chains to its signer's head |
+| U24-05, U24-06 | Law 110 | a served range is accounted before it leaves; invoices and nonces are single-use |
+| U24-07 | Law 111 | settlement is determined by the possession-challenge outcome |
+
 ## 4. The fault tree
 
 ```

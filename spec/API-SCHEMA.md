@@ -83,9 +83,14 @@ rholang-typed values, and the reply shapes of the system processes.
    key that is never sent.
 6. **`POST /api/explore-deploy` takes a raw JSON string body** (the term), not
    `ExploreDeployRequest`.
-7. **`rho:rchain:deployId` / `deployerId` are bound by the normalizer env on the deploy path only.**
-   They are absent under an exploratory deploy, so a term that reads them fails there with
-   `No value set for \`rho:rchain:deployId\`` — a property of explore, not of the contract.
+8. **A signed service object is verified over canonical bytes, never over its JSON envelope.** The
+   history credit, the range authorization and the audit attestation travel as JSON (the statement
+   plus `signer`, `sigAlgorithm`, `sig`), but the signature covers a domain-tagged, length-prefixed
+   preimage defined by the type (`models/src/casper/protocol/audit.rs`,
+   `node/src/web/history_credit.rs`). A verifier must not hash the JSON: key order, whitespace and
+   number formatting are not part of the signature, and a parser that accepted a second spelling of
+   the same statement would accept a different signed message.
+
 
 ## System-process reply shapes
 

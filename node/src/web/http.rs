@@ -1574,6 +1574,78 @@ pub const OPENAPI_JSON: &str = r##"{
         }
       }
     },
+    "/history/range": {
+      "post": {
+        "summary": "Bounded history bodies for a height window",
+        "description": "At most 64 heights and 64 MiB. A metered archive requires a payer-signed authorization and debits the exact bytes before the response leaves; an open archive answers without one.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": {
+          "200": { "description": "The window's bodies, with a per-height gap reported", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "description": "Missing or invalid authorization" },
+          "402": { "description": "The account cannot pay for the range" },
+          "429": { "description": "The per-peer rate window is exhausted" }
+        }
+      }
+    },
+    "/history/credit": {
+      "post": {
+        "summary": "Deposit a settlement-key credit receipt",
+        "description": "The receipt is verified over its canonical bytes and its invoice is single-use.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": {
+          "200": { "description": "The payer's updated meter", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "description": "The receipt is not signed by this archive's settlement key, or has expired" }
+        }
+      }
+    },
+    "/history/meter/{payer}": {
+      "get": {
+        "summary": "A payer's prepaid history meter",
+        "parameters": [{ "in": "path", "name": "payer", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Credit, served and period counters", "content": { "application/json": { "schema": { "type": "object" } } } }
+        }
+      }
+    },
+    "/audit/request": {
+      "post": {
+        "summary": "Run one attested audit",
+        "description": "Opt-in, rate-limited, one replay at a time. Answers 404 when the node does not serve attested audits.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": {
+          "200": { "description": "The report and, on AGREE, the signed claim", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "400": { "description": "The nonce is not a simple identifier" },
+          "404": { "description": "This node does not serve attested audits" },
+          "429": { "description": "The hourly request budget is spent" }
+        }
+      }
+    },
+    "/audit/attestation/{request_id}": {
+      "get": {
+        "summary": "The signed claim produced for a request",
+        "parameters": [{ "in": "path", "name": "request_id", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "The produced report and claim", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "404": { "description": "No answer is held for this request id" }
+        }
+      }
+    },
+    "/audit/attestations": {
+      "get": {
+        "summary": "Claims this node itself reproduced and accepted",
+        "responses": {
+          "200": { "description": "Accepted claims", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object" } } } } }
+        }
+      }
+    },
+    "/audit/conflicts": {
+      "get": {
+        "summary": "Claims this node refused, with the local reason",
+        "responses": {
+          "200": { "description": "Conflict records", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object" } } } } }
+        }
+      }
+    },
     "/finality-observation": {
       "get": {
         "summary": "Node-local finalized frontier and observed lag (network availability unknown)",
@@ -4997,6 +5069,34 @@ mod tests {
         assert_eq!(doc["openapi"], "3.0.0");
         assert!(doc["paths"].is_object());
         assert!(doc["components"]["schemas"].is_object());
+    }
+
+    /// **The served document names every history and audit route the node mounts.** The document is
+    /// hand-written, so a route added to the router and not here is a contract a client cannot see;
+    /// this test is the join between the two.
+    #[test]
+    fn the_openapi_documents_the_history_and_audit_routes() {
+        let doc: serde_json::Value =
+            serde_json::from_str(OPENAPI_JSON).expect("served OpenAPI parses");
+        for (path, method) in [
+            ("/history/range", "post"),
+            ("/history/credit", "post"),
+            ("/history/meter/{payer}", "get"),
+            ("/audit/request", "post"),
+            ("/audit/attestation/{request_id}", "get"),
+            ("/audit/attestations", "get"),
+            ("/audit/conflicts", "get"),
+        ] {
+            assert!(
+                doc["paths"][path][method].is_object(),
+                "the served OpenAPI does not document {method} {path}"
+            );
+        }
+        assert_eq!(
+            doc["paths"]["/history/range"]["post"]["responses"]["402"]["description"],
+            "The account cannot pay for the range",
+            "the unpaid refusal is the one a consumer must handle"
+        );
     }
 
     /// The served schema must describe the same refusal on every legacy/v1

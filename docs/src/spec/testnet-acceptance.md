@@ -2538,6 +2538,37 @@ of §0.7 exists to catch. And the audit itself committed it: see §0.9.
 4. **A fetch in the setup**, which is the one thing §0.9 says no amount of care inside the analysis
    substitutes for.
 
+### U25 — The anchored join, the metered archive and the attested audit
+
+> **Added 2026-11-15 by the sync/checkpoint pass, not by the wargame.** It covers surfaces the ten
+> study nodes did not have: the checkpoint certificate and its trust anchor (#591/#592), the metered
+> history service (Laws 110/111), and the signed audit attestation (Law 112). The rows are read-only
+> analysis; no new run is claimed, and the designs are stated in
+> [Sync, checkpoints and history](../node/sync-and-history.md) and
+> [Audit attestations](../node/audit-attestations.md).
+
+**Design intent.** A running node has a trust anchor and a certified validation window; history is a
+service that debits before a body leaves; an audit claim is stored only after the node reproduces
+it; and every failure lands in a named refusal or a defined fallback.
+
+**Guide words.** row: NO, MORE, LESS, OTHER THAN, REVERSE, BEFORE, AFTER · folded: AS WELL AS → MORE, PART OF → LESS, EARLY → BEFORE, LATE → AFTER
+
+| ID | Guide word | Deviation | Cause (anchor) | Consequence → TE | A |
+|---|---|---|---|---|---|
+| **H-U25-01** | NO | **A populated DAG with no verified certificate is served as if anchored** | the removed `CURRENT_ROOT` heuristic; closed by `AcceptedState` and the boot refusal (`casper/src/engine/anchor.rs`, `casper/src/engine/node_launch.rs`) | a node runs one finality step behind the state it accepted, or serves an unattributable chain → TE-3 (the node cannot be trusted to serve) | A2.c |
+| **H-U25-02** | MORE | **A peer serves headers beyond the certificate's `metadataRoot`** | the metadata walk admits from several peers; the commitment is what rejects the extra set (`casper/src/checkpoint.rs::verify_metadata_root`) | refused, retried, then Syncing/terminal — never a widened history → TE-3 | A2.b |
+| **H-U25-03** | LESS | **A validation-window root cannot be hydrated**, or a body range omits a height | the window is a protocol constant (8) and the range is bounded at 64 heights; a missing root or body is a refusal/gap (`casper/src/engine/node_syncing.rs`, `node/src/api/web_api_impl.rs::history_range`) | the joiner stops before Running; the consumer falls back per height or reports incomplete → TE-3 | A2.b |
+| **H-U25-04** | REVERSE | **A credit invoice or range nonce is replayed**, or an audit claim is signed by another key / for another checkpoint | the meter's serialized read-modify-write and the verifier's reproduction rule (`block-storage/src/history_meter.rs`, `casper/src/audit.rs`) | a second debit/credit or a false claim is refused and recorded as conflict evidence → TE-4 (service integrity), never a consensus event | A3 |
+
+**Table B — barriers**
+
+| Deviation | Preventive barrier (anchor) | Evidence | Independence |
+|---|---|---|---|
+| H-U25-01 | `AcceptedState` is the only path into Running; a boot with no verified certificate refuses | `casper/src/engine/anchor.rs::an_accepted_state_carries_its_anchors_root` | `[one-surface]` — the launch is the only consumer |
+| H-U25-02 | `metadataRoot` over the walked header set | `casper/src/checkpoint.rs::a_metadata_commitment_is_bound_and_verifies` | `[one-surface]` — the commitment is the only authentication for headers |
+| H-U25-03 | the committed `historyRoot` and a bounded range response | `casper/src/checkpoint.rs::a_validation_window_is_bound_and_verifies` | `[one-surface]` |
+| H-U25-04 | the durable meter and the accepted-claim type | `block-storage/src/history_meter.rs::a_range_without_credit_is_refused_before_a_body_is_read`, `casper/src/audit.rs::a_reproduced_claim_is_accepted` | `[shared-cause]` — the service relationship is the same surface for the fee and the claim |
+
 ---
 
 *Provenance of the analysis.* This page was produced by an adversarial wargame over tree `1e5a64ed4`: a
