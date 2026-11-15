@@ -25,9 +25,11 @@ the finalized fringe, the shard, the epoch, and two optional commitments:
 
 - **`metadataRoot`** — a set commitment over the anchor's transitive ancestor headers (genesis
   excluded, sorted by block hash, deduplicated, length-prefixed). Each header enters through a
-  canonical projection that deliberately excludes `fringe`, `fringe_state_hash` and
-  `body_available`, so the commitment covers what the certificate is claiming and nothing a peer
-  could vary harmlessly.
+  canonical projection that includes its hash, height, sender, sequence, justifications, bonds,
+  **fringe membership, fringe state root**, the two state roots, and the signature — everything the
+  DAG reads. `body_available` is the one field excluded, because it is a per-peer transport detail.
+  The fringe fields are committed precisely because they are consensus-relevant and a body does not
+  carry them; an audit reads them from `/api/v1/block/{hash}/header` before checking the root.
 - **`historyRoot`** — a commitment over the **validation window**: the pre-state, post-state and
   fringe-state roots of the most recent `VALIDATION_WINDOW_BLOCKS = 8` headers. These are the only
   historical roots a post-anchor block (the PoS close) may read.
@@ -37,10 +39,13 @@ Validators sign the statement digest with a domain tag of its own
 assembles a certificate when the signatures reach the finality rule and serves it at
 `/api/v1/checkpoint`.
 
-Both commitments are **optional on the wire** so a legacy v1 certificate keeps its old digest. A
-legacy certificate is accepted by the audit, which still checks the state by replay, but **not** by
-sync: the sync path refuses a statement with no metadata or window commitment. A certificate with
-the commitments present has a different digest from a legacy one; the two cannot be mixed.
+The two commitments are **optional on the wire**, and the digest encodes their presence
+unambiguously: a statement with neither keeps the v1 digest byte-for-byte; a statement with at least
+one appends a presence bitmap (bit 0 `metadataRoot`, bit 1 `historyRoot`) followed by each present
+root under its own domain tag. A metadata-only statement and a history-only statement with the same
+root therefore have different digests — a signature over one cannot authenticate the other. A legacy
+certificate (neither present) is accepted by the audit, which still checks the state by replay, but
+**not** by sync: the sync path refuses a statement with no commitments.
 
 ## The join
 
@@ -63,6 +68,15 @@ The running state carries the accepted anchor and its root: `CURRENT_ROOT` is th
 construction, not a value recovered from a DAG tip. The accepted state is the only way into the
 running phase; a success signal without one is refused. A genesis anchor is accepted only when the
 genesis block is the pinned one.
+
+**What a running node accepts.** The accepted state installs a **runtime window**: the checkpoint
+root, the certified validation window, and the roots this node derives by accepting validated
+post-anchor blocks. A received block whose pre-state is none of those is refused **before replay**
+as `UncertifiedPreState` — a divergence in this node's view, not a slashable offence. The state
+store's contents are never consulted for permission, so an older historical root left on disk (from
+before the join, or from a restart) is not an input. At boot the window is rebuilt from the stored
+certificate's DAG closure and both commitments are re-verified; a missing commitment or header
+refuses to run rather than substituting an empty window.
 
 The header walk is bounded and retryable. The walk's cost is one round trip per generation on a
 single-parent chain; the range-walk optimization batches a height window per request, and every
@@ -91,7 +105,9 @@ certificate is re-verified at boot before the node runs.
 | Certificate missing, malformed, or below quorum | Refused; stay Syncing and retry |
 | `metadataRoot` or `historyRoot` missing or mismatched | Refused; never widened or guessed |
 | Window root cannot be hydrated | Refused before Running |
-| Genesis target does not match the pin | Refused |
+| A post-anchor block's pre-state is not the anchor root, a certified window root, or a root this node derived | Refused before replay as `UncertifiedPreState` |
+| Boot cannot rebuild the stored certificate's window | Refuses to run, naming the missing commitment or header |
+| Genesis target does not match the pin | Refused **before** hydration, the DAG/approved/history writes or `CURRENT_ROOT` publication; the body may remain in the block store (content verification is not acceptance) |
 | Populated DAG above genesis with no verified stored certificate | **Boot refuses to run**, naming the missing trust anchor |
 | Retry budget spent | Terminal stop; no serving from an unattributed state |
 

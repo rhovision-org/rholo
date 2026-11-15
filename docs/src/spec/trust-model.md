@@ -25,12 +25,13 @@ state's bonds have drifted from that set is refused. A node with neither anchor 
 |---|---|
 | Genesis | Exactly one height-zero block, content hash, and the configured genesis pin when present |
 | Certificate | Statement shape; every signer is a bonded key; signatures verify over the domain-tagged digest; the signers hold strictly more than two thirds of the bonded stake; the bond set has not drifted |
-| `metadataRoot` | The walked ancestor header set recomputes to the committed root; a missing or mismatched root is refused |
+| `metadataRoot` | The walked ancestor header set recomputes to the committed root; each header's **fringe membership and fringe state root** are part of the projection, and the set's shape is checked (one parentless genesis, older fringe members, non-zero non-genesis fringe roots); a missing or mismatched root is refused |
 | `historyRoot` | The last `VALIDATION_WINDOW_BLOCKS = 8` headers' pre/post/fringe roots recompute to the committed root; the joiner hydrates exactly that set and never widens it |
 | Checkpoint post-state | The anchor's post-state is the root the node runs from; an accepted state cannot carry a root its anchor does not name |
-| Genesis body | The one body this path downloads: re-hashed and refused on mismatch |
+| Genesis body | The one body this path downloads: re-hashed, and its fields checked against the walked genesis header (empty fringe, fringe state = pre-state) |
 | Ancestry shape | The walked closure is contiguous and each header's justifications are present |
-| Boot | The stored certificate is re-verified; a populated DAG above genesis with no verified certificate is refused |
+| Post-anchor block | Its pre-state must be the anchor root, a certified window root, or a root this node derived from a validated post-anchor block; the state store's contents are not permission |
+| Boot | The stored certificate is re-verified and its window rebuilt from the DAG closure; a populated DAG above genesis with no verified certificate is refused |
 
 ## What the joiner does not check
 
@@ -44,8 +45,9 @@ state's bonds have drifted from that set is refused. A node with neither anchor 
   archive's possession is checked by challenge, not by the join.
 
 The per-block `fringe_state_hash` residual that Law 83 enumerated for the removed transfer path is
-not an input to the current join: the validation window is committed by the statement, and the
-joiner refuses a missing or mismatched window rather than trusting a peer's per-block claim.
+closed for the current join: each non-genesis header's fringe claim is in the `metadataRoot`
+projection, and the genesis header is separately checked against its body. The joiner refuses a
+missing or mismatched commitment rather than trusting a peer's per-block claim.
 
 ## Publication and restart
 

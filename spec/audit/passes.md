@@ -13094,7 +13094,7 @@ the register):
 No row closes on a benchmark PASS. The join evidence is cited where it supports a witness; the law and
 the type are the close.
 
-## 169. Sync in the book, a metered archive, and attested re-execution (C384–C389)
+## 169. Sync in the book, a metered archive, and attested re-execution (C384–C396)
 
 This pass does three things the #592 close-out left open: it states the post-#591/#592 model in the
 book and the runbook; it turns history below an anchor into a **metered service**; and it makes a
@@ -13152,6 +13152,11 @@ evidence, never the closure.
 | C389 | done | the docs/runbook pages, Laws 101–112 in the reading, HAZOP U24 and acceptance U25 |
 | C390 | done | the audit re-executes the genesis body's blessed deploys, checks the derived root against the body, and answers INCOMPLETE if it cannot; the devnet evidence run reaches AGREE |
 | C391 | done | the audit reads the last eight window headers' fringe roots from `GET /api/v1/block/{hash}/header` and reports INCOMPLETE for a header it cannot read; the producer/joiner window check now holds |
+| C392 | done | review R1: the metadata commitment includes each header's fringe and fringe state root, the producer/joiner check the set's shape, and the audit hydrates every closure header and checks the genesis header against its body |
+| C393 | done | review R2: `AcceptedWindow` (anchor, certified, derived) is enforced by a pre-replay gate and rebuilt/verified at boot; an uncertified historical root in the store is not permission |
+| C394 | done | review R3: the optional commitments use a presence bitmap and per-slot domain tags; the shared Rust/Python fixture pins all four shapes and the transposition |
+| C395 | done | review R4: the benchmark digest includes `historyRoot`; PASS requires the certificate, commitments, digest-naming attestation, quorum and the proposed block's finalization; the tests run in CI |
+| C396 | done | review R5: the genesis pin is checked before any acceptance write and before boot publication; the checkpoint store serializes its read-then-write decisions |
 
 ### Non-claims
 
@@ -13169,6 +13174,9 @@ evidence, never the closure.
   and a re-measurement is an operational follow-up.
 - The attestation evidence run is a **local devnet** with throwaway keys: it shows the mechanism, not
   a live acceptance, and `execution_proven` stays `false`.
+- **The audit reads every committed header, not just the window.** The metadata commitment now covers
+  each ancestor's fringe claim, so the audit's header reads are O(ancestor closure); a header-range
+  batch is a performance follow-up, not a trust change.
 - **The signed-claim evidence is local.** `spec/audit/evidence/n-audit-chain-20261115/` records two
   AGREE audits on a local devnet (anchors 15 and 44), a claim verified offline at sequence 0, a
   second claim chained to it at sequence 1 and verified against its head, and both accepted with no

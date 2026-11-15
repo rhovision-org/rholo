@@ -473,12 +473,13 @@ mod tests {
     /// does not compile, because [`BlockStatus::failure_cause`] matches on all of them.
     #[test]
     fn the_causes_partition_the_statuses() {
-        const DIVERGENCE: [BlockStatus; 5] = [
+        const DIVERGENCE: [BlockStatus; 6] = [
             BlockStatus::InvalidStateHash,
             BlockStatus::InvalidPreStateHash,
             BlockStatus::InvalidRejectedDeploy,
             BlockStatus::InvalidBondsCache,
             BlockStatus::UnjustifiedSlash,
+            BlockStatus::UncertifiedPreState,
         ];
 
         for status in ALL {

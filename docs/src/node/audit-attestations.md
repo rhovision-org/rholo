@@ -29,16 +29,22 @@ statement type cannot be replayed here. A golden digest pins the encoding.
 
 ## What the replay establishes first
 
-Two inputs are established before the replay can produce a verdict, and neither is allowed to look
+Three inputs are established before the replay can produce a verdict, and none is allowed to look
 like a disagreement:
 
 - **The genesis post-state.** The genesis body carries its own blessed deploys, so the audit
   re-executes them and requires the derived root to equal the body's claimed post-state. An
   auditor needs no ceremony key; a body whose deploys do not derive its own state is **INCOMPLETE**.
+- **Every committed header's fringe claim.** `metadataRoot` covers each ancestor's fringe
+  membership and fringe state root, and a body carries neither. The audit reads **every** header in
+  the anchor's ancestor closure from `GET /api/v1/block/{hash}/header`, checks the route's pre/post
+  state roots against the body it served, and verifies the commitment over the hydrated set. This is
+  O(ancestor closure) requests; a header-range batch is a performance follow-up.
 - **The validation window.** `historyRoot` commits the last eight headers' pre/post/fringe state
-  roots, and a body does not carry the fringe root. The audit reads those eight headers from
-  `GET /api/v1/block/{hash}/header`; a header it cannot read is **INCOMPLETE**. Only a window that
-  reconstructs but does not match the statement is a disagreement.
+  roots; the hydrated set is what the window is recomputed from. A header the audit cannot read is
+  **INCOMPLETE**; a served set that reconstructs but does not match the statement is a disagreement.
+  The genesis header is separately checked against the downloaded body (genesis is excluded from
+  the metadata set).
 
 ## Acceptance is reproduction
 
