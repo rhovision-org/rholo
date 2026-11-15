@@ -67,6 +67,14 @@ pub struct AuditReport {
     pub derived_root: Option<String>,
     /// How many bodies the replay consumed.
     pub blocks: usize,
+    /// **Whether the certificate committed to the historical metadata.** A legacy `None` root is
+    /// accepted by the audit (with `metadata_committed: false`) because the replay still checks the
+    /// state; a reader must not mistake that for an authenticated header set.
+    pub metadata_committed: bool,
+    /// **Whether the certificate committed to the validation window.** A legacy `None` is accepted
+    /// by the audit — the replay still checks the state — and reported as uncommitted; the sync path
+    /// refuses it.
+    pub window_committed: bool,
     /// Why the verdict is not AGREE.
     pub reason: Option<String>,
 }
@@ -76,10 +84,41 @@ fn required_heights(anchor_height: i64) -> std::ops::RangeInclusive<i64> {
     0..=anchor_height
 }
 
+/// **The anchor's transitive justification closure**, from the bodies an audit downloaded. A block
+/// that merely shares a height with a certified ancestor is not part of the certified metadata set;
+/// a root over every body at every height would falsely disagree with a correct certificate. The
+/// missing hash is returned when an ancestor's body is absent — that is INCOMPLETE, not DISAGREE.
+fn ancestor_closure(
+    anchor: BlockHash,
+    headers: &[rchain_models::casper::protocol::casper_message::BlockHeader],
+) -> Result<Vec<rchain_models::casper::protocol::casper_message::BlockHeader>, BlockHash> {
+    let by_hash: BTreeMap<
+        BlockHash,
+        &rchain_models::casper::protocol::casper_message::BlockHeader,
+    > = headers
+        .iter()
+        .map(|header| (header.block_hash, header))
+        .collect();
+    let mut closure = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![anchor];
+    while let Some(hash) = stack.pop() {
+        if !seen.insert(hash) {
+            continue;
+        }
+        let Some(header) = by_hash.get(&hash) else {
+            return Err(hash);
+        };
+        closure.push((*header).clone());
+        stack.extend(header.justifications.iter().copied());
+    }
+    Ok(closure)
+}
+
 /// Reconstruct the full block from a node's `RawBlock` response: the encoded preimage has the hash
 /// zeroed and the signature emptied by construction (`to_bytes_cleared`), so both are restored from
 /// the response's separate fields. The result is the block `hash_block` was taken over.
-fn reconstruct_block(raw: &RawBlock) -> Result<BlockMessage, String> {
+pub fn reconstruct_block(raw: &RawBlock) -> Result<BlockMessage, String> {
     let encoded = base16::decode(&raw.encoded)
         .ok_or_else(|| "the raw block's `encoded` is not base16".to_string())?;
     let mut block = BlockMessage::from_bytes(&encoded)
@@ -117,10 +156,16 @@ pub async fn run(
         .build()
         .map_err(|e| format!("audit client: {e}"))?;
 
-    let certificate: CheckpointCertificate =
-        get_json(&client, &format!("{base}/api/v1/checkpoint"))
-            .await
-            .map_err(|e| format!("the checkpoint certificate was not fetched: {e}"))?;
+    // **A named digest is fetched by digest**, not compared against whatever the node currently
+    // serves: an audit of a historical certificate must still work after the head has moved. The
+    // digest self-check below stays: the returned statement must hash to the requested key.
+    let certificate_url = match &request.checkpoint {
+        Some(digest) => format!("{base}/api/v1/checkpoint/{digest}"),
+        None => format!("{base}/api/v1/checkpoint"),
+    };
+    let certificate: CheckpointCertificate = get_json(&client, &certificate_url)
+        .await
+        .map_err(|e| format!("the checkpoint certificate was not fetched: {e}"))?;
     let digest = rchain_casper::checkpoint::checkpoint_digest(&certificate.checkpoint)
         .map_err(|e| format!("the served checkpoint is malformed: {e}"))?;
     if let Some(expected) = &request.checkpoint {
@@ -177,6 +222,10 @@ pub async fn run(
             .map_err(|e| format!("the staging block store could not be opened: {e}"))?
     };
     let mut heights: BTreeMap<i64, BTreeSet<BlockHash>> = BTreeMap::new();
+    // The headers the certificate committed to, reconstructed from the bodies it serves. The
+    // projection ignores `fringe`/`fringe_state_hash` (absent from a body); the replay bounds the
+    // state those fields describe.
+    let mut headers: Vec<rchain_models::casper::protocol::casper_message::BlockHeader> = Vec::new();
     for height in required_heights(certificate.checkpoint.anchor_height) {
         let infos: Vec<LightBlockInfo> =
             match get_json(&client, &format!("{base}/api/v1/blocks/{height}/{height}")).await {
@@ -221,6 +270,23 @@ pub async fn run(
                     ),
                 ));
             }
+            headers.push(
+                rchain_models::casper::protocol::casper_message::BlockHeader {
+                    block_hash: block.block_hash,
+                    block_num: block.block_number,
+                    sender: block.sender,
+                    seq_num: block.seq_num,
+                    justifications: block.justifications.iter().copied().collect(),
+                    bonds_map: block.bonds.clone(),
+                    fringe: BTreeSet::new(),
+                    fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+                    pre_state_hash: block.pre_state_hash,
+                    post_state_hash: block.post_state_hash,
+                    body_available: true,
+                    sig: block.sig.clone(),
+                    sig_algorithm: block.sig_algorithm.clone(),
+                },
+            );
             store
                 .put(&[(block.block_hash, block.clone())])
                 .await
@@ -235,6 +301,77 @@ pub async fn run(
             ));
         }
         heights.insert(height, at_height);
+    }
+
+    // **The certificate's commitment to the metadata the replay consumed.** A mismatch is a
+    // DISAGREE: the bodies this node served are not the headers the quorum signed over. A legacy
+    // `None` root is accepted — the replay still checks the state — and reported as uncommitted, so
+    // the report never implies an authentication that did not happen.
+    let metadata_committed = certificate.checkpoint.metadata_root.is_some();
+    let window_committed = certificate.checkpoint.history_root.is_some();
+    if metadata_committed || window_committed {
+        // **The commitments cover the anchor's ancestor closure, not every block at a height.**
+        // The bodies route returns all blocks at a height, including forks; a root over that
+        // superset would disagree with a correct certificate. Walk the anchor's justifications,
+        // exactly as the producer and the joiner do.
+        let closure = match ancestor_closure(anchor, &headers) {
+            Ok(closure) => closure,
+            Err(hash) => {
+                let report = incomplete(
+                    &verified,
+                    certificate.checkpoint.anchor_height,
+                    format!("the anchor's ancestor {} has no body", hash.to_hex()),
+                );
+                write_report(&request.out, &report).await?;
+                return Ok(report);
+            }
+        };
+        if metadata_committed {
+            if let Err(e) = rchain_casper::checkpoint::verify_metadata_root(
+                &certificate.checkpoint,
+                closure.iter(),
+            ) {
+                let report = AuditReport {
+                    verdict: "DISAGREE".to_string(),
+                    checkpoint_digest: verified.digest.to_hex(),
+                    anchor: anchor.to_hex(),
+                    anchor_height: certificate.checkpoint.anchor_height,
+                    claimed_root: certificate.checkpoint.anchor_post_state.clone(),
+                    derived_root: None,
+                    blocks: heights.values().map(|set| set.len()).sum(),
+                    metadata_committed,
+                    window_committed,
+                    reason: Some(format!(
+                        "the metadata commitment does not match the bodies: {e}"
+                    )),
+                };
+                write_report(&request.out, &report).await?;
+                return Ok(report);
+            }
+        }
+        if window_committed {
+            if let Err(e) = rchain_casper::checkpoint::verify_validation_window(
+                &certificate.checkpoint,
+                closure.iter(),
+            ) {
+                let report = AuditReport {
+                    verdict: "DISAGREE".to_string(),
+                    checkpoint_digest: verified.digest.to_hex(),
+                    anchor: anchor.to_hex(),
+                    anchor_height: certificate.checkpoint.anchor_height,
+                    claimed_root: certificate.checkpoint.anchor_post_state.clone(),
+                    derived_root: None,
+                    blocks: heights.values().map(|set| set.len()).sum(),
+                    metadata_committed,
+                    window_committed,
+                    reason: Some(format!(
+                        "the validation-window commitment does not match the bodies: {e}"
+                    )),
+                };
+                write_report(&request.out, &report).await?;
+                return Ok(report);
+            }
+        }
     }
 
     let fringe_hashes: Vec<BlockHash> = certificate
@@ -277,6 +414,8 @@ pub async fn run(
             claimed_root: certificate.checkpoint.anchor_post_state.clone(),
             derived_root: Some(certificate.checkpoint.anchor_post_state.clone()),
             blocks,
+            metadata_committed,
+            window_committed,
             reason: None,
         },
         Err(reason) => AuditReport {
@@ -287,6 +426,8 @@ pub async fn run(
             claimed_root: certificate.checkpoint.anchor_post_state.clone(),
             derived_root: None,
             blocks,
+            metadata_committed,
+            window_committed,
             reason: Some(reason),
         },
     };
@@ -314,6 +455,8 @@ fn incomplete(
         claimed_root: verified.checkpoint.anchor_post_state.clone(),
         derived_root: None,
         blocks: height.max(0) as usize,
+        metadata_committed: verified.checkpoint.metadata_root.is_some(),
+        window_committed: verified.checkpoint.history_root.is_some(),
         reason: Some(reason),
     }
 }
@@ -436,6 +579,8 @@ mod tests {
                 fringe_hashes: vec![base16::encode(&[1u8; 32])],
                 parent_digest: None,
                 epoch: 0,
+                metadata_root: None,
+                history_root: None,
             },
             digest,
             supporting_stake: 3,
@@ -446,5 +591,50 @@ mod tests {
         assert_eq!(report.checkpoint_digest, digest.to_hex());
         assert_eq!(report.anchor_height, 9);
         assert_eq!(report.blocks, 4);
+    }
+
+    fn header(
+        height: i64,
+        hash_byte: u8,
+        parent: Option<BlockHash>,
+    ) -> rchain_models::casper::protocol::casper_message::BlockHeader {
+        rchain_models::casper::protocol::casper_message::BlockHeader {
+            block_hash: BlockHash::new([hash_byte; 32]),
+            block_num: rchain_shared::refined::BlockHeight::try_from(height).expect("height"),
+            sender: rchain_models::validator::Validator::new([0u8; 65]),
+            seq_num: rchain_shared::refined::SeqNum::try_from(0).expect("seq"),
+            justifications: parent.into_iter().collect(),
+            bonds_map: BTreeMap::new(),
+            fringe: BTreeSet::new(),
+            fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([1u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([2u8; 32]),
+            body_available: true,
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
+        }
+    }
+
+    /// **The certified metadata set is the anchor's ancestor closure, not every body at a height.**
+    /// A sibling at a certified height is not in the set; including it would make a correct
+    /// certificate disagree. A missing ancestor is INCOMPLETE evidence, not a disagreement.
+    #[test]
+    fn the_audit_closure_ignores_a_sibling_at_a_certified_height() {
+        let genesis = header(0, 1, None);
+        let child = header(1, 2, Some(genesis.block_hash));
+        let sibling = header(1, 3, Some(genesis.block_hash));
+        let headers = vec![genesis.clone(), child.clone(), sibling.clone()];
+        let closure = ancestor_closure(child.block_hash, &headers).expect("closure");
+        let hashes: BTreeSet<_> = closure.iter().map(|header| header.block_hash).collect();
+        assert_eq!(
+            hashes,
+            BTreeSet::from([genesis.block_hash, child.block_hash])
+        );
+        assert!(!hashes.contains(&sibling.block_hash));
+        assert_eq!(
+            ancestor_closure(sibling.block_hash, &headers[..2]),
+            Err(sibling.block_hash),
+            "a missing ancestor is INCOMPLETE evidence, not a disagreement"
+        );
     }
 }

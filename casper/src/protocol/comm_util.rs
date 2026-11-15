@@ -43,6 +43,25 @@ const MAX_BOOTSTRAP_RETRIES: u32 = 10;
 /// input to the restored state.
 pub const LFS_BLOCK_FANOUT: usize = 2;
 
+/// **How long a reader waits for the connection cell before treating peers as absent.** The cell is
+/// a `tokio::sync::RwLock`; a held writer parks every reader. The 2026-11-14 campaign measured that
+/// shape as an unlogged stall at a fixed header count, so the read is bounded for every caller.
+const CONNECTIONS_READ_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// **How long one block request may take to enter the transport.** A send that cannot complete is
+/// a peer for this round, not a hang in the caller's loop.
+const REQUEST_SEND_TIMEOUT: Duration = Duration::from_secs(2);
+
+async fn read_connections_within(
+    connections: &ConnectionsCell,
+    within: Duration,
+) -> Option<Vec<PeerNode>> {
+    match tokio::time::timeout(within, connections.read()).await {
+        Ok(guard) => Some(guard.clone()),
+        Err(_) => None,
+    }
+}
+
 /// A standalone (bootstrap) node tried to send to the bootstrap node (port of
 /// `StandaloneNodeSendToBootstrapError`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,17 +103,30 @@ impl CommUtil {
     /// The peers this node is connected to. The block walk broadcasts its requests to this set, and
     /// the give-up diagnostic lists the members that never answered — the reachability shape of a
     /// joiner whose inbound protocol/discovery ports admit only its bootstrap.
+    ///
+    /// **The read is bounded.** The cell is a `tokio::sync::RwLock`; a writer that holds it parks
+    /// every reader, and the 2026-11-14 campaign measured exactly that shape as an unlogged stall.
+    /// A held cell is treated as "no peers this round", which every caller already handles.
     pub async fn connected_peers(&self) -> Vec<PeerNode> {
-        self.connections.read().await.clone()
+        match read_connections_within(&self.connections, CONNECTIONS_READ_TIMEOUT).await {
+            Some(peers) => peers,
+            None => {
+                self.log.warn(
+                    self.log_source,
+                    &format!(
+                        "the connection cell was held for {CONNECTIONS_READ_TIMEOUT:?}; treating \
+                         peers as absent for this round"
+                    ),
+                );
+                Vec::new()
+            }
+        }
     }
 
     /// Broadcast a packet (in one piece) to up to `scope_size` random peers (port of `sendToPeers`).
     pub async fn send_to_peers(&self, message: &Packet, scope_size: Option<usize>) {
         let max = scope_size.unwrap_or(self.conf.max_num_of_connections);
-        let peers = {
-            let connections = self.connections.read().await;
-            random_connections(&connections, max)
-        };
+        let peers = random_connections(&self.connected_peers().await, max);
         let msg = protocol_helper::packet(&self.conf.local, &self.conf.network_id, message.clone());
         self.transport.broadcast(&peers, msg).await;
     }
@@ -103,10 +135,7 @@ impl CommUtil {
     /// `streamToPeers`).
     pub async fn stream_to_peers(&self, packet: &Packet, scope_size: Option<usize>) {
         let max = scope_size.unwrap_or(self.conf.max_num_of_connections);
-        let peers = {
-            let connections = self.connections.read().await;
-            random_connections(&connections, max)
-        };
+        let peers = random_connections(&self.connected_peers().await, max);
         let blob = Blob {
             sender: self.conf.local.clone(),
             packet: packet.clone(),
@@ -182,18 +211,30 @@ impl CommUtil {
             &format!("Requesting {} from {}.", hash.to_hex(), peer.endpoint.host),
         );
         let packet = BlockRequestSerde.mk_packet(&BlockRequest { hash: *hash });
-        if let Err(e) =
-            transport_layer_syntax::send_to_peer(self.transport.as_ref(), &self.conf, peer, packet)
-                .await
-        {
-            self.log.warn(
+        let sent = tokio::time::timeout(
+            REQUEST_SEND_TIMEOUT,
+            transport_layer_syntax::send_to_peer(self.transport.as_ref(), &self.conf, peer, packet),
+        )
+        .await;
+        match sent {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => self.log.warn(
                 self.log_source,
                 &format!(
                     "could not request block {} from {}: {e} (AUDIT C254's E6b)",
                     hash.to_hex(),
                     peer.endpoint.host
                 ),
-            );
+            ),
+            Err(_) => self.log.warn(
+                self.log_source,
+                &format!(
+                    "could not request block {} from {}: the send did not complete within \
+                     {REQUEST_SEND_TIMEOUT:?}",
+                    hash.to_hex(),
+                    peer.endpoint.host
+                ),
+            ),
         }
     }
 
@@ -229,7 +270,7 @@ impl CommUtil {
         let mut chosen: Vec<PeerNode> = Vec::new();
         self.request_for_block(bootstrap, hash).await;
         chosen.push(bootstrap.clone());
-        let connected = self.connections.read().await.clone();
+        let connected = self.connected_peers().await;
         let candidates: Vec<PeerNode> = connected
             .into_iter()
             .filter(|p| p.id != self.conf.local.id)
@@ -260,17 +301,28 @@ impl CommUtil {
             ),
         );
         let packet = BlockRangeRequestSerde.mk_packet(req);
-        if let Err(e) =
-            transport_layer_syntax::send_to_peer(self.transport.as_ref(), &self.conf, peer, packet)
-                .await
-        {
-            self.log.warn(
+        let sent = tokio::time::timeout(
+            REQUEST_SEND_TIMEOUT,
+            transport_layer_syntax::send_to_peer(self.transport.as_ref(), &self.conf, peer, packet),
+        )
+        .await;
+        match sent {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => self.log.warn(
                 self.log_source,
                 &format!(
                     "could not request heights {}..={} from {}: {e}",
                     req.from, req.to, peer.endpoint.host
                 ),
-            );
+            ),
+            Err(_) => self.log.warn(
+                self.log_source,
+                &format!(
+                    "could not request heights {}..={} from {}: the send did not complete within \
+                     {REQUEST_SEND_TIMEOUT:?}",
+                    req.from, req.to, peer.endpoint.host
+                ),
+            ),
         }
     }
 
@@ -290,10 +342,10 @@ impl CommUtil {
             block_hash: *hash,
             block_creator: block_creator.to_vec(),
         });
-        let peers = {
-            let connections = self.connections.read().await;
-            random_connections(&connections, self.conf.max_num_of_connections)
-        };
+        let peers = random_connections(
+            &self.connected_peers().await,
+            self.conf.max_num_of_connections,
+        );
         let message = protocol_helper::packet(&self.conf.local, &self.conf.network_id, packet);
         let outcomes = self.transport.broadcast(&peers, message.clone()).await;
 
@@ -397,10 +449,7 @@ impl CommUtil {
     ) -> Vec<PeerNode> {
         let packet = BlockRequestSerde.mk_packet(&BlockRequest { hash: *hash });
         let max = scope_size.unwrap_or(self.conf.max_num_of_connections);
-        let peers = {
-            let connections = self.connections.read().await;
-            random_connections(&connections, max)
-        };
+        let peers = random_connections(&self.connected_peers().await, max);
         let msg = protocol_helper::packet(&self.conf.local, &self.conf.network_id, packet);
         self.transport.broadcast(&peers, msg).await;
         peers
@@ -1132,5 +1181,27 @@ mod tests {
             local.id.key().to_vec()
         );
         assert_eq!(header.network_id, "testnet");
+    }
+
+    /// **A held connection cell is a timeout, not a hang.** The cell is an `RwLock`; a writer that
+    /// does not release it must not park the walk. The production bound is 2 s; the test uses 20 ms.
+    #[tokio::test]
+    async fn a_held_connection_cell_times_out_instead_of_hanging() {
+        let cell: ConnectionsCell = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+        let held = cell.write().await;
+        let started = std::time::Instant::now();
+        assert_eq!(
+            read_connections_within(&cell, Duration::from_millis(20)).await,
+            None
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "the bounded read returned on its own timeout"
+        );
+        drop(held);
+        assert_eq!(
+            read_connections_within(&cell, Duration::from_millis(20)).await,
+            Some(Vec::new())
+        );
     }
 }

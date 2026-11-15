@@ -10,6 +10,12 @@
 //! the previous checkpoint's digest, the epoch and the finalized fringe. A signature over one
 //! checkpoint is therefore not a signature over another, and a certificate cannot cross shards.
 //!
+//! **An absent parent is encoded as 32 zero bytes, and an explicit zero parent is refused.** The
+//! sentinel is deliberate: without it `parent_digest: None` and `Some("00…00")` would be two
+//! distinct wire statements with one digest. A zero digest is never a real parent, so the generic
+//! verifier rejects it as malformed before hashing; the genesis-only wrapper additionally refuses
+//! any named parent on the sync path.
+//!
 //! **What the certificate does and does not establish.** It attributes the root to a supermajority of
 //! the bonded set: a quorum that all computed the same wrong root still certifies it (Law 85's
 //! residual is unchanged). The historical audit — `rnode audit` — is the independent counterweight;
@@ -18,6 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_models::casper::protocol::casper_message::BlockHeader;
 use rchain_models::casper::protocol::checkpoint::{
     Checkpoint, CheckpointAttestation, CheckpointCertificate,
 };
@@ -49,6 +56,19 @@ pub enum CheckpointError {
     NoBonds,
     /// An attestation's digest or signature does not verify.
     BadSignature(String),
+    /// **The certificate commits to a different historical metadata set than the one the walk
+    /// holds.** The statement's root is what a joiner recomputes; a mismatch means the headers it
+    /// was given are not the headers the quorum signed over.
+    MetadataRootMismatch { claimed: String, derived: String },
+    /// **The certificate has no metadata commitment.** The sync path requires one; a legacy
+    /// statement is accepted only by the audit, which reports the absence.
+    MissingMetadataRoot,
+    /// **The certificate's validation-window commitment does not match the walked headers.** A
+    /// post-anchor block would be validated against roots the quorum did not sign over.
+    ValidationWindowMismatch { claimed: String, derived: String },
+    /// **The certificate has no validation-window commitment.** The sync path requires one; a legacy
+    /// statement is accepted only by the audit, which reports the absence.
+    MissingValidationWindow,
     /// The anchor state's active bonds differ from the bond set the verifier trusts. Weighing the
     /// signatures against the old set would count the wrong stake, so the certificate is refused.
     /// A bond-set transition needs the checkpoint chain (each certificate verified against its
@@ -76,6 +96,26 @@ impl std::fmt::Display for CheckpointError {
             ),
             CheckpointError::NoBonds => write!(f, "there is no bonded stake to verify against"),
             CheckpointError::BadSignature(why) => write!(f, "bad checkpoint attestation: {why}"),
+            CheckpointError::MetadataRootMismatch { claimed, derived } => write!(
+                f,
+                "the checkpoint commits to metadata root {claimed}, but the walked headers derive \
+                 {derived}"
+            ),
+            CheckpointError::MissingMetadataRoot => write!(
+                f,
+                "the checkpoint does not commit to its historical metadata; this build refuses an \
+                 uncommitted metadata set on the sync path"
+            ),
+            CheckpointError::ValidationWindowMismatch { claimed, derived } => write!(
+                f,
+                "the checkpoint commits to validation window {claimed}, but the walked headers \
+                 derive {derived}"
+            ),
+            CheckpointError::MissingValidationWindow => write!(
+                f,
+                "the checkpoint does not commit to a validation window; this build refuses to \
+                 validate against roots the quorum did not sign"
+            ),
             CheckpointError::BondSetDrifted { genesis, anchor } => write!(
                 f,
                 "the anchor state's active bond set ({anchor} validator(s)) differs from the \
@@ -118,10 +158,31 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
             "the anchor height is negative".to_string(),
         ));
     }
+    // **The epoch is a nonnegative shape field.** The producer derives it from a nonnegative
+    // anchor height and a positive epoch length; a signed statement that carries a negative epoch
+    // is not a statement this build can have produced, and accepting it would put an impossible
+    // value inside a digest every verifier agrees on.
+    if checkpoint.epoch < 0 {
+        return Err(CheckpointError::Malformed(
+            "the checkpoint epoch is negative".to_string(),
+        ));
+    }
     let anchor = decode_32(&checkpoint.anchor, "anchor")?;
     let post = decode_32(&checkpoint.anchor_post_state, "anchorPostState")?;
     let parent = match &checkpoint.parent_digest {
-        Some(hex) => decode_32(hex, "parentDigest")?,
+        Some(hex) => {
+            let bytes = decode_32(hex, "parentDigest")?;
+            // **A zero parent is invalid, not absent.** An absent parent is encoded as 32 zero
+            // bytes below; if an explicit zero digest were hashed as well, `None` and
+            // `Some(00…00)` would be two distinct wire statements with one digest. The sentinel
+            // makes the explicit zero unrepresentable, so the two cannot alias.
+            if bytes == [0u8; 32] {
+                return Err(CheckpointError::Malformed(
+                    "parentDigest is the zero digest".to_string(),
+                ));
+            }
+            bytes
+        }
         None => [0u8; 32],
     };
     let fringe_hex = &checkpoint.fringe_hashes;
@@ -156,7 +217,71 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
     for h in &fringe {
         buf.extend_from_slice(h);
     }
+    // **The optional metadata commitment is appended only when present**, so a `None` statement
+    // keeps the exact v1 preimage (and digest) it had before this field existed. The presence byte
+    // keeps the extension unambiguous: a `Some` statement is 33 bytes longer than a `None` one.
+    if let Some(root) = &checkpoint.metadata_root {
+        let bytes = decode_32(root, "metadataRoot")?;
+        buf.push(1);
+        buf.extend_from_slice(&bytes);
+    }
+    // **The validation window is committed after the metadata set**, with the same presence-byte
+    // extension: a statement with neither field keeps the v1 digest, and a statement with both is
+    // unambiguous by field order.
+    if let Some(root) = &checkpoint.history_root {
+        let bytes = decode_32(root, "historyRoot")?;
+        buf.push(1);
+        buf.extend_from_slice(&bytes);
+    }
     Ok(Blake2b256Hash::create(&buf))
+}
+
+/// **Recompute the validation-window commitment from the headers a joiner walked.** The statement
+/// names the roots a post-anchor block may read; the joiner checks that the set is the one the quorum
+/// signed and hydrates exactly it. A missing commitment or a mismatch is a refusal on the sync path;
+/// the audit is the only caller allowed to accept a legacy `None`, and it reports the absence.
+pub fn verify_validation_window<'a>(
+    checkpoint: &Checkpoint,
+    headers: impl IntoIterator<Item = &'a BlockHeader>,
+) -> Result<(), CheckpointError> {
+    let claimed = checkpoint
+        .history_root
+        .as_ref()
+        .ok_or(CheckpointError::MissingValidationWindow)?;
+    let claimed_bytes = decode_32(claimed, "historyRoot")?;
+    let derived = rchain_models::casper::protocol::checkpoint::validation_window_root(headers);
+    if derived.as_bytes() != &claimed_bytes {
+        return Err(CheckpointError::ValidationWindowMismatch {
+            claimed: claimed.clone(),
+            derived: derived.to_hex(),
+        });
+    }
+    Ok(())
+}
+
+/// **Recompute the metadata commitment from the headers a joiner walked.**
+///
+/// The certificate's root is the quorum's commitment to the anchor's ancestor headers; the joiner
+/// has the headers, so it can check the statement it is about to trust. Genesis is excluded by
+/// [`metadata_root`] itself, and a missing commitment is a refusal on the sync path (the audit is
+/// the only caller allowed to accept a legacy `None`, and it reports the absence).
+pub fn verify_metadata_root<'a>(
+    checkpoint: &Checkpoint,
+    headers: impl IntoIterator<Item = &'a BlockHeader>,
+) -> Result<(), CheckpointError> {
+    let claimed = checkpoint
+        .metadata_root
+        .as_ref()
+        .ok_or(CheckpointError::MissingMetadataRoot)?;
+    let claimed_bytes = decode_32(claimed, "metadataRoot")?;
+    let derived = rchain_models::casper::protocol::checkpoint::metadata_root(headers);
+    if derived.as_bytes() != &claimed_bytes {
+        return Err(CheckpointError::MetadataRootMismatch {
+            claimed: claimed.clone(),
+            derived: derived.to_hex(),
+        });
+    }
+    Ok(())
 }
 
 /// A verified certificate: the statement, its digest, and the stake that signed it.
@@ -272,6 +397,10 @@ pub fn verify_genesis_rooted_certificate(
     certificate: &CheckpointCertificate,
     bonds: &BTreeMap<Validator, NonNegI64>,
 ) -> Result<VerifiedCheckpoint, CheckpointError> {
+    // **The statement's shape is validated before the parent rule.** `named_parent` decodes a
+    // parent but does not hash; without this, an explicit zero parent would be reported
+    // `WrongParent` here and `Malformed` by the generic verifier. One statement, one refusal.
+    checkpoint_digest(&certificate.checkpoint)?;
     if let Some(parent) = named_parent(certificate) {
         return Err(CheckpointError::WrongParent {
             expected: None,
@@ -333,6 +462,8 @@ mod tests {
             fringe_hashes: vec![hash(1)],
             parent_digest: None,
             epoch: 4,
+            metadata_root: None,
+            history_root: None,
         }
     }
 
@@ -346,6 +477,24 @@ mod tests {
             Validator::try_from(public_bytes.as_slice()).expect("a validator key"),
             key,
         )
+    }
+
+    fn header(height: i64, hash_byte: u8) -> BlockHeader {
+        BlockHeader {
+            block_hash: rchain_models::block_hash::BlockHash::new([hash_byte; 32]),
+            block_num: rchain_shared::refined::BlockHeight::try_from(height).expect("height"),
+            sender: Validator::new([0u8; 65]),
+            seq_num: rchain_shared::refined::SeqNum::try_from(0).expect("seq"),
+            justifications: BTreeSet::new(),
+            bonds_map: BTreeMap::new(),
+            fringe: BTreeSet::new(),
+            fringe_state_hash: rchain_models::block::state_hash::StateHash::new([3u8; 32]),
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([4u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([5u8; 32]),
+            body_available: false,
+            sig: vec![1, 2, 3],
+            sig_algorithm: "secp256k1".to_string(),
+        }
     }
 
     fn attest(checkpoint: &Checkpoint, key: &PrivateKey) -> CheckpointAttestation {
@@ -378,6 +527,8 @@ mod tests {
             |c: &mut Checkpoint| c.anchor_post_state = hash(9),
             |c: &mut Checkpoint| c.epoch = 5,
             |c: &mut Checkpoint| c.parent_digest = Some(hash(7)),
+            |c: &mut Checkpoint| c.metadata_root = Some(hash(7)),
+            |c: &mut Checkpoint| c.history_root = Some(hash(7)),
             |c: &mut Checkpoint| {
                 c.fringe_hashes = vec![hash(1), hash(9)];
             },
@@ -553,5 +704,254 @@ mod tests {
         let a: BTreeSet<Validator> = [v1, v2].into_iter().collect();
         let b: BTreeSet<Validator> = [v2, v3].into_iter().collect();
         assert!(!a.is_disjoint(&b));
+    }
+
+    /// **The absent-parent encoding is unchanged.** The sentinel fix rejects an explicit zero
+    /// parent without moving any digest a `None`-parent statement already had; this value is the
+    /// pre-fix fixture's digest.
+    #[test]
+    fn a_none_parent_statement_keeps_its_v1_digest() {
+        assert_eq!(
+            checkpoint_digest(&checkpoint()).expect("digest").to_hex(),
+            "688779f55fb88078a2a5939ca49ee62e726131d3dfbe2fdf4ce6d6c8d0ed803d"
+        );
+    }
+
+    /// **A zero parent is invalid, not absent.** `None` hashes as 32 zero bytes; an explicit
+    /// `Some(00…00)` must not reach the hash, or two distinct statements would share a digest.
+    #[test]
+    fn an_explicit_zero_parent_is_malformed() {
+        let mut c = checkpoint();
+        c.parent_digest = Some(hash(0));
+        assert!(matches!(
+            checkpoint_digest(&c),
+            Err(CheckpointError::Malformed(_))
+        ));
+    }
+
+    /// The mutation the audit named: change an absent parent to an explicit zero and keep the
+    /// existing signature. The digest cannot be recomputed, so the attestation cannot verify.
+    #[test]
+    fn changing_an_absent_parent_to_zero_without_resigning_is_refused() {
+        let (v1, k1) = validator(1);
+        let bonds: BTreeMap<Validator, NonNegI64> = [(v1, NonNegI64::try_from(100).unwrap())]
+            .into_iter()
+            .collect();
+        let c = checkpoint();
+        let mut mutated = c.clone();
+        mutated.parent_digest = Some(hash(0));
+        let cert = CheckpointCertificate {
+            checkpoint: mutated,
+            attestations: vec![attest(&c, &k1)],
+        };
+        assert!(matches!(
+            verify_checkpoint_certificate(&cert, &bonds, None),
+            Err(CheckpointError::Malformed(_))
+        ));
+        // The genesis-only wrapper validates the shape before `named_parent`, so both entry
+        // points name the same fact.
+        assert!(matches!(
+            verify_genesis_rooted_certificate(&cert, &bonds),
+            Err(CheckpointError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn an_epoch_below_zero_is_malformed() {
+        let mut c = checkpoint();
+        c.epoch = -1;
+        assert!(matches!(
+            checkpoint_digest(&c),
+            Err(CheckpointError::Malformed(_))
+        ));
+    }
+
+    /// **A forged signature over the correct digest must fail in the cryptographic check, not in
+    /// the declared-digest comparison.** This is the test the old suite lacked: disabling
+    /// `alg.verify` left every other case green.
+    #[test]
+    fn a_corrupted_signature_over_the_correct_digest_is_refused() {
+        let (v1, k1) = validator(1);
+        let bonds: BTreeMap<Validator, NonNegI64> = [(v1, NonNegI64::try_from(100).unwrap())]
+            .into_iter()
+            .collect();
+        let c = checkpoint();
+        let mut attestation = attest(&c, &k1);
+        let mut sig = base16::decode(&attestation.sig).expect("sig is hex");
+        sig[0] ^= 0xff;
+        attestation.sig = base16::encode(&sig);
+        let cert = CheckpointCertificate {
+            checkpoint: c,
+            attestations: vec![attestation],
+        };
+        assert!(matches!(
+            verify_checkpoint_certificate(&cert, &bonds, None),
+            Err(CheckpointError::BadSignature(_))
+        ));
+    }
+
+    /// A signature over the correct prehash but made by another key, declared under a bonded
+    /// sender, must fail in `alg.verify`.
+    #[test]
+    fn a_signature_from_another_key_is_refused() {
+        let (v1, _k1) = validator(1);
+        let (_v2, k2) = validator(2);
+        let bonds: BTreeMap<Validator, NonNegI64> =
+            [(v1.clone(), NonNegI64::try_from(100).unwrap())]
+                .into_iter()
+                .collect();
+        let c = checkpoint();
+        let mut attestation = attest(&c, &k2);
+        attestation.sender = base16::encode(v1.as_bytes());
+        let cert = CheckpointCertificate {
+            checkpoint: c,
+            attestations: vec![attestation],
+        };
+        assert!(matches!(
+            verify_checkpoint_certificate(&cert, &bonds, None),
+            Err(CheckpointError::BadSignature(_))
+        ));
+    }
+
+    /// **The stateless half of the conflict witness.** Two actually signed 3-of-4 certificates at
+    /// one parent both verify; a verifier alone cannot reject the second, which is why the store
+    /// must detect the conflict (U2). The signer sets intersect, as Law 104 says.
+    #[test]
+    fn two_signed_conflicting_certificates_both_verify() {
+        let keys = [validator(1), validator(2), validator(3), validator(4)];
+        let bonds: BTreeMap<Validator, NonNegI64> = keys
+            .iter()
+            .map(|(v, _)| (v.clone(), NonNegI64::try_from(100).unwrap()))
+            .collect();
+        let a = checkpoint();
+        let mut b = checkpoint();
+        b.anchor_post_state = hash(9);
+        let cert_a = CheckpointCertificate {
+            checkpoint: a.clone(),
+            attestations: vec![
+                attest(&a, &keys[0].1),
+                attest(&a, &keys[1].1),
+                attest(&a, &keys[2].1),
+            ],
+        };
+        let cert_b = CheckpointCertificate {
+            checkpoint: b.clone(),
+            attestations: vec![
+                attest(&b, &keys[1].1),
+                attest(&b, &keys[2].1),
+                attest(&b, &keys[3].1),
+            ],
+        };
+        let verified_a =
+            verify_checkpoint_certificate(&cert_a, &bonds, None).expect("certificate a");
+        let verified_b =
+            verify_checkpoint_certificate(&cert_b, &bonds, None).expect("certificate b");
+        assert_eq!(verified_a.supporting_stake, 300);
+        assert_eq!(verified_b.supporting_stake, 300);
+        assert_ne!(verified_a.digest, verified_b.digest);
+        let senders = |cert: &CheckpointCertificate| -> BTreeSet<Validator> {
+            cert.attestations
+                .iter()
+                .map(|attestation| {
+                    let bytes = base16::decode(&attestation.sender).expect("sender is hex");
+                    Validator::try_from(bytes.as_slice()).expect("sender is a key")
+                })
+                .collect()
+        };
+        assert!(!senders(&cert_a).is_disjoint(&senders(&cert_b)));
+    }
+
+    /// **The metadata commitment is a set commitment over the walked headers.** Genesis is
+    /// excluded; `body_available` is a transport detail and is not hashed; a changed committed
+    /// field changes the root; a missing commitment is refused on the sync path.
+    #[test]
+    fn a_metadata_commitment_is_bound_and_verifies() {
+        use rchain_models::casper::protocol::checkpoint::metadata_root;
+
+        let genesis = header(0, 1);
+        let child = header(1, 2);
+        let root = metadata_root([&genesis, &child]);
+        assert_eq!(
+            root,
+            metadata_root([&child]),
+            "genesis is excluded from the commitment"
+        );
+
+        let mut c = checkpoint();
+        let without = checkpoint_digest(&c).expect("digest");
+        c.metadata_root = Some(root.to_hex());
+        assert_ne!(
+            checkpoint_digest(&c).expect("digest"),
+            without,
+            "the commitment is bound by the signed digest"
+        );
+        assert!(verify_metadata_root(&c, [&genesis, &child]).is_ok());
+
+        let mut other = child.clone();
+        other.body_available = true;
+        assert!(
+            verify_metadata_root(&c, [&genesis, &other]).is_ok(),
+            "body availability is a per-peer transport detail, not a committed field"
+        );
+
+        let mut tampered = child.clone();
+        tampered.pre_state_hash = rchain_models::block::state_hash::StateHash::new([9u8; 32]);
+        assert!(matches!(
+            verify_metadata_root(&c, [&genesis, &tampered]),
+            Err(CheckpointError::MetadataRootMismatch { .. })
+        ));
+
+        let legacy = checkpoint();
+        assert!(matches!(
+            verify_metadata_root(&legacy, [&genesis, &child]),
+            Err(CheckpointError::MissingMetadataRoot)
+        ));
+    }
+
+    /// **The validation window is committed, and only the committed window validates.** The
+    /// commitment binds the selected roots; a dropped header or a changed field derives another root
+    /// and is refused. A legacy statement without the commitment is refused by the sync check.
+    #[test]
+    fn a_validation_window_is_bound_and_verifies() {
+        use rchain_models::casper::protocol::checkpoint::{
+            validation_window_root, validation_window_roots,
+        };
+
+        let genesis = header(0, 1);
+        let child = header(1, 2);
+        let mut grandchild = header(2, 3);
+        grandchild.pre_state_hash = rchain_models::block::state_hash::StateHash::new([6u8; 32]);
+        let headers = [&genesis, &child, &grandchild];
+
+        let root = validation_window_root(headers);
+        assert!(!validation_window_roots(headers).is_empty());
+        let mut c = checkpoint();
+        let without = checkpoint_digest(&c).expect("digest");
+        c.history_root = Some(root.to_hex());
+        assert_ne!(
+            checkpoint_digest(&c).expect("digest"),
+            without,
+            "the window commitment is bound by the signed digest"
+        );
+        assert!(verify_validation_window(&c, headers).is_ok());
+
+        let shortened = [&genesis, &child];
+        assert!(matches!(
+            verify_validation_window(&c, shortened),
+            Err(CheckpointError::ValidationWindowMismatch { .. })
+        ));
+
+        let mut tampered = child.clone();
+        tampered.post_state_hash = rchain_models::block::state_hash::StateHash::new([9u8; 32]);
+        assert!(matches!(
+            verify_validation_window(&c, [&genesis, &tampered, &grandchild]),
+            Err(CheckpointError::ValidationWindowMismatch { .. })
+        ));
+
+        let legacy = checkpoint();
+        assert!(matches!(
+            verify_validation_window(&legacy, headers),
+            Err(CheckpointError::MissingValidationWindow)
+        ));
     }
 }

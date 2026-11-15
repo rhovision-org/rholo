@@ -32,6 +32,9 @@ pub struct SyncCensus {
     pub backfilled_bodies: AtomicU64,
     /// Body requests the backfill sent, including retries.
     pub backfill_requests: AtomicU64,
+    /// **Two checkpoint statements seen at one anchor** (Law 104's equivocation shape). The head is
+    /// never replaced by the second; this counter is the alarm.
+    pub checkpoint_conflicts: AtomicU64,
 }
 
 impl SyncCensus {
@@ -81,6 +84,10 @@ impl SyncCensus {
         self.replay_nanos.fetch_add(nanos, Ordering::Relaxed);
     }
 
+    pub fn add_checkpoint_conflict(&self) {
+        self.checkpoint_conflicts.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// A JSON-able reading. Field names are the metrics keys (`sync_pages_requested`, …).
     pub fn snapshot(&self) -> SyncCensusSnapshot {
         let load = |v: &AtomicU64| v.load(Ordering::Relaxed);
@@ -100,6 +107,7 @@ impl SyncCensus {
             sync_replay_nanos: load(&self.replay_nanos),
             sync_backfilled_bodies: load(&self.backfilled_bodies),
             sync_backfill_requests: load(&self.backfill_requests),
+            sync_checkpoint_conflicts: load(&self.checkpoint_conflicts),
         }
     }
 }
@@ -124,6 +132,7 @@ pub fn census() -> &'static SyncCensus {
         replay_nanos: AtomicU64::new(0),
         backfilled_bodies: AtomicU64::new(0),
         backfill_requests: AtomicU64::new(0),
+        checkpoint_conflicts: AtomicU64::new(0),
     };
     &CENSUS
 }
@@ -148,6 +157,7 @@ pub struct SyncCensusSnapshot {
     pub sync_replay_nanos: u64,
     pub sync_backfilled_bodies: u64,
     pub sync_backfill_requests: u64,
+    pub sync_checkpoint_conflicts: u64,
 }
 
 #[cfg(test)]
@@ -166,6 +176,7 @@ mod tests {
         c.add_resend();
         c.add_state_roots(2);
         c.add_replay(10, 20);
+        c.add_checkpoint_conflict();
         let s = c.snapshot();
         assert_eq!(s.sync_pages_requested, 3);
         assert_eq!(s.sync_pages_received, 2);
@@ -180,5 +191,6 @@ mod tests {
         assert_eq!(s.sync_state_roots_requested, 2);
         assert_eq!(s.sync_replay_blocks, 10);
         assert_eq!(s.sync_replay_nanos, 20);
+        assert_eq!(s.sync_checkpoint_conflicts, 1);
     }
 }

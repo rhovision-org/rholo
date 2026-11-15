@@ -34,6 +34,7 @@ HEIGHTS="256,756,2432"
 RUNS=3
 OUT="target/sync-bench"
 REBUILD=false
+GATE_ID="C377"
 BUILD_HTTP_BASE=61403
 MEASURE_PREFIX="syncmeas"
 MEASURE_NETWORK="syncmeas"
@@ -47,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     --runs) RUNS="${2:?}"; shift 2 ;;
     --out) OUT="${2:?}"; shift 2 ;;
     --rebuild) REBUILD=true; shift ;;
+    --gate-id) GATE_ID="${2:?}"; shift 2 ;;
     *) echo "sync-bench: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -103,11 +105,58 @@ measure() { # <height> <run>
       --target-height "$h" \
       --observer \
       --bootstrap-volume "$vol" \
+      --join-mode checkpoint \
       --no-autopropose --no-propose-on-deploy \
       --restore-timeout 1800
   DEVNET_PREFIX="$MEASURE_PREFIX" DEVNET_NETWORK="$MEASURE_NETWORK" \
     tools/devnet.sh down -v >/dev/null 2>&1 || true
   echo "    result: ${dir}/raw/result.json"
+}
+
+summarize() { # <height>
+  local h="$1"
+  python3 - "$OUT" "$h" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+out, h = Path(sys.argv[1]), sys.argv[2]
+results = []
+for path in sorted(out.glob(f"{h}-run*/raw/result.json")):
+    data = json.loads(path.read_text())
+    results.append(
+        (
+            path.parent.parent.name,
+            data.get("joiner", {}).get("restore_seconds"),
+            data.get("verdict_hint"),
+            data.get("verdict_reasons", []),
+        )
+    )
+if not results:
+    print(f"sync-bench: {h}: no result.json files", file=sys.stderr)
+    sys.exit(1)
+times = sorted(t for _, t, _, _ in results if isinstance(t, (int, float)))
+
+def percentile(p: float):
+    if not times:
+        return None
+    index = max(0, min(len(times) - 1, round((len(times) - 1) * p)))
+    return times[index]
+
+print(
+    f"==> {h}: runs={len(results)} p50={percentile(0.50)}s p95={percentile(0.95)}s"
+)
+bad = [row for row in results if row[2] != "PASS"]
+for name, seconds, verdict, reasons in results:
+    detail = f" — {'; '.join(reasons)}" if reasons else ""
+    print(f"    {name}: {verdict} {seconds}s{detail}")
+if bad:
+    print(
+        f"sync-bench: {h}: {len(bad)} run(s) are not PASS; refusing a PASS summary",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
 }
 
 echo "==> sync-bench: heights ${HEIGHTS}, ${RUNS} run(s) each, out ${OUT}"
@@ -116,8 +165,9 @@ for h in ${HEIGHTS//,/ }; do
   for (( r = 1; r <= RUNS; r++ )); do
     measure "$h" "$r"
   done
+  summarize "$h"
 done
 echo "==> sync-bench: done. Pack a run with:"
 echo "    python3 tools/evidence-pack.py pack --run-dir ${OUT}/<height>-run<run> \\"
-echo "      --record spec/audit/evidence/sync-<height>-<date> --gate-id C339 \\"
+echo "      --record spec/audit/evidence/sync-<height>-<date> --gate-id ${GATE_ID} \\"
 echo "      --verdict PASS|FAIL|INCONCLUSIVE --locality local-devnet"

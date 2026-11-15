@@ -12921,3 +12921,175 @@ not served by the body-reading routes.
 **Verification.** Targeted suites for the checkpoint, sync, DAG, backfill, archives and audit paths;
 Laws 104–107 build and the register is consistent at 107 laws / 162 entries; the 2,432-height
 checkpoint join and the audit's DISAGREE remain the acceptance run for this pass.
+
+## 167. Checkpoint hardening after the stage-one audit (C377–C379)
+
+An independent stage-one audit, run against the `26ba696a`/`abf55f9e` heads before #591 merged,
+reported six findings and a set of integration obligations. Re-checked on the merged tree, **F1** (an
+absent parent and an explicit zero parent hashed alike), **F4** (no forged-signature test reached
+`alg.verify`), **F5** (the conflict test was a set intersection, and the store overwrote the served
+head), **F6** (a negative epoch was accepted) and **F2/F3** (the benchmark timed the restore before
+readiness and passed on height alone) were present. F2/F3 were benchmark defects, not sync defects.
+
+**The verifier.** An explicit zero parent is now `Malformed`, refused before hashing; the
+absent-parent encoding is unchanged (a golden v1 digest pins it); a negative epoch is malformed. A
+corrupted signature over the correct digest and a signature from another key now reach the
+cryptographic check, so the audit's `alg.verify`-disabled mutant fails. A signed 3-of-4 conflict
+witness verifies both statements statelessly, and the store carries the stateful half: `record` keeps
+the digest-keyed row and an anchor index; `adopt` moves the head only forward, never across shards,
+never between statements at one anchor. The anchor index survives a reopen, and no plain overwrite
+caller remains.
+
+**Metadata authentication.** The checkpoint statement now carries an optional `metadataRoot`: a set
+commitment over the anchor's transitive justification closure, genesis excluded, sorted by block
+hash, over the fields a body carries. The digest appends it only when present, so legacy certificates
+keep their v1 digest. The producer refuses to sign a partial root; the joiner recomputes it over the
+headers it walked and refuses a mismatch or a missing commitment; the audit recomputes it over the
+anchor's ancestor closure and reports `metadataCommitted: false` for a legacy certificate.
+
+**The benchmark.** The restore clock now stops after the readiness probe (`measure_restore`'s
+signature makes the order structural), and PASS requires a certified anchor at or above the
+bootstrap's finalized height, the same post-state at that anchor, matching finalized values, a
+post-join block that finalizes, a restart that retains the certified anchor and finalized height,
+and `replayed none` with no replay marker. A missing certificate or unreadable post-state is
+INCONCLUSIVE. `--no-autopropose` now reaches devnet (its default is on; omitting the flag did not
+disable it), so the measured bootstrap does not compete with its own restore. Offline tests pin the
+clock, the boundary witness and the golden digest across the Rust and Python encodings.
+
+**What the smoke found, and the fixes.** A 20-height certified join accepted the state and logged
+`replayed none`, then failed on the first post-anchor block:
+
+- the boot republish of `CURRENT_ROOT` read the tip's **body**, which a checkpoint-synced node does
+  not hold; the pointer stayed at genesis and the first block was validated against the wrong state.
+  The tip's post-state now comes from metadata, and the approved finalized fringe's state is
+  preferred when present.
+- the first post-anchor block runs the PoS close for a block a few heights behind it;
+  `validateBlockCheckpoint` regenerates that block's mergeable channels, and the checkpoint state
+  alone did not carry them. The sync now hydrates the last eight walked headers' pre/post/fringe
+  states (at most 24 content-addressed roots; the C339 cost was 316 full-trie walks).
+
+**Liveness boundary (recorded, not a verifier defect).** The strict `3s > 2t` rule means a cold
+bonded validator can join only if the remaining bonded validators are a quorum. With equal stake N=4
+has 3-of-4; N=3 has 2-of-3 = exactly two thirds and is refused; N=2 has 1-of-2. A one-validator
+bootstrap plus an unbonded observer joins (the observer is not weighed); a cold bonded validator
+needs N≥4. Changing this is a consensus change and is out of scope.
+
+**Funding.** The history tier's funding rail is the **direct REV service fee** — the decision of
+record (2026-11-15, owner: Patrick): no consensus change, no new token, no new slashing rule.
+
+**Acceptance.** The root-cause closure is by Law 108 (anchored running) and Law 109 (certified
+validation roots) and the types in `casper/src/engine/anchor.rs`, not by a benchmark run. The
+2,788-height join is evidence that the anchor/metadata/window path works (certificate and post-state
+matched, post-join finality, restart retention, `replayed none`); its 817 s is recorded as a
+performance miss with its cause (the header walk is one round-trip per header), not re-presented as
+an acceptance. See §168 for the design, the fallbacks, and the register re-derivation.
+
+## 168. Sync, archive and audit: the design, its invariants, and the re-derived register
+
+The register was partly written against the replay-sync design #591 removed. This section states the
+design that exists, the invariants that remove the unsafe states by type, the safe fallbacks, and the
+disposition of every sync/archive/audit row. **The closure standard:** the bad state is not
+representable, a law forbids it, failure lands in a defined safe state, and the row cites that law —
+a benchmark or a passing test alone is not a close.
+
+### The design
+
+**Sync moves from a trust anchor to the tip over authenticated data; it never replays.**
+The anchor is exactly one of:
+
+- the operator's **genesis** — the manifest/descriptors and the genesis block's post-state
+  (`TrustAnchor::Genesis`); or
+- a **verified quorum checkpoint** — strict `3s > 2t` over the genesis active bonds, a well-shaped
+  statement, and a metadata set committed by `metadataRoot`.
+
+The accepted state is the anchor's root plus the **certified validation window** (`historyRoot`): the
+last `VALIDATION_WINDOW_BLOCKS` headers' pre/post/fringe roots that a post-anchor block — the PoS
+close — may read. The joiner hydrates exactly the window the statement names; it never widens the
+window to make a block validate. Bodies are hash-checked when acquired; replay is `rnode audit`'s job.
+The DAG is built from committed headers.
+
+**Archive is a capability, not a node type.** It holds bodies, advertises its floor, and answers a
+nonce-derived possession challenge; a failure is fee/reputation, never consensus.
+
+**Audit is the independent check.** `AGREE`/`DISAGREE`/`INCOMPLETE`; a divergence is an alarm on an
+accepted state, never a rewind or a sync gate.
+
+### Invariants and their laws
+
+| # | Invariant | Law |
+|---|---|---|
+| A1 | A well-shaped statement: absent ≠ explicit-zero parent, epoch ≥ 0, strict quorum, signer dedupe | 104 |
+| A2 | The metadata set is `metadataRoot`; a mismatch or missing root is refused | 105 |
+| A3 | Running carries an `AcceptedState`; the current root is the anchor's; a failed sync is not running | 108 |
+| A4 | A post-anchor block validates only against the certified window; an uncertified root is refused | 109 |
+| A5 | A genesis-only network's anchor is the pinned genesis; no certificate is requested | 108 |
+| A6 | The served head is an adopted statement; it never moves backwards, across shards, or between statements at one anchor | 104b |
+| A7 | Audit verdicts are sound w.r.t. the roots and the commitment; incomplete ≠ agreement | 106 |
+| A8 | Availability is a service; a challenge proves possession; `unavailable` ≠ `not found` | 107 |
+
+### Safe fallbacks
+
+| Failure | Safe state |
+|---|---|
+| No/malformed/unquorate certificate, metadata mismatch, missing validation root | stay `Syncing` and retry; exhausted → terminal stop (`Refused`). Never `Running`. |
+| No trust anchor at boot (no approved fringe, no genesis pin) | refuse to run; never publish a heuristic root |
+| Genesis block ≠ the pin | refuse the anchor |
+| Body hash mismatch | drop the body; the history floor is unchanged; never serve it |
+| Audit `DISAGREE` | alarm on the accepted state (Law 106); operator policy may halt; never a rewind |
+| Archive challenge failure | fee/reputation, not consensus |
+
+### Register re-derivation
+
+Every sync/archive/audit row is disposed in one of four classes (the per-row table is maintained with
+the register):
+
+- **Removed path → superseded**: the mechanism (body walk + replay, whole-trie historical roots, the
+  replay campaign) no longer exists; the row's note names the law/type that makes it unnecessary.
+  Representative: C188, C339, C376.
+- **Migrated**: the same property is now enforced by the current path; its mechanism, evidence and
+  witness are rewritten. Representative: C62, C64, C65, C68, C181, C193, C194, C211–C215, C334,
+  C335, C337, C338, C374, C375.
+- **Rewritten to the invariant**: C377 (anchor, metadata commitment, window; Laws 104/105/108/109),
+  C378 (service/challenge; Law 107), C379 (audit verdicts; Law 106). The live join, the archive
+  challenge and the audit verdicts are supporting evidence, not the closure.
+- **New unsafe states (owner: the user, who directed this pass)**: C380 a running root from a DAG/tip
+  heuristic (Law 108, `AcceptedState`); C381 an uncertified validation root (Law 109, the window);
+  C382 a genesis-only network forced through a certificate fetch (Law 108 anchor union); C383 the
+  register's stale replay design (this pass).
+- **Unchanged/open external**: C301, C343, C344, C357, each with its blocker.
+
+### Row disposition
+
+| Row | Class | Where it stands now |
+|---|---|---|
+| C62 | migrated | the state-page serving path; the certified sync hydrates pages and the audit replays, so the "multiplied page" shape is not on the sync path |
+| C64 | migrated | validator catch-up (unchanged); a joiner no longer replays, so the row's catch-up cost is a validator concern |
+| C65 | migrated | body acquisition is the backfill/content-checked fetch; a swallowed failure leaves the floor unchanged |
+| C68 | migrated | a failed sync is `Syncing` then a terminal stop, never Running (Law 108); the signal is the current retry loop's |
+| C181 | migrated | the retry loop inside the sync task; `finished` carries the accepted state or the node refuses it |
+| C188 | superseded | the insert-to-replay path is gone; the joined state is attributable (Laws 108/109) |
+| C193 | migrated | the reset/recovery state machine; outside the certified sync |
+| C194 | migrated | the proposer/sequence path; outside the certified sync |
+| C211 | migrated | catch-up/finality; the certified sync's post-anchor validation reads the certified window |
+| C212 | migrated | the attestation licence; validator path, unchanged |
+| C213 | migrated | the attestation tap; validator path, unchanged |
+| C214 | migrated | the fringe-seen signal; validator path, unchanged |
+| C215 | migrated | the merge/pre-state path; the audit and the window bound what a joiner accepts |
+| C334 | migrated | bootstrap admission; the current bootstrap/fringe request |
+| C335 | migrated | the fringe request/stream; the anchored request and the metadata walk |
+| C337 | migrated | body content hashing; `fetch_block_body`/backfill |
+| C338 | migrated | the walked headers are committed (`metadataRoot`) and the window is committed (`historyRoot`) |
+| C339 | superseded | the replay campaign; the replay sync path was removed in #591 (Laws 108/109, §168) |
+| C374 | migrated | the running loop's bounded read/answer pool; unchanged |
+| C375 | migrated | block/state-page fan-out; unchanged |
+| C376 | superseded | the whole-trie historical roots are replaced by the certified window (Law 109) |
+| C377 | rewritten | Laws 104/105/108/109 and the anchor/window types |
+| C378 | rewritten | Law 107; the direct REV service fee is the funding decision of record |
+| C379 | rewritten | Law 106; the audit's verdict equivalence |
+| C380 | new | Law 108 and `AcceptedState` |
+| C381 | new | Law 109 and `historyRoot` |
+| C382 | new | Law 108's genesis anchor |
+| C383 | new | this pass |
+
+No row closes on a benchmark PASS. The join evidence is cited where it supports a witness; the law and
+the type are the close.

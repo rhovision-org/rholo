@@ -3220,6 +3220,8 @@ mod tests {
                 fringe_hashes: vec!["00".repeat(32)],
                 parent_digest: None,
                 epoch: 0,
+                metadata_root: None,
+                history_root: None,
             })
         }
 

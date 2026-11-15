@@ -115,6 +115,10 @@ pub fn rnode_db_mapping() -> Vec<(Db, LmdbEnvConfig)> {
             Db::new("checkpoint-history"),
             LmdbEnvConfig::new("dagstorage", 100 * GB),
         ),
+        (
+            Db::new("checkpoint-anchors"),
+            LmdbEnvConfig::new("dagstorage", 100 * GB),
+        ),
         // **When this node first saw each piece of unfinalised work** (#583). A local, non-consensus
         // row per work block (hash → first-seen tip height), pruned below finality, so the small DAG
         // environment is its natural home.

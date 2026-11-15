@@ -293,7 +293,7 @@ async fn create_store_broadcast_genesis(
     dag: &dyn BlockDagStorage,
     comm_util: &CommUtil,
     log: &dyn Log,
-) -> Result<(), String> {
+) -> Result<BlockMessage, String> {
     let source = LogSource::new("casper.engine.NodeLaunch");
     let validator = validator_identity_opt.ok_or_else(|| {
         "To create genesis block node must provide validator private key".to_string()
@@ -317,7 +317,7 @@ async fn create_store_broadcast_genesis(
     put_block(block_store, genesis_block.clone()).await?;
     put_approved_block(approved_store, genesis_fringe.clone()).await?;
     let genesis_post = genesis_block.post_state_hash;
-    insert_genesis(dag, genesis_block).await?;
+    insert_genesis(dag, genesis_block.clone()).await?;
     // **The genesis block is accepted: publish its state** (law 80, B40). Its checkpoint recorded the
     // root as known; without this the pointer would stay at the empty root until the first accepted
     // block.
@@ -330,7 +330,7 @@ async fn create_store_broadcast_genesis(
     comm_util
         .stream_to_peers(&FinalizedFringeSerde.mk_packet(&genesis_fringe), None)
         .await;
-    Ok(())
+    Ok(genesis_block)
 }
 
 /// The node launch mode dispatch (port of `NodeLaunch.apply`).
@@ -445,6 +445,9 @@ pub async fn apply<
             ),
         );
     }
+    // **The accepted state this boot will run from** (Law 108). Each branch must set it; the boot
+    // refuses to run without one, so there is no heuristic root fallback.
+    let mut accepted_state: Option<crate::engine::anchor::AcceptedState> = None;
     if repr.dag_set.is_empty() && standalone && pending_recovery.is_none() {
         if expected_genesis_hash.is_some() {
             return Err(
@@ -471,7 +474,7 @@ pub async fn apply<
             source,
             "Starting as genesis master, creating genesis block...",
         );
-        create_store_broadcast_genesis(
+        let genesis_block = create_store_broadcast_genesis(
             validator_identity_opt.as_ref(),
             &spec,
             runtime_manager.as_ref(),
@@ -482,6 +485,16 @@ pub async fn apply<
             log.as_ref(),
         )
         .await?;
+        // The genesis master's anchor is the genesis it just created from the configuration. Law 108
+        // requires the anchor's root; the creation path has already published it.
+        let pin = crate::engine::anchor::GenesisPin {
+            block: genesis_block.block_hash,
+            post_state: genesis_block.post_state_hash,
+        };
+        accepted_state = Some(crate::engine::anchor::AcceptedState::from_genesis(
+            pin,
+            &genesis_block,
+        )?);
     } else if repr.dag_set.is_empty() || pending_recovery.is_some() {
         log.info(source, "Starting from bootstrap node, syncing LFS...");
         phase.set_phase(crate::engine::node_phase::NodePhase::Syncing);
@@ -636,6 +649,7 @@ pub async fn apply<
         // prevent — the two facts are different and get different signals.
         let finished = { engine.lock().await.finished_handle() };
         let terminal = { engine.lock().await.terminal_handle() };
+        let accepted_cell = { engine.lock().await.accepted_state_handle() };
         let handle_loop = async {
             while let Some(pm) = packet_rx.recv().await {
                 let mut guard = engine.lock().await;
@@ -683,6 +697,15 @@ pub async fn apply<
                     return Err(message);
                 }
             }
+        }
+        // **A successful sync must have produced an anchor.** `finished` carries the signal; the
+        // accepted state is the payload. A signal without one is refused rather than running on the
+        // DAG the attempt happened to leave (Law 108).
+        accepted_state = accepted_cell.lock().await.clone();
+        if accepted_state.is_none() {
+            return Err(
+                "LFS sync signalled success without an accepted state; refusing to run".to_string(),
+            );
         }
     } else {
         // **A node that reset itself is not simply reconnecting** (F-U5-01's crash window, register
@@ -764,6 +787,13 @@ pub async fn apply<
                             verified.checkpoint.anchor_height
                         ),
                     );
+                    // **The stored certificate is the anchor** (Law 108): its checkpoint root is the
+                    // root this node runs from. The approved fringe's state is the finality fringe's
+                    // merged state, not the execution root, so it is not substituted here.
+                    accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
+                        verified.clone(),
+                        BTreeSet::new(),
+                    )?);
                 } else {
                     log.warn(
                         source,
@@ -780,10 +810,59 @@ pub async fn apply<
         } else {
             log.info(
                 source,
-                "boot: no checkpoint certificate is stored for the accepted fringe; the state on \
-                 disk is what this node accepted on its last sync (the collector certifies the \
-                 current fringe once a quorum signs it)",
+                "boot: no checkpoint certificate is stored for the accepted fringe; a genesis-only \
+                 DAG can still be anchored by its pinned genesis",
             );
+        }
+
+        // **No verified certificate: only a genesis-only DAG has an anchor left.** A DAG with any
+        // block above genesis and no certificate is an unattributed state; the node refuses to run
+        // rather than serve it (Law 108).
+        if accepted_state.is_none() {
+            let genesis_only = repr.dag_set.len() == 1
+                && repr
+                    .height_map
+                    .keys()
+                    .next()
+                    .map(|height| i64::from(*height))
+                    == Some(0);
+            if genesis_only {
+                let genesis_hash = repr
+                    .height_map
+                    .values()
+                    .next()
+                    .and_then(|hashes| hashes.iter().next().copied())
+                    .ok_or_else(|| "the DAG names no genesis block".to_string())?;
+                let genesis_post = genesis_post_state_hash(dag.as_ref(), &block_store)
+                    .await?
+                    .ok_or_else(|| {
+                        "the genesis block has no recorded post-state, so it cannot anchor this \
+                         node"
+                            .to_string()
+                    })?;
+                let genesis_block = block_store
+                    .get(&[genesis_hash])
+                    .await?
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "the genesis block has no stored body".to_string())?;
+                let pin = crate::engine::anchor::GenesisPin {
+                    block: genesis_hash,
+                    post_state: genesis_post,
+                };
+                accepted_state = Some(crate::engine::anchor::AcceptedState::from_genesis(
+                    pin,
+                    &genesis_block,
+                )?);
+            } else {
+                return Err(format!(
+                    "this node's DAG holds {} block(s) but no verified checkpoint certificate; the \
+                     accepted state cannot be attributed, so the node refuses to run (a genesis \
+                     anchor is only for a genesis-only DAG)",
+                    repr.dag_set.len()
+                ));
+            }
         }
     }
 
@@ -813,58 +892,23 @@ pub async fn apply<
         ),
     }
 
-    // **Republish the latest accepted root** (law 80, B40, HAZOP F-U17-10). A block that was inserted
-    // before a crash left its checkpoint's root recorded as *known* and never published; the tip's
-    // post-state is an accepted state, so it is a legitimate `CURRENT_ROOT`. A root this store does
-    // not know is not published — the pointer is left where it was and the mismatch is logged.
-    {
-        let repr = dag.get_representation().await;
-        if let Some(tip) = repr.latest_fringe().iter().max_by_key(|m| m.height) {
-            let tip_hash = tip.id;
-            match block_store.get(&[tip_hash]).await {
-                Ok(blocks) => match blocks.into_iter().flatten().next() {
-                    Some(block) => {
-                        let root =
-                            Blake2b256Hash::from_byte_array(block.post_state_hash.as_bytes());
-                        match runtime_manager.publish_accepted_root(root).await {
-                            Ok(true) => log.info(
-                                source,
-                                &format!(
-                                    "republished CURRENT_ROOT at the latest accepted block {}",
-                                    tip_hash.to_hex()
-                                ),
-                            ),
-                            Ok(false) => log.warn(
-                                source,
-                                &format!(
-                                    "the latest accepted block {} names a root this store does not \
-                                     know; CURRENT_ROOT is left where it was",
-                                    tip_hash.to_hex()
-                                ),
-                            ),
-                            Err(e) => log.warn(
-                                source,
-                                &format!("could not republish CURRENT_ROOT: {e}"),
-                            ),
-                        }
-                    }
-                    None => log.warn(
-                        source,
-                        &format!(
-                            "the DAG's tip {} has no stored body; CURRENT_ROOT is left where it was",
-                            tip_hash.to_hex()
-                        ),
-                    ),
-                },
-                Err(e) => log.warn(
-                    source,
-                    &format!(
-                        "could not read the tip {} to republish CURRENT_ROOT: {e}",
-                        tip_hash.to_hex()
-                    ),
-                ),
-            }
+    // **Publish the accepted anchor's root** (Law 108; law 80, B40). The running root is the
+    // anchor's root by construction. A boot with no anchor, or an anchor whose root this store does
+    // not know, refuses to run — there is no heuristic fallback to a DAG tip or an approved fringe.
+    let accepted = accepted_state.take().ok_or_else(|| {
+        "this node has no trust anchor (no verified checkpoint certificate and no genesis-only DAG), \
+         so it refuses to run"
+            .to_string()
+    })?;
+    match runtime_manager.publish_accepted_root(accepted.root()).await {
+        Ok(true) => log.info(source, "published CURRENT_ROOT from the accepted anchor"),
+        Ok(false) => {
+            return Err(format!(
+                "the accepted anchor names a root this store does not know ({}); refusing to run",
+                accepted.root().to_hex()
+            ))
         }
+        Err(e) => return Err(format!("could not publish the accepted root: {e}")),
     }
 
     if let Some(expected) = expected_genesis_hash {

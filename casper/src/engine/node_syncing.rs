@@ -14,6 +14,7 @@ use rchain_block_storage::approved_store::{
 };
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
+use rchain_block_storage::syntax::{insert_genesis, put_approved_block, put_block};
 use rchain_comm::peer_node::PeerNode;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_comm::transport::transport_layer::TransportLayer;
@@ -88,6 +89,10 @@ pub struct NodeSyncing<I: RSpaceImporter> {
     /// so the *caller* owns what to do, and so an exit inside the sync task cannot take a test
     /// binary with it.
     terminal: Arc<tokio::sync::Notify>,
+    /// **The accepted state the successful sync constructed** (Law 108). The sync task writes it
+    /// before `finished`; the launch reads it and refuses a `finished` signal without it. A node
+    /// cannot reach Running on a sync that did not produce an anchor.
+    accepted_state: Arc<tokio::sync::Mutex<Option<crate::engine::anchor::AcceptedState>>>,
 }
 
 /// How many times one sync attempt is retried before the node gives up and signals terminal.
@@ -216,7 +221,16 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             latest_fringe: Arc::new(tokio::sync::Mutex::new(None)),
             fringe_arrived: Arc::new(tokio::sync::Notify::new()),
             terminal: Arc::new(tokio::sync::Notify::new()),
+            accepted_state: Arc::new(tokio::sync::Mutex::new(None)),
         }
+    }
+
+    /// **The accepted state's slot** (Law 108): the sync task writes it before signalling
+    /// `finished`; the launch reads it and refuses a `finished` signal without one.
+    pub fn accepted_state_handle(
+        &self,
+    ) -> Arc<tokio::sync::Mutex<Option<crate::engine::anchor::AcceptedState>>> {
+        self.accepted_state.clone()
     }
 
     /// A sync without a replay context fails closed before publishing any DAG metadata.
@@ -420,6 +434,7 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             let comm_util = self.comm_util.clone();
             let log = self.log.clone();
             let finished = self.finished.clone();
+            let accepted_state = self.accepted_state.clone();
             let latest_fringe = self.latest_fringe.clone();
             let fringe_arrived = self.fringe_arrived.clone();
             let terminal = self.terminal.clone();
@@ -529,7 +544,11 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                     )
                     .await;
                     let outcome = match outcome {
-                        Ok(()) => {
+                        Ok(state) => {
+                            // **The accepted state is written before `finished`.** The launch reads
+                            // this slot and refuses a `finished` signal without it (Law 108): a sync
+                            // that did not produce an anchor cannot move the node to Running.
+                            *accepted_state.lock().await = Some(state);
                             report_restored_checkpoint(&approved_store, &target, log.as_ref()).await
                         }
                         Err(error) => Err(error),
@@ -667,10 +686,106 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     >,
     replay: Option<&RecoveryReplay>,
     approved_store: &ApprovedStore,
-) -> Result<(), String> {
+) -> Result<crate::engine::anchor::AcceptedState, String> {
     let source = LogSource::new("casper.engine.NodeSyncing");
     let replay =
         replay.ok_or_else(|| "LFS recovery has no independent replay context".to_string())?;
+
+    // **A target whose only member is the genesis block is the trust anchor, not a certificate
+    // target.** A genesis-only network has no finalized fringe to certify — the bootstrap's
+    // `/api/v1/checkpoint` answers 400 — and the genesis is agreed by the operator's manifest and
+    // this node's genesis configuration, not by a quorum that does not exist yet. A target above
+    // genesis still requires a certificate (`an_unsigned_sync_has_no_fallback_path`).
+    if fringe.hashes.len() == 1 && dag.get_representation().await.dag_set.is_empty() {
+        let candidate = fringe.hashes[0];
+        let block = fetch_block_body(
+            &block_store,
+            candidate,
+            incoming_blocks_rx,
+            comm_util.as_ref(),
+            log.as_ref(),
+        )
+        .await?;
+        if i64::from(block.block_number) == 0 {
+            if block.post_state_hash != fringe.state_hash {
+                return Err(format!(
+                    "the genesis body's post-state {} is not the target's {}",
+                    rchain_shared::base16::encode(block.post_state_hash.as_bytes()),
+                    rchain_shared::base16::encode(fringe.state_hash.as_bytes())
+                ));
+            }
+            // **The genesis state is hydrated, not assumed.** The runtime publishes only a root it
+            // holds; the joiner fetches the genesis state pages exactly as the certified path does.
+            // An unfinished walk is a failed anchor, not a reason to run on a root the store lacks.
+            let page_peers =
+                match tokio::time::timeout(Duration::from_secs(2), comm_util.connected_peers())
+                    .await
+                {
+                    Ok(peers) => peers,
+                    Err(_) => {
+                        log.warn(
+                        source,
+                        "the connections read did not return within 2s; the genesis state walk \
+                         asks the bootstrap only",
+                    );
+                        Vec::new()
+                    }
+                };
+            let tuple_st = request_tuple_space(
+                fringe,
+                tuple_space_rx,
+                REQUEST_TIMEOUT,
+                transport.as_ref(),
+                &conf,
+                &page_peers,
+                importer,
+                log.as_ref(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            if !tuple_st.is_finished() {
+                return Err(format!(
+                    "the genesis state walk did not complete: {} key(s) outstanding",
+                    tuple_st.outstanding_count()
+                ));
+            }
+            put_block(&block_store, block.clone()).await?;
+            insert_genesis(dag.as_ref(), block.clone()).await?;
+            put_approved_block(approved_store, fringe.clone()).await?;
+            if let Some(store) = replay.checkpoint_store.as_ref() {
+                store.set_history_from(0).await?;
+            }
+            match replay
+                .runtime
+                .publish_accepted_root(Blake2b256Hash::from_byte_array(
+                    block.post_state_hash.as_bytes(),
+                ))
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(
+                        "the genesis state's root is not in the runtime's store after the state \
+                         walk; refusing to anchor on a state this node cannot serve"
+                            .to_string(),
+                    )
+                }
+                Err(e) => return Err(format!("could not publish the genesis root: {e}")),
+            }
+            log.info(
+                source,
+                "genesis-only network: accepted the genesis block and its state; no checkpoint \
+                 certificate is required below the first finalized height",
+            );
+            let pin = crate::engine::anchor::GenesisPin {
+                block: replay.expected_genesis.unwrap_or(block.block_hash),
+                post_state: block.post_state_hash,
+            };
+            return crate::engine::anchor::AcceptedState::from_genesis(pin, &block);
+        }
+        // A target above genesis: the body is now stored, so the certified path's genesis fetch is
+        // a store hit; continue with the certificate as usual.
+    }
 
     // **The certificate comes first** (sync/verification separation). The fringe a bootstrap offers
     // is an unsigned claim, and a state root is not acceptable on the strength of a message this
@@ -704,18 +819,18 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         log.as_ref(),
     )
     .await?;
-    let (entries, fringe_state_root) =
+    let (entries, fringe_state_root, window) =
         certified_metadata_entries(&walk, &verified.checkpoint, checkpoint_root)?;
 
-    // **Two roots are hydrated, and only two.** The checkpoint's post-state is the state this node
-    // starts from; the max fringe member's `fringe_state_hash` is the state the proposer's next
-    // block starts from. Both are claims of the same signed statement. The old path walked the
-    // whole trie for every ancestry claim and every block's pre/post root — O(height) full walks,
-    // measured at ~2.5 minutes for 316 roots (C339) — and replay then recomputed all of it.
+    // **The hydrated set is the certified set.** The checkpoint's post-state, the max fringe
+    // member's `fringe_state_hash`, the approved fringe's state, and exactly the validation-window
+    // roots the statement commits to. The joiner does not guess a window or widen it; a root it
+    // cannot hydrate is a failed sync.
     let mut required_roots = BTreeSet::from([checkpoint_root, fringe_state_root]);
     required_roots.insert(Blake2b256Hash::from_byte_array(
         fringe.state_hash.as_bytes(),
     ));
+    required_roots.extend(window.iter().copied());
     crate::engine::sync_metrics::census().add_state_roots(required_roots.len() as u64);
 
     // The anchored fringe's own root is the checkpoint root (`node_running` answers an anchored
@@ -840,6 +955,68 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
             0
         };
         store.set_history_from(floor).await?;
+        // **Adopt only after the state, metadata and floor are accepted.** The head is the
+        // statement this node will re-verify at boot and serve to joiners, so it must not move
+        // ahead of the state it names. `allow_sibling` is true because this certificate was already
+        // tied to the fringe the sync walked: a different anchor at the same height is this
+        // network's finality movement, not a foreign statement.
+        if let Some(certificate) = store.get(&verified.digest).await? {
+            match store.adopt(&verified.digest, &certificate, true).await? {
+                rchain_block_storage::checkpoint_store::Adoption::Adopted
+                | rchain_block_storage::checkpoint_store::Adoption::AlreadyHead => {}
+                rchain_block_storage::checkpoint_store::Adoption::Conflict {
+                    head_digest,
+                    incoming_digest,
+                } => {
+                    crate::engine::sync_metrics::census().add_checkpoint_conflict();
+                    log.warn(
+                        source,
+                        &format!(
+                            "two checkpoint statements at one anchor: head {}, accepted {}; the \
+                             head was not replaced",
+                            head_digest
+                                .map(|digest| digest.to_hex())
+                                .unwrap_or_else(|| "unknown".to_string()),
+                            incoming_digest.to_hex()
+                        ),
+                    );
+                }
+                rchain_block_storage::checkpoint_store::Adoption::Sibling {
+                    head_digest,
+                    head_anchor_height,
+                } => log.warn(
+                    source,
+                    &format!(
+                        "the accepted certificate's anchor ({}) is a sibling of the served head at \
+                         height {head_anchor_height} (head digest {}); the head was not replaced",
+                        verified.checkpoint.anchor_height,
+                        head_digest
+                            .map(|digest| digest.to_hex())
+                            .unwrap_or_else(|| "unknown".to_string())
+                    ),
+                ),
+                rchain_block_storage::checkpoint_store::Adoption::Stale {
+                    head_anchor_height,
+                } => log.warn(
+                    source,
+                    &format!(
+                        "the accepted certificate's anchor ({}) is older than the served head at \
+                         height {head_anchor_height}; the head was not replaced",
+                        verified.checkpoint.anchor_height
+                    ),
+                ),
+                rchain_block_storage::checkpoint_store::Adoption::ForeignShard {
+                    head_shard,
+                    incoming_shard,
+                } => log.warn(
+                    source,
+                    &format!(
+                        "the accepted certificate names shard {incoming_shard}, but the served head \
+                         is {head_shard}; the head was not replaced"
+                    ),
+                ),
+            }
+        }
     }
     log.info(
         source,
@@ -852,7 +1029,9 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
             entries.len()
         ),
     );
-    Ok(())
+    // **The accepted state: the anchor is the certificate, the root is its checkpoint root, and the
+    // window is the set this sync hydrated.** Law 108 and Law 109 are on the running path together.
+    crate::engine::anchor::AcceptedState::from_certificate(verified.clone(), window)
 }
 
 /// **Fetch, verify and tie the certificate to the fringe the bootstrap served.**
@@ -895,12 +1074,21 @@ async fn certified_checkpoint(
         ));
     }
     tie_certificate_to_fringe(&verified.checkpoint, fringe)?;
-    // **Persist before the state walk**: the certificate is what makes the accepted fringe
+    // **Record before the state walk**: the certificate is what makes the accepted fringe
     // re-verifiable at the next boot, and a node that crashes after hydrating the state but before
-    // storing the statement would restart with a history it cannot attribute. The store reads both
-    // writes back.
+    // storing the statement would restart with a history it cannot attribute. This is the
+    // digest-keyed record, not adoption: the head moves only after the state, metadata and history
+    // floor are accepted (see the end of the state sync).
     if let Some(store) = store {
-        store.put(&verified.digest, &certificate).await?;
+        if matches!(
+            store.record(&verified.digest, &certificate).await?,
+            rchain_block_storage::checkpoint_store::Recorded::Conflict { .. }
+        ) {
+            // The adoption after the state is published reports the conflict with the head it
+            // protected; counting it here keeps the record-time sighting visible even if the walk
+            // fails.
+            crate::engine::sync_metrics::census().add_checkpoint_conflict();
+        }
     }
     Ok(verified)
 }
@@ -982,7 +1170,14 @@ pub(super) fn certified_metadata_entries(
     walk: &super::lfs_metadata_requester::MetadataWalk,
     checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
     checkpoint_root: Blake2b256Hash,
-) -> Result<(Vec<(BlockHash, BlockMetadata)>, Blake2b256Hash), String> {
+) -> Result<
+    (
+        Vec<(BlockHash, BlockMetadata)>,
+        Blake2b256Hash,
+        BTreeSet<Blake2b256Hash>,
+    ),
+    String,
+> {
     let anchor = decode_hash(&checkpoint.anchor, "certificate anchor")?;
     let anchor_header = walk.headers.get(&anchor).ok_or_else(|| {
         format!(
@@ -1045,6 +1240,23 @@ pub(super) fn certified_metadata_entries(
         }
     }
 
+    // **The certificate's commitment to the headers the walk holds.** A statement without one is a
+    // legacy certificate, refused by the sync path; a mismatch means the headers this peer served
+    // are not the headers the quorum signed over. The replay's job is the audit's; this is what a
+    // header can prove.
+    crate::checkpoint::verify_metadata_root(checkpoint, walk.headers.values())
+        .map_err(|e| e.to_string())?;
+    // **The certificate's validation window is the set this node hydrates.** The statement commits
+    // to the roots a post-anchor block may read; the joiner derives the same set from the walked
+    // headers and checks the commitment. A missing root is a hydration failure, not a wider window.
+    crate::checkpoint::verify_validation_window(checkpoint, walk.headers.values())
+        .map_err(|e| e.to_string())?;
+    let window: BTreeSet<Blake2b256Hash> =
+        rchain_models::casper::protocol::checkpoint::validation_window_roots(walk.headers.values())
+            .into_iter()
+            .map(|root| Blake2b256Hash::from_byte_array(&root))
+            .collect();
+
     let mut entries = Vec::with_capacity(walk.headers.len());
     for header in walk.headers.values() {
         entries.push((
@@ -1078,6 +1290,7 @@ pub(super) fn certified_metadata_entries(
     Ok((
         entries,
         Blake2b256Hash::from_byte_array(anchor_header.fringe_state_hash.as_bytes()),
+        window,
     ))
 }
 
@@ -1091,48 +1304,90 @@ async fn fetch_genesis_body(
     comm_util: &CommUtil,
     log: &dyn Log,
 ) -> Result<(), String> {
-    let _ = comm_util.request_lfs_block_from(&genesis, &[]).await;
+    let block = fetch_block_body(block_store, genesis, incoming_blocks_rx, comm_util, log).await?;
+    if i64::from(block.block_number) != 0 {
+        return Err(format!(
+            "the body served for genesis {} is not that block (height {})",
+            genesis.to_hex(),
+            block.block_number
+        ));
+    }
+    log.info(
+        LogSource::new("casper.engine.NodeSyncing"),
+        &format!(
+            "genesis body {} fetched and content-verified",
+            genesis.to_hex()
+        ),
+    );
+    Ok(())
+}
+
+/// **Fetch one body by hash**, content-checked against the hash it was requested by. The genesis
+/// path adds the height-zero rule; the genesis-only target probe needs the generic form, because it
+/// must be able to ask for a target above genesis and then decide.
+async fn fetch_block_body(
+    block_store: &BlockStore,
+    requested: BlockHash,
+    incoming_blocks_rx: &mut tokio::sync::mpsc::Receiver<BlockMessage>,
+    comm_util: &CommUtil,
+    log: &dyn Log,
+) -> Result<BlockMessage, String> {
+    if let Some(block) = block_store
+        .get(&[requested])
+        .await?
+        .into_iter()
+        .flatten()
+        .next()
+    {
+        return Ok(block);
+    }
+    // **The send is inside the deadline.** A blocked transport used to sit outside the receive
+    // deadline, so the one body the certified path downloads could stall before the clock started.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let sent = tokio::time::timeout(
+        deadline.saturating_duration_since(tokio::time::Instant::now()),
+        comm_util.request_lfs_block_from(&requested, &[]),
+    )
+    .await;
+    if sent.is_err() {
+        return Err(format!(
+            "the body {} was requested but the request could not be sent within 30s",
+            requested.to_hex()
+        ));
+    }
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
             return Err(format!(
-                "the genesis body {} was requested but did not arrive within 30s",
-                genesis.to_hex()
+                "the body {} was requested but did not arrive within 30s",
+                requested.to_hex()
             ));
         }
         match tokio::time::timeout(remaining, incoming_blocks_rx.recv()).await {
             Ok(Some(block)) => {
-                if block.block_hash != genesis {
+                if block.block_hash != requested {
                     continue;
                 }
-                if i64::from(block.block_number) != 0
-                    || !crate::validate::format_of_fields(&block)
+                if !crate::validate::format_of_fields(&block)
                     || !crate::validate::block_hash(&block)
                 {
                     return Err(format!(
-                        "the body served for genesis {} is not that block (hash, height or field \
-                         format)",
-                        genesis.to_hex()
+                        "the body served for {} is not that block (hash or field format)",
+                        requested.to_hex()
                     ));
                 }
-                block_store.put(&[(genesis, block)]).await?;
+                block_store.put(&[(requested, block.clone())]).await?;
                 log.info(
                     LogSource::new("casper.engine.NodeSyncing"),
-                    &format!(
-                        "genesis body {} fetched and content-verified",
-                        genesis.to_hex()
-                    ),
+                    &format!("body {} fetched and content-verified", requested.to_hex()),
                 );
-                return Ok(());
+                return Ok(block);
             }
-            Ok(None) => {
-                return Err("the block ingress closed before the genesis arrived".to_string())
-            }
+            Ok(None) => return Err("the block ingress closed before the body arrived".to_string()),
             Err(_) => {
                 return Err(format!(
-                    "the genesis body {} did not arrive before the deadline",
-                    genesis.to_hex()
+                    "the body {} did not arrive before the deadline",
+                    requested.to_hex()
                 ))
             }
         }
@@ -2424,6 +2679,8 @@ mod tests {
                 .collect(),
             parent_digest: None,
             epoch: 0,
+            metadata_root: None,
+            history_root: None,
         }
     }
 
@@ -2568,6 +2825,8 @@ mod tests {
                 .collect(),
             parent_digest: None,
             epoch: 0,
+            metadata_root: None,
+            history_root: None,
         }
     }
 
@@ -2578,12 +2837,24 @@ mod tests {
         let mut grandchild = header_of(2, Some(child.block_hash));
         grandchild.fringe = BTreeSet::from([child.block_hash]);
         let walk = walk_of(vec![genesis.clone(), child.clone(), grandchild.clone()]);
-        let checkpoint = certified_checkpoint_over(
+        let mut checkpoint = certified_checkpoint_over(
             grandchild.block_hash,
             grandchild.post_state_hash,
             vec![grandchild.block_hash],
         );
-        let (entries, fringe_root) = certified_metadata_entries(
+        // The statement commits to the headers the walk is about to accept and to the validation
+        // window those headers select.
+        checkpoint.metadata_root = Some(
+            rchain_models::casper::protocol::checkpoint::metadata_root(walk.headers.values())
+                .to_hex(),
+        );
+        checkpoint.history_root = Some(
+            rchain_models::casper::protocol::checkpoint::validation_window_root(
+                walk.headers.values(),
+            )
+            .to_hex(),
+        );
+        let (entries, fringe_root, _window) = certified_metadata_entries(
             &walk,
             &checkpoint,
             Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
@@ -2607,6 +2878,60 @@ mod tests {
         );
     }
 
+    /// A legacy statement has no metadata commitment; the sync path refuses it rather than treating
+    /// an uncommitted header set as authenticated.
+    #[test]
+    fn a_metadata_history_without_a_commitment_is_refused() {
+        let genesis = header_of(0, None);
+        let child = header_of(1, Some(genesis.block_hash));
+        let grandchild = header_of(2, Some(child.block_hash));
+        let walk = walk_of(vec![genesis.clone(), child.clone(), grandchild.clone()]);
+        let checkpoint = certified_checkpoint_over(
+            grandchild.block_hash,
+            grandchild.post_state_hash,
+            vec![grandchild.block_hash],
+        );
+        let err = certified_metadata_entries(
+            &walk,
+            &checkpoint,
+            Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
+        )
+        .expect_err("a legacy statement has no metadata commitment");
+        assert!(err.contains("does not commit"), "got {err}");
+    }
+
+    /// **Metadata tampering under an unchanged valid certificate.** The certificate's root is
+    /// computed over the original headers; one committed field of one middle header changes, and
+    /// the joiner refuses the set. This is the arm the audit asked for.
+    #[test]
+    fn a_tampered_metadata_header_is_refused_under_the_same_certificate() {
+        let genesis = header_of(0, None);
+        let child = header_of(1, Some(genesis.block_hash));
+        let grandchild = header_of(2, Some(child.block_hash));
+        let mut walk = walk_of(vec![genesis.clone(), child.clone(), grandchild.clone()]);
+        let mut checkpoint = certified_checkpoint_over(
+            grandchild.block_hash,
+            grandchild.post_state_hash,
+            vec![grandchild.block_hash],
+        );
+        checkpoint.metadata_root = Some(
+            rchain_models::casper::protocol::checkpoint::metadata_root(walk.headers.values())
+                .to_hex(),
+        );
+        let tampered = walk
+            .headers
+            .get_mut(&child.block_hash)
+            .expect("the child header is in the walk");
+        tampered.pre_state_hash = StateHash::new([0x9A; 32]);
+        let err = certified_metadata_entries(
+            &walk,
+            &checkpoint,
+            Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
+        )
+        .expect_err("the headers are not the set the certificate committed to");
+        assert!(err.contains("commits"), "got {err}");
+    }
+
     #[test]
     fn a_metadata_anchor_must_be_the_fringes_maximum_member() {
         let genesis = header_of(0, None);
@@ -2624,6 +2949,8 @@ mod tests {
             parent_digest: None,
             epoch: 0,
             shard_id: "root".to_string(),
+            metadata_root: None,
+            history_root: None,
         };
         let err = certified_metadata_entries(
             &walk,
@@ -2647,6 +2974,8 @@ mod tests {
             parent_digest: None,
             epoch: 0,
             shard_id: "root".to_string(),
+            metadata_root: None,
+            history_root: None,
         };
         let err = certified_metadata_entries(
             &walk,

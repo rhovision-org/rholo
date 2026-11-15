@@ -6007,28 +6007,40 @@ def lawsC : List Law := [
     statement := "**A checkpoint certificate is attributable.** A certificate is quorate when its \
       signers hold strictly more than two thirds of the bonded stake; two quorate certificates for \
       one parent therefore share a signer, so two conflicting checkpoints require an equivocator. The \
-      digest binds the anchor, the anchor's post-state, the fringe, the shard and the parent, so a \
-      signature over one checkpoint is not a signature over another.",
+      digest binds the anchor, the anchor's post-state, the fringe, the shard, the parent and the \
+      metadata commitment, so a signature over one checkpoint is not a signature over another. An \
+      absent parent is not an explicit zero parent, and a negative epoch is not a well-shaped \
+      statement.",
     status := .provedModel,
     declarations := [`Rchain.Sync.Checkpoint.two_quorums_intersect,
       `Rchain.Sync.Checkpoint.a_conflicting_checkpoint_requires_an_equivocator,
-      `Rchain.Sync.Checkpoint.the_digest_binds_the_anchor_and_parent],
+      `Rchain.Sync.Checkpoint.the_digest_binds_the_anchor_and_parent,
+      `Rchain.Sync.Checkpoint.the_absence_of_a_parent_is_not_the_zero_parent,
+      `Rchain.Sync.Checkpoint.a_negative_epoch_is_not_well_shaped],
     axioms := [],
     rust := ["casper/src/checkpoint.rs", "casper/src/api/block_api_impl.rs"],
     rustWitness := [
       "casper/src/checkpoint.rs:a_certificate_at_exactly_two_thirds_is_refused",
-      "casper/src/checkpoint.rs:two_conflicting_checkpoints_share_a_signer_under_a_split"],
+      "casper/src/checkpoint.rs:two_conflicting_checkpoints_share_a_signer_under_a_split",
+      "casper/src/checkpoint.rs:an_explicit_zero_parent_is_malformed",
+      "casper/src/checkpoint.rs:an_epoch_below_zero_is_malformed"],
     witness := [`Rchain.Sync.Checkpoint.two_quorums_intersect,
-      `Rchain.Sync.Checkpoint.the_digest_binds_the_anchor_and_parent],
+      `Rchain.Sync.Checkpoint.the_digest_binds_the_anchor_and_parent,
+      `Rchain.Sync.Checkpoint.the_absence_of_a_parent_is_not_the_zero_parent],
     falsifiable := "Make the rule `>=` and `two_quorums_intersect` fails on two disjoint halves of an \
       even signer set; the Rust witness `a_certificate_at_exactly_two_thirds_is_refused` reddens for \
       the same change. Drop the digest's anchor projection and \
       `the_digest_binds_the_anchor_and_parent` fails; `the_digest_separates_two_anchors` is the \
-      non-vacuity half.",
+      non-vacuity half. Hash an explicit zero parent and \
+      `an_explicit_zero_parent_is_malformed` fails; accept a negative epoch and \
+      `an_epoch_below_zero_is_malformed` fails.",
     note := "**The model is equal-weight over a fixed signer set; the Rust weighs stake.** \
       `two_quorums_intersect` is the equal-weight projection of `is_super_majority`, and the Rust's \
-      `verify_checkpoint_certificate` sums stake in `i128` and deduplicates signers. **What this law \
-      does not claim:** a quorum can sign a wrong root — that residual is Law 85's, and the audit \
+      `verify_checkpoint_certificate` sums stake in `i128` and deduplicates signers. **The shape \
+      rules are part of the law, not an assumption:** `Parent` carries a presence bit, so an absent \
+      parent and an explicit zero are different statements, and the Rust refuses the explicit zero \
+      before hashing; `WellShaped` requires a nonnegative epoch, which the Rust enforces. **What this \
+      law does not claim:** a quorum can sign a wrong root — that residual is Law 85's, and the audit \
       (Law 106) is its counterweight. This build produces **genesis-rooted** checkpoints only: there \
       is no parent chain and no freshness window yet, so the statement's parent binding is the \
       digest's binding, not evidence that a chain of certificates was walked. That is recorded as a \
@@ -6036,59 +6048,82 @@ def lawsC : List Law := [
 
   { number := 105, layer := "Sync",
     statement := "**Sync and verification are separate.** Acceptance is a function of the checkpoint \
-      certificate, the metadata walk and the checkpoint state; the replay input cannot change it. A \
-      failed audit is an alarm on an accepted state, not a rewind: it never un-accepts what the \
-      quorum certified. Replay-from-genesis is the audit's job (`rnode audit`), not the sync path's.",
+      certificate, the metadata walk (including the statement's commitment to the metadata set) and \
+      the checkpoint state; the replay input cannot change it. A failed audit is an alarm on an \
+      accepted state, not a rewind: it never un-accepts what the quorum certified. Replay-from-genesis \
+      is the audit's job (`rnode audit`), not the sync path's.",
     status := .provedModel,
     declarations := [`Rchain.Sync.Separation.sync_reads_only_the_checkpoint_and_metadata,
       `Rchain.Sync.Separation.replay_cannot_change_acceptance,
-      `Rchain.Sync.Separation.a_failed_audit_is_an_alarm_not_a_rewind],
+      `Rchain.Sync.Separation.a_failed_audit_is_an_alarm_not_a_rewind,
+      `Rchain.Sync.Separation.sync_refuses_a_metadata_root_that_disagrees,
+      `Rchain.Sync.Separation.a_quorate_certificate_with_the_same_metadata_is_accepted],
     axioms := [],
     rust := ["casper/src/engine/node_syncing.rs", "node/src/runtime/audit.rs"],
     rustWitness := [
       "casper/src/engine/node_syncing.rs:an_unsigned_sync_has_no_fallback_path",
-      "casper/src/engine/node_syncing.rs:a_certified_metadata_history_carries_the_quorums_claim_on_each_block"],
+      "casper/src/engine/node_syncing.rs:a_certified_metadata_history_carries_the_quorums_claim_on_each_block",
+      "casper/src/engine/node_syncing.rs:a_tampered_metadata_header_is_refused_under_the_same_certificate",
+      "casper/src/engine/node_syncing.rs:a_metadata_history_without_a_commitment_is_refused"],
     witness := [`Rchain.Sync.Separation.replay_cannot_change_acceptance,
-      `Rchain.Sync.Separation.a_failed_audit_is_an_alarm_not_a_rewind],
+      `Rchain.Sync.Separation.a_failed_audit_is_an_alarm_not_a_rewind,
+      `Rchain.Sync.Separation.sync_refuses_a_metadata_root_that_disagrees],
     falsifiable := "Feed the replay input into `accept` and `replay_cannot_change_acceptance` fails; \
       make a failed audit yield a rewind and `a_failed_audit_is_an_alarm_not_a_rewind` fails. In Rust, \
       `an_unsigned_sync_has_no_fallback_path` reddens if sync accepts a fringe without a certificate, \
-      and `a_certified_metadata_history_carries_the_quorums_claim_on_each_block` if acceptance reads \
-      anything but the certified header set.",
+      `a_certified_metadata_history_carries_the_quorums_claim_on_each_block` if acceptance reads \
+      anything but the certified header set, and the tamper test if a walked header that differs from \
+      the certificate's commitment is accepted.",
     note := "**Acceptance is quorum attribution, not a state proof.** This law does not claim the \
       certificate is quorate (Law 14a) or honest (Law 83/85); it claims the *shape* of the path. \
       Operator policy may stop a node on a disagreement (`--halt-on-audit-disagree` is a policy the \
-      audit does not itself impose); the model's default is to stay accepted and alarmed. The metadata \
-      is accepted under the certificate because `hash_block` covers deploy payloads, so a header is \
-      not content-verifiable on its own — the audit and the backfill are the two things that check a \
-      body, and neither gates acceptance." },
+      audit does not itself impose); the model's default is to stay accepted and alarmed. **The \
+      metadata is now committed by the statement** (`metadata_root`, a set commitment over the \
+      anchor's ancestor closure): a joiner recomputes it from the headers it walked, so a peer that \
+      serves another header set under a valid certificate is refused. A legacy certificate with no \
+      commitment is refused by sync and accepted only by the audit, which reports \
+      `metadataCommitted: false`. `hash_block` still covers deploy payloads, so the backfill and the \
+      audit remain the checks of a body; neither gates acceptance." },
 
   { number := 106, layer := "Sync",
-    statement := "**Audit equivalence.** The audit's verdict is sound with respect to the roots it \
-      compares: agreement implies the replay derived the claimed root; a covered difference is \
-      reported as a disagreement; and a history the audit could not obtain is **not** agreement.",
+    statement := "**Audit equivalence.** The audit's verdict is sound with respect to what it \
+      compares: agreement implies the replay derived the claimed root and the certificate's metadata \
+      commitment matched the bodies; a covered difference — of the state root or of the metadata \
+      commitment — is reported as a disagreement; and a history the audit could not obtain is **not** \
+      agreement.",
     status := .provedModel,
     declarations := [`Rchain.Sync.Audit.a_replay_that_agrees_derives_the_checkpoint_root,
       `Rchain.Sync.Audit.a_divergence_is_reported,
+      `Rchain.Sync.Audit.a_metadata_commitment_mismatch_is_a_disagreement,
       `Rchain.Sync.Audit.an_incomplete_history_is_not_agreement],
     axioms := [],
     rust := ["node/src/runtime/audit.rs", "casper/src/engine/recovery.rs"],
     rustWitness := [
       "node/src/runtime/audit.rs:a_raw_block_reconstructs_and_a_tampered_preimage_is_refused",
-      "node/src/runtime/audit.rs:an_audit_covers_every_height_including_genesis"],
+      "node/src/runtime/audit.rs:an_audit_covers_every_height_including_genesis",
+      "node/src/runtime/audit.rs:the_audit_closure_ignores_a_sibling_at_a_certified_height",
+      "casper/src/checkpoint.rs:a_metadata_commitment_is_bound_and_verifies"],
     witness := [`Rchain.Sync.Audit.a_replay_that_agrees_derives_the_checkpoint_root,
+      `Rchain.Sync.Audit.a_metadata_commitment_mismatch_is_a_disagreement,
       `Rchain.Sync.Audit.an_incomplete_history_is_not_agreement],
     falsifiable := "Make `judge` return `agree` on a covered difference and \
       `a_replay_that_agrees_derives_the_checkpoint_root` fails; return `agree` on an uncovered history \
-      and `an_incomplete_history_is_not_agreement` fails. In Rust, the reconstruction test reddens if \
-      a body that does not hash to the claimed block is accepted, and the height-coverage test if the \
-      audit skips a height.",
+      and `an_incomplete_history_is_not_agreement` fails; ignore the metadata check and \
+      `a_metadata_commitment_mismatch_is_a_disagreement` fails. In Rust, the reconstruction test \
+      reddens if a body that does not hash to the claimed block is accepted, the height-coverage test \
+      if the audit skips a height, the closure test if a sibling at a certified height enters the \
+      committed set, and the commitment test if a changed committed header field leaves the root \
+      unchanged.",
     note := "**What this law does not claim.** It does not claim the replay is faithful (Law 102 and \
       the Rust's rules), nor that agreement is proof the state is honest: a quorum that signed a wrong \
       root is Law 85's residual, and the audit is the counterweight that makes it detectable, not \
-      impossible. The Rust report names the checkpoint digest and the claimed root; the derived root \
-      is present on agreement and the reason carries the replay's own message (which names the block \
-      and both states) on disagreement. Missing evidence is `INCOMPLETE`, never a pass." },
+      impossible. The audit checks the certificate's metadata commitment — recomputed over the \
+      anchor's ancestor closure, not every body at a height — before the replay; a mismatch is a \
+      `DISAGREE`, and a legacy certificate with no commitment is accepted with \
+      `metadataCommitted: false`. The Rust report names the checkpoint digest and the claimed root; \
+      the derived root is present on agreement and the reason carries the replay's own message (which \
+      names the block and both states) on disagreement. Missing evidence is `INCOMPLETE`, never a \
+      pass." },
 
   { number := 107, layer := "Sync",
     statement := "**History availability is a service with a check.** A challenge answer proves the \
@@ -6122,6 +6157,74 @@ def lawsC : List Law := [
       challenge time is not retention for ever, and a failed challenge is fee forfeiture/reputation, \
       not consensus slashing. Observers enter the tier by staking hardware, not tokens; validators \
       can archive too." },
+
+  { number := 108, layer := "Sync",
+    statement := "**A running node is anchored.** The node runs from either the operator's pinned \
+      genesis or a verified quorum checkpoint; its current root is the anchor's root, and a failed \
+      sync is not running. A genesis anchor names the pinned genesis, not a bootstrap's unverified \
+      claim, and an accepted state cannot carry a root its anchor does not name.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Anchor.running_is_anchored,
+      `Rchain.Sync.Anchor.a_refused_sync_is_not_running,
+      `Rchain.Sync.Anchor.a_genesis_anchor_is_the_pinned_genesis,
+      `Rchain.Sync.Anchor.a_foreign_root_is_not_accepted],
+    axioms := [],
+    rust := ["casper/src/engine/anchor.rs", "casper/src/engine/node_launch.rs"],
+    rustWitness := [
+      "casper/src/engine/anchor.rs:an_accepted_state_carries_its_anchors_root",
+      "casper/src/engine/anchor.rs:a_genesis_anchor_must_match_the_pin"],
+    witness := [`Rchain.Sync.Anchor.running_is_anchored,
+      `Rchain.Sync.Anchor.a_foreign_root_is_not_accepted],
+    falsifiable := "Give `Accepted` a public constructor that omits the root equality and \
+      `a_foreign_root_is_not_accepted` fails; let the failed-sync transition reach `running` and \
+      `a_refused_sync_is_not_running` fails. In Rust, the anchor tests redden if the accepted state \
+      derives a root other than the certificate's checkpoint root, or if the genesis anchor accepts a \
+      block other than the pin.",
+    note := "**The anchor union is the design.** A node's trust anchor is either the operator's \
+      genesis (the manifest/descriptors and the genesis block's post-state) or a quorum checkpoint \
+      certificate; there is no third source. The prior sync path could leave `CURRENT_ROOT` at genesis \
+      after accepting a checkpoint because the running state's root came from a DAG/tip heuristic; the \
+      `AcceptedState` type and this law remove that state rather than patch it. **What this law does \
+      not claim:** the certificate is quorate (Law 14a) or honest (Law 83/85); it is the shape of the \
+      running state. The genesis-only case is the anchor's genesis branch: no certificate is \
+      requested, because a network with no finalized fringe has no quorum to ask. A cold bonded \
+      validator still needs the remaining validators to form a quorum (N≥4 under the strict rule); \
+      that liveness boundary is recorded, not claimed." },
+
+  { number := 109, layer := "Sync",
+    statement := "**A post-anchor block validates only against certified roots.** The checkpoint \
+      statement commits to a validation window — the recent pre/post/fringe state roots a PoS close \
+      may read — and a block whose pre-state is outside the checkpoint root plus that window is \
+      refused. The joiner hydrates exactly the committed window and never widens it to make a block \
+      validate; under collision-freedom the commitment binds the window.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Window.a_validated_block_reads_only_certified_roots,
+      `Rchain.Sync.Window.an_uncertified_root_is_refused,
+      `Rchain.Sync.Window.the_history_root_binds_the_window,
+      `Rchain.Sync.Window.a_shortened_window_refuses,
+      `Rchain.Sync.Window.a_window_root_validates],
+    axioms := [],
+    rust := ["casper/src/checkpoint.rs", "casper/src/engine/node_syncing.rs",
+      "node/src/runtime/audit.rs"],
+    rustWitness := [
+      "casper/src/checkpoint.rs:a_validation_window_is_bound_and_verifies",
+      "casper/src/engine/node_syncing.rs:a_certified_metadata_history_carries_the_quorums_claim_on_each_block"],
+    witness := [`Rchain.Sync.Window.a_validated_block_reads_only_certified_roots,
+      `Rchain.Sync.Window.a_shortened_window_refuses],
+    falsifiable := "Admit any root into `validates` and `an_uncertified_root_is_refused` fails; drop \
+      a member from the window and `a_shortened_window_refuses` fails. In Rust, the window test \
+      reddens if the digest does not bind `historyRoot`, if a shortened window derives the same \
+      commitment, or if a changed header field does not change the window root; the certified-metadata \
+      test reddens if the joiner accepts a committed window it cannot derive from the walked headers.",
+    note := "**The window size is a protocol constant, not a theorem.** `VALIDATION_WINDOW_BLOCKS` is 8 \
+      in `models/src/casper/protocol/checkpoint.rs`, chosen from the measured PoS close depth (the \
+      1,465-height failure needed block 1,465's pre-state for a close five heights above it); a future \
+      builder that reads deeper must change the constant and the commitment together — the joiner \
+      refuses rather than widening. **What this law does not claim:** the state roots are a quorum \
+      claim (Law 85's residual); the audit (Law 106) is the counterweight. The window's commitment is \
+      an extension of the statement, appended after `metadataRoot` only when present, so a legacy \
+      certificate keeps its v1 digest and is accepted only by the audit, with `windowCommitted: \
+      false`." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

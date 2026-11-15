@@ -1,0 +1,58 @@
+{
+  "arms": [],
+  "binary_sha256": "6574b102640375944dfb496cf86128b1fef7df5527d73fe2c11d937671cf6903",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 925,
+      "kind": "json",
+      "path": "raw/raw/bootstrap-health.json",
+      "sha256": "e6a9fd61f918b4a79562270d7b1252a19e8385ba612f4c24033f2259e27983aa"
+    },
+    {
+      "bytes": 878432,
+      "kind": "log",
+      "path": "raw/raw/bootstrap.log",
+      "sha256": "5a1944cf6cac310353c892c4369c453004843677a9e4e774098e7c8205f1164a"
+    },
+    {
+      "bytes": 927,
+      "kind": "json",
+      "path": "raw/raw/joiner-health-after-restart.json",
+      "sha256": "3d4f84edc3ffd7ae281b8e662330b173d324ff0e00374d514250f418bab1e571"
+    },
+    {
+      "bytes": 1251,
+      "kind": "json",
+      "path": "raw/raw/joiner-health.json",
+      "sha256": "f5877c6d1468b3f56d05bb8a8526e0f83409033d131bbf47af190ca1baef9ea5"
+    },
+    {
+      "bytes": 1168777,
+      "kind": "log",
+      "path": "raw/raw/joiner.log",
+      "sha256": "349f6934872fc24f9dccf422a3279037426e4fa7917aa0a0dacd3beb9cce9280"
+    },
+    {
+      "bytes": 3981,
+      "kind": "json",
+      "path": "raw/raw/result.json",
+      "sha256": "8d780315f5705438c5ad6fac4d4f60e69aac5aaecdb1edc2597158c589076d97"
+    }
+  ],
+  "gate_id": "C377",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-15T11:54:31+00:00",
+    "tool": "evidence-pack",
+    "version": 1
+  },
+  "redactions": [],
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "1f6b842af618c35a7206af8328e3dd367c3c8222",
+  "verdict": "PASS"
+}
