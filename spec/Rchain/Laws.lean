@@ -4475,7 +4475,12 @@ def lawsC : List Law := [
       not derivable on the join path, so the residual stands. The witnesses are the join path's own \
       tests: membership, duplicate, derived-fringe, and the state-hash residual stated as one. A \
       singleton state pin was attempted and the node's restore suite refuted it; the law records the \
-      absence rather than the false check." },
+      absence rather than the false check. **Reconciled by Laws 105/108-109 (§168, post-#591/#592): \
+      this row models the removed transfer boundary. The checkpoint path no longer trusts the \
+      bootstrap's choice of finalised root — acceptance is a verified quorum certificate (Law 105) \
+      and the running root is the anchor's (Law 108) — and the per-block `fringe_state_hash` residual \
+      is replaced by the committed validation window (Law 109). The content-trustlessness half \
+      remains as stated; C339 is superseded by §168.**" },
   { number := 84, layer := "Casper",
     statement := "**The genesis anchor is a function of the genesis inputs, and the ceremony refuses \
       any other key.** The block's sender, the blessed deploys' signer and the governance admin are \

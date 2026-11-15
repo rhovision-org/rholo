@@ -13093,3 +13093,77 @@ the register):
 
 No row closes on a benchmark PASS. The join evidence is cited where it supports a witness; the law and
 the type are the close.
+
+## 169. Sync in the book, a metered archive, and attested re-execution (C384–C389)
+
+This pass does three things the #592 close-out left open: it states the post-#591/#592 model in the
+book and the runbook; it turns history below an anchor into a **metered service**; and it makes a
+re-execution claim **attributable and reproducible**. The unsafe states are removed in types, the
+laws forbid them, and each failure lands in a named refusal or a defined fallback. The benchmark is
+evidence, never the closure.
+
+### The design, in one screen
+
+1. **Anchor.** A running node has one: the pinned genesis or a verified quorum checkpoint. The boot
+   refuses a populated DAG with no verified certificate (Law 108).
+2. **Validation window.** A post-anchor block reads only the statement's `historyRoot` set; a root
+   that cannot be hydrated is a refusal, never a widened window (Law 109).
+3. **Join cost.** The header walk asks for height windows, not one generation per round; the range
+   is a transport optimization and the walked set is still checked against `metadataRoot`
+   (C384). Bodies are fetched in 64-height batches; every body is reconstructed and re-hashed.
+4. **History as a service.** A settlement-key receipt prepays bytes; a payer-signed authorization
+   names the archive, period and exact heights; the meter debits before a body leaves; invoices and
+   nonces are single-use (Law 110). Settlement follows the possession challenge: pass carries,
+   failure forfeits and marks (Law 111). A metered archive with no settlement key refuses to start;
+   `--archive-open` is the explicit unmetered opt-out.
+5. **The economics balance.** Bodies are metered because custody and bandwidth are the archive's
+   cost; headers and checkpoint metadata stay free and bounded so a join is not taxed. A consumer
+   with no credit falls through to the next archive; a failed archive is excluded for a cooldown.
+6. **Re-execution.** An audit attestation is a canonical, domain-tagged signed claim over the
+   checkpoint, the derived root, a replay head and a nonce, chained by `previous`/`sequence`. A node
+   stores a claim only after its own replay reproduces it; a mismatch is conflict evidence, never an
+   accepted row (Law 112). `rnode audit --attest-key-path` signs offline;
+   `verify-audit-attestation` checks a claim against a local report; the opt-in service answers
+   pull requests, rate-limited, one replay at a time.
+
+### Safe fallbacks
+
+| Situation | Fallback |
+|---|---|
+| No anchor / no verified certificate at boot | Refuse to run, naming the missing anchor (terminal) |
+| Metadata or window mismatch | Refuse; retry another peer; then Syncing/terminal |
+| Range unsupported by a peer | Fall back to the hash-frontier walk |
+| Body range gap | Per-height fallback in the audit; a gap is `body: null`, not "absent history" |
+| No credit / valid authorization | `402`; the consumer tries the next archive |
+| Rate window exhausted | `429` + retry-after |
+| Failed possession challenge | Period forfeited, peer marked, archive excluded for a cooldown |
+| Audit claim mismatched or unchained | Refused and recorded as conflict; never accepted |
+| Audit replay not AGREE | A report with no signature; the service answers the report, not a claim |
+
+### Row dispositions
+
+| Row | Disposition | What closes it |
+|---|---|---|
+| C384 | done | the height-window walk and its tests; the 45.5 s target is evidence, not re-run |
+| C385 | done | Law 110, the durable meter, the range authorization and the capability checks |
+| C386 | done | Law 111, settlement by challenge outcome, the selector's cooldown |
+| C387 | done | Law 112, the canonical statement, the replay-derived root and replay head |
+| C388 | done | Law 112's acceptance and chain rules, the nonce, the pull-only rate-limited service |
+| C389 | done | the docs/runbook pages, Laws 101–112 in the reading, HAZOP U24 and acceptance U25 |
+
+### Non-claims
+
+- **No zero-knowledge proof.** A ZK witness is a future `witnessType`; the signed hash chain is what
+  this pass implements. Verification is a replay, not a succinct proof.
+- **No consensus change.** The fee, the meter, the settlement, the attestation and the audit are
+  service and sync artifacts. `witnessType` is in the signed preimage precisely so adding a witness
+  later is an extension, not a chain split.
+- **No on-chain payment proof.** The node verifies the settlement key's signature and expiry, not
+  the REV transfer. Forfeiture is service-level.
+- **No new light-client mode.** A bodies-optional observer is the consumer in scope; a header-only
+  client is deferred post-mainnet.
+- **No benchmark re-run.** The join's 817.1 s measurement and the 45.5 s target are recorded in
+  `spec/audit/evidence/c377-anchored-join-20261115/`; this pass changes the mechanism and tests it,
+  and a re-measurement is an operational follow-up.
+- The attestation evidence run is a **local devnet** with throwaway keys: it shows the mechanism, not
+  a live acceptance, and `execution_proven` stays `false`.
