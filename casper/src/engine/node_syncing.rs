@@ -714,6 +714,11 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
                     rchain_shared::base16::encode(fringe.state_hash.as_bytes())
                 ));
             }
+            // **The pin is checked before any acceptance write** (review R5). A genesis block that
+            // is not the operator's expected genesis is refused here, before the state walk, the
+            // DAG/approved/history writes and `CURRENT_ROOT` publication; a retry with the correct
+            // pin then finds no half-accepted state.
+            let accepted = checked_genesis_anchor(replay.expected_genesis, &block)?;
             // **The genesis state is hydrated, not assumed.** The runtime publishes only a root it
             // holds; the joiner fetches the genesis state pages exactly as the certified path does.
             // An unfinished walk is a failed anchor, not a reason to run on a root the store lacks.
@@ -777,11 +782,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
                 "genesis-only network: accepted the genesis block and its state; no checkpoint \
                  certificate is required below the first finalized height",
             );
-            let pin = crate::engine::anchor::GenesisPin {
-                block: replay.expected_genesis.unwrap_or(block.block_hash),
-                post_state: block.post_state_hash,
-            };
-            return crate::engine::anchor::AcceptedState::from_genesis(pin, &block);
+            return Ok(accepted);
         }
         // A target above genesis: the body is now stored, so the certified path's genesis fetch is
         // a store hit; continue with the certificate as usual.
@@ -1310,6 +1311,20 @@ pub(super) fn certified_metadata_entries(
 /// **Fetch and content-verify the genesis body.** The one body the certified path downloads: the
 /// operator's genesis pin is a claim about *this* block, and a hash of a header is not a check of
 /// it (`hash_block` covers deploy payloads, which a header does not carry).
+/// **The genesis anchor, checked before any acceptance write** (review R5). The expected genesis is
+/// the operator's pin; an absent pin accepts the served genesis by content. A mismatch is a refusal
+/// here, before the state walk and before any DAG/approved/history/root write.
+fn checked_genesis_anchor(
+    expected: Option<BlockHash>,
+    block: &BlockMessage,
+) -> Result<crate::engine::anchor::AcceptedState, String> {
+    let pin = crate::engine::anchor::GenesisPin {
+        block: expected.unwrap_or(block.block_hash),
+        post_state: block.post_state_hash,
+    };
+    crate::engine::anchor::AcceptedState::from_genesis(pin, block)
+}
+
 async fn fetch_genesis_body(
     block_store: &BlockStore,
     genesis: BlockHash,
@@ -3035,5 +3050,25 @@ mod tests {
         ]))
         .expect_err("a header naming an absent parent is refused");
         assert!(err.contains("did not receive"), "{err}");
+    }
+
+    /// **Review R5 — the genesis pin is checked before the acceptance writes.** The helper is the
+    /// first thing the genesis-only branch runs after content-verifying the body; a wrong pin names
+    /// the block it expected and produces no `AcceptedState` (so no hydration, DAG write or root
+    /// publication can follow).
+    #[test]
+    fn a_wrong_genesis_pin_is_refused_before_any_acceptance() {
+        let genesis = chain_block(0, None);
+        let err = checked_genesis_anchor(Some(hash(9)), &genesis)
+            .expect_err("a wrong pin must be refused");
+        assert!(err.contains("not the pinned genesis"), "{err}");
+        assert!(
+            checked_genesis_anchor(Some(genesis.block_hash), &genesis).is_ok(),
+            "the matching pin is the anchor"
+        );
+        assert!(
+            checked_genesis_anchor(None, &genesis).is_ok(),
+            "an absent pin accepts the content-verified genesis"
+        );
     }
 }

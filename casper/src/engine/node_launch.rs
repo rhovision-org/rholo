@@ -851,8 +851,10 @@ pub async fn apply<
                     .flatten()
                     .next()
                     .ok_or_else(|| "the genesis block has no stored body".to_string())?;
+                // The operator's pin is the anchor's identity, checked by `from_genesis` before any
+                // accepted state exists (review R5).
                 let pin = crate::engine::anchor::GenesisPin {
-                    block: genesis_hash,
+                    block: expected_genesis_hash.unwrap_or(genesis_hash),
                     post_state: genesis_post,
                 };
                 accepted_state = Some(crate::engine::anchor::AcceptedState::from_genesis(
@@ -910,6 +912,11 @@ pub async fn apply<
     let mut runtime_window = crate::engine::anchor::AcceptedWindow::from_accepted(&accepted);
     seed_derived_roots(dag.as_ref(), accepted.anchor(), &mut runtime_window).await?;
     *accepted_window.write().await = Some(runtime_window);
+    // **The pin is enforced before publication** (review R5): a boot that would refuse must not have
+    // moved `CURRENT_ROOT` first.
+    if let Some(expected) = expected_genesis_hash {
+        check_expected_genesis(dag.as_ref(), &expected).await?;
+    }
     match runtime_manager.publish_accepted_root(accepted.root()).await {
         Ok(true) => log.info(source, "published CURRENT_ROOT from the accepted anchor"),
         Ok(false) => {
@@ -919,10 +926,6 @@ pub async fn apply<
             ))
         }
         Err(e) => return Err(format!("could not publish the accepted root: {e}")),
-    }
-
-    if let Some(expected) = expected_genesis_hash {
-        check_expected_genesis(dag.as_ref(), &expected).await?;
     }
 
     // The synced root is content-addressed, but its params must also be readable by this binary
