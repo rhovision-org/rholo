@@ -132,18 +132,12 @@ pub fn rnode_db_mapping() -> Vec<(Db, LmdbEnvConfig)> {
             Db::new("history-meter"),
             LmdbEnvConfig::new("dagstorage", 100 * GB),
         ),
-        // **The accepted audit claims and their chains** (Law 112). Small rows in the same DAG
-        // environment: digest → claim, signer → head, signer:nonce → digest, digest → conflict.
+        // **The accepted audit claims, their chains and their answers** (Law 112). One store, so
+        // the claim, its signer's head, the spent nonce and the answer commit in one transaction:
+        // `attestation:<digest>`, `head:<signer>`, `nonce:<signer>:<nonce>`,
+        // `response:<signer>:<nonce>`.
         (
-            Db::new("audit-attestations"),
-            LmdbEnvConfig::new("dagstorage", 100 * GB),
-        ),
-        (
-            Db::new("audit-heads"),
-            LmdbEnvConfig::new("dagstorage", 100 * GB),
-        ),
-        (
-            Db::new("audit-nonces"),
+            Db::new("audit-claims"),
             LmdbEnvConfig::new("dagstorage", 100 * GB),
         ),
         (

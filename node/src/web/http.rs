@@ -1074,6 +1074,22 @@ async fn api_checkpoint_by_digest(
     json_result(state.web_api.checkpoint_certificate(Some(&digest)).await)
 }
 
+/// `POST /api/v1/checkpoint/verify` — apply **this node's verifier** to a caller-supplied
+/// certificate: the digest is recomputed, every signature over it is checked against bonded stake,
+/// and the strict quorum rule is applied. A consumer that cannot verify secp256k1 reads this
+/// verdict rather than counting attestation strings.
+async fn api_verify_checkpoint(
+    State(state): State<HttpState>,
+    Json(certificate): Json<rchain_models::casper::protocol::checkpoint::CheckpointCertificate>,
+) -> Response {
+    json_result(
+        state
+            .web_api
+            .verify_checkpoint_certificate(&certificate)
+            .await,
+    )
+}
+
 /// `GET /api/v1/checkpoint-attestation` — this node's signature over **its own** current checkpoint
 /// digest. No caller input: a digest chosen by the caller would make the route a signing oracle.
 async fn api_checkpoint_attestation(State(state): State<HttpState>) -> Response {
@@ -1234,6 +1250,9 @@ async fn api_audit_request(
                 }
                 crate::runtime::audit_service::AuditServiceError::BadNonce => {
                     StatusCode::BAD_REQUEST
+                }
+                crate::runtime::audit_service::AuditServiceError::AlreadyAnswered => {
+                    StatusCode::CONFLICT
                 }
                 crate::runtime::audit_service::AuditServiceError::Failed(_) => {
                     StatusCode::INTERNAL_SERVER_ERROR
@@ -1613,6 +1632,17 @@ pub const OPENAPI_JSON: &str = r##"{
         "parameters": [{ "in": "path", "name": "payer", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "200": { "description": "Credit, served and period counters", "content": { "application/json": { "schema": { "type": "object" } } } }
+        }
+      }
+    },
+    "/checkpoint/verify": {
+      "post": {
+        "summary": "Apply this node's verifier to a certificate",
+        "description": "The digest is recomputed, every signature over it is checked against the signer's bonded stake, and the strict quorum rule (3s > 2t) is applied. A refusal is an error response; a verdict names the recomputed digest and the stake that signed it.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": {
+          "200": { "description": "The verified digest, anchor and signed stake", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "400": { "description": "The certificate is malformed, a signature is not over the recomputed digest, a signer is unbonded, or the quorum is not met" }
         }
       }
     },
@@ -2758,6 +2788,7 @@ pub fn router(state: HttpState) -> Router {
         )
         .route("/api/v1/checkpoint", get(api_checkpoint))
         .route("/api/v1/checkpoint/{digest}", get(api_checkpoint_by_digest))
+        .route("/api/v1/checkpoint/verify", post(api_verify_checkpoint))
         .route("/api/v1/archives", get(api_archives))
         .route("/api/v1/history/challenge", get(api_history_challenge))
         .route("/api/v1/history/range", post(api_history_range))
@@ -3599,6 +3630,25 @@ mod tests {
                         .await
                         .map(|a| vec![a])
                         .unwrap_or_default(),
+                },
+            )
+        }
+
+        async fn verify_checkpoint_certificate(
+            &self,
+            certificate: &rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
+        ) -> Result<
+            rchain_models::casper::protocol::deploy_service::VerifiedCertificate,
+            BlockApiException,
+        > {
+            Ok(
+                rchain_models::casper::protocol::deploy_service::VerifiedCertificate {
+                    verified: true,
+                    digest: "22".repeat(32),
+                    anchor: certificate.checkpoint.anchor.clone(),
+                    anchor_height: certificate.checkpoint.anchor_height,
+                    supporting_stake: 3,
+                    total_stake: 4,
                 },
             )
         }
@@ -4894,6 +4944,37 @@ mod tests {
         assert_eq!(json["sigAlgorithm"], "secp256k1");
     }
 
+    /// **The verifier is on the public surface** (the mature-join benchmark consumes it): the route
+    /// applies the node's verifier to the posted certificate and serves the verdict, digest and
+    /// signed stake. A consumer that cannot do secp256k1 reads this, not an attestation count.
+    #[tokio::test]
+    async fn the_verify_route_serves_the_verifier_verdict() {
+        let checkpoint = rchain_models::casper::protocol::checkpoint::Checkpoint {
+            shard_id: "root".to_string(),
+            anchor: "44".repeat(32),
+            anchor_height: 9,
+            anchor_post_state: "55".repeat(32),
+            fringe_hashes: vec!["44".repeat(32)],
+            parent_digest: None,
+            epoch: 0,
+            metadata_root: Some("66".repeat(32)),
+            history_root: Some("77".repeat(32)),
+        };
+        let certificate = rchain_models::casper::protocol::checkpoint::CheckpointCertificate {
+            checkpoint,
+            attestations: Vec::new(),
+        };
+        let response = api_verify_checkpoint(State(state()), Json(certificate)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["verified"], true);
+        assert_eq!(json["digest"], "22".repeat(32));
+        assert_eq!(json["anchor"], "44".repeat(32));
+        assert_eq!(json["supportingStake"], 3);
+        assert_eq!(json["totalStake"], 4);
+    }
+
     #[tokio::test]
     async fn the_archives_route_serves_the_capability_and_the_configured_archives() {
         let mut st = state();
@@ -5104,6 +5185,7 @@ mod tests {
             ("/history/range", "post"),
             ("/history/credit", "post"),
             ("/history/meter/{payer}", "get"),
+            ("/checkpoint/verify", "post"),
             ("/audit/request", "post"),
             ("/audit/attestation/{request_id}", "get"),
             ("/audit/attestations", "get"),

@@ -5,7 +5,7 @@
 //! only [`verify_and_accept`] builds one, and only an accepted claim reaches the store's accepted
 //! rows. A claim that fails is recorded as attributable conflict evidence instead.
 
-use rchain_block_storage::audit_store::{AuditConflict, AuditHead, AuditStore};
+use rchain_block_storage::audit_store::{AuditConflict, AuditHead, AuditResponse, AuditStore};
 use rchain_casper::audit::{
     verify_audit_attestation, AuditChainHead, AuditExpectation, AuditVerificationError,
     VerifiedAuditAttestation,
@@ -148,8 +148,16 @@ pub async fn verify_and_accept(
     };
     let digest = Blake2b256Hash::from_hex_either(digest_hex(&verified))
         .map_err(|e| AcceptanceError::Refused(format!("the claim digest is not a hash: {e}")))?;
+    // **The answer is written with the claim, in one batch.** A restart can then return the same
+    // response for the same nonce instead of finding a spent nonce and no answer.
+    let answer = AuditResponse {
+        report: serde_json::to_value(run.report()).map_err(|e| {
+            AcceptanceError::Refused(format!("the reproduced report is not serializable: {e}"))
+        })?,
+        attestation: verified.attestation().clone(),
+    };
     store
-        .accept(&digest, verified.attestation())
+        .accept(&digest, verified.attestation(), Some(&answer))
         .await
         .map_err(AcceptanceError::Refused)?;
     Ok(AcceptedAudit { verified })
@@ -256,7 +264,7 @@ mod tests {
         let store = AuditStore::open(&kvm).await.expect("open");
         let claim = claim(&"55".repeat(32), "nonce-1");
         store
-            .accept(&Blake2b256Hash::from_byte_array(&[1u8; 32]), &claim)
+            .accept(&Blake2b256Hash::from_byte_array(&[1u8; 32]), &claim, None)
             .await
             .expect("seed");
         let err = verify_and_accept(&store, &run(), &claim, 1_700_000_000_000)

@@ -58,6 +58,8 @@ pub enum AuditServiceError {
     RateLimited,
     /// The request names a nonce that is not a simple identifier (path safety).
     BadNonce,
+    /// The nonce is spent but its answer is not stored (a legacy or foreign acceptance).
+    AlreadyAnswered,
     /// The replay or the acceptance failed, with the reason.
     Failed(String),
 }
@@ -71,6 +73,11 @@ impl std::fmt::Display for AuditServiceError {
             AuditServiceError::BadNonce => write!(
                 f,
                 "the nonce must be 1–128 characters of letters, digits, '-' or '_'"
+            ),
+            AuditServiceError::AlreadyAnswered => write!(
+                f,
+                "the nonce has already been answered and its result is not stored; a new request \
+                 needs a new nonce"
             ),
             AuditServiceError::Failed(reason) => write!(f, "{reason}"),
         }
@@ -130,13 +137,25 @@ impl AuditService {
         if !nonce_is_safe(&request.nonce) {
             return Err(AuditServiceError::BadNonce);
         }
-        if let Some(existing) = self.produced.lock().unpoison().get(&request.nonce).cloned() {
+        let cached = self.produced.lock().unpoison().get(&request.nonce).cloned();
+        if let Some(existing) = cached {
             return Ok(existing);
+        }
+        // **The durable answer outlives this process** (review: idempotency was process-local).
+        // The nonce and its answer are written in one batch, so a spent nonce without an answer is
+        // a defined refusal rather than a replay attempt.
+        if let Some(produced) = durable_answer(&self.store, &self.signer(), &request.nonce).await? {
+            self.produced
+                .lock()
+                .unpoison()
+                .insert(request.nonce.clone(), produced.clone());
+            return Ok(produced);
         }
         self.budget.admit()?;
         let _guard = self.run_lock.lock().await;
         // Another request may have completed while this one waited.
-        if let Some(existing) = self.produced.lock().unpoison().get(&request.nonce).cloned() {
+        let cached = self.produced.lock().unpoison().get(&request.nonce).cloned();
+        if let Some(existing) = cached {
             return Ok(existing);
         }
         let scratch = self.scratch_root.join(&request.nonce);
@@ -196,6 +215,38 @@ impl AuditService {
     ) -> Result<Vec<rchain_block_storage::audit_store::AuditConflict>, String> {
         self.store.conflicts().await
     }
+}
+
+/// **The durable answer for a nonce, or the defined refusal when only the nonce survived.** The
+/// store commits the claim, the head, the spent nonce and this answer in one batch; this read is
+/// what makes a retry after a restart return the original claim instead of replaying the nonce.
+async fn durable_answer(
+    store: &AuditStore,
+    signer: &str,
+    nonce: &str,
+) -> Result<Option<ProducedAudit>, AuditServiceError> {
+    if let Some(stored) = store
+        .response(signer, nonce)
+        .await
+        .map_err(AuditServiceError::Failed)?
+    {
+        let report: AuditReport = serde_json::from_value(stored.report).map_err(|e| {
+            AuditServiceError::Failed(format!("the stored audit report is unreadable: {e}"))
+        })?;
+        return Ok(Some(ProducedAudit {
+            request_id: nonce.to_string(),
+            report,
+            attestation: Some(stored.attestation),
+        }));
+    }
+    if store
+        .nonce_seen(signer, nonce)
+        .await
+        .map_err(AuditServiceError::Failed)?
+    {
+        return Err(AuditServiceError::AlreadyAnswered);
+    }
+    Ok(None)
 }
 
 /// **A nonce becomes a scratch directory name**, so it must be a simple identifier: no separator,
@@ -265,5 +316,103 @@ mod tests {
         let budget = HourlyBudget::new(1);
         budget.admit().expect("first");
         assert_eq!(budget.admit(), Err(AuditServiceError::RateLimited));
+    }
+
+    use rchain_block_storage::audit_store::{AuditResponse, AuditStore};
+    use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+    use rchain_models::casper::protocol::audit::{AuditAttestation, SIGNED_HASH_CHAIN_WITNESS};
+    use rchain_shared::store_manager::InMemoryStoreManager;
+
+    fn report() -> AuditReport {
+        AuditReport {
+            verdict: "AGREE".to_string(),
+            checkpoint_digest: "11".repeat(32),
+            anchor: "22".repeat(32),
+            anchor_height: 7,
+            shard_id: "root".to_string(),
+            claimed_root: "55".repeat(32),
+            metadata_root: Some("33".repeat(32)),
+            history_root: Some("44".repeat(32)),
+            derived_root: Some("55".repeat(32)),
+            replay_head: Some("66".repeat(32)),
+            blocks: 8,
+            metadata_committed: true,
+            window_committed: true,
+            reason: None,
+        }
+    }
+
+    fn claim(nonce: &str) -> AuditAttestation {
+        AuditAttestation {
+            witness_type: SIGNED_HASH_CHAIN_WITNESS.to_string(),
+            shard_id: "root".to_string(),
+            checkpoint_digest: "11".repeat(32),
+            anchor: "22".repeat(32),
+            anchor_height: 7,
+            from_height: 0,
+            to_height: 7,
+            metadata_root: "33".repeat(32),
+            history_root: "44".repeat(32),
+            derived_root: "55".repeat(32),
+            replay_head: "66".repeat(32),
+            previous: None,
+            sequence: 0,
+            nonce: nonce.to_string(),
+            signer: "07".repeat(33),
+            sig_algorithm: "secp256k1".to_string(),
+            sig: "88".repeat(64),
+        }
+    }
+
+    /// **A retry after a restart returns the stored answer** (review: idempotency was
+    /// process-local). A new process has an empty cache, so this reads only the durable row the
+    /// acceptance wrote with the claim.
+    #[tokio::test]
+    async fn a_retry_after_restart_returns_the_stored_answer() {
+        let kvm = InMemoryStoreManager::default();
+        let store = AuditStore::open(&kvm).await.expect("open");
+        let claim = claim("nonce-1");
+        let answer = AuditResponse {
+            report: serde_json::to_value(report()).expect("report json"),
+            attestation: claim.clone(),
+        };
+        store
+            .accept(
+                &Blake2b256Hash::from_byte_array(&[5u8; 32]),
+                &claim,
+                Some(&answer),
+            )
+            .await
+            .expect("accept");
+
+        let reopened = AuditStore::open(&kvm).await.expect("reopen");
+        let produced = durable_answer(&reopened, &claim.signer, "nonce-1")
+            .await
+            .expect("read")
+            .expect("the answer survived the restart");
+        assert_eq!(produced.report.verdict, "AGREE");
+        assert_eq!(produced.attestation.as_ref(), Some(&claim));
+        assert!(durable_answer(&reopened, &claim.signer, "nonce-2")
+            .await
+            .expect("miss")
+            .is_none());
+    }
+
+    /// A nonce with no stored answer is a defined refusal, not a replay attempt.
+    #[tokio::test]
+    async fn a_spent_nonce_without_an_answer_is_a_defined_refusal() {
+        let kvm = InMemoryStoreManager::default();
+        let store = AuditStore::open(&kvm).await.expect("open");
+        let claim = claim("nonce-1");
+        store
+            .accept(&Blake2b256Hash::from_byte_array(&[6u8; 32]), &claim, None)
+            .await
+            .expect("accept");
+        assert_eq!(
+            durable_answer(&store, &claim.signer, "nonce-1")
+                .await
+                .expect_err("a spent nonce has no answer to return"),
+            AuditServiceError::AlreadyAnswered
+        );
     }
 }

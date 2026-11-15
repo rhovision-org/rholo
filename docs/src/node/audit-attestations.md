@@ -57,6 +57,20 @@ A claim that does not match is stored as **falsification evidence** — the sign
 report digest of the local replay — and is never accepted. A replayed nonce is refused, and a claim
 whose `previous` does not match the signer's accepted head cannot extend the chain.
 
+**The accepted record commits in one transaction.** The claim, the signer's new head, the spent
+nonce and the answer the service returned are four rows in one store, written in one batch: a crash
+leaves either the whole record or none of it, never a visible claim with an outdated head or an
+unconsumed nonce. A nonce is spent once and a head only moves to a strictly greater sequence; both
+read-then-write decisions are held under one in-process gate, so two concurrent acceptances cannot
+both pass. A refusal is one row in a separate conflicts store and never enters the accepted set.
+(One node per store is the assumption; a second process writing the same directory is outside the
+gate.)
+
+**A retry after a restart returns the same answer.** Because the response is written with the claim,
+the service reads the durable row before replaying: the same nonce returns the original report and
+claim even in a new process. A nonce that is spent with no stored answer — a legacy or foreign
+acceptance — is a defined `409`, not a replay attempt.
+
 ## No spam
 
 There is no gossip and no broadcast. The only trigger is an opt-in, rate-limited request:
@@ -66,7 +80,14 @@ POST /api/v1/audit/request          { checkpoint, nonce, previous?, sequence? }
 GET  /api/v1/audit/attestation/{id} the signed result, when ready
 GET  /api/v1/audit/attestations     claims this node itself reproduced
 GET  /api/v1/audit/conflicts        claims this node refused, with the local reason
+POST /api/v1/checkpoint/verify      this node's verifier applied to a certificate
 ```
+
+`POST /api/v1/checkpoint/verify` takes a certificate and returns the node's verdict: the recomputed
+digest, the anchor, and the bonded stake whose signatures named it, with `3s > 2t` applied. It exists
+for consumers that cannot verify secp256k1 themselves — the mature-join benchmark is one — so a
+verdict about signatures is never a string comparison. A refusal is an error response naming the
+first fact that failed.
 
 A request is idempotent on its nonce, runs one replay at a time in a fresh scratch directory, and
 never touches the live store. The service is off by default; enabling it needs a key:
