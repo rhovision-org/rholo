@@ -1683,11 +1683,15 @@ pub const OPENAPI_JSON: &str = r##"{
     },
     "/audit/attestation/{request_id}": {
       "get": {
-        "summary": "The signed claim produced for a request",
+        "summary": "Retrieve a completed audit report and optional signed claim",
+        "description": "Returns the original persisted result after restart, including an unsigned DISAGREE or INCOMPLETE. A nonce identifies one completed result: repeating it cannot re-run an INCOMPLETE audit after a transient cause clears; use a new nonce to request a fresh replay.",
         "parameters": [{ "in": "path", "name": "request_id", "required": true, "schema": { "type": "string" } }],
         "responses": {
-          "200": { "description": "The produced report and claim", "content": { "application/json": { "schema": { "type": "object" } } } },
-          "404": { "description": "No answer is held for this request id" }
+          "200": { "description": "The original completed report and optional signed attestation; INCOMPLETE is stable for this nonce, so use a new nonce for a fresh replay", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "400": { "description": "The request id is not a valid nonce identifier" },
+          "404": { "description": "The audit service is disabled or no completed result exists for this request id" },
+          "409": { "description": "The nonce was spent without a stored answer (legacy/foreign acceptance); use a new nonce" },
+          "500": { "description": "The durable audit result could not be read" }
         }
       }
     },
@@ -5222,6 +5226,36 @@ mod tests {
             doc["paths"]["/history/range"]["post"]["responses"]["402"]["description"],
             "The account cannot pay for the range",
             "the unpaid refusal is the one a consumer must handle"
+        );
+        let audit_result = &doc["paths"]["/audit/attestation/{request_id}"]["get"];
+        assert_eq!(
+            audit_result["summary"],
+            "Retrieve a completed audit report and optional signed claim"
+        );
+        assert!(
+            audit_result["description"]
+                .as_str()
+                .expect("GET audit result description")
+                .contains("use a new nonce"),
+            "a persisted INCOMPLETE is not a retry of the same nonce"
+        );
+        assert!(
+            audit_result["responses"]["200"]["description"]
+                .as_str()
+                .expect("GET audit result 200 description")
+                .contains("INCOMPLETE"),
+            "the 200 must include unsigned verdicts"
+        );
+        assert!(
+            audit_result["responses"]["400"]["description"].is_string(),
+            "invalid request ids must be documented"
+        );
+        assert!(
+            audit_result["responses"]["409"]["description"]
+                .as_str()
+                .expect("GET audit result 409 description")
+                .contains("use a new nonce"),
+            "legacy spent nonces must document the recovery action"
         );
     }
 
