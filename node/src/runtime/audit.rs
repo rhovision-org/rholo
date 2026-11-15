@@ -397,24 +397,72 @@ pub async fn run(
         ))
     });
 
-    // **The replay's one external state is the genesis post-state** (Law 102). The scratch runtime
-    // holds the genesis the configuration names; if it cannot read the genesis post-state's native
-    // leaves, the replay never starts. That is **missing evidence**, not a divergence: the audit
-    // must not report DISAGREE for a state it could not establish. (The transfer of that state is a
-    // recorded gap — C390 — demonstrated on a dev-mode genesis, whose post-state depends on the
-    // genesis contracts rather than on the configured PoS/vault leaves alone.)
-    if let Some(post_state) = headers
+    // **The replay starts from the genesis post-state** (Law 102's one external state). The genesis
+    // body carries its own blessed deploys, so re-executing them installs exactly that state under
+    // the same root — no ceremony key is needed, and an auditor that never held the genesis
+    // master's key can still reproduce the chain. The derived root must equal the body's claimed
+    // post-state; a mismatch means this node's genesis descriptors are not the chain's, which is
+    // missing/foreign input, not a divergence.
+    let genesis_hash = heights
+        .get(&0)
+        .and_then(|set| set.iter().next().copied())
+        .ok_or_else(|| "the audit downloaded no height-zero block".to_string())?;
+    let genesis_body = store
+        .get(&[genesis_hash])
+        .await?
+        .into_iter()
+        .flatten()
+        .next()
+        .ok_or_else(|| "the genesis body was recorded but cannot be read".to_string())?;
+    let terms: Vec<_> = genesis_body
+        .state
+        .deploys
         .iter()
-        .find(|header| i64::from(header.block_num) == 0)
-        .map(|header| header.post_state_hash)
+        .map(|processed| processed.deploy.clone())
+        .collect();
+    let genesis_random =
+        rchain_casper::block_random_seed::BlockRandomSeed::random_generator_from_shard_id(
+            &genesis_body.shard_id,
+        )
+        .map_err(|e| format!("the genesis shard id has no random seed: {e}"))?;
+    let genesis_data = rchain_rholang::system_processes::BlockData {
+        block_number: genesis_body.block_number,
+        sender: rchain_crypto::public_key::PublicKey::new(genesis_body.sender.as_bytes().to_vec()),
+        seq_num: genesis_body.seq_num,
+        timestamp: genesis_body.timestamp,
+    };
+    match parts
+        .runtime_manager
+        .compute_genesis(
+            &terms,
+            &genesis_random,
+            genesis_data,
+            parts.runtime_manager.genesis_pos(),
+            parts.runtime_manager.genesis_vaults(),
+        )
+        .await
     {
-        if let Err(e) = parts.runtime_manager.compute_bonds(&post_state).await {
+        Ok((_pre, derived_genesis_root, _results)) => {
+            if derived_genesis_root.as_bytes() != genesis_body.post_state_hash.as_bytes() {
+                return Ok(incomplete(
+                    &verified,
+                    0,
+                    format!(
+                        "the genesis body's deploys derive {}, but the body claims {}; this node \
+                         cannot establish the chain's genesis post-state",
+                        base16::encode(derived_genesis_root.as_bytes()),
+                        base16::encode(genesis_body.post_state_hash.as_bytes())
+                    ),
+                ));
+            }
+        }
+        Err(e) => {
             return Ok(incomplete(
                 &verified,
                 0,
                 format!(
-                    "the replay cannot read the genesis post-state ({e}); the audit has no \
-                     evidence to disagree with"
+                    "the genesis post-state could not be executed ({e}); the audit has no evidence \
+                     to disagree with"
                 ),
             ));
         }
