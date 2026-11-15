@@ -231,7 +231,7 @@ async fn ask_peers(
     }
     let connected = comm_util.connected_peers().await;
     for peer in connected {
-        if chosen.len() >= 1 + METADATA_FANOUT {
+        if chosen.len() > METADATA_FANOUT {
             break;
         }
         if peer.id == conf.local.id || chosen.iter().any(|p| p.id == peer.id) {

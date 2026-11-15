@@ -238,7 +238,7 @@ impl Default for BlockMetadata {
     fn default() -> Self {
         BlockMetadata {
             block_hash: BlockHash::new([0u8; 32]),
-            block_num: BlockHeight::try_from(0).expect("zero is a valid height"),
+            block_num: BlockHeight::zero(),
             sender: Validator::new([0u8; 65]),
             seq_num: SeqNum::zero(),
             justifications: BTreeSet::new(),

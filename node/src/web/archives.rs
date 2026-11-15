@@ -44,11 +44,13 @@ pub fn sample_heights(nonce: &str, count: usize, max_height: i64) -> Vec<i64> {
         .min(MAX_CHALLENGE_COUNT)
         .min(usize::try_from(total).unwrap_or(usize::MAX));
     let digest = rchain_crypto::hash::blake2b256_hash::Blake2b256Hash::create(nonce.as_bytes());
-    let mut state = u64::from_be_bytes(
-        digest.as_bytes()[..8]
-            .try_into()
-            .expect("eight bytes of a 32-byte digest"),
-    );
+    // The seed is the first eight bytes of the digest, big-endian. Built byte by byte: the slice is
+    // a fixed 32-byte array, and an explicit fold keeps the construction total without a conversion
+    // that could fail.
+    let mut state: u64 = 0;
+    for byte in &digest.as_bytes()[..8] {
+        state = (state << 8) | u64::from(*byte);
+    }
     let mut chosen: BTreeSet<i64> = BTreeSet::new();
     while chosen.len() < take {
         state = splitmix64(state);

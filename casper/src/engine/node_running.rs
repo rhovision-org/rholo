@@ -295,12 +295,19 @@ pub async fn handle_block_metadata_request(
                 continue;
             }
         };
-        let body_available = block_store
-            .contains(&[*hash])
-            .await
-            .ok()
-            .and_then(|found| found.first().copied())
-            .unwrap_or(false);
+        let body_available = match block_store.contains(&[*hash]).await {
+            Ok(found) => found.first().copied().unwrap_or(false),
+            Err(e) => {
+                log.warn(
+                    source,
+                    &format!(
+                        "metadata request: body-availability read for {} failed: {e}",
+                        hash.to_hex()
+                    ),
+                );
+                false
+            }
+        };
         headers.push(BlockHeader {
             block_hash: meta.block_hash,
             block_num: meta.block_num,
@@ -1073,14 +1080,20 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                 // processor's: the block is already in the DAG under the certificate, and handing it
                 // to the validator would replay exactly what the checkpoint replaced.
                 if let Some(tx) = &self.backfill {
-                    if self
-                        .dag
-                        .lookup(&b.block_hash)
-                        .await
-                        .ok()
-                        .flatten()
-                        .is_some()
-                    {
+                    let known = match self.dag.lookup(&b.block_hash).await {
+                        Ok(known) => known.is_some(),
+                        Err(e) => {
+                            self.log.warn(
+                                self.log_source,
+                                &format!(
+                                    "backfill divert: metadata read for {} failed: {e}",
+                                    b.block_hash.to_hex()
+                                ),
+                            );
+                            false
+                        }
+                    };
+                    if known {
                         if tx.try_send(b.clone()).is_err() {
                             self.log.warn(
                                 self.log_source,

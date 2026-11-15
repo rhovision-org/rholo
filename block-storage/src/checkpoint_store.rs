@@ -57,7 +57,14 @@ pub struct CheckpointCertificateCodec;
 
 impl Codec<CheckpointCertificate> for CheckpointCertificateCodec {
     fn encode(&self, value: &CheckpointCertificate) -> Vec<u8> {
-        serde_json::to_vec(value).expect("a checkpoint certificate serializes")
+        // The `Codec` contract has no error channel, and a serialization failure here is not a
+        // runtime condition: the type is a fixed set of strings, lists and options. An empty row is
+        // refused by `decode`, so a hypothetical failure surfaces as an unreadable certificate
+        // rather than a panic in a store write.
+        match serde_json::to_vec(value) {
+            Ok(bytes) => bytes,
+            Err(_) => Vec::new(),
+        }
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<CheckpointCertificate, String> {

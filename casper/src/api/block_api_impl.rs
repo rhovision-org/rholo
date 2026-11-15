@@ -284,12 +284,10 @@ impl BlockApiImpl {
     /// store records that floor; `0` means coverage from genesis. A read failure is `0` — the
     /// conservative answer is "not gapped", never a floor the node cannot support.
     async fn history_floor(&self) -> i64 {
-        self.checkpoint_store
-            .history_from()
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(0)
+        match self.checkpoint_store.history_from().await {
+            Ok(floor) => floor.unwrap_or(0),
+            Err(_) => 0,
+        }
     }
 
     /// The height of the last finalised block, or `None` on a DAG that has finalised nothing.
@@ -554,27 +552,21 @@ impl BlockApi for BlockApiImpl {
         // separation). A certified sync leaves the history below its anchor as metadata only; the
         // marker records that floor, and a reader must not mistake "no earlier body" for "no such
         // block". A node that never joined at a checkpoint has no marker and is `available`.
-        let history_floor = self
-            .checkpoint_store
-            .history_from()
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(0);
-        let checkpoint_age =
-            self.checkpoint_store
-                .latest()
-                .await
-                .ok()
-                .flatten()
-                .map(|certificate| {
-                    // `latest_block_number` is one past the highest observed height (an empty DAG is
-                    // `0`), so the tip is one below it; the age is the tip minus the anchor.
-                    latest_block_number
-                        .saturating_sub(1)
-                        .max(0)
-                        .saturating_sub(certificate.checkpoint.anchor_height)
-                });
+        let history_floor = match self.checkpoint_store.history_from().await {
+            Ok(floor) => floor.unwrap_or(0),
+            Err(_) => 0,
+        };
+        let checkpoint_age = match self.checkpoint_store.latest().await {
+            Ok(certificate) => certificate.map(|certificate| {
+                // `latest_block_number` is one past the highest observed height (an empty DAG is
+                // `0`), so the tip is one below it; the age is the tip minus the anchor.
+                latest_block_number
+                    .saturating_sub(1)
+                    .max(0)
+                    .saturating_sub(certificate.checkpoint.anchor_height)
+            }),
+            Err(_) => None,
+        };
         Status {
             version: VersionInfo {
                 api: 1.to_string(),

@@ -313,7 +313,7 @@ fn incomplete(
         anchor_height: verified.checkpoint.anchor_height,
         claimed_root: verified.checkpoint.anchor_post_state.clone(),
         derived_root: None,
-        blocks: usize::try_from(height.max(0)).unwrap_or(0),
+        blocks: height.max(0) as usize,
         reason: Some(reason),
     }
 }

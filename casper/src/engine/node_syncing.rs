@@ -900,10 +900,11 @@ pub(super) fn tie_certificate_to_fringe(
     // for the fringe anchored at the certificate's anchor, so the answer names that anchor alone and
     // carries its ancestry. The statement and the served root are then the same by construction.
     if transport.len() == 1 {
-        let served = *transport.iter().next().expect("one hash");
-        let anchor = decode_hash(&checkpoint.anchor, "certificate anchor")?;
-        if served == anchor && certified.contains(&anchor) {
-            return Ok(());
+        if let Some(&served) = transport.iter().next() {
+            let anchor = decode_hash(&checkpoint.anchor, "certificate anchor")?;
+            if served == anchor && certified.contains(&anchor) {
+                return Ok(());
+            }
         }
     }
     if certified != transport {
