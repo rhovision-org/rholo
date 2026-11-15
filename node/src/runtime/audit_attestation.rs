@@ -154,7 +154,7 @@ pub async fn verify_and_accept(
         report: serde_json::to_value(run.report()).map_err(|e| {
             AcceptanceError::Refused(format!("the reproduced report is not serializable: {e}"))
         })?,
-        attestation: verified.attestation().clone(),
+        attestation: Some(verified.attestation().clone()),
     };
     store
         .accept(&digest, verified.attestation(), Some(&answer))
