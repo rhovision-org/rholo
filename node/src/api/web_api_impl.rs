@@ -330,6 +330,9 @@ mod tests {
             latest_block_number: 42,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
         }
     }
 

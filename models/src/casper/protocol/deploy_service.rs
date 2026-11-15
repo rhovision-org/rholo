@@ -153,6 +153,54 @@ pub struct Status {
     /// Latest block minus the served checkpoint's anchor, or `None` when no certificate is stored.
     #[serde(default)]
     pub checkpoint_age: Option<i64>,
+    /// The shard's start-up phase: `starting`, `syncing`, `running` or `blocked`. `None` on a
+    /// transport that does not carry it.
+    #[serde(default)]
+    pub sync_phase: Option<String>,
+    /// **The trust anchor this node runs from.** `kind` is `checkpoint` when a verified certificate
+    /// is stored, `genesis` for a genesis-only DAG; `None` means this node has no anchor. A running
+    /// node always has one (Law 108).
+    #[serde(default)]
+    pub checkpoint: Option<CheckpointStatus>,
+    /// **Whether this node offers audit attestations, and the last one it ran.** Absent when the
+    /// node does not serve the audit tier.
+    #[serde(default)]
+    pub audit: Option<AuditAvailability>,
+}
+
+/// The status surface's view of the anchor a node runs from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointStatus {
+    /// `checkpoint` or `genesis`.
+    pub kind: String,
+    /// The certificate's signed digest; absent for a genesis anchor.
+    pub digest: Option<String>,
+    pub anchor: String,
+    pub anchor_height: i64,
+    /// Latest block minus the anchor, when the tip is known.
+    pub age_blocks: Option<i64>,
+    /// `VALIDATION_WINDOW_BLOCKS`: the number of recent headers whose state roots a post-anchor
+    /// block may read.
+    pub validation_window_blocks: i64,
+    /// Whether the statement commits to the validation window (`historyRoot`).
+    pub validation_window_committed: bool,
+    /// Whether the statement commits to the ancestor metadata (`metadataRoot`).
+    pub metadata_committed: bool,
+}
+
+/// Whether a node serves audit attestations, and the last run it completed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditAvailability {
+    /// This node mounts the attested-audit service (it holds an audit key).
+    pub available: bool,
+    /// A replay is running now.
+    pub running: bool,
+    /// The last verdict: `AGREE`, `DISAGREE` or `INCOMPLETE`.
+    pub last_verdict: Option<String>,
+    pub last_checkpoint: Option<String>,
+    pub last_run_at_unix_ms: Option<u64>,
 }
 
 /// Post-block continuations plus the block they belong to (port of
@@ -546,6 +594,9 @@ mod tests {
             latest_block_number: 6,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: Some("running".to_string()),
+            checkpoint: None,
+            audit: None,
         })
         .expect("ser");
         for key in [
@@ -562,6 +613,37 @@ mod tests {
         }
         assert_eq!(status["minPhloPrice"], 5);
         assert_eq!(status["latestBlockNumber"], 6);
+    }
+
+    /// **An older transport carries no anchor, and that is not a malformed status.** The three new
+    /// fields are absent from a pre-change response; decoding it must leave them unknown rather than
+    /// fail, and a current serializer must still emit the keys (null, not omitted).
+    #[test]
+    fn a_status_without_the_anchor_fields_decodes_with_no_anchor() {
+        let json = serde_json::json!({
+            "version": {"api": "1", "node": "n"},
+            "address": "addr",
+            "networkId": "net",
+            "shardId": "root",
+            "peers": 0,
+            "nodes": 0,
+            "minPhloPrice": 0,
+            "latestBlockNumber": 0,
+            "historyAvailability": "available",
+            "checkpointAge": null
+        });
+        let status: Status = serde_json::from_value(json).expect("an older transport decodes");
+        assert_eq!(status.sync_phase, None);
+        assert_eq!(status.checkpoint, None);
+        assert_eq!(status.audit, None);
+
+        let value = serde_json::to_value(&status).expect("ser");
+        for key in ["syncPhase", "checkpoint", "audit"] {
+            assert!(
+                value.get(key).is_some(),
+                "the key is present (null in an older reading), not omitted: missing {key}"
+            );
+        }
     }
 
     /// The deserializer accepts what the serializer emits, for the nested enum too: a client that

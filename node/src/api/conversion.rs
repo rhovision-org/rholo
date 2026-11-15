@@ -133,6 +133,9 @@ pub fn to_public_status(
         },
         history_availability: status.history_availability.clone(),
         checkpoint_age: status.checkpoint_age,
+        sync_phase: status.sync_phase.clone(),
+        checkpoint: status.checkpoint.clone(),
+        audit: status.audit.clone(),
     }
 }
 
@@ -421,6 +424,9 @@ mod tests {
             latest_block_number: 0,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
         };
         let caps = Capabilities {
             autopropose: false,
@@ -511,6 +517,9 @@ mod tests {
             latest_block_number: 4,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
         };
         let caps = Capabilities {
             autopropose: true,
@@ -714,6 +723,9 @@ mod tests {
             latest_block_number: 0,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
             autopropose: false,
             propose_on_deploy: false,
             manual_propose: true,
@@ -758,6 +770,71 @@ mod tests {
         );
     }
 
+    /// **The anchor and audit reading reaches the public status.** A client deciding whether to ask
+    /// this node for history needs the anchor kind, the validation-window size and whether the
+    /// certificate committed to it; an auditor needs the tier's availability and last verdict.
+    #[test]
+    fn the_public_status_carries_the_anchor_and_audit_reading() {
+        use rchain_models::casper::protocol::deploy_service::{
+            AuditAvailability, CheckpointStatus,
+        };
+
+        let status = Status {
+            version: rchain_models::casper::protocol::deploy_service::VersionInfo {
+                api: "1.0".into(),
+                node: "n".into(),
+            },
+            address: "addr".into(),
+            network_id: "testnet".into(),
+            shard_id: "/root".into(),
+            peers: 0,
+            nodes: 0,
+            min_phlo_price: 0,
+            latest_block_number: 10,
+            history_availability: "available".to_string(),
+            checkpoint_age: Some(3),
+            sync_phase: Some("running".to_string()),
+            checkpoint: Some(CheckpointStatus {
+                kind: "checkpoint".to_string(),
+                digest: Some("digest".to_string()),
+                anchor: "anchor".to_string(),
+                anchor_height: 7,
+                age_blocks: Some(3),
+                validation_window_blocks: 8,
+                validation_window_committed: true,
+                metadata_committed: true,
+            }),
+            audit: Some(AuditAvailability {
+                available: true,
+                running: false,
+                last_verdict: Some("AGREE".to_string()),
+                last_checkpoint: Some("digest".to_string()),
+                last_run_at_unix_ms: Some(1_700_000_000_000),
+            }),
+        };
+        let public = to_public_status(
+            &status,
+            &Capabilities {
+                autopropose: false,
+                propose_on_deploy: false,
+                manual_propose: true,
+                admin_http: false,
+                dev_mode: false,
+                proposer: false,
+            },
+            &ResourceSnapshot::default(),
+            &DeployPoolStats::default(),
+        );
+        assert_eq!(public.sync_phase.as_deref(), Some("running"));
+        let anchor = public.checkpoint.expect("the anchor travels");
+        assert_eq!(anchor.kind, "checkpoint");
+        assert_eq!(anchor.validation_window_blocks, 8);
+        assert!(anchor.validation_window_committed);
+        let audit = public.audit.expect("the audit reading travels");
+        assert!(audit.available);
+        assert_eq!(audit.last_verdict.as_deref(), Some("AGREE"));
+    }
+
     /// **The shard's history reaches the wire under the names the row uses** (W-N10-02).
     ///
     /// The row states its defect by wire name — `finalityStallEpisodes`, `nonQuietMergeReports` — because
@@ -786,6 +863,9 @@ mod tests {
             latest_block_number: 0,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
             autopropose: true,
             propose_on_deploy: false,
             manual_propose: false,
@@ -867,6 +947,9 @@ mod tests {
             latest_block_number: 0,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
             autopropose: true,
             propose_on_deploy: false,
             manual_propose: false,
@@ -970,6 +1053,9 @@ mod tests {
             latest_block_number: 0,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
         };
         let caps = Capabilities {
             autopropose: false,
@@ -1060,6 +1146,9 @@ mod tests {
             latest_block_number: 0,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
         };
         let caps = Capabilities {
             autopropose: false,

@@ -545,6 +545,9 @@ mod tests {
                 latest_block_number: 1,
                 history_availability: "available".to_string(),
                 checkpoint_age: None,
+                sync_phase: None,
+                checkpoint: None,
+                audit: None,
             }
         }
         async fn proposer_health(&self) -> ProposerHealth {

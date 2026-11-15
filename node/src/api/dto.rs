@@ -149,6 +149,15 @@ pub struct PublicStatus {
     pub history_availability: String,
     /// Latest block minus the served checkpoint's anchor, or `None` when no certificate exists.
     pub checkpoint_age: Option<i64>,
+    /// The shard's start-up phase (`starting`, `syncing`, `running`, `blocked`).
+    #[serde(default)]
+    pub sync_phase: Option<String>,
+    /// The trust anchor this node runs from: a verified checkpoint or the pinned genesis.
+    #[serde(default)]
+    pub checkpoint: Option<rchain_models::casper::protocol::deploy_service::CheckpointStatus>,
+    /// Whether this node offers audit attestations, and the last run it completed.
+    #[serde(default)]
+    pub audit: Option<rchain_models::casper::protocol::deploy_service::AuditAvailability>,
 }
 
 /// **The deploy pool's public capacity answer** (Law 86a). Counts and bytes only; per-deployer keys
@@ -773,6 +782,9 @@ mod tests {
             latest_block_number: 4,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
             autopropose: true,
             propose_on_deploy: true,
             manual_propose: false,

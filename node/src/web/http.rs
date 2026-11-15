@@ -1674,7 +1674,25 @@ pub const OPENAPI_JSON: &str = r##"{
             "maxBytes": { "type": "integer" }
           } },
           "historyAvailability": { "type": "string", "description": "Where this node's body history begins: available | backfilling | unavailable | unknown (a transport that does not carry the field). unavailable means the node joined at a checkpoint and holds no earlier bodies; ask for a block below the checkpoint only after reading this" },
-          "checkpointAge": { "type": "integer", "format": "int64", "nullable": true, "description": "The distance from the served checkpoint's anchor to the latest observed block, or null when no checkpoint certificate is stored" }
+          "checkpointAge": { "type": "integer", "format": "int64", "nullable": true, "description": "The distance from the served checkpoint's anchor to the latest observed block, or null when no checkpoint certificate is stored" },
+          "syncPhase": { "type": "string", "description": "This shard's start-up phase: starting | syncing | running | blocked. A node can hold blocks and serve none, which latestBlockNumber cannot express" },
+          "checkpoint": { "type": "object", "description": "The trust anchor this node runs from (Law 108). kind is checkpoint (with the certificate digest) or genesis; null means this node has no anchor and is not running", "properties": {
+            "kind": { "type": "string", "description": "checkpoint | genesis" },
+            "digest": { "type": "string", "nullable": true, "description": "The certificate's signed digest; null for a genesis anchor" },
+            "anchor": { "type": "string" },
+            "anchorHeight": { "type": "integer", "format": "int64" },
+            "ageBlocks": { "type": "integer", "format": "int64", "nullable": true, "description": "Latest observed block minus the anchor; a height difference, not a wall clock" },
+            "validationWindowBlocks": { "type": "integer", "format": "int64", "description": "The recent headers whose state roots a post-anchor block may read (8)" },
+            "validationWindowCommitted": { "type": "boolean", "description": "Whether the statement commits to the validation window (historyRoot, Law 109)" },
+            "metadataCommitted": { "type": "boolean", "description": "Whether the statement commits to the ancestor metadata (metadataRoot)" }
+          } },
+          "audit": { "type": "object", "description": "Whether this node serves audit attestations, and the last run it completed", "properties": {
+            "available": { "type": "boolean", "description": "This node mounts the attested-audit service" },
+            "running": { "type": "boolean", "description": "A replay is running now" },
+            "lastVerdict": { "type": "string", "nullable": true, "description": "AGREE | DISAGREE | INCOMPLETE" },
+            "lastCheckpoint": { "type": "string", "nullable": true },
+            "lastRunAtUnixMs": { "type": "integer", "format": "int64", "nullable": true }
+          } }
         }
       },
       "OperatorStatus": {
@@ -1704,6 +1722,24 @@ pub const OPENAPI_JSON: &str = r##"{
           } },
           "historyAvailability": { "type": "string", "description": "Where this node's body history begins: available | backfilling | unavailable | unknown (a transport that does not carry the field). unavailable means the node joined at a checkpoint and holds no earlier bodies; ask for a block below the checkpoint only after reading this" },
           "checkpointAge": { "type": "integer", "format": "int64", "nullable": true, "description": "The distance from the served checkpoint's anchor to the latest observed block, or null when no checkpoint certificate is stored" },
+          "syncPhase": { "type": "string", "description": "This shard's start-up phase: starting | syncing | running | blocked. A node can hold blocks and serve none, which latestBlockNumber cannot express" },
+          "checkpoint": { "type": "object", "description": "The trust anchor this node runs from (Law 108). kind is checkpoint (with the certificate digest) or genesis; null means this node has no anchor and is not running", "properties": {
+            "kind": { "type": "string", "description": "checkpoint | genesis" },
+            "digest": { "type": "string", "nullable": true, "description": "The certificate's signed digest; null for a genesis anchor" },
+            "anchor": { "type": "string" },
+            "anchorHeight": { "type": "integer", "format": "int64" },
+            "ageBlocks": { "type": "integer", "format": "int64", "nullable": true, "description": "Latest observed block minus the anchor; a height difference, not a wall clock" },
+            "validationWindowBlocks": { "type": "integer", "format": "int64", "description": "The recent headers whose state roots a post-anchor block may read (8)" },
+            "validationWindowCommitted": { "type": "boolean", "description": "Whether the statement commits to the validation window (historyRoot, Law 109)" },
+            "metadataCommitted": { "type": "boolean", "description": "Whether the statement commits to the ancestor metadata (metadataRoot)" }
+          } },
+          "audit": { "type": "object", "description": "Whether this node serves audit attestations, and the last run it completed", "properties": {
+            "available": { "type": "boolean", "description": "This node mounts the attested-audit service" },
+            "running": { "type": "boolean", "description": "A replay is running now" },
+            "lastVerdict": { "type": "string", "nullable": true, "description": "AGREE | DISAGREE | INCOMPLETE" },
+            "lastCheckpoint": { "type": "string", "nullable": true },
+            "lastRunAtUnixMs": { "type": "integer", "format": "int64", "nullable": true }
+          } },
           "adminHttp": { "type": "boolean", "description": "The admin HTTP surface is published" },
           "consecutiveSelfValidationFailures": { "type": "integer", "format": "int64", "description": "Self-validation failures the proposer has recorded in a row; cleared by a successful propose" },
           "selfValidationRefusal": { "$ref": "#/components/schemas/SelfValidationRefusalDto" },
@@ -3117,6 +3153,9 @@ mod tests {
             latest_block_number: 4,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
             autopropose: true,
             propose_on_deploy: true,
             manual_propose: false,
@@ -5223,6 +5262,9 @@ mod tests {
                 latest_block_number: if self.shard_id == "/root" { 7 } else { 3 },
                 history_availability: "available".to_string(),
                 checkpoint_age: None,
+                sync_phase: None,
+                checkpoint: None,
+                audit: None,
             }
         }
         async fn deploy_status(

@@ -67,7 +67,7 @@ def envelopeCatalog : List EnvelopeRow :=
       keys := ["version", "address", "networkId", "shardId", "peers", "nodes", "minPhloPrice",
         "latestBlockNumber", "autopropose", "proposeOnDeploy", "manualPropose", "devMode",
         "proposer", "degraded", "acceptsDeploys", "pool", "historyAvailability",
-        "checkpointAge"] }
+        "checkpointAge", "syncPhase", "checkpoint", "audit"] }
   -- **The operator half, on its own endpoint** (W-N3-01). The row above used to carry every key
   -- below, and served them on a public listener; the split *is* the finding, so the catalog splits
   -- with it. A superset of the row above by construction: `OperatorStatus` flattens `PublicStatus`
@@ -76,7 +76,7 @@ def envelopeCatalog : List EnvelopeRow :=
       keys := ["version", "address", "networkId", "shardId", "peers", "nodes", "minPhloPrice",
         "latestBlockNumber", "autopropose", "proposeOnDeploy", "manualPropose", "devMode",
         "proposer", "degraded", "acceptsDeploys", "pool", "historyAvailability",
-        "checkpointAge",
+        "checkpointAge", "syncPhase", "checkpoint", "audit",
         "adminHttp",
         "consecutiveSelfValidationFailures", "selfValidationRefusal", "poolQuarantined",
         "autoproposeTimerHalted",

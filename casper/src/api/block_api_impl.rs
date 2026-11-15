@@ -23,10 +23,10 @@ use rchain_models::casper::protocol::casper_message::{
     BlockHeader, BlockMessage, SignedDeployData,
 };
 use rchain_models::casper::protocol::checkpoint::{
-    Checkpoint, CheckpointAttestation, CheckpointCertificate,
+    Checkpoint, CheckpointAttestation, CheckpointCertificate, VALIDATION_WINDOW_BLOCKS,
 };
 use rchain_models::casper::protocol::deploy_service::{
-    BlockInfo, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
+    BlockInfo, CheckpointStatus, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
     FinalityAttestation, LightBlockInfo, RawBlock, Status, VersionInfo, WaitingContinuationInfo,
 };
 use rchain_models::rholang::RhoType::RhoDeployId;
@@ -44,6 +44,8 @@ use crate::api::graph_generator::{dag_as_cluster, ValidatorBlock};
 use crate::api::machine_verifiable_dag::machine_verifiable_dag;
 use crate::blocks::proposer::propose_result::{ProposeResult, ProposeStatus};
 use crate::blocks::proposer::proposer::ProposerResult;
+use crate::checkpoint::checkpoint_digest;
+use crate::engine::audit_status::audit_availability;
 use crate::engine::node_phase::NodePhaseCell;
 use crate::event_converter::to_rspace_event;
 use crate::interpreter_util::ShardHealth;
@@ -58,6 +60,35 @@ pub struct NetworkStatus {
     pub address: String,
     pub peers: i32,
     pub nodes: i32,
+}
+
+/// **The genesis anchor, or none.** A DAG at height zero with no stored certificate anchors on its
+/// pinned genesis (Law 108); a DAG above genesis with no certificate has no anchor and the status
+/// says so rather than inventing one.
+async fn genesis_anchor_status(
+    dag: &dyn BlockDagStorage,
+    latest_block_number: i64,
+) -> Option<CheckpointStatus> {
+    if latest_block_number > 1 {
+        return None;
+    }
+    let representation = dag.get_representation().await;
+    let genesis = representation
+        .topo_sort_unsafe(0, Some(0))
+        .ok()?
+        .into_iter()
+        .flatten()
+        .next()?;
+    Some(CheckpointStatus {
+        kind: "genesis".to_string(),
+        digest: None,
+        anchor: genesis.to_hex(),
+        anchor_height: 0,
+        age_blocks: None,
+        validation_window_blocks: VALIDATION_WINDOW_BLOCKS as i64,
+        validation_window_committed: false,
+        metadata_committed: false,
+    })
 }
 
 /// A propose trigger (port of `ProposeFunction[F] = Boolean => F[ProposerResult]`).
@@ -648,18 +679,30 @@ impl BlockApi for BlockApiImpl {
             Ok(floor) => floor.unwrap_or(0),
             Err(_) => 0,
         };
-        let checkpoint_age = match self.checkpoint_store.latest().await {
-            Ok(certificate) => certificate.map(|certificate| {
-                // `latest_block_number` is one past the highest observed height (an empty DAG is
-                // `0`), so the tip is one below it; the age is the tip minus the anchor.
-                latest_block_number
-                    .saturating_sub(1)
-                    .max(0)
-                    .saturating_sub(certificate.checkpoint.anchor_height)
+        // `latest_block_number` is one past the highest observed height (an empty DAG is `0`), so
+        // the tip is one below it; the age is the tip minus the anchor.
+        let tip = latest_block_number.saturating_sub(1).max(0);
+        let checkpoint = match self.checkpoint_store.latest().await {
+            Ok(Some(certificate)) => Some(CheckpointStatus {
+                kind: "checkpoint".to_string(),
+                digest: checkpoint_digest(&certificate.checkpoint)
+                    .ok()
+                    .map(|digest| digest.to_hex()),
+                anchor: certificate.checkpoint.anchor.clone(),
+                anchor_height: certificate.checkpoint.anchor_height,
+                age_blocks: Some(tip.saturating_sub(certificate.checkpoint.anchor_height)),
+                validation_window_blocks: VALIDATION_WINDOW_BLOCKS as i64,
+                validation_window_committed: certificate.checkpoint.history_root.is_some(),
+                metadata_committed: certificate.checkpoint.metadata_root.is_some(),
             }),
+            Ok(None) => genesis_anchor_status(self.dag.as_ref(), latest_block_number).await,
             Err(_) => None,
         };
+        let checkpoint_age = checkpoint.as_ref().and_then(|anchor| anchor.age_blocks);
         Status {
+            sync_phase: Some(self.phase.phase().label().to_string()),
+            checkpoint,
+            audit: Some(audit_availability()),
             version: VersionInfo {
                 api: 1.to_string(),
                 node: self.version.clone(),
