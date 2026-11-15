@@ -776,38 +776,18 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         log.as_ref(),
     )
     .await?;
-    let (entries, fringe_state_root) =
+    let (entries, fringe_state_root, window) =
         certified_metadata_entries(&walk, &verified.checkpoint, checkpoint_root)?;
 
-    // **Two roots are hydrated, and only two.** The checkpoint's post-state is the state this node
-    // starts from; the max fringe member's `fringe_state_hash` is the state the proposer's next
-    // block starts from. Both are claims of the same signed statement. The old path walked the
-    // whole trie for every ancestry claim and every block's pre/post root — O(height) full walks,
-    // measured at ~2.5 minutes for 316 roots (C339) — and replay then recomputed all of it.
+    // **The hydrated set is the certified set.** The checkpoint's post-state, the max fringe
+    // member's `fringe_state_hash`, the approved fringe's state, and exactly the validation-window
+    // roots the statement commits to. The joiner does not guess a window or widen it; a root it
+    // cannot hydrate is a failed sync.
     let mut required_roots = BTreeSet::from([checkpoint_root, fringe_state_root]);
     required_roots.insert(Blake2b256Hash::from_byte_array(
         fringe.state_hash.as_bytes(),
     ));
-    // **The close block reads a short history.** A post-anchor block runs the PoS close for the
-    // block finalized a few heights behind it; `validateBlockCheckpoint` regenerates that block's
-    // mergeable channels from its **pre-state**, and the checkpoint state alone does not carry it.
-    // The measured-correct set is the last eight walked headers' pre/post/fringe states (24
-    // content-addressed roots): a 5-post-only trim failed at height 1,465 because the close needed
-    // block 1,465's pre-state. The walk is bounded; the C339 cost was 316 full-trie walks.
-    const CLOSE_HISTORY_BLOCKS: usize = 8;
-    let mut recent: Vec<_> = walk.headers.values().collect();
-    recent.sort_by_key(|header| i64::from(header.block_num));
-    for header in recent.iter().rev().take(CLOSE_HISTORY_BLOCKS) {
-        for root in [
-            header.post_state_hash,
-            header.pre_state_hash,
-            header.fringe_state_hash,
-        ] {
-            if root != StateHash::new([0u8; 32]) {
-                required_roots.insert(Blake2b256Hash::from_byte_array(root.as_bytes()));
-            }
-        }
-    }
+    required_roots.extend(window.iter().copied());
     crate::engine::sync_metrics::census().add_state_roots(required_roots.len() as u64);
 
     // The anchored fringe's own root is the checkpoint root (`node_running` answers an anchored
@@ -1006,10 +986,9 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
             entries.len()
         ),
     );
-    // **The accepted state: the anchor is the certificate and the root is its checkpoint root.**
-    // The validation window is filled by the certified-window unit; until then the sync hydrates the
-    // measured close history and this state carries an empty window (the launch does not use it yet).
-    crate::engine::anchor::AcceptedState::from_certificate(verified.clone(), BTreeSet::new())
+    // **The accepted state: the anchor is the certificate, the root is its checkpoint root, and the
+    // window is the set this sync hydrated.** Law 108 and Law 109 are on the running path together.
+    crate::engine::anchor::AcceptedState::from_certificate(verified.clone(), window)
 }
 
 /// **Fetch, verify and tie the certificate to the fringe the bootstrap served.**
@@ -1148,7 +1127,14 @@ pub(super) fn certified_metadata_entries(
     walk: &super::lfs_metadata_requester::MetadataWalk,
     checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
     checkpoint_root: Blake2b256Hash,
-) -> Result<(Vec<(BlockHash, BlockMetadata)>, Blake2b256Hash), String> {
+) -> Result<
+    (
+        Vec<(BlockHash, BlockMetadata)>,
+        Blake2b256Hash,
+        BTreeSet<Blake2b256Hash>,
+    ),
+    String,
+> {
     let anchor = decode_hash(&checkpoint.anchor, "certificate anchor")?;
     let anchor_header = walk.headers.get(&anchor).ok_or_else(|| {
         format!(
@@ -1217,6 +1203,16 @@ pub(super) fn certified_metadata_entries(
     // header can prove.
     crate::checkpoint::verify_metadata_root(checkpoint, walk.headers.values())
         .map_err(|e| e.to_string())?;
+    // **The certificate's validation window is the set this node hydrates.** The statement commits
+    // to the roots a post-anchor block may read; the joiner derives the same set from the walked
+    // headers and checks the commitment. A missing root is a hydration failure, not a wider window.
+    crate::checkpoint::verify_validation_window(checkpoint, walk.headers.values())
+        .map_err(|e| e.to_string())?;
+    let window: BTreeSet<Blake2b256Hash> =
+        rchain_models::casper::protocol::checkpoint::validation_window_roots(walk.headers.values())
+            .into_iter()
+            .map(|root| Blake2b256Hash::from_byte_array(&root))
+            .collect();
 
     let mut entries = Vec::with_capacity(walk.headers.len());
     for header in walk.headers.values() {
@@ -1251,6 +1247,7 @@ pub(super) fn certified_metadata_entries(
     Ok((
         entries,
         Blake2b256Hash::from_byte_array(anchor_header.fringe_state_hash.as_bytes()),
+        window,
     ))
 }
 
@@ -2640,6 +2637,7 @@ mod tests {
             parent_digest: None,
             epoch: 0,
             metadata_root: None,
+            history_root: None,
         }
     }
 
@@ -2785,6 +2783,7 @@ mod tests {
             parent_digest: None,
             epoch: 0,
             metadata_root: None,
+            history_root: None,
         }
     }
 
@@ -2800,12 +2799,19 @@ mod tests {
             grandchild.post_state_hash,
             vec![grandchild.block_hash],
         );
-        // The statement commits to the headers the walk is about to accept.
+        // The statement commits to the headers the walk is about to accept and to the validation
+        // window those headers select.
         checkpoint.metadata_root = Some(
             rchain_models::casper::protocol::checkpoint::metadata_root(walk.headers.values())
                 .to_hex(),
         );
-        let (entries, fringe_root) = certified_metadata_entries(
+        checkpoint.history_root = Some(
+            rchain_models::casper::protocol::checkpoint::validation_window_root(
+                walk.headers.values(),
+            )
+            .to_hex(),
+        );
+        let (entries, fringe_root, _window) = certified_metadata_entries(
             &walk,
             &checkpoint,
             Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
@@ -2901,6 +2907,7 @@ mod tests {
             epoch: 0,
             shard_id: "root".to_string(),
             metadata_root: None,
+            history_root: None,
         };
         let err = certified_metadata_entries(
             &walk,
@@ -2925,6 +2932,7 @@ mod tests {
             epoch: 0,
             shard_id: "root".to_string(),
             metadata_root: None,
+            history_root: None,
         };
         let err = certified_metadata_entries(
             &walk,

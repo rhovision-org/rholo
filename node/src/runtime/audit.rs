@@ -71,6 +71,10 @@ pub struct AuditReport {
     /// accepted by the audit (with `metadata_committed: false`) because the replay still checks the
     /// state; a reader must not mistake that for an authenticated header set.
     pub metadata_committed: bool,
+    /// **Whether the certificate committed to the validation window.** A legacy `None` is accepted
+    /// by the audit — the replay still checks the state — and reported as uncommitted; the sync path
+    /// refuses it.
+    pub window_committed: bool,
     /// Why the verdict is not AGREE.
     pub reason: Option<String>,
 }
@@ -114,7 +118,7 @@ fn ancestor_closure(
 /// Reconstruct the full block from a node's `RawBlock` response: the encoded preimage has the hash
 /// zeroed and the signature emptied by construction (`to_bytes_cleared`), so both are restored from
 /// the response's separate fields. The result is the block `hash_block` was taken over.
-fn reconstruct_block(raw: &RawBlock) -> Result<BlockMessage, String> {
+pub fn reconstruct_block(raw: &RawBlock) -> Result<BlockMessage, String> {
     let encoded = base16::decode(&raw.encoded)
         .ok_or_else(|| "the raw block's `encoded` is not base16".to_string())?;
     let mut block = BlockMessage::from_bytes(&encoded)
@@ -304,8 +308,9 @@ pub async fn run(
     // `None` root is accepted — the replay still checks the state — and reported as uncommitted, so
     // the report never implies an authentication that did not happen.
     let metadata_committed = certificate.checkpoint.metadata_root.is_some();
-    if metadata_committed {
-        // **The commitment covers the anchor's ancestor closure, not every block at a height.**
+    let window_committed = certificate.checkpoint.history_root.is_some();
+    if metadata_committed || window_committed {
+        // **The commitments cover the anchor's ancestor closure, not every block at a height.**
         // The bodies route returns all blocks at a height, including forks; a root over that
         // superset would disagree with a correct certificate. Walk the anchor's justifications,
         // exactly as the producer and the joiner do.
@@ -321,24 +326,51 @@ pub async fn run(
                 return Ok(report);
             }
         };
-        if let Err(e) =
-            rchain_casper::checkpoint::verify_metadata_root(&certificate.checkpoint, closure.iter())
-        {
-            let report = AuditReport {
-                verdict: "DISAGREE".to_string(),
-                checkpoint_digest: verified.digest.to_hex(),
-                anchor: anchor.to_hex(),
-                anchor_height: certificate.checkpoint.anchor_height,
-                claimed_root: certificate.checkpoint.anchor_post_state.clone(),
-                derived_root: None,
-                blocks: heights.values().map(|set| set.len()).sum(),
-                metadata_committed,
-                reason: Some(format!(
-                    "the metadata commitment does not match the bodies: {e}"
-                )),
-            };
-            write_report(&request.out, &report).await?;
-            return Ok(report);
+        if metadata_committed {
+            if let Err(e) = rchain_casper::checkpoint::verify_metadata_root(
+                &certificate.checkpoint,
+                closure.iter(),
+            ) {
+                let report = AuditReport {
+                    verdict: "DISAGREE".to_string(),
+                    checkpoint_digest: verified.digest.to_hex(),
+                    anchor: anchor.to_hex(),
+                    anchor_height: certificate.checkpoint.anchor_height,
+                    claimed_root: certificate.checkpoint.anchor_post_state.clone(),
+                    derived_root: None,
+                    blocks: heights.values().map(|set| set.len()).sum(),
+                    metadata_committed,
+                    window_committed,
+                    reason: Some(format!(
+                        "the metadata commitment does not match the bodies: {e}"
+                    )),
+                };
+                write_report(&request.out, &report).await?;
+                return Ok(report);
+            }
+        }
+        if window_committed {
+            if let Err(e) = rchain_casper::checkpoint::verify_validation_window(
+                &certificate.checkpoint,
+                closure.iter(),
+            ) {
+                let report = AuditReport {
+                    verdict: "DISAGREE".to_string(),
+                    checkpoint_digest: verified.digest.to_hex(),
+                    anchor: anchor.to_hex(),
+                    anchor_height: certificate.checkpoint.anchor_height,
+                    claimed_root: certificate.checkpoint.anchor_post_state.clone(),
+                    derived_root: None,
+                    blocks: heights.values().map(|set| set.len()).sum(),
+                    metadata_committed,
+                    window_committed,
+                    reason: Some(format!(
+                        "the validation-window commitment does not match the bodies: {e}"
+                    )),
+                };
+                write_report(&request.out, &report).await?;
+                return Ok(report);
+            }
         }
     }
 
@@ -383,6 +415,7 @@ pub async fn run(
             derived_root: Some(certificate.checkpoint.anchor_post_state.clone()),
             blocks,
             metadata_committed,
+            window_committed,
             reason: None,
         },
         Err(reason) => AuditReport {
@@ -394,6 +427,7 @@ pub async fn run(
             derived_root: None,
             blocks,
             metadata_committed,
+            window_committed,
             reason: Some(reason),
         },
     };
@@ -422,6 +456,7 @@ fn incomplete(
         derived_root: None,
         blocks: height.max(0) as usize,
         metadata_committed: verified.checkpoint.metadata_root.is_some(),
+        window_committed: verified.checkpoint.history_root.is_some(),
         reason: Some(reason),
     }
 }
@@ -545,6 +580,7 @@ mod tests {
                 parent_digest: None,
                 epoch: 0,
                 metadata_root: None,
+                history_root: None,
             },
             digest,
             supporting_stake: 3,

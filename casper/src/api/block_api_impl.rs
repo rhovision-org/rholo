@@ -518,15 +518,14 @@ impl BlockApiImpl {
         })
     }
 
-    /// **The post-state of a block, from metadata first.** The DAG's `BlockMetadata` carries the
-    /// same `post_state_hash` the body does, and a checkpoint-joined validator has metadata without
-    /// the historical body. The body is the fallback for a store whose metadata predates this
-    /// field; a block with neither is refused rather than checkpointed with a zero root.
-    /// **The commitment over the anchor's ancestor closure.** The walk follows `justifications`
-    /// from the anchor, exactly as the joiner's metadata walk does; `metadata_root` itself filters
-    /// genesis and sorts by block hash, so every signer derives the same root from the same DAG.
-    /// A missing ancestor is a refusal: a partial root would not be the set the joiner verifies.
-    async fn anchor_metadata_root(&self, anchor: &BlockHash) -> Result<Blake2b256Hash, String> {
+    /// **The commitments over the anchor's ancestor closure.** The walk follows `justifications`
+    /// from the anchor, exactly as the joiner's metadata walk does; both commitments filter and sort
+    /// the same set, so every signer derives them from the same DAG. A missing ancestor is a refusal:
+    /// a partial root would not be the set the joiner verifies.
+    async fn anchor_commitments(
+        &self,
+        anchor: &BlockHash,
+    ) -> Result<(Blake2b256Hash, Blake2b256Hash), String> {
         let mut seen = BTreeSet::new();
         let mut stack = vec![*anchor];
         let mut headers = Vec::new();
@@ -536,19 +535,23 @@ impl BlockApiImpl {
             }
             let metadata = self.dag.lookup(&hash).await?.ok_or_else(|| {
                 format!(
-                    "the checkpoint anchor's ancestor {} has no metadata, so the metadata root \
-                     would not cover the history the joiner walks",
+                    "the checkpoint anchor's ancestor {} has no metadata, so the commitments would \
+                     not cover the history the joiner walks",
                     hash.to_hex()
                 )
             })?;
             headers.push(header_from_metadata(&metadata));
             stack.extend(metadata.justifications.iter().copied());
         }
-        Ok(rchain_models::casper::protocol::checkpoint::metadata_root(
-            &headers,
-        ))
+        let metadata = rchain_models::casper::protocol::checkpoint::metadata_root(&headers);
+        let window = rchain_models::casper::protocol::checkpoint::validation_window_root(&headers);
+        Ok((metadata, window))
     }
 
+    /// **The post-state of a block, from metadata first.** The DAG's `BlockMetadata` carries the
+    /// same `post_state_hash` the body does, and a checkpoint-joined validator has metadata without
+    /// the historical body. The body is the fallback for a store whose metadata predates this
+    /// field; a block with neither is refused rather than checkpointed with a zero root.
     async fn anchor_post_state(&self, hash: &BlockHash) -> Result<StateHash, String> {
         let metadata = self
             .dag
@@ -1239,10 +1242,10 @@ impl BlockApi for BlockApiImpl {
         // unable to attest until the backfill reached the anchor. The fallback keeps the old
         // behaviour for a node whose metadata predates this path.
         let anchor_post_state = self.anchor_post_state(&anchor_hash).await?;
-        // **The statement commits to the headers it is a statement about.** The anchor's ancestor
-        // closure is the set the joiner will walk; a validator that cannot read every ancestor's
-        // metadata refuses to attest rather than sign a partial root.
-        let metadata_root = self.anchor_metadata_root(&anchor_hash).await?;
+        // **The statement commits to the headers it is a statement about and to the validation
+        // window.** The anchor's ancestor closure is the set the joiner will walk; a validator that
+        // cannot read every ancestor's metadata refuses to attest rather than sign a partial root.
+        let (metadata_root, history_root) = self.anchor_commitments(&anchor_hash).await?;
         let epoch_length = self.runtime.genesis_pos().params.epoch_length.max(1);
         let anchor_height = i64::from(anchor.height);
         Ok(Checkpoint {
@@ -1263,6 +1266,7 @@ impl BlockApi for BlockApiImpl {
             parent_digest: None,
             epoch: anchor_height / epoch_length,
             metadata_root: Some(metadata_root.to_hex()),
+            history_root: Some(history_root.to_hex()),
         })
     }
 

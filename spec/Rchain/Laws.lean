@@ -6190,6 +6190,41 @@ def lawsC : List Law := [
       requested, because a network with no finalized fringe has no quorum to ask. A cold bonded \
       validator still needs the remaining validators to form a quorum (N≥4 under the strict rule); \
       that liveness boundary is recorded, not claimed." },
+
+  { number := 109, layer := "Sync",
+    statement := "**A post-anchor block validates only against certified roots.** The checkpoint \
+      statement commits to a validation window — the recent pre/post/fringe state roots a PoS close \
+      may read — and a block whose pre-state is outside the checkpoint root plus that window is \
+      refused. The joiner hydrates exactly the committed window and never widens it to make a block \
+      validate; under collision-freedom the commitment binds the window.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Window.a_validated_block_reads_only_certified_roots,
+      `Rchain.Sync.Window.an_uncertified_root_is_refused,
+      `Rchain.Sync.Window.the_history_root_binds_the_window,
+      `Rchain.Sync.Window.a_shortened_window_refuses,
+      `Rchain.Sync.Window.a_window_root_validates],
+    axioms := [],
+    rust := ["casper/src/checkpoint.rs", "casper/src/engine/node_syncing.rs",
+      "node/src/runtime/audit.rs"],
+    rustWitness := [
+      "casper/src/checkpoint.rs:a_validation_window_is_bound_and_verifies",
+      "casper/src/engine/node_syncing.rs:a_certified_metadata_history_carries_the_quorums_claim_on_each_block"],
+    witness := [`Rchain.Sync.Window.a_validated_block_reads_only_certified_roots,
+      `Rchain.Sync.Window.a_shortened_window_refuses],
+    falsifiable := "Admit any root into `validates` and `an_uncertified_root_is_refused` fails; drop \
+      a member from the window and `a_shortened_window_refuses` fails. In Rust, the window test \
+      reddens if the digest does not bind `historyRoot`, if a shortened window derives the same \
+      commitment, or if a changed header field does not change the window root; the certified-metadata \
+      test reddens if the joiner accepts a committed window it cannot derive from the walked headers.",
+    note := "**The window size is a protocol constant, not a theorem.** `VALIDATION_WINDOW_BLOCKS` is 8 \
+      in `models/src/casper/protocol/checkpoint.rs`, chosen from the measured PoS close depth (the \
+      1,465-height failure needed block 1,465's pre-state for a close five heights above it); a future \
+      builder that reads deeper must change the constant and the commitment together — the joiner \
+      refuses rather than widening. **What this law does not claim:** the state roots are a quorum \
+      claim (Law 85's residual); the audit (Law 106) is the counterweight. The window's commitment is \
+      an extension of the statement, appended after `metadataRoot` only when present, so a legacy \
+      certificate keeps its v1 digest and is accepted only by the audit, with `windowCommitted: \
+      false`." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

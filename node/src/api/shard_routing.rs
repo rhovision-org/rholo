@@ -512,6 +512,7 @@ mod tests {
                 parent_digest: None,
                 epoch: 0,
                 metadata_root: None,
+                history_root: None,
             })
         }
 

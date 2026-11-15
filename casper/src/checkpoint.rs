@@ -63,6 +63,12 @@ pub enum CheckpointError {
     /// **The certificate has no metadata commitment.** The sync path requires one; a legacy
     /// statement is accepted only by the audit, which reports the absence.
     MissingMetadataRoot,
+    /// **The certificate's validation-window commitment does not match the walked headers.** A
+    /// post-anchor block would be validated against roots the quorum did not sign over.
+    ValidationWindowMismatch { claimed: String, derived: String },
+    /// **The certificate has no validation-window commitment.** The sync path requires one; a legacy
+    /// statement is accepted only by the audit, which reports the absence.
+    MissingValidationWindow,
     /// The anchor state's active bonds differ from the bond set the verifier trusts. Weighing the
     /// signatures against the old set would count the wrong stake, so the certificate is refused.
     /// A bond-set transition needs the checkpoint chain (each certificate verified against its
@@ -99,6 +105,16 @@ impl std::fmt::Display for CheckpointError {
                 f,
                 "the checkpoint does not commit to its historical metadata; this build refuses an \
                  uncommitted metadata set on the sync path"
+            ),
+            CheckpointError::ValidationWindowMismatch { claimed, derived } => write!(
+                f,
+                "the checkpoint commits to validation window {claimed}, but the walked headers \
+                 derive {derived}"
+            ),
+            CheckpointError::MissingValidationWindow => write!(
+                f,
+                "the checkpoint does not commit to a validation window; this build refuses to \
+                 validate against roots the quorum did not sign"
             ),
             CheckpointError::BondSetDrifted { genesis, anchor } => write!(
                 f,
@@ -209,7 +225,38 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
         buf.push(1);
         buf.extend_from_slice(&bytes);
     }
+    // **The validation window is committed after the metadata set**, with the same presence-byte
+    // extension: a statement with neither field keeps the v1 digest, and a statement with both is
+    // unambiguous by field order.
+    if let Some(root) = &checkpoint.history_root {
+        let bytes = decode_32(root, "historyRoot")?;
+        buf.push(1);
+        buf.extend_from_slice(&bytes);
+    }
     Ok(Blake2b256Hash::create(&buf))
+}
+
+/// **Recompute the validation-window commitment from the headers a joiner walked.** The statement
+/// names the roots a post-anchor block may read; the joiner checks that the set is the one the quorum
+/// signed and hydrates exactly it. A missing commitment or a mismatch is a refusal on the sync path;
+/// the audit is the only caller allowed to accept a legacy `None`, and it reports the absence.
+pub fn verify_validation_window<'a>(
+    checkpoint: &Checkpoint,
+    headers: impl IntoIterator<Item = &'a BlockHeader>,
+) -> Result<(), CheckpointError> {
+    let claimed = checkpoint
+        .history_root
+        .as_ref()
+        .ok_or(CheckpointError::MissingValidationWindow)?;
+    let claimed_bytes = decode_32(claimed, "historyRoot")?;
+    let derived = rchain_models::casper::protocol::checkpoint::validation_window_root(headers);
+    if derived.as_bytes() != &claimed_bytes {
+        return Err(CheckpointError::ValidationWindowMismatch {
+            claimed: claimed.clone(),
+            derived: derived.to_hex(),
+        });
+    }
+    Ok(())
 }
 
 /// **Recompute the metadata commitment from the headers a joiner walked.**
@@ -416,6 +463,7 @@ mod tests {
             parent_digest: None,
             epoch: 4,
             metadata_root: None,
+            history_root: None,
         }
     }
 
@@ -480,6 +528,7 @@ mod tests {
             |c: &mut Checkpoint| c.epoch = 5,
             |c: &mut Checkpoint| c.parent_digest = Some(hash(7)),
             |c: &mut Checkpoint| c.metadata_root = Some(hash(7)),
+            |c: &mut Checkpoint| c.history_root = Some(hash(7)),
             |c: &mut Checkpoint| {
                 c.fringe_hashes = vec![hash(1), hash(9)];
             },
@@ -856,6 +905,53 @@ mod tests {
         assert!(matches!(
             verify_metadata_root(&legacy, [&genesis, &child]),
             Err(CheckpointError::MissingMetadataRoot)
+        ));
+    }
+
+    /// **The validation window is committed, and only the committed window validates.** The
+    /// commitment binds the selected roots; a dropped header or a changed field derives another root
+    /// and is refused. A legacy statement without the commitment is refused by the sync check.
+    #[test]
+    fn a_validation_window_is_bound_and_verifies() {
+        use rchain_models::casper::protocol::checkpoint::{
+            validation_window_root, validation_window_roots,
+        };
+
+        let genesis = header(0, 1);
+        let child = header(1, 2);
+        let mut grandchild = header(2, 3);
+        grandchild.pre_state_hash = rchain_models::block::state_hash::StateHash::new([6u8; 32]);
+        let headers = [&genesis, &child, &grandchild];
+
+        let root = validation_window_root(headers);
+        assert!(!validation_window_roots(headers).is_empty());
+        let mut c = checkpoint();
+        let without = checkpoint_digest(&c).expect("digest");
+        c.history_root = Some(root.to_hex());
+        assert_ne!(
+            checkpoint_digest(&c).expect("digest"),
+            without,
+            "the window commitment is bound by the signed digest"
+        );
+        assert!(verify_validation_window(&c, headers).is_ok());
+
+        let shortened = [&genesis, &child];
+        assert!(matches!(
+            verify_validation_window(&c, shortened),
+            Err(CheckpointError::ValidationWindowMismatch { .. })
+        ));
+
+        let mut tampered = child.clone();
+        tampered.post_state_hash = rchain_models::block::state_hash::StateHash::new([9u8; 32]);
+        assert!(matches!(
+            verify_validation_window(&c, [&genesis, &tampered, &grandchild]),
+            Err(CheckpointError::ValidationWindowMismatch { .. })
+        ));
+
+        let legacy = checkpoint();
+        assert!(matches!(
+            verify_validation_window(&legacy, headers),
+            Err(CheckpointError::MissingValidationWindow)
         ));
     }
 }
