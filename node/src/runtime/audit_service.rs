@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use rchain_block_storage::audit_store::AuditStore;
 use rchain_casper::validator_identity::ValidatorIdentity;
 use rchain_models::casper::protocol::audit::AuditAttestation;
+use rchain_shared::lock::Unpoison;
 use rchain_shared::log::Log;
 use serde::{Deserialize, Serialize};
 
@@ -129,25 +130,13 @@ impl AuditService {
         if !nonce_is_safe(&request.nonce) {
             return Err(AuditServiceError::BadNonce);
         }
-        if let Some(existing) = self
-            .produced
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&request.nonce)
-            .cloned()
-        {
+        if let Some(existing) = self.produced.lock().unpoison().get(&request.nonce).cloned() {
             return Ok(existing);
         }
         self.budget.admit()?;
         let _guard = self.run_lock.lock().await;
         // Another request may have completed while this one waited.
-        if let Some(existing) = self
-            .produced
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&request.nonce)
-            .cloned()
-        {
+        if let Some(existing) = self.produced.lock().unpoison().get(&request.nonce).cloned() {
             return Ok(existing);
         }
         let scratch = self.scratch_root.join(&request.nonce);
@@ -186,18 +175,14 @@ impl AuditService {
         };
         self.produced
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unpoison()
             .insert(request.nonce.clone(), produced.clone());
         Ok(produced)
     }
 
     /// A previously produced answer, if this process still holds it.
     pub fn produced(&self, request_id: &str) -> Option<ProducedAudit> {
-        self.produced
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(request_id)
-            .cloned()
+        self.produced.lock().unpoison().get(request_id).cloned()
     }
 
     /// The claims this node accepted (its own, reproduced).
@@ -240,10 +225,7 @@ impl HourlyBudget {
 
     fn admit(&self) -> Result<(), AuditServiceError> {
         let now = Instant::now();
-        let mut requests = self
-            .requests
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut requests = self.requests.lock().unpoison();
         requests.retain(|at| now.duration_since(*at) < Duration::from_secs(3_600));
         if requests.len() as u64 >= self.limit {
             return Err(AuditServiceError::RateLimited);

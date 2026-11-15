@@ -116,14 +116,17 @@ fn audit_batches(last_height: i64) -> Vec<(i64, i64)> {
 }
 
 /// The bodies for `[from, to]` from the history service, when the node serves one complete range.
-/// `None` means "use the per-height route": an older node, a refusal, or a gap. The range is a
-/// transport optimization; every body is reconstructed and re-hashed by the caller.
+/// `Ok(None)` means "use the per-height route": an older node, a refusal, or a gap. `Err` is a
+/// transport or decode failure, which the caller also answers by the per-height route — but it keeps
+/// the reason and reports it if that route fails too, rather than folding a distinct failure into
+/// "no range". The range is a transport optimization; every body is reconstructed and re-hashed by
+/// the caller.
 async fn fetch_history_range(
     client: &reqwest::Client,
     base: &str,
     from: i64,
     to: i64,
-) -> Option<BTreeMap<i64, Vec<RawBlock>>> {
+) -> Result<Option<BTreeMap<i64, Vec<RawBlock>>>, String> {
     let response = client
         .post(format!("{base}/api/v1/history/range"))
         .json(&serde_json::json!({
@@ -133,13 +136,16 @@ async fn fetch_history_range(
         }))
         .send()
         .await
-        .ok()?;
+        .map_err(|e| format!("the history-range request failed: {e}"))?;
     if !response.status().is_success() {
-        return None;
+        return Ok(None);
     }
-    let range: crate::api::dto::HistoryRange = response.json().await.ok()?;
+    let range: crate::api::dto::HistoryRange = response
+        .json()
+        .await
+        .map_err(|e| format!("the history-range response is not a range: {e}"))?;
     if !range.complete {
-        return None;
+        return Ok(None);
     }
     let mut by_height: BTreeMap<i64, Vec<RawBlock>> = BTreeMap::new();
     for entry in range.entries {
@@ -148,9 +154,9 @@ async fn fetch_history_range(
         }
     }
     if (from..=to).any(|height| !by_height.contains_key(&height)) {
-        return None;
+        return Ok(None);
     }
-    Some(by_height)
+    Ok(Some(by_height))
 }
 
 /// A block's state-root commitments. The fringe state root is not in a body, so the validation
@@ -366,7 +372,7 @@ pub async fn run(
     let last_height = *required_heights(certificate.checkpoint.anchor_height).end();
     for (height, to) in audit_batches(last_height) {
         match fetch_history_range(&client, base, height, to).await {
-            Some(mut bodies) => {
+            Ok(Some(mut bodies)) => {
                 for at in height..=to {
                     let raws = bodies.remove(&at).unwrap_or_default();
                     if let Err(reason) =
@@ -376,7 +382,13 @@ pub async fn run(
                     }
                 }
             }
-            None => {
+            ranged => {
+                // An older node has no batched route (`Ok(None)`); a transport or decode failure is
+                // a different event, so it is kept and named if the per-height route fails too.
+                let range_failure = match ranged {
+                    Err(reason) => Some(reason),
+                    _ => None,
+                };
                 for at in height..=to {
                     match fetch_height_bodies(&client, base, at).await {
                         Ok(raws) => {
@@ -386,7 +398,15 @@ pub async fn run(
                                 return Ok(incomplete(&verified, at, reason));
                             }
                         }
-                        Err(reason) => return Ok(incomplete(&verified, at, reason)),
+                        Err(reason) => {
+                            let reason = match range_failure.as_deref() {
+                                Some(range) => format!(
+                                    "{reason}; the batched history-range route also failed: {range}"
+                                ),
+                                None => reason,
+                            };
+                            return Ok(incomplete(&verified, at, reason));
+                        }
                     }
                 }
             }
@@ -625,11 +645,19 @@ pub async fn run(
             .iter()
             .find(|header| i64::from(header.block_num) == 0)
         {
-            let body = store
-                .get(&[genesis_header.block_hash])
-                .await
-                .ok()
-                .and_then(|bodies| bodies.into_iter().flatten().next());
+            let body = match store.get(&[genesis_header.block_hash]).await {
+                Ok(bodies) => bodies.into_iter().flatten().next(),
+                Err(e) => {
+                    return Ok(incomplete(
+                        &verified,
+                        0,
+                        format!(
+                            "the staging store could not be read for the genesis body {}: {e}",
+                            genesis_header.block_hash.to_hex()
+                        ),
+                    ));
+                }
+            };
             let Some(body) = body else {
                 return Ok(incomplete(
                     &verified,

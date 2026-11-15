@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use rchain_block_storage::history_meter::{HistoryMeter, MeterAccount, MeterError};
+use rchain_shared::lock::Unpoison;
 use serde::{Deserialize, Serialize};
 
 use super::history_credit::{
@@ -259,10 +260,7 @@ impl HistoryService {
             return Ok(());
         }
         let now = Instant::now();
-        let mut windows = self
-            .windows
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut windows = self.windows.lock().unpoison();
         let entry = windows.entry(payer.to_string()).or_insert(RateWindow {
             started: now,
             bytes: 0,

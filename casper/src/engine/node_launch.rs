@@ -762,31 +762,30 @@ pub async fn apply<
                     verified.checkpoint.shard_id, spec.shard_id
                 ));
             }
-            if let Some(accepted) = approved_store
+            let recorded = approved_store
                 .get(&[rchain_block_storage::approved_store::FINALIZED_FRINGE_KEY])
                 .await?
                 .into_iter()
                 .next()
                 .flatten()
-            {
-                let accepted_set: std::collections::BTreeSet<_> =
-                    accepted.hashes.iter().copied().collect();
-                let certified_set: std::collections::BTreeSet<_> = verified
-                    .checkpoint
-                    .fringe_hashes
-                    .iter()
-                    .filter_map(|hex| {
-                        rchain_shared::base16::decode(hex)
-                            .and_then(|bytes| BlockHash::try_from(bytes.as_slice()).ok())
-                    })
-                    .collect();
-                if certified_set == accepted_set {
+                .map(|accepted| accepted.hashes.iter().copied().collect());
+            let certified_set: BTreeSet<_> = verified
+                .checkpoint
+                .fringe_hashes
+                .iter()
+                .filter_map(|hex| {
+                    rchain_shared::base16::decode(hex)
+                        .and_then(|bytes| BlockHash::try_from(bytes.as_slice()).ok())
+                })
+                .collect();
+            match stored_fringe_agreement(recorded.as_ref(), &certified_set) {
+                StoredFringeAgreement::Reverified => {
                     log.info(
                         source,
                         &format!(
                             "boot: the accepted fringe ({} block(s)) is re-verified by its stored \
                              checkpoint certificate at anchor {}",
-                            accepted_set.len(),
+                            certified_set.len(),
                             verified.checkpoint.anchor_height
                         ),
                     );
@@ -798,17 +797,36 @@ pub async fn apply<
                         verified.clone(),
                         window,
                     )?);
-                } else {
+                }
+                StoredFringeAgreement::Mismatch {
+                    certified,
+                    accepted,
+                } => {
                     log.warn(
                         source,
                         &format!(
                             "boot: the stored checkpoint certificate names another fringe than the \
-                             accepted fringe ({} certified, {} accepted); the accepted state is not \
-                             re-verified by it",
-                            certified_set.len(),
-                            accepted_set.len()
+                             accepted fringe ({certified} certified, {accepted} accepted); the \
+                             accepted state is not re-verified by it"
                         ),
                     );
+                }
+                StoredFringeAgreement::Absent => {
+                    // **No accepted fringe is recorded, but a verified certificate is.** A genesis
+                    // master — and a node whose approved-fringe write was interrupted — has no
+                    // fringe to compare against; the certificate is the only accepted-state record
+                    // and is adopted as the anchor (Law 108). The DAG must still hold the anchor's
+                    // closure, which the window rebuild verifies.
+                    log.warn(
+                        source,
+                        "boot: no accepted fringe is recorded; adopting the verified stored \
+                         checkpoint certificate as the anchor",
+                    );
+                    let window = rebuild_window_from_dag(dag.as_ref(), &verified).await?;
+                    accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
+                        verified.clone(),
+                        window,
+                    )?);
                 }
             }
         } else {
@@ -1471,6 +1489,38 @@ async fn start_catchup_if_anchored(
 }
 
 /// **The anchor's ancestor closure from DAG metadata** — the same walk the producer and joiner use.
+/// **Which record anchors a boot?** (Law 108, review R2) A restart trusts the state on disk only
+/// when a verified certificate says what that state is. Three cases, and none may be collapsed into
+/// "run unanchored":
+///
+/// - the approved fringe is recorded and the certificate names exactly it — **re-verified**;
+/// - both are recorded and disagree — **mismatch**, and the node must not adopt the certificate
+///   silently over a newer accepted fringe;
+/// - no approved fringe is recorded at all — a genesis master, or an interrupted approved-fringe
+///   write — the verified certificate is the only accepted-state record, so it is **adopted**.
+///   Refusing to run here was the observed defect: a validator that had certified normally could
+///   not restart at all.
+#[derive(Debug, PartialEq, Eq)]
+enum StoredFringeAgreement {
+    Reverified,
+    Mismatch { certified: usize, accepted: usize },
+    Absent,
+}
+
+fn stored_fringe_agreement(
+    recorded: Option<&BTreeSet<BlockHash>>,
+    certified: &BTreeSet<BlockHash>,
+) -> StoredFringeAgreement {
+    match recorded {
+        Some(accepted) if accepted == certified => StoredFringeAgreement::Reverified,
+        Some(accepted) => StoredFringeAgreement::Mismatch {
+            certified: certified.len(),
+            accepted: accepted.len(),
+        },
+        None => StoredFringeAgreement::Absent,
+    }
+}
+
 async fn anchor_closure(
     dag: &dyn BlockDagStorage,
     anchor: BlockHash,
@@ -1608,6 +1658,40 @@ mod tests {
         assert!(check_genesis_height_map(&valid, &fork)
             .unwrap_err()
             .contains("differs from pinned genesis"));
+    }
+
+    /// **The boot anchor is a decision, not an accident** (Law 108, review R2). A verified
+    /// certificate with no recorded accepted fringe must be adopted — refusing to run there is the
+    /// genesis-master restart defect this test pins — while a certificate that names another fringe
+    /// than the recorded one must never be adopted over it.
+    #[test]
+    fn a_missing_fringe_record_adopts_the_certificate_but_a_disagreement_does_not() {
+        let set = |bytes: &[u8]| -> std::collections::BTreeSet<BlockHash> {
+            bytes
+                .iter()
+                .map(|b| BlockHash::try_from(vec![*b; 32].as_slice()).expect("32 bytes"))
+                .collect()
+        };
+        let certified = set(&[1, 2]);
+
+        assert_eq!(
+            stored_fringe_agreement(None, &certified),
+            StoredFringeAgreement::Absent,
+            "a genesis master has no fringe record; the verified certificate is the only anchor"
+        );
+        assert_eq!(
+            stored_fringe_agreement(Some(&set(&[2, 1])), &certified),
+            StoredFringeAgreement::Reverified,
+            "set order is not membership"
+        );
+        assert_eq!(
+            stored_fringe_agreement(Some(&set(&[2, 3])), &certified),
+            StoredFringeAgreement::Mismatch {
+                certified: 2,
+                accepted: 2
+            },
+            "a newer accepted fringe is not replaced by an older certificate"
+        );
     }
 
     use rchain_comm::peer_node::NodeIdentifier;
