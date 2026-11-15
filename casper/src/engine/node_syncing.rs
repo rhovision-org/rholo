@@ -1125,30 +1125,39 @@ pub(super) fn certified_metadata_entries(
 
     let mut entries = Vec::with_capacity(walk.headers.len());
     for header in walk.headers.values() {
-        entries.push((
-            header.block_hash,
-            BlockMetadata {
-                block_hash: header.block_hash,
-                block_num: header.block_num,
-                sender: header.sender,
-                seq_num: header.seq_num,
-                justifications: header.justifications.clone(),
-                bonds_map: header.bonds_map.clone(),
-                validated: true,
-                validation_failed: false,
-                slashable: false,
-                failure_cause: None,
-                slash_severity: rchain_models::block_metadata::SlashSeverity::Unspecified,
-                restore_attempts: 0,
-                fringe: header.fringe.clone(),
-                fringe_state_hash: header.fringe_state_hash,
-                pre_state_hash: header.pre_state_hash,
-                post_state_hash: header.post_state_hash,
-                sig: header.sig.clone(),
-                sig_algorithm: header.sig_algorithm.clone(),
-                member_of_fringe: None,
-            },
-        ));
+        let mut metadata = BlockMetadata {
+            block_hash: header.block_hash,
+            block_num: header.block_num,
+            sender: header.sender,
+            seq_num: header.seq_num,
+            justifications: header.justifications.clone(),
+            bonds_map: header.bonds_map.clone(),
+            validated: true,
+            validation_failed: false,
+            slashable: false,
+            failure_cause: None,
+            slash_severity: rchain_models::block_metadata::SlashSeverity::Unspecified,
+            restore_attempts: 0,
+            fringe: header.fringe.clone(),
+            fringe_state_hash: header.fringe_state_hash,
+            pre_state_hash: header.pre_state_hash,
+            post_state_hash: header.post_state_hash,
+            sig: header.sig.clone(),
+            sig_algorithm: header.sig_algorithm.clone(),
+            member_of_fringe: None,
+        };
+        if header.block_hash == anchor {
+            // **The certificate's finalized fringe is this node's finality.** The anchor's header
+            // names the fringe it was *built on*; the certificate names the fringe that *finalized*.
+            // The walk holds the anchor and not its siblings, so the anchor is the member this node
+            // finalizes and executes from. Without this override the DAG's latest fringe stays one
+            // finality step behind the certificate, `CURRENT_ROOT` is republished at that older
+            // block, and the first post-anchor block is validated from an unhydrated state
+            // ("unknown root"). The anchor's `fringe_state_hash` stays its header's pre-state: the
+            // anchor's own mergeable channels are regenerated from it.
+            metadata.fringe = BTreeSet::from([anchor]);
+        }
+        entries.push((header.block_hash, metadata));
     }
     // Parents before children for the insert; the DAG refuses a block whose justifications are
     // absent, and the walk's own shape check has already guaranteed the order exists.
@@ -2696,7 +2705,10 @@ mod tests {
         let (_, anchor_meta) = entries.last().expect("anchor entry");
         assert!(anchor_meta.validated, "accepted under the certificate");
         assert!(!anchor_meta.validation_failed);
-        assert_eq!(anchor_meta.fringe, BTreeSet::from([child.block_hash]));
+        // **The anchor's finality is the certificate's fringe, not its header's fringe.** The
+        // header was built on `child`; the certificate finalized `grandchild`, and that is what the
+        // DAG's latest fringe must reflect.
+        assert_eq!(anchor_meta.fringe, BTreeSet::from([grandchild.block_hash]));
         assert_eq!(anchor_meta.sig, grandchild.sig, "the signature survives");
         assert_eq!(
             fringe_root,
