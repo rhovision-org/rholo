@@ -1814,7 +1814,7 @@ mod tests {
         let genesis = header_meta(1, 0, &[], &[], 1, 1, 1);
         let child = header_meta(2, 1, &[1], &[1], 1, 2, 3);
         let anchor = child.block_hash;
-        let headers = vec![genesis.to_header(false), child.to_header(false)];
+        let headers = [genesis.to_header(false), child.to_header(false)];
         let checkpoint = model::Checkpoint {
             shard_id: "boot-test".to_string(),
             anchor: anchor.to_hex(),
