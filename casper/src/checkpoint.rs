@@ -281,12 +281,10 @@ pub fn check_committed_headers<'a>(
             }
             continue;
         }
-        if i64::from(header.block_num) == 0 {
-            if genesis.replace(header).is_some() {
-                return Err(CheckpointError::Malformed(
-                    "the committed header set has more than one height-zero block".to_string(),
-                ));
-            }
+        if i64::from(header.block_num) == 0 && genesis.replace(header).is_some() {
+            return Err(CheckpointError::Malformed(
+                "the committed header set has more than one height-zero block".to_string(),
+            ));
         }
         by_hash.insert(header.block_hash, header);
     }

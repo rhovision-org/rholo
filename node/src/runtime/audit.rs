@@ -385,10 +385,7 @@ pub async fn run(
             ranged => {
                 // An older node has no batched route (`Ok(None)`); a transport or decode failure is
                 // a different event, so it is kept and named if the per-height route fails too.
-                let range_failure = match ranged {
-                    Err(reason) => Some(reason),
-                    _ => None,
-                };
+                let range_failure = ranged.err();
                 for at in height..=to {
                     match fetch_height_bodies(&client, base, at).await {
                         Ok(raws) => {
