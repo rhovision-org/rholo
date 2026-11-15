@@ -1,0 +1,112 @@
+{
+  "arms": [],
+  "binary_sha256": "d84e128d665446e8cccc130f769ff016189fccd6408d9673253f0303a7c42d53",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 1969,
+      "kind": "json",
+      "path": "raw/accepted.json",
+      "sha256": "09366c969671475904845063755f0bc0264cede8f8f9f399d9b93ff834bf999f"
+    },
+    {
+      "bytes": 65,
+      "kind": "sha256",
+      "path": "raw/binary.sha256",
+      "sha256": "446eb29de1aad628e01f0e1294d22bc6fd873903b6bb62b1c77f195b72a44159"
+    },
+    {
+      "bytes": 913,
+      "kind": "json",
+      "path": "raw/checkpoint.json",
+      "sha256": "b7eed8ee20b5e57d37c17ad9313b38c2fd9b23e760cae7901d333d82169c2c78"
+    },
+    {
+      "bytes": 1367,
+      "kind": "txt",
+      "path": "raw/commands.txt",
+      "sha256": "de603cac8f8f8747189d729fe3eb7393c1dc3b28321ac4c74fabc4d526d75895"
+    },
+    {
+      "bytes": 2,
+      "kind": "json",
+      "path": "raw/conflicts.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "bytes": 1023,
+      "kind": "json",
+      "path": "raw/ev1-attestation.json",
+      "sha256": "5366c311b7ea751f56440b63578e5832948cbb0f9f9d877fdd08d5dd313fef41"
+    },
+    {
+      "bytes": 754,
+      "kind": "json",
+      "path": "raw/ev1-report.json",
+      "sha256": "080676ffa4ac0e6c8c90fc9ad9c8bf7f1e7cddef2eb7ddc5f3a8c8211dae6ca4"
+    },
+    {
+      "bytes": 1694,
+      "kind": "json",
+      "path": "raw/ev1-request-response.json",
+      "sha256": "18a12265968ae4879088d785cecef52721810e707dfff95fae1ff1d74fe8a054"
+    },
+    {
+      "bytes": 224,
+      "kind": "txt",
+      "path": "raw/ev1-verify-line.txt",
+      "sha256": "e061b923ea49ec71e6f360437d5054598eb2f303f672706fd90c233565030823"
+    },
+    {
+      "bytes": 224,
+      "kind": "txt",
+      "path": "raw/ev1-verify.txt",
+      "sha256": "a0774cbcf550a11ea1c52a4bfc63e86aae720cefaeb04edde9ff51ff5a6db8b0"
+    },
+    {
+      "bytes": 1083,
+      "kind": "json",
+      "path": "raw/ev2-attestation.json",
+      "sha256": "1c4a1c775a1661f703de4161881cf89bbaca5a1bef037f344f1710f95d7358fd"
+    },
+    {
+      "bytes": 754,
+      "kind": "json",
+      "path": "raw/ev2-report.json",
+      "sha256": "afcd2e232bfcac2ef72e985df3431b9ef362772c4e0c3b6e3aa307788d6b0dd0"
+    },
+    {
+      "bytes": 1754,
+      "kind": "json",
+      "path": "raw/ev2-request-response.json",
+      "sha256": "386cfee25b0feffe62a5756a142f17e5d747dbd65a28911e802c3b5d2231b72e"
+    },
+    {
+      "bytes": 224,
+      "kind": "txt",
+      "path": "raw/ev2-verify-line.txt",
+      "sha256": "bad87b1965da617b245058657d89fda9c90288b6d4efce67c4ab608988065ce5"
+    },
+    {
+      "bytes": 938,
+      "kind": "json",
+      "path": "raw/status.json",
+      "sha256": "befca01e4455cdbbdb516750c6c0b25c6e4003c83a2738a1a8adcc82850b0124"
+    }
+  ],
+  "gate_id": "n-audit-chain",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-15T16:18:25+00:00",
+    "tool": "evidence-pack",
+    "version": 1
+  },
+  "redactions": [],
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "d2e97c835",
+  "verdict": "PASS"
+}

@@ -27,6 +27,19 @@ explicit zero is not the absent previous. The signature is over
 `blake2b256(lp("rchain-audit-attestation-v1") || digest)`, so a signature made for another
 statement type cannot be replayed here. A golden digest pins the encoding.
 
+## What the replay establishes first
+
+Two inputs are established before the replay can produce a verdict, and neither is allowed to look
+like a disagreement:
+
+- **The genesis post-state.** The genesis body carries its own blessed deploys, so the audit
+  re-executes them and requires the derived root to equal the body's claimed post-state. An
+  auditor needs no ceremony key; a body whose deploys do not derive its own state is **INCOMPLETE**.
+- **The validation window.** `historyRoot` commits the last eight headers' pre/post/fringe state
+  roots, and a body does not carry the fringe root. The audit reads those eight headers from
+  `GET /api/v1/block/{hash}/header`; a header it cannot read is **INCOMPLETE**. Only a window that
+  reconstructs but does not match the statement is a disagreement.
+
 ## Acceptance is reproduction
 
 A claim is not a fact because it is signed. A node accepts an attestation only after its **own**

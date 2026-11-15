@@ -13150,7 +13150,8 @@ evidence, never the closure.
 | C387 | done | Law 112, the canonical statement, the replay-derived root and replay head |
 | C388 | done | Law 112's acceptance and chain rules, the nonce, the pull-only rate-limited service |
 | C389 | done | the docs/runbook pages, Laws 101–112 in the reading, HAZOP U24 and acceptance U25 |
-| C390 | in progress | the audit's INCOMPLETE fallback is done (a replay that cannot read the genesis state does not disagree); the genesis post-state transfer/execution is open, so the live signed-claim run is owed |
+| C390 | done | the audit re-executes the genesis body's blessed deploys, checks the derived root against the body, and answers INCOMPLETE if it cannot; the devnet evidence run reaches AGREE |
+| C391 | done | the audit reads the last eight window headers' fringe roots from `GET /api/v1/block/{hash}/header` and reports INCOMPLETE for a header it cannot read; the producer/joiner window check now holds |
 
 ### Non-claims
 
@@ -13168,7 +13169,8 @@ evidence, never the closure.
   and a re-measurement is an operational follow-up.
 - The attestation evidence run is a **local devnet** with throwaway keys: it shows the mechanism, not
   a live acceptance, and `execution_proven` stays `false`.
-- **The live signed-claim run is not done.** The devnet audit returned INCOMPLETE (after the fallback
-  fix; it returned DISAGREE before it) because the audit cannot establish a dev-mode genesis
-  post-state — C390. The verifier, store, acceptance and service behaviour are evidenced by their
-  tests; a signed claim from a live replay is owed with the state transfer, not claimed here.
+- **The signed-claim evidence is local.** `spec/audit/evidence/n-audit-chain-20261115/` records two
+  AGREE audits on a local devnet (anchors 15 and 44), a claim verified offline at sequence 0, a
+  second claim chained to it at sequence 1 and verified against its head, and both accepted with no
+  conflict. It is one signer on one short chain with the checker sharing the producer's codebase —
+  a witness for the mechanism, not a live or independent acceptance.

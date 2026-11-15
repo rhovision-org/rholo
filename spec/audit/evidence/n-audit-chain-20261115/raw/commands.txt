@@ -1,0 +1,23 @@
+Attested-audit evidence run — local devnet, 2026-11-15
+
+Image: rnode:local built from git d2e97c835 (devnet.sh build)
+Host verifier: rnode built from c3df3ddbd (the offline checker only)
+
+1. tools/devnet.sh down -v
+2. POS_EPOCH_LENGTH=4 POS_ACTIVE_VALIDATORS=1 DEVNET_OBSERVER_ARCHIVE=1 \
+   DEVNET_EXTRA_FLAGS_devnet_bootstrap=--audit-attest \
+   tools/devnet.sh up --validators 1 --observers 1
+3. POST http://localhost:40403/api/v1/audit/request {"nonce":"ev-1"}
+   -> ev1-request-response.json (AGREE, anchor 15, attestation present)
+4. Split report/attestation; verify:
+   rnode verify-audit-attestation --report ev1-report.json < ev1-attestation.json
+   -> ev1-verify-line.txt: OK signer ..., sequence 0, digest aacf85d8...
+5. POST /api/v1/audit/request
+   {"nonce":"ev-2","previous":"aacf85d8f2a580f790a9148baa85d825dbbeeed980d3d32a331320eabf9d6709","sequence":1}
+   -> ev2-request-response.json (AGREE, anchor 44, attestation present)
+6. rnode verify-audit-attestation --report ev2-report.json \
+     --head-digest aacf85d8... --head-sequence 0 < ev2-attestation.json
+   -> ev2-verify-line.txt: OK signer ..., sequence 1, digest 0ce3e9b8...
+7. GET /api/v1/audit/attestations -> accepted.json (2 claims, sequences 0 and 1)
+   GET /api/v1/audit/conflicts    -> conflicts.json (0)
+8. status.json and checkpoint.json are the run's status and served certificate.

@@ -1,0 +1,16 @@
+{
+  "verdict": "AGREE",
+  "checkpointDigest": "8617418dbe1e09687bb75c3de08e3a85d00a4e09996d0d66cac84f0fd6e13a58",
+  "anchor": "f0ebcc6e93a6687168d36446ee28f0d562a012c0597473125334e2acd9397718",
+  "anchorHeight": 15,
+  "shardId": "/root",
+  "claimedRoot": "8c02223a2a9265338845a46da68707e00fdd9a5df1b20bdf61bd24bd2013237a",
+  "metadataRoot": "60c94f200b79e05e84d1984e4278337519fb0d0ce980971704ff15cf98d8f47e",
+  "historyRoot": "eb46829ae901d20e1d10ece72cb3f9fe5174a999b6fcd43659bb3e39bdba4d60",
+  "derivedRoot": "8c02223a2a9265338845a46da68707e00fdd9a5df1b20bdf61bd24bd2013237a",
+  "replayHead": "0edf7a2c5263cb2f68db0bfbb36c3710c4d72487924489a6771ae00f3340cde8",
+  "blocks": 16,
+  "metadataCommitted": true,
+  "windowCommitted": true,
+  "reason": null
+}
