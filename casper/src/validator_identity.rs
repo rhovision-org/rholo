@@ -100,6 +100,13 @@ impl ValidatorIdentity {
         self.signature(&checkpoint_attestation_prehash(digest))
     }
 
+    /// Sign an **audit attestation's prehash** (Law 112). The prehash already carries the statement
+    /// type's domain tag, so this signature cannot be replayed as a block, finality or checkpoint
+    /// attestation.
+    pub fn attest_audit(&self, prehash: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        self.signature(prehash)
+    }
+
     /// Build an identity from a private key (port of `ValidatorIdentity.apply`).
     pub fn from_private_key(private_key: PrivateKey) -> Result<ValidatorIdentity, CryptoError> {
         let public_key = Secp256k1.to_public(&private_key)?;

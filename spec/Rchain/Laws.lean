@@ -6286,6 +6286,41 @@ def lawsC : List Law := [
       the period the challenge covers, not retention for ever. **What this law does not claim:** the \
       consumer trusts the archive it chose; the settlement key's signature and expiry are verified, \
       not the on-chain transfer." },
+
+  { number := 112, layer := "Sync",
+    statement := "**An accepted audit claim is one this node reproduced.** A signed audit \
+      attestation names the checkpoint, the state root the replay derived, a replay head over the \
+      anchor's canonical ancestor closure, and a challenge nonce; a node accepts it only when its \
+      own replay agrees on the root and the head, and the claim extends its signer's chain \
+      (`previous`/`sequence`). A mismatched claim is refused rather than stored, and an unchained \
+      claim cannot extend a head.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Claim.only_a_reproduced_claim_is_accepted,
+      `Rchain.Sync.Claim.a_mismatched_claim_is_refused,
+      `Rchain.Sync.Claim.a_reproduced_claim_is_accepted,
+      `Rchain.Sync.Claim.an_unchained_claim_is_refused,
+      `Rchain.Sync.Claim.a_chained_claim_extends],
+    axioms := [],
+    rust := ["models/src/casper/protocol/audit.rs", "casper/src/audit.rs",
+      "node/src/runtime/audit.rs"],
+    rustWitness := [
+      "casper/src/audit.rs:a_reproduced_claim_is_accepted",
+      "casper/src/audit.rs:a_chained_claim_extends_the_head_and_an_unchained_one_is_refused"],
+    witness := [`Rchain.Sync.Claim.only_a_reproduced_claim_is_accepted,
+      `Rchain.Sync.Claim.an_unchained_claim_is_refused],
+    falsifiable := "Make `accept` total (always `some`) and `a_mismatched_claim_is_refused` fails; \
+      ignore `previous` in `chain` and `an_unchained_claim_is_refused` fails. In Rust, the verifier \
+      tests redden if a claim whose derived root or replay head differs from the local replay is \
+      accepted, if another key's signature verifies, if a replayed nonce is accepted, or if an \
+      unchained claim extends a head.",
+    note := "**The statement and its encoding are separate from acceptance.** `AuditAttestation` \
+      fixes the claim and its canonical bytes (a golden digest pins the encoding); this law is the \
+      acceptance relation over a local reproduction. A signature alone is not acceptance: the \
+      accepted store's type has no public constructor, so an unverified claim is not representable. \
+      **What this law does not claim:** the replay is correct (Law 106 is the audit's soundness); \
+      the nonce's freshness and the request rate limit are the service's (Law 110's accounting), \
+      not this law; and a claim is not a zero-knowledge proof — `witnessType` is part of the signed \
+      preimage so a future witness can be added, but none is claimed here." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

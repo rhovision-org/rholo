@@ -64,6 +64,10 @@ pub struct AuditReport {
     pub claimed_root: String,
     /// The root the replay derived, when it ran far enough to have one.
     pub derived_root: Option<String>,
+    /// The replay's cumulative head over the anchor's canonical ancestor closure (Law 112). The same
+    /// value an attestation signs; `None` when the closure could not be built.
+    #[serde(default)]
+    pub replay_head: Option<String>,
     /// How many bodies the replay consumed.
     pub blocks: usize,
     /// **Whether the certificate committed to the historical metadata.** A legacy `None` root is
@@ -365,6 +369,22 @@ pub async fn run(
         }
     }
 
+    // **The replay head** (Law 112): the cumulative hash over the anchor's canonical ancestor
+    // closure, sorted by `(height, hash)`, seeded by the checkpoint digest. It is the value an
+    // attestation signs; a missing ancestor is not an error here (the report says `None`).
+    let replay_head = ancestor_closure(anchor, &headers).ok().map(|closure| {
+        base16::encode(&rchain_models::casper::protocol::audit::replay_head(
+            verified.digest.as_bytes(),
+            closure.iter().map(
+                |header| rchain_models::casper::protocol::audit::ReplayStep {
+                    block_hash: header.block_hash,
+                    height: i64::from(header.block_num),
+                    post_state_hash: header.post_state_hash,
+                },
+            ),
+        ))
+    });
+
     // **The certificate's commitment to the metadata the replay consumed.** A mismatch is a
     // DISAGREE: the bodies this node served are not the headers the quorum signed over. A legacy
     // `None` root is accepted — the replay still checks the state — and reported as uncommitted, so
@@ -400,6 +420,7 @@ pub async fn run(
                     anchor_height: certificate.checkpoint.anchor_height,
                     claimed_root: certificate.checkpoint.anchor_post_state.clone(),
                     derived_root: None,
+                    replay_head: replay_head.clone(),
                     blocks: heights.values().map(|set| set.len()).sum(),
                     metadata_committed,
                     window_committed,
@@ -423,6 +444,7 @@ pub async fn run(
                     anchor_height: certificate.checkpoint.anchor_height,
                     claimed_root: certificate.checkpoint.anchor_post_state.clone(),
                     derived_root: None,
+                    replay_head: replay_head.clone(),
                     blocks: heights.values().map(|set| set.len()).sum(),
                     metadata_committed,
                     window_committed,
@@ -468,13 +490,15 @@ pub async fn run(
     };
     let blocks: usize = heights.values().map(|set| set.len()).sum();
     let report = match replay.verify(&store, &heights, &target, log).await {
-        Ok(_) => AuditReport {
+        Ok(verified_replay) => AuditReport {
             verdict: "AGREE".to_string(),
             checkpoint_digest: verified.digest.to_hex(),
             anchor: anchor.to_hex(),
             anchor_height: certificate.checkpoint.anchor_height,
             claimed_root: certificate.checkpoint.anchor_post_state.clone(),
-            derived_root: Some(certificate.checkpoint.anchor_post_state.clone()),
+            // **The root the replay derived**, not a copy of the claim it was compared with.
+            derived_root: Some(base16::encode(verified_replay.derived_root().as_bytes())),
+            replay_head: replay_head.clone(),
             blocks,
             metadata_committed,
             window_committed,
@@ -487,6 +511,7 @@ pub async fn run(
             anchor_height: certificate.checkpoint.anchor_height,
             claimed_root: certificate.checkpoint.anchor_post_state.clone(),
             derived_root: None,
+            replay_head: replay_head.clone(),
             blocks,
             metadata_committed,
             window_committed,
@@ -516,6 +541,7 @@ fn incomplete(
         anchor_height: verified.checkpoint.anchor_height,
         claimed_root: verified.checkpoint.anchor_post_state.clone(),
         derived_root: None,
+        replay_head: None,
         blocks: height.max(0) as usize,
         metadata_committed: verified.checkpoint.metadata_root.is_some(),
         window_committed: verified.checkpoint.history_root.is_some(),

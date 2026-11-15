@@ -14,6 +14,7 @@ use rchain_block_storage::dag::codecs::{
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
 use rchain_block_storage::syntax::insert_genesis;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockFringe, FinalizedFringe};
@@ -54,6 +55,17 @@ pub struct RecoveryReplay {
 #[derive(Debug)]
 pub struct VerifiedRecovery {
     entries: Vec<(BlockHash, BlockMetadata)>,
+    /// **The state root the replay itself derived** for the target. `check_target` compares it with
+    /// the claimed fringe state; an attestation signs this root, not the claim it was compared to
+    /// (Law 112).
+    derived_root: StateHash,
+}
+
+impl VerifiedRecovery {
+    /// The locally derived target state root.
+    pub fn derived_root(&self) -> StateHash {
+        self.derived_root
+    }
 }
 
 async fn staging_dag() -> Result<BlockDagKeyValueStorage, String> {
@@ -101,7 +113,7 @@ async fn check_target(
     store: &BlockStore,
     fringe: &FinalizedFringe,
     anchor: Option<BlockHash>,
-) -> Result<(), String> {
+) -> Result<StateHash, String> {
     let mut members = Vec::new();
     for hash in &fringe.hashes {
         let meta = dag.lookup(hash).await?.ok_or_else(|| {
@@ -147,7 +159,9 @@ async fn check_target(
             rchain_shared::base16::encode(expected.as_bytes())
         ));
     }
-    Ok(())
+    // The comparison above is equality; returning the locally derived side is what makes the value
+    // an attestable fact rather than a copy of the claim.
+    Ok(expected)
 }
 
 impl RecoveryReplay {
@@ -270,7 +284,7 @@ impl RecoveryReplay {
                 entries.push((*hash, meta));
             }
         }
-        check_target(&dag, store, target, self.anchor).await?;
+        let derived_root = check_target(&dag, store, target, self.anchor).await?;
         // Exercise the actual bonds read against a verified committed post-state.
         let newest = entries
             .last()
@@ -293,7 +307,10 @@ impl RecoveryReplay {
         );
         crate::engine::sync_metrics::census()
             .add_replay(entries.len() as u64, started.elapsed().as_nanos() as u64);
-        Ok(VerifiedRecovery { entries })
+        Ok(VerifiedRecovery {
+            entries,
+            derived_root,
+        })
     }
 }
 
