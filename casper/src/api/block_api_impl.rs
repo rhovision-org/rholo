@@ -16,6 +16,7 @@ use rchain_block_storage::dag::representation::DagRepresentation;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_graphz::ListSerializer;
 use rchain_models::ast::Par;
+use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
@@ -514,6 +515,44 @@ impl BlockApiImpl {
             }
         })
     }
+
+    /// **The post-state of a block, from metadata first.** The DAG's `BlockMetadata` carries the
+    /// same `post_state_hash` the body does, and a checkpoint-joined validator has metadata without
+    /// the historical body. The body is the fallback for a store whose metadata predates this
+    /// field; a block with neither is refused rather than checkpointed with a zero root.
+    async fn anchor_post_state(&self, hash: &BlockHash) -> Result<StateHash, String> {
+        let metadata = self
+            .dag
+            .lookup(hash)
+            .await?
+            .map(|metadata| metadata.post_state_hash);
+        let body = self
+            .block_store
+            .get(&[*hash])
+            .await?
+            .into_iter()
+            .next()
+            .flatten()
+            .map(|block| block.post_state_hash);
+        post_state_preference(metadata, body).ok_or_else(|| {
+            format!(
+                "the checkpoint anchor {} has neither a recorded post-state nor a body",
+                hash.to_hex()
+            )
+        })
+    }
+}
+
+/// **Metadata first, then the body.** A zero metadata post-state is the absence marker a
+/// checkpoint-joined node can carry before the body arrives; it is not a root, so the body is the
+/// fallback. A node with neither is refused rather than checkpointing a zero root.
+fn post_state_preference(
+    metadata: Option<StateHash>,
+    body: Option<StateHash>,
+) -> Option<StateHash> {
+    metadata
+        .filter(|state| *state != StateHash::new([0u8; 32]))
+        .or(body)
 }
 
 /// **The capability answer, split from the node so the one identity field can be tested without a
@@ -1145,21 +1184,18 @@ impl BlockApi for BlockApiImpl {
             .max_by_key(|m| (m.height, m.id))
             .ok_or_else(|| "the DAG has no finalized fringe to checkpoint".to_string())?;
         let anchor_hash = anchor.id;
-        let block = self
-            .block_store
-            .get(&[anchor_hash])
-            .await?
-            .into_iter()
-            .flatten()
-            .next()
-            .ok_or_else(|| format!("the checkpoint anchor {} has no body", anchor_hash.to_hex()))?;
+        // **The anchor's post-state is read from metadata first.** A checkpoint-joined validator
+        // holds every header but not the historical bodies; requiring the body here would make it
+        // unable to attest until the backfill reached the anchor. The fallback keeps the old
+        // behaviour for a node whose metadata predates this path.
+        let anchor_post_state = self.anchor_post_state(&anchor_hash).await?;
         let epoch_length = self.runtime.genesis_pos().params.epoch_length.max(1);
         let anchor_height = i64::from(anchor.height);
         Ok(Checkpoint {
             shard_id: self.shard_id.clone(),
             anchor: base16::encode(anchor_hash.as_bytes()),
             anchor_height,
-            anchor_post_state: base16::encode(block.post_state_hash.as_bytes()),
+            anchor_post_state: base16::encode(anchor_post_state.as_bytes()),
             fringe_hashes: fringe
                 .iter()
                 .map(|m| base16::encode(m.id.as_bytes()))
@@ -1224,6 +1260,18 @@ impl BlockApi for BlockApiImpl {
         let digest =
             crate::checkpoint::checkpoint_digest(&checkpoint).map_err(|e| e.to_string())?;
         if let Some(certificate) = self.checkpoint_store.get(&digest).await? {
+            // **The row must still hash to the key it was found under.** A store that returns a
+            // decodable certificate for a digest is not yet evidence that the statement is that
+            // digest; recompute before serving it as a certificate.
+            let stored = crate::checkpoint::checkpoint_digest(&certificate.checkpoint)
+                .map_err(|e| e.to_string())?;
+            if stored != digest {
+                return Err(format!(
+                    "the certificate stored under {} hashes to {}",
+                    digest.to_hex(),
+                    stored.to_hex()
+                ));
+            }
             return Ok(certificate);
         }
         // No quorum has been assembled for the *current* statement yet. Serve the statement with
@@ -1406,6 +1454,20 @@ mod tests {
         // Autopropose does not change the identity answer either.
         assert!(capability_answer(true, true, false, false, true).proposer);
         assert!(!capability_answer(true, true, false, false, false).proposer);
+    }
+
+    /// **A checkpoint-joined validator has metadata without the historical body.** The anchor's
+    /// post-state must come from the metadata in that case; a zero metadata root is the absence
+    /// marker, so the body is the fallback, and neither is a refusal — never a zero checkpoint.
+    #[test]
+    fn a_metadata_only_anchor_has_a_post_state_and_zero_metadata_falls_back_to_the_body() {
+        let metadata = StateHash::new([7u8; 32]);
+        let body = StateHash::new([8u8; 32]);
+        let zero = StateHash::new([0u8; 32]);
+        assert_eq!(post_state_preference(Some(metadata), None), Some(metadata));
+        assert_eq!(post_state_preference(Some(zero), Some(body)), Some(body));
+        assert_eq!(post_state_preference(None, Some(body)), Some(body));
+        assert_eq!(post_state_preference(None, None), None);
     }
 
     fn block() -> BlockMessage {

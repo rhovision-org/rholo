@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rchain_block_storage::checkpoint_store::CheckpointStore;
+use rchain_block_storage::checkpoint_store::{Adoption, CheckpointStore, Recorded};
 use rchain_casper::api::block_api::BlockApi;
 use rchain_casper::checkpoint::{
     check_bond_set_unchanged, checkpoint_digest, verify_genesis_rooted_certificate,
@@ -225,7 +225,27 @@ impl CheckpointCollector {
         let checkpoint = self.block_api.current_checkpoint().await?;
         let digest =
             checkpoint_digest(&checkpoint).map_err(|e| format!("current checkpoint: {e}"))?;
-        if self.store.get(&digest).await?.is_some() {
+        if let Some(stored) = self.store.get(&digest).await? {
+            // **A record is not the head.** A crash between the sync's record and its later
+            // adoption leaves a statement this node accepted but does not serve; adoption is
+            // idempotent, so the first collector tick heals the head instead of waiting for the
+            // statement to be re-derived and re-signed.
+            match self.store.adopt(&digest, &stored, false).await? {
+                Adoption::Adopted => self.log.info(
+                    LogSource::new("coop.rchain.node.runtime.CheckpointCollector"),
+                    &format!(
+                        "{}: adopted the recorded checkpoint at anchor {} (digest {})",
+                        self.shard_id,
+                        stored.checkpoint.anchor_height,
+                        digest.to_hex()
+                    ),
+                ),
+                Adoption::Conflict {
+                    head_digest,
+                    incoming_digest,
+                } => self.report_conflict(head_digest, incoming_digest),
+                _ => {}
+            }
             return Ok(None);
         }
 
@@ -251,8 +271,57 @@ impl CheckpointCollector {
         };
         let verified =
             verify_genesis_rooted_certificate(&certificate, &trusted).map_err(|e| e.to_string())?;
-        self.store.put(&verified.digest, &certificate).await?;
-        Ok(Some(verified))
+        if let Recorded::Conflict { existing_digest } =
+            self.store.record(&verified.digest, &certificate).await?
+        {
+            self.report_conflict(Some(existing_digest), verified.digest);
+            return Ok(None);
+        }
+        match self
+            .store
+            .adopt(&verified.digest, &certificate, false)
+            .await?
+        {
+            Adoption::Adopted | Adoption::AlreadyHead => Ok(Some(verified)),
+            Adoption::Conflict {
+                head_digest,
+                incoming_digest,
+            } => {
+                self.report_conflict(head_digest, incoming_digest);
+                Ok(None)
+            }
+            Adoption::Sibling { .. } | Adoption::Stale { .. } => Ok(None),
+            Adoption::ForeignShard {
+                head_shard,
+                incoming_shard,
+            } => Err(format!(
+                "the collector's certificate names shard {incoming_shard}, but the served head is \
+                 {head_shard}"
+            )),
+        }
+    }
+
+    /// **Two statements at one anchor are evidence, not a replacement.** Law 104 says their quorums
+    /// share a signer; the store keeps both digest rows and the first anchor mapping, and the head
+    /// stays on the statement this node already served.
+    fn report_conflict(
+        &self,
+        head_digest: Option<Blake2b256Hash>,
+        incoming_digest: Blake2b256Hash,
+    ) {
+        rchain_casper::engine::sync_metrics::census().add_checkpoint_conflict();
+        self.log.warn(
+            LogSource::new("coop.rchain.node.runtime.CheckpointCollector"),
+            &format!(
+                "{}: two checkpoint statements at one anchor (head {}, incoming {}); the head was \
+                 not replaced",
+                self.shard_id,
+                head_digest
+                    .map(|digest| digest.to_hex())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                incoming_digest.to_hex()
+            ),
+        );
     }
 
     /// The certificate requires signatures carried by the bond set the verifier trusts. A node that

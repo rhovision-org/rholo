@@ -840,6 +840,68 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
             0
         };
         store.set_history_from(floor).await?;
+        // **Adopt only after the state, metadata and floor are accepted.** The head is the
+        // statement this node will re-verify at boot and serve to joiners, so it must not move
+        // ahead of the state it names. `allow_sibling` is true because this certificate was already
+        // tied to the fringe the sync walked: a different anchor at the same height is this
+        // network's finality movement, not a foreign statement.
+        if let Some(certificate) = store.get(&verified.digest).await? {
+            match store.adopt(&verified.digest, &certificate, true).await? {
+                rchain_block_storage::checkpoint_store::Adoption::Adopted
+                | rchain_block_storage::checkpoint_store::Adoption::AlreadyHead => {}
+                rchain_block_storage::checkpoint_store::Adoption::Conflict {
+                    head_digest,
+                    incoming_digest,
+                } => {
+                    crate::engine::sync_metrics::census().add_checkpoint_conflict();
+                    log.warn(
+                        source,
+                        &format!(
+                            "two checkpoint statements at one anchor: head {}, accepted {}; the \
+                             head was not replaced",
+                            head_digest
+                                .map(|digest| digest.to_hex())
+                                .unwrap_or_else(|| "unknown".to_string()),
+                            incoming_digest.to_hex()
+                        ),
+                    );
+                }
+                rchain_block_storage::checkpoint_store::Adoption::Sibling {
+                    head_digest,
+                    head_anchor_height,
+                } => log.warn(
+                    source,
+                    &format!(
+                        "the accepted certificate's anchor ({}) is a sibling of the served head at \
+                         height {head_anchor_height} (head digest {}); the head was not replaced",
+                        verified.checkpoint.anchor_height,
+                        head_digest
+                            .map(|digest| digest.to_hex())
+                            .unwrap_or_else(|| "unknown".to_string())
+                    ),
+                ),
+                rchain_block_storage::checkpoint_store::Adoption::Stale {
+                    head_anchor_height,
+                } => log.warn(
+                    source,
+                    &format!(
+                        "the accepted certificate's anchor ({}) is older than the served head at \
+                         height {head_anchor_height}; the head was not replaced",
+                        verified.checkpoint.anchor_height
+                    ),
+                ),
+                rchain_block_storage::checkpoint_store::Adoption::ForeignShard {
+                    head_shard,
+                    incoming_shard,
+                } => log.warn(
+                    source,
+                    &format!(
+                        "the accepted certificate names shard {incoming_shard}, but the served head \
+                         is {head_shard}; the head was not replaced"
+                    ),
+                ),
+            }
+        }
     }
     log.info(
         source,
@@ -895,12 +957,21 @@ async fn certified_checkpoint(
         ));
     }
     tie_certificate_to_fringe(&verified.checkpoint, fringe)?;
-    // **Persist before the state walk**: the certificate is what makes the accepted fringe
+    // **Record before the state walk**: the certificate is what makes the accepted fringe
     // re-verifiable at the next boot, and a node that crashes after hydrating the state but before
-    // storing the statement would restart with a history it cannot attribute. The store reads both
-    // writes back.
+    // storing the statement would restart with a history it cannot attribute. This is the
+    // digest-keyed record, not adoption: the head moves only after the state, metadata and history
+    // floor are accepted (see the end of the state sync).
     if let Some(store) = store {
-        store.put(&verified.digest, &certificate).await?;
+        if matches!(
+            store.record(&verified.digest, &certificate).await?,
+            rchain_block_storage::checkpoint_store::Recorded::Conflict { .. }
+        ) {
+            // The adoption after the state is published reports the conflict with the head it
+            // protected; counting it here keeps the record-time sighting visible even if the walk
+            // fails.
+            crate::engine::sync_metrics::census().add_checkpoint_conflict();
+        }
     }
     Ok(verified)
 }
