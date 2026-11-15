@@ -1694,6 +1694,191 @@ mod tests {
         );
     }
 
+    /// **A read-only DAG holding one ancestor closure**, so the boot rebuild can be exercised without
+    /// a live store.
+    struct ClosureDag {
+        by_hash: BTreeMap<BlockHash, rchain_models::block_metadata::BlockMetadata>,
+    }
+
+    #[async_trait::async_trait]
+    impl BlockDagStorage for ClosureDag {
+        async fn get_representation(
+            &self,
+        ) -> Arc<rchain_block_storage::dag::representation::DagRepresentation> {
+            Arc::new(
+                rchain_block_storage::dag::representation::DagRepresentation {
+                    dag_set: Arc::new(self.by_hash.keys().copied().collect()),
+                    child_map: Arc::new(BTreeMap::new()),
+                    height_map: Arc::new(BTreeMap::new()),
+                    dag_message_state:
+                        rchain_block_storage::dag::message_state::DagMessageState::empty(),
+                },
+            )
+        }
+
+        async fn lookup(
+            &self,
+            block_hash: &BlockHash,
+        ) -> Result<Option<rchain_models::block_metadata::BlockMetadata>, String> {
+            Ok(self.by_hash.get(block_hash).cloned())
+        }
+
+        async fn insert(
+            &self,
+            _metadata: rchain_models::block_metadata::BlockMetadata,
+            _block: BlockMessage,
+        ) -> Result<(), String> {
+            Err("the boot rebuild only reads".to_string())
+        }
+
+        async fn lookup_by_deploy_id(
+            &self,
+            _deploy_id: &rchain_block_storage::dag::dag_storage::DeployId,
+        ) -> Result<Option<BlockHash>, String> {
+            Ok(None)
+        }
+
+        async fn add_deploy(
+            &self,
+            _deploy: rchain_models::casper::protocol::casper_message::SignedDeployData,
+        ) -> Result<(), String> {
+            Err("the boot rebuild only reads".to_string())
+        }
+
+        async fn pooled_deploys(
+            &self,
+        ) -> Result<
+            BTreeMap<
+                rchain_block_storage::dag::dag_storage::DeployId,
+                rchain_models::casper::protocol::casper_message::SignedDeployData,
+            >,
+            String,
+        > {
+            Ok(BTreeMap::new())
+        }
+
+        async fn contains_deploy_in_pool(
+            &self,
+            _deploy_id: &rchain_block_storage::dag::dag_storage::DeployId,
+        ) -> Result<bool, String> {
+            Ok(false)
+        }
+    }
+
+    /// One DAG record. `seed` is both the block hash's fill byte and the block's identity in the
+    /// closure; the state roots are fill bytes so a test can count distinct roots by eye.
+    fn header_meta(
+        seed: u8,
+        height: i64,
+        parents: &[u8],
+        fringe: &[u8],
+        pre: u8,
+        post: u8,
+        fringe_state: u8,
+    ) -> rchain_models::block_metadata::BlockMetadata {
+        use rchain_models::block::state_hash::StateHash;
+        let hash = |fill: u8| BlockHash::try_from(vec![fill; 32].as_slice()).expect("32 bytes");
+        rchain_models::block_metadata::BlockMetadata {
+            block_hash: hash(seed),
+            block_num: if height == 0 {
+                BlockHeight::zero()
+            } else {
+                BlockHeight::try_from(height).expect("a non-negative height")
+            },
+            sender: rchain_models::validator::Validator::new([7u8; 65]),
+            seq_num: rchain_shared::refined::SeqNum::zero(),
+            justifications: parents.iter().map(|fill| hash(*fill)).collect(),
+            bonds_map: BTreeMap::new(),
+            validated: true,
+            validation_failed: false,
+            slashable: false,
+            failure_cause: None,
+            slash_severity: rchain_models::block_metadata::SlashSeverity::Unspecified,
+            restore_attempts: 0,
+            fringe: fringe.iter().map(|fill| hash(*fill)).collect(),
+            fringe_state_hash: StateHash::new([fringe_state; 32]),
+            pre_state_hash: StateHash::new([pre; 32]),
+            post_state_hash: StateHash::new([post; 32]),
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
+            member_of_fringe: None,
+        }
+    }
+
+    /// **The boot rebuild is a verification, not a reconstruction** (review R2): the window is
+    /// derived from the DAG only after both commitments reproduce, and each missing or altered
+    /// fact is refused by name rather than leading to an empty window.
+    #[tokio::test]
+    async fn the_boot_rebuild_verifies_both_commitments_and_refuses_a_tampered_one() {
+        use rchain_models::casper::protocol::checkpoint as model;
+        let genesis = header_meta(1, 0, &[], &[], 1, 1, 1);
+        let child = header_meta(2, 1, &[1], &[1], 1, 2, 3);
+        let anchor = child.block_hash;
+        let headers = vec![genesis.to_header(false), child.to_header(false)];
+        let checkpoint = model::Checkpoint {
+            shard_id: "boot-test".to_string(),
+            anchor: anchor.to_hex(),
+            anchor_height: 1,
+            anchor_post_state: rchain_shared::base16::encode(child.post_state_hash.as_bytes()),
+            fringe_hashes: vec![anchor.to_hex()],
+            parent_digest: None,
+            epoch: 0,
+            metadata_root: Some(model::metadata_root(headers.iter()).to_hex()),
+            history_root: Some(model::validation_window_root(headers.iter()).to_hex()),
+        };
+        let verified = crate::checkpoint::VerifiedCheckpoint {
+            checkpoint,
+            digest: Blake2b256Hash::create(b"boot-test"),
+            supporting_stake: 1,
+            total_stake: 1,
+        };
+        let dag = ClosureDag {
+            by_hash: BTreeMap::from([
+                (genesis.block_hash, genesis.clone()),
+                (child.block_hash, child),
+            ]),
+        };
+
+        let window = rebuild_window_from_dag(&dag, &verified)
+            .await
+            .expect("the closure reproduces both commitments");
+        let expected: BTreeSet<_> = model::validation_window_roots(headers.iter())
+            .into_iter()
+            .map(|root| Blake2b256Hash::from_byte_array(&root))
+            .collect();
+        assert_eq!(window, expected);
+        assert_eq!(
+            window.len(),
+            3,
+            "the shared pre-state, the anchor post-state and the fringe state are the three roots"
+        );
+
+        let mut tampered = verified.clone();
+        tampered.checkpoint.metadata_root = Some(Blake2b256Hash::create(b"elsewhere").to_hex());
+        let error = rebuild_window_from_dag(&dag, &tampered)
+            .await
+            .expect_err("a metadata root the closure does not reproduce is refused");
+        assert!(
+            error.contains("metadata commitment does not verify"),
+            "{error}"
+        );
+
+        let mut uncommitted = verified.clone();
+        uncommitted.checkpoint.history_root = None;
+        let error = rebuild_window_from_dag(&dag, &uncommitted)
+            .await
+            .expect_err("a certificate with no window commitment is refused");
+        assert!(error.contains("no validation-window commitment"), "{error}");
+
+        let incomplete = ClosureDag {
+            by_hash: BTreeMap::from([(genesis.block_hash, genesis)]),
+        };
+        let error = rebuild_window_from_dag(&incomplete, &verified)
+            .await
+            .expect_err("an anchor the DAG does not hold is refused");
+        assert!(error.contains("no DAG metadata"), "{error}");
+    }
+
     use rchain_comm::peer_node::NodeIdentifier;
     use rchain_shared::log::NopLog;
     use rchain_shared::refined::Port;
