@@ -93,6 +93,18 @@ pub trait WebApi: Send + Sync {
         ))
     }
 
+    /// `GET /api/v1/block/{hash}/header` — the block's pre/post/fringe state roots. The fringe root
+    /// is not in a body, so a validation-window audit reads it here. The default refuses.
+    async fn block_header(
+        &self,
+        _hash: &str,
+    ) -> Result<rchain_models::casper::protocol::deploy_service::HeaderCommitment, BlockApiException>
+    {
+        Err(BlockApiException(
+            "this surface serves no block header commitment".to_string(),
+        ))
+    }
+
     /// `GET /api/v1/finality-attestation` — this node's finalised block, signed by its validator key,
     /// bound to the caller's nonce. The default refuses: a surface with no identity attests for no one.
     async fn finality_attestation(

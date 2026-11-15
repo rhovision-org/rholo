@@ -1034,6 +1034,15 @@ async fn api_get_raw_block(State(state): State<HttpState>, Path(hash): Path<Stri
     json_result(state.web_api.raw_block(&hash).await)
 }
 
+/// `GET /api/v1/block/{hash}/header` — the block's state-root commitments (the fringe root is not
+/// in a body, so an audit reads it here).
+async fn api_get_block_header(
+    State(state): State<HttpState>,
+    Path(hash): Path<String>,
+) -> Response {
+    json_result(state.web_api.block_header(&hash).await)
+}
+
 /// `GET /api/v1/finality-attestation?nonce=…` — what this node has finalised, signed by its validator
 /// key (AUDIT C261). A node-local claim cannot be weighed; an attestation signed by a bonded key can.
 async fn api_finality_attestation(
@@ -1836,6 +1845,17 @@ pub const OPENAPI_JSON: &str = r##"{
         "responses": {
           "200": { "description": "The bytes the block hash is taken over, plus the signature over that hash", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RawBlock" } } } },
           "400": { "description": "Invalid block hash, or a block this node has not added" }
+        }
+      }
+    },
+    "/block/{hash}/header": {
+      "get": {
+        "summary": "The block's pre-state, post-state and fringe-state roots",
+        "description": "A body does not carry the fringe state root, so a validation-window audit reads it here.",
+        "parameters": [ { "name": "hash", "in": "path", "required": true, "schema": { "type": "string" } } ],
+        "responses": {
+          "200": { "description": "The header commitment", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "400": { "description": "Invalid block hash, or a block this node's DAG does not hold" }
         }
       }
     },
@@ -2731,6 +2751,7 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/v1/blocks", get(api_get_blocks))
         .route("/api/v1/block/{hash}", get(api_get_block))
         .route("/api/v1/block/{hash}/raw", get(api_get_raw_block))
+        .route("/api/v1/block/{hash}/header", get(api_get_block_header))
         .route(
             "/api/v1/finality-attestation",
             get(api_finality_attestation),
@@ -5079,6 +5100,7 @@ mod tests {
         let doc: serde_json::Value =
             serde_json::from_str(OPENAPI_JSON).expect("served OpenAPI parses");
         for (path, method) in [
+            ("/block/{hash}/header", "get"),
             ("/history/range", "post"),
             ("/history/credit", "post"),
             ("/history/meter/{payer}", "get"),

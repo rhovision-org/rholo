@@ -27,7 +27,8 @@ use rchain_models::casper::protocol::checkpoint::{
 };
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, CheckpointStatus, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
-    FinalityAttestation, LightBlockInfo, RawBlock, Status, VersionInfo, WaitingContinuationInfo,
+    FinalityAttestation, HeaderCommitment, LightBlockInfo, RawBlock, Status, VersionInfo,
+    WaitingContinuationInfo,
 };
 use rchain_models::rholang::RhoType::RhoDeployId;
 use rchain_models::sorter::sort_par_term;
@@ -1221,6 +1222,24 @@ impl BlockApi for BlockApiImpl {
     async fn get_block(&self, hash: &str) -> ApiErr<BlockInfo> {
         let block = self.find_block(hash).await?;
         Ok(get_full_block_info(&block))
+    }
+
+    async fn header_commitment(&self, hash: &str) -> ApiErr<HeaderCommitment> {
+        let bytes =
+            base16::decode(hash).ok_or_else(|| "the block hash is not base16".to_string())?;
+        let hash = BlockHash::try_from(bytes.as_slice()).map_err(|e| e.to_string())?;
+        let meta = self
+            .dag
+            .lookup(&hash)
+            .await?
+            .ok_or_else(|| format!("block {} is not in this node's DAG", hash.to_hex()))?;
+        Ok(HeaderCommitment {
+            block_hash: meta.block_hash.to_hex(),
+            height: i64::from(meta.block_num),
+            pre_state_hash: base16::encode(meta.pre_state_hash.as_bytes()),
+            post_state_hash: base16::encode(meta.post_state_hash.as_bytes()),
+            fringe_state_hash: base16::encode(meta.fringe_state_hash.as_bytes()),
+        })
     }
 
     async fn get_raw_block(&self, hash: &str) -> ApiErr<RawBlock> {

@@ -168,6 +168,18 @@ pub struct Status {
     pub audit: Option<AuditAvailability>,
 }
 
+/// **A block's metadata projection**: the state roots its header carries. A body does not carry the
+/// fringe state root, so this is the route an audit uses to check a validation-window commitment.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderCommitment {
+    pub block_hash: String,
+    pub height: i64,
+    pub pre_state_hash: String,
+    pub post_state_hash: String,
+    pub fringe_state_hash: String,
+}
+
 /// The status surface's view of the anchor a node runs from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

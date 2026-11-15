@@ -1590,6 +1590,17 @@ impl WebApi for WebApiImpl {
             .map_err(BlockApiException)
     }
 
+    async fn block_header(
+        &self,
+        hash: &str,
+    ) -> Result<rchain_models::casper::protocol::deploy_service::HeaderCommitment, BlockApiException>
+    {
+        self.block_api
+            .header_commitment(hash)
+            .await
+            .map_err(BlockApiException)
+    }
+
     async fn finality_attestation(
         &self,
         nonce: &str,

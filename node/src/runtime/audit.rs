@@ -153,6 +153,16 @@ async fn fetch_history_range(
     Some(by_height)
 }
 
+/// A block's state-root commitments. The fringe state root is not in a body, so the validation
+/// window (which commits it) is reconstructed from this route.
+async fn fetch_header_commitment(
+    client: &reqwest::Client,
+    base: &str,
+    block_hash: &str,
+) -> Result<rchain_models::casper::protocol::deploy_service::HeaderCommitment, String> {
+    get_json(client, &format!("{base}/api/v1/block/{block_hash}/header")).await
+}
+
 /// One height's bodies via the per-height route: the block list at the height, then each body.
 async fn fetch_height_bodies(
     client: &reqwest::Client,
@@ -479,7 +489,7 @@ pub async fn run(
         // The bodies route returns all blocks at a height, including forks; a root over that
         // superset would disagree with a correct certificate. Walk the anchor's justifications,
         // exactly as the producer and the joiner do.
-        let closure = match ancestor_closure(anchor, &headers) {
+        let mut closure = match ancestor_closure(anchor, &headers) {
             Ok(closure) => closure,
             Err(hash) => {
                 let report = incomplete(
@@ -519,6 +529,63 @@ pub async fn run(
             }
         }
         if window_committed {
+            // **The window commits fringe state roots, and a body does not carry its fringe root.**
+            // Reconstruct the last `VALIDATION_WINDOW_BLOCKS` headers' fringe roots from the node's
+            // header route; a header that cannot be read is missing evidence (INCOMPLETE), not a
+            // disagreement.
+            let mut ordered: Vec<&BlockHeader> = closure.iter().collect();
+            ordered.sort_by_key(|header| (i64::from(header.block_num), header.block_hash));
+            let window: BTreeSet<BlockHash> = ordered
+                .iter()
+                .rev()
+                .take(rchain_models::casper::protocol::checkpoint::VALIDATION_WINDOW_BLOCKS)
+                .map(|header| header.block_hash)
+                .collect();
+            for header in closure
+                .iter_mut()
+                .filter(|header| window.contains(&header.block_hash))
+            {
+                let height = i64::from(header.block_num);
+                let hash = header.block_hash.to_hex();
+                let info = match fetch_header_commitment(&client, base, &hash).await {
+                    Ok(info) => info,
+                    Err(e) => {
+                        return Ok(incomplete(
+                            &verified,
+                            height,
+                            format!("the validation-window header {hash} could not be read: {e}"),
+                        ))
+                    }
+                };
+                if !info.block_hash.eq_ignore_ascii_case(&hash) || info.height != height {
+                    return Ok(incomplete(
+                        &verified,
+                        height,
+                        format!(
+                            "the header route answered {} at height {} for the requested {hash} at \
+                             {height}; this node cannot establish the window",
+                            info.block_hash, info.height
+                        ),
+                    ));
+                }
+                let Some(bytes) = base16::decode(&info.fringe_state_hash) else {
+                    return Ok(incomplete(
+                        &verified,
+                        height,
+                        format!("the fringe state root of {hash} is not base16"),
+                    ));
+                };
+                match rchain_models::block::state_hash::StateHash::try_from(bytes.as_slice()) {
+                    Ok(root) => header.fringe_state_hash = root,
+                    Err(e) => {
+                        return Ok(incomplete(
+                            &verified,
+                            height,
+                            format!("the fringe state root of {hash} is not a state root: {e}"),
+                        ))
+                    }
+                }
+            }
             if let Err(e) = rchain_casper::checkpoint::verify_validation_window(
                 &certificate.checkpoint,
                 closure.iter(),

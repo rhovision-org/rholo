@@ -930,6 +930,16 @@ pub trait BlockApi: Send + Sync {
 
     async fn get_block(&self, hash: &str) -> ApiErr<BlockInfo>;
 
+    /// **The block's header commitment** — hash, height and the pre/post/fringe state roots. A
+    /// body does not carry the fringe state root, so a validation-window audit reads it here. The
+    /// default refuses: a surface with no DAG cannot answer for one.
+    async fn header_commitment(
+        &self,
+        _hash: &str,
+    ) -> ApiErr<rchain_models::casper::protocol::deploy_service::HeaderCommitment> {
+        Err("this surface serves no block header commitment".to_string())
+    }
+
     async fn bond_status(&self, public_key: &[u8]) -> ApiErr<bool>;
 
     /// The reply *and where it was read from*: a bare `Vec<Par>` cannot say whether the term
