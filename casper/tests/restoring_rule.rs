@@ -180,6 +180,10 @@ fn record(h: BlockHash, sender: Validator, cause: FailureCause, attempts: u32) -
         restore_attempts: attempts,
         fringe: BTreeSet::new(),
         fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+        pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+        post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+        sig: Vec::new(),
+        sig_algorithm: String::new(),
         member_of_fringe: None,
     }
 }

@@ -97,10 +97,11 @@ measure() { # <height> <run>
   DEVNET_PREFIX="$MEASURE_PREFIX" DEVNET_NETWORK="$MEASURE_NETWORK" \
   DEVNET_GRPC_BASE="$MEASURE_GRPC_BASE" DEVNET_HTTP_BASE="$MEASURE_HTTP_BASE" \
   DEVNET_ADMIN_BASE="$MEASURE_ADMIN_BASE" \
+  DEVNET_NODE_MEMORY="${DEVNET_NODE_MEMORY:-8g}" \
     python3 tools/c339_mature_replay.py \
       --out "$dir" \
       --target-height "$h" \
-      --validators 2 --validator 1 \
+      --observer \
       --bootstrap-volume "$vol" \
       --no-autopropose --no-propose-on-deploy \
       --restore-timeout 1800

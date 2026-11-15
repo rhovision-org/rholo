@@ -228,6 +228,23 @@ pub enum Commands {
         #[arg(long = "nonce", required = true)]
         nonce: String,
     },
+    /// **Audit a checkpoint by replaying its history from genesis** (sync/verification separation).
+    /// Downloads the bodies, replays them through the validator in a scratch data directory, and
+    /// writes AGREE / DISAGREE / INCOMPLETE to `<out>/audit.json`. Never touches a live store.
+    Audit {
+        /// The node to read the certificate and bodies from, as `http://host:port` (its client API).
+        #[arg(long = "bootstrap", required = true)]
+        bootstrap: String,
+        /// The checkpoint digest to audit; defaults to whatever certificate the node serves.
+        #[arg(long = "checkpoint")]
+        checkpoint: Option<String>,
+        /// A scratch directory for the replay's runtime. Not a live node's data directory.
+        #[arg(long = "data-dir", required = true)]
+        data_dir: PathBuf,
+        /// Where `audit.json` is written.
+        #[arg(long = "out", required = true)]
+        out: PathBuf,
+    },
 }
 
 /// The `run` subcommand options (port of `Options.run`).
@@ -697,6 +714,26 @@ pub struct Run {
     #[arg(long = "no-self-replay-reset")]
     pub no_self_replay_reset: bool,
 
+    /// **Do not backfill the bodies of a certified history** (light-node mode). The backfill is on
+    /// by default: after a checkpoint join the node walks the missing heights from genesis upward,
+    /// content-verifies each body and indexes its deploys. Leaving it off keeps the node metadata-only
+    /// below its floor (`historyAvailability: unavailable`) and it relies on an archive for history.
+    #[arg(long = "no-backfill-bodies")]
+    pub no_backfill_bodies: bool,
+
+    /// **Advertise and serve this node as a history archive** (sync/verification separation). An
+    /// archive answers the challenge route and can be listed at `/api/v1/archives`; it is a service
+    /// commitment, not a consensus role.
+    #[arg(long = "archive")]
+    pub archive: bool,
+    /// How many heights of history to retain when archiving (`0` = all).
+    #[arg(long = "history-retention", value_name = "HEIGHTS")]
+    pub history_retention: Option<i64>,
+    /// Archive endpoints to list (comma-separated `http://host:port` URLs). The challenge route is
+    /// how a client checks one actually holds what it advertises.
+    #[arg(long = "archive-peers", value_name = "URLS")]
+    pub archive_peers: Option<String>,
+
     /// **Inject a deterministic self-replay refusal into this node's own blocks** (#564). A devnet
     /// measurement instrument, not an operating mode: `deploy[:N]` refuses deploy-bearing blocks,
     /// `all[:N]` also refuses the attestation-only fallback, and `N` spends the injection after N
@@ -789,6 +826,47 @@ mod tests {
         assert!(
             rendered.contains("--validator-private-key-path"),
             "and points at the route that replaces it: {rendered}"
+        );
+    }
+
+    /// **The audit subcommand's four inputs are all required except the checkpoint.** A missing
+    /// `--data-dir` or `--out` is a parse error rather than a run that writes somewhere unintended.
+    #[test]
+    fn the_audit_subcommand_parses_and_requires_its_paths() {
+        let opts = parse(&[
+            "audit",
+            "--bootstrap",
+            "http://127.0.0.1:40403",
+            "--data-dir",
+            "/tmp/audit-scratch",
+            "--out",
+            "/tmp/audit-out",
+        ])
+        .expect("the audit subcommand parses");
+        match &opts.subcommand {
+            Commands::Audit {
+                bootstrap,
+                checkpoint,
+                data_dir,
+                out,
+            } => {
+                assert_eq!(bootstrap, "http://127.0.0.1:40403");
+                assert!(checkpoint.is_none(), "the served checkpoint is the default");
+                assert_eq!(data_dir, std::path::Path::new("/tmp/audit-scratch"));
+                assert_eq!(out, std::path::Path::new("/tmp/audit-out"));
+            }
+            other => panic!("wrong subcommand: {other:?}"),
+        }
+        assert!(
+            parse(&[
+                "audit",
+                "--bootstrap",
+                "http://127.0.0.1:40403",
+                "--data-dir",
+                "/tmp/audit-scratch",
+            ])
+            .is_err(),
+            "--out is required"
         );
     }
 

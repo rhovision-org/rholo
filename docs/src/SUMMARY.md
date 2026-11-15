@@ -40,6 +40,7 @@
 - [Block merging (RCHIP-02)](node/block-merge.md)
 - [Sorted matching (proposal)](node/sorted-matching.md)
 - [Storage](node/storage.md)
+- [Sync, checkpoints and history](node/sync-and-history.md)
 - [Operating the node](node/operating.md)
 - [Ingress admission](node/admission.md)
 - [Running a node: testnet now, mainnet later — validator and observer](node/validator-observer-setup.md)

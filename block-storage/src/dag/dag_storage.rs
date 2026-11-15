@@ -571,6 +571,34 @@ pub trait BlockDagStorage: Send + Sync {
         block: BlockMessage,
     ) -> Result<(), String>;
 
+    /// **Accept a block this node holds no body for** (sync/verification separation).
+    ///
+    /// A metadata-only sync publishes the history the checkpoint certificate accepted; the bodies
+    /// are backfilled later or never. The record is the consensus write minus the two
+    /// body-dependent steps (the deploy index and the pool release). **The default refuses**: a
+    /// backend that cannot represent a body-less block must say so, or a sync would believe it
+    /// published a DAG it silently did not.
+    async fn insert_metadata(&self, block_metadata: BlockMetadata) -> Result<(), String> {
+        Err(format!(
+            "this DAG storage cannot insert metadata without a body ({})",
+            block_metadata.block_hash.to_hex()
+        ))
+    }
+
+    /// **Attach a body to a block already accepted by metadata** (the backfill's write). The
+    /// default refuses: a backend that cannot index a body must say so rather than let a backfill
+    /// believe it closed a gap.
+    async fn attach_body(
+        &self,
+        block_metadata: &BlockMetadata,
+        _block: &BlockMessage,
+    ) -> Result<(), String> {
+        Err(format!(
+            "this DAG storage cannot attach a body to {} (no `attach_body` impl)",
+            block_metadata.block_hash.to_hex()
+        ))
+    }
+
     /// **Update the record of a block the DAG already holds** — the write the restoring rule needs, and
     /// `insert` is not it (AUDIT C193).
     ///

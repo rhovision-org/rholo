@@ -126,6 +126,12 @@ pub struct VersionInfo {
     pub node: String,
 }
 
+/// A `Status` that predates the history fields decodes as `unknown` rather than failing: a gRPC
+/// `Status` does not carry them, and an older JSON response is not a malformed one.
+fn unknown_history_availability() -> String {
+    "unknown".to_string()
+}
+
 /// Node status (port of `Status`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -138,6 +144,15 @@ pub struct Status {
     pub nodes: i32,
     pub min_phlo_price: i64,
     pub latest_block_number: i64,
+    /// **Where this node's history begins** (sync/verification separation): `available` when it
+    /// holds the chain from genesis, `backfilling` while a body backfill is closing a checkpoint
+    /// gap, `unavailable` when it started from a checkpoint and holds no earlier bodies, and
+    /// `unknown` for a transport that does not carry the field.
+    #[serde(default = "unknown_history_availability")]
+    pub history_availability: String,
+    /// Latest block minus the served checkpoint's anchor, or `None` when no certificate is stored.
+    #[serde(default)]
+    pub checkpoint_age: Option<i64>,
 }
 
 /// Post-block continuations plus the block they belong to (port of
@@ -529,6 +544,8 @@ mod tests {
             nodes: 4,
             min_phlo_price: 5,
             latest_block_number: 6,
+            history_availability: "available".to_string(),
+            checkpoint_age: None,
         })
         .expect("ser");
         for key in [

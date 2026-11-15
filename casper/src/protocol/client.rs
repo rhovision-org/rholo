@@ -86,6 +86,10 @@ fn status_from_wire(s: &wire::Status) -> Result<Status, String> {
         nodes: s.nodes,
         min_phlo_price: s.min_phlo_price,
         latest_block_number: s.latest_block_number,
+        // The gRPC `Status` message predates these fields; the HTTP surface is where they live.
+        // A client reading the wire must not infer coverage it was not told.
+        history_availability: "unknown".to_string(),
+        checkpoint_age: None,
     })
 }
 

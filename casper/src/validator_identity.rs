@@ -34,6 +34,21 @@ pub fn attestation_prehash(nonce: &[u8], block_hash: &BlockHash) -> Vec<u8> {
         .to_vec()
 }
 
+/// The domain tag of a **checkpoint attestation**. Deliberately not the finality tag: a signature
+/// over "the block I finalised, for this nonce" must never verify as a signature over "this durable
+/// checkpoint". See `casper::checkpoint`.
+pub const CHECKPOINT_ATTESTATION_TAG: &[u8] = b"rchain-checkpoint-attestation-v1";
+
+/// **The 32-byte prehash a checkpoint attestation signs**: `blake2b256(tag || digest)`.
+///
+/// One implementation, called by the producer and the verifier, for the same reason
+/// [`attestation_prehash`] is: a second copy of the rule could disagree with the first.
+pub fn checkpoint_attestation_prehash(digest: &Blake2b256Hash) -> Vec<u8> {
+    Blake2b256Hash::create_many(&[CHECKPOINT_ATTESTATION_TAG, digest.as_bytes()])
+        .to_byte_array()
+        .to_vec()
+}
+
 /// A validator's signing identity (port of `ValidatorIdentity`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatorIdentity {
@@ -73,6 +88,16 @@ impl ValidatorIdentity {
         block_hash: &BlockHash,
     ) -> Result<Vec<u8>, CryptoError> {
         self.signature(&attestation_prehash(nonce, block_hash))
+    }
+
+    /// Sign a **checkpoint digest** (sync/verification separation).
+    ///
+    /// A distinct statement from [`Self::attest_finality`]: that one signs `(nonce, block_hash)` for
+    /// one interactive question, and is deliberately short-lived; this one signs the durable
+    /// checkpoint statement (anchor, post-state, fringe, shard, parent) so any later joiner can verify
+    /// it. The two tags keep a block attestation from being replayed as a checkpoint attestation.
+    pub fn attest_checkpoint(&self, digest: &Blake2b256Hash) -> Result<Vec<u8>, CryptoError> {
+        self.signature(&checkpoint_attestation_prehash(digest))
     }
 
     /// Build an identity from a private key (port of `ValidatorIdentity.apply`).
@@ -164,6 +189,34 @@ mod tests {
         assert!(
             !Secp256k1::verify_bytes(&prehash, &untagged_sig, identity.public_key.bytes()),
             "a signature over the untagged bytes is not an attestation"
+        );
+    }
+
+    /// **The checkpoint tag is a second domain separation.** A checkpoint attestation signs
+    /// `blake2b256(checkpoint-tag || digest)`; a finality attestation signs
+    /// `blake2b256(finality-tag || nonce || block_hash)`. The same key and the same 32-byte digest
+    /// must not produce a signature that verifies as the other statement.
+    #[test]
+    fn a_checkpoint_attestation_is_not_a_finality_attestation() {
+        let identity = ValidatorIdentity::from_hex(
+            "67e56582298859ddae725f972992a07c6c4fb9f62a8fff58ce3ca926a1063530",
+        )
+        .unwrap();
+        let digest = Blake2b256Hash::create(b"a checkpoint digest");
+        let sig = identity.attest_checkpoint(&digest).unwrap();
+        assert!(Secp256k1::verify_bytes(
+            &checkpoint_attestation_prehash(&digest),
+            &sig,
+            identity.public_key.bytes()
+        ));
+        let block_hash = BlockHash::new(*digest.as_bytes());
+        assert!(
+            !Secp256k1::verify_bytes(
+                &attestation_prehash(&[0u8; 16], &block_hash),
+                &sig,
+                identity.public_key.bytes()
+            ),
+            "the checkpoint signature is not a finality attestation"
         );
     }
 

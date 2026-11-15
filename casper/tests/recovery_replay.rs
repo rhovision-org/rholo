@@ -291,6 +291,10 @@ fn independent_recovery_replays_epoch_boundaries_and_refuses_forged_claims() {
                         max_number_of_parents: 0,
                         expected_genesis: Some(genesis.block_hash),
                         anchor: None,
+                        // This test drives the replay (the audit path) directly; sync's
+                        // certificate source and store are not part of `verify`.
+                        checkpoint_source: None,
+                        checkpoint_store: None,
                     };
                     let verified = replay
                         .verify(&store, &heights, &target, &log)

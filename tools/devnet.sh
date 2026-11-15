@@ -789,10 +789,25 @@ cmd_up() {
     http_port=$((HTTP_BASE + (n + i) * 1000))
     admin_port=$((ADMIN_BASE + (n + i) * 1000))
     echo "==> starting $name (observer $i, bootstraps from $BOOTSTRAP)"
+    # **An observer can be a history archive** (sync/verification separation): it keeps the bodies
+    # the checkpoint join skipped and answers the challenge route. `DEVNET_OBSERVER_ARCHIVE=1` is
+    # the opt-in, since archiving is a service commitment rather than a consensus role.
+    archive_flag=()
+    if [[ "${DEVNET_OBSERVER_ARCHIVE:-0}" == "1" ]]; then
+      archive_flag=(--archive)
+      echo "    (archive tier: on)"
+    fi
+    # **An observer needs the genesis manifest too** (sync/verification separation): the checkpoint
+    # certificate is verified against the genesis bond set, which is the trust anchor a joiner
+    # cannot derive from the chain it is about to accept. The files are mounted read-only and no
+    # validator key is passed: reading the bonds is not joining the bonded set.
     # shellcheck disable=SC2046
     docker run $(docker_opts "$name" "$host_port" "$http_port" "$admin_port") \
+      -v "${genesis_dir}:/genesis:ro" \
       "$(node_image "$name")" $(rnode_run_common "$name") \
-        --bootstrap "rnode://${id}@${BOOTSTRAP}?protocol=40400&discovery=40404"
+        --bootstrap "rnode://${id}@${BOOTSTRAP}?protocol=40400&discovery=40404" \
+        --bonds-file /genesis/bonds.txt --wallets-file /genesis/wallets.txt \
+        "${archive_flag[@]}"
   done
 
   # Recorded so `reset` can rebuild ONE node against the same flags (#139). Written after the nodes are

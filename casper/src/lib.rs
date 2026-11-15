@@ -13,6 +13,7 @@ pub mod block_status;
 pub mod blocks;
 pub mod bonds_parser;
 pub mod budget;
+pub mod checkpoint;
 pub mod conf;
 pub mod construct_deploy;
 pub mod dag;

@@ -354,6 +354,9 @@ pub async fn apply<
     // **May a self-replay fault reset this node?** (#564) On by default; see
     // `CasperConf::self_replay_reset` for the constructive safety case. Off means the fault halts.
     self_replay_reset: bool,
+    // **Fetch the bodies of a certified history in the background** (default on). Off is the
+    // light-node mode: the node serves from the checkpoint state and reports its history floor.
+    backfill_bodies: bool,
     // **The wake a completed self-replay reset needs** (#564, F-U23-11). The running loop owns the
     // moment the catch-up walk passes the anchor it rewound to; the health cell behind the operator
     // surface owns the latch. This is the narrow seam, not a process-wide cell.
@@ -381,12 +384,19 @@ pub async fn apply<
     runtime_manager: Arc<RuntimeManager>,
     block_store: BlockStore,
     approved_store: ApprovedStore,
+    // **The accepted certificates, for boot re-verification and for serving the next joiner**
+    // (sync/verification separation). The sync branch persists the certificate it verified here.
+    checkpoint_store: rchain_block_storage::checkpoint_store::CheckpointStore,
     dag: Arc<dyn BlockDagStorage>,
     block_disposition: BlockDispositionStore,
     to_processor: mpsc::Sender<BlockMessage>,
     importer: I,
     exporter: E,
     phase: crate::engine::node_phase::NodePhaseCell,
+    // **Where a joiner fetches the checkpoint certificate** (sync/verification separation). The
+    // engine owns the sync protocol and has no HTTP client; the node wires the bootstrap's client
+    // endpoint. `None` makes sync fail closed: a fringe is not a state root without a quorum.
+    checkpoint_source: Option<Arc<dyn crate::engine::checkpoint_source::CheckpointSource>>,
     log: Arc<dyn Log>,
 ) -> Result<(), String> {
     let source = LogSource::new("casper.engine.NodeLaunch");
@@ -495,6 +505,8 @@ pub async fn apply<
                 max_number_of_parents: spec.genesis_block_data.max_number_of_parents,
                 expected_genesis: expected_genesis_hash,
                 anchor: boot_anchor,
+                checkpoint_source: checkpoint_source.clone(),
+                checkpoint_store: Some(checkpoint_store.clone()),
             }),
         ));
         // **A named anchor replaces the fringe request** (C259). A peer with no finalised fringe answers
@@ -507,6 +519,77 @@ pub async fn apply<
         // (`lfs_block_requester.rs`), so seeding it with an anchor rather than with a peer's fringe is
         // the same machinery with a different root — and `request_tuple_space` then pulls the state at
         // the anchor's post-state, exactly as it would for a fringe.
+        // **Ask for the fringe anchored at the certified checkpoint** (sync/verification
+        // separation). The certificate names the anchor and its post-state; an anchored request
+        // returns exactly that fringe (the anchor's closure), so the statement the joiner verifies
+        // and the history it walks are the same history by construction. Without a certificate the
+        // ordinary request is used and the attempt fails closed later — there is no unsigned
+        // fallback; the retry loop re-asks, which is what lets a just-started bootstrap certify.
+        if boot_anchor.is_none() {
+            if let Some(served_by) = checkpoint_source.as_ref() {
+                match served_by.fetch_certificate().await {
+                    Ok(certificate) => {
+                        match crate::checkpoint::verify_genesis_rooted_certificate(
+                            &certificate,
+                            &runtime_manager.genesis_pos().active_bonds(),
+                        ) {
+                            Ok(verified) if verified.checkpoint.shard_id == spec.shard_id.to_string() => {
+                                match BlockHash::try_from_hex(&verified.checkpoint.anchor) {
+                                    Ok(anchor) => {
+                                        log.info(
+                                            source,
+                                            &format!(
+                                                "Requesting the fringe anchored at the certified \
+                                                 checkpoint {} (height {})",
+                                                anchor.to_hex(),
+                                                verified.checkpoint.anchor_height
+                                            ),
+                                        );
+                                        // **The same statement the anchor came from** goes with the
+                                        // engine: the sync task verifies it rather than fetching a
+                                        // newer one, so the signed statement and the served fringe
+                                        // cannot be two different histories.
+                                        engine
+                                            .lock()
+                                            .await
+                                            .set_checkpoint_certificate(certificate.clone());
+                                        boot_anchor = Some(anchor);
+                                    }
+                                    Err(e) => log.warn(
+                                        source,
+                                        &format!(
+                                            "the served checkpoint names an unparseable anchor: {e}"
+                                        ),
+                                    ),
+                                }
+                            }
+                            Ok(verified) => log.warn(
+                                source,
+                                &format!(
+                                    "the served checkpoint names shard {:?}, not this node's {:?}",
+                                    verified.checkpoint.shard_id, spec.shard_id
+                                ),
+                            ),
+                            Err(e) => log.warn(
+                                source,
+                                &format!(
+                                    "the served checkpoint certificate was refused ({e}); asking \
+                                     for the ordinary fringe"
+                                ),
+                            ),
+                        }
+                    }
+                    Err(e) => log.info(
+                        source,
+                        &format!(
+                            "no checkpoint certificate is served yet ({e}); asking for the ordinary \
+                             fringe — the sync will fail closed until one is"
+                        ),
+                    ),
+                }
+            }
+        }
+
         let anchor = boot_anchor;
         // **The anchor is named *in the request*, not fetched and patched in afterwards** (C259a).
         // Seeding the sync from the anchor block alone left `ancestry` empty, which bypasses exactly the
@@ -629,6 +712,78 @@ pub async fn apply<
             )?);
         } else {
             log.info(source, "Reconnecting to existing network...");
+        }
+
+        // **The accepted fringe is re-verified against its stored certificate at boot**
+        // (sync/verification separation). The state on disk was accepted under a quorum; a restart
+        // must not turn a corrupted or replaced certificate into an accepted history. Only a
+        // certificate naming *this* fringe is evidence for it — an older certificate is what the
+        // node held when it last certified, and the accepted fringe may legitimately be newer.
+        if let Some(certificate) = checkpoint_store.latest().await? {
+            let verified = crate::checkpoint::verify_genesis_rooted_certificate(
+                &certificate,
+                &runtime_manager.genesis_pos().active_bonds(),
+            )
+            .map_err(|e| {
+                format!(
+                    "the stored checkpoint certificate failed re-verification at boot, so the \
+                     accepted fringe cannot be attributed: {e}"
+                )
+            })?;
+            if verified.checkpoint.shard_id != spec.shard_id.to_string() {
+                return Err(format!(
+                    "the stored checkpoint certificate names shard {:?}, not this node's {:?}",
+                    verified.checkpoint.shard_id, spec.shard_id
+                ));
+            }
+            if let Some(accepted) = approved_store
+                .get(&[rchain_block_storage::approved_store::FINALIZED_FRINGE_KEY])
+                .await?
+                .into_iter()
+                .next()
+                .flatten()
+            {
+                let accepted_set: std::collections::BTreeSet<_> =
+                    accepted.hashes.iter().copied().collect();
+                let certified_set: std::collections::BTreeSet<_> = verified
+                    .checkpoint
+                    .fringe_hashes
+                    .iter()
+                    .filter_map(|hex| {
+                        rchain_shared::base16::decode(hex)
+                            .and_then(|bytes| BlockHash::try_from(bytes.as_slice()).ok())
+                    })
+                    .collect();
+                if certified_set == accepted_set {
+                    log.info(
+                        source,
+                        &format!(
+                            "boot: the accepted fringe ({} block(s)) is re-verified by its stored \
+                             checkpoint certificate at anchor {}",
+                            accepted_set.len(),
+                            verified.checkpoint.anchor_height
+                        ),
+                    );
+                } else {
+                    log.warn(
+                        source,
+                        &format!(
+                            "boot: the stored checkpoint certificate names another fringe than the \
+                             accepted fringe ({} certified, {} accepted); the accepted state is not \
+                             re-verified by it",
+                            certified_set.len(),
+                            accepted_set.len()
+                        ),
+                    );
+                }
+            }
+        } else {
+            log.info(
+                source,
+                "boot: no checkpoint certificate is stored for the accepted fringe; the state on \
+                 disk is what this node accepted on its last sync (the collector certifies the \
+                 current fringe once a quorum signs it)",
+            );
         }
     }
 
@@ -803,6 +958,23 @@ pub async fn apply<
     // The permit is acquired *before* the spawn, which is the backpressure: a full pool parks the
     // receive loop instead of building an unbounded task list. A packet refused by the pool would
     // be a message the peer must resend anyway; parking the loop is the same delay with no drop.
+    // **The body backfill** (sync/verification separation). A certified joiner holds headers only;
+    // this task closes the gap in the background, lowest height first. Off is the light-node mode.
+    let backfill_tx = if backfill_bodies {
+        let (tx, rx) = tokio::sync::mpsc::channel(50);
+        crate::engine::backfill::spawn(
+            dag.clone(),
+            block_store.clone(),
+            checkpoint_store.clone(),
+            comm_util.clone(),
+            spec.shard_id.to_string(),
+            log.clone(),
+            rx,
+        );
+        Some(tx)
+    } else {
+        None
+    };
     let engine = std::sync::Arc::new(NodeRunning::new(
         transport.clone(),
         rp_conf.clone(),
@@ -816,6 +988,7 @@ pub async fn apply<
         disable_state_exporter,
         catchup.clone(),
         block_range_door.clone(),
+        backfill_tx,
     ));
     let consumer_slots =
         std::sync::Arc::new(tokio::sync::Semaphore::new(max_message_consumers.max(1)));
@@ -994,14 +1167,10 @@ async fn restored_native_state_root(
         let hash = hashes.first().ok_or_else(|| {
             "restored DAG has a newest height without any block hashes".to_string()
         })?;
-        let block = block_store
-            .get(&[*hash])
-            .await?
-            .into_iter()
-            .next()
-            .flatten()
-            .ok_or_else(|| "newest restored DAG block is missing from block storage".to_string())?;
-        return Ok(block.post_state_hash);
+        // **The metadata is the record, and a metadata-only sync has no body** (sync/verification
+        // separation). A record written before the field existed carries the zero root; only then
+        // is the body the sole copy, and a node that holds neither refuses by name.
+        return post_state_of(dag, block_store, hash).await;
     }
     // Only a synthetic, empty DAG has no block post-state to inspect.
     // Never silently substitute a fringe root when the DAG names a missing block.
@@ -1064,14 +1233,38 @@ async fn genesis_post_state_hash(
     else {
         return Ok(None);
     };
+    post_state_of(dag, block_store, genesis_hash)
+        .await
+        .map(Some)
+}
+
+/// **A block's post-state, from the metadata when it has one.** The certified sync path holds no
+/// body for the history it accepted; the record carries the root, and only a pre-field record falls
+/// back to the body. A node that holds neither says so rather than substituting a fringe root.
+async fn post_state_of(
+    dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
+    hash: &BlockHash,
+) -> Result<StateHash, String> {
+    if let Some(meta) = dag.lookup(hash).await? {
+        if meta.post_state_hash != StateHash::new([0u8; 32]) {
+            return Ok(meta.post_state_hash);
+        }
+    }
     block_store
-        .get(&[*genesis_hash])
+        .get(&[*hash])
         .await?
         .into_iter()
         .next()
         .flatten()
-        .ok_or_else(|| "genesis block missing after restore".to_string())
-        .map(|block| Some(block.post_state_hash))
+        .map(|block| block.post_state_hash)
+        .ok_or_else(|| {
+            format!(
+                "block {} has neither a recorded post-state nor a body, so the restore guard \
+                 cannot read it",
+                hash.to_hex()
+            )
+        })
 }
 
 /// Check the restored developer allocation before admission and proposal enter the running phase.

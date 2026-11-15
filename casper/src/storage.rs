@@ -100,6 +100,21 @@ pub fn rnode_db_mapping() -> Vec<(Db, LmdbEnvConfig)> {
             Db::new("finalized-store"),
             LmdbEnvConfig::new("dagstorage", 100 * GB),
         ),
+        // **The checkpoint certificates this node accepted** (sync/verification separation): the
+        // digest-keyed records, the served head, and the history floor the backfill advances. Small
+        // rows, the same DAG environment.
+        (
+            Db::new("checkpoint-certificates"),
+            LmdbEnvConfig::new("dagstorage", 100 * GB),
+        ),
+        (
+            Db::new("checkpoint-head"),
+            LmdbEnvConfig::new("dagstorage", 100 * GB),
+        ),
+        (
+            Db::new("checkpoint-history"),
+            LmdbEnvConfig::new("dagstorage", 100 * GB),
+        ),
         // **When this node first saw each piece of unfinalised work** (#583). A local, non-consensus
         // row per work block (hash → first-seen tip height), pruned below finality, so the small DAG
         // environment is its natural home.

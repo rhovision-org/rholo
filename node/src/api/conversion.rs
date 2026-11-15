@@ -131,6 +131,8 @@ pub fn to_public_status(
             max_deploys: pool.max_deploys,
             max_bytes: pool.max_bytes,
         },
+        history_availability: status.history_availability.clone(),
+        checkpoint_age: status.checkpoint_age,
     }
 }
 
@@ -271,6 +273,7 @@ pub fn to_node_capabilities(
     faucet: bool,
     faucet_remaining: i64,
     node_list: bool,
+    history: super::dto::HistoryCapabilities,
 ) -> NodeCapabilities {
     NodeCapabilities {
         autopropose: caps.autopropose,
@@ -282,6 +285,7 @@ pub fn to_node_capabilities(
         node_list,
         faucet,
         faucet_remaining,
+        history,
     }
 }
 
@@ -415,6 +419,8 @@ mod tests {
             nodes: 0,
             min_phlo_price: 0,
             latest_block_number: 0,
+            history_availability: "available".to_string(),
+            checkpoint_age: None,
         };
         let caps = Capabilities {
             autopropose: false,
@@ -503,6 +509,8 @@ mod tests {
             nodes: 2,
             min_phlo_price: 3,
             latest_block_number: 4,
+            history_availability: "available".to_string(),
+            checkpoint_age: None,
         };
         let caps = Capabilities {
             autopropose: true,
@@ -704,6 +712,8 @@ mod tests {
             nodes: 0,
             min_phlo_price: 0,
             latest_block_number: 0,
+            history_availability: "available".to_string(),
+            checkpoint_age: None,
             autopropose: false,
             propose_on_deploy: false,
             manual_propose: true,
@@ -774,6 +784,8 @@ mod tests {
             nodes: 0,
             min_phlo_price: 0,
             latest_block_number: 0,
+            history_availability: "available".to_string(),
+            checkpoint_age: None,
             autopropose: true,
             propose_on_deploy: false,
             manual_propose: false,
@@ -853,6 +865,8 @@ mod tests {
             nodes: 0,
             min_phlo_price: 0,
             latest_block_number: 0,
+            history_availability: "available".to_string(),
+            checkpoint_age: None,
             autopropose: true,
             propose_on_deploy: false,
             manual_propose: false,
@@ -954,6 +968,8 @@ mod tests {
             nodes: 0,
             min_phlo_price: 0,
             latest_block_number: 0,
+            history_availability: "available".to_string(),
+            checkpoint_age: None,
         };
         let caps = Capabilities {
             autopropose: false,
@@ -1042,6 +1058,8 @@ mod tests {
             nodes: 0,
             min_phlo_price: 0,
             latest_block_number: 0,
+            history_availability: "available".to_string(),
+            checkpoint_age: None,
         };
         let caps = Capabilities {
             autopropose: false,

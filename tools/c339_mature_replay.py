@@ -93,6 +93,10 @@ def main() -> int:
                         help="disable propose-on-deploy for the measured run")
     parser.add_argument("--validators", type=int, default=4,
                         help="devnet validators (needs 4 for the default validator 3)")
+    parser.add_argument("--observer", action="store_true",
+                        help="measure an empty observer joining the retained chain instead of "
+                             "wiping a bonded validator; requires the chain's genesis to match the "
+                             "network this up starts")
     parser.add_argument("--chain-timeout", type=float, default=4 * 60 * 60,
                         help="seconds allowed for the chain to reach the target (default 4h)")
     parser.add_argument("--restore-timeout", type=float, default=45 * 60,
@@ -117,7 +121,14 @@ def main() -> int:
 
     started = time.monotonic()
     if not args.skip_up:
-        up = ["tools/devnet.sh", "up", "--validators", str(args.validators), "--fresh", "--admin"]
+        if args.observer:
+            # The retained chain was built by a one-validator network; an observer joins the same
+            # genesis, so the bootstrap's bonds file matches its stored chain. A second *validator*
+            # would change the bonds file and the genesis post-state (AUDIT C46).
+            up = ["tools/devnet.sh", "up", "--validators", "1", "--observers", "1",
+                  "--fresh", "--admin"]
+        else:
+            up = ["tools/devnet.sh", "up", "--validators", str(args.validators), "--fresh", "--admin"]
         if not args.no_autopropose:
             up.append("--autopropose")
         if args.no_propose_on_deploy:
@@ -149,42 +160,85 @@ def main() -> int:
         return 1
     capture(raw / "bootstrap-health.json", json.dumps(chain, indent=2, sort_keys=True) + "\n")
 
-    validator_port = HTTP_BASE + args.validator * 1000
-    reset_started = time.monotonic()
-    run(["tools/devnet.sh", "reset", str(args.validator)])
-    restored = wait_for(
-        validator_port,
-        lambda body: body.get("ready") is True
-        and body.get("maxObservedHeight") is not None
-        and body["maxObservedHeight"] >= bootstrap_finalized,
-        args.restore_timeout,
-        args.poll,
-        f"validator {args.validator} restore to finalized {bootstrap_finalized}",
-    )
-    restore_seconds = time.monotonic() - reset_started
+    if args.observer:
+        # The observer starts empty and `devnet.sh up` waits until it serves; its container start is
+        # the restore clock's origin. No reset is needed: the volume was created fresh by `--fresh`.
+        joiner_name = f"{PREFIX}-observer-1"
+        joiner_port = HTTP_BASE + 2 * 1000  # n=1 validators, observer i=1
+        started_raw = docker(["inspect", "-f", "{{.State.StartedAt}}", joiner_name]).strip()
+        restored_at = http_json(joiner_port, "/health")
+        # `devnet.sh up` returns only after the observer serves, so this is the restore's end; the
+        # clock starts at the container's own start, not at `up`'s return.
+        try:
+            import datetime
 
-    restart_started = time.monotonic()
-    run(["tools/devnet.sh", "stop", str(args.validator)])
-    run(["tools/devnet.sh", "start", str(args.validator)])
-    restarted = wait_for(
-        validator_port,
-        lambda body: body.get("ready") is True
-        and body.get("maxObservedHeight") is not None
-        and body["maxObservedHeight"] >= restored["maxObservedHeight"],
-        args.restore_timeout,
-        args.poll,
-        f"validator {args.validator} restart control",
-    )
-    restart_seconds = time.monotonic() - restart_started
+            started_dt = datetime.datetime.strptime(started_raw[:19], "%Y-%m-%dT%H:%M:%S")
+            now = datetime.datetime.utcnow()
+            restore_seconds = max(0.0, (now - started_dt).total_seconds())
+        except ValueError:
+            # Fall back to the whole `up` window (the bootstrap's own start included).
+            restore_seconds = time.monotonic() - started
+        restored = wait_for(
+            joiner_port,
+            lambda body: body.get("ready") is True
+            and body.get("maxObservedHeight") is not None
+            and body["maxObservedHeight"] >= bootstrap_finalized,
+            args.restore_timeout,
+            args.poll,
+            f"observer restore to finalized {bootstrap_finalized}",
+        )
 
-    capture(raw / f"validator-{args.validator}-health.json",
+        restart_started = time.monotonic()
+        run(["tools/devnet.sh", "stop", joiner_name])
+        run(["tools/devnet.sh", "start", joiner_name])
+        restarted = wait_for(
+            joiner_port,
+            lambda body: body.get("ready") is True
+            and body.get("maxObservedHeight") is not None
+            and body["maxObservedHeight"] >= restored["maxObservedHeight"],
+            args.restore_timeout,
+            args.poll,
+            "observer restart control",
+        )
+        restart_seconds = time.monotonic() - restart_started
+    else:
+        joiner_name = f"{PREFIX}-validator-{args.validator}"
+        joiner_port = HTTP_BASE + args.validator * 1000
+        reset_started = time.monotonic()
+        run(["tools/devnet.sh", "reset", str(args.validator)])
+        restored = wait_for(
+            joiner_port,
+            lambda body: body.get("ready") is True
+            and body.get("maxObservedHeight") is not None
+            and body["maxObservedHeight"] >= bootstrap_finalized,
+            args.restore_timeout,
+            args.poll,
+            f"validator {args.validator} restore to finalized {bootstrap_finalized}",
+        )
+        restore_seconds = time.monotonic() - reset_started
+
+        restart_started = time.monotonic()
+        run(["tools/devnet.sh", "stop", str(args.validator)])
+        run(["tools/devnet.sh", "start", str(args.validator)])
+        restarted = wait_for(
+            joiner_port,
+            lambda body: body.get("ready") is True
+            and body.get("maxObservedHeight") is not None
+            and body["maxObservedHeight"] >= restored["maxObservedHeight"],
+            args.restore_timeout,
+            args.poll,
+            f"validator {args.validator} restart control",
+        )
+        restart_seconds = time.monotonic() - restart_started
+
+    capture(raw / "joiner-health.json",
             json.dumps(restored, indent=2, sort_keys=True) + "\n")
-    capture(raw / "validator-health-after-restart.json",
+    capture(raw / "joiner-health-after-restart.json",
             json.dumps(restarted, indent=2, sort_keys=True) + "\n")
-    capture(raw / "validator.log", docker(["logs", "--timestamps", f"{PREFIX}-validator-{args.validator}"]))
+    capture(raw / "joiner.log", docker(["logs", "--timestamps", joiner_name]))
     capture(raw / "bootstrap.log", docker(["logs", "--timestamps", BOOTSTRAP]))
 
-    log_text = (raw / "validator.log").read_text(errors="replace")
+    log_text = (raw / "joiner.log").read_text(errors="replace")
     result = {
         "tool": "c339_mature_replay.py",
         "source_sha": source_sha,
@@ -198,7 +252,9 @@ def main() -> int:
             "boot_id": chain.get("bootId"),
         },
         "joiner": {
-            "validator": args.validator,
+            "mode": "observer" if args.observer else "validator",
+            "name": joiner_name,
+            "validator": None if args.observer else args.validator,
             "restore_seconds": restore_seconds,
             "max_observed_height": restored.get("maxObservedHeight"),
             "finalized_height": restored.get("finalizedHeight"),

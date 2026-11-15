@@ -20,6 +20,7 @@ use tokio::sync::watch;
 
 use rchain_block_storage::approved_store::{self, ApprovedStore};
 use rchain_block_storage::block_store::{self, BlockStore};
+use rchain_block_storage::checkpoint_store::{self, CheckpointStore};
 use rchain_block_storage::dag::codecs::{
     BlockHashCodec, BlockMetadataCodec, SignedDeployDataCodec,
 };
@@ -483,6 +484,8 @@ pub struct NodeProgram {
     grpc_max_recv_message_size: usize,
     max_connection_idle: Duration,
     enable_reporting: bool,
+    // The history tier (`api-server.archive*`): the archives route and the challenge route.
+    history: crate::web::archives::HistoryConfig,
     // Whether the faucet routes are mounted (AUDIT R34): dev mode and a deployer key, resolved where
     // both are known and passed through to `acquire_http_server`.
     faucet_enabled: bool,
@@ -554,6 +557,7 @@ impl NodeProgram {
             grpc_max_recv_message_size,
             max_connection_idle,
             enable_reporting,
+            history,
             enable_txn_api,
             enable_devnet_cors,
             enable_devnet_admin_public,
@@ -630,6 +634,7 @@ impl NodeProgram {
                     peer_liveness,
                     max_connection_idle,
                     enable_reporting,
+                    history,
                     faucet_enabled,
                     node_list,
                     stop,
@@ -797,6 +802,10 @@ pub struct ShardParts {
     pub phase: NodePhaseCell,
     pub runtime_manager: Arc<RuntimeManager>,
     pub approved_store: ApprovedStore,
+    /// **The certificates this shard has accepted** (sync/verification separation). A joiner accepts
+    /// the finalized state by verifying a quorum over the checkpoint statement; this is the record
+    /// the collector writes and the API serves.
+    pub checkpoint_store: CheckpointStore,
     /// **When this shard's proposer first saw each piece of unfinalised work** (#583). Local and
     /// non-consensus: it ages the prompt-attestation licence, so an advancing fringe cannot renew
     /// the same work.
@@ -1567,7 +1576,12 @@ pub async fn setup_node_program(
             resources.clone(),
         )
         .with_persistent_faucet_ledger(conf.storage.data_dir.join("faucet-ledger.json"))?
-        .with_node_list(conf.api_server.publish_node_list),
+        .with_node_list(conf.api_server.publish_node_list)
+        .with_history(crate::web::archives::HistoryConfig {
+            archive: conf.api_server.archive,
+            history_retention: conf.api_server.history_retention,
+            archive_peers: conf.api_server.archive_peers.clone(),
+        }),
     );
     // The PoS read (AUDIT C148): the primary shard's live native state through the runtime manager
     // that owns it, plus the status API for the head's height — one definition of "latest block".
@@ -1649,6 +1663,11 @@ pub async fn setup_node_program(
             .map_err(|e| e.to_string())?,
         max_connection_idle: conf.api_server.max_connection_idle,
         enable_reporting: conf.api_server.enable_reporting,
+        history: crate::web::archives::HistoryConfig {
+            archive: conf.api_server.archive,
+            history_retention: conf.api_server.history_retention,
+            archive_peers: conf.api_server.archive_peers.clone(),
+        },
         faucet_enabled,
         enable_txn_api: conf.api_server.enable_txn_api,
         enable_devnet_cors: conf.api_server.enable_devnet_cors,
@@ -2244,6 +2263,43 @@ async fn setup_shard_runtime(
     // This shard's slice of the peer-message stream (fed by the router).
     let (peer_tx, peer_message_rx) = mpsc::channel::<PeerMessage>(50);
 
+    // **Where this shard's joiner fetches its checkpoint certificate** (sync/verification
+    // separation). The sync engine has no HTTP client, so the node builds the source here from the
+    // bootstrap's published client port. A node with no bootstrap (a genesis producer) starts from
+    // its own genesis and never syncs; `None` is honest there and refusal on a joiner.
+    let checkpoint_source: Option<
+        Arc<dyn rchain_casper::engine::checkpoint_source::CheckpointSource>,
+    > = if let Some(url) = conf.casper.checkpoint_source.as_ref() {
+        match crate::runtime::checkpoint_collector::HttpCheckpointSource::from_url(url) {
+            Ok(source) => Some(Arc::new(source)),
+            Err(e) => {
+                log.warn(
+                    LogSource::new("coop.rchain.node.runtime.Setup"),
+                    &format!("no checkpoint source for {shard_id} at {url}: {e}"),
+                );
+                None
+            }
+        }
+    } else {
+        match comm_state.rp_conf.bootstrap.as_ref() {
+            Some(peer) => {
+                match crate::runtime::checkpoint_collector::HttpCheckpointSource::from_bootstrap(
+                    peer,
+                ) {
+                    Ok(source) => Some(Arc::new(source)),
+                    Err(e) => {
+                        log.warn(
+                            LogSource::new("coop.rchain.node.runtime.Setup"),
+                            &format!("no checkpoint source for {shard_id}: {e}"),
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        }
+    };
+
     // Node launch mode dispatch (genesis → syncing → running over the peer-message stream).
     let node_launch = node_launch::apply(
         peer_message_rx,
@@ -2256,6 +2312,8 @@ async fn setup_shard_runtime(
         conf.casper.self_reset,
         // #564: the self-replay fault's reset is safe by construction and on by default.
         conf.casper.self_replay_reset,
+        // The body backfill's operator switch (default on; `--no-backfill-bodies` is light mode).
+        conf.casper.backfill_bodies,
         // #564, F-U23-11: the walk wakes this shard's self-replay latch once it passes the anchor.
         Arc::new(propose_health.clone()),
         conf.protocol_server.disable_state_exporter,
@@ -2277,12 +2335,14 @@ async fn setup_shard_runtime(
         parts.runtime_manager.clone(),
         parts.block_store.clone(),
         parts.approved_store.clone(),
+        parts.checkpoint_store.clone(),
         parts.dag.clone(),
         parts.block_disposition.clone(),
         handles.processor_input,
         importer,
         exporter,
         parts.phase.clone(),
+        checkpoint_source,
         log.clone(),
     );
     let node_launch_log = log.clone();
@@ -2301,6 +2361,30 @@ async fn setup_shard_runtime(
             crate::runtime::shutdown::report_fatal(format!("NodeLaunch exited with error: {err}"));
         }
     });
+
+    // **The checkpoint-attestation collector** (sync/verification separation). Validators sign
+    // their own current checkpoint; this task gathers those signatures from connected peers and
+    // stores the first quorate certificate, which `GET /api/v1/checkpoint` then serves to joiners.
+    // A node with no identity still collects: an observer can hold and serve a certificate.
+    {
+        use crate::runtime::checkpoint_collector::CheckpointCollector;
+        match CheckpointCollector::new(
+            parts.block_api.clone(),
+            parts.checkpoint_store.clone(),
+            parts.runtime_manager.clone(),
+            comm_state.comm_util.clone(),
+            log.clone(),
+            shard_id.clone(),
+        ) {
+            Ok(collector) => {
+                collector.spawn();
+            }
+            Err(e) => log.warn(
+                LogSource::new("coop.rchain.node.runtime.Setup"),
+                &format!("{shard_id}: checkpoint collector not started: {e}"),
+            ),
+        }
+    }
 
     // Proposer stream (port of `proposerStream` in `Setup.setupNodeProgram`). Runs only when a
     // validator identity is configured; the propose trigger + state were wired into `BlockApiImpl`
@@ -2600,6 +2684,7 @@ pub async fn setup_shard(
     // Block store + DAG storage.
     let block_store = block_store::create(&store_manager).await?;
     let approved_store = approved_store::create(&store_manager).await?;
+    let checkpoint_store = checkpoint_store::CheckpointStore::open(&store_manager).await?;
     let work_seen = work_seen::create(&store_manager).await?;
     let block_metadata_kv: Arc<dyn KeyValueTypedStore<BlockHash, BlockMetadata>> = Arc::new(
         database(
@@ -2909,6 +2994,7 @@ pub async fn setup_shard(
         shard_health,
         phase.clone(),
         deploy_relay_from_env(connections.clone()),
+        checkpoint_store.clone(),
     ));
 
     let report_store: Arc<dyn KeyValueTypedStore<BlockHash, BlockEventInfo>> = Arc::new(
@@ -2996,6 +3082,7 @@ pub async fn setup_shard(
         phase,
         runtime_manager,
         approved_store,
+        checkpoint_store,
         work_seen,
         store_manager,
         validator_identity_opt: validator_opt,
@@ -3645,6 +3732,10 @@ mod tests {
                     member_of_fringe: None,
                     fringe: std::collections::BTreeSet::new(),
                     fringe_state_hash: foreign.post_state_hash,
+                    pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+                    post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+                    sig: Vec::new(),
+                    sig_algorithm: String::new(),
                 },
                 foreign,
             )

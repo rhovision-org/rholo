@@ -2288,6 +2288,10 @@ mod tests {
                 [0u8; 32],
             )
             .into(),
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
         };
 
         let invalid = ValidateError::ValidationFailed(metadata.clone(), status);
@@ -2355,6 +2359,10 @@ mod newest_justification_tests {
             restore_attempts: 0,
             fringe: BTreeSet::new(),
             fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
             member_of_fringe: None,
         }
     }
@@ -2425,6 +2433,10 @@ mod restore_tests {
             restore_attempts: attempts,
             fringe: BTreeSet::new(),
             fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
             member_of_fringe: None,
         }
     }
@@ -2666,6 +2678,10 @@ mod mark_failed_tests {
             restore_attempts: 0,
             fringe: BTreeSet::new(),
             fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
             member_of_fringe: None,
         }
     }

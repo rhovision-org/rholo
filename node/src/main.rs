@@ -163,6 +163,53 @@ async fn async_main(options: Options, log_level: rchain_shared::log::Level) {
     // wall clock on every line, so this is also what makes a cross-node timeline reconstructable.
     let log: Arc<StderrLog> = Arc::new(StderrLog::new(log_level));
 
+    // **`audit` is an offline replay that needs the node's genesis configuration** (sync/verification
+    // separation). It is neither a thin-client command nor a served node: it builds a replay runtime
+    // in the caller's scratch directory, downloads the bodies, and writes a verdict.
+    if let Commands::Audit {
+        bootstrap,
+        checkpoint,
+        data_dir,
+        out,
+    } = &options.subcommand
+    {
+        let (node_conf, _, _) = match Configuration::build(&options) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Configuration error: {e}");
+                std::process::exit(1);
+            }
+        };
+        let request = rchain_node::runtime::audit::AuditRequest {
+            bootstrap: bootstrap.clone(),
+            checkpoint: checkpoint.clone(),
+            data_dir: data_dir.clone(),
+            out: out.clone(),
+        };
+        let audit_log: Arc<dyn Log> = log.clone();
+        match rchain_node::runtime::audit::run(&node_conf, &request, &audit_log).await {
+            Ok(report) => {
+                println!(
+                    "{} checkpoint {} at anchor {} ({} bodies)",
+                    report.verdict, report.checkpoint_digest, report.anchor, report.blocks
+                );
+                if let Some(reason) = &report.reason {
+                    eprintln!("{reason}");
+                }
+                // 0 = AGREE; 2 = DISAGREE/INCOMPLETE, so a script can gate on the verdict. 1 stays
+                // the usage/configuration failure.
+                if report.verdict != "AGREE" {
+                    std::process::exit(2);
+                }
+            }
+            Err(e) => {
+                eprintln!("audit failed: {e}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+
     // Execute a thin-client CLI command (port of `Main.main`'s `runCLI` branch).
     if !matches!(options.subcommand, Commands::Run(_)) {
         if let Err(errors) = run_cli(&options).await {

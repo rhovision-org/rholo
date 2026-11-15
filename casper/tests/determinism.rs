@@ -699,12 +699,18 @@ async fn play_and_replay_agree_per_deploy_for_same_key_multi_transfer() {
     );
 }
 
+/// **The cost census is a process-global switch**, so two tests that toggle it race: one disables it
+/// while the other's shadow replay is running, and the breakdown assertion reads the other test's
+/// state. The guard serializes the two that use it; it is held across awaits, so a tokio mutex.
+static COST_CENSUS_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// **The ordering the incident's evidence depended on** (#564): a cost mismatch is returned before the
 /// declared post-state hash is compared, so the refusal says nothing about whether the state was
 /// correct. The record tamper changes the refund input too; the shadow replay is what reports the
 /// state verdict, and it is the only place that verdict is computed.
 #[tokio::test]
 async fn a_cost_only_tamper_is_refused_before_the_state_hash_is_compared() {
+    let _census_guard = COST_CENSUS_TESTS.lock().await;
     use rchain_rholang::accounting::set_cost_census_enabled;
     use rchain_rholang::runtime::ReplayCostCheck;
 
@@ -852,6 +858,7 @@ async fn a_cost_only_tamper_is_refused_before_the_state_hash_is_compared() {
 /// `ReplayCostMismatch`. Either change fails this test.
 #[tokio::test]
 async fn a_cost_refusal_masks_the_trace_check_and_the_shadow_reports_it() {
+    let _census_guard = COST_CENSUS_TESTS.lock().await;
     use rchain_rholang::accounting::set_cost_census_enabled;
     use rchain_rholang::runtime::ReplayCostCheck;
 

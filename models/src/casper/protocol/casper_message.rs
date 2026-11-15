@@ -458,6 +458,32 @@ impl EquivocationEvidence {
         }
     }
 
+    /// The same evidence from a [`BlockMetadata`](crate::block_metadata::BlockMetadata): a
+    /// metadata-only DAG holds the block's signature too, so an equivocation it detects is still
+    /// provable without a body.
+    pub fn from_metadata(meta: &crate::block_metadata::BlockMetadata) -> Self {
+        Self {
+            block_hash: meta.block_hash,
+            sender: meta.sender,
+            seq_num: meta.seq_num,
+            sig: meta.sig.clone(),
+            sig_algorithm: meta.sig_algorithm.clone(),
+        }
+    }
+
+    /// The same evidence from a [`BlockHeader`]: the header carries the block hash, sender,
+    /// sequence number and signature, and `is_signed_by` needs nothing else — so a node that synced
+    /// metadata-only does not lose the power to prove an equivocation it detected.
+    pub fn from_header(header: &BlockHeader) -> Self {
+        Self {
+            block_hash: header.block_hash,
+            sender: header.sender,
+            seq_num: header.seq_num,
+            sig: header.sig.clone(),
+            sig_algorithm: header.sig_algorithm.clone(),
+        }
+    }
+
     /// The wire form — what a `Slash`'s `evidence` field carries.
     ///
     /// **The bytes are carried, not recomputed.** They are part of the block's state, so what matters is
@@ -1024,6 +1050,182 @@ pub struct FinalizedFringeRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ForkChoiceTipRequest;
 
+/// **A header of the finalized DAG, as a metadata-only walker consumes it**
+/// (sync/verification separation).
+///
+/// A block body cannot be content-verified against its hash by a peer that does not hold its
+/// deploys — `hash_block` covers `state.deploys` — so a metadata-only history is accepted under the
+/// **checkpoint certificate's quorum**, not under per-block hashing. This type carries exactly the
+/// fields the DAG store and the proposer need: identity, parents, the fringe claim, and the block's
+/// own state roots. `body_available` says the peer can also serve a content-verifiable body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockHeader {
+    pub block_hash: BlockHash,
+    pub block_num: BlockHeight,
+    pub sender: Validator,
+    pub seq_num: SeqNum,
+    pub justifications: BTreeSet<BlockHash>,
+    pub bonds_map: BTreeMap<Validator, NonNegI64>,
+    pub fringe: BTreeSet<BlockHash>,
+    pub fringe_state_hash: StateHash,
+    pub pre_state_hash: StateHash,
+    pub post_state_hash: StateHash,
+    pub body_available: bool,
+    /// The signature over `block_hash`, so a metadata-only node can still produce checkable
+    /// equivocation evidence. Not otherwise used: metadata is accepted under the quorum.
+    pub sig: Vec<u8>,
+    pub sig_algorithm: String,
+}
+
+impl BlockHeader {
+    pub fn from_proto(h: &BlockHeaderProto) -> Result<Self, crate::errors::ModelsError> {
+        Ok(BlockHeader {
+            block_hash: BlockHash::try_from(h.block_hash.as_slice())?,
+            block_num: BlockHeight::try_from(h.block_num)
+                .map_err(|_| crate::errors::ModelsError::Malformed("negative block number"))?,
+            sender: Validator::try_from(h.sender.as_slice())?,
+            seq_num: SeqNum::try_from(h.seq_num)
+                .map_err(|_| crate::errors::ModelsError::Malformed("negative sequence number"))?,
+            justifications: h
+                .justifications
+                .iter()
+                .map(|j| BlockHash::try_from(j.as_slice()))
+                .collect::<Result<BTreeSet<BlockHash>, crate::errors::ModelsError>>()?,
+            bonds_map: h
+                .bonds
+                .iter()
+                .map(|b| {
+                    Ok((
+                        Validator::try_from(b.validator.as_slice())?,
+                        NonNegI64::try_from(b.stake).map_err(|_| {
+                            crate::errors::ModelsError::Malformed("negative bond stake")
+                        })?,
+                    ))
+                })
+                .collect::<Result<_, crate::errors::ModelsError>>()?,
+            fringe: h
+                .fringe
+                .iter()
+                .map(|f| BlockHash::try_from(f.as_slice()))
+                .collect::<Result<BTreeSet<BlockHash>, crate::errors::ModelsError>>()?,
+            fringe_state_hash: StateHash::try_from(h.fringe_state_hash.as_slice())?,
+            pre_state_hash: StateHash::try_from(h.pre_state_hash.as_slice())?,
+            post_state_hash: StateHash::try_from(h.post_state_hash.as_slice())?,
+            body_available: h.body_available,
+            sig: h.sig.clone(),
+            sig_algorithm: h.sig_algorithm.clone(),
+        })
+    }
+
+    pub fn to_proto(&self) -> BlockHeaderProto {
+        BlockHeaderProto {
+            block_hash: self.block_hash.as_bytes().to_vec(),
+            block_num: i64::from(self.block_num),
+            sender: self.sender.as_bytes().to_vec(),
+            seq_num: i64::from(self.seq_num),
+            justifications: self
+                .justifications
+                .iter()
+                .map(|j| j.as_bytes().to_vec())
+                .collect(),
+            bonds: self
+                .bonds_map
+                .iter()
+                .map(|(validator, stake)| BondProto {
+                    validator: validator.as_bytes().to_vec(),
+                    stake: i64::from(*stake),
+                })
+                .collect(),
+            fringe: self.fringe.iter().map(|f| f.as_bytes().to_vec()).collect(),
+            fringe_state_hash: self.fringe_state_hash.as_bytes().to_vec(),
+            pre_state_hash: self.pre_state_hash.as_bytes().to_vec(),
+            post_state_hash: self.post_state_hash.as_bytes().to_vec(),
+            body_available: self.body_available,
+            sig: self.sig.clone(),
+            sig_algorithm: self.sig_algorithm.clone(),
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = BlockHeaderProto::decode(bytes)
+            .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
+        BlockHeader::from_proto(&proto)
+    }
+}
+
+/// A request for the headers of named blocks (a metadata-only walk's step).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockMetadataRequest {
+    pub hashes: Vec<BlockHash>,
+}
+
+impl BlockMetadataRequest {
+    pub fn from_proto(r: &BlockMetadataRequestProto) -> Result<Self, crate::errors::ModelsError> {
+        Ok(BlockMetadataRequest {
+            hashes: r
+                .hashes
+                .iter()
+                .map(|h| BlockHash::try_from(h.as_slice()))
+                .collect::<Result<Vec<BlockHash>, crate::errors::ModelsError>>()?,
+        })
+    }
+
+    pub fn to_proto(&self) -> BlockMetadataRequestProto {
+        BlockMetadataRequestProto {
+            hashes: self.hashes.iter().map(|h| h.as_bytes().to_vec()).collect(),
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = BlockMetadataRequestProto::decode(bytes)
+            .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
+        BlockMetadataRequest::from_proto(&proto)
+    }
+}
+
+/// The headers a peer holds for a [`BlockMetadataRequest`]; a hash the peer does not hold is
+/// simply absent, which is the same answer as a block request for an unknown hash.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockMetadataMessage {
+    pub headers: Vec<BlockHeader>,
+}
+
+impl BlockMetadataMessage {
+    pub fn from_proto(m: &BlockMetadataMessageProto) -> Result<Self, crate::errors::ModelsError> {
+        Ok(BlockMetadataMessage {
+            headers: m
+                .headers
+                .iter()
+                .map(BlockHeader::from_proto)
+                .collect::<Result<Vec<BlockHeader>, crate::errors::ModelsError>>()?,
+        })
+    }
+
+    pub fn to_proto(&self) -> BlockMetadataMessageProto {
+        BlockMetadataMessageProto {
+            headers: self.headers.iter().map(BlockHeader::to_proto).collect(),
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = BlockMetadataMessageProto::decode(bytes)
+            .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
+        BlockMetadataMessage::from_proto(&proto)
+    }
+}
+
 /// A has-block request (port of `HasBlockRequest`).
 ///
 /// The hash is the 32-byte [`BlockHash`] refinement, not a `Vec<u8>`: these three variants used to
@@ -1442,6 +1644,9 @@ pub enum CasperMessage {
     FinalizedFringeRequest(FinalizedFringeRequest),
     StoreItemsMessageRequest(StoreItemsMessageRequest),
     StoreItemsMessage(StoreItemsMessage),
+    // Metadata-only sync (sync/verification separation).
+    BlockMetadataRequest(BlockMetadataRequest),
+    BlockMetadataMessage(BlockMetadataMessage),
 }
 
 /// The sealed `CasperMessageProto` sum type (the scalapb `sealed trait CasperMessageProto`).
@@ -1459,6 +1664,9 @@ pub enum CasperMessageProto {
     FinalizedFringeRequest(FinalizedFringeRequestProto),
     StoreItemsMessageRequest(StoreItemsMessageRequestProto),
     StoreItemsMessage(StoreItemsMessageProto),
+    // Metadata-only sync (sync/verification separation).
+    BlockMetadataRequest(BlockMetadataRequestProto),
+    BlockMetadataMessage(BlockMetadataMessageProto),
 }
 
 impl CasperMessage {
@@ -1502,6 +1710,12 @@ impl CasperMessage {
             CasperMessageProto::StoreItemsMessage(m) => Ok(CasperMessage::StoreItemsMessage(
                 StoreItemsMessage::from_proto(m)?,
             )),
+            CasperMessageProto::BlockMetadataRequest(m) => Ok(CasperMessage::BlockMetadataRequest(
+                BlockMetadataRequest::from_proto(m)?,
+            )),
+            CasperMessageProto::BlockMetadataMessage(m) => Ok(CasperMessage::BlockMetadataMessage(
+                BlockMetadataMessage::from_proto(m)?,
+            )),
         }
     }
 
@@ -1533,6 +1747,12 @@ impl CasperMessage {
             }
             CasperMessage::StoreItemsMessage(m) => {
                 CasperMessageProto::StoreItemsMessage(m.to_proto())
+            }
+            CasperMessage::BlockMetadataRequest(m) => {
+                CasperMessageProto::BlockMetadataRequest(m.to_proto())
+            }
+            CasperMessage::BlockMetadataMessage(m) => {
+                CasperMessageProto::BlockMetadataMessage(m.to_proto())
             }
         }
     }

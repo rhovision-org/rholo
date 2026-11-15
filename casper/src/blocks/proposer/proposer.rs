@@ -3079,6 +3079,10 @@ mod tests {
                 restore_attempts: 0,
                 fringe: BTreeSet::new(),
                 fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+                pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+                post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+                sig: Vec::new(),
+                sig_algorithm: String::new(),
                 member_of_fringe: None,
             }))
         }
@@ -5096,6 +5100,10 @@ mod attestation_suppression_tests {
             restore_attempts: 0,
             fringe: BTreeSet::new(),
             fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
             member_of_fringe: None,
         }
     }
@@ -5694,6 +5702,10 @@ mod slashable_offenders_tests {
             restore_attempts: 0,
             fringe: BTreeSet::new(),
             fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
             member_of_fringe: None,
         }
     }
@@ -5858,6 +5870,10 @@ mod active_validator_tests {
             restore_attempts: 0,
             fringe: BTreeSet::new(),
             fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
             member_of_fringe: None,
         }
     }

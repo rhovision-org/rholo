@@ -20,9 +20,9 @@ use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::{
-    BlockFringe, BlockMessage, BlockRange, BlockRangeRequest, BlockRequest, CasperMessage,
-    FinalizedFringe, FinalizedFringeRequest, HasBlock, HasBlockRequest, StoreItemsMessage,
-    StoreItemsMessageRequest,
+    BlockFringe, BlockHeader, BlockMessage, BlockMetadataMessage, BlockMetadataRequest, BlockRange,
+    BlockRangeRequest, BlockRequest, CasperMessage, FinalizedFringe, FinalizedFringeRequest,
+    HasBlock, HasBlockRequest, StoreItemsMessage, StoreItemsMessageRequest,
 };
 use rchain_models::casper::protocol::packet_type_tag::ToPacket;
 use rchain_rspace::state::RSpaceExporter;
@@ -33,7 +33,8 @@ use crate::blocks::block_receiver::not_validated;
 use crate::blocks::block_retriever::{AdmitHashReason, BlockRetriever};
 use crate::engine::catchup::CatchupWindow;
 use crate::protocol::casper_message_protocol::{
-    BlockMessageSerde, BlockRangeSerde, FinalizedFringeSerde, HasBlockSerde, StoreItemsMessageSerde,
+    BlockMessageSerde, BlockMetadataMessageSerde, BlockRangeSerde, FinalizedFringeSerde,
+    HasBlockSerde, StoreItemsMessageSerde,
 };
 use crate::validator_identity::ValidatorIdentity;
 
@@ -263,6 +264,77 @@ pub async fn handle_has_block_request(
             );
         }
     }
+}
+
+/// **Answer a metadata request**: the headers this node holds for the named hashes, with
+/// `body_available` read from the block store.
+///
+/// A hash this node does not hold is simply absent — the same answer a block request for an unknown
+/// hash gives — so a walk asks another peer rather than failing. The response is streamed: a request
+/// is answered in one message and a batch of headers can exceed a single packet.
+pub async fn handle_block_metadata_request(
+    transport: &dyn TransportLayer,
+    conf: &RPConf,
+    dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
+    log: &dyn Log,
+    source: LogSource,
+    peer: &PeerNode,
+    req: &BlockMetadataRequest,
+) {
+    let mut headers = Vec::new();
+    for hash in &req.hashes {
+        let meta = match dag.lookup(hash).await {
+            Ok(Some(meta)) => meta,
+            Ok(None) => continue,
+            Err(e) => {
+                log.warn(
+                    source,
+                    &format!("metadata request: lookup of {} failed: {e}", hash.to_hex()),
+                );
+                continue;
+            }
+        };
+        let body_available = match block_store.contains(&[*hash]).await {
+            Ok(found) => found.first().copied().unwrap_or(false),
+            Err(e) => {
+                log.warn(
+                    source,
+                    &format!(
+                        "metadata request: body-availability read for {} failed: {e}",
+                        hash.to_hex()
+                    ),
+                );
+                false
+            }
+        };
+        headers.push(BlockHeader {
+            block_hash: meta.block_hash,
+            block_num: meta.block_num,
+            sender: meta.sender,
+            seq_num: meta.seq_num,
+            justifications: meta.justifications,
+            bonds_map: meta.bonds_map,
+            fringe: meta.fringe,
+            fringe_state_hash: meta.fringe_state_hash,
+            pre_state_hash: meta.pre_state_hash,
+            post_state_hash: meta.post_state_hash,
+            body_available,
+            sig: meta.sig,
+            sig_algorithm: meta.sig_algorithm,
+        });
+    }
+    if headers.is_empty() {
+        return;
+    }
+    let answer = BlockMetadataMessage { headers };
+    transport_layer_syntax::stream_to_peer(
+        transport,
+        conf,
+        peer,
+        BlockMetadataMessageSerde.mk_packet(&answer),
+    )
+    .await;
 }
 
 /// Respond to a peer's fork-choice-tip request (port of `handleForkChoiceTipRequest`).
@@ -928,6 +1000,9 @@ pub struct NodeRunning<E: RSpaceExporter> {
     /// receiver. `apply` swaps the sender in — dropping the previous one, which is what tells the walk
     /// that ended to stop.
     block_range_tx: BlockRangeDoor,
+    /// **Where a body the DAG already knows by metadata goes** (sync/verification separation). The
+    /// backfill owns the receiver; `None` when the operator disabled it (light-node mode).
+    backfill: Option<tokio::sync::mpsc::Sender<BlockMessage>>,
 }
 
 /// **The catch-up walk's door** — see [`NodeRunning::block_range_tx`]. Shared with `apply`, which swaps
@@ -949,6 +1024,7 @@ impl<E: RSpaceExporter> NodeRunning<E> {
         disable_state_exporter: bool,
         catchup: Arc<CatchupWindow>,
         block_range_tx: BlockRangeDoor,
+        backfill: Option<tokio::sync::mpsc::Sender<BlockMessage>>,
     ) -> Self {
         NodeRunning {
             transport,
@@ -967,6 +1043,7 @@ impl<E: RSpaceExporter> NodeRunning<E> {
             )),
             exporter,
             disable_state_exporter,
+            backfill,
         }
     }
 
@@ -999,6 +1076,36 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                 .await;
             }
             CasperMessage::BlockMessage(b) => {
+                // **A body for a block this node accepted by metadata is the backfill's**, not the
+                // processor's: the block is already in the DAG under the certificate, and handing it
+                // to the validator would replay exactly what the checkpoint replaced.
+                if let Some(tx) = &self.backfill {
+                    let known = match self.dag.lookup(&b.block_hash).await {
+                        Ok(known) => known.is_some(),
+                        Err(e) => {
+                            self.log.warn(
+                                self.log_source,
+                                &format!(
+                                    "backfill divert: metadata read for {} failed: {e}",
+                                    b.block_hash.to_hex()
+                                ),
+                            );
+                            false
+                        }
+                    };
+                    if known {
+                        if tx.try_send(b.clone()).is_err() {
+                            self.log.warn(
+                                self.log_source,
+                                &format!(
+                                    "backfill ingress full; dropping a body for {} (it will be                                      re-requested)",
+                                    b.block_hash.to_hex()
+                                ),
+                            );
+                        }
+                        return;
+                    }
+                }
                 if let Some(id) = &self.validator_id {
                     if b.sender.as_bytes().as_slice() == id.public_key.bytes() {
                         self.log.warn(
@@ -1313,6 +1420,21 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                 )
                 .await;
             }
+            CasperMessage::BlockMetadataRequest(req) => {
+                handle_block_metadata_request(
+                    self.transport.as_ref(),
+                    &self.conf,
+                    self.dag.as_ref(),
+                    &self.block_store,
+                    self.log.as_ref(),
+                    self.log_source,
+                    peer,
+                    req,
+                )
+                .await;
+            }
+            // A metadata answer is consumed by a syncing walker, not by the running engine.
+            CasperMessage::BlockMetadataMessage(_) => {}
             CasperMessage::StoreItemsMessage(_) => {}
             CasperMessage::FinalizedFringe(_) => {}
         }
@@ -1918,6 +2040,7 @@ mod tests {
             false,
             window.clone(),
             block_range_tx,
+            None,
         );
 
         // A block far above the node's frontier: the gap, not the window.
@@ -1986,6 +2109,7 @@ mod tests {
             false,
             Arc::new(CatchupWindow::new(crate::engine::catchup::WINDOW_HEIGHTS)),
             block_range_tx,
+            None,
         );
 
         let first = block(hash(11));
@@ -2045,6 +2169,7 @@ mod tests {
             false,
             Arc::new(CatchupWindow::new(crate::engine::catchup::WINDOW_HEIGHTS)),
             block_range_tx,
+            None,
         );
 
         // An unseen block is handed to the block-processing queue — this is the node's ingress.

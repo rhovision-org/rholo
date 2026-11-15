@@ -13,11 +13,15 @@ use async_trait::async_trait;
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
 use rchain_block_storage::dag::representation::DagRepresentation;
+use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_graphz::ListSerializer;
 use rchain_models::ast::Par;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
+use rchain_models::casper::protocol::checkpoint::{
+    Checkpoint, CheckpointAttestation, CheckpointCertificate,
+};
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
     FinalityAttestation, LightBlockInfo, RawBlock, Status, VersionInfo, WaitingContinuationInfo,
@@ -99,6 +103,9 @@ pub struct BlockApiImpl {
     phase: NodePhaseCell,
     /// The pending-work relay, when the operator enabled it (Law 86e). `None` admits locally only.
     relay: Option<RelayFunction>,
+    /// **The certificates this node has accepted** (sync/verification separation). A joiner fetches
+    /// a certificate, not a bare fringe; the collector writes here and this surface reads it.
+    checkpoint_store: rchain_block_storage::checkpoint_store::CheckpointStore,
 }
 
 /// The block a **no-hash** `explore-deploy` reads (AUDIT C129, #554).
@@ -272,6 +279,17 @@ impl BlockApiImpl {
         Ok((out, len))
     }
 
+    /// **The lowest height this node can answer deploy questions for** (sync/verification
+    /// separation). A certified sync leaves the history below its anchor as metadata only, and the
+    /// store records that floor; `0` means coverage from genesis. A read failure is `0` — the
+    /// conservative answer is "not gapped", never a floor the node cannot support.
+    async fn history_floor(&self) -> i64 {
+        match self.checkpoint_store.history_from().await {
+            Ok(floor) => floor.unwrap_or(0),
+            Err(_) => 0,
+        }
+    }
+
     /// The height of the last finalised block, or `None` on a DAG that has finalised nothing.
     ///
     /// **The floor a read of chain data has to have** (W-N3-04). `height_map` is the whole DAG,
@@ -325,6 +343,7 @@ impl BlockApiImpl {
         shard_health: ShardHealth,
         phase: NodePhaseCell,
         relay: Option<RelayFunction>,
+        checkpoint_store: rchain_block_storage::checkpoint_store::CheckpointStore,
     ) -> Self {
         BlockApiImpl {
             dag,
@@ -349,6 +368,7 @@ impl BlockApiImpl {
             shard_health,
             phase,
             relay,
+            checkpoint_store,
         }
     }
 
@@ -528,6 +548,25 @@ impl BlockApi for BlockApiImpl {
         // Latest block number from the DAG (height map), not a hardcoded 0 — the devnet's autopropose
         // (dummy deploys) advances it continuously.
         let latest_block_number = self.dag.get_representation().await.latest_block_number();
+        // **Where the history begins, and how old the served checkpoint is** (sync/verification
+        // separation). A certified sync leaves the history below its anchor as metadata only; the
+        // marker records that floor, and a reader must not mistake "no earlier body" for "no such
+        // block". A node that never joined at a checkpoint has no marker and is `available`.
+        let history_floor = match self.checkpoint_store.history_from().await {
+            Ok(floor) => floor.unwrap_or(0),
+            Err(_) => 0,
+        };
+        let checkpoint_age = match self.checkpoint_store.latest().await {
+            Ok(certificate) => certificate.map(|certificate| {
+                // `latest_block_number` is one past the highest observed height (an empty DAG is
+                // `0`), so the tip is one below it; the age is the tip minus the anchor.
+                latest_block_number
+                    .saturating_sub(1)
+                    .max(0)
+                    .saturating_sub(certificate.checkpoint.anchor_height)
+            }),
+            Err(_) => None,
+        };
         Status {
             version: VersionInfo {
                 api: 1.to_string(),
@@ -540,6 +579,16 @@ impl BlockApi for BlockApiImpl {
             nodes: net.nodes,
             min_phlo_price: self.min_phlo_price,
             latest_block_number,
+            // A floor of 0 is full coverage. A floor above 0 is a gap: `backfilling` while the
+            // backfill is walking, `unavailable` when it is off (a light node) or stalled.
+            history_availability: if history_floor <= 0 {
+                "available".to_string()
+            } else if crate::engine::backfill::backfill_active() {
+                "backfilling".to_string()
+            } else {
+                "unavailable".to_string()
+            },
+            checkpoint_age,
         }
     }
 
@@ -1005,10 +1054,20 @@ impl BlockApi for BlockApiImpl {
                 let block = self.get_block_unsafe(&h).await?;
                 Ok(get_light_block_info(&block))
             }
-            None => Err(format!(
-                "Couldn't find block containing deploy with id: {}",
-                base16::encode(id)
-            )),
+            // **"Not indexed yet" is not "not found"** (sync/verification separation). A node that
+            // joined at a checkpoint holds no deploy rows below its anchor; saying "couldn't find"
+            // there would tell a wallet the deploy never landed.
+            None => match self.history_floor().await {
+                floor if floor > 0 => Err(format!(
+                    "this node indexes deploys from height {floor} (it joined at a checkpoint); \
+                     deploy {} is not indexed below that height",
+                    base16::encode(id)
+                )),
+                _ => Err(format!(
+                    "Couldn't find block containing deploy with id: {}",
+                    base16::encode(id)
+                )),
+            },
         }
     }
 
@@ -1020,7 +1079,7 @@ impl BlockApi for BlockApiImpl {
         };
         Ok(DeployerInfo {
             block,
-            indexed_from_height: lookup.indexed_from,
+            indexed_from_height: lookup.indexed_from.max(self.history_floor().await),
         })
     }
 
@@ -1075,6 +1134,108 @@ impl BlockApi for BlockApiImpl {
             sender: base16::encode(identity.public_key.bytes()),
             sig_algorithm: identity.sig_algorithm.clone(),
             sig: base16::encode(&sig),
+        })
+    }
+
+    async fn current_checkpoint(&self) -> ApiErr<Checkpoint> {
+        let dag = self.dag.get_representation().await;
+        let fringe = dag.latest_fringe();
+        let anchor = fringe
+            .iter()
+            .max_by_key(|m| (m.height, m.id))
+            .ok_or_else(|| "the DAG has no finalized fringe to checkpoint".to_string())?;
+        let anchor_hash = anchor.id;
+        let block = self
+            .block_store
+            .get(&[anchor_hash])
+            .await?
+            .into_iter()
+            .flatten()
+            .next()
+            .ok_or_else(|| format!("the checkpoint anchor {} has no body", anchor_hash.to_hex()))?;
+        let epoch_length = self.runtime.genesis_pos().params.epoch_length.max(1);
+        let anchor_height = i64::from(anchor.height);
+        Ok(Checkpoint {
+            shard_id: self.shard_id.clone(),
+            anchor: base16::encode(anchor_hash.as_bytes()),
+            anchor_height,
+            anchor_post_state: base16::encode(block.post_state_hash.as_bytes()),
+            fringe_hashes: fringe
+                .iter()
+                .map(|m| base16::encode(m.id.as_bytes()))
+                .collect(),
+            // **Every checkpoint this build produces is genesis-rooted.** A parent link must be a
+            // statement every signer derives identically or their digests differ and their
+            // attestations cannot combine; the deterministic epoch-parent rule is not implemented
+            // yet, so the chain is one link long and the genesis active bonds are the trust anchor.
+            // `checkpoint::verify_genesis_rooted_bonds` refuses a certificate whose anchor state has
+            // drifted from those bonds rather than weighing signatures against the wrong set.
+            parent_digest: None,
+            epoch: anchor_height / epoch_length,
+        })
+    }
+
+    async fn checkpoint_attestation(&self) -> ApiErr<CheckpointAttestation> {
+        let Some(identity) = self.validator_opt.as_ref() else {
+            return Err("this node has no validator identity to attest with".to_string());
+        };
+        // Before the signature, not after: reuses the same admission rule as the finality
+        // attestation. The node signs **only its own current checkpoint** — a caller cannot choose a
+        // digest, so this cannot become a signing oracle.
+        attestation_is_admissible(&self.dag, identity.public_key.bytes()).await?;
+        let checkpoint = self.current_checkpoint().await?;
+        let digest =
+            crate::checkpoint::checkpoint_digest(&checkpoint).map_err(|e| e.to_string())?;
+        let sig = identity
+            .attest_checkpoint(&digest)
+            .map_err(|e| e.to_string())?;
+        Ok(CheckpointAttestation {
+            checkpoint_digest: digest.to_hex(),
+            sender: base16::encode(identity.public_key.bytes()),
+            sig_algorithm: identity.sig_algorithm.clone(),
+            sig: base16::encode(&sig),
+        })
+    }
+
+    async fn history_floor(&self) -> i64 {
+        BlockApiImpl::history_floor(self).await
+    }
+
+    async fn checkpoint_certificate(&self, digest: Option<&str>) -> ApiErr<CheckpointCertificate> {
+        if let Some(digest) = digest {
+            let bytes = base16::decode(digest)
+                .ok_or_else(|| format!("checkpoint digest is not valid hex: {digest}"))?;
+            if bytes.len() != 32 {
+                return Err(format!(
+                    "a checkpoint digest is 32 bytes, got {}",
+                    bytes.len()
+                ));
+            }
+            let digest = Blake2b256Hash::from_byte_array(bytes.as_slice());
+            return self.checkpoint_store.get(&digest).await?.ok_or_else(|| {
+                format!(
+                    "this node holds no certificate for checkpoint {}",
+                    digest.to_hex()
+                )
+            });
+        }
+
+        let checkpoint = self.current_checkpoint().await?;
+        let digest =
+            crate::checkpoint::checkpoint_digest(&checkpoint).map_err(|e| e.to_string())?;
+        if let Some(certificate) = self.checkpoint_store.get(&digest).await? {
+            return Ok(certificate);
+        }
+        // No quorum has been assembled for the *current* statement yet. Serve the statement with
+        // this node's own attestation when it has an identity: a caller then sees a partial
+        // certificate rather than a bare claim, and a joiner refuses it by its own quorum rule.
+        let attestations = match self.checkpoint_attestation().await {
+            Ok(attestation) => vec![attestation],
+            Err(_) => Vec::new(),
+        };
+        Ok(CheckpointCertificate {
+            checkpoint,
+            attestations,
         })
     }
 

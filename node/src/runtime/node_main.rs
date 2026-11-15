@@ -107,6 +107,11 @@ pub async fn run_cli(options: &Options) -> Result<(), Vec<String>> {
                 Err(reason) => Err(vec![reason]),
             }
         }
+        // `audit` needs the node's genesis configuration (it builds a replay runtime), so it is
+        // dispatched before the thin-client arm; see `main::async_main`.
+        Commands::Audit { .. } => Err(vec![
+            "`audit` is handled by the node, not the thin client".to_string()
+        ]),
         Commands::VerifyAttestation { nonce } => {
             let text = read_stdin()?;
             match recovery_verify::verify_attestation(&text, nonce) {

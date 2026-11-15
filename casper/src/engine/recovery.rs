@@ -28,6 +28,11 @@ use crate::merging::BlockIndex;
 use crate::runtime_manager::RuntimeManager;
 
 /// Production replay context; built by NodeLaunch from this shard's runtime/config.
+///
+/// **The name is now half wrong and deliberately kept** for one commit at a time: `verify` is the
+/// replay the audit path still uses, and the sync path uses the same context for the runtime (the
+/// bond read) and for the certificate source. Splitting the type is a rename, not a behaviour
+/// change, and is left until the audit command lands.
 #[derive(Clone)]
 pub struct RecoveryReplay {
     pub runtime: Arc<RuntimeManager>,
@@ -36,6 +41,13 @@ pub struct RecoveryReplay {
     pub max_number_of_parents: i32,
     pub expected_genesis: Option<BlockHash>,
     pub anchor: Option<BlockHash>,
+    /// **Where sync fetches the certificate that makes the served state acceptable.** `None` fails
+    /// the sync closed: an unsigned fringe is not a state root a node may start from.
+    pub checkpoint_source: Option<Arc<dyn crate::engine::checkpoint_source::CheckpointSource>>,
+    /// **Where an accepted certificate is persisted**, so boot can re-verify the accepted fringe
+    /// and the node can serve the certificate to the next joiner. `None` in a fixture that never
+    /// accepts one.
+    pub checkpoint_store: Option<rchain_block_storage::checkpoint_store::CheckpointStore>,
 }
 
 /// Only replay can construct this value. Publishing never consumes wire metadata.
@@ -293,6 +305,45 @@ impl VerifiedRecovery {
     ) -> Result<(), String> {
         publish_verified_blocks(dag, store, &self.entries).await
     }
+}
+
+/// **Publish a history this node holds no body for** (sync/verification separation).
+///
+/// The same prefix and agreement rules as [`publish_verified_blocks`], but each record is written
+/// through `insert_metadata`: a block accepted under the checkpoint certificate need not have its
+/// body here. The deploy index and pool release are the body-dependent steps this path skips; the
+/// backfill fills them when a body arrives.
+pub(super) async fn publish_certified_metadata(
+    dag: &dyn BlockDagStorage,
+    entries: &[(BlockHash, BlockMetadata)],
+) -> Result<(), String> {
+    let certified_hashes: BTreeSet<_> = entries.iter().map(|(hash, _)| *hash).collect();
+    if !dag
+        .get_representation()
+        .await
+        .dag_set
+        .is_subset(&certified_hashes)
+    {
+        return Err(
+            "the existing DAG is not a prefix of the certified metadata history".to_string(),
+        );
+    }
+    for (hash, meta) in entries {
+        if let Some(known) = dag.lookup(hash).await? {
+            if known.fringe != meta.fringe
+                || known.fringe_state_hash != meta.fringe_state_hash
+                || !known.validated
+                || known.validation_failed
+            {
+                return Err(format!(
+                    "existing metadata disagrees with the certified history: {}",
+                    hash.to_hex()
+                ));
+            }
+        }
+        dag.insert_metadata(meta.clone()).await?;
+    }
+    Ok(())
 }
 
 pub(super) async fn publish_verified_blocks(

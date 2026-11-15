@@ -8,6 +8,7 @@ description = "Faithful and hardened Rust port of the RChain block-storage modul
 [dependencies]
 async-trait = "0.1"
 lz4_flex = "0.14"
+serde_json = "1"
 rchain-crypto = { path = "../crypto" }
 rchain-models = { path = "../models" }
 rchain-sdk = { path = "../sdk" }

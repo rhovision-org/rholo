@@ -12849,11 +12849,12 @@ with the block and page hedge tests as its Rust witnesses.
 pre/post root, and `request_tuple_space_roots` walked each entire trie; dedup was only inside one
 attempt. `RecoveryReplay` already derives each block's pre-state from its parents' post-states and
 persists every computed state through its checkpoints, so the only external state is the **genesis
-post-state** (there is no block before height 0 to execute). `required_state_roots` now returns the
-genesis post-state plus the served fringe root (a pre-warm), and the O(height) manifest is gone. The
-falsifier is `restore_root_manifest_is_the_genesis_and_the_served_fringe`: it asserts the manifest
-contains only those two roots and refuses a walk that did not reach genesis by name. Laws 83 and 85
-still bound what replay does and does not verify.
+post-state** (there is no block before height 0 to execute). The replay-forward manifest is gone.
+**The redesign (C377, §166) moved the replay off the sync path entirely**: this paragraph now
+describes `rnode audit`, whose falsifier is the recovery-replay test
+(`casper/tests/recovery_replay.rs::independent_recovery_replays_epoch_boundaries_and_refuses_forged_claims`)
+plus the audit's own reconstruction and height-coverage tests. Laws 83 and 85 still bound what replay
+does and does not verify.
 
 **Page size, the byte cap, and the watchdog.** A page is now requested at `PAGE_SIZE = 4_000` nodes
 (the responder's own bound is 10,000 nodes / 32 MiB), and a page over the byte cap is served as a
@@ -12882,3 +12883,41 @@ on a contended host. **No benchmark has been run in this pass**: C339 remains `i
 complete 2,432-height restore and the restart/wrong-pin controls are recorded. These fixes change no
 block validity, no consensus rule and no anchor claim; the state bytes still come from content-verified
 pages and replay still checks the anchor's claim.
+
+## 166. Sync from the last finalized state: certificates, metadata, and replay as an audit (C377–C379)
+
+The 2,432-height campaign (`§165`, `spec/audit/evidence/c339-mature-replay-20261114/`) falsified the
+assumption the sync path was built on: a mature joiner downloaded every body and replayed it through
+the validator, and the observer replayed to a different mergeable-channel root, so the join failed
+deterministically. The redesign separates the two concerns the old path conflated.
+
+**Sync pulls the last finalized state; replay is an audit.** Validators sign a checkpoint statement
+(anchor, anchor post-state, fringe, epoch) with a domain tag of its own; a joiner verifies a
+`3s > 2t` certificate against the genesis active bonds, requests the fringe anchored at the certified
+anchor, walks the DAG by **headers** (new `BlockHeader`/`BlockMetadataRequest`/`BlockMetadataMessage`
+wire messages), hydrates two state roots (the checkpoint's post-state and the fringe's), fetches and
+content-verifies the genesis body, and publishes the header history through
+`dag::insert_metadata`/`publish_certified_metadata`. `RecoveryReplay::verify` remains the audit's
+engine (`rnode audit`), which replays from genesis and reports AGREE/DISAGREE/INCOMPLETE; a
+`DISAGREE` is an alarm, never a sync block.
+
+**History becomes a service.** A metadata-only node reports its body floor (`historyFrom`) as
+`historyAvailability`; the backfill closes the gap in the background (`--no-backfill-bodies` is the
+light-node opt-out); an archive advertises `HistoryCapabilities` and answers a deterministic
+possession challenge at `/api/v1/history/challenge`. Funding the tier is an external decision row.
+
+**Laws 104–107 land with it**: checkpoint quorum soundness, sync/verification separation, audit
+equivalence, and history availability. Law 102 is re-scoped to the audit path it now describes; Law
+83's Rust witnesses are restored.
+
+**Recorded residuals, not claims.** Checkpoints are genesis-rooted only (no parent chain, no
+freshness window, no operator pin), so verification trusts the genesis active bonds and refuses a
+certificate whose anchor state has drifted (`BondSetDrifted`); the anchor request walks the anchor's
+closure, so sibling fringe members are signed but not downloaded; `insert_metadata` duplicates
+`insert`'s commit sequence rather than sharing one function (a test pins their equivalence); and
+`bodyAvailable` is a wire-header field, not added to `LightBlockInfo`, because a body-less block is
+not served by the body-reading routes.
+
+**Verification.** Targeted suites for the checkpoint, sync, DAG, backfill, archives and audit paths;
+Laws 104–107 build and the register is consistent at 107 laws / 162 entries; the 2,432-height
+checkpoint join and the audit's DISAGREE remain the acceptance run for this pass.

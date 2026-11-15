@@ -500,20 +500,21 @@ async fn restore_guard_checks_committed_zero_legacy_and_bad_records_before_runni
 // A DAG that references a block without its body must not allow the restore guard
 // to fall back to the approved fringe's native state, even when the bounds match.
 #[tokio::test]
-async fn restore_guard_refuses_missing_newest_block_body() {
+async fn restore_guard_reads_the_post_state_from_metadata_when_the_body_is_missing() {
+    // **A metadata-only restore has no body, and that is not a gap** (sync/verification
+    // separation): the accepted record carries the block's post-state, and the guard reads it from
+    // there. Deleting the body leaves the guard's input intact — a node that could not do this would
+    // refuse every checkpoint join. A record with neither a post-state nor a body is the refusal
+    // case, and `post_state_of` names it.
     let runtime = common::build_runtime_manager().await;
     let (dag, store, approved) = snapshot_fixture(&runtime, Some(params(2, 2)), params(2, 2)).await;
 
     let missing = BlockHash::new([2; 32]);
     assert_eq!(store.delete(&[missing]).await.unwrap(), 1);
 
-    let error = check_running_validation_bounds(dag.as_ref(), &store, &approved, &runtime, 2, 2)
+    check_running_validation_bounds(dag.as_ref(), &store, &approved, &runtime, 2, 2)
         .await
-        .expect_err("restored DAG references a missing block; the guard must fail closed");
-    assert!(
-        error.contains("missing from block storage"),
-        "unexpected restore refusal: {error}"
-    );
+        .expect("the post-state is in the metadata, so a missing body is not a refusal");
 }
 
 /// **The restore guard reads the newest block's post-state, not the approved fringe's
