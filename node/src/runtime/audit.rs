@@ -397,6 +397,29 @@ pub async fn run(
         ))
     });
 
+    // **The replay's one external state is the genesis post-state** (Law 102). The scratch runtime
+    // holds the genesis the configuration names; if it cannot read the genesis post-state's native
+    // leaves, the replay never starts. That is **missing evidence**, not a divergence: the audit
+    // must not report DISAGREE for a state it could not establish. (The transfer of that state is a
+    // recorded gap — C390 — demonstrated on a dev-mode genesis, whose post-state depends on the
+    // genesis contracts rather than on the configured PoS/vault leaves alone.)
+    if let Some(post_state) = headers
+        .iter()
+        .find(|header| i64::from(header.block_num) == 0)
+        .map(|header| header.post_state_hash)
+    {
+        if let Err(e) = parts.runtime_manager.compute_bonds(&post_state).await {
+            return Ok(incomplete(
+                &verified,
+                0,
+                format!(
+                    "the replay cannot read the genesis post-state ({e}); the audit has no \
+                     evidence to disagree with"
+                ),
+            ));
+        }
+    }
+
     // **The certificate's commitment to the metadata the replay consumed.** A mismatch is a
     // DISAGREE: the bodies this node served are not the headers the quorum signed over. A legacy
     // `None` root is accepted — the replay still checks the state — and reported as uncommitted, so
