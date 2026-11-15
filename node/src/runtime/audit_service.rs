@@ -153,9 +153,14 @@ impl AuditService {
         }
         self.budget.admit()?;
         let _guard = self.run_lock.lock().await;
-        // Another request may have completed while this one waited.
+        // Another request (or a different AuditService instance on the same store) could
+        // have completed while this request waited; avoid another replay if it did.
         let cached = self.produced.lock().unpoison().get(&request.nonce).cloned();
         if let Some(existing) = cached {
+            return Ok(existing);
+        }
+        if let Some(existing) = durable_answer(&self.store, &self.signer(), &request.nonce).await? {
+            self.produced.lock().unpoison().insert(request.nonce.clone(), existing.clone());
             return Ok(existing);
         }
         let scratch = self.scratch_root.join(&request.nonce);
@@ -186,6 +191,19 @@ impl AuditService {
                     "the node's own claim did not reproduce: {error}"
                 )));
             }
+        } else {
+            // Non-AGREE is a completed, unsigned report. It must be replay-idempotent too;
+            // consume the nonce and persist its answer in the same durable batch.
+            let answer = rchain_block_storage::audit_store::AuditResponse {
+                report: serde_json::to_value(&outcome.report).map_err(|e| {
+                    AuditServiceError::Failed(format!("audit report could not be encoded: {e}"))
+                })?,
+                attestation: None,
+            };
+            self.store
+                .record_unattested_response(&self.signer(), &request.nonce, &answer)
+                .await
+                .map_err(AuditServiceError::Failed)?;
         }
         let produced = ProducedAudit {
             request_id: request.nonce.clone(),
@@ -199,9 +217,26 @@ impl AuditService {
         Ok(produced)
     }
 
-    /// A previously produced answer, if this process still holds it.
-    pub fn produced(&self, request_id: &str) -> Option<ProducedAudit> {
-        self.produced.lock().unpoison().get(request_id).cloned()
+    /// Retrieve the original answer from memory or the durable row after restart.
+    /// A report without an attestation is still a completed response.
+    pub async fn produced(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<ProducedAudit>, AuditServiceError> {
+        if !nonce_is_safe(request_id) {
+            return Err(AuditServiceError::BadNonce);
+        }
+        if let Some(cached) = self.produced.lock().unpoison().get(request_id).cloned() {
+            return Ok(Some(cached));
+        }
+        let result = durable_answer(&self.store, &self.signer(), request_id).await?;
+        if let Some(response) = &result {
+            self.produced
+                .lock()
+                .unpoison()
+                .insert(request_id.to_string(), response.clone());
+        }
+        Ok(result)
     }
 
     /// The claims this node accepted (its own, reproduced).
@@ -236,7 +271,7 @@ async fn durable_answer(
         return Ok(Some(ProducedAudit {
             request_id: nonce.to_string(),
             report,
-            attestation: Some(stored.attestation),
+            attestation: stored.attestation,
         }));
     }
     if store
@@ -374,7 +409,7 @@ mod tests {
         let claim = claim("nonce-1");
         let answer = AuditResponse {
             report: serde_json::to_value(report()).expect("report json"),
-            attestation: claim.clone(),
+            attestation: Some(claim.clone()),
         };
         store
             .accept(
@@ -396,6 +431,32 @@ mod tests {
             .await
             .expect("miss")
             .is_none());
+    }
+
+    /// Both unsigned verdicts are stable across reopen and never materialize a signed claim.
+    #[tokio::test]
+    async fn unsigned_reports_are_retryable_after_restart_without_an_attestation() {
+        let kvm = InMemoryStoreManager::default();
+        let store = AuditStore::open(&kvm).await.expect("open");
+        let signer = "07".repeat(33);
+        for verdict in ["INCOMPLETE", "DISAGREE"] {
+            let nonce = verdict.to_lowercase();
+            let mut reported = report();
+            reported.verdict = verdict.to_string();
+            reported.derived_root = None;
+            let answer = AuditResponse {
+                report: serde_json::to_value(&reported).expect("json"),
+                attestation: None,
+            };
+            store.record_unattested_response(&signer, &nonce, &answer).await.expect("persist");
+            let reopened = AuditStore::open(&kvm).await.expect("reopen");
+            let original = durable_answer(&reopened, &signer, &nonce)
+                .await.expect("read").expect("persisted answer");
+            assert_eq!(original.report.verdict, verdict);
+            assert!(original.attestation.is_none());
+            assert!(reopened.accepted().await.expect("accepted").is_empty());
+            assert!(reopened.head(&signer).await.expect("head").is_none());
+        }
     }
 
     /// A nonce with no stored answer is a defined refusal, not a replay attempt.
