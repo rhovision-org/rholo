@@ -869,8 +869,13 @@ pub async fn apply<
                     .flatten()
                     .next()
                     .ok_or_else(|| "the genesis block has no stored body".to_string())?;
-                // The operator's pin is the anchor's identity, checked by `from_genesis` before any
-                // accepted state exists (review R5).
+                // **The operator's pin is checked before any accepted state exists** (review R5).
+                // `from_genesis` also refuses a body that is not the pin, but it words that refusal
+                // differently; the canonical `differs from pinned genesis` sentence belongs to the
+                // pin check, so the check runs first and the state then carries the proven identity.
+                if let Some(expected) = expected_genesis_hash {
+                    check_expected_genesis(dag.as_ref(), &expected).await?;
+                }
                 let pin = crate::engine::anchor::GenesisPin {
                     block: expected_genesis_hash.unwrap_or(genesis_hash),
                     post_state: genesis_post,
