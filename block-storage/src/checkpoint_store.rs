@@ -186,7 +186,7 @@ mod tests {
     use rchain_shared::store_manager::InMemoryStoreManager;
 
     fn certificate(anchor_byte: u8) -> CheckpointCertificate {
-        let anchor = format!("{}", "ab".repeat(32));
+        let anchor = "ab".repeat(32);
         CheckpointCertificate {
             checkpoint: Checkpoint {
                 shard_id: "root".to_string(),
