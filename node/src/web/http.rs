@@ -1291,12 +1291,24 @@ async fn api_audit_attestation(
             .into_response(),
         Err(error) => {
             let status = match error {
-                crate::runtime::audit_service::AuditServiceError::BadNonce => StatusCode::BAD_REQUEST,
-                crate::runtime::audit_service::AuditServiceError::AlreadyAnswered => StatusCode::CONFLICT,
-                crate::runtime::audit_service::AuditServiceError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
-                crate::runtime::audit_service::AuditServiceError::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                crate::runtime::audit_service::AuditServiceError::BadNonce => {
+                    StatusCode::BAD_REQUEST
+                }
+                crate::runtime::audit_service::AuditServiceError::AlreadyAnswered => {
+                    StatusCode::CONFLICT
+                }
+                crate::runtime::audit_service::AuditServiceError::RateLimited => {
+                    StatusCode::TOO_MANY_REQUESTS
+                }
+                crate::runtime::audit_service::AuditServiceError::Failed(_) => {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
             };
-            (status, Json(serde_json::json!({ "error": error.to_string() }))).into_response()
+            (
+                status,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
         }
     }
 }
