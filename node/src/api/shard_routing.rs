@@ -374,6 +374,19 @@ impl BlockApi for ShardRoutingBlockApi {
         .await
     }
 
+    async fn header_commitment(
+        &self,
+        hash: &str,
+    ) -> ApiErr<rchain_models::casper::protocol::deploy_service::HeaderCommitment> {
+        // Keyed by a block hash for the same reason as `get_raw_block`: a hash belongs to one shard.
+        let hash = hash.to_string();
+        self.probe(move |api| {
+            let hash = hash.clone();
+            async move { api.header_commitment(&hash).await }
+        })
+        .await
+    }
+
     async fn finality_attestation(&self, nonce: &str) -> ApiErr<FinalityAttestation> {
         // Names no shard and no key, so it resolves to the primary — the same rule as
         // `last_finalized_block`, and for the same reason: it is a statement about *this node's*

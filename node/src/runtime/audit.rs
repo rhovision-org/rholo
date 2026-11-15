@@ -169,8 +169,10 @@ async fn fetch_height_bodies(
     base: &str,
     height: i64,
 ) -> Result<Vec<RawBlock>, String> {
+    // The per-height list route is the legacy `/api/blocks/{start}/{end}` alias (the v1 document
+    // describes the same operation under its `api/v1` server prefix).
     let infos: Vec<LightBlockInfo> =
-        get_json(client, &format!("{base}/api/v1/blocks/{height}/{height}"))
+        get_json(client, &format!("{base}/api/blocks/{height}/{height}"))
             .await
             .map_err(|e| format!("height {height}: {e}"))?;
     let mut bodies = Vec::new();
