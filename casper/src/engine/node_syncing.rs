@@ -718,7 +718,20 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     // request with the anchor's post-state), so this walk hydrates it; any other root is a second
     // walk. `request_tuple_space` is the first because its exit state is the one the C271 guard
     // below reads.
-    let page_peers = comm_util.connected_peers().await;
+    // **The fan-out read is bounded**: the walk must not freeze on a connections cell a writer is
+    // holding. The bootstrap is still asked by the requester; the connected set is only the hedge.
+    let page_peers = match tokio::time::timeout(Duration::from_secs(2), comm_util.connected_peers())
+        .await
+    {
+        Ok(peers) => peers,
+        Err(_) => {
+            log.warn(
+                source,
+                "the connections read did not return within 2s; the state walk asks the bootstrap only",
+            );
+            Vec::new()
+        }
+    };
     let tuple_st = request_tuple_space(
         fringe,
         tuple_space_rx,
