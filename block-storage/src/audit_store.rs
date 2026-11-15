@@ -212,7 +212,7 @@ impl AuditStore {
             .await?;
         if self
             .conflicts
-            .get(&[conflict.attestation_digest.clone()])
+            .get(std::slice::from_ref(&conflict.attestation_digest))
             .await?
             .into_iter()
             .next()

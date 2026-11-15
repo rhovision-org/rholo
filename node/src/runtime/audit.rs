@@ -353,7 +353,7 @@ pub async fn run(
     // the audit never holds the whole chain in memory.
     let last_height = *required_heights(certificate.checkpoint.anchor_height).end();
     for (height, to) in audit_batches(last_height) {
-        match fetch_history_range(&client, &base, height, to).await {
+        match fetch_history_range(&client, base, height, to).await {
             Some(mut bodies) => {
                 for at in height..=to {
                     let raws = bodies.remove(&at).unwrap_or_default();
@@ -366,7 +366,7 @@ pub async fn run(
             }
             None => {
                 for at in height..=to {
-                    match fetch_height_bodies(&client, &base, at).await {
+                    match fetch_height_bodies(&client, base, at).await {
                         Ok(raws) => {
                             if let Err(reason) =
                                 record_height(&store, at, raws, &mut headers, &mut heights).await
@@ -822,7 +822,7 @@ mod tests {
         assert_eq!(covered, (0..=last).collect::<Vec<_>>());
         assert!(audit_batches(last)
             .iter()
-            .all(|(from, to)| to - from + 1 <= MAX_AUDIT_BODY_BATCH));
+            .all(|(from, to)| to - from < MAX_AUDIT_BODY_BATCH));
     }
 
     /// The digest the report names is the certificate's, not the anchor's.
