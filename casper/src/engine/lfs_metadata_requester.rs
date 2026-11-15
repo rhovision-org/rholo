@@ -259,21 +259,32 @@ async fn ask_peers(
         return;
     }
     for peer in chosen {
-        if let Err(e) = rchain_comm::transport::transport_layer_syntax::send_to_peer(
+        // **A blocked transport send must not stall the walk.** The send sits outside the round's
+        // timeout; a bootstrap whose inbound path is saturated would otherwise stop the walk with no
+        // log line at all (measured on a 2,175-header walk). The request is idempotent, so a timed-out
+        // send is re-asked next round.
+        let send = rchain_comm::transport::transport_layer_syntax::send_to_peer(
             transport,
             conf,
             &peer,
             BlockMetadataRequestSerde.mk_packet(&request),
-        )
-        .await
-        {
-            log.warn(
+        );
+        match tokio::time::timeout(METADATA_ROUND_TIMEOUT, send).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => log.warn(
                 LogSource::new("casper.engine.LfsMetadataRequester"),
                 &format!(
                     "metadata walk: request to {peer} failed: {e}; another peer and the next round \
                      may still answer"
                 ),
-            );
+            ),
+            Err(_) => log.warn(
+                LogSource::new("casper.engine.LfsMetadataRequester"),
+                &format!(
+                    "metadata walk: request to {peer} did not leave the node within \
+                     {METADATA_ROUND_TIMEOUT:?}; the next round re-asks the same hashes"
+                ),
+            ),
         }
     }
 }
