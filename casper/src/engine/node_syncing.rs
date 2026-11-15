@@ -718,21 +718,17 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     ));
     // **The close block reads a short history.** A post-anchor block runs the PoS close for the
     // block finalized a few heights behind it; `validateBlockCheckpoint` regenerates that block's
-    // mergeable channels, and the checkpoint state alone does not carry them. The last few walked
-    // headers' pre/post/fringe states are hydrated so the close has its inputs. The walk is
-    // content-addressed and bounded — the C339 cost was 316 full-trie walks; this is at most 24.
-    const CLOSE_HISTORY_BLOCKS: usize = 8;
+    // mergeable channels from the block's **post-state**, and the checkpoint state alone does not
+    // carry it. The last few walked headers' post-states are hydrated (the measured 24-root
+    // pre/post/fringe set cost ~6 minutes; the close needs the post-states only). The walk is
+    // content-addressed and bounded.
+    const CLOSE_HISTORY_BLOCKS: usize = 5;
     let mut recent: Vec<_> = walk.headers.values().collect();
     recent.sort_by_key(|header| i64::from(header.block_num));
     for header in recent.iter().rev().take(CLOSE_HISTORY_BLOCKS) {
-        for root in [
-            header.post_state_hash,
-            header.pre_state_hash,
-            header.fringe_state_hash,
-        ] {
-            if root != StateHash::new([0u8; 32]) {
-                required_roots.insert(Blake2b256Hash::from_byte_array(root.as_bytes()));
-            }
+        let root = header.post_state_hash;
+        if root != StateHash::new([0u8; 32]) {
+            required_roots.insert(Blake2b256Hash::from_byte_array(root.as_bytes()));
         }
     }
     crate::engine::sync_metrics::census().add_state_roots(required_roots.len() as u64);

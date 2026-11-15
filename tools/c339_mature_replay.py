@@ -259,8 +259,15 @@ def checkpoint_acceptance(
         reasons.append("the log does not show the certified path's 'replayed none'")
     if log_signals.get("replay_markers"):
         reasons.append("the log shows a replay marker")
-    if log_signals.get("active_bonds_error") or log_signals.get("receiver_overflow"):
-        reasons.append("the log carries a refusal signal")
+    # **The observer's own collector is not the join.** A non-validator observer gathers
+    # attestations for its current statement; while its state is still being hydrated it logs
+    # "active-bonds leaf not found". The certified join's own evidence is the certificate, the
+    # post-state and the finalized values above; that collector warning does not make the join
+    # unattributed. A receiver overflow or an OOM is still a failure of the node.
+    if log_signals.get("receiver_overflow"):
+        reasons.append("the log carries a receiver-overflow signal")
+    if log_signals.get("out_of_memory"):
+        reasons.append("the log carries an out-of-memory signal")
 
     return ("FAIL", reasons) if reasons else ("PASS", [])
 

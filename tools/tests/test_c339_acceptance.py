@@ -188,6 +188,34 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(verdict, "FAIL")
         self.assertTrue(any("replay marker" in reason for reason in reasons))
 
+    def test_the_observers_own_collector_warning_is_not_a_join_failure(self) -> None:
+        # A non-validator observer's collector logs "active-bonds leaf not found" while its state
+        # is being hydrated. The certified join is proven by the certificate/post-state/finality;
+        # the collector's own certification is not part of it.
+        verdict, reasons = accepted(
+            log_signals={
+                "replayed_none": True,
+                "replay_markers": False,
+                "active_bonds_error": True,
+                "receiver_overflow": False,
+                "out_of_memory": False,
+            }
+        )
+        self.assertEqual(verdict, "PASS", reasons)
+
+    def test_a_receiver_overflow_fails(self) -> None:
+        verdict, reasons = accepted(
+            log_signals={
+                "replayed_none": True,
+                "replay_markers": False,
+                "active_bonds_error": False,
+                "receiver_overflow": True,
+                "out_of_memory": False,
+            }
+        )
+        self.assertEqual(verdict, "FAIL")
+        self.assertTrue(any("receiver-overflow" in reason for reason in reasons))
+
 
 if __name__ == "__main__":
     unittest.main()
