@@ -179,6 +179,16 @@ pub struct ApiServer {
     pub archive_max_bytes_per_period: u64,
     /// Explicitly unmetered history; wins over `archive-credit-policy`.
     pub archive_open: bool,
+    /// **Serve attested audits** (Law 112). Off by default: the service runs a full replay per
+    /// request, so it is an operator's explicit commitment.
+    pub audit_attest: bool,
+    /// The audit key file (hex). Falls back to the validator key when absent; a service with
+    /// neither is a startup error.
+    pub audit_key_path: Option<PathBuf>,
+    /// The URL this node audits itself through; defaults to `http://127.0.0.1:<port-http>`.
+    pub audit_bootstrap: Option<String>,
+    /// How many audit requests one hour admits (process-local).
+    pub audit_requests_per_hour: u64,
     pub ocapn_listen: Option<String>,
     /// Bind the **`unix`** OCapN listener at this socket path, or `None` for none (issue #249). A
     /// transport rather than a second address for the one above, and the one the node offers that is

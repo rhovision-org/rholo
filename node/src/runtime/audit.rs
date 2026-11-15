@@ -23,11 +23,14 @@ use std::time::Duration;
 use crate::diagnostics::effects::MetricsRegistry;
 use rchain_block_storage::block_store::{self, BlockStore};
 use rchain_casper::api::block_api::ProposeHealth;
+use rchain_casper::audit::{verify_audit_attestation, AuditExpectation};
 use rchain_casper::engine::recovery::RecoveryReplay;
 use rchain_casper::interpreter_util::ShardHealth;
 use rchain_casper::protocol::comm_util::ConnectionsCell;
+use rchain_casper::validator_identity::ValidatorIdentity;
 use rchain_comm::discovery::node_discovery::NodeDiscovery;
 use rchain_models::block_hash::BlockHash;
+use rchain_models::casper::protocol::audit::{AuditAttestation, SIGNED_HASH_CHAIN_WITNESS};
 use rchain_models::casper::protocol::casper_message::{BlockHeader, FinalizedFringe};
 use rchain_models::casper::protocol::checkpoint::CheckpointCertificate;
 use rchain_models::casper::protocol::deploy_service::{LightBlockInfo, RawBlock};
@@ -60,8 +63,17 @@ pub struct AuditReport {
     pub checkpoint_digest: String,
     pub anchor: String,
     pub anchor_height: i64,
+    /// The shard the audited certificate names.
+    #[serde(default)]
+    pub shard_id: String,
     /// The state root the certificate claimed.
     pub claimed_root: String,
+    /// The certificate's metadata commitment; `None` on a legacy certificate.
+    #[serde(default)]
+    pub metadata_root: Option<String>,
+    /// The certificate's validation-window commitment; `None` on a legacy certificate.
+    #[serde(default)]
+    pub history_root: Option<String>,
     /// The root the replay derived, when it ran far enough to have one.
     pub derived_root: Option<String>,
     /// The replay's cumulative head over the anchor's canonical ancestor closure (Law 112). The same
@@ -418,7 +430,10 @@ pub async fn run(
                     checkpoint_digest: verified.digest.to_hex(),
                     anchor: anchor.to_hex(),
                     anchor_height: certificate.checkpoint.anchor_height,
+                    shard_id: certificate.checkpoint.shard_id.clone(),
                     claimed_root: certificate.checkpoint.anchor_post_state.clone(),
+                    metadata_root: certificate.checkpoint.metadata_root.clone(),
+                    history_root: certificate.checkpoint.history_root.clone(),
                     derived_root: None,
                     replay_head: replay_head.clone(),
                     blocks: heights.values().map(|set| set.len()).sum(),
@@ -442,7 +457,10 @@ pub async fn run(
                     checkpoint_digest: verified.digest.to_hex(),
                     anchor: anchor.to_hex(),
                     anchor_height: certificate.checkpoint.anchor_height,
+                    shard_id: certificate.checkpoint.shard_id.clone(),
                     claimed_root: certificate.checkpoint.anchor_post_state.clone(),
+                    metadata_root: certificate.checkpoint.metadata_root.clone(),
+                    history_root: certificate.checkpoint.history_root.clone(),
                     derived_root: None,
                     replay_head: replay_head.clone(),
                     blocks: heights.values().map(|set| set.len()).sum(),
@@ -495,7 +513,10 @@ pub async fn run(
             checkpoint_digest: verified.digest.to_hex(),
             anchor: anchor.to_hex(),
             anchor_height: certificate.checkpoint.anchor_height,
+            shard_id: certificate.checkpoint.shard_id.clone(),
             claimed_root: certificate.checkpoint.anchor_post_state.clone(),
+            metadata_root: certificate.checkpoint.metadata_root.clone(),
+            history_root: certificate.checkpoint.history_root.clone(),
             // **The root the replay derived**, not a copy of the claim it was compared with.
             derived_root: Some(base16::encode(verified_replay.derived_root().as_bytes())),
             replay_head: replay_head.clone(),
@@ -509,7 +530,10 @@ pub async fn run(
             checkpoint_digest: verified.digest.to_hex(),
             anchor: anchor.to_hex(),
             anchor_height: certificate.checkpoint.anchor_height,
+            shard_id: certificate.checkpoint.shard_id.clone(),
             claimed_root: certificate.checkpoint.anchor_post_state.clone(),
+            metadata_root: certificate.checkpoint.metadata_root.clone(),
+            history_root: certificate.checkpoint.history_root.clone(),
             derived_root: None,
             replay_head: replay_head.clone(),
             blocks,
@@ -529,6 +553,123 @@ pub async fn run(
     Ok(report)
 }
 
+/// The result of an attested audit: the report, and the signed claim when the verdict is `AGREE`.
+#[derive(Clone, Debug)]
+pub struct AuditOutcome {
+    pub report: AuditReport,
+    pub attestation: Option<AuditAttestation>,
+}
+
+/// **Sign the claim an `AGREE` report supports** (Law 112). A legacy certificate has no
+/// commitments to attest and a non-AGREE verdict is not a claim, so both are refused here rather
+/// than signed into an unfalsifiable statement.
+pub fn attest_report(
+    report: &AuditReport,
+    signer: &ValidatorIdentity,
+    nonce: &str,
+    previous: Option<String>,
+    sequence: u64,
+) -> Result<AuditAttestation, String> {
+    if report.verdict != "AGREE" {
+        return Err(format!(
+            "only an AGREE report is attested; this one is {}",
+            report.verdict
+        ));
+    }
+    let metadata_root = report
+        .metadata_root
+        .clone()
+        .ok_or_else(|| "a legacy certificate has no metadata commitment to attest".to_string())?;
+    let history_root = report.history_root.clone().ok_or_else(|| {
+        "a legacy certificate has no validation-window commitment to attest".to_string()
+    })?;
+    let derived_root = report
+        .derived_root
+        .clone()
+        .ok_or_else(|| "an AGREE report must carry the root the replay derived".to_string())?;
+    let replay_head = report
+        .replay_head
+        .clone()
+        .ok_or_else(|| "an AGREE report must carry its replay head".to_string())?;
+    let mut attestation = AuditAttestation {
+        witness_type: SIGNED_HASH_CHAIN_WITNESS.to_string(),
+        shard_id: report.shard_id.clone(),
+        checkpoint_digest: report.checkpoint_digest.clone(),
+        anchor: report.anchor.clone(),
+        anchor_height: report.anchor_height,
+        from_height: 0,
+        to_height: report.anchor_height,
+        metadata_root,
+        history_root,
+        derived_root,
+        replay_head,
+        previous,
+        sequence,
+        nonce: nonce.to_string(),
+        signer: base16::encode(signer.public_key.bytes()),
+        sig_algorithm: signer.sig_algorithm.clone(),
+        sig: String::new(),
+    };
+    let prehash = attestation.prehash().map_err(|e| e.to_string())?;
+    let signature = signer.attest_audit(&prehash).map_err(|e| e.to_string())?;
+    attestation.sig = base16::encode(&signature);
+    Ok(attestation)
+}
+
+/// **Run the audit and, on `AGREE`, sign the claim.** This is the attested entry point; `run`
+/// remains the plain report.
+pub async fn run_attested(
+    conf: &NodeConf,
+    request: &AuditRequest,
+    signer: &ValidatorIdentity,
+    nonce: &str,
+    previous: Option<String>,
+    sequence: u64,
+    log: &Arc<dyn Log>,
+) -> Result<AuditOutcome, String> {
+    let report = run(conf, request, log).await?;
+    let attestation = if report.verdict == "AGREE" {
+        Some(attest_report(&report, signer, nonce, previous, sequence)?)
+    } else {
+        None
+    };
+    Ok(AuditOutcome {
+        report,
+        attestation,
+    })
+}
+
+/// **Verify an attestation against a report** — the offline checker's rule. The signature, shape
+/// and every reproduced fact must match; the chain head is not checked here because the checker
+/// has no accepted head to extend (a node's store does that check).
+pub fn verify_against_report(
+    attestation: &AuditAttestation,
+    report: &AuditReport,
+) -> Result<rchain_casper::audit::VerifiedAuditAttestation, String> {
+    let expectation = AuditExpectation {
+        checkpoint_digest: report.checkpoint_digest.clone(),
+        anchor: report.anchor.clone(),
+        anchor_height: report.anchor_height,
+        metadata_root: report
+            .metadata_root
+            .clone()
+            .ok_or_else(|| "the report names no metadata commitment".to_string())?,
+        history_root: report
+            .history_root
+            .clone()
+            .ok_or_else(|| "the report names no validation-window commitment".to_string())?,
+        derived_root: report
+            .derived_root
+            .clone()
+            .ok_or_else(|| "the report names no derived root".to_string())?,
+        replay_head: report
+            .replay_head
+            .clone()
+            .ok_or_else(|| "the report names no replay head".to_string())?,
+    };
+    verify_audit_attestation(attestation, &expectation, None).map_err(|e| e.to_string())
+}
+
 fn incomplete(
     verified: &rchain_casper::checkpoint::VerifiedCheckpoint,
     height: i64,
@@ -539,7 +680,10 @@ fn incomplete(
         checkpoint_digest: verified.digest.to_hex(),
         anchor: verified.checkpoint.anchor.clone(),
         anchor_height: verified.checkpoint.anchor_height,
+        shard_id: verified.checkpoint.shard_id.clone(),
         claimed_root: verified.checkpoint.anchor_post_state.clone(),
+        metadata_root: verified.checkpoint.metadata_root.clone(),
+        history_root: verified.checkpoint.history_root.clone(),
         derived_root: None,
         replay_head: None,
         blocks: height.max(0) as usize,

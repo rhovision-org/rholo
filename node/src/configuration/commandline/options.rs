@@ -244,6 +244,28 @@ pub enum Commands {
         /// Where `audit.json` is written.
         #[arg(long = "out", required = true)]
         out: PathBuf,
+        /// **Sign the result as an audit attestation** (Law 112) with this secp256k1 key file.
+        #[arg(long = "attest-key-path", value_name = "PATH")]
+        attest_key_path: Option<PathBuf>,
+        /// Where the signed attestation is written (default: stdout).
+        #[arg(long = "attest-out", value_name = "PATH")]
+        attest_out: Option<PathBuf>,
+        /// The challenge nonce this run answers (default: the checkpoint digest).
+        #[arg(long = "challenge", value_name = "NONCE")]
+        nonce: Option<String>,
+        /// The signer's previous accepted claim's digest, for a chained claim.
+        #[arg(long = "previous", value_name = "DIGEST")]
+        previous: Option<String>,
+        /// The signer's next sequence number.
+        #[arg(long = "sequence", default_value_t = 0)]
+        sequence: u64,
+    },
+    /// **Verify a signed audit attestation** against an audit report. The attestation is read from
+    /// stdin; the report is the local `audit.json` it must reproduce. Exit 0 verifies, 2 refuses.
+    VerifyAuditAttestation {
+        /// The report the claim must match.
+        #[arg(long = "report", required = true)]
+        report: PathBuf,
     },
     /// **Sign a history credit receipt** with the archive's settlement key (Laws 110/111). The
     /// receipt is printed as JSON; the payer deposits it at `POST /api/v1/history/credit`.
@@ -811,6 +833,20 @@ pub struct Run {
     /// startup. The possession challenge remains available.
     #[arg(long = "archive-open")]
     pub archive_open: bool,
+    /// **Serve attested audits** (Law 112): a requester names a checkpoint and a nonce, the node
+    /// replays it, and it answers with a signed claim chained to its previous one. Off by default.
+    #[arg(long = "audit-attest")]
+    pub audit_attest: bool,
+    /// The audit key file (hex, `0600`). Falls back to the validator key; a service with neither is
+    /// a startup error.
+    #[arg(long = "audit-key-path", value_name = "PATH")]
+    pub audit_key_path: Option<PathBuf>,
+    /// The URL this node audits itself through (its own public HTTP endpoint).
+    #[arg(long = "audit-bootstrap", value_name = "URL")]
+    pub audit_bootstrap: Option<String>,
+    /// How many audit requests one hour admits.
+    #[arg(long = "audit-requests-per-hour", value_name = "COUNT")]
+    pub audit_requests_per_hour: Option<u64>,
 
     /// **Inject a deterministic self-replay refusal into this node's own blocks** (#564). A devnet
     /// measurement instrument, not an operating mode: `deploy[:N]` refuses deploy-bearing blocks,
@@ -927,11 +963,21 @@ mod tests {
                 checkpoint,
                 data_dir,
                 out,
+                attest_key_path,
+                attest_out,
+                nonce,
+                previous,
+                sequence,
             } => {
                 assert_eq!(bootstrap, "http://127.0.0.1:40403");
                 assert!(checkpoint.is_none(), "the served checkpoint is the default");
                 assert_eq!(data_dir, std::path::Path::new("/tmp/audit-scratch"));
                 assert_eq!(out, std::path::Path::new("/tmp/audit-out"));
+                assert!(attest_key_path.is_none(), "attestation is opt-in");
+                assert!(attest_out.is_none());
+                assert!(nonce.is_none());
+                assert!(previous.is_none());
+                assert_eq!(*sequence, 0);
             }
             other => panic!("wrong subcommand: {other:?}"),
         }

@@ -304,6 +304,18 @@ fn api_server_from_hocon(h: &Hocon) -> Result<ApiServer, String> {
             Some(v) => to_bool(v)?,
             None => false,
         },
+        audit_attest: match get_opt(h, "audit-attest") {
+            Some(v) => to_bool(v)?,
+            None => false,
+        },
+        audit_key_path: to_optional_path(h, "audit-key-path")?,
+        audit_bootstrap: to_optional_string(h, "audit-bootstrap")?.filter(|s| !s.is_empty()),
+        audit_requests_per_hour: match get_opt(h, "audit-requests-per-hour") {
+            Some(v) => u64::try_from(to_i64(v)?).map_err(|_| {
+                "api-server.audit-requests-per-hour must be a non-negative integer".to_string()
+            })?,
+            None => 12,
+        },
         ocapn_listen: to_optional_string(h, "ocapn-listen")?.filter(|s| !s.is_empty()),
         // The `unix` transport, same shape: absent or empty means the node does not listen on UDS.
         ocapn_listen_unix: to_optional_string(h, "ocapn-listen-unix")?.filter(|s| !s.is_empty()),

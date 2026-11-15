@@ -489,6 +489,8 @@ pub struct NodeProgram {
     history: crate::web::archives::HistoryConfig,
     /// The metered service an archive runs (Laws 110/111). `None` on a node that does not archive.
     history_service: Option<Arc<crate::web::history_service::HistoryService>>,
+    /// The on-demand attested-audit service (Law 112). `None` unless `--audit-attest` is set.
+    audit_service: Option<Arc<crate::runtime::audit_service::AuditService>>,
     // Whether the faucet routes are mounted (AUDIT R34): dev mode and a deployer key, resolved where
     // both are known and passed through to `acquire_http_server`.
     faucet_enabled: bool,
@@ -562,6 +564,7 @@ impl NodeProgram {
             enable_reporting,
             history,
             history_service,
+            audit_service,
             enable_txn_api,
             enable_devnet_cors,
             enable_devnet_admin_public,
@@ -640,6 +643,7 @@ impl NodeProgram {
                     enable_reporting,
                     history,
                     history_service,
+                    audit_service,
                     faucet_enabled,
                     node_list,
                     stop,
@@ -814,6 +818,8 @@ pub struct ShardParts {
     /// **The archive's durable history meter** (Laws 110/111). One account per paying peer; the
     /// metered service reads and debits it before a body leaves.
     pub history_meter: HistoryMeter,
+    /// **The accepted audit claims and their chains** (Law 112).
+    pub audit_store: rchain_block_storage::audit_store::AuditStore,
     /// **When this shard's proposer first saw each piece of unfinalised work** (#583). Local and
     /// non-consensus: it ages the prompt-attestation licence, so an advancing fringe cannot renew
     /// the same work.
@@ -1684,6 +1690,39 @@ pub async fn setup_node_program(
         None
     };
 
+    // **The attested-audit service.** Off unless the operator opts in; a service with no key is a
+    // startup error rather than a signing oracle with an empty identity.
+    let audit_service = if conf.api_server.audit_attest {
+        let key = match &conf.api_server.audit_key_path {
+            Some(path) => {
+                let text = std::fs::read_to_string(path)
+                    .map_err(|e| format!("audit key {}: {e}", path.display()))?;
+                ValidatorIdentity::from_hex(text.trim()).ok_or_else(|| {
+                    "the audit key file is not a hex secp256k1 private key".to_string()
+                })?
+            }
+            None => validator_opt.clone().ok_or_else(|| {
+                "--audit-attest needs --audit-key-path or a validator key".to_string()
+            })?,
+        };
+        let bootstrap = conf
+            .api_server
+            .audit_bootstrap
+            .clone()
+            .unwrap_or_else(|| format!("http://127.0.0.1:{}", conf.api_server.port_http));
+        Some(Arc::new(crate::runtime::audit_service::AuditService::new(
+            conf.clone(),
+            primary_parts.audit_store.clone(),
+            key,
+            bootstrap,
+            conf.storage.data_dir.join("audit-scratch"),
+            conf.api_server.audit_requests_per_hour,
+            log.clone(),
+        )))
+    } else {
+        None
+    };
+
     Ok(NodeProgram {
         grpc_services,
         web_api,
@@ -1724,6 +1763,7 @@ pub async fn setup_node_program(
             max_bytes_per_period: conf.api_server.archive_max_bytes_per_period,
         },
         history_service,
+        audit_service,
         faucet_enabled,
         enable_txn_api: conf.api_server.enable_txn_api,
         enable_devnet_cors: conf.api_server.enable_devnet_cors,
@@ -2742,6 +2782,7 @@ pub async fn setup_shard(
     let approved_store = approved_store::create(&store_manager).await?;
     let checkpoint_store = checkpoint_store::CheckpointStore::open(&store_manager).await?;
     let history_meter = HistoryMeter::open(&store_manager).await?;
+    let audit_store = rchain_block_storage::audit_store::AuditStore::open(&store_manager).await?;
     let work_seen = work_seen::create(&store_manager).await?;
     let block_metadata_kv: Arc<dyn KeyValueTypedStore<BlockHash, BlockMetadata>> = Arc::new(
         database(
@@ -3141,6 +3182,7 @@ pub async fn setup_shard(
         approved_store,
         checkpoint_store,
         history_meter,
+        audit_store,
         work_seen,
         store_manager,
         validator_identity_opt: validator_opt,

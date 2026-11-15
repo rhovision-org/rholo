@@ -43,16 +43,27 @@ whose `previous` does not match the signer's accepted head cannot extend the cha
 There is no gossip and no broadcast. The only trigger is an opt-in, rate-limited request:
 
 ```text
-POST /api/v1/audit/request          { checkpoint, nonce }
+POST /api/v1/audit/request          { checkpoint, nonce, previous?, sequence? }
 GET  /api/v1/audit/attestation/{id} the signed result, when ready
-GET  /api/v1/audit/attestations     claims this node itself verified
+GET  /api/v1/audit/attestations     claims this node itself reproduced
+GET  /api/v1/audit/conflicts        claims this node refused, with the local reason
 ```
 
-A request is idempotent per `(signer, nonce)`, runs with bounded concurrency in a fresh scratch
-directory, and never touches the live store. A node that does not enable the service mounts no
-request route: an audit key is required, and a missing key is a startup error rather than an open
-signing oracle. Because a consumer must reproduce a claim before accepting it, a false claim cannot
-propagate: it costs the claimant its service relationship and leaves durable, attributable evidence.
+A request is idempotent on its nonce, runs one replay at a time in a fresh scratch directory, and
+never touches the live store. The service is off by default; enabling it needs a key:
+
+| Setting | Meaning |
+|---|---|
+| `--audit-attest` | Serve the attested-audit routes |
+| `--audit-key-path` | The signing key (hex, `0600`); falls back to the validator key |
+| `--audit-bootstrap` | The URL the node audits itself through (default `http://127.0.0.1:<port-http>`) |
+| `--audit-requests-per-hour` | The request budget (default 12) |
+
+A node that does not enable the service answers `404` on these routes. A missing key is a startup
+error rather than an open signing oracle. Because a consumer must reproduce a claim before accepting
+it, a false claim cannot propagate: it costs the claimant its service relationship and leaves
+durable, attributable evidence — the node's own `GET /api/v1/audit/conflicts` is that record for
+claims it refused.
 
 ## CLI
 

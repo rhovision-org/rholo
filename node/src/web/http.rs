@@ -264,6 +264,9 @@ pub struct HttpState {
     /// **The metered history service** (Laws 110/111), present on an archive. The range route charges
     /// through it before a body leaves; `None` is an unmetered surface (and a non-archive).
     pub history_service: Option<Arc<crate::web::history_service::HistoryService>>,
+    /// **The attested-audit service** (Law 112), present only when the operator enabled it. No
+    /// service means the routes answer 404 exactly like a node built before they existed.
+    pub audit_service: Option<Arc<crate::runtime::audit_service::AuditService>>,
 }
 
 /// State shared by the admin HTTP server (port of the `adminWebApiRoutes` argument of
@@ -1198,6 +1201,100 @@ async fn api_history_meter(State(state): State<HttpState>, Path(payer): Path<Str
             crate::web::history_service::HistoryServiceError::NoCredit(e),
         ),
     }
+}
+
+/// `POST /api/v1/audit/request` — run one attested audit. Idempotent on the nonce, rate-limited,
+/// one replay at a time; a node without the service answers 404.
+async fn api_audit_request(
+    State(state): State<HttpState>,
+    Json(request): Json<crate::runtime::audit_service::AuditRequestDto>,
+) -> Response {
+    let Some(service) = state.audit_service.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "this node does not serve attested audits" })),
+        )
+            .into_response();
+    };
+    match service.request(&request).await {
+        Ok(produced) => json_result(Ok(produced)),
+        Err(error) => {
+            let status = match error {
+                crate::runtime::audit_service::AuditServiceError::RateLimited => {
+                    StatusCode::TOO_MANY_REQUESTS
+                }
+                crate::runtime::audit_service::AuditServiceError::BadNonce => {
+                    StatusCode::BAD_REQUEST
+                }
+                crate::runtime::audit_service::AuditServiceError::Failed(_) => {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
+            };
+            (
+                status,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// `GET /api/v1/audit/attestation/{request_id}` — the signed claim produced for a request.
+async fn api_audit_attestation(
+    State(state): State<HttpState>,
+    Path(request_id): Path<String>,
+) -> Response {
+    let Some(service) = state.audit_service.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "this node does not serve attested audits" })),
+        )
+            .into_response();
+    };
+    match service.produced(&request_id) {
+        Some(produced) => json_result(Ok(produced)),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "no attestation was produced for this request id; request it first"
+            })),
+        )
+            .into_response(),
+    }
+}
+
+/// `GET /api/v1/audit/attestations` — the claims this node itself reproduced and accepted.
+async fn api_audit_attestations(State(state): State<HttpState>) -> Response {
+    let Some(service) = state.audit_service.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "this node does not serve attested audits" })),
+        )
+            .into_response();
+    };
+    json_result(
+        service
+            .accepted()
+            .await
+            .map_err(crate::api::dto::BlockApiException),
+    )
+}
+
+/// `GET /api/v1/audit/conflicts` — the claims this node refused, with the local reason.
+async fn api_audit_conflicts(State(state): State<HttpState>) -> Response {
+    let Some(service) = state.audit_service.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "this node does not serve attested audits" })),
+        )
+            .into_response();
+    };
+    json_result(
+        service
+            .conflicts()
+            .await
+            .map_err(crate::api::dto::BlockApiException),
+    )
 }
 
 /// A service refusal, with the status it maps to (`401` authorization, `402` unpaid, `429` rate).
@@ -2573,6 +2670,13 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/v1/history/range", post(api_history_range))
         .route("/api/v1/history/credit", post(api_history_credit))
         .route("/api/v1/history/meter/{payer}", get(api_history_meter))
+        .route("/api/v1/audit/request", post(api_audit_request))
+        .route(
+            "/api/v1/audit/attestation/{request_id}",
+            get(api_audit_attestation),
+        )
+        .route("/api/v1/audit/attestations", get(api_audit_attestations))
+        .route("/api/v1/audit/conflicts", get(api_audit_conflicts))
         .route(
             "/api/v1/checkpoint-attestation",
             get(api_checkpoint_attestation),
@@ -2826,6 +2930,8 @@ pub async fn acquire_http_server(
     history: crate::web::archives::HistoryConfig,
     // The metered service, present on an archive.
     history_service: Option<Arc<crate::web::history_service::HistoryService>>,
+    // The attested-audit service, present when `--audit-attest` is set.
+    audit_service: Option<Arc<crate::runtime::audit_service::AuditService>>,
     // Whether to mount the faucet routes (AUDIT R34): dev mode **and** a deployer key, resolved by
     // the caller because that is where both are known.
     faucet_enabled: bool,
@@ -2944,6 +3050,7 @@ pub async fn acquire_http_server(
         )),
         history,
         history_service,
+        audit_service,
     })
     .layer(TimeoutLayer::with_status_code(
         StatusCode::REQUEST_TIMEOUT,
@@ -3606,6 +3713,7 @@ mod tests {
             faucet_enabled: true,
             history: Default::default(),
             history_service: None,
+            audit_service: None,
         }
     }
 

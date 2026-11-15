@@ -386,6 +386,27 @@ pub fn from_options(options: &Options) -> Hocon {
         if run.archive_open {
             e.push(("api-server.archive-open".to_string(), Hocon::Boolean(true)));
         }
+        if run.audit_attest {
+            e.push(("api-server.audit-attest".to_string(), Hocon::Boolean(true)));
+        }
+        if let Some(path) = &run.audit_key_path {
+            e.push((
+                "api-server.audit-key-path".to_string(),
+                Hocon::String(path.display().to_string()),
+            ));
+        }
+        if let Some(url) = &run.audit_bootstrap {
+            e.push((
+                "api-server.audit-bootstrap".to_string(),
+                Hocon::String(url.clone()),
+            ));
+        }
+        if let Some(count) = run.audit_requests_per_hour {
+            e.push((
+                "api-server.audit-requests-per-hour".to_string(),
+                Hocon::Integer(i64::try_from(count).unwrap_or(i64::MAX)),
+            ));
+        }
         if let Some(mode) = &run.self_replay_injection {
             e.push((
                 "casper.self-replay-injection".to_string(),
