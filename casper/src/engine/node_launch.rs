@@ -818,75 +818,105 @@ pub async fn apply<
     // post-state is an accepted state, so it is a legitimate `CURRENT_ROOT`. A root this store does
     // not know is not published — the pointer is left where it was and the mismatch is logged.
     {
-        let repr = dag.get_representation().await;
-        if let Some(tip) = repr.latest_fringe().iter().max_by_key(|m| m.height) {
-            let tip_hash = tip.id;
-            // **The tip's post-state, from metadata first.** A checkpoint-synced node holds the
-            // tip's header and not its historical body; requiring the body here left `CURRENT_ROOT`
-            // at genesis, and the first post-anchor block was then validated against the wrong state
-            // ("unknown root"). The metadata carries the same post-state the body does.
-            let metadata_root = match dag.lookup(&tip_hash).await {
-                Ok(metadata) => metadata.map(|metadata| metadata.post_state_hash),
-                Err(e) => {
-                    log.warn(
-                        source,
-                        &format!(
-                            "could not read the tip {} metadata to republish CURRENT_ROOT: {e}",
-                            tip_hash.to_hex()
-                        ),
-                    );
-                    None
-                }
-            };
-            let body_root = match block_store.get(&[tip_hash]).await {
-                Ok(blocks) => blocks
-                    .into_iter()
-                    .flatten()
-                    .next()
-                    .map(|block| block.post_state_hash),
-                Err(e) => {
-                    log.warn(
-                        source,
-                        &format!(
-                            "could not read the tip {} body to republish CURRENT_ROOT: {e}",
-                            tip_hash.to_hex()
-                        ),
-                    );
-                    None
-                }
-            };
-            match accepted_tip_root(metadata_root, body_root) {
-                Some(root) => {
-                    let root = Blake2b256Hash::from_byte_array(root.as_bytes());
-                    match runtime_manager.publish_accepted_root(root).await {
-                        Ok(true) => log.info(
+        // **The approved fringe's state is the accepted root when the store has one.** A certified
+        // sync writes the certificate's fringe and state here; the DAG's latest fringe can lag a
+        // finality step, and publishing from it would start the node behind the state it just
+        // hydrated. The DAG tip remains the fallback for a crash before approval.
+        let approved = match approved_store
+            .get(&[rchain_block_storage::approved_store::FINALIZED_FRINGE_KEY])
+            .await
+        {
+            Ok(rows) => rows.into_iter().next().flatten(),
+            Err(e) => {
+                log.warn(source, &format!("could not read the approved fringe: {e}"));
+                None
+            }
+        };
+        if let Some(fringe) = approved {
+            let root = Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes());
+            match runtime_manager.publish_accepted_root(root).await {
+                Ok(true) => log.info(
+                    source,
+                    "republished CURRENT_ROOT from the approved finalized fringe",
+                ),
+                Ok(false) => log.warn(
+                    source,
+                    "the approved fringe names a root this store does not know; CURRENT_ROOT is \
+                     left where it was",
+                ),
+                Err(e) => log.warn(source, &format!("could not republish CURRENT_ROOT: {e}")),
+            }
+        } else {
+            let repr = dag.get_representation().await;
+            if let Some(tip) = repr.latest_fringe().iter().max_by_key(|m| m.height) {
+                let tip_hash = tip.id;
+                // **The tip's post-state, from metadata first.** A checkpoint-synced node holds the
+                // tip's header and not its historical body; requiring the body here left `CURRENT_ROOT`
+                // at genesis, and the first post-anchor block was then validated against the wrong state
+                // ("unknown root"). The metadata carries the same post-state the body does.
+                let metadata_root = match dag.lookup(&tip_hash).await {
+                    Ok(metadata) => metadata.map(|metadata| metadata.post_state_hash),
+                    Err(e) => {
+                        log.warn(
                             source,
                             &format!(
-                                "republished CURRENT_ROOT at the latest accepted block {}",
+                                "could not read the tip {} metadata to republish CURRENT_ROOT: {e}",
                                 tip_hash.to_hex()
                             ),
-                        ),
-                        Ok(false) => log.warn(
+                        );
+                        None
+                    }
+                };
+                let body_root = match block_store.get(&[tip_hash]).await {
+                    Ok(blocks) => blocks
+                        .into_iter()
+                        .flatten()
+                        .next()
+                        .map(|block| block.post_state_hash),
+                    Err(e) => {
+                        log.warn(
                             source,
                             &format!(
+                                "could not read the tip {} body to republish CURRENT_ROOT: {e}",
+                                tip_hash.to_hex()
+                            ),
+                        );
+                        None
+                    }
+                };
+                match accepted_tip_root(metadata_root, body_root) {
+                    Some(root) => {
+                        let root = Blake2b256Hash::from_byte_array(root.as_bytes());
+                        match runtime_manager.publish_accepted_root(root).await {
+                            Ok(true) => log.info(
+                                source,
+                                &format!(
+                                    "republished CURRENT_ROOT at the latest accepted block {}",
+                                    tip_hash.to_hex()
+                                ),
+                            ),
+                            Ok(false) => log.warn(
+                                source,
+                                &format!(
                                 "the latest accepted block {} names a root this store does not \
                                  know; CURRENT_ROOT is left where it was",
                                 tip_hash.to_hex()
                             ),
-                        ),
-                        Err(e) => {
-                            log.warn(source, &format!("could not republish CURRENT_ROOT: {e}"))
+                            ),
+                            Err(e) => {
+                                log.warn(source, &format!("could not republish CURRENT_ROOT: {e}"))
+                            }
                         }
                     }
-                }
-                None => log.warn(
-                    source,
-                    &format!(
+                    None => log.warn(
+                        source,
+                        &format!(
                         "the DAG's tip {} has neither a recorded post-state nor a stored body; \
                          CURRENT_ROOT is left where it was",
                         tip_hash.to_hex()
                     ),
-                ),
+                    ),
+                }
             }
         }
     }

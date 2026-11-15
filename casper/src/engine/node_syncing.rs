@@ -716,6 +716,25 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     required_roots.insert(Blake2b256Hash::from_byte_array(
         fringe.state_hash.as_bytes(),
     ));
+    // **The close block reads a short history.** A post-anchor block runs the PoS close for the
+    // block finalized a few heights behind it; `validateBlockCheckpoint` regenerates that block's
+    // mergeable channels, and the checkpoint state alone does not carry them. The last few walked
+    // headers' pre/post/fringe states are hydrated so the close has its inputs. The walk is
+    // content-addressed and bounded — the C339 cost was 316 full-trie walks; this is at most 24.
+    const CLOSE_HISTORY_BLOCKS: usize = 8;
+    let mut recent: Vec<_> = walk.headers.values().collect();
+    recent.sort_by_key(|header| i64::from(header.block_num));
+    for header in recent.iter().rev().take(CLOSE_HISTORY_BLOCKS) {
+        for root in [
+            header.post_state_hash,
+            header.pre_state_hash,
+            header.fringe_state_hash,
+        ] {
+            if root != StateHash::new([0u8; 32]) {
+                required_roots.insert(Blake2b256Hash::from_byte_array(root.as_bytes()));
+            }
+        }
+    }
     crate::engine::sync_metrics::census().add_state_roots(required_roots.len() as u64);
 
     // The anchored fringe's own root is the checkpoint root (`node_running` answers an anchored
@@ -1125,39 +1144,30 @@ pub(super) fn certified_metadata_entries(
 
     let mut entries = Vec::with_capacity(walk.headers.len());
     for header in walk.headers.values() {
-        let mut metadata = BlockMetadata {
-            block_hash: header.block_hash,
-            block_num: header.block_num,
-            sender: header.sender,
-            seq_num: header.seq_num,
-            justifications: header.justifications.clone(),
-            bonds_map: header.bonds_map.clone(),
-            validated: true,
-            validation_failed: false,
-            slashable: false,
-            failure_cause: None,
-            slash_severity: rchain_models::block_metadata::SlashSeverity::Unspecified,
-            restore_attempts: 0,
-            fringe: header.fringe.clone(),
-            fringe_state_hash: header.fringe_state_hash,
-            pre_state_hash: header.pre_state_hash,
-            post_state_hash: header.post_state_hash,
-            sig: header.sig.clone(),
-            sig_algorithm: header.sig_algorithm.clone(),
-            member_of_fringe: None,
-        };
-        if header.block_hash == anchor {
-            // **The certificate's finalized fringe is this node's finality.** The anchor's header
-            // names the fringe it was *built on*; the certificate names the fringe that *finalized*.
-            // The walk holds the anchor and not its siblings, so the anchor is the member this node
-            // finalizes and executes from. Without this override the DAG's latest fringe stays one
-            // finality step behind the certificate, `CURRENT_ROOT` is republished at that older
-            // block, and the first post-anchor block is validated from an unhydrated state
-            // ("unknown root"). The anchor's `fringe_state_hash` stays its header's pre-state: the
-            // anchor's own mergeable channels are regenerated from it.
-            metadata.fringe = BTreeSet::from([anchor]);
-        }
-        entries.push((header.block_hash, metadata));
+        entries.push((
+            header.block_hash,
+            BlockMetadata {
+                block_hash: header.block_hash,
+                block_num: header.block_num,
+                sender: header.sender,
+                seq_num: header.seq_num,
+                justifications: header.justifications.clone(),
+                bonds_map: header.bonds_map.clone(),
+                validated: true,
+                validation_failed: false,
+                slashable: false,
+                failure_cause: None,
+                slash_severity: rchain_models::block_metadata::SlashSeverity::Unspecified,
+                restore_attempts: 0,
+                fringe: header.fringe.clone(),
+                fringe_state_hash: header.fringe_state_hash,
+                pre_state_hash: header.pre_state_hash,
+                post_state_hash: header.post_state_hash,
+                sig: header.sig.clone(),
+                sig_algorithm: header.sig_algorithm.clone(),
+                member_of_fringe: None,
+            },
+        ));
     }
     // Parents before children for the insert; the DAG refuses a block whose justifications are
     // absent, and the walk's own shape check has already guaranteed the order exists.
@@ -2705,10 +2715,7 @@ mod tests {
         let (_, anchor_meta) = entries.last().expect("anchor entry");
         assert!(anchor_meta.validated, "accepted under the certificate");
         assert!(!anchor_meta.validation_failed);
-        // **The anchor's finality is the certificate's fringe, not its header's fringe.** The
-        // header was built on `child`; the certificate finalized `grandchild`, and that is what the
-        // DAG's latest fringe must reflect.
-        assert_eq!(anchor_meta.fringe, BTreeSet::from([grandchild.block_hash]));
+        assert_eq!(anchor_meta.fringe, BTreeSet::from([child.block_hash]));
         assert_eq!(anchor_meta.sig, grandchild.sig, "the signature survives");
         assert_eq!(
             fringe_root,
