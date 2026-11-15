@@ -25,8 +25,8 @@ use rchain_models::casper::protocol::checkpoint::{
 };
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, CheckpointStatus, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
-    FinalityAttestation, HeaderCommitment, LightBlockInfo, RawBlock, Status, VersionInfo,
-    WaitingContinuationInfo,
+    FinalityAttestation, HeaderCommitment, LightBlockInfo, RawBlock, Status, VerifiedCertificate,
+    VersionInfo, WaitingContinuationInfo,
 };
 use rchain_models::rholang::RhoType::RhoDeployId;
 use rchain_models::sorter::sort_par_term;
@@ -1388,6 +1388,26 @@ impl BlockApi for BlockApiImpl {
         Ok(CheckpointCertificate {
             checkpoint,
             attestations,
+        })
+    }
+
+    async fn verify_checkpoint_certificate(
+        &self,
+        certificate: &CheckpointCertificate,
+    ) -> ApiErr<VerifiedCertificate> {
+        // **The node's own verifier, not a string comparison.** `verify_genesis_rooted_certificate`
+        // recomputes the digest, checks each signature over that digest against the signer's bonded
+        // stakeholder, and applies `3s > 2t`. A consumer that cannot do secp256k1 reads this verdict.
+        let bonds = self.runtime.genesis_pos().active_bonds();
+        let verified = crate::checkpoint::verify_genesis_rooted_certificate(certificate, &bonds)
+            .map_err(|e| e.to_string())?;
+        Ok(VerifiedCertificate {
+            verified: true,
+            digest: verified.digest.to_hex(),
+            anchor: verified.checkpoint.anchor.clone(),
+            anchor_height: verified.checkpoint.anchor_height,
+            supporting_stake: verified.supporting_stake,
+            total_stake: verified.total_stake,
         })
     }
 

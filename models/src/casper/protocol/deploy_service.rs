@@ -205,6 +205,27 @@ pub struct CheckpointStatus {
     pub metadata_committed: bool,
 }
 
+/// **A certificate this node verified**, as served by `POST /api/v1/checkpoint/verify`.
+///
+/// The verdict is the node's own verifier: it recomputes the digest, checks every signature over
+/// that digest against the signer's bonded stake, and applies the strict quorum rule. A consumer
+/// that cannot verify secp256k1 (the mature-join benchmark is one) reads this instead of counting
+/// attestation strings.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifiedCertificate {
+    /// Always `true` on a served verdict; a refusal is an error response, not a false field.
+    pub verified: bool,
+    /// The digest the verifier recomputed from the statement.
+    pub digest: String,
+    pub anchor: String,
+    pub anchor_height: i64,
+    /// Bonded stake whose signatures named the digest.
+    pub supporting_stake: i128,
+    /// The verifier's bond-set total.
+    pub total_stake: i128,
+}
+
 /// Whether a node serves audit attestations, and the last run it completed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

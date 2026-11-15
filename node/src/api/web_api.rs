@@ -134,6 +134,21 @@ pub trait WebApi: Send + Sync {
         ))
     }
 
+    /// `POST /api/v1/checkpoint/verify` — this node's verifier applied to a caller-supplied
+    /// certificate. A refusal is an error; a verdict names the recomputed digest and the stake that
+    /// signed it.
+    async fn verify_checkpoint_certificate(
+        &self,
+        _certificate: &CheckpointCertificate,
+    ) -> Result<
+        rchain_models::casper::protocol::deploy_service::VerifiedCertificate,
+        BlockApiException,
+    > {
+        Err(BlockApiException(
+            "this surface cannot verify checkpoint certificates".to_string(),
+        ))
+    }
+
     /// `GET /api/v1/history/challenge` — a deterministic sample of bodies at the caller's nonce
     /// (the archive tier's proof of possession). The default refuses: a surface with no history
     /// tier cannot answer for one.

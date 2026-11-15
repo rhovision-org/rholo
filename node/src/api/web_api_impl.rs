@@ -1639,6 +1639,19 @@ impl WebApi for WebApiImpl {
             .map_err(BlockApiException)
     }
 
+    async fn verify_checkpoint_certificate(
+        &self,
+        certificate: &CheckpointCertificate,
+    ) -> Result<
+        rchain_models::casper::protocol::deploy_service::VerifiedCertificate,
+        BlockApiException,
+    > {
+        self.block_api
+            .verify_checkpoint_certificate(certificate)
+            .await
+            .map_err(BlockApiException)
+    }
+
     async fn checkpoint_attestation(&self) -> Result<CheckpointAttestation, BlockApiException> {
         // The same pre-signature gate as the finality attestation: a node that has stopped producing
         // does not attest. The statement is different (a durable checkpoint digest, not a nonce-bound

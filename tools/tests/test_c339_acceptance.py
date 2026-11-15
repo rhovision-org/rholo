@@ -46,10 +46,35 @@ def certificate(
     }
     certificate = {"checkpoint": checkpoint, "attestations": []}
     if attestations:
+        # A structurally complete attestation: the predicate requires a sender and a signature
+        # before it will ask the node's verifier (the verifier is what checks the bytes).
         certificate["attestations"] = [
-            {"checkpointDigest": c339.checkpoint_digest_hex(checkpoint)}
+            {
+                "checkpointDigest": c339.checkpoint_digest_hex(checkpoint),
+                "sender": "07" * 33,
+                "sig": "88" * 64,
+            }
         ]
     return certificate
+
+
+def verdict_for(
+    cert,
+    supporting=3,
+    total=3,
+    verified=True,
+    digest=None,
+    anchor=None,
+) -> dict:
+    fields = c339.certificate_fields(cert) or {}
+    return {
+        "verified": verified,
+        "digest": digest or fields.get("digest"),
+        "anchor": anchor or fields.get("anchor"),
+        "anchorHeight": fields.get("anchor_height"),
+        "supportingStake": supporting,
+        "totalStake": total,
+    }
 
 
 def accepted(**overrides) -> tuple[str, list[str]]:
@@ -84,6 +109,18 @@ def accepted(**overrides) -> tuple[str, list[str]]:
         },
     }
     fields.update(overrides)
+    if "joiner_verdict" not in overrides:
+        fields["joiner_verdict"] = (
+            verdict_for(fields["joiner_certificate"])
+            if fields["joiner_certificate"] is not None
+            else None
+        )
+    if "bootstrap_verdict" not in overrides:
+        fields["bootstrap_verdict"] = (
+            verdict_for(fields["bootstrap_certificate"])
+            if fields["bootstrap_certificate"] is not None
+            else None
+        )
     return c339.checkpoint_acceptance(**fields)
 
 
@@ -224,9 +261,81 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(verdict, "FAIL")
         self.assertTrue(any("not quorate" in reason for reason in reasons))
 
-    def test_an_absent_quorum_line_is_inconclusive(self) -> None:
-        verdict, _ = accepted(quorum=None)
+    def test_an_absent_quorum_line_does_not_replace_the_verifier_verdict(self) -> None:
+        # The log line is corroboration; the signed stake is the verifier's answer now.
+        verdict, reasons = accepted(quorum=None)
+        self.assertEqual(verdict, "PASS", reasons)
+
+    def test_an_absent_verifier_verdict_is_inconclusive(self) -> None:
+        verdict, reasons = accepted(joiner_verdict=None)
         self.assertEqual(verdict, "INCONCLUSIVE")
+        self.assertTrue(any("not submitted to a verifier" in r for r in reasons))
+
+    def test_an_absent_bootstrap_verdict_is_inconclusive(self) -> None:
+        verdict, reasons = accepted(bootstrap_verdict=None)
+        self.assertEqual(verdict, "INCONCLUSIVE")
+        self.assertTrue(any("bootstrap" in r and "verifier" in r for r in reasons))
+
+    def test_a_verifier_refusal_fails(self) -> None:
+        # The node checked the signatures and refused: a served, unverifiable certificate is a
+        # failed join, not a missing measurement.
+        verdict, reasons = accepted(
+            joiner_verdict={"error": "HTTP 400", "status": 400, "body": {"error": "bad sig"}}
+        )
+        self.assertEqual(verdict, "FAIL")
+        self.assertTrue(any("refused the joiner's certificate" in r for r in reasons))
+
+    def test_a_tampered_or_wrong_signer_verdict_fails(self) -> None:
+        # A tampered signature and a signature by an unbonded key both reach the predicate as the
+        # verifier's refusal; fixture values are the wire shape the route returns.
+        for refusal in (
+            {"verified": False},
+            {"error": "HTTP 400", "status": 400},
+        ):
+            verdict, reasons = accepted(joiner_verdict=refusal)
+            self.assertEqual(verdict, "FAIL", refusal)
+            self.assertTrue(any("refused" in r for r in reasons), reasons)
+
+    def test_a_verifier_digest_mismatch_fails(self) -> None:
+        cert = certificate("01" * 32, "02" * 32, 10)
+        verdict, reasons = accepted(
+            joiner_verdict=verdict_for(cert, digest="99" * 32)
+        )
+        self.assertEqual(verdict, "FAIL")
+        self.assertTrue(any("verifier's digest" in r for r in reasons))
+
+    def test_a_verifier_below_strict_quorum_fails(self) -> None:
+        cert = certificate("01" * 32, "02" * 32, 10)
+        verdict, reasons = accepted(joiner_verdict=verdict_for(cert, supporting=2, total=3))
+        self.assertEqual(verdict, "FAIL")
+        self.assertTrue(any("unquorate" in r for r in reasons))
+
+    def test_an_unsigned_attestation_is_never_a_pass(self) -> None:
+        # The old positive fixture had `checkpointDigest` and nothing else. Even with a (bogus)
+        # verified verdict, a statement with no sender and no signature cannot be a PASS; the
+        # verifier is the authority for the bytes, and this is the structural floor beneath it.
+        cert = certificate("01" * 32, "02" * 32, 10)
+        cert["attestations"] = [
+            {"checkpointDigest": c339.checkpoint_digest_hex(cert["checkpoint"])}
+        ]
+        verdict, reasons = accepted(
+            joiner_certificate=cert,
+            joiner_verdict=verdict_for(cert),
+        )
+        self.assertEqual(verdict, "INCONCLUSIVE")
+        self.assertTrue(any("unsigned statement" in r for r in reasons))
+
+    def test_a_verifier_answer_without_stake_is_inconclusive(self) -> None:
+        cert = certificate("01" * 32, "02" * 32, 10)
+        verdict, reasons = accepted(
+            joiner_verdict={
+                "verified": True,
+                "digest": c339.certificate_fields(cert)["digest"],
+                "anchor": cert["checkpoint"]["anchor"],
+            }
+        )
+        self.assertEqual(verdict, "INCONCLUSIVE")
+        self.assertTrue(any("not a verified result" in r for r in reasons))
 
     def test_the_propose_response_names_the_block_hash(self) -> None:
         named = "cd" * 32

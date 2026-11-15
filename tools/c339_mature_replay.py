@@ -18,6 +18,12 @@ The tool decides nothing. It writes `raw/result.json` and the logs; the operator
 evidence README and chooses PASS/INCONCLUSIVE. `execution_proven` is whatever `evidence-pack.py`
 says it is (always false).
 
+**Signatures are checked by the node, not by this script.** The served certificates are posted to
+`POST /api/v1/checkpoint/verify`, which recomputes the digest, checks every signature over it
+against bonded stake and applies `3s > 2t`. `PASS` requires that verdict for the joiner and the
+bootstrap; an attestation count or a quorum log line is corroboration only. A missing verdict is
+INCONCLUSIVE and a verifier refusal is FAIL.
+
 Usage:
   python3 tools/c339_mature_replay.py --out target/c339-mature-replay --target-height 2436
   python3 tools/c339_mature_replay.py --skip-up --skip-chain --out target/c339-mature-replay
@@ -96,6 +102,33 @@ def try_http_json(port: int, path: str):
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ConnectionError) as exc:
         print(f"c339: GET {path} did not answer: {exc}", file=sys.stderr)
         return None
+
+
+def http_post_json(port: int, path: str, body, timeout: float = 20.0):
+    url = f"http://127.0.0.1:{port}{path}"
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read())
+
+
+def try_post_json(port: int, path: str, body):
+    """A POST whose refusal is data: a verifier refusal carries a status, not an exception."""
+    try:
+        return http_post_json(port, path, body)
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read())
+        except (ValueError, OSError):
+            detail = None
+        return {"error": f"HTTP {exc.code}", "status": exc.code, "body": detail}
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ConnectionError) as exc:
+        print(f"c339: POST {path} did not answer: {exc}", file=sys.stderr)
+        return {"error": str(exc)}
 
 
 def measure_post_join(joiner_port: int, before: dict) -> dict:
@@ -255,18 +288,21 @@ def certificate_fields(certificate) -> dict | None:
     except (KeyError, TypeError, ValueError):
         digest = None
     attestations = certificate.get("attestations") or []
-    naming = (
-        sum(
-            1
-            for attestation in attestations
-            if isinstance(attestation, dict)
+    naming = 0
+    signed_naming = 0
+    for attestation in attestations:
+        if not (
+            isinstance(attestation, dict)
             and isinstance(attestation.get("checkpointDigest"), str)
             and digest is not None
             and attestation["checkpointDigest"].lower() == digest
-        )
-        if digest is not None
-        else 0
-    )
+        ):
+            continue
+        naming += 1
+        sender = attestation.get("sender")
+        sig = attestation.get("sig")
+        if isinstance(sender, str) and sender and isinstance(sig, str) and sig:
+            signed_naming += 1
     return {
         "digest": digest,
         "anchor": checkpoint.get("anchor"),
@@ -276,7 +312,58 @@ def certificate_fields(certificate) -> dict | None:
         "history_root": checkpoint.get("historyRoot"),
         "attestations": len(attestations),
         "attestations_naming_digest": naming,
+        # **A digest string is not a signature.** This count requires the structural fields a
+        # verifier needs; the node's verdict below is what checks the bytes and the stake.
+        "attestations_signed_naming_digest": signed_naming,
     }
+
+
+def verdict_fields(verdict) -> dict | None:
+    """The node verifier's answer, or `None` when it is not a verified result.
+
+    Python cannot verify secp256k1, so `PASS` does not rest on counting attestation strings: the
+    benchmark posts the served certificate to the node's `/api/v1/checkpoint/verify`, which
+    recomputes the digest, checks every signature against bonded stake and applies `3s > 2t`.
+    This function is the only reader of that answer.
+    """
+    if not isinstance(verdict, dict) or verdict.get("verified") is not True:
+        return None
+    if verdict.get("error"):
+        return None
+
+    def as_int(key):
+        try:
+            return int(verdict[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    supporting = as_int("supportingStake")
+    total = as_int("totalStake")
+    digest = verdict.get("digest")
+    anchor = verdict.get("anchor")
+    if (
+        supporting is None
+        or total is None
+        or not isinstance(digest, str)
+        or not isinstance(anchor, str)
+    ):
+        return None
+    return {
+        "digest": digest.lower(),
+        "anchor": anchor,
+        "anchor_height": verdict.get("anchorHeight"),
+        "supporting": supporting,
+        "total": total,
+    }
+
+
+def verdict_refused(verdict) -> bool:
+    """Whether the node's verifier answered and refused (as opposed to the route being absent)."""
+    if not isinstance(verdict, dict):
+        return False
+    if verdict.get("verified") is False:
+        return True
+    return verdict.get("error") is not None and verdict.get("status") in (400, 422)
 
 
 def checkpoint_acceptance(
@@ -290,15 +377,23 @@ def checkpoint_acceptance(
     restart: dict,
     post_join_progress,
     log_signals: dict,
+    joiner_verdict=None,
+    bootstrap_verdict=None,
 ) -> tuple[str, list[str]]:
     """**The checkpoint-mode verdict.** Height and `ready` alone are not a join.
 
     A boundary witness can report the requested height and `ready` while serving another root and
-    a zero finalized height; the old predicate called that PASS. PASS now requires a certified
-    anchor at or above the bootstrap's finalized height, a post-state that matches the bootstrap's
-    block at that anchor, finalized values that match, a post-join block that finalizes, a restart
-    that retains the certified anchor and finalized height, and a log that shows the certified path
-    (`replayed none`) with no replay marker.
+    a zero finalized height; the old predicate called that PASS. PASS now requires the node's
+    **verifier** to accept the served certificate (recomputed digest, signatures over bonded stake,
+    `3s > 2t`), a certified anchor at or above the bootstrap's finalized height, a post-state that
+    matches the bootstrap's block at that anchor, finalized values that match, a post-join block
+    that finalizes, a restart that retains the certified anchor and finalized height, and a log that
+    shows the certified path (`replayed none`) with no replay marker.
+
+    `joiner_verdict` and `bootstrap_verdict` are the answers from
+    `POST /api/v1/checkpoint/verify`. A served certificate with no verdict is INCONCLUSIVE; a
+    verifier refusal is FAIL. The quorum log line stays as a corroborating signal, not as the
+    evidence of signatures.
     """
     reasons: list[str] = []
     joiner = certificate_fields(joiner_certificate)
@@ -326,6 +421,53 @@ def checkpoint_acceptance(
             "no attestation names the recomputed canonical digest; the certificate's signatures "
             "were not checked against this statement"
         ]
+    if joiner["attestations_signed_naming_digest"] == 0:
+        return "INCONCLUSIVE", [
+            "no attestation naming the digest carries a sender and a signature; an unsigned "
+            "statement cannot be a PASS"
+        ]
+    # **The node's verifier is the evidence of signatures and stake.** A digest string and a log
+    # line are not; a consumer that cannot do secp256k1 asks the node that can.
+    if joiner_verdict is None:
+        return "INCONCLUSIVE", [
+            "the joiner's certificate was not submitted to a verifier; signatures and signed stake "
+            "were not checked"
+        ]
+    if verdict_refused(joiner_verdict):
+        reasons.append(
+            "the node's verifier refused the joiner's certificate: "
+            f"{joiner_verdict.get('error') or joiner_verdict}"
+        )
+    else:
+        checked = verdict_fields(joiner_verdict)
+        if checked is None:
+            return "INCONCLUSIVE", [
+                "the verifier's answer is not a verified result (missing stake or digest)"
+            ]
+        if checked["digest"] != joiner["digest"]:
+            reasons.append(
+                "the verifier's digest does not match the joiner's recomputed digest"
+            )
+        if checked["anchor"] != joiner["anchor"]:
+            reasons.append("the verifier's anchor does not match the joiner's certificate")
+        if 3 * checked["supporting"] <= 2 * checked["total"]:
+            reasons.append(
+                f"the verifier reports an unquorate certificate: {checked['supporting']} of "
+                f"{checked['total']} stake"
+            )
+    baseline_checked = verdict_fields(bootstrap_verdict)
+    if bootstrap_verdict is None:
+        return "INCONCLUSIVE", [
+            "the bootstrap's certificate was not submitted to a verifier"
+        ]
+    if verdict_refused(bootstrap_verdict):
+        reasons.append("the node's verifier refused the bootstrap's certificate")
+    elif baseline_checked is None:
+        return "INCONCLUSIVE", [
+            "the bootstrap verifier's answer is not a verified result"
+        ]
+    elif baseline_checked["digest"] != baseline["digest"]:
+        reasons.append("the verifier's digest does not match the bootstrap's digest")
     if joiner["digest"] != baseline["digest"] or (
         joiner["anchor"],
         joiner["anchor_post_state"],
@@ -333,11 +475,14 @@ def checkpoint_acceptance(
         reasons.append(
             "the joiner's certificate disagrees with the bootstrap's (digest, anchor or post-state)"
         )
-    if not isinstance(quorum, dict) or quorum.get("supporting") is None or quorum.get("total") is None:
-        return "INCONCLUSIVE", [
-            "the joiner's quorum line (supporting of total stake signed) was not found"
-        ]
-    if 3 * int(quorum["supporting"]) <= 2 * int(quorum["total"]):
+    # The log's quorum line is a corroborating signal, not the evidence: the verifier verdict above
+    # carries the signed stake. A line that contradicts it is still a failure.
+    if (
+        isinstance(quorum, dict)
+        and quorum.get("supporting") is not None
+        and quorum.get("total") is not None
+        and 3 * int(quorum["supporting"]) <= 2 * int(quorum["total"])
+    ):
         reasons.append(
             f"the certificate is not quorate: {quorum['supporting']} of {quorum['total']} stake"
         )
@@ -595,6 +740,18 @@ def main() -> int:
     # the control; the certificate and post-state measured here are the join's claim.
     joiner_certificate = try_http_json(joiner_port, "/api/v1/checkpoint")
     bootstrap_certificate = try_http_json(HTTP_BASE, "/api/v1/checkpoint")
+    # **Signatures and signed stake are checked by the node's verifier**, not by string equality:
+    # the served certificate is posted back to the node that checked it.
+    joiner_verdict = (
+        try_post_json(joiner_port, "/api/v1/checkpoint/verify", joiner_certificate)
+        if isinstance(joiner_certificate, dict)
+        else None
+    )
+    bootstrap_verdict = (
+        try_post_json(HTTP_BASE, "/api/v1/checkpoint/verify", bootstrap_certificate)
+        if isinstance(bootstrap_certificate, dict)
+        else None
+    )
     joiner_fields = certificate_fields(joiner_certificate)
     bootstrap_post_state = None
     if joiner_fields and joiner_fields.get("anchor"):
@@ -609,6 +766,12 @@ def main() -> int:
             baseline = certificate_fields(bootstrap_certificate)
             if baseline and baseline.get("anchor") == joiner_fields.get("anchor"):
                 bootstrap_post_state = baseline.get("anchor_post_state")
+    capture(raw / "joiner-certificate.json",
+            json.dumps(joiner_certificate, indent=2, sort_keys=True) + "\n")
+    capture(raw / "joiner-verdict.json",
+            json.dumps(joiner_verdict, indent=2, sort_keys=True) + "\n")
+    capture(raw / "bootstrap-verdict.json",
+            json.dumps(bootstrap_verdict, indent=2, sort_keys=True) + "\n")
     post_join_progress = measure_post_join(joiner_port, restored)
 
     pre_restart_height = restored.get("maxObservedHeight", 0)
@@ -691,6 +854,11 @@ def main() -> int:
             ),
         },
         "quorum": quorum,
+        "verifier": {
+            "joiner": joiner_verdict,
+            "bootstrap": bootstrap_verdict,
+            "route": "POST /api/v1/checkpoint/verify",
+        },
         "restart": restart,
         "post_join_progress": post_join_progress,
         "log_signals": {
@@ -721,6 +889,8 @@ def main() -> int:
         joiner_certificate=joiner_certificate,
         bootstrap_certificate=bootstrap_certificate,
         bootstrap_post_state=bootstrap_post_state,
+        joiner_verdict=joiner_verdict,
+        bootstrap_verdict=bootstrap_verdict,
         quorum=quorum,
         restart=restart,
         post_join_progress=post_join_progress,

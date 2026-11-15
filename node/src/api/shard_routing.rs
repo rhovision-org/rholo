@@ -412,6 +412,15 @@ impl BlockApi for ShardRoutingBlockApi {
         self.primary_api().checkpoint_certificate(digest).await
     }
 
+    async fn verify_checkpoint_certificate(
+        &self,
+        certificate: &rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
+    ) -> ApiErr<rchain_models::casper::protocol::deploy_service::VerifiedCertificate> {
+        self.primary_api()
+            .verify_checkpoint_certificate(certificate)
+            .await
+    }
+
     async fn checkpoint_attestation(
         &self,
     ) -> ApiErr<rchain_models::casper::protocol::checkpoint::CheckpointAttestation> {
@@ -538,6 +547,23 @@ mod tests {
                 rchain_models::casper::protocol::checkpoint::CheckpointCertificate {
                     checkpoint: self.current_checkpoint().await?,
                     attestations: Vec::new(),
+                },
+            )
+        }
+
+        async fn verify_checkpoint_certificate(
+            &self,
+            _certificate: &rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
+        ) -> ApiErr<rchain_models::casper::protocol::deploy_service::VerifiedCertificate> {
+            self.record("verify_checkpoint_certificate");
+            Ok(
+                rchain_models::casper::protocol::deploy_service::VerifiedCertificate {
+                    verified: true,
+                    digest: "11".repeat(32),
+                    anchor: "22".repeat(32),
+                    anchor_height: 1,
+                    supporting_stake: 3,
+                    total_stake: 4,
                 },
             )
         }
