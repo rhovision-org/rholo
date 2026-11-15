@@ -16,6 +16,7 @@ pub mod block_store;
 pub mod checkpoint_store;
 pub mod dag;
 pub mod errors;
+pub mod history_meter;
 pub mod syntax;
 pub mod work_seen;
 

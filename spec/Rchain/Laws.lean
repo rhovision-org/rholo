@@ -6225,6 +6225,67 @@ def lawsC : List Law := [
       an extension of the statement, appended after `metadataRoot` only when present, so a legacy \
       certificate keeps its v1 digest and is accepted only by the audit, with `windowCommitted: \
       false`." },
+
+  { number := 110, layer := "Sync",
+    statement := "**A served history range is accounted before it leaves.** A history range is \
+      served only when the peer's durable credit pays for its bytes: the debit is exact (the served \
+      total grows by the range and the remaining credit is the credit before minus the range), an \
+      account short of the range is refused without a partial debit, and a credit invoice or a \
+      range nonce is single-use. The meter is the enforcement point; the fee itself is an external \
+      decision, not a consensus rule.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Service.served_requires_credit,
+      `Rchain.Sync.Service.an_unpaid_range_is_refused,
+      `Rchain.Sync.Service.a_served_range_is_accounted,
+      `Rchain.Sync.Service.a_paid_range_is_served,
+      `Rchain.Sync.Service.a_short_account_is_refused],
+    axioms := [],
+    rust := ["block-storage/src/history_meter.rs"],
+    rustWitness := [
+      "block-storage/src/history_meter.rs:a_range_with_credit_is_served_and_debited_exactly",
+      "block-storage/src/history_meter.rs:a_range_without_credit_is_refused_before_a_body_is_read"],
+    witness := [`Rchain.Sync.Service.a_served_range_is_accounted,
+      `Rchain.Sync.Service.an_unpaid_range_is_refused],
+    falsifiable := "Remove the credit check from `serve` and `an_unpaid_range_is_refused` fails; \
+      debit any amount other than the range's cost and `a_served_range_is_accounted` fails. In Rust, \
+      the meter tests redden if a range is debited without credit, if a short account is partially \
+      debited, or if a replayed invoice or nonce credits/serves twice.",
+    note := "**What is metered is bodies, not headers.** Headers and checkpoint metadata are small, \
+      committed by the certificate and needed to join cheaply, so joins are not taxed; the archive's \
+      custody and bandwidth are. The funding rail is the direct REV service fee — the decision of \
+      record (2026-11-15, owner: Patrick): no consensus change, no new token and no new slashing rule. \
+      **What this law does not claim:** the meter does not price the service or prove the on-chain \
+      transfer; the receipt's settlement key is the operator's, and on-chain payment proof is future \
+      work. Peer-to-peer body replication remains the sync path and is not a substitute for the paid \
+      on-demand tier. See Law 111 for the challenge outcome." },
+
+  { number := 111, layer := "Sync",
+    statement := "**Settlement is determined by the possession-challenge outcome.** A paid period \
+      ends with the caller's possession challenge: a pass carries the unused fee and leaves the \
+      archive selected; a failure forfeits the period and marks the peer, excluding it from selection \
+      until the operator's cooldown. The two outcomes are observably different, so a settlement \
+      cannot be confused with the other one, and neither is a consensus event.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Settlement.a_failed_challenge_forfeits,
+      `Rchain.Sync.Settlement.a_passed_challenge_refunds,
+      `Rchain.Sync.Settlement.settlement_is_determined,
+      `Rchain.Sync.Settlement.the_two_outcomes_differ],
+    axioms := [],
+    rust := ["block-storage/src/history_meter.rs"],
+    rustWitness := [
+      "block-storage/src/history_meter.rs:a_failed_challenge_forfeits_the_period_and_marks_the_peer",
+      "block-storage/src/history_meter.rs:a_passed_challenge_carries_the_unused_credit"],
+    witness := [`Rchain.Sync.Settlement.a_failed_challenge_forfeits,
+      `Rchain.Sync.Settlement.the_two_outcomes_differ],
+    falsifiable := "Make `settle` constant and `the_two_outcomes_differ` fails; swap its branches and \
+      both the forfeit and the carry theorems fail. In Rust, the meter tests redden if a failed \
+      challenge leaves credit or does not mark the peer, or if a pass forfeits.",
+    note := "**Forfeiture is service-level, not a slash.** The direct REV payment is not reversed \
+      on-chain; the consequence is non-renewal, credit write-off and selection exclusion. The \
+      challenge proves possession at challenge time (Law 107's boundary), so the settlement is about \
+      the period the challenge covers, not retention for ever. **What this law does not claim:** the \
+      consumer trusts the archive it chose; the settlement key's signature and expiry are verified, \
+      not the on-chain transfer." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC
