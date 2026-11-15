@@ -1116,6 +1116,13 @@ pub(super) fn certified_metadata_entries(
         }
     }
 
+    // **The certificate's commitment to the headers the walk holds.** A statement without one is a
+    // legacy certificate, refused by the sync path; a mismatch means the headers this peer served
+    // are not the headers the quorum signed over. The replay's job is the audit's; this is what a
+    // header can prove.
+    crate::checkpoint::verify_metadata_root(checkpoint, walk.headers.values())
+        .map_err(|e| e.to_string())?;
+
     let mut entries = Vec::with_capacity(walk.headers.len());
     for header in walk.headers.values() {
         entries.push((
@@ -2495,6 +2502,7 @@ mod tests {
                 .collect(),
             parent_digest: None,
             epoch: 0,
+            metadata_root: None,
         }
     }
 
@@ -2639,6 +2647,7 @@ mod tests {
                 .collect(),
             parent_digest: None,
             epoch: 0,
+            metadata_root: None,
         }
     }
 
@@ -2649,10 +2658,15 @@ mod tests {
         let mut grandchild = header_of(2, Some(child.block_hash));
         grandchild.fringe = BTreeSet::from([child.block_hash]);
         let walk = walk_of(vec![genesis.clone(), child.clone(), grandchild.clone()]);
-        let checkpoint = certified_checkpoint_over(
+        let mut checkpoint = certified_checkpoint_over(
             grandchild.block_hash,
             grandchild.post_state_hash,
             vec![grandchild.block_hash],
+        );
+        // The statement commits to the headers the walk is about to accept.
+        checkpoint.metadata_root = Some(
+            rchain_models::casper::protocol::checkpoint::metadata_root(walk.headers.values())
+                .to_hex(),
         );
         let (entries, fringe_root) = certified_metadata_entries(
             &walk,
@@ -2678,6 +2692,60 @@ mod tests {
         );
     }
 
+    /// A legacy statement has no metadata commitment; the sync path refuses it rather than treating
+    /// an uncommitted header set as authenticated.
+    #[test]
+    fn a_metadata_history_without_a_commitment_is_refused() {
+        let genesis = header_of(0, None);
+        let child = header_of(1, Some(genesis.block_hash));
+        let grandchild = header_of(2, Some(child.block_hash));
+        let walk = walk_of(vec![genesis.clone(), child.clone(), grandchild.clone()]);
+        let checkpoint = certified_checkpoint_over(
+            grandchild.block_hash,
+            grandchild.post_state_hash,
+            vec![grandchild.block_hash],
+        );
+        let err = certified_metadata_entries(
+            &walk,
+            &checkpoint,
+            Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
+        )
+        .expect_err("a legacy statement has no metadata commitment");
+        assert!(err.contains("does not commit"), "got {err}");
+    }
+
+    /// **Metadata tampering under an unchanged valid certificate.** The certificate's root is
+    /// computed over the original headers; one committed field of one middle header changes, and
+    /// the joiner refuses the set. This is the arm the audit asked for.
+    #[test]
+    fn a_tampered_metadata_header_is_refused_under_the_same_certificate() {
+        let genesis = header_of(0, None);
+        let child = header_of(1, Some(genesis.block_hash));
+        let grandchild = header_of(2, Some(child.block_hash));
+        let mut walk = walk_of(vec![genesis.clone(), child.clone(), grandchild.clone()]);
+        let mut checkpoint = certified_checkpoint_over(
+            grandchild.block_hash,
+            grandchild.post_state_hash,
+            vec![grandchild.block_hash],
+        );
+        checkpoint.metadata_root = Some(
+            rchain_models::casper::protocol::checkpoint::metadata_root(walk.headers.values())
+                .to_hex(),
+        );
+        let tampered = walk
+            .headers
+            .get_mut(&child.block_hash)
+            .expect("the child header is in the walk");
+        tampered.pre_state_hash = StateHash::new([0x9A; 32]);
+        let err = certified_metadata_entries(
+            &walk,
+            &checkpoint,
+            Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
+        )
+        .expect_err("the headers are not the set the certificate committed to");
+        assert!(err.contains("commits"), "got {err}");
+    }
+
     #[test]
     fn a_metadata_anchor_must_be_the_fringes_maximum_member() {
         let genesis = header_of(0, None);
@@ -2695,6 +2763,7 @@ mod tests {
             parent_digest: None,
             epoch: 0,
             shard_id: "root".to_string(),
+            metadata_root: None,
         };
         let err = certified_metadata_entries(
             &walk,
@@ -2718,6 +2787,7 @@ mod tests {
             parent_digest: None,
             epoch: 0,
             shard_id: "root".to_string(),
+            metadata_root: None,
         };
         let err = certified_metadata_entries(
             &walk,

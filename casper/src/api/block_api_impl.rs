@@ -19,7 +19,9 @@ use rchain_models::ast::Par;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
-use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
+use rchain_models::casper::protocol::casper_message::{
+    BlockHeader, BlockMessage, SignedDeployData,
+};
 use rchain_models::casper::protocol::checkpoint::{
     Checkpoint, CheckpointAttestation, CheckpointCertificate,
 };
@@ -520,6 +522,33 @@ impl BlockApiImpl {
     /// same `post_state_hash` the body does, and a checkpoint-joined validator has metadata without
     /// the historical body. The body is the fallback for a store whose metadata predates this
     /// field; a block with neither is refused rather than checkpointed with a zero root.
+    /// **The commitment over the anchor's ancestor closure.** The walk follows `justifications`
+    /// from the anchor, exactly as the joiner's metadata walk does; `metadata_root` itself filters
+    /// genesis and sorts by block hash, so every signer derives the same root from the same DAG.
+    /// A missing ancestor is a refusal: a partial root would not be the set the joiner verifies.
+    async fn anchor_metadata_root(&self, anchor: &BlockHash) -> Result<Blake2b256Hash, String> {
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![*anchor];
+        let mut headers = Vec::new();
+        while let Some(hash) = stack.pop() {
+            if !seen.insert(hash) {
+                continue;
+            }
+            let metadata = self.dag.lookup(&hash).await?.ok_or_else(|| {
+                format!(
+                    "the checkpoint anchor's ancestor {} has no metadata, so the metadata root \
+                     would not cover the history the joiner walks",
+                    hash.to_hex()
+                )
+            })?;
+            headers.push(header_from_metadata(&metadata));
+            stack.extend(metadata.justifications.iter().copied());
+        }
+        Ok(rchain_models::casper::protocol::checkpoint::metadata_root(
+            &headers,
+        ))
+    }
+
     async fn anchor_post_state(&self, hash: &BlockHash) -> Result<StateHash, String> {
         let metadata = self
             .dag
@@ -540,6 +569,27 @@ impl BlockApiImpl {
                 hash.to_hex()
             )
         })
+    }
+}
+
+/// **The header a stored metadata record describes.** The commitment projection reads only the
+/// fields a body carries; `fringe`, `fringe_state_hash` and `body_available` are carried here for
+/// completeness of the type but are not hashed (see `header_commitment_bytes`).
+fn header_from_metadata(metadata: &BlockMetadata) -> BlockHeader {
+    BlockHeader {
+        block_hash: metadata.block_hash,
+        block_num: metadata.block_num,
+        sender: metadata.sender,
+        seq_num: metadata.seq_num,
+        justifications: metadata.justifications.clone(),
+        bonds_map: metadata.bonds_map.clone(),
+        fringe: metadata.fringe.clone(),
+        fringe_state_hash: metadata.fringe_state_hash,
+        pre_state_hash: metadata.pre_state_hash,
+        post_state_hash: metadata.post_state_hash,
+        body_available: false,
+        sig: metadata.sig.clone(),
+        sig_algorithm: metadata.sig_algorithm.clone(),
     }
 }
 
@@ -1189,6 +1239,10 @@ impl BlockApi for BlockApiImpl {
         // unable to attest until the backfill reached the anchor. The fallback keeps the old
         // behaviour for a node whose metadata predates this path.
         let anchor_post_state = self.anchor_post_state(&anchor_hash).await?;
+        // **The statement commits to the headers it is a statement about.** The anchor's ancestor
+        // closure is the set the joiner will walk; a validator that cannot read every ancestor's
+        // metadata refuses to attest rather than sign a partial root.
+        let metadata_root = self.anchor_metadata_root(&anchor_hash).await?;
         let epoch_length = self.runtime.genesis_pos().params.epoch_length.max(1);
         let anchor_height = i64::from(anchor.height);
         Ok(Checkpoint {
@@ -1208,6 +1262,7 @@ impl BlockApi for BlockApiImpl {
             // drifted from those bonds rather than weighing signatures against the wrong set.
             parent_digest: None,
             epoch: anchor_height / epoch_length,
+            metadata_root: Some(metadata_root.to_hex()),
         })
     }
 

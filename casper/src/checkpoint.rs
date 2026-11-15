@@ -24,6 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_models::casper::protocol::casper_message::BlockHeader;
 use rchain_models::casper::protocol::checkpoint::{
     Checkpoint, CheckpointAttestation, CheckpointCertificate,
 };
@@ -55,6 +56,13 @@ pub enum CheckpointError {
     NoBonds,
     /// An attestation's digest or signature does not verify.
     BadSignature(String),
+    /// **The certificate commits to a different historical metadata set than the one the walk
+    /// holds.** The statement's root is what a joiner recomputes; a mismatch means the headers it
+    /// was given are not the headers the quorum signed over.
+    MetadataRootMismatch { claimed: String, derived: String },
+    /// **The certificate has no metadata commitment.** The sync path requires one; a legacy
+    /// statement is accepted only by the audit, which reports the absence.
+    MissingMetadataRoot,
     /// The anchor state's active bonds differ from the bond set the verifier trusts. Weighing the
     /// signatures against the old set would count the wrong stake, so the certificate is refused.
     /// A bond-set transition needs the checkpoint chain (each certificate verified against its
@@ -82,6 +90,16 @@ impl std::fmt::Display for CheckpointError {
             ),
             CheckpointError::NoBonds => write!(f, "there is no bonded stake to verify against"),
             CheckpointError::BadSignature(why) => write!(f, "bad checkpoint attestation: {why}"),
+            CheckpointError::MetadataRootMismatch { claimed, derived } => write!(
+                f,
+                "the checkpoint commits to metadata root {claimed}, but the walked headers derive \
+                 {derived}"
+            ),
+            CheckpointError::MissingMetadataRoot => write!(
+                f,
+                "the checkpoint does not commit to its historical metadata; this build refuses an \
+                 uncommitted metadata set on the sync path"
+            ),
             CheckpointError::BondSetDrifted { genesis, anchor } => write!(
                 f,
                 "the anchor state's active bond set ({anchor} validator(s)) differs from the \
@@ -183,7 +201,40 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
     for h in &fringe {
         buf.extend_from_slice(h);
     }
+    // **The optional metadata commitment is appended only when present**, so a `None` statement
+    // keeps the exact v1 preimage (and digest) it had before this field existed. The presence byte
+    // keeps the extension unambiguous: a `Some` statement is 33 bytes longer than a `None` one.
+    if let Some(root) = &checkpoint.metadata_root {
+        let bytes = decode_32(root, "metadataRoot")?;
+        buf.push(1);
+        buf.extend_from_slice(&bytes);
+    }
     Ok(Blake2b256Hash::create(&buf))
+}
+
+/// **Recompute the metadata commitment from the headers a joiner walked.**
+///
+/// The certificate's root is the quorum's commitment to the anchor's ancestor headers; the joiner
+/// has the headers, so it can check the statement it is about to trust. Genesis is excluded by
+/// [`metadata_root`] itself, and a missing commitment is a refusal on the sync path (the audit is
+/// the only caller allowed to accept a legacy `None`, and it reports the absence).
+pub fn verify_metadata_root<'a>(
+    checkpoint: &Checkpoint,
+    headers: impl IntoIterator<Item = &'a BlockHeader>,
+) -> Result<(), CheckpointError> {
+    let claimed = checkpoint
+        .metadata_root
+        .as_ref()
+        .ok_or(CheckpointError::MissingMetadataRoot)?;
+    let claimed_bytes = decode_32(claimed, "metadataRoot")?;
+    let derived = rchain_models::casper::protocol::checkpoint::metadata_root(headers);
+    if derived.as_bytes() != &claimed_bytes {
+        return Err(CheckpointError::MetadataRootMismatch {
+            claimed: claimed.clone(),
+            derived: derived.to_hex(),
+        });
+    }
+    Ok(())
 }
 
 /// A verified certificate: the statement, its digest, and the stake that signed it.
@@ -364,6 +415,7 @@ mod tests {
             fringe_hashes: vec![hash(1)],
             parent_digest: None,
             epoch: 4,
+            metadata_root: None,
         }
     }
 
@@ -377,6 +429,24 @@ mod tests {
             Validator::try_from(public_bytes.as_slice()).expect("a validator key"),
             key,
         )
+    }
+
+    fn header(height: i64, hash_byte: u8) -> BlockHeader {
+        BlockHeader {
+            block_hash: rchain_models::block_hash::BlockHash::new([hash_byte; 32]),
+            block_num: rchain_shared::refined::BlockHeight::try_from(height).expect("height"),
+            sender: Validator::new([0u8; 65]),
+            seq_num: rchain_shared::refined::SeqNum::try_from(0).expect("seq"),
+            justifications: BTreeSet::new(),
+            bonds_map: BTreeMap::new(),
+            fringe: BTreeSet::new(),
+            fringe_state_hash: rchain_models::block::state_hash::StateHash::new([3u8; 32]),
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([4u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([5u8; 32]),
+            body_available: false,
+            sig: vec![1, 2, 3],
+            sig_algorithm: "secp256k1".to_string(),
+        }
     }
 
     fn attest(checkpoint: &Checkpoint, key: &PrivateKey) -> CheckpointAttestation {
@@ -409,6 +479,7 @@ mod tests {
             |c: &mut Checkpoint| c.anchor_post_state = hash(9),
             |c: &mut Checkpoint| c.epoch = 5,
             |c: &mut Checkpoint| c.parent_digest = Some(hash(7)),
+            |c: &mut Checkpoint| c.metadata_root = Some(hash(7)),
             |c: &mut Checkpoint| {
                 c.fringe_hashes = vec![hash(1), hash(9)];
             },
@@ -739,5 +810,52 @@ mod tests {
                 .collect()
         };
         assert!(!senders(&cert_a).is_disjoint(&senders(&cert_b)));
+    }
+
+    /// **The metadata commitment is a set commitment over the walked headers.** Genesis is
+    /// excluded; `body_available` is a transport detail and is not hashed; a changed committed
+    /// field changes the root; a missing commitment is refused on the sync path.
+    #[test]
+    fn a_metadata_commitment_is_bound_and_verifies() {
+        use rchain_models::casper::protocol::checkpoint::metadata_root;
+
+        let genesis = header(0, 1);
+        let child = header(1, 2);
+        let root = metadata_root([&genesis, &child]);
+        assert_eq!(
+            root,
+            metadata_root([&child]),
+            "genesis is excluded from the commitment"
+        );
+
+        let mut c = checkpoint();
+        let without = checkpoint_digest(&c).expect("digest");
+        c.metadata_root = Some(root.to_hex());
+        assert_ne!(
+            checkpoint_digest(&c).expect("digest"),
+            without,
+            "the commitment is bound by the signed digest"
+        );
+        assert!(verify_metadata_root(&c, [&genesis, &child]).is_ok());
+
+        let mut other = child.clone();
+        other.body_available = true;
+        assert!(
+            verify_metadata_root(&c, [&genesis, &other]).is_ok(),
+            "body availability is a per-peer transport detail, not a committed field"
+        );
+
+        let mut tampered = child.clone();
+        tampered.pre_state_hash = rchain_models::block::state_hash::StateHash::new([9u8; 32]);
+        assert!(matches!(
+            verify_metadata_root(&c, [&genesis, &tampered]),
+            Err(CheckpointError::MetadataRootMismatch { .. })
+        ));
+
+        let legacy = checkpoint();
+        assert!(matches!(
+            verify_metadata_root(&legacy, [&genesis, &child]),
+            Err(CheckpointError::MissingMetadataRoot)
+        ));
     }
 }

@@ -363,6 +363,7 @@ mod tests {
                 fringe_hashes: vec![anchor],
                 parent_digest: None,
                 epoch: 1,
+                metadata_root: None,
             },
             attestations: vec![CheckpointAttestation {
                 checkpoint_digest: "ef".repeat(32),
