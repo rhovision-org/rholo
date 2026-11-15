@@ -13058,5 +13058,38 @@ the register):
   register's stale replay design (this pass).
 - **Unchanged/open external**: C301, C343, C344, C357, each with its blocker.
 
+### Row disposition
+
+| Row | Class | Where it stands now |
+|---|---|---|
+| C62 | migrated | the state-page serving path; the certified sync hydrates pages and the audit replays, so the "multiplied page" shape is not on the sync path |
+| C64 | migrated | validator catch-up (unchanged); a joiner no longer replays, so the row's catch-up cost is a validator concern |
+| C65 | migrated | body acquisition is the backfill/content-checked fetch; a swallowed failure leaves the floor unchanged |
+| C68 | migrated | a failed sync is `Syncing` then a terminal stop, never Running (Law 108); the signal is the current retry loop's |
+| C181 | migrated | the retry loop inside the sync task; `finished` carries the accepted state or the node refuses it |
+| C188 | superseded | the insert-to-replay path is gone; the joined state is attributable (Laws 108/109) |
+| C193 | migrated | the reset/recovery state machine; outside the certified sync |
+| C194 | migrated | the proposer/sequence path; outside the certified sync |
+| C211 | migrated | catch-up/finality; the certified sync's post-anchor validation reads the certified window |
+| C212 | migrated | the attestation licence; validator path, unchanged |
+| C213 | migrated | the attestation tap; validator path, unchanged |
+| C214 | migrated | the fringe-seen signal; validator path, unchanged |
+| C215 | migrated | the merge/pre-state path; the audit and the window bound what a joiner accepts |
+| C334 | migrated | bootstrap admission; the current bootstrap/fringe request |
+| C335 | migrated | the fringe request/stream; the anchored request and the metadata walk |
+| C337 | migrated | body content hashing; `fetch_block_body`/backfill |
+| C338 | migrated | the walked headers are committed (`metadataRoot`) and the window is committed (`historyRoot`) |
+| C339 | superseded | the replay campaign; the replay sync path was removed in #591 (Laws 108/109, §168) |
+| C374 | migrated | the running loop's bounded read/answer pool; unchanged |
+| C375 | migrated | block/state-page fan-out; unchanged |
+| C376 | superseded | the whole-trie historical roots are replaced by the certified window (Law 109) |
+| C377 | rewritten | Laws 104/105/108/109 and the anchor/window types |
+| C378 | rewritten | Law 107; the direct REV service fee is the funding decision of record |
+| C379 | rewritten | Law 106; the audit's verdict equivalence |
+| C380 | new | Law 108 and `AcceptedState` |
+| C381 | new | Law 109 and `historyRoot` |
+| C382 | new | Law 108's genesis anchor |
+| C383 | new | this pass |
+
 No row closes on a benchmark PASS. The join evidence is cited where it supports a witness; the law and
 the type are the close.
