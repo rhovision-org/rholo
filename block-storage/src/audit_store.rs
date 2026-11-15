@@ -506,42 +506,39 @@ mod tests {
         assert_eq!(store.accepted().await.expect("accepted").len(), 1);
     }
 
-    /// **A failed batch leaves no row at all** — the store's one commit point. The failing store
-    /// rejects the `put` before applying it, which is the strongest fault this interface exposes;
-    /// after the fault is cleared the same acceptance succeeds.
-    #[tokio::test]
-    async fn a_failed_batch_writes_none_of_the_claim() {
-        struct FailingStore {
-            inner: InMemoryKeyValueStore,
-            fail: Arc<AtomicBool>,
+    struct FailingStore {
+        inner: InMemoryKeyValueStore,
+        fail: Arc<AtomicBool>,
+    }
+    impl KeyValueStore for FailingStore {
+        fn get(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>, String> {
+            self.inner.get(keys)
         }
-        impl KeyValueStore for FailingStore {
-            fn get(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>, String> {
-                self.inner.get(keys)
+        fn put(&mut self, pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
+            if self.fail.load(Ordering::SeqCst) {
+                return Err("injected write failure".to_string());
             }
-            fn put(&mut self, pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
-                if self.fail.load(Ordering::SeqCst) {
-                    return Err("injected write failure".to_string());
-                }
-                self.inner.put(pairs)
-            }
-            fn delete(&mut self, keys: &[Vec<u8>]) -> Result<usize, String> {
-                self.inner.delete(keys)
-            }
-            fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
-                self.inner.entries()
-            }
+            self.inner.put(pairs)
         }
-        struct FailingManager {
-            store: SharedStore,
+        fn delete(&mut self, keys: &[Vec<u8>]) -> Result<usize, String> {
+            self.inner.delete(keys)
         }
-        #[async_trait::async_trait]
-        impl KeyValueStoreManager for FailingManager {
-            async fn store(&self, _name: &str) -> Result<SharedStore, String> {
-                Ok(self.store.clone())
-            }
-            async fn shutdown(&self) {}
+        fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+            self.inner.entries()
         }
+    }
+    struct FailingManager {
+        store: SharedStore,
+    }
+    #[async_trait::async_trait]
+    impl KeyValueStoreManager for FailingManager {
+        async fn store(&self, _name: &str) -> Result<SharedStore, String> {
+            Ok(self.store.clone())
+        }
+        async fn shutdown(&self) {}
+    }
+
+    fn failing_manager() -> (FailingManager, Arc<AtomicBool>) {
         let fail = Arc::new(AtomicBool::new(true));
         let kvm = FailingManager {
             store: Arc::new(tokio::sync::Mutex::new(Box::new(FailingStore {
@@ -549,6 +546,15 @@ mod tests {
                 fail: fail.clone(),
             }))),
         };
+        (kvm, fail)
+    }
+
+    /// **A failed batch leaves no row at all** — the store's one commit point. The failing store
+    /// rejects the `put` before applying it, which is the strongest fault this interface exposes;
+    /// after the fault is cleared the same acceptance succeeds.
+    #[tokio::test]
+    async fn a_failed_batch_writes_none_of_the_claim() {
+        let (kvm, fail) = failing_manager();
         let store = AuditStore::open(&kvm).await.expect("open");
         let claim = attestation(0, "nonce-1");
         let answer = response(&claim);
@@ -576,6 +582,66 @@ mod tests {
             .await
             .expect("the same acceptance succeeds once the fault is cleared");
         assert_eq!(store.accepted().await.expect("accepted"), vec![claim]);
+    }
+
+    /// Fault injection on the unsigned commit point: neither nonce nor answer survives
+    /// a failed batch, and the same request becomes durable once the failure clears.
+    /// This falsifies pre-commit write failure; it does not simulate an LMDB process crash.
+    #[tokio::test]
+    async fn a_failed_unsigned_batch_leaves_no_spent_nonce_or_response() {
+        let (kvm, fail) = failing_manager();
+        let store = AuditStore::open(&kvm).await.expect("open");
+        let signer = "07".repeat(33);
+        let nonce = "unsigned-fault";
+        let answer = AuditResponse {
+            report: serde_json::json!({"verdict": "INCOMPLETE", "reason": "header unavailable"}),
+            attestation: None,
+        };
+
+        let error = store
+            .record_unattested_response(&signer, nonce, &answer)
+            .await
+            .expect_err("injected put failure is surfaced");
+        assert!(error.contains("injected write failure"), "{error}");
+
+        let reopened = AuditStore::open(&kvm).await.expect("reopen after failure");
+        assert!(!reopened.nonce_seen(&signer, nonce).await.expect("nonce absent"));
+        assert!(reopened
+            .response(&signer, nonce)
+            .await
+            .expect("answer absent")
+            .is_none());
+        assert!(reopened.accepted().await.expect("no claims").is_empty());
+        assert!(reopened.head(&signer).await.expect("no chain head").is_none());
+
+        fail.store(false, Ordering::SeqCst);
+        reopened
+            .record_unattested_response(&signer, nonce, &answer)
+            .await
+            .expect("retry after clearing fault succeeds");
+
+        let reopened_again = AuditStore::open(&kvm).await.expect("reopen after success");
+        assert!(reopened_again
+            .nonce_seen(&signer, nonce)
+            .await
+            .expect("nonce persisted"));
+        assert_eq!(
+            reopened_again
+                .response(&signer, nonce)
+                .await
+                .expect("response persisted"),
+            Some(answer.clone())
+        );
+        assert!(reopened_again.accepted().await.expect("no claims").is_empty());
+        assert!(reopened_again
+            .head(&signer)
+            .await
+            .expect("no head")
+            .is_none());
+        assert!(reopened_again
+            .record_unattested_response(&signer, nonce, &answer)
+            .await
+            .is_err());
     }
 
     /// Unsigned outcomes survive reopen, are idempotent and cannot create a signed-chain head.
