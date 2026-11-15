@@ -1,5 +1,10 @@
 # n-audit-chain-20261115
 
+> **Superseded by `n-audit-chain-20261115-r1r5`.** The review's R1/R3 fixes changed the
+> `metadataRoot` projection and the checkpoint digest, so the claims in this pack are not claims a
+> current build can verify. This pack is retained as the historical record of its own source
+> (`d2e97c835…`, binary `d84e128d…`); do not compare its digests with the current encoding.
+
 **Evidence locality.** `local-devnet`
 
 ## Scope
