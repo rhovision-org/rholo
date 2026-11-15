@@ -730,6 +730,14 @@ cmd_up() {
     c="$(validator_name "$v")"
     if docker volume inspect "${c}-data" >/dev/null 2>&1; then reused+=("$c"); fi
   done
+  # **Observers are part of a fresh start too.** They were omitted from this pass, so `--fresh`
+  # left an observer's accumulated store in place: a cold-restore measurement would silently start
+  # from the previous run's chain instead of an empty store (the same substitution `--fresh` exists
+  # to announce). Include them so the message names every store it discards.
+  for (( v = 1; v <= m; v++ )); do
+    c="$(observer_name "$v")"
+    if docker volume inspect "${c}-data" >/dev/null 2>&1; then reused+=("$c"); fi
+  done
   if $FRESH && (( ${#reused[@]} > 0 )); then
     echo "==> --fresh: discarding the data volumes of ${reused[*]}"
     for c in "${reused[@]}"; do docker volume rm "${c}-data" >/dev/null 2>&1 || true; done
@@ -742,6 +750,13 @@ cmd_up() {
   # Validator 0 = bootstrap: creates + approves genesis (autopropose optional).
   echo "==> starting $BOOTSTRAP (validator 0, standalone, creates genesis)"
   seed_validator_key "$BOOTSTRAP" 0
+  # **`up` replaces the containers it starts.** The persistent part is the data volume, not the
+  # container: a previous run's container keeps the name, and `docker run --name` then fails
+  # (exit 125) before the network is rebuilt — which is how a repeated `up --fresh` failed while
+  # the volumes it had just discarded were already gone. Stop gracefully, then remove; the volume
+  # is untouched, so an `up` without `--fresh` is still the documented restart.
+  docker stop -t 10 "$BOOTSTRAP" >/dev/null 2>&1 || true
+  docker rm -f "$BOOTSTRAP" >/dev/null 2>&1 || true
   # shellcheck disable=SC2046
   docker run $(docker_opts "$BOOTSTRAP" "$GRPC_BASE" "$HTTP_BASE" "$ADMIN_BASE") \
     -v "${genesis_dir}:/genesis:ro" \
@@ -766,6 +781,8 @@ cmd_up() {
     admin_port=$((ADMIN_BASE + i * 1000))
     echo "==> starting $name (validator $i, bootstraps from $BOOTSTRAP)"
     seed_validator_key "$name" "$i"
+    docker stop -t 10 "$name" >/dev/null 2>&1 || true
+    docker rm -f "$name" >/dev/null 2>&1 || true
     # The genesis files go to every *bonded* validator, not only the bootstrap. They are part of the
     # network configuration: a joining validator replays the genesis block when it first indexes it
     # (the finalized fringe points at block #0), and the genesis's native PoS state and REV vault
@@ -803,6 +820,8 @@ cmd_up() {
     # certificate is verified against the genesis bond set, which is the trust anchor a joiner
     # cannot derive from the chain it is about to accept. The files are mounted read-only and no
     # validator key is passed: reading the bonds is not joining the bonded set.
+    docker stop -t 10 "$name" >/dev/null 2>&1 || true
+    docker rm -f "$name" >/dev/null 2>&1 || true
     # shellcheck disable=SC2046
     docker run $(docker_opts "$name" "$host_port" "$http_port" "$admin_port") \
       -v "${genesis_dir}:/genesis:ro" \

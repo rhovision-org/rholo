@@ -27,6 +27,12 @@ INCONCLUSIVE and a verifier refusal is FAIL.
 Usage:
   python3 tools/c339_mature_replay.py --out target/c339-mature-replay --target-height 2436
   python3 tools/c339_mature_replay.py --skip-up --skip-chain --out target/c339-mature-replay
+
+**A retained long-chain volume must be from the same canonical encodings.** The checkpoint digest
+and `metadataRoot` projection changed in the R1/R3 follow-up, so a volume written by an earlier build
+cannot be replayed by this one: the boot re-verifies its stored certificate, recomputes a different
+digest and refuses to run. Rebuild the chain with the measured binary before using
+`--bootstrap-volume`; do not read that refusal as a restore defect.
 """
 
 from __future__ import annotations
@@ -572,7 +578,21 @@ def wait_for(port: int, predicate, timeout_s: float, poll_s: float, label: str) 
 
 
 def run(argv: list[str], timeout: float | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, check=True, text=True, capture_output=True, timeout=timeout)
+    """Run a step; on failure, keep the command's own words.
+
+    `check=True` raised a `CalledProcessError` whose captured stdout/stderr were never shown, so a
+    devnet refusal (a name conflict, the node's memory preflight, a boot rejection) surfaced as a
+    bare exit code. The step's output is part of the diagnosis, and the benchmark must not throw it
+    away.
+    """
+    completed = subprocess.run(argv, text=True, capture_output=True, timeout=timeout)
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(
+            f"{' '.join(argv)} failed (exit {completed.returncode})"
+            + (f":\n{detail}" if detail else "")
+        )
+    return completed
 
 
 def docker(argv: list[str]) -> str:
@@ -597,7 +617,9 @@ def main() -> int:
     parser.add_argument("--skip-chain", action="store_true",
                         help="skip the chain build and measure against the current chain")
     parser.add_argument("--bootstrap-volume", default=None,
-                        help="start the bootstrap from this retained data volume (no chain build)")
+                        help="start the bootstrap from this retained data volume (no chain build); "
+                             "a mature chain needs DEVNET_NODE_MEMORY above the node's preflight "
+                             "floor (8g for ~2.8k persisted blocks), or the bootstrap refuses to run")
     parser.add_argument("--no-autopropose", action="store_true",
                         help="start without autopropose (measure only, no competing production)")
     parser.add_argument("--no-propose-on-deploy", action="store_true",

@@ -173,6 +173,17 @@ class DigestTests(unittest.TestCase):
         self.assertNotEqual(digests["both"], digests["transposed"])
 
 
+class StepFailureTests(unittest.TestCase):
+    def test_a_failed_step_keeps_the_commands_own_words(self) -> None:
+        """A devnet refusal (a container-name conflict, the node's preflight floor) used to surface
+        as a bare exit code because the step's captured output was discarded."""
+        with self.assertRaises(RuntimeError) as caught:
+            c339.run(["sh", "-c", "echo 'docker: name conflict' >&2; exit 125"])
+        text = str(caught.exception)
+        self.assertIn("exit 125", text)
+        self.assertIn("name conflict", text)
+
+
 class AcceptanceTests(unittest.TestCase):
     def test_a_matching_certificate_and_progress_passes(self) -> None:
         verdict, reasons = accepted()
