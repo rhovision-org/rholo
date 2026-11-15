@@ -13094,7 +13094,7 @@ the register):
 No row closes on a benchmark PASS. The join evidence is cited where it supports a witness; the law and
 the type are the close.
 
-## 169. Sync in the book, a metered archive, and attested re-execution (C384–C396)
+## 169. Sync in the book, a metered archive, and attested re-execution (C384–C399)
 
 This pass does three things the #592 close-out left open: it states the post-#591/#592 model in the
 book and the runbook; it turns history below an anchor into a **metered service**; and it makes a
@@ -13157,6 +13157,9 @@ evidence, never the closure.
 | C394 | done | review R3: the optional commitments use a presence bitmap and per-slot domain tags; the shared Rust/Python fixture pins all four shapes and the transposition |
 | C395 | done | review R4: the benchmark digest includes `historyRoot`; PASS requires the certificate, commitments, digest-naming attestation, quorum and the proposed block's finalization; the tests run in CI |
 | C396 | done | review R5: the genesis pin is checked before any acceptance write and before boot publication; the checkpoint store serializes its read-then-write decisions |
+| C397 | done | follow-up review: the benchmark posts both served certificates to the node's verifier (`POST /api/v1/checkpoint/verify`); an unsigned attestation is structurally refused, a missing verdict is INCONCLUSIVE and a verifier refusal is FAIL |
+| C398 | done | follow-up review: the accepted audit record (claim, head, nonce, answer) commits in one store batch, with a spent-once nonce and a strictly advancing head under one gate; an injected write failure leaves no row |
+| C399 | done | follow-up review: the answer is persisted with the claim and read before replay, so a same-nonce retry after a restart returns the original answer; a spent nonce without an answer is a defined 409 |
 
 ### Non-claims
 
@@ -13170,8 +13173,13 @@ evidence, never the closure.
 - **No new light-client mode.** A bodies-optional observer is the consumer in scope; a header-only
   client is deferred post-mainnet.
 - **No benchmark re-run.** The join's 817.1 s measurement and the 45.5 s target are recorded in
-  `spec/audit/evidence/c377-anchored-join-20261115/`; this pass changes the mechanism and tests it,
-  and a re-measurement is an operational follow-up.
+  `spec/audit/evidence/c377-anchored-join-20261115/`; this pass changes the mechanism and tests it.
+  The final-source mature-chain cold-restore/restart measurement is still owed and is not implied by
+  any unit result here.
+- **The benchmark's signature evidence is the node's verifier.** `PASS` requires
+  `POST /api/v1/checkpoint/verify` for the joiner and the bootstrap; Python verifies no signature
+  itself, so the verdict is only as trustworthy as the node asked. The verifier's negative cases
+  (corrupted signature, another key, unbonded signer, below quorum) are its own Rust tests.
 - The attestation evidence run is a **local devnet** with throwaway keys: it shows the mechanism, not
   a live acceptance, and `execution_proven` stays `false`.
 - **The audit reads every committed header, not just the window.** The metadata commitment now covers
