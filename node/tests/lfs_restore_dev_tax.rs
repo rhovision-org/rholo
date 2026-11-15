@@ -531,7 +531,11 @@ fn snapshot_restore_with_missing_descriptors_trusts_the_bootstrap() {
         JoinerSpec {
             recipient: None,
             wallets_rows: None,
-            bonds: false,
+            // **The network's bond set is the trust anchor; only the local allocation claim is
+            // absent.** A joiner with no bonds cannot verify the checkpoint certificate, so the
+            // missing-descriptor case keeps the bonds and withholds the dev-tax/wallet claim — the
+            // guard's "trust when absent" rule is about the allocation, not the trust anchor.
+            bonds: true,
             bonded: false,
         },
         Expected::Restored,
