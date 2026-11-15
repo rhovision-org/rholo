@@ -1267,7 +1267,8 @@ async fn api_audit_request(
     }
 }
 
-/// `GET /api/v1/audit/attestation/{request_id}` — the signed claim produced for a request.
+/// `GET /api/v1/audit/attestation/{request_id}` — the persisted audit result, with an
+/// optional signed claim. Both AGREE and unsigned verdicts survive a process restart.
 async fn api_audit_attestation(
     State(state): State<HttpState>,
     Path(request_id): Path<String>,
@@ -1279,15 +1280,24 @@ async fn api_audit_attestation(
         )
             .into_response();
     };
-    match service.produced(&request_id) {
-        Some(produced) => json_result(Ok(produced)),
-        None => (
+    match service.produced(&request_id).await {
+        Ok(Some(produced)) => json_result(Ok(produced)),
+        Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
-                "error": "no attestation was produced for this request id; request it first"
+                "error": "no completed audit result exists for this request id"
             })),
         )
             .into_response(),
+        Err(error) => {
+            let status = match error {
+                crate::runtime::audit_service::AuditServiceError::BadNonce => StatusCode::BAD_REQUEST,
+                crate::runtime::audit_service::AuditServiceError::AlreadyAnswered => StatusCode::CONFLICT,
+                crate::runtime::audit_service::AuditServiceError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+                crate::runtime::audit_service::AuditServiceError::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (status, Json(serde_json::json!({ "error": error.to_string() }))).into_response()
+        }
     }
 }
 
