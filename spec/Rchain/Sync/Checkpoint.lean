@@ -20,6 +20,10 @@ and the audit (Law 106) is its counterweight. This model assumes equal weight pe
 `Fin n` set; the Rust weighs stake, and `two_quorums_intersect` is the equal-weight projection of the
 same strict-majority arithmetic.
 
+**The shape rules are modelled, not assumed.** An explicit zero parent is a different statement from
+an absent parent (`the_absence_of_a_parent_is_not_the_zero_parent`), and a negative epoch is not well
+shaped (`a_negative_epoch_is_not_well_shaped`) — the two input-shape gaps the stage-one audit found.
+
 **Why it is not vacuous.** Make the rule `>=` and `two_quorums_intersect` fails on two disjoint halves
 of an even set; drop the digest's anchor projection and `the_digest_binds_the_anchor_and_parent` fails.
 -/
@@ -45,12 +49,42 @@ theorem two_quorums_intersect (a b : Finset (Fin n)) (ha : Quorate a) (hb : Quor
   have : 0 < (a ∩ b).card := by omega
   exact Finset.card_pos.mp this
 
-/-- One checkpoint statement: the anchor, the parent digest, the anchor's post-state and the fringe. -/
+/-- **A parent is either absent or present.** The Rust digest encodes absence as 32 zero bytes and
+    refuses an explicit zero parent as malformed; a presence bit is the model of that sentinel, so
+    `absent` and `present 0` are different statements rather than one aliased digest. -/
+structure Parent where
+  present : Bool
+  digest : Nat
+deriving DecidableEq
+
+/-- One checkpoint statement: the anchor, the parent, the anchor's post-state, the fringe and the
+    epoch. The epoch is an `Int` on purpose: the Rust verifier now rejects a negative epoch, and the
+    model states that shape rule instead of assuming it away with a `Nat`. -/
 structure Statement where
   anchor : Nat
-  parent : Nat
+  parent : Parent
   post : Nat
   fringe : Nat
+  epoch : Int
+deriving DecidableEq
+
+/-- **The statement shape the verifier accepts**: an absent or nonzero parent, and a nonnegative
+    epoch. -/
+def WellShaped (s : Statement) : Prop :=
+  (s.parent.present = true → s.parent.digest ≠ 0) ∧ 0 ≤ s.epoch
+
+/-- **An absent parent is not an explicit zero parent.** The presence bit makes the two distinct
+    statements; the Rust refuses the explicit zero rather than hashing it. -/
+theorem the_absence_of_a_parent_is_not_the_zero_parent :
+    ({ present := false, digest := 0 } : Parent) ≠ { present := true, digest := 0 } := by
+  simp
+
+/-- **A negative epoch is not well shaped.** The producer derives a nonnegative epoch; a signed
+    statement that carries a negative one is refused before hashing. -/
+theorem a_negative_epoch_is_not_well_shaped (s : Statement) (h : s.epoch < 0) :
+    ¬ WellShaped s := by
+  rintro ⟨_, hnonneg⟩
+  omega
 
 /-- A certificate is a statement and the signers it holds. -/
 structure Certificate (n : Nat) where
