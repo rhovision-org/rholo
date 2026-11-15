@@ -217,21 +217,40 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
     for h in &fringe {
         buf.extend_from_slice(h);
     }
-    // **The optional metadata commitment is appended only when present**, so a `None` statement
-    // keeps the exact v1 preimage (and digest) it had before this field existed. The presence byte
-    // keeps the extension unambiguous: a `Some` statement is 33 bytes longer than a `None` one.
-    if let Some(root) = &checkpoint.metadata_root {
-        let bytes = decode_32(root, "metadataRoot")?;
-        buf.push(1);
-        buf.extend_from_slice(&bytes);
-    }
-    // **The validation window is committed after the metadata set**, with the same presence-byte
-    // extension: a statement with neither field keeps the v1 digest, and a statement with both is
-    // unambiguous by field order.
-    if let Some(root) = &checkpoint.history_root {
-        let bytes = decode_32(root, "historyRoot")?;
-        buf.push(1);
-        buf.extend_from_slice(&bytes);
+    // **The optional commitments are encoded unambiguously.** A statement with neither keeps the
+    // exact v1 preimage (and digest) it had before these fields existed. A statement with at least
+    // one appends a single **presence bitmap** (bit0 metadataRoot, bit1 historyRoot) followed by each
+    // present root under its own domain tag. Two `0x01 || root` appendages would alias: a
+    // metadata-only statement and a history-only statement with the same root would share a signed
+    // digest. The bitmap separates those shapes, and the tags keep the two slots distinguishable when
+    // both are present.
+    let metadata_root = checkpoint
+        .metadata_root
+        .as_ref()
+        .map(|root| decode_32(root, "metadataRoot"))
+        .transpose()?;
+    let history_root = checkpoint
+        .history_root
+        .as_ref()
+        .map(|root| decode_32(root, "historyRoot"))
+        .transpose()?;
+    let presence = u8::from(metadata_root.is_some()) | (u8::from(history_root.is_some()) << 1);
+    if presence != 0 {
+        buf.push(presence);
+        if let Some(root) = metadata_root {
+            lp(
+                &mut buf,
+                rchain_models::casper::protocol::checkpoint::METADATA_ROOT_TAG,
+            );
+            buf.extend_from_slice(&root);
+        }
+        if let Some(root) = history_root {
+            lp(
+                &mut buf,
+                rchain_models::casper::protocol::checkpoint::HISTORY_ROOT_TAG,
+            );
+            buf.extend_from_slice(&root);
+        }
     }
     Ok(Blake2b256Hash::create(&buf))
 }
@@ -715,6 +734,89 @@ mod tests {
             checkpoint_digest(&checkpoint()).expect("digest").to_hex(),
             "688779f55fb88078a2a5939ca49ee62e726131d3dfbe2fdf4ce6d6c8d0ed803d"
         );
+    }
+
+    #[derive(serde::Deserialize)]
+    struct DigestCase {
+        name: String,
+        checkpoint: Checkpoint,
+        digest: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct DigestFixture {
+        cases: Vec<DigestCase>,
+    }
+
+    fn digest_fixture() -> DigestFixture {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/checkpoint-digest-goldens.json"
+        )))
+        .expect("the digest fixture parses")
+    }
+
+    /// **Every optional-commitment shape has its own digest.** The legacy neither-present shape keeps
+    /// the v1 digest; a metadata-only and a history-only statement with the same root do not alias;
+    /// the both-present shape and its transposition differ. The same fixture is read by the Python
+    /// benchmark encoder, so the two implementations cannot drift silently.
+    #[test]
+    fn the_presence_bitmap_distinguishes_every_optional_combination() {
+        let fixture = digest_fixture();
+        let mut seen = BTreeSet::new();
+        for case in &fixture.cases {
+            let digest = checkpoint_digest(&case.checkpoint)
+                .expect("a fixture statement is well shaped")
+                .to_hex();
+            assert_eq!(digest, case.digest, "case {}", case.name);
+            assert!(
+                seen.insert(digest.clone()),
+                "case {} repeats a digest; the optional slots alias",
+                case.name
+            );
+        }
+        assert_eq!(seen.len(), fixture.cases.len());
+    }
+
+    /// The two single-slot shapes are not interchangeable: swapping which slot carries the root
+    /// changes the digest, so a signature over one cannot authenticate the other.
+    #[test]
+    fn the_optional_slots_cannot_be_transposed() {
+        let fixture = digest_fixture();
+        let digest = |name: &str| {
+            fixture
+                .cases
+                .iter()
+                .find(|case| case.name == name)
+                .expect("a case")
+                .digest
+                .clone()
+        };
+        assert_ne!(digest("metadata_only"), digest("history_only"));
+        assert_ne!(digest("both"), digest("transposed"));
+    }
+
+    /// **A signature over a metadata-only statement does not verify a history-only one.** The
+    /// attestation names the first statement's digest; the verifier recomputes the second's and
+    /// refuses before any bond arithmetic.
+    #[test]
+    fn a_signature_over_a_metadata_only_statement_does_not_verify_a_history_only_statement() {
+        let (v1, k1) = validator(1);
+        let bonds: BTreeMap<Validator, NonNegI64> = [(v1, NonNegI64::try_from(100).unwrap())]
+            .into_iter()
+            .collect();
+        let mut metadata_only = checkpoint();
+        metadata_only.metadata_root = Some(hash(7));
+        let mut history_only = checkpoint();
+        history_only.history_root = Some(hash(8));
+        let certificate = CheckpointCertificate {
+            checkpoint: history_only,
+            attestations: vec![attest(&metadata_only, &k1)],
+        };
+        assert!(matches!(
+            verify_checkpoint_certificate(&certificate, &bonds, None),
+            Err(CheckpointError::BadSignature(_))
+        ));
     }
 
     /// **A zero parent is invalid, not absent.** `None` hashes as 32 zero bytes; an explicit

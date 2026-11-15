@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime
 import importlib.util
+import json
 import unittest
 from pathlib import Path
 
@@ -90,21 +91,33 @@ class RestoreClockTests(unittest.TestCase):
         )
 
 
+FIXTURE = (
+    Path(__file__).resolve().parents[2]
+    / "casper"
+    / "tests"
+    / "fixtures"
+    / "checkpoint-digest-goldens.json"
+)
+
+
 class DigestTests(unittest.TestCase):
-    def test_the_python_encoding_matches_the_rust_golden_digest(self) -> None:
-        checkpoint = {
-            "shardId": "root",
-            "anchor": "01" * 32,
-            "anchorHeight": 42,
-            "anchorPostState": "02" * 32,
-            "fringeHashes": ["01" * 32],
-            "parentDigest": None,
-            "epoch": 4,
-        }
-        self.assertEqual(
-            c339.checkpoint_digest_hex(checkpoint),
-            "688779f55fb88078a2a5939ca49ee62e726131d3dfbe2fdf4ce6d6c8d0ed803d",
-        )
+    def test_the_python_encoding_matches_the_rust_goldens_for_every_shape(self) -> None:
+        """Rust and Python read the same fixture; the four optional shapes and the transposition
+        must all agree, including `historyRoot` (the old encoder omitted it)."""
+        fixture = json.loads(FIXTURE.read_text())
+        seen: set[str] = set()
+        for case in fixture["cases"]:
+            digest = c339.checkpoint_digest_hex(case["checkpoint"])
+            self.assertEqual(digest, case["digest"], case["name"])
+            self.assertNotIn(digest, seen, f"{case['name']} repeats a digest")
+            seen.add(digest)
+        self.assertEqual(len(seen), len(fixture["cases"]))
+
+    def test_the_optional_slots_cannot_be_transposed(self) -> None:
+        fixture = json.loads(FIXTURE.read_text())
+        digests = {case["name"]: case["digest"] for case in fixture["cases"]}
+        self.assertNotEqual(digests["metadata_only"], digests["history_only"])
+        self.assertNotEqual(digests["both"], digests["transposed"])
 
 
 class AcceptanceTests(unittest.TestCase):

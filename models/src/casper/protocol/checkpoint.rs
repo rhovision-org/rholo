@@ -18,6 +18,14 @@ use crate::casper::protocol::casper_message::BlockHeader;
 /// Domain tag of the metadata-set commitment.
 pub const METADATA_SET_TAG: &[u8] = b"rchain-metadata-set-v1";
 
+/// Domain tag of the optional metadata-root slot in the statement digest. The two optional slots are
+/// tagged separately so a statement cannot be reinterpreted with its commitments transposed; see
+/// `casper/src/checkpoint.rs::checkpoint_digest`.
+pub const METADATA_ROOT_TAG: &[u8] = b"rchain-checkpoint-metadata-root-v1";
+
+/// Domain tag of the optional history-root slot in the statement digest.
+pub const HISTORY_ROOT_TAG: &[u8] = b"rchain-checkpoint-history-root-v1";
+
 /// Domain tag of one header's canonical projection.
 pub const HEADER_COMMITMENT_TAG: &[u8] = b"rchain-header-v1";
 

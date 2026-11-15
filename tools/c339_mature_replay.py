@@ -163,9 +163,15 @@ def checkpoint_digest_hex(checkpoint: dict) -> str:
     buffer += struct.pack(">q", checkpoint["epoch"])
     fringe = sorted(bytes.fromhex(item) for item in checkpoint["fringeHashes"])
     buffer += struct.pack(">I", len(fringe)) + b"".join(fringe)
-    root = checkpoint.get("metadataRoot")
-    if root is not None:
-        buffer += b"\x01" + bytes.fromhex(root)
+    metadata = checkpoint.get("metadataRoot")
+    history = checkpoint.get("historyRoot")
+    presence = (1 if metadata is not None else 0) | (2 if history is not None else 0)
+    if presence:
+        buffer += bytes([presence])
+        if metadata is not None:
+            buffer += _lp(b"rchain-checkpoint-metadata-root-v1") + bytes.fromhex(metadata)
+        if history is not None:
+            buffer += _lp(b"rchain-checkpoint-history-root-v1") + bytes.fromhex(history)
     return hashlib.blake2b(buffer, digest_size=32).hexdigest()
 
 

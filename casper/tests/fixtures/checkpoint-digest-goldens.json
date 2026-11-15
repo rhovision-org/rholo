@@ -1,0 +1,80 @@
+{
+  "why": "The checkpoint statement digest, pinned for every optional-commitment shape. Rust (casper/src/checkpoint.rs) and Python (tools/c339_mature_replay.py) read this file; a drift is a failure in both. The digests were computed independently with Python's hashlib.blake2b(digest_size=32) over the canonical preimage described in the encoder.",
+  "cases": [
+    {
+      "name": "neither",
+      "checkpoint": {
+        "shardId": "root",
+        "anchor": "0101010101010101010101010101010101010101010101010101010101010101",
+        "anchorHeight": 42,
+        "anchorPostState": "0202020202020202020202020202020202020202020202020202020202020202",
+        "fringeHashes": ["0101010101010101010101010101010101010101010101010101010101010101"],
+        "parentDigest": null,
+        "epoch": 4,
+        "metadataRoot": null,
+        "historyRoot": null
+      },
+      "digest": "688779f55fb88078a2a5939ca49ee62e726131d3dfbe2fdf4ce6d6c8d0ed803d"
+    },
+    {
+      "name": "metadata_only",
+      "checkpoint": {
+        "shardId": "root",
+        "anchor": "0101010101010101010101010101010101010101010101010101010101010101",
+        "anchorHeight": 42,
+        "anchorPostState": "0202020202020202020202020202020202020202020202020202020202020202",
+        "fringeHashes": ["0101010101010101010101010101010101010101010101010101010101010101"],
+        "parentDigest": null,
+        "epoch": 4,
+        "metadataRoot": "0707070707070707070707070707070707070707070707070707070707070707",
+        "historyRoot": null
+      },
+      "digest": "99900a3d0572d5fe8c002cfd511d10434739ac9617a85630b350b36b9fca6d7e"
+    },
+    {
+      "name": "history_only",
+      "checkpoint": {
+        "shardId": "root",
+        "anchor": "0101010101010101010101010101010101010101010101010101010101010101",
+        "anchorHeight": 42,
+        "anchorPostState": "0202020202020202020202020202020202020202020202020202020202020202",
+        "fringeHashes": ["0101010101010101010101010101010101010101010101010101010101010101"],
+        "parentDigest": null,
+        "epoch": 4,
+        "metadataRoot": null,
+        "historyRoot": "0808080808080808080808080808080808080808080808080808080808080808"
+      },
+      "digest": "772070267166c70f3544edb3cc391b122c3ef8a1c010f419b06b38da739792eb"
+    },
+    {
+      "name": "both",
+      "checkpoint": {
+        "shardId": "root",
+        "anchor": "0101010101010101010101010101010101010101010101010101010101010101",
+        "anchorHeight": 42,
+        "anchorPostState": "0202020202020202020202020202020202020202020202020202020202020202",
+        "fringeHashes": ["0101010101010101010101010101010101010101010101010101010101010101"],
+        "parentDigest": null,
+        "epoch": 4,
+        "metadataRoot": "0707070707070707070707070707070707070707070707070707070707070707",
+        "historyRoot": "0808080808080808080808080808080808080808080808080808080808080808"
+      },
+      "digest": "6f274e970108792a16a6947a72315868c820ff091264f8c001a0f3eb809cd0c8"
+    },
+    {
+      "name": "transposed",
+      "checkpoint": {
+        "shardId": "root",
+        "anchor": "0101010101010101010101010101010101010101010101010101010101010101",
+        "anchorHeight": 42,
+        "anchorPostState": "0202020202020202020202020202020202020202020202020202020202020202",
+        "fringeHashes": ["0101010101010101010101010101010101010101010101010101010101010101"],
+        "parentDigest": null,
+        "epoch": 4,
+        "metadataRoot": "0808080808080808080808080808080808080808080808080808080808080808",
+        "historyRoot": "0707070707070707070707070707070707070707070707070707070707070707"
+      },
+      "digest": "805296950259f7d85568602a6a5297e0ae5e7d1b6b07b91cb0ed087583daa15c"
+    }
+  ]
+}
