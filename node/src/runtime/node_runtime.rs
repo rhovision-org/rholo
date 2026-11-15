@@ -907,6 +907,7 @@ pub fn wire_block_processing(
     autopropose: Option<Arc<dyn Fn() + Send + Sync>>,
     attest_on_new_blocks: Option<Arc<dyn Fn(&BlockMessage) + Send + Sync>>,
     health: ShardHealth,
+    accepted_window: rchain_casper::engine::anchor::SharedAcceptedWindow,
 ) -> (mpsc::Sender<BlockMessage>, mpsc::Sender<BlockMessage>) {
     let handles = wire_block_processing_observed(
         comm_state,
@@ -919,6 +920,7 @@ pub fn wire_block_processing(
         attest_on_new_blocks,
         None,
         health,
+        accepted_window,
     );
     (handles.incoming_blocks, handles.validated_blocks)
 }
@@ -943,6 +945,7 @@ fn wire_block_processing_observed(
     attest_on_new_blocks: Option<Arc<dyn Fn(&BlockMessage) + Send + Sync>>,
     queue_metrics: Option<(Arc<MetricsRegistry>, usize)>,
     health: ShardHealth,
+    accepted_window: rchain_casper::engine::anchor::SharedAcceptedWindow,
 ) -> BlockProcessingHandles {
     let (incoming_blocks_tx, incoming_blocks_rx) =
         mpsc::channel(rchain_casper::engine::node_running::MAX_PENDING_BLOCKS);
@@ -1130,6 +1133,7 @@ fn wire_block_processing_observed(
         block_index,
         log,
         health,
+        accepted_window,
     );
     tokio::spawn(processor);
 
@@ -2341,6 +2345,10 @@ async fn setup_shard_runtime(
         _ => None,
     };
 
+    // **The runtime's admissible pre-state window** (review R2): installed by the launch when the
+    // accepted anchor is known, then read by the block processor and grown by every validated insert.
+    let accepted_window: rchain_casper::engine::anchor::SharedAcceptedWindow =
+        Arc::new(tokio::sync::RwLock::new(None));
     // Block receiver + processor streams (spawned internally).
     let handles = wire_block_processing_observed(
         comm_state,
@@ -2353,6 +2361,7 @@ async fn setup_shard_runtime(
         attest_on_new_blocks,
         Some((metrics, index)),
         shard_health.clone(),
+        accepted_window.clone(),
     );
     let incoming_blocks_tx = handles.incoming_blocks;
 
@@ -2439,6 +2448,7 @@ async fn setup_shard_runtime(
         exporter,
         parts.phase.clone(),
         checkpoint_source,
+        accepted_window.clone(),
         log.clone(),
     );
     let node_launch_log = log.clone();
@@ -2558,6 +2568,7 @@ async fn setup_shard_runtime(
             conf.casper.equivocation_injection,
             conf.casper.self_replay_injection,
             shard_health.clone(),
+            accepted_window.clone(),
         );
         let proposer_stream = proposer_instance::create(
             proposer_parts.queue_rx,

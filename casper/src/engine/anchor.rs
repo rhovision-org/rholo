@@ -10,10 +10,12 @@
 //! prior launch path could reach by republishing `CURRENT_ROOT` from a DAG/tip heuristic.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
+use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
 use rchain_shared::base16;
 
@@ -119,6 +121,57 @@ impl AcceptedState {
         &self.window
     }
 }
+
+/// **The runtime's admissible pre-state roots** (review R2).
+///
+/// The accepted state names the checkpoint root and the certificate's validation window. As the
+/// chain advances, this node derives further roots by validating post-anchor blocks. A block whose
+/// pre-state is none of those is refused — **the state store's contents are not consulted**, so an
+/// older historical root left on disk (from before the join, or from a restart) is not permission.
+#[derive(Clone, Debug)]
+pub struct AcceptedWindow {
+    /// The anchor's root: the state a post-anchor block may build on directly.
+    anchor_root: Blake2b256Hash,
+    /// The certificate's validation window (Law 109).
+    certified: BTreeSet<Blake2b256Hash>,
+    /// Roots this node derived by accepting a validated post-anchor block.
+    derived: BTreeSet<Blake2b256Hash>,
+}
+
+impl AcceptedWindow {
+    /// The window an accepted state starts with: the anchor root and the certified set.
+    pub fn from_accepted(state: &AcceptedState) -> Self {
+        AcceptedWindow {
+            anchor_root: state.root(),
+            certified: state.window().clone(),
+            derived: BTreeSet::new(),
+        }
+    }
+
+    /// **Note the roots a validated post-anchor block derived.** Called beside the insert that
+    /// records the block; a rejected or failed block derives nothing this node may build on.
+    pub fn note_roots(&mut self, metadata: &BlockMetadata) {
+        if !metadata.validated || metadata.validation_failed {
+            return;
+        }
+        self.derived.insert(Blake2b256Hash::from_byte_array(
+            metadata.post_state_hash.as_bytes(),
+        ));
+        self.derived.insert(Blake2b256Hash::from_byte_array(
+            metadata.fringe_state_hash.as_bytes(),
+        ));
+    }
+
+    /// **The membership rule, not a height rule.**
+    pub fn permits(&self, pre_state: StateHash) -> bool {
+        let root = Blake2b256Hash::from_byte_array(pre_state.as_bytes());
+        root == self.anchor_root || self.certified.contains(&root) || self.derived.contains(&root)
+    }
+}
+
+/// The shared runtime window. `None` before the boot installs it: a block that arrives early is a
+/// retryable internal fault, not an acceptance and not a verdict about the block.
+pub type SharedAcceptedWindow = Arc<tokio::sync::RwLock<Option<AcceptedWindow>>>;
 
 fn checkpoint_root(verified: &VerifiedCheckpoint) -> Result<Blake2b256Hash, String> {
     let bytes = base16::decode(&verified.checkpoint.anchor_post_state)
@@ -229,5 +282,54 @@ mod tests {
 
         let not_genesis = block(1, 1, 2);
         assert!(AcceptedState::from_genesis(pin, &not_genesis).is_err());
+    }
+
+    /// **Review R2 — the runtime window is membership, not height.** Only the anchor root, a
+    /// certified window root or a root this node derived by accepting a validated block is
+    /// permitted; a root that merely exists in the store is not.
+    #[test]
+    fn an_accepted_window_permits_only_the_anchor_certified_and_derived_roots() {
+        let certified = Blake2b256Hash::from_byte_array(&[0xCC; 32]);
+        let state = AcceptedState::from_certificate(verified(0xAB), BTreeSet::from([certified]))
+            .expect("anchor");
+        let mut window = AcceptedWindow::from_accepted(&state);
+
+        assert!(
+            window.permits(StateHash::new([0xAB; 32])),
+            "the anchor root"
+        );
+        assert!(
+            window.permits(StateHash::new([0xCC; 32])),
+            "a certified window root"
+        );
+        assert!(
+            !window.permits(StateHash::new([0xDD; 32])),
+            "an uncertified historical root is refused even if a store holds it"
+        );
+
+        let mut meta = BlockMetadata::from_block(&block(10, 3, 0xEE));
+        meta.validated = true;
+        meta.validation_failed = false;
+        window.note_roots(&meta);
+        assert!(
+            window.permits(meta.post_state_hash),
+            "a root derived by a validated post-anchor block"
+        );
+    }
+
+    /// A rejected block derives nothing: its roots are not admitted for later blocks.
+    #[test]
+    fn a_derived_root_is_permitted_only_after_a_validated_block_is_noted() {
+        let state =
+            AcceptedState::from_certificate(verified(0xAB), BTreeSet::new()).expect("anchor");
+        let mut window = AcceptedWindow::from_accepted(&state);
+        let mut meta = BlockMetadata::from_block(&block(10, 3, 0xEE));
+        meta.validated = true;
+        meta.validation_failed = true;
+        window.note_roots(&meta);
+        assert!(
+            !window.permits(meta.post_state_hash),
+            "a failed block's root is not an input"
+        );
     }
 }

@@ -397,6 +397,9 @@ pub async fn apply<
     // engine owns the sync protocol and has no HTTP client; the node wires the bootstrap's client
     // endpoint. `None` makes sync fail closed: a fringe is not a state root without a quorum.
     checkpoint_source: Option<Arc<dyn crate::engine::checkpoint_source::CheckpointSource>>,
+    // **The runtime's admissible pre-state window** (review R2). Installed below from the accepted
+    // anchor; `None` until then is a retryable fault for any block that arrives early.
+    accepted_window: crate::engine::anchor::SharedAcceptedWindow,
     log: Arc<dyn Log>,
 ) -> Result<(), String> {
     let source = LogSource::new("casper.engine.NodeLaunch");
@@ -790,9 +793,10 @@ pub async fn apply<
                     // **The stored certificate is the anchor** (Law 108): its checkpoint root is the
                     // root this node runs from. The approved fringe's state is the finality fringe's
                     // merged state, not the execution root, so it is not substituted here.
+                    let window = rebuild_window_from_dag(dag.as_ref(), &verified).await?;
                     accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
                         verified.clone(),
-                        BTreeSet::new(),
+                        window,
                     )?);
                 } else {
                     log.warn(
@@ -900,6 +904,12 @@ pub async fn apply<
          so it refuses to run"
             .to_string()
     })?;
+    // **Install the runtime's admissible pre-state window** (review R2) before any block can be
+    // accepted: the anchor root, the certified window, and the roots this node already derived above
+    // the anchor. The state store's contents are never consulted for permission.
+    let mut runtime_window = crate::engine::anchor::AcceptedWindow::from_accepted(&accepted);
+    seed_derived_roots(dag.as_ref(), accepted.anchor(), &mut runtime_window).await?;
+    *accepted_window.write().await = Some(runtime_window);
     match runtime_manager.publish_accepted_root(accepted.root()).await {
         Ok(true) => log.info(source, "published CURRENT_ROOT from the accepted anchor"),
         Ok(false) => {
@@ -1455,6 +1465,99 @@ async fn start_catchup_if_anchored(
         )
         .await;
     });
+}
+
+/// **The anchor's ancestor closure from DAG metadata** — the same walk the producer and joiner use.
+async fn anchor_closure(
+    dag: &dyn BlockDagStorage,
+    anchor: BlockHash,
+) -> Result<Vec<rchain_models::casper::protocol::casper_message::BlockHeader>, String> {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![anchor];
+    let mut headers = Vec::new();
+    while let Some(hash) = stack.pop() {
+        if !seen.insert(hash) {
+            continue;
+        }
+        let metadata = dag.lookup(&hash).await?.ok_or_else(|| {
+            format!(
+                "the accepted anchor's ancestor {} has no DAG metadata, so the stored certificate \
+                 cannot be re-verified",
+                hash.to_hex()
+            )
+        })?;
+        headers.push(metadata.to_header(false));
+        stack.extend(metadata.justifications.iter().copied());
+    }
+    Ok(headers)
+}
+
+/// **Rebuild and verify the certified validation window at boot** (review R2). The stored
+/// certificate must carry both commitments; the DAG must hold the anchor's closure; the walked
+/// headers must reproduce both commitments. A missing commitment, header or match refuses to run
+/// with a named reason rather than substituting an empty window.
+async fn rebuild_window_from_dag(
+    dag: &dyn BlockDagStorage,
+    verified: &crate::checkpoint::VerifiedCheckpoint,
+) -> Result<BTreeSet<Blake2b256Hash>, String> {
+    if verified.checkpoint.metadata_root.is_none() {
+        return Err(
+            "the stored certificate has no metadata commitment; this build refuses to run \
+             without one"
+                .to_string(),
+        );
+    }
+    if verified.checkpoint.history_root.is_none() {
+        return Err(
+            "the stored certificate has no validation-window commitment; this build refuses to \
+             run without one"
+                .to_string(),
+        );
+    }
+    let anchor = BlockHash::try_from_hex(&verified.checkpoint.anchor)
+        .map_err(|e| format!("the stored certificate's anchor is not a block hash: {e}"))?;
+    let closure = anchor_closure(dag, anchor).await?;
+    crate::checkpoint::check_committed_headers(closure.iter())
+        .map_err(|e| format!("the stored certificate's committed headers are inconsistent: {e}"))?;
+    crate::checkpoint::verify_metadata_root(&verified.checkpoint, closure.iter()).map_err(|e| {
+        format!("the stored certificate's metadata commitment does not verify: {e}")
+    })?;
+    crate::checkpoint::verify_validation_window(&verified.checkpoint, closure.iter()).map_err(
+        |e| format!("the stored certificate's validation-window commitment does not verify: {e}"),
+    )?;
+    Ok(
+        rchain_models::casper::protocol::checkpoint::validation_window_roots(closure.iter())
+            .into_iter()
+            .map(|root| Blake2b256Hash::from_byte_array(&root))
+            .collect(),
+    )
+}
+
+/// **Seed the runtime window with roots this node already derived above the anchor.** A restart's
+/// DAG holds post-anchor blocks whose children may arrive before this node produces a new block.
+async fn seed_derived_roots(
+    dag: &dyn BlockDagStorage,
+    anchor: &crate::engine::anchor::TrustAnchor,
+    window: &mut crate::engine::anchor::AcceptedWindow,
+) -> Result<(), String> {
+    let anchor_height = match anchor {
+        crate::engine::anchor::TrustAnchor::Genesis(_) => 0,
+        crate::engine::anchor::TrustAnchor::Checkpoint { verified, .. } => {
+            verified.checkpoint.anchor_height
+        }
+    };
+    let representation = dag.get_representation().await;
+    let topo = representation
+        .topo_sort_unsafe(anchor_height + 1, None)
+        .map_err(|e| format!("the DAG above the accepted anchor is unreadable: {e}"))?;
+    for hashes in topo {
+        for hash in hashes {
+            if let Some(metadata) = dag.lookup(&hash).await? {
+                window.note_roots(&metadata);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

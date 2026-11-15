@@ -1836,7 +1836,7 @@ where
 /// `restore_attempts` is carried over rather than reset, so the cap in
 /// [`restore_divergent_justifications`] is a per-block-lifetime budget: a record that flaps between
 /// restored and failed cannot buy unlimited revalidations.
-fn mark_failed(meta: &BlockMetadata, status: BlockStatus) -> BlockMetadata {
+pub(crate) fn mark_failed(meta: &BlockMetadata, status: BlockStatus) -> BlockMetadata {
     BlockMetadata {
         validated: true,
         validation_failed: true,
