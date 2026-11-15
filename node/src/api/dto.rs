@@ -652,7 +652,7 @@ pub struct HistoryRangeRequest {
     pub from: i64,
     pub to: i64,
     #[serde(default)]
-    pub authorization: Option<String>,
+    pub authorization: Option<crate::web::history_credit::SignedHistoryAuthorization>,
 }
 
 /// One block at a height. `body` is absent when this node does not hold the body; `block_hash` is
@@ -674,6 +674,10 @@ pub struct HistoryRange {
     pub from: i64,
     pub to: i64,
     pub complete: bool,
+    /// Bytes this response was charged for (`0` on an open archive).
+    pub charged_bytes: u64,
+    /// The charged payer's key, when the archive is metered.
+    pub payer: Option<String>,
     pub entries: Vec<HistoryRangeEntry>,
 }
 

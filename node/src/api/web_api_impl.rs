@@ -1351,6 +1351,8 @@ impl WebApi for WebApiImpl {
             from: request.from,
             to: request.to,
             complete,
+            charged_bytes: 0,
+            payer: None,
             entries,
         })
     }

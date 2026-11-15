@@ -14,7 +14,7 @@
 use std::collections::BTreeSet;
 
 /// The operator's history settings (from `api-server.archive*`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HistoryConfig {
     /// Advertise and serve the archive tier.
     pub archive: bool,
@@ -22,6 +22,44 @@ pub struct HistoryConfig {
     pub history_retention: i64,
     /// Archive endpoints this node was configured with (`--archive-peers`).
     pub archive_peers: Vec<String>,
+    /// `receipt` (default), `allowance`, or `open`.
+    pub credit_policy: String,
+    /// The archive's settlement public key (hex); required by a metered policy.
+    pub settlement_key: Option<String>,
+    /// `payer-key = bytes` allowances (`--archive-allow`).
+    pub allowances: Vec<String>,
+    /// The settlement period's length in seconds.
+    pub period_seconds: u64,
+    /// Per-payer serving rate.
+    pub rate_bytes_per_sec: u64,
+    /// The most bytes one payer may be served in a period.
+    pub max_bytes_per_period: u64,
+}
+
+impl Default for HistoryConfig {
+    fn default() -> Self {
+        HistoryConfig {
+            archive: false,
+            history_retention: 0,
+            archive_peers: Vec::new(),
+            // **A metered archive by default.** A node that advertises the tier without a settlement
+            // key refuses to start rather than silently serving history unmetered; `--archive-open`
+            // is the explicit opt-out.
+            credit_policy: "receipt".to_string(),
+            settlement_key: None,
+            allowances: Vec::new(),
+            period_seconds: 3_600,
+            rate_bytes_per_sec: 1 << 20,
+            max_bytes_per_period: 1 << 30,
+        }
+    }
+}
+
+impl HistoryConfig {
+    /// The policy this configuration names, with `--archive-open` taking precedence.
+    pub fn policy(&self) -> Result<crate::web::history_service::CreditPolicy, String> {
+        crate::web::history_service::CreditPolicy::parse(&self.credit_policy)
+    }
 }
 
 /// The most heights one challenge may sample. A bounded response, independent of the chain length.

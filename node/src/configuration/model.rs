@@ -165,6 +165,20 @@ pub struct ApiServer {
     /// Archive endpoints this node may backfill from, as `http://host:port` URLs. The challenge
     /// route is how a client verifies an archive actually holds what it advertises.
     pub archive_peers: Vec<String>,
+    /// `receipt`, `allowance` or `open` (`api-server.archive-credit-policy`).
+    pub archive_credit_policy: String,
+    /// The archive's settlement public key (hex); required by a metered policy.
+    pub archive_settlement_key: Option<String>,
+    /// `payer-key = bytes` allowances for the allowance policy.
+    pub archive_allow: Vec<String>,
+    /// The settlement period's length in seconds.
+    pub archive_period_seconds: u64,
+    /// Per-payer serving rate, in bytes per second.
+    pub archive_rate_bytes_per_sec: u64,
+    /// The most bytes one payer may be served in a period.
+    pub archive_max_bytes_per_period: u64,
+    /// Explicitly unmetered history; wins over `archive-credit-policy`.
+    pub archive_open: bool,
     pub ocapn_listen: Option<String>,
     /// Bind the **`unix`** OCapN listener at this socket path, or `None` for none (issue #249). A
     /// transport rather than a second address for the one above, and the one the node offers that is

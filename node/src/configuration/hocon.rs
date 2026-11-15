@@ -269,6 +269,41 @@ fn api_server_from_hocon(h: &Hocon) -> Result<ApiServer, String> {
                     .collect()
             })
             .unwrap_or_default(),
+        archive_credit_policy: to_optional_string(h, "archive-credit-policy")?
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "receipt".to_string()),
+        archive_settlement_key: to_optional_string(h, "archive-settlement-key")?
+            .filter(|s| !s.is_empty()),
+        archive_allow: to_optional_string(h, "archive-allow")?
+            .map(|s| {
+                s.split(',')
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        archive_period_seconds: match get_opt(h, "archive-period-seconds") {
+            Some(v) => u64::try_from(to_i64(v)?).map_err(|_| {
+                "api-server.archive-period-seconds must be a non-negative integer".to_string()
+            })?,
+            None => 3_600,
+        },
+        archive_rate_bytes_per_sec: match get_opt(h, "archive-rate-bytes-per-sec") {
+            Some(v) => u64::try_from(to_i64(v)?).map_err(|_| {
+                "api-server.archive-rate-bytes-per-sec must be a non-negative integer".to_string()
+            })?,
+            None => 1 << 20,
+        },
+        archive_max_bytes_per_period: match get_opt(h, "archive-max-bytes-per-period") {
+            Some(v) => u64::try_from(to_i64(v)?).map_err(|_| {
+                "api-server.archive-max-bytes-per-period must be a non-negative integer".to_string()
+            })?,
+            None => 1 << 30,
+        },
+        archive_open: match get_opt(h, "archive-open") {
+            Some(v) => to_bool(v)?,
+            None => false,
+        },
         ocapn_listen: to_optional_string(h, "ocapn-listen")?.filter(|s| !s.is_empty()),
         // The `unix` transport, same shape: absent or empty means the node does not listen on UDS.
         ocapn_listen_unix: to_optional_string(h, "ocapn-listen-unix")?.filter(|s| !s.is_empty()),

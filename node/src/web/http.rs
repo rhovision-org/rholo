@@ -261,6 +261,9 @@ pub struct HttpState {
     /// The operator's history tier (`api-server.archive*`), served by `/api/v1/archives` and the
     /// challenge route.
     pub history: crate::web::archives::HistoryConfig,
+    /// **The metered history service** (Laws 110/111), present on an archive. The range route charges
+    /// through it before a body leaves; `None` is an unmetered surface (and a non-archive).
+    pub history_service: Option<Arc<crate::web::history_service::HistoryService>>,
 }
 
 /// State shared by the admin HTTP server (port of the `adminWebApiRoutes` argument of
@@ -1003,6 +1006,28 @@ async fn api_get_block(State(state): State<HttpState>, Path(hash): Path<String>)
 /// or a justification from it is reading the node's word. With the preimage, the client hashes it,
 /// compares to `blockHash`, and then reads the fields off bytes it has verified.
 async fn api_get_raw_block(State(state): State<HttpState>, Path(hash): Path<String>) -> Response {
+    // **Below the archive's floor a body is the paid service.** A metered archive does not hand it
+    // out on the raw route: the payer asks for a bounded range with an authorization, so the debit
+    // precedes the body. Above the floor the raw route is the ordinary block surface.
+    if let Some(service) = state.history_service.as_ref() {
+        if service.policy() != crate::web::history_service::CreditPolicy::Open {
+            let mut below_floor = false;
+            if let Ok(info) = state.web_api.get_block(&hash).await {
+                if let Ok(caps) = state.web_api.capabilities().await {
+                    below_floor = info.block_info.block_number < caps.history.bodies_from;
+                }
+            }
+            if below_floor {
+                return history_error_response(
+                    crate::web::history_service::HistoryServiceError::Unauthorized(
+                        "this body is below the archive floor; request it with \
+                         POST /api/v1/history/range and a payer authorization"
+                            .to_string(),
+                    ),
+                );
+            }
+        }
+    }
     json_result(state.web_api.raw_block(&hash).await)
 }
 
@@ -1069,12 +1094,128 @@ async fn api_history_challenge(
 }
 
 /// `POST /api/v1/history/range` — a bounded window of bodies. The body names the window and,
-/// for a metered archive, carries the payer's authorization.
+/// for a metered archive, carries the payer's authorization. The response is built first (no body
+/// leaves), then charged, then sent: a refusal sends nothing.
 async fn api_history_range(
     State(state): State<HttpState>,
     Json(request): Json<crate::api::dto::HistoryRangeRequest>,
 ) -> Response {
-    json_result(state.web_api.history_range(&request).await)
+    let mut range = match state.web_api.history_range(&request).await {
+        Ok(range) => range,
+        Err(e) => {
+            return json_result(Err::<crate::api::dto::HistoryRange, _>(e));
+        }
+    };
+    let Some(service) = state.history_service.as_ref() else {
+        return json_result(Ok(range));
+    };
+    let bytes: u64 = range
+        .entries
+        .iter()
+        .filter_map(|entry| entry.body.as_ref())
+        .map(|body| (body.encoded.len() + body.sig.len()) as u64)
+        .sum();
+    match service
+        .charge(
+            request.authorization.as_ref(),
+            request.from,
+            request.to,
+            bytes,
+            now_unix_ms(),
+        )
+        .await
+    {
+        Ok(_) => {
+            range.charged_bytes = bytes;
+            range.payer = request
+                .authorization
+                .as_ref()
+                .map(|signed| signed.authorization.payer.clone());
+            json_result(Ok(range))
+        }
+        Err(e) => history_error_response(e),
+    }
+}
+
+/// A signed credit receipt submitted by a payer.
+#[derive(serde::Deserialize)]
+struct HistoryCreditRequest {
+    receipt: crate::web::history_credit::SignedHistoryCredit,
+}
+
+/// `POST /api/v1/history/credit` — deposit a settlement-key receipt into the payer's meter.
+async fn api_history_credit(
+    State(state): State<HttpState>,
+    Json(request): Json<HistoryCreditRequest>,
+) -> Response {
+    let Some(service) = state.history_service.as_ref() else {
+        return history_error_response(
+            crate::web::history_service::HistoryServiceError::Unauthorized(
+                "this node is not a metered archive".to_string(),
+            ),
+        );
+    };
+    match service.grant(&request.receipt, now_unix_ms()).await {
+        Ok(account) => json_result(Ok(serde_json::json!({
+            "payer": request.receipt.credit.payer,
+            "credit": account.credit,
+            "served": account.served,
+            "period": account.period,
+        }))),
+        Err(e) => history_error_response(e),
+    }
+}
+
+/// `GET /api/v1/history/meter/{payer}` — a payer's own prepaid meter.
+async fn api_history_meter(State(state): State<HttpState>, Path(payer): Path<String>) -> Response {
+    let Some(service) = state.history_service.as_ref() else {
+        return history_error_response(
+            crate::web::history_service::HistoryServiceError::Unauthorized(
+                "this node is not a metered archive".to_string(),
+            ),
+        );
+    };
+    match service.account(&payer).await {
+        Ok(Some(account)) => json_result(Ok(serde_json::json!({
+            "payer": payer,
+            "credit": account.credit,
+            "served": account.served,
+            "spent": account.spent,
+            "period": account.period,
+            "periodSpent": account.period_spent,
+            "marked": account.marked,
+        }))),
+        Ok(None) => json_result(Ok(serde_json::json!({
+            "payer": payer,
+            "credit": 0,
+            "served": 0,
+            "spent": 0,
+            "period": 0,
+            "periodSpent": 0,
+            "marked": false,
+        }))),
+        Err(e) => history_error_response(
+            crate::web::history_service::HistoryServiceError::NoCredit(e),
+        ),
+    }
+}
+
+/// A service refusal, with the status it maps to (`401` authorization, `402` unpaid, `429` rate).
+fn history_error_response(error: crate::web::history_service::HistoryServiceError) -> Response {
+    let status = StatusCode::from_u16(error.status_code()).unwrap_or(StatusCode::BAD_REQUEST);
+    (
+        status,
+        Json(serde_json::json!({ "error": error.to_string() })),
+    )
+        .into_response()
+}
+
+/// Wall-clock milliseconds since the Unix epoch; a clock read, kept at the HTTP boundary.
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// `GET /api/v1/archives` — this node's history capability and the archives it was configured with.
@@ -2430,6 +2571,8 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/v1/archives", get(api_archives))
         .route("/api/v1/history/challenge", get(api_history_challenge))
         .route("/api/v1/history/range", post(api_history_range))
+        .route("/api/v1/history/credit", post(api_history_credit))
+        .route("/api/v1/history/meter/{payer}", get(api_history_meter))
         .route(
             "/api/v1/checkpoint-attestation",
             get(api_checkpoint_attestation),
@@ -2681,6 +2824,8 @@ pub async fn acquire_http_server(
     enable_reporting: bool,
     // The history tier (`api-server.archive*`): advertised by /api/v1/archives and the challenge.
     history: crate::web::archives::HistoryConfig,
+    // The metered service, present on an archive.
+    history_service: Option<Arc<crate::web::history_service::HistoryService>>,
     // Whether to mount the faucet routes (AUDIT R34): dev mode **and** a deployer key, resolved by
     // the caller because that is where both are known.
     faucet_enabled: bool,
@@ -2798,6 +2943,7 @@ pub async fn acquire_http_server(
             MAX_TRACKED_PEERS,
         )),
         history,
+        history_service,
     })
     .layer(TimeoutLayer::with_status_code(
         StatusCode::REQUEST_TIMEOUT,
@@ -3459,6 +3605,7 @@ mod tests {
             // off case is pinned by its own test below.
             faucet_enabled: true,
             history: Default::default(),
+            history_service: None,
         }
     }
 
@@ -4553,6 +4700,7 @@ mod tests {
             archive: true,
             history_retention: 0,
             archive_peers: vec!["http://archive.example:40403".to_string()],
+            ..Default::default()
         };
         let response = api_archives(State(st)).await;
         assert_eq!(response.status(), StatusCode::OK);

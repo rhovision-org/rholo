@@ -245,6 +245,58 @@ pub enum Commands {
         #[arg(long = "out", required = true)]
         out: PathBuf,
     },
+    /// **Sign a history credit receipt** with the archive's settlement key (Laws 110/111). The
+    /// receipt is printed as JSON; the payer deposits it at `POST /api/v1/history/credit`.
+    HistoryCredit {
+        /// The settlement private key, hex, in a file (`0600`).
+        #[arg(long = "key-path", required = true)]
+        key_path: PathBuf,
+        /// The paying public key, hex.
+        #[arg(long = "payer", required = true)]
+        payer: String,
+        /// The archive's settlement public key, hex.
+        #[arg(long = "archive", required = true)]
+        archive: String,
+        #[arg(long = "period", required = true)]
+        period: u64,
+        /// The REV amount paid, in the network's smallest unit.
+        #[arg(long = "rev-amount", required = true)]
+        rev_amount: u64,
+        /// The prepaid bytes.
+        #[arg(long = "bytes", required = true)]
+        bytes: u64,
+        /// A single-use invoice id.
+        #[arg(long = "invoice", required = true)]
+        invoice: String,
+        /// The REV transfer deploy that paid for the credit.
+        #[arg(long = "payment-deploy-id", required = true)]
+        payment_deploy_id: String,
+        /// Expiry, milliseconds since the Unix epoch.
+        #[arg(long = "expires-at-unix-ms", required = true)]
+        expires_at_unix_ms: u64,
+    },
+    /// **Sign a history range authorization** with the payer's key. Print it as JSON; send it as
+    /// `authorization` in `POST /api/v1/history/range`.
+    HistoryAuthorize {
+        /// The payer's private key, hex, in a file (`0600`).
+        #[arg(long = "key-path", required = true)]
+        key_path: PathBuf,
+        /// The paying public key, hex.
+        #[arg(long = "payer", required = true)]
+        payer: String,
+        /// The archive's settlement public key, hex.
+        #[arg(long = "archive", required = true)]
+        archive: String,
+        #[arg(long = "period", required = true)]
+        period: u64,
+        #[arg(long = "from", required = true)]
+        from: i64,
+        #[arg(long = "to", required = true)]
+        to: i64,
+        /// Single-use; the meter remembers it.
+        #[arg(long = "nonce", required = true)]
+        nonce: String,
+    },
 }
 
 /// The `run` subcommand options (port of `Options.run`).
@@ -733,6 +785,32 @@ pub struct Run {
     /// how a client checks one actually holds what it advertises.
     #[arg(long = "archive-peers", value_name = "URLS")]
     pub archive_peers: Option<String>,
+    /// **How the archive meters history** (`receipt` default, `allowance`, `open`). A metered policy
+    /// needs `--archive-settlement-key`; a missing key is a startup error, never a silent unmetered
+    /// archive.
+    #[arg(long = "archive-credit-policy", value_name = "POLICY")]
+    pub archive_credit_policy: Option<String>,
+    /// The archive's settlement public key (hex). The archive signs credit receipts with the
+    /// matching private key out of band (`rnode history-credit`).
+    #[arg(long = "archive-settlement-key", value_name = "HEX")]
+    pub archive_settlement_key: Option<String>,
+    /// Grant a named payer a fixed byte allowance under the `allowance` policy:
+    /// `<public-key>=<bytes>` (repeatable).
+    #[arg(long = "archive-allow", value_name = "KEY=BYTES")]
+    pub archive_allow: Vec<String>,
+    /// The settlement period's length in seconds (advertised; the receipt names the period).
+    #[arg(long = "archive-period-seconds", value_name = "SECONDS")]
+    pub archive_period_seconds: Option<u64>,
+    /// Per-payer serving rate, in bytes per second.
+    #[arg(long = "archive-rate-bytes-per-sec", value_name = "BYTES")]
+    pub archive_rate_bytes_per_sec: Option<u64>,
+    /// The most bytes one payer may be served in a period.
+    #[arg(long = "archive-max-bytes-per-period", value_name = "BYTES")]
+    pub archive_max_bytes_per_period: Option<u64>,
+    /// **Serve history unmetered.** Explicit opt-out from the metered default; the node warns at
+    /// startup. The possession challenge remains available.
+    #[arg(long = "archive-open")]
+    pub archive_open: bool,
 
     /// **Inject a deterministic self-replay refusal into this node's own blocks** (#564). A devnet
     /// measurement instrument, not an operating mode: `deploy[:N]` refuses deploy-bearing blocks,

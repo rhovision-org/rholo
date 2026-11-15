@@ -158,10 +158,124 @@ mod tests {
     }
 }
 
+/// Wall-clock milliseconds since the Unix epoch, for a signed statement's issue time.
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 async fn async_main(options: Options, log_level: rchain_shared::log::Level) {
     // The one logger the node installs, at the operator's level (AUDIT C145). `StderrLog` writes the
     // wall clock on every line, so this is also what makes a cross-node timeline reconstructable.
     let log: Arc<StderrLog> = Arc::new(StderrLog::new(log_level));
+
+    // **The history-service signing commands are offline** (Laws 110/111): they read a key file and
+    // print a signed receipt or authorization. They need neither a node configuration nor a peer.
+    match &options.subcommand {
+        Commands::HistoryCredit {
+            key_path,
+            payer,
+            archive,
+            period,
+            rev_amount,
+            bytes,
+            invoice,
+            payment_deploy_id,
+            expires_at_unix_ms,
+        } => {
+            let Some(algorithm) =
+                rchain_crypto::signatures::signatures_alg::from_algorithm("secp256k1")
+            else {
+                eprintln!("secp256k1 is not registered in this build");
+                std::process::exit(1);
+            };
+            let key = match rchain_node::web::history_credit::read_private_key(key_path) {
+                Ok(key) => key,
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            };
+            let credit = rchain_node::web::history_credit::HistoryCredit {
+                payer: payer.clone(),
+                archive: archive.clone(),
+                period: *period,
+                rev_amount: *rev_amount,
+                bytes: *bytes,
+                invoice: invoice.clone(),
+                payment_deploy_id: payment_deploy_id.clone(),
+                issued_at_unix_ms: unix_ms(),
+                expires_at_unix_ms: *expires_at_unix_ms,
+            };
+            match rchain_node::web::history_credit::sign_credit(credit, &key, algorithm) {
+                Ok(signed) => match serde_json::to_string_pretty(&signed) {
+                    Ok(text) => println!("{text}"),
+                    Err(e) => {
+                        eprintln!("the signed receipt could not be printed: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        Commands::HistoryAuthorize {
+            key_path,
+            payer,
+            archive,
+            period,
+            from,
+            to,
+            nonce,
+        } => {
+            let Some(algorithm) =
+                rchain_crypto::signatures::signatures_alg::from_algorithm("secp256k1")
+            else {
+                eprintln!("secp256k1 is not registered in this build");
+                std::process::exit(1);
+            };
+            let key = match rchain_node::web::history_credit::read_private_key(key_path) {
+                Ok(key) => key,
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            };
+            let authorization = rchain_node::web::history_credit::HistoryAuthorization {
+                payer: payer.clone(),
+                archive: archive.clone(),
+                period: *period,
+                from: *from,
+                to: *to,
+                nonce: nonce.clone(),
+                issued_at_unix_ms: unix_ms(),
+            };
+            match rchain_node::web::history_credit::sign_authorization(
+                authorization,
+                &key,
+                algorithm,
+            ) {
+                Ok(signed) => match serde_json::to_string_pretty(&signed) {
+                    Ok(text) => println!("{text}"),
+                    Err(e) => {
+                        eprintln!("the signed authorization could not be printed: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        _ => {}
+    }
 
     // **`audit` is an offline replay that needs the node's genesis configuration** (sync/verification
     // separation). It is neither a thin-client command nor a served node: it builds a replay runtime

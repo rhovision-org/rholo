@@ -26,6 +26,7 @@ use rchain_block_storage::dag::codecs::{
 };
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
 use rchain_block_storage::dag::message_state::DagMessageState;
+use rchain_block_storage::history_meter::HistoryMeter;
 use rchain_block_storage::work_seen::{self, WorkSeenStore};
 use rchain_casper::api::block_api::{BlockApi, ProposeHealth, ProposerHealth};
 use rchain_casper::api::block_api_impl::{
@@ -486,6 +487,8 @@ pub struct NodeProgram {
     enable_reporting: bool,
     // The history tier (`api-server.archive*`): the archives route and the challenge route.
     history: crate::web::archives::HistoryConfig,
+    /// The metered service an archive runs (Laws 110/111). `None` on a node that does not archive.
+    history_service: Option<Arc<crate::web::history_service::HistoryService>>,
     // Whether the faucet routes are mounted (AUDIT R34): dev mode and a deployer key, resolved where
     // both are known and passed through to `acquire_http_server`.
     faucet_enabled: bool,
@@ -558,6 +561,7 @@ impl NodeProgram {
             max_connection_idle,
             enable_reporting,
             history,
+            history_service,
             enable_txn_api,
             enable_devnet_cors,
             enable_devnet_admin_public,
@@ -635,6 +639,7 @@ impl NodeProgram {
                     max_connection_idle,
                     enable_reporting,
                     history,
+                    history_service,
                     faucet_enabled,
                     node_list,
                     stop,
@@ -806,6 +811,9 @@ pub struct ShardParts {
     /// the finalized state by verifying a quorum over the checkpoint statement; this is the record
     /// the collector writes and the API serves.
     pub checkpoint_store: CheckpointStore,
+    /// **The archive's durable history meter** (Laws 110/111). One account per paying peer; the
+    /// metered service reads and debits it before a body leaves.
+    pub history_meter: HistoryMeter,
     /// **When this shard's proposer first saw each piece of unfinalised work** (#583). Local and
     /// non-consensus: it ages the prompt-attestation licence, so an advancing fringe cannot renew
     /// the same work.
@@ -1581,6 +1589,16 @@ pub async fn setup_node_program(
             archive: conf.api_server.archive,
             history_retention: conf.api_server.history_retention,
             archive_peers: conf.api_server.archive_peers.clone(),
+            credit_policy: if conf.api_server.archive_open {
+                "open".to_string()
+            } else {
+                conf.api_server.archive_credit_policy.clone()
+            },
+            settlement_key: conf.api_server.archive_settlement_key.clone(),
+            allowances: conf.api_server.archive_allow.clone(),
+            period_seconds: conf.api_server.archive_period_seconds,
+            rate_bytes_per_sec: conf.api_server.archive_rate_bytes_per_sec,
+            max_bytes_per_period: conf.api_server.archive_max_bytes_per_period,
         }),
     );
     // The PoS read (AUDIT C148): the primary shard's live native state through the runtime manager
@@ -1639,6 +1657,33 @@ pub async fn setup_node_program(
     // and a signing key — so a single-shard or key-less node is untouched.
     let gateway = build_gateway(conf, &shards, &primary_parts.store_manager, &log).await?;
 
+    // **The metered history service.** Built only by an archive. A metered policy without a
+    // settlement key is a startup error here, before the listener binds, so the node cannot run as a
+    // silently unmetered archive.
+    let history_service = if conf.api_server.archive {
+        let policy = if conf.api_server.archive_open {
+            "open".to_string()
+        } else {
+            conf.api_server.archive_credit_policy.clone()
+        };
+        let config = crate::web::history_service::HistoryServiceConfig {
+            policy: crate::web::history_service::CreditPolicy::parse(&policy)?,
+            settlement_key: conf.api_server.archive_settlement_key.clone(),
+            allowances: crate::web::history_credit::parse_allowances(
+                &conf.api_server.archive_allow,
+            )?,
+            period_seconds: conf.api_server.archive_period_seconds,
+            rate_bytes_per_sec: conf.api_server.archive_rate_bytes_per_sec,
+            max_bytes_per_period: conf.api_server.archive_max_bytes_per_period,
+        };
+        Some(crate::web::history_service::service(
+            primary_parts.history_meter.clone(),
+            config,
+        )?)
+    } else {
+        None
+    };
+
     Ok(NodeProgram {
         grpc_services,
         web_api,
@@ -1667,7 +1712,18 @@ pub async fn setup_node_program(
             archive: conf.api_server.archive,
             history_retention: conf.api_server.history_retention,
             archive_peers: conf.api_server.archive_peers.clone(),
+            credit_policy: if conf.api_server.archive_open {
+                "open".to_string()
+            } else {
+                conf.api_server.archive_credit_policy.clone()
+            },
+            settlement_key: conf.api_server.archive_settlement_key.clone(),
+            allowances: conf.api_server.archive_allow.clone(),
+            period_seconds: conf.api_server.archive_period_seconds,
+            rate_bytes_per_sec: conf.api_server.archive_rate_bytes_per_sec,
+            max_bytes_per_period: conf.api_server.archive_max_bytes_per_period,
         },
+        history_service,
         faucet_enabled,
         enable_txn_api: conf.api_server.enable_txn_api,
         enable_devnet_cors: conf.api_server.enable_devnet_cors,
@@ -2685,6 +2741,7 @@ pub async fn setup_shard(
     let block_store = block_store::create(&store_manager).await?;
     let approved_store = approved_store::create(&store_manager).await?;
     let checkpoint_store = checkpoint_store::CheckpointStore::open(&store_manager).await?;
+    let history_meter = HistoryMeter::open(&store_manager).await?;
     let work_seen = work_seen::create(&store_manager).await?;
     let block_metadata_kv: Arc<dyn KeyValueTypedStore<BlockHash, BlockMetadata>> = Arc::new(
         database(
@@ -3083,6 +3140,7 @@ pub async fn setup_shard(
         runtime_manager,
         approved_store,
         checkpoint_store,
+        history_meter,
         work_seen,
         store_manager,
         validator_identity_opt: validator_opt,

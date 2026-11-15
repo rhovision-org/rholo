@@ -27,6 +27,9 @@ pub struct MeterAccount {
     pub spent: u64,
     /// The settlement period this account was last credited for.
     pub period: u64,
+    /// Bytes debited in the current period. Reset when a credit names a new period.
+    #[serde(default)]
+    pub period_spent: u64,
     /// **A failed possession challenge marked this peer.** A marked account is not served until the
     /// operator's cooldown decision clears it.
     pub marked: bool,
@@ -47,6 +50,8 @@ pub enum MeterError {
     ReplayedNonce,
     /// A failed possession challenge marked the peer.
     Marked,
+    /// The range would exceed the operator's per-period cap.
+    PeriodCap { cap: u64, spent: u64 },
     /// The store could not be read or written; fail closed.
     Unreadable(String),
 }
@@ -63,6 +68,9 @@ impl std::fmt::Display for MeterError {
             }
             MeterError::ReplayedNonce => write!(f, "the range nonce has already been spent"),
             MeterError::Marked => write!(f, "a failed possession challenge marked this peer"),
+            MeterError::PeriodCap { cap, spent } => {
+                write!(f, "the period has spent {spent} of its {cap} byte cap")
+            }
             MeterError::Unreadable(e) => write!(f, "the history meter is unreadable: {e}"),
         }
     }
@@ -136,7 +144,12 @@ impl HistoryMeter {
             .credit
             .checked_add(bytes)
             .ok_or_else(|| MeterError::Unreadable("credit overflow".to_string()))?;
-        account.period = account.period.max(period);
+        if period > account.period {
+            // A credit for a new period opens that period's spend counter; an older period's
+            // credit cannot move the account backwards.
+            account.period = period;
+            account.period_spent = 0;
+        }
         self.write(payer, &account).await?;
         Ok(account)
     }
@@ -148,6 +161,18 @@ impl HistoryMeter {
         payer: &str,
         bytes: u64,
         nonce: &str,
+    ) -> Result<MeterAccount, MeterError> {
+        self.reserve_capped(payer, bytes, nonce, None).await
+    }
+
+    /// **Debit a range, enforcing the operator's per-period cap under the same lock.** The cap and
+    /// the credit check are one decision, so a concurrent request cannot pass both sides of it.
+    pub async fn reserve_capped(
+        &self,
+        payer: &str,
+        bytes: u64,
+        nonce: &str,
+        max_period_bytes: Option<u64>,
     ) -> Result<MeterAccount, MeterError> {
         let _guard = self.lock.lock().await;
         let mut account = self.load(payer).await?;
@@ -163,7 +188,23 @@ impl HistoryMeter {
                 available: account.credit,
             });
         }
+        if let Some(cap) = max_period_bytes {
+            let spent = account
+                .period_spent
+                .checked_add(bytes)
+                .ok_or_else(|| MeterError::Unreadable("period spend overflow".to_string()))?;
+            if spent > cap {
+                return Err(MeterError::PeriodCap {
+                    cap,
+                    spent: account.period_spent,
+                });
+            }
+        }
         account.credit -= bytes;
+        account.period_spent = account
+            .period_spent
+            .checked_add(bytes)
+            .ok_or_else(|| MeterError::Unreadable("period spend overflow".to_string()))?;
         account.served = account
             .served
             .checked_add(bytes)
@@ -379,6 +420,55 @@ mod tests {
         let settled = meter.settle_period("payer", true).await.expect("settle");
         assert_eq!(settled.credit, 70, "unused credit carries");
         assert!(!settled.marked);
+    }
+
+    /// The operator's per-period cap refuses a range that would cross it, under the same lock as
+    /// the credit check, and a new period's credit opens a fresh spend counter.
+    #[tokio::test]
+    async fn a_period_cap_is_enforced_and_a_new_period_resets_it() {
+        let meter = meter().await;
+        meter
+            .credit("payer", 2_000, "invoice-1", 1)
+            .await
+            .expect("credit");
+        meter
+            .reserve_capped("payer", 600, "nonce-1", Some(1_000))
+            .await
+            .expect("inside the cap");
+        // The account can pay for this range; the period cap is what refuses it.
+        let err = meter
+            .reserve_capped("payer", 500, "nonce-2", Some(1_000))
+            .await
+            .expect_err("over the cap");
+        assert_eq!(
+            err,
+            MeterError::PeriodCap {
+                cap: 1_000,
+                spent: 600
+            }
+        );
+        assert_eq!(
+            meter
+                .account("payer")
+                .await
+                .expect("read")
+                .expect("account")
+                .credit,
+            1_400,
+            "the refused range was not debited"
+        );
+
+        // A credit for a new period opens that period's counter.
+        meter
+            .credit("payer", 500, "invoice-2", 2)
+            .await
+            .expect("credit");
+        let account = meter
+            .reserve_capped("payer", 500, "nonce-3", Some(1_000))
+            .await
+            .expect("the new period has room");
+        assert_eq!(account.period, 2);
+        assert_eq!(account.period_spent, 500);
     }
 
     /// The meter is durable: reopening over the same manager reads the same account, and a spent

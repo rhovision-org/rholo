@@ -126,6 +126,12 @@ pub fn rnode_db_mapping() -> Vec<(Db, LmdbEnvConfig)> {
             Db::new("work-seen-store"),
             LmdbEnvConfig::new("dagstorage", 100 * GB),
         ),
+        // **The archive's durable history meter** (Laws 110/111): one account per paying peer. Small
+        // rows, the same DAG environment; absent on a node that does not archive.
+        (
+            Db::new("history-meter"),
+            LmdbEnvConfig::new("dagstorage", 100 * GB),
+        ),
         // Deploys from blocks
         (
             Db::new("deploy-index"),
