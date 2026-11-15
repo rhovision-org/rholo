@@ -605,14 +605,21 @@ mod tests {
         assert!(error.contains("injected write failure"), "{error}");
 
         let reopened = AuditStore::open(&kvm).await.expect("reopen after failure");
-        assert!(!reopened.nonce_seen(&signer, nonce).await.expect("nonce absent"));
+        assert!(!reopened
+            .nonce_seen(&signer, nonce)
+            .await
+            .expect("nonce absent"));
         assert!(reopened
             .response(&signer, nonce)
             .await
             .expect("answer absent")
             .is_none());
         assert!(reopened.accepted().await.expect("no claims").is_empty());
-        assert!(reopened.head(&signer).await.expect("no chain head").is_none());
+        assert!(reopened
+            .head(&signer)
+            .await
+            .expect("no chain head")
+            .is_none());
 
         fail.store(false, Ordering::SeqCst);
         reopened
@@ -632,7 +639,11 @@ mod tests {
                 .expect("response persisted"),
             Some(answer.clone())
         );
-        assert!(reopened_again.accepted().await.expect("no claims").is_empty());
+        assert!(reopened_again
+            .accepted()
+            .await
+            .expect("no claims")
+            .is_empty());
         assert!(reopened_again
             .head(&signer)
             .await
