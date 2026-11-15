@@ -442,7 +442,6 @@ fn matching_spec() -> JoinerSpec {
     }
 }
 
-#[ignore = "written for the unsigned-fringe sync path; the certified path needs a finalized checkpoint certificate and a genesis trust anchor, and this matrix's migration is part of C377 (sync/verification separation)"]
 #[test]
 fn genesis_only_restore_with_matching_inputs_preserves_the_allocation() {
     test_runtime().block_on(run_case(
@@ -452,7 +451,6 @@ fn genesis_only_restore_with_matching_inputs_preserves_the_allocation() {
     ));
 }
 
-#[ignore = "written for the unsigned-fringe sync path; the certified path needs a finalized checkpoint certificate and a genesis trust anchor, and this matrix's migration is part of C377 (sync/verification separation)"]
 #[test]
 fn genesis_only_restore_refuses_a_different_recipient() {
     test_runtime().block_on(run_case(
@@ -465,7 +463,6 @@ fn genesis_only_restore_refuses_a_different_recipient() {
     ));
 }
 
-#[ignore = "written for the unsigned-fringe sync path; the certified path needs a finalized checkpoint certificate and a genesis trust anchor, and this matrix's migration is part of C377 (sync/verification separation)"]
 #[test]
 fn genesis_only_restore_refuses_changed_wallet_balances() {
     test_runtime().block_on(run_case(
@@ -480,7 +477,6 @@ fn genesis_only_restore_refuses_changed_wallet_balances() {
     ));
 }
 
-#[ignore = "written for the unsigned-fringe sync path; the certified path needs a finalized checkpoint certificate and a genesis trust anchor, and this matrix's migration is part of C377 (sync/verification separation)"]
 #[test]
 fn genesis_only_restore_with_missing_descriptors_trusts_the_bootstrap() {
     test_runtime().block_on(run_case(
@@ -528,7 +524,6 @@ fn snapshot_restore_refuses_changed_wallet_balances() {
     ));
 }
 
-#[ignore = "written for the unsigned-fringe sync path; the certified path needs a finalized checkpoint certificate and a genesis trust anchor, and this matrix's migration is part of C377 (sync/verification separation)"]
 #[test]
 fn snapshot_restore_with_missing_descriptors_trusts_the_bootstrap() {
     test_runtime().block_on(run_case(
@@ -547,7 +542,6 @@ fn snapshot_restore_with_missing_descriptors_trusts_the_bootstrap() {
 /// above shows the joiner adopts the allocation; this shows the restored state is usable for the
 /// node's actual job, not merely readable. Both validators are bonded at genesis, so the joiner's
 /// proposal is one the bootstrap can accept.
-#[ignore = "written for the unsigned-fringe sync path; the certified path needs a finalized checkpoint certificate and a genesis trust anchor, and this matrix's migration is part of C377 (sync/verification separation)"]
 #[test]
 fn a_restored_bonded_joiner_validates_and_proposes() {
     test_runtime().block_on(async {

@@ -714,20 +714,63 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
                     rchain_shared::base16::encode(fringe.state_hash.as_bytes())
                 ));
             }
+            // **The genesis state is hydrated, not assumed.** The runtime publishes only a root it
+            // holds; the joiner fetches the genesis state pages exactly as the certified path does.
+            // An unfinished walk is a failed anchor, not a reason to run on a root the store lacks.
+            let page_peers =
+                match tokio::time::timeout(Duration::from_secs(2), comm_util.connected_peers())
+                    .await
+                {
+                    Ok(peers) => peers,
+                    Err(_) => {
+                        log.warn(
+                        source,
+                        "the connections read did not return within 2s; the genesis state walk \
+                         asks the bootstrap only",
+                    );
+                        Vec::new()
+                    }
+                };
+            let tuple_st = request_tuple_space(
+                fringe,
+                tuple_space_rx,
+                REQUEST_TIMEOUT,
+                transport.as_ref(),
+                &conf,
+                &page_peers,
+                importer,
+                log.as_ref(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            if !tuple_st.is_finished() {
+                return Err(format!(
+                    "the genesis state walk did not complete: {} key(s) outstanding",
+                    tuple_st.outstanding_count()
+                ));
+            }
             put_block(&block_store, block.clone()).await?;
             insert_genesis(dag.as_ref(), block.clone()).await?;
             put_approved_block(approved_store, fringe.clone()).await?;
             if let Some(store) = replay.checkpoint_store.as_ref() {
                 store.set_history_from(0).await?;
             }
-            if let Err(e) = replay
+            match replay
                 .runtime
                 .publish_accepted_root(Blake2b256Hash::from_byte_array(
                     block.post_state_hash.as_bytes(),
                 ))
                 .await
             {
-                log.warn(source, &format!("could not publish the genesis root: {e}"));
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(
+                        "the genesis state's root is not in the runtime's store after the state \
+                         walk; refusing to anchor on a state this node cannot serve"
+                            .to_string(),
+                    )
+                }
+                Err(e) => return Err(format!("could not publish the genesis root: {e}")),
             }
             log.info(
                 source,
