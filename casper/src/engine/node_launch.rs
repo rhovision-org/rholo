@@ -545,6 +545,14 @@ pub async fn apply<
                                                 verified.checkpoint.anchor_height
                                             ),
                                         );
+                                        // **The same statement the anchor came from** goes with the
+                                        // engine: the sync task verifies it rather than fetching a
+                                        // newer one, so the signed statement and the served fringe
+                                        // cannot be two different histories.
+                                        engine
+                                            .lock()
+                                            .await
+                                            .set_checkpoint_certificate(certificate.clone());
                                         boot_anchor = Some(anchor);
                                     }
                                     Err(e) => log.warn(

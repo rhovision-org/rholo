@@ -54,6 +54,11 @@ pub struct NodeSyncing<I: RSpaceImporter> {
     trim_state: bool,
     importer: Option<I>,
     replay: Option<RecoveryReplay>,
+    /// **The certificate the sync target was chosen from** (sync/verification separation). A joiner
+    /// picks the certified anchor *before* asking for the fringe; re-fetching a certificate at sync
+    /// time can name a newer anchor than the served fringe, and the two must be the same statement.
+    prefetched_certificate:
+        Option<rchain_models::casper::protocol::checkpoint::CheckpointCertificate>,
     incoming_blocks_tx: tokio::sync::mpsc::Sender<BlockMessage>,
     incoming_blocks_rx: Option<tokio::sync::mpsc::Receiver<BlockMessage>>,
     /// **The per-hash block-request log** (#457): which peers each outstanding hash was requested
@@ -193,6 +198,7 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             trim_state,
             importer: Some(importer),
             replay: None,
+            prefetched_certificate: None,
             incoming_blocks_tx,
             incoming_blocks_rx: Some(incoming_blocks_rx),
             block_requests: Arc::new(tokio::sync::Mutex::new(BlockRequestLog::default())),
@@ -213,6 +219,16 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
     pub fn with_replay(mut self, replay: RecoveryReplay) -> Self {
         self.replay = Some(replay);
         self
+    }
+
+    /// Record the certificate the launch phase used to choose the certified anchor. The sync task
+    /// verifies **this** statement rather than fetching a newer one: the fringe it is about to walk
+    /// was requested for this anchor.
+    pub fn set_checkpoint_certificate(
+        &mut self,
+        certificate: rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
+    ) {
+        self.prefetched_certificate = Some(certificate);
     }
 
     /// A future that completes when syncing finishes (port of `finished.get`).
@@ -456,6 +472,7 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             // So the loop takes them by `&mut` across attempts instead of re-taking them (AUDIT C181).
             let block_requests = self.block_requests.clone();
             let replay = self.replay.clone();
+            let prefetched_certificate = self.prefetched_certificate.clone();
             tokio::spawn(async move {
                 let source = LogSource::new("casper.engine.NodeSyncing");
                 let mut importer = importer;
@@ -502,6 +519,7 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                         &mut incoming_blocks_rx,
                         &mut tuple_space_rx,
                         &mut metadata_rx,
+                        prefetched_certificate.as_ref(),
                         replay.as_ref(),
                         &approved_store,
                     )
@@ -640,6 +658,9 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     incoming_blocks_rx: &mut tokio::sync::mpsc::Receiver<BlockMessage>,
     tuple_space_rx: &mut tokio::sync::mpsc::Receiver<StoreItemsMessage>,
     metadata_rx: &mut tokio::sync::mpsc::Receiver<BlockMetadataMessage>,
+    prefetched_certificate: Option<
+        &rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
+    >,
     replay: Option<&RecoveryReplay>,
     approved_store: &ApprovedStore,
 ) -> Result<(), String> {
@@ -659,6 +680,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         &replay.shard_id,
         fringe,
         replay.checkpoint_store.as_ref(),
+        prefetched_certificate,
     )
     .await?;
     let checkpoint_root = checkpoint_state_root(&verified.checkpoint)?;
@@ -830,16 +852,23 @@ async fn certified_checkpoint(
     shard_id: &str,
     fringe: &FinalizedFringe,
     store: Option<&rchain_block_storage::checkpoint_store::CheckpointStore>,
+    prefetched: Option<&rchain_models::casper::protocol::checkpoint::CheckpointCertificate>,
 ) -> Result<crate::checkpoint::VerifiedCheckpoint, String> {
     let source = source.ok_or_else(|| {
         "LFS sync has no checkpoint source: this build does not accept an unsigned fringe as a \
          state root"
             .to_string()
     })?;
-    let certificate = source
-        .fetch_certificate()
-        .await
-        .map_err(|e| format!("the bootstrap's checkpoint certificate was not fetched: {e}"))?;
+    // **The statement the anchor was chosen from** is verified here; a fresh fetch can name a newer
+    // anchor than the fringe that was requested for the older one, and the tie below would (rightly)
+    // refuse it.
+    let certificate = match prefetched {
+        Some(certificate) => certificate.clone(),
+        None => source
+            .fetch_certificate()
+            .await
+            .map_err(|e| format!("the bootstrap's checkpoint certificate was not fetched: {e}"))?,
+    };
     let verified = verify_genesis_rooted_certificate(&certificate, trusted_bonds)
         .map_err(|e| format!("the bootstrap's checkpoint certificate was refused: {e}"))?;
     if verified.checkpoint.shard_id != shard_id {
@@ -2401,7 +2430,7 @@ mod tests {
     #[tokio::test]
     async fn an_unsigned_sync_has_no_fallback_path() {
         let bonds = BTreeMap::new();
-        let err = certified_checkpoint(None, &bonds, "root", &fringe_of(vec![hash(1)]), None)
+        let err = certified_checkpoint(None, &bonds, "root", &fringe_of(vec![hash(1)]), None, None)
             .await
             .expect_err("a sync with no certificate source must fail closed");
         assert!(err.contains("no checkpoint source"), "{err}");
@@ -2425,6 +2454,7 @@ mod tests {
             "root",
             &fringe_of(vec![hash(1)]),
             None,
+            None,
         )
         .await
         .expect_err("a certificate with no signatures must be refused");
@@ -2438,6 +2468,7 @@ mod tests {
             &bonds,
             "root",
             &fringe_of(vec![hash(1)]),
+            None,
             None,
         )
         .await
@@ -2455,6 +2486,7 @@ mod tests {
             "root",
             &fringe_of(vec![hash(1)]),
             None,
+            None,
         )
         .await
         .expect_err("a certificate for another shard must be refused");
@@ -2470,6 +2502,7 @@ mod tests {
             &bonds,
             "root",
             &fringe_of(vec![hash(2)]),
+            None,
             None,
         )
         .await

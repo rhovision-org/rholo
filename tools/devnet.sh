@@ -797,10 +797,16 @@ cmd_up() {
       archive_flag=(--archive)
       echo "    (archive tier: on)"
     fi
+    # **An observer needs the genesis manifest too** (sync/verification separation): the checkpoint
+    # certificate is verified against the genesis bond set, which is the trust anchor a joiner
+    # cannot derive from the chain it is about to accept. The files are mounted read-only and no
+    # validator key is passed: reading the bonds is not joining the bonded set.
     # shellcheck disable=SC2046
     docker run $(docker_opts "$name" "$host_port" "$http_port" "$admin_port") \
+      -v "${genesis_dir}:/genesis:ro" \
       "$(node_image "$name")" $(rnode_run_common "$name") \
         --bootstrap "rnode://${id}@${BOOTSTRAP}?protocol=40400&discovery=40404" \
+        --bonds-file /genesis/bonds.txt --wallets-file /genesis/wallets.txt \
         "${archive_flag[@]}"
   done
 
