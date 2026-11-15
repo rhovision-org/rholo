@@ -36,10 +36,10 @@ use crate::protocol::comm_util::CommUtil;
 
 /// Hashes asked for in one request. A header is a few hundred bytes; a batch keeps a round trip
 /// productive without making one answer exceed a packet.
-const METADATA_BATCH: usize = 64;
+const METADATA_BATCH: usize = 128;
 
 /// How long one round waits for answers before re-asking the same frontier.
-const METADATA_ROUND_TIMEOUT: Duration = Duration::from_secs(10);
+const METADATA_ROUND_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Rounds with **no new header** before the walk gives up and names what is missing.
 const METADATA_MAX_IDLE_ROUNDS: u32 = 6;
@@ -127,6 +127,18 @@ pub async fn request_metadata(
         // A batch still outstanding goes back to the frontier for the next round (a re-ask is
         // idempotent); an answer that arrived for an earlier round is already in `headers`.
         frontier.extend(pending.into_iter().filter(|h| !headers.contains_key(h)));
+        // A progress line every eight rounds: a mature walk is thousands of headers, and a
+        // silently advancing walk is otherwise indistinguishable from a stalled one.
+        if headers.len() % (METADATA_BATCH * 8) < METADATA_BATCH {
+            log.info(
+                source,
+                &format!(
+                    "metadata walk: {} header(s), {} hash(es) outstanding",
+                    headers.len(),
+                    frontier.len()
+                ),
+            );
+        }
         if learned == 0 {
             idle_rounds += 1;
             if idle_rounds >= METADATA_MAX_IDLE_ROUNDS {
