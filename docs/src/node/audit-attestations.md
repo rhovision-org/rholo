@@ -66,10 +66,14 @@ both pass. A refusal is one row in a separate conflicts store and never enters t
 (One node per store is the assumption; a second process writing the same directory is outside the
 gate.)
 
-**A retry after a restart returns the same answer.** Because the response is written with the claim,
-the service reads the durable row before replaying: the same nonce returns the original report and
-claim even in a new process. A nonce that is spent with no stored answer — a legacy or foreign
-acceptance — is a defined `409`, not a replay attempt.
+**A retry after a restart returns the same completed result.** An `AGREE` result commits
+its signed claim, accepted head, nonce and response together. An unsigned `DISAGREE` or
+`INCOMPLETE` commits only its nonce and report, in one atomic batch; it never creates a
+signed claim or advances the accepted head. Both paths are read before replay on a retry.
+The nonce identifies the original request: reusing it does not request a new replay after
+the underlying chain changes. A legacy/foreign spent nonce without a stored response
+returns `409` rather than executing another audit. A replay that fails before producing
+a verdict is an error, not a completed idempotent result.
 
 ## No spam
 
@@ -77,7 +81,7 @@ There is no gossip and no broadcast. The only trigger is an opt-in, rate-limited
 
 ```text
 POST /api/v1/audit/request          { checkpoint, nonce, previous?, sequence? }
-GET  /api/v1/audit/attestation/{id} the signed result, when ready
+GET  /api/v1/audit/attestation/{id} the completed report (attestation optional), including after restart
 GET  /api/v1/audit/attestations     claims this node itself reproduced
 GET  /api/v1/audit/conflicts        claims this node refused, with the local reason
 POST /api/v1/checkpoint/verify      this node's verifier applied to a certificate
