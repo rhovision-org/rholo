@@ -159,21 +159,46 @@ async fn deploy_for_snapshot(dir: &Path, ports: &[u16], client: &reqwest::Client
 
     let rho = dir.join("snapshot.rho");
     std::fs::write(&rho, "@\"snapshot\"!(\"state\")\n").expect("write rho source");
-    let deploy = GrpcDeployService::connect("127.0.0.1", ports[4] as i32, 16 * 1024 * 1024)
+    // **The bootstrap's HTTP readiness is not its gRPC readiness.** A loaded CI runner has refused
+    // the deploy connection here while the HTTP status already answered; the deploy is idempotent
+    // across attempts (it is never pooled twice), so a bounded retry replaces a hard failure that
+    // said nothing about the code under test.
+    let mut last_error = String::new();
+    for _ in 0..20 {
+        let deploy = match GrpcDeployService::connect(
+            "127.0.0.1",
+            ports[4] as i32,
+            16 * 1024 * 1024,
+        )
         .await
-        .expect("deploy gRPC");
-    DeployRuntime::deploy_file_program(
-        &deploy,
-        1_000_000,
-        1,
-        -1,
-        &PrivateKey::new(base16::decode(common::VALIDATOR_PRIV_HEX).expect("decode key")),
-        rho.to_str().expect("rho path"),
-        "/root",
-    )
-    .await
-    .expect("deploy accepted");
-    wait_for_finalized(client, base, 1).await;
+        {
+            Ok(deploy) => deploy,
+            Err(e) => {
+                last_error = e;
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                continue;
+            }
+        };
+        match DeployRuntime::deploy_file_program(
+            &deploy,
+            1_000_000,
+            1,
+            -1,
+            &PrivateKey::new(base16::decode(common::VALIDATOR_PRIV_HEX).expect("decode key")),
+            rho.to_str().expect("rho path"),
+            "/root",
+        )
+        .await
+        {
+            Ok(()) => {
+                wait_for_finalized(client, base, 1).await;
+                return;
+            }
+            Err(e) => last_error = format!("{e:?}"),
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    panic!("deploy for snapshot refused after 20 attempts: {last_error}");
 }
 
 /// Wait for the launch phase's own Running line. `wait_for_sync_cleared` can return before the
