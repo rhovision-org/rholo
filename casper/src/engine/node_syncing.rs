@@ -2478,7 +2478,7 @@ mod tests {
     }
 
     fn header_of(height: i64, parent: Option<BlockHash>) -> BlockHeader {
-        let mut block = sealed_block(height, parent);
+        let block = sealed_block(height, parent);
         rchain_models::casper::protocol::casper_message::BlockHeader {
             block_hash: block.block_hash,
             block_num: block.block_number,
