@@ -244,19 +244,25 @@ impl AuditStore {
                 Some("INCOMPLETE" | "DISAGREE")
             )
         {
-            return Err("only an unsigned INCOMPLETE or DISAGREE is stored without a claim".to_string());
+            return Err(
+                "only an unsigned INCOMPLETE or DISAGREE is stored without a claim".to_string(),
+            );
         }
         let _gate = self.gate.lock().await;
         let key = nonce_key(signer, nonce);
         if self.get_row(&key).await?.is_some() {
-            return Err(format!("the request nonce {nonce:?} for signer {signer} has already been answered"));
+            return Err(format!(
+                "the request nonce {nonce:?} for signer {signer} has already been answered"
+            ));
         }
         self.claims
             .put(&[
                 (key, ClaimRow::UnattestedNonce),
                 (
                     response_key(signer, nonce),
-                    ClaimRow::Response { response: response.clone() },
+                    ClaimRow::Response {
+                        response: response.clone(),
+                    },
                 ),
             ])
             .await?;
@@ -573,13 +579,22 @@ mod tests {
                 report: serde_json::json!({"verdict": verdict, "reason": "fixture"}),
                 attestation: None,
             };
-            store.record_unattested_response(&signer, &nonce, &answer).await.expect("persist");
+            store
+                .record_unattested_response(&signer, &nonce, &answer)
+                .await
+                .expect("persist");
             let reopened = AuditStore::open(&kvm).await.expect("reopen");
-            assert_eq!(reopened.response(&signer, &nonce).await.expect("response"), Some(answer.clone()));
+            assert_eq!(
+                reopened.response(&signer, &nonce).await.expect("response"),
+                Some(answer.clone())
+            );
             assert!(reopened.nonce_seen(&signer, &nonce).await.expect("spent nonce"));
             assert!(reopened.head(&signer).await.expect("head").is_none());
             assert!(reopened.accepted().await.expect("claims").is_empty());
-            assert!(reopened.record_unattested_response(&signer, &nonce, &answer).await.is_err());
+            assert!(reopened
+                .record_unattested_response(&signer, &nonce, &answer)
+                .await
+                .is_err());
         }
     }
 
@@ -592,7 +607,10 @@ mod tests {
             report: serde_json::json!({"verdict": "AGREE"}),
             attestation: None,
         };
-        assert!(store.record_unattested_response(&signer, "n", &reply).await.is_err());
+        assert!(store
+            .record_unattested_response(&signer, "n", &reply)
+            .await
+            .is_err());
         assert!(!store.nonce_seen(&signer, "n").await.expect("nonce remains unused"));
     }
 
