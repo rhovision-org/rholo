@@ -367,8 +367,9 @@ def main() -> int:
                   "--fresh", "--admin"]
         else:
             up = ["tools/devnet.sh", "up", "--validators", str(args.validators), "--fresh", "--admin"]
-        if not args.no_autopropose:
-            up.append("--autopropose")
+        # Devnet defaults autopropose ON; omitting the flag does not disable it. The measured
+        # network must not compete with its own restore, so pass the explicit negative.
+        up.append("--no-autopropose" if args.no_autopropose else "--autopropose")
         if args.no_propose_on_deploy:
             up.append("--no-propose-on-deploy")
         if args.bootstrap_volume:

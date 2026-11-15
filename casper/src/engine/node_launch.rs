@@ -821,45 +821,69 @@ pub async fn apply<
         let repr = dag.get_representation().await;
         if let Some(tip) = repr.latest_fringe().iter().max_by_key(|m| m.height) {
             let tip_hash = tip.id;
-            match block_store.get(&[tip_hash]).await {
-                Ok(blocks) => match blocks.into_iter().flatten().next() {
-                    Some(block) => {
-                        let root =
-                            Blake2b256Hash::from_byte_array(block.post_state_hash.as_bytes());
-                        match runtime_manager.publish_accepted_root(root).await {
-                            Ok(true) => log.info(
-                                source,
-                                &format!(
-                                    "republished CURRENT_ROOT at the latest accepted block {}",
-                                    tip_hash.to_hex()
-                                ),
-                            ),
-                            Ok(false) => log.warn(
-                                source,
-                                &format!(
-                                    "the latest accepted block {} names a root this store does not \
-                                     know; CURRENT_ROOT is left where it was",
-                                    tip_hash.to_hex()
-                                ),
-                            ),
-                            Err(e) => log.warn(
-                                source,
-                                &format!("could not republish CURRENT_ROOT: {e}"),
-                            ),
-                        }
-                    }
-                    None => log.warn(
+            // **The tip's post-state, from metadata first.** A checkpoint-synced node holds the
+            // tip's header and not its historical body; requiring the body here left `CURRENT_ROOT`
+            // at genesis, and the first post-anchor block was then validated against the wrong state
+            // ("unknown root"). The metadata carries the same post-state the body does.
+            let metadata_root = match dag.lookup(&tip_hash).await {
+                Ok(metadata) => metadata.map(|metadata| metadata.post_state_hash),
+                Err(e) => {
+                    log.warn(
                         source,
                         &format!(
-                            "the DAG's tip {} has no stored body; CURRENT_ROOT is left where it was",
+                            "could not read the tip {} metadata to republish CURRENT_ROOT: {e}",
                             tip_hash.to_hex()
                         ),
-                    ),
-                },
-                Err(e) => log.warn(
+                    );
+                    None
+                }
+            };
+            let body_root = match block_store.get(&[tip_hash]).await {
+                Ok(blocks) => blocks
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .map(|block| block.post_state_hash),
+                Err(e) => {
+                    log.warn(
+                        source,
+                        &format!(
+                            "could not read the tip {} body to republish CURRENT_ROOT: {e}",
+                            tip_hash.to_hex()
+                        ),
+                    );
+                    None
+                }
+            };
+            match accepted_tip_root(metadata_root, body_root) {
+                Some(root) => {
+                    let root = Blake2b256Hash::from_byte_array(root.as_bytes());
+                    match runtime_manager.publish_accepted_root(root).await {
+                        Ok(true) => log.info(
+                            source,
+                            &format!(
+                                "republished CURRENT_ROOT at the latest accepted block {}",
+                                tip_hash.to_hex()
+                            ),
+                        ),
+                        Ok(false) => log.warn(
+                            source,
+                            &format!(
+                                "the latest accepted block {} names a root this store does not \
+                                 know; CURRENT_ROOT is left where it was",
+                                tip_hash.to_hex()
+                            ),
+                        ),
+                        Err(e) => {
+                            log.warn(source, &format!("could not republish CURRENT_ROOT: {e}"))
+                        }
+                    }
+                }
+                None => log.warn(
                     source,
                     &format!(
-                        "could not read the tip {} to republish CURRENT_ROOT: {e}",
+                        "the DAG's tip {} has neither a recorded post-state nor a stored body; \
+                         CURRENT_ROOT is left where it was",
                         tip_hash.to_hex()
                     ),
                 ),
@@ -1267,6 +1291,16 @@ async fn post_state_of(
         })
 }
 
+/// **The accepted tip's post-state, metadata first.** A checkpoint-synced node holds the tip's
+/// header and not its body; a body-first read leaves `CURRENT_ROOT` at genesis, and the first
+/// post-anchor block is then validated against the wrong state. The body is the fallback for a
+/// store whose metadata predates the field.
+fn accepted_tip_root(metadata: Option<StateHash>, body: Option<StateHash>) -> Option<StateHash> {
+    metadata
+        .filter(|root| *root != StateHash::new([0u8; 32]))
+        .or(body)
+}
+
 /// Check the restored developer allocation before admission and proposal enter the running phase.
 ///
 /// **Enforce when present, trust when absent.** A joiner that made a local allocation claim — bonds
@@ -1426,6 +1460,22 @@ mod tests {
         assert!(error.contains("refusing to enter Running"));
         assert!(error.contains(&canonical.to_hex()));
         assert!(error.contains(&fork.to_hex()));
+    }
+
+    /// **The current root after a certified sync comes from metadata.** A checkpoint-synced node
+    /// has the tip's header and not its body; a body-first read leaves `CURRENT_ROOT` at genesis.
+    #[test]
+    fn the_accepted_tip_root_prefers_metadata_over_a_missing_body() {
+        let metadata = StateHash::new([7u8; 32]);
+        let body = StateHash::new([8u8; 32]);
+        assert_eq!(accepted_tip_root(Some(metadata), None), Some(metadata));
+        assert_eq!(
+            accepted_tip_root(Some(StateHash::new([0u8; 32])), Some(body)),
+            Some(body),
+            "a zero metadata post-state is the absence marker"
+        );
+        assert_eq!(accepted_tip_root(None, Some(body)), Some(body));
+        assert_eq!(accepted_tip_root(None, None), None);
     }
 
     #[test]
