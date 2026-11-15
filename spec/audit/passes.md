@@ -13153,7 +13153,7 @@ evidence, never the closure.
 | C390 | done | the audit re-executes the genesis body's blessed deploys, checks the derived root against the body, and answers INCOMPLETE if it cannot; the devnet evidence run reaches AGREE |
 | C391 | done | the audit reads the last eight window headers' fringe roots from `GET /api/v1/block/{hash}/header` and reports INCOMPLETE for a header it cannot read; the producer/joiner window check now holds |
 | C392 | done | review R1: the metadata commitment includes each header's fringe and fringe state root, the producer/joiner check the set's shape, and the audit hydrates every closure header and checks the genesis header against its body |
-| C393 | done | review R2: `AcceptedWindow` (anchor, certified, derived) is enforced by a pre-replay gate and rebuilt/verified at boot; an uncertified historical root in the store is not permission |
+| C393 | done | review R2: `AcceptedWindow` (anchor, certified, derived) is enforced by a pre-replay gate and rebuilt/verified at boot; an uncertified historical root in the store is not permission; a verified certificate with no recorded fringe is adopted at boot instead of refusing to run |
 | C394 | done | review R3: the optional commitments use a presence bitmap and per-slot domain tags; the shared Rust/Python fixture pins all four shapes and the transposition |
 | C395 | done | review R4: the benchmark digest includes `historyRoot`; PASS requires the certificate, commitments, digest-naming attestation, quorum and the proposed block's finalization; the tests run in CI |
 | C396 | done | review R5: the genesis pin is checked before any acceptance write and before boot publication; the checkpoint store serializes its read-then-write decisions |
