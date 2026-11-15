@@ -1157,26 +1157,78 @@ impl BlockHeader {
     }
 }
 
+/// A height window over a named tip's ancestry (a metadata walk's batched step).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockMetadataRange {
+    pub from: i64,
+    pub to: i64,
+}
+
 /// A request for the headers of named blocks (a metadata-only walk's step).
+///
+/// With `range = None` the answer is exactly the named headers. With `range = Some(r)` the answer
+/// also includes each named tip's **ancestors whose height is in `[r.from, r.to]`**; the named tip
+/// itself is always included, even when its height is above `r.to`. The range is a transport
+/// optimization: the walk still checks the returned set against the certificate's `metadataRoot`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockMetadataRequest {
     pub hashes: Vec<BlockHash>,
+    pub range: Option<BlockMetadataRange>,
 }
 
 impl BlockMetadataRequest {
+    /// The original hashes-only request.
+    pub fn hashes(hashes: Vec<BlockHash>) -> Self {
+        BlockMetadataRequest {
+            hashes,
+            range: None,
+        }
+    }
+
+    /// Ask for each tip and its ancestors in `[from, to]`.
+    pub fn range(tips: Vec<BlockHash>, from: i64, to: i64) -> Self {
+        BlockMetadataRequest {
+            hashes: tips,
+            range: Some(BlockMetadataRange { from, to }),
+        }
+    }
+
     pub fn from_proto(r: &BlockMetadataRequestProto) -> Result<Self, crate::errors::ModelsError> {
-        Ok(BlockMetadataRequest {
-            hashes: r
-                .hashes
-                .iter()
-                .map(|h| BlockHash::try_from(h.as_slice()))
-                .collect::<Result<Vec<BlockHash>, crate::errors::ModelsError>>()?,
-        })
+        let hashes = r
+            .hashes
+            .iter()
+            .map(|h| BlockHash::try_from(h.as_slice()))
+            .collect::<Result<Vec<BlockHash>, crate::errors::ModelsError>>()?;
+        if hashes.is_empty() {
+            return Err(crate::errors::ModelsError::Decode(
+                "a metadata request names no block".to_string(),
+            ));
+        }
+        let range = match &r.range {
+            Some(range) if range.from < 0 || range.to < range.from => {
+                return Err(crate::errors::ModelsError::Decode(format!(
+                    "a metadata range must satisfy 0 <= from <= to, got from={} to={}",
+                    range.from, range.to
+                )))
+            }
+            Some(range) => Some(BlockMetadataRange {
+                from: range.from,
+                to: range.to,
+            }),
+            None => None,
+        };
+        Ok(BlockMetadataRequest { hashes, range })
     }
 
     pub fn to_proto(&self) -> BlockMetadataRequestProto {
         BlockMetadataRequestProto {
             hashes: self.hashes.iter().map(|h| h.as_bytes().to_vec()).collect(),
+            range: self
+                .range
+                .map(|range| crate::proto::casper::BlockMetadataRangeProto {
+                    from: range.from,
+                    to: range.to,
+                }),
         }
     }
 
@@ -2444,5 +2496,48 @@ mod tests {
 
         // Bytes that are not the message at all.
         assert!(EquivocationEvidence::decode(b"not evidence").is_err());
+    }
+
+    /// A range request carries the tips in `hashes` and the window in `range`, and round-trips.
+    #[test]
+    fn a_metadata_request_carries_a_height_range_and_a_tip() {
+        let request = BlockMetadataRequest::range(vec![block_hash(1), block_hash(2)], 0, 255);
+        let decoded = BlockMetadataRequest::from_bytes(&request.to_bytes()).expect("decodes");
+        assert_eq!(decoded, request);
+        assert_eq!(decoded.range, Some(BlockMetadataRange { from: 0, to: 255 }));
+        assert_eq!(decoded.hashes.len(), 2);
+
+        let plain = BlockMetadataRequest::hashes(vec![block_hash(3)]);
+        assert_eq!(plain.range, None);
+        assert_eq!(
+            BlockMetadataRequest::from_bytes(&plain.to_bytes()).expect("decodes"),
+            plain
+        );
+    }
+
+    /// A request that names no block is refused: an empty answer is not a walk step.
+    #[test]
+    fn a_metadata_request_with_no_tip_is_refused() {
+        let proto = BlockMetadataRequestProto {
+            hashes: Vec::new(),
+            range: Some(crate::proto::casper::BlockMetadataRangeProto { from: 0, to: 10 }),
+        };
+        let err = BlockMetadataRequest::from_bytes(&proto.encode_to_vec())
+            .expect_err("a request with no tip must be refused");
+        assert!(err.to_string().contains("names no block"), "{err}");
+    }
+
+    /// A window with `to < from` (or a negative bound) is malformed, not an empty range.
+    #[test]
+    fn a_metadata_range_with_to_below_from_is_refused() {
+        for (from, to) in [(-1, 10), (10, 9)] {
+            let proto = BlockMetadataRequestProto {
+                hashes: vec![vec![1u8; 32]],
+                range: Some(crate::proto::casper::BlockMetadataRangeProto { from, to }),
+            };
+            let err = BlockMetadataRequest::from_bytes(&proto.encode_to_vec())
+                .expect_err("a malformed window must be refused");
+            assert!(err.to_string().contains("0 <= from <= to"), "{err}");
+        }
     }
 }

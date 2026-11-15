@@ -812,6 +812,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     // children, and agreement between duplicates.
     let walk = super::lfs_metadata_requester::request_metadata(
         anchor,
+        verified.checkpoint.anchor_height,
         metadata_rx,
         transport.as_ref(),
         &conf,

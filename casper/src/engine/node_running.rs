@@ -6,7 +6,7 @@
 //! (LFS state-sync) requests are served from the RSpace exporter.
 
 use rchain_shared::lock::Unpoison;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -266,12 +266,24 @@ pub async fn handle_has_block_request(
     }
 }
 
+/// The most headers one range answer carries. The requester windows its walk below this, so a
+/// single answer stays bounded independent of the chain's depth.
+const MAX_METADATA_RANGE_HEADERS: usize = 512;
+/// The most DAG nodes one range answer visits. A caller can name a tip far above its window; the
+/// traversal is bounded so that request cannot turn into a whole-chain walk.
+const MAX_METADATA_RANGE_VISITS: usize = 50_000;
+
 /// **Answer a metadata request**: the headers this node holds for the named hashes, with
 /// `body_available` read from the block store.
 ///
 /// A hash this node does not hold is simply absent — the same answer a block request for an unknown
 /// hash gives — so a walk asks another peer rather than failing. The response is streamed: a request
 /// is answered in one message and a batch of headers can exceed a single packet.
+///
+/// With a range, the answer also includes each named tip's **ancestors inside the window**. The
+/// named tip is included even when it is above the window; ancestors below it are not. The range is
+/// a transport optimization: the caller still checks the returned set against the certificate's
+/// `metadataRoot`.
 pub async fn handle_block_metadata_request(
     transport: &dyn TransportLayer,
     conf: &RPConf,
@@ -282,48 +294,7 @@ pub async fn handle_block_metadata_request(
     peer: &PeerNode,
     req: &BlockMetadataRequest,
 ) {
-    let mut headers = Vec::new();
-    for hash in &req.hashes {
-        let meta = match dag.lookup(hash).await {
-            Ok(Some(meta)) => meta,
-            Ok(None) => continue,
-            Err(e) => {
-                log.warn(
-                    source,
-                    &format!("metadata request: lookup of {} failed: {e}", hash.to_hex()),
-                );
-                continue;
-            }
-        };
-        let body_available = match block_store.contains(&[*hash]).await {
-            Ok(found) => found.first().copied().unwrap_or(false),
-            Err(e) => {
-                log.warn(
-                    source,
-                    &format!(
-                        "metadata request: body-availability read for {} failed: {e}",
-                        hash.to_hex()
-                    ),
-                );
-                false
-            }
-        };
-        headers.push(BlockHeader {
-            block_hash: meta.block_hash,
-            block_num: meta.block_num,
-            sender: meta.sender,
-            seq_num: meta.seq_num,
-            justifications: meta.justifications,
-            bonds_map: meta.bonds_map,
-            fringe: meta.fringe,
-            fringe_state_hash: meta.fringe_state_hash,
-            pre_state_hash: meta.pre_state_hash,
-            post_state_hash: meta.post_state_hash,
-            body_available,
-            sig: meta.sig,
-            sig_algorithm: meta.sig_algorithm,
-        });
-    }
+    let headers = metadata_answer(dag, block_store, log, source, req).await;
     if headers.is_empty() {
         return;
     }
@@ -335,6 +306,126 @@ pub async fn handle_block_metadata_request(
         BlockMetadataMessageSerde.mk_packet(&answer),
     )
     .await;
+}
+
+/// The headers one metadata request answers. Split from the transport so the window semantics are
+/// testable without a peer: the range includes each named tip and its ancestors inside the window;
+/// the hashes-only request answers exactly the named headers.
+pub(crate) async fn metadata_answer(
+    dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
+    log: &dyn Log,
+    source: LogSource,
+    req: &BlockMetadataRequest,
+) -> Vec<BlockHeader> {
+    let mut headers = Vec::new();
+    let mut seen: BTreeSet<BlockHash> = BTreeSet::new();
+    match &req.range {
+        None => {
+            for hash in &req.hashes {
+                if !seen.insert(*hash) {
+                    continue;
+                }
+                if let Some(header) = metadata_header(dag, block_store, log, source, hash).await {
+                    headers.push(header);
+                }
+            }
+        }
+        Some(range) => {
+            let mut queue: VecDeque<(BlockHash, bool)> = req
+                .hashes
+                .iter()
+                .copied()
+                .map(|hash| (hash, true))
+                .collect();
+            let mut visited = 0usize;
+            while let Some((hash, named)) = queue.pop_front() {
+                if visited >= MAX_METADATA_RANGE_VISITS
+                    || headers.len() >= MAX_METADATA_RANGE_HEADERS
+                {
+                    break;
+                }
+                if !seen.insert(hash) {
+                    continue;
+                }
+                visited += 1;
+                let Some(header) = metadata_header(dag, block_store, log, source, &hash).await
+                else {
+                    continue;
+                };
+                let height = i64::from(header.block_num);
+                let parents = header.justifications.clone();
+                let in_window = height >= range.from && height <= range.to;
+                // The named tip is what the caller asked for; it is answered even when it is above
+                // the window. Ancestors are answered only inside the window.
+                if named || in_window {
+                    headers.push(header);
+                    if headers.len() >= MAX_METADATA_RANGE_HEADERS {
+                        break;
+                    }
+                }
+                // Walk toward the window; below `from` there is nothing left to contribute.
+                if height > range.from {
+                    for parent in parents {
+                        if !seen.contains(&parent) {
+                            queue.push_back((parent, false));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    headers
+}
+
+/// One header with its `body_available` read from the block store. A lookup failure is logged and
+/// the header is absent, which the walk treats the same as "this peer does not hold it".
+async fn metadata_header(
+    dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
+    log: &dyn Log,
+    source: LogSource,
+    hash: &BlockHash,
+) -> Option<BlockHeader> {
+    let meta = match dag.lookup(hash).await {
+        Ok(Some(meta)) => meta,
+        Ok(None) => return None,
+        Err(e) => {
+            log.warn(
+                source,
+                &format!("metadata request: lookup of {} failed: {e}", hash.to_hex()),
+            );
+            return None;
+        }
+    };
+    let body_available = match block_store.contains(&[*hash]).await {
+        Ok(found) => found.first().copied().unwrap_or(false),
+        Err(e) => {
+            log.warn(
+                source,
+                &format!(
+                    "metadata request: body-availability read for {} failed: {e}",
+                    hash.to_hex()
+                ),
+            );
+            false
+        }
+    };
+    Some(BlockHeader {
+        block_hash: meta.block_hash,
+        block_num: meta.block_num,
+        sender: meta.sender,
+        seq_num: meta.seq_num,
+        justifications: meta.justifications,
+        bonds_map: meta.bonds_map,
+        fringe: meta.fringe,
+        fringe_state_hash: meta.fringe_state_hash,
+        pre_state_hash: meta.pre_state_hash,
+        post_state_hash: meta.post_state_hash,
+        body_available,
+        sig: meta.sig,
+        sig_algorithm: meta.sig_algorithm,
+    })
 }
 
 /// Respond to a peer's fork-choice-tip request (port of `handleForkChoiceTipRequest`).
@@ -2423,6 +2514,108 @@ mod tests {
         assert_eq!(
             bounded.to, MAX_BLOCK_RANGE as i64,
             "the responder bounds the window by its own limit"
+        );
+    }
+
+    /// **A metadata range answers the tip and its ancestry inside the window.** The named tip is
+    /// always included, even when it is above the window, because it is what the caller asked for;
+    /// ancestors below the window are not included. The answer is a transport optimization: the
+    /// caller still checks the set against the certificate's `metadataRoot`.
+    #[tokio::test]
+    async fn a_metadata_range_answers_the_tips_ancestry_in_the_window() {
+        use rchain_models::block_metadata::BlockMetadata;
+
+        let dag = build_dag().await;
+        let store = block_store(vec![]).await;
+        let g = chain_block(0, 0, &[]);
+        let a = chain_block(1, 1, &[g.block_hash]);
+        let b = chain_block(2, 2, &[a.block_hash]);
+        let c = chain_block(3, 3, &[b.block_hash]);
+        for block in [&g, &a, &b, &c] {
+            dag.insert(BlockMetadata::from_block(block), block.clone())
+                .await
+                .expect("the block inserts");
+        }
+
+        let req = BlockMetadataRequest::range(vec![c.block_hash], 1, 2);
+        let answer =
+            metadata_answer(dag.as_ref(), &store, &NopLog, LogSource::new("test"), &req).await;
+        let heights: BTreeSet<i64> = answer
+            .iter()
+            .map(|header| i64::from(header.block_num))
+            .collect();
+        assert_eq!(
+            heights,
+            BTreeSet::from([1, 2, 3]),
+            "the tip is above the window and still answered; the window's ancestors are answered; \
+             genesis below it is not"
+        );
+        assert!(
+            answer
+                .iter()
+                .any(|header| header.block_hash == c.block_hash),
+            "the named tip is always included"
+        );
+
+        // The hashes-only request is unchanged: exactly the named headers, no ancestry.
+        let plain = BlockMetadataRequest::hashes(vec![a.block_hash]);
+        let answer = metadata_answer(
+            dag.as_ref(),
+            &store,
+            &NopLog,
+            LogSource::new("test"),
+            &plain,
+        )
+        .await;
+        assert_eq!(answer.len(), 1);
+        assert_eq!(answer[0].block_hash, a.block_hash);
+
+        // An unknown tip answers nothing; the caller asks another peer.
+        let unknown = BlockMetadataRequest::range(vec![hash(99)], 0, 10);
+        assert!(metadata_answer(
+            dag.as_ref(),
+            &store,
+            &NopLog,
+            LogSource::new("test"),
+            &unknown
+        )
+        .await
+        .is_empty());
+    }
+
+    /// A range answer is bounded by the responder's own cap, whatever the caller asks for.
+    #[tokio::test]
+    async fn a_metadata_range_is_bounded_by_the_responders_cap() {
+        use rchain_models::block_metadata::BlockMetadata;
+
+        let dag = build_dag().await;
+        let store = block_store(vec![]).await;
+        let mut parent: Option<BlockHash> = None;
+        let mut tip = None;
+        for height in 0..(MAX_METADATA_RANGE_HEADERS as i64 + 32) {
+            let parents: Vec<BlockHash> = parent.into_iter().collect();
+            let mut block = chain_block(1, height, &parents);
+            // One sender may not reuse a sequence: make each height a new sequence.
+            block.seq_num = height.try_into().expect("a sequence");
+            // A unique hash per height: `chain_block`'s one-byte id repeats every 250 heights.
+            let mut bytes = [0u8; 32];
+            bytes[..8].copy_from_slice(&height.to_le_bytes());
+            bytes[31] = 0xAB;
+            block.block_hash = BlockHash::new(bytes);
+            dag.insert(BlockMetadata::from_block(&block), block.clone())
+                .await
+                .expect("the block inserts");
+            parent = Some(block.block_hash);
+            tip = Some(block.block_hash);
+        }
+
+        let req = BlockMetadataRequest::range(vec![tip.expect("a tip")], 0, i64::MAX);
+        let answer =
+            metadata_answer(dag.as_ref(), &store, &NopLog, LogSource::new("test"), &req).await;
+        assert_eq!(
+            answer.len(),
+            MAX_METADATA_RANGE_HEADERS,
+            "one answer never exceeds the responder's cap"
         );
     }
 
