@@ -2269,20 +2269,35 @@ async fn setup_shard_runtime(
     // its own genesis and never syncs; `None` is honest there and refusal on a joiner.
     let checkpoint_source: Option<
         Arc<dyn rchain_casper::engine::checkpoint_source::CheckpointSource>,
-    > = match comm_state.rp_conf.bootstrap.as_ref() {
-        Some(peer) => {
-            match crate::runtime::checkpoint_collector::HttpCheckpointSource::from_bootstrap(peer) {
-                Ok(source) => Some(Arc::new(source)),
-                Err(e) => {
-                    log.warn(
-                        LogSource::new("coop.rchain.node.runtime.Setup"),
-                        &format!("no checkpoint source for {shard_id}: {e}"),
-                    );
-                    None
-                }
+    > = if let Some(url) = conf.casper.checkpoint_source.as_ref() {
+        match crate::runtime::checkpoint_collector::HttpCheckpointSource::from_url(url) {
+            Ok(source) => Some(Arc::new(source)),
+            Err(e) => {
+                log.warn(
+                    LogSource::new("coop.rchain.node.runtime.Setup"),
+                    &format!("no checkpoint source for {shard_id} at {url}: {e}"),
+                );
+                None
             }
         }
-        None => None,
+    } else {
+        match comm_state.rp_conf.bootstrap.as_ref() {
+            Some(peer) => {
+                match crate::runtime::checkpoint_collector::HttpCheckpointSource::from_bootstrap(
+                    peer,
+                ) {
+                    Ok(source) => Some(Arc::new(source)),
+                    Err(e) => {
+                        log.warn(
+                            LogSource::new("coop.rchain.node.runtime.Setup"),
+                            &format!("no checkpoint source for {shard_id}: {e}"),
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        }
     };
 
     // Node launch mode dispatch (genesis → syncing → running over the peer-message stream).

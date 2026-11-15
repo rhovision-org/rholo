@@ -279,6 +279,9 @@ async fn run_case(phase: Phase, spec: JoinerSpec, expected: Expected) {
 
     let join_dir = temp_dir("lfs-join");
     let mut join_conf = joiner_conf(&join_dir, &join_ports, &boot_peer);
+    // **The harness assigns ports dynamically**, so the bootstrap's client API is named explicitly
+    // rather than derived from the protocol port's published +3 layout.
+    join_conf.casper.checkpoint_source = Some(format!("http://127.0.0.1:{}", boot_ports[0]));
     spec.apply(&mut join_conf, &join_dir);
 
     let boot_base = format!("http://127.0.0.1:{}", boot_ports[0]);
@@ -527,6 +530,9 @@ fn a_restored_bonded_joiner_validates_and_proposes() {
 
         let join_dir = temp_dir("lfs-bonded-join");
         let mut join_conf = joiner_conf(&join_dir, &join_ports, &boot_peer);
+        // **The harness assigns ports dynamically**, so the bootstrap's client API is named explicitly
+        // rather than derived from the protocol port's published +3 layout.
+        join_conf.casper.checkpoint_source = Some(format!("http://127.0.0.1:{}", boot_ports[0]));
         JoinerSpec {
             recipient: Some(recipient.clone()),
             wallets_rows: Some(wallets("1000000000000000000")),

@@ -182,6 +182,11 @@ pub struct CasperConf {
     /// a light node: it serves and proposes from the checkpoint state, answers "not indexed" below
     /// its floor, and relies on an archive for history.
     pub backfill_bodies: bool,
+    /// **Where a joiner fetches its checkpoint certificate**, as a client-API base URL
+    /// (`http://host:port`). `None` derives it from the bootstrap's protocol port (the published
+    /// `+3` layout); an explicit value is for a bootstrap on a non-standard client port or a test
+    /// harness whose ports are assigned dynamically.
+    pub checkpoint_source: Option<String>,
     /// Operator-pinned genesis block hash for joining an existing network.
     pub expected_genesis_hash: Option<String>,
     /// **Whether this node may reset itself** — the acting half of F-U5-01, off by default (#320).

@@ -580,6 +580,7 @@ fn casper_conf_from_hocon(h: &Hocon) -> Result<CasperConf, String> {
             Some(v) => to_bool(v)?,
             None => true,
         },
+        checkpoint_source: to_optional_string(h, "checkpoint-source")?.filter(|s| !s.is_empty()),
         effect_mode: to_optional_string(h, "effect-scheduler")?
             .unwrap_or_else(|| "dfs".to_string()),
     })

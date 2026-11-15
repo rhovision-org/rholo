@@ -67,6 +67,23 @@ pub struct HttpCheckpointSource {
 }
 
 impl HttpCheckpointSource {
+    /// An explicit client-API base URL (`casper.checkpoint-source`), for a bootstrap on a
+    /// non-standard client port or a harness whose ports are assigned dynamically.
+    pub fn from_url(base: &str) -> Result<Self, String> {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .connect_timeout(ATTESTATION_TIMEOUT)
+            .timeout(ATTESTATION_TIMEOUT)
+            .user_agent(concat!("rchain-rnode/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|e| format!("checkpoint source client: {e}"))?;
+        Ok(HttpCheckpointSource {
+            client,
+            url: format!("{}/api/v1/checkpoint", base.trim_end_matches('/')),
+        })
+    }
+
     /// The bootstrap's HTTP endpoint is the protocol port plus the published offset — the same
     /// derivation the node list and the peer probe use, so a node published there is the one asked.
     pub fn from_bootstrap(peer: &PeerNode) -> Result<Self, String> {
