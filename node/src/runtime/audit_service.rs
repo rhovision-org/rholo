@@ -160,7 +160,10 @@ impl AuditService {
             return Ok(existing);
         }
         if let Some(existing) = durable_answer(&self.store, &self.signer(), &request.nonce).await? {
-            self.produced.lock().unpoison().insert(request.nonce.clone(), existing.clone());
+            self.produced
+                .lock()
+                .unpoison()
+                .insert(request.nonce.clone(), existing.clone());
             return Ok(existing);
         }
         let scratch = self.scratch_root.join(&request.nonce);
@@ -253,8 +256,8 @@ impl AuditService {
 }
 
 /// **The durable answer for a nonce, or the defined refusal when only the nonce survived.** The
-/// store commits the claim, the head, the spent nonce and this answer in one batch; this read is
-/// what makes a retry after a restart return the original claim instead of replaying the nonce.
+/// signed claims commit their head, nonce and answer together. Unsigned results commit a nonce
+/// and response only; both paths return the original verdict instead of replaying.
 async fn durable_answer(
     store: &AuditStore,
     signer: &str,
@@ -448,10 +451,15 @@ mod tests {
                 report: serde_json::to_value(&reported).expect("json"),
                 attestation: None,
             };
-            store.record_unattested_response(&signer, &nonce, &answer).await.expect("persist");
+            store
+                .record_unattested_response(&signer, &nonce, &answer)
+                .await
+                .expect("persist");
             let reopened = AuditStore::open(&kvm).await.expect("reopen");
             let original = durable_answer(&reopened, &signer, &nonce)
-                .await.expect("read").expect("persisted answer");
+                .await
+                .expect("read")
+                .expect("persisted answer");
             assert_eq!(original.report.verdict, verdict);
             assert!(original.attestation.is_none());
             assert!(reopened.accepted().await.expect("accepted").is_empty());
