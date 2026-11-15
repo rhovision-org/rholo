@@ -26,8 +26,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime
+import hashlib
 import json
 import os
+import struct
 import subprocess
 import sys
 import time
@@ -36,8 +39,230 @@ import urllib.request
 from pathlib import Path
 
 HTTP_BASE = int(os.environ.get("DEVNET_HTTP_BASE", "40403"))
+ADMIN_BASE = int(os.environ.get("DEVNET_ADMIN_BASE", "40405"))
 PREFIX = os.environ.get("DEVNET_PREFIX", "devnet")
 BOOTSTRAP = f"{PREFIX}-bootstrap"
+
+
+def utcnow() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def parse_started_at(raw: str) -> datetime.datetime:
+    """Docker's `StartedAt` is UTC with a `Z` suffix; the clock origin is the container's start."""
+    return datetime.datetime.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S").replace(
+        tzinfo=datetime.timezone.utc
+    )
+
+
+def restore_elapsed(started_at: datetime.datetime, ended_at: datetime.datetime) -> float:
+    return max(0.0, (ended_at - started_at).total_seconds())
+
+
+def measure_restore(started_at, readiness_probe, clock=utcnow) -> float:
+    """**The clock stops after readiness, never before it.**
+
+    The audit found the old code sampled the end time *before* waiting for `ready` and then waited,
+    so a 20-second readiness delay was recorded as 0. The probe must complete before the end sample;
+    the signature makes that ordering structural rather than a comment.
+    """
+    readiness_probe()
+    return restore_elapsed(started_at, clock())
+
+
+def http_post_json(port: int, path: str, payload, timeout: float = 15.0):
+    url = f"http://127.0.0.1:{port}{path}"
+    data = None if payload is None else json.dumps(payload).encode()
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        body = response.read()
+    if not body:
+        return None
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        return {"raw": body.decode(errors="replace")}
+
+
+def try_http_json(port: int, path: str):
+    try:
+        return http_json(port, path)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ConnectionError) as exc:
+        print(f"c339: GET {path} did not answer: {exc}", file=sys.stderr)
+        return None
+
+
+def measure_post_join(joiner_port: int, before: dict) -> dict:
+    """**A join that stops at the anchor is not a join.**
+
+    Submit a deploy to the bootstrap, force a block through the admin propose route, and require the
+    joiner to observe the new height and then finalize it. Instrument failures are recorded as an
+    error, which the acceptance treats as INCONCLUSIVE rather than PASS.
+    """
+    before_height = before.get("maxObservedHeight")
+    before_finalized = before.get("finalizedHeight")
+    if before_height is None or before_finalized is None:
+        return {"error": "the joiner's pre-join height or finality is unknown"}
+    try:
+        deploy = http_post_json(
+            HTTP_BASE, "/api/v1/explore-deploy", "new x in { x!(1) }"
+        )
+        propose = http_post_json(ADMIN_BASE, "/api/propose", None)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ConnectionError) as exc:
+        return {"error": f"the post-join deploy/propose failed: {exc}"}
+    try:
+        advanced = wait_for(
+            joiner_port,
+            lambda body: body.get("maxObservedHeight", -1) > before_height,
+            120.0,
+            5.0,
+            "post-join block observed",
+        )
+        finalized = wait_for(
+            joiner_port,
+            lambda body: body.get("finalizedHeight", -1) > before_finalized,
+            180.0,
+            5.0,
+            "post-join finality",
+        )
+    except TimeoutError as exc:
+        return {"error": str(exc), "deploy": deploy, "propose": propose}
+    return {
+        "height_advanced": True,
+        "finality_advanced": True,
+        "observed_height": advanced.get("maxObservedHeight"),
+        "finalized_height": finalized.get("finalizedHeight"),
+        "deploy": deploy,
+        "propose": propose,
+    }
+
+
+def _lp(value: bytes) -> bytes:
+    return struct.pack(">I", len(value)) + value
+
+
+def checkpoint_digest_hex(checkpoint: dict) -> str:
+    """The statement digest, mirroring `rchain-casper::checkpoint::checkpoint_digest`.
+
+    This is a second implementation on purpose: the benchmark compares the certificate a joiner
+    serves with the one the bootstrap serves, and the golden test against the Rust fixture pins the
+    two encodings together. A drift is a benchmark failure, not a silent disagreement.
+    """
+    buffer = _lp(b"rchain-checkpoint-v1")
+    buffer += _lp(checkpoint["shardId"].encode())
+    buffer += bytes.fromhex(checkpoint["anchor"])
+    buffer += struct.pack(">q", checkpoint["anchorHeight"])
+    buffer += bytes.fromhex(checkpoint["anchorPostState"])
+    parent = checkpoint.get("parentDigest")
+    buffer += bytes.fromhex(parent) if parent else bytes(32)
+    buffer += struct.pack(">q", checkpoint["epoch"])
+    fringe = sorted(bytes.fromhex(item) for item in checkpoint["fringeHashes"])
+    buffer += struct.pack(">I", len(fringe)) + b"".join(fringe)
+    root = checkpoint.get("metadataRoot")
+    if root is not None:
+        buffer += b"\x01" + bytes.fromhex(root)
+    return hashlib.blake2b(buffer, digest_size=32).hexdigest()
+
+
+def certificate_fields(certificate) -> dict | None:
+    if not isinstance(certificate, dict) or not isinstance(
+        certificate.get("checkpoint"), dict
+    ):
+        return None
+    checkpoint = certificate["checkpoint"]
+    try:
+        digest = checkpoint_digest_hex(checkpoint)
+    except (KeyError, TypeError, ValueError):
+        digest = None
+    return {
+        "digest": digest,
+        "anchor": checkpoint.get("anchor"),
+        "anchor_height": checkpoint.get("anchorHeight"),
+        "anchor_post_state": checkpoint.get("anchorPostState"),
+        "metadata_root": checkpoint.get("metadataRoot"),
+        "attestations": len(certificate.get("attestations") or []),
+    }
+
+
+def checkpoint_acceptance(
+    *,
+    joiner_health: dict,
+    bootstrap_finalized,
+    joiner_certificate,
+    bootstrap_post_state,
+    restart: dict,
+    post_join_progress,
+    log_signals: dict,
+) -> tuple[str, list[str]]:
+    """**The checkpoint-mode verdict.** Height and `ready` alone are not a join.
+
+    A boundary witness can report the requested height and `ready` while serving another root and
+    a zero finalized height; the old predicate called that PASS. PASS now requires a certified
+    anchor at or above the bootstrap's finalized height, a post-state that matches the bootstrap's
+    block at that anchor, finalized values that match, a post-join block that finalizes, a restart
+    that retains the certified anchor and finalized height, and a log that shows the certified path
+    (`replayed none`) with no replay marker.
+    """
+    reasons: list[str] = []
+    joiner = certificate_fields(joiner_certificate)
+    if joiner is None:
+        return "INCONCLUSIVE", ["the joiner serves no checkpoint certificate"]
+    if bootstrap_post_state is None:
+        return "INCONCLUSIVE", [
+            "the bootstrap's post-state for the joiner's certified anchor was not readable"
+        ]
+
+    if joiner_health.get("ready") is not True:
+        reasons.append("the joiner is not ready")
+    observed = joiner_health.get("maxObservedHeight")
+    if observed is None or observed < bootstrap_finalized:
+        reasons.append("the joiner's observed height is below the bootstrap's finalized anchor")
+
+    anchor_height = joiner.get("anchor_height")
+    if anchor_height is None or anchor_height < bootstrap_finalized:
+        reasons.append("the certified anchor is below the bootstrap's finalized height")
+    if joiner.get("anchor_post_state") != bootstrap_post_state:
+        reasons.append(
+            "the joiner's certified post-state differs from the bootstrap's post-state at the "
+            "certified anchor"
+        )
+
+    finalized = joiner_health.get("finalizedHeight")
+    if finalized is None or finalized < bootstrap_finalized:
+        reasons.append("the joiner's finalized height is below the bootstrap's")
+
+    if not isinstance(post_join_progress, dict) or post_join_progress.get("error"):
+        return "INCONCLUSIVE", [
+            f"post-join progress was not measured: {post_join_progress}"
+        ]
+    if not post_join_progress.get("height_advanced"):
+        reasons.append("the joiner did not observe a post-join block")
+    if not post_join_progress.get("finality_advanced"):
+        reasons.append("the post-join block did not finalize")
+
+    if restart.get("ready") is not True:
+        reasons.append("the joiner is not ready after restart")
+    if (
+        restart.get("certified_anchor_height") is None
+        or restart["certified_anchor_height"] < anchor_height
+    ):
+        reasons.append("the restart lost the certified anchor")
+    if restart.get("finalized_height") is None or restart["finalized_height"] < finalized:
+        reasons.append("the restart lost finalized height")
+
+    if not log_signals.get("replayed_none"):
+        reasons.append("the log does not show the certified path's 'replayed none'")
+    if log_signals.get("replay_markers"):
+        reasons.append("the log shows a replay marker")
+    if log_signals.get("active_bonds_error") or log_signals.get("receiver_overflow"):
+        reasons.append("the log carries a refusal signal")
+
+    return ("FAIL", reasons) if reasons else ("PASS", [])
 
 
 def http_json(port: int, path: str, timeout: float = 5.0) -> dict:
@@ -103,10 +328,23 @@ def main() -> int:
                         help="seconds allowed for the wiped validator to restore (default 45m)")
     parser.add_argument("--poll", type=float, default=10.0, help="poll interval in seconds")
     parser.add_argument("--validator", type=int, default=3, help="validator to wipe (default 3)")
+    parser.add_argument(
+        "--join-mode",
+        default="checkpoint",
+        help="the sync path measured; only `checkpoint` exists after #591 (use `rnode audit` "
+        "for the full replay)",
+    )
     args = parser.parse_args()
 
     if args.validator not in (1, 2, 3):
         print("c339: devnet.sh reset supports validators 1..3", file=sys.stderr)
+        return 2
+    if args.join_mode != "checkpoint":
+        print(
+            "c339: the replay sync path was removed in #591; measure the replay with "
+            "`rnode audit`, not with a join",
+            file=sys.stderr,
+        )
         return 2
 
     out = Path(args.out)
@@ -166,41 +404,34 @@ def main() -> int:
         joiner_name = f"{PREFIX}-observer-1"
         joiner_port = HTTP_BASE + 2 * 1000  # n=1 validators, observer i=1
         started_raw = docker(["inspect", "-f", "{{.State.StartedAt}}", joiner_name]).strip()
-        restored_at = http_json(joiner_port, "/health")
-        # `devnet.sh up` returns only after the observer serves, so this is the restore's end; the
-        # clock starts at the container's own start, not at `up`'s return.
+        # `devnet.sh up` returns only after the observer serves, so the restore's end is after the
+        # readiness wait below; the clock starts at the container's own start, not at `up`'s return.
         try:
-            import datetime
-
-            started_dt = datetime.datetime.strptime(started_raw[:19], "%Y-%m-%dT%H:%M:%S")
-            now = datetime.datetime.utcnow()
-            restore_seconds = max(0.0, (now - started_dt).total_seconds())
+            started_dt = parse_started_at(started_raw)
         except ValueError:
-            # Fall back to the whole `up` window (the bootstrap's own start included).
-            restore_seconds = time.monotonic() - started
-        restored = wait_for(
-            joiner_port,
-            lambda body: body.get("ready") is True
-            and body.get("maxObservedHeight") is not None
-            and body["maxObservedHeight"] >= bootstrap_finalized,
-            args.restore_timeout,
-            args.poll,
-            f"observer restore to finalized {bootstrap_finalized}",
-        )
+            started_dt = None
 
-        restart_started = time.monotonic()
-        run(["tools/devnet.sh", "stop", joiner_name])
-        run(["tools/devnet.sh", "start", joiner_name])
-        restarted = wait_for(
-            joiner_port,
-            lambda body: body.get("ready") is True
-            and body.get("maxObservedHeight") is not None
-            and body["maxObservedHeight"] >= restored["maxObservedHeight"],
-            args.restore_timeout,
-            args.poll,
-            "observer restart control",
-        )
-        restart_seconds = time.monotonic() - restart_started
+        observed: dict = {}
+
+        def probe() -> None:
+            observed["restored"] = wait_for(
+                joiner_port,
+                lambda body: body.get("ready") is True
+                and body.get("maxObservedHeight") is not None
+                and body["maxObservedHeight"] >= bootstrap_finalized,
+                args.restore_timeout,
+                args.poll,
+                f"observer restore to finalized {bootstrap_finalized}",
+            )
+
+        if started_dt is None:
+            probe()
+            restore_seconds = time.monotonic() - started
+        else:
+            # The probe runs inside `measure_restore`; the end sample cannot precede it.
+            restore_seconds = measure_restore(started_dt, probe)
+        restored = observed["restored"]
+        restart_target = joiner_name
     else:
         joiner_name = f"{PREFIX}-validator-{args.validator}"
         joiner_port = HTTP_BASE + args.validator * 1000
@@ -216,20 +447,55 @@ def main() -> int:
             f"validator {args.validator} restore to finalized {bootstrap_finalized}",
         )
         restore_seconds = time.monotonic() - reset_started
+        restart_target = str(args.validator)
 
-        restart_started = time.monotonic()
-        run(["tools/devnet.sh", "stop", str(args.validator)])
-        run(["tools/devnet.sh", "start", str(args.validator)])
-        restarted = wait_for(
-            joiner_port,
-            lambda body: body.get("ready") is True
-            and body.get("maxObservedHeight") is not None
-            and body["maxObservedHeight"] >= restored["maxObservedHeight"],
-            args.restore_timeout,
-            args.poll,
-            f"validator {args.validator} restart control",
-        )
-        restart_seconds = time.monotonic() - restart_started
+    # **The acceptance evidence, before the restart.** A certificate that survives the restart is
+    # the control; the certificate and post-state measured here are the join's claim.
+    joiner_certificate = try_http_json(joiner_port, "/api/v1/checkpoint")
+    bootstrap_certificate = try_http_json(HTTP_BASE, "/api/v1/checkpoint")
+    joiner_fields = certificate_fields(joiner_certificate)
+    bootstrap_post_state = None
+    if joiner_fields and joiner_fields.get("anchor"):
+        block = try_http_json(HTTP_BASE, f"/api/v1/block/{joiner_fields['anchor']}")
+        if isinstance(block, dict):
+            bootstrap_post_state = block.get("postStateHash") or block.get(
+                "post_state_hash"
+            )
+        if bootstrap_post_state is None:
+            # Fall back to a certificate naming the same anchor; the block route may be pruned
+            # while the certificate is still served.
+            baseline = certificate_fields(bootstrap_certificate)
+            if baseline and baseline.get("anchor") == joiner_fields.get("anchor"):
+                bootstrap_post_state = baseline.get("anchor_post_state")
+    post_join_progress = measure_post_join(joiner_port, restored)
+
+    pre_restart_height = restored.get("maxObservedHeight", 0)
+    if isinstance(post_join_progress, dict) and post_join_progress.get("observed_height"):
+        pre_restart_height = max(pre_restart_height, post_join_progress["observed_height"])
+
+    restart_started = time.monotonic()
+    run(["tools/devnet.sh", "stop", restart_target])
+    run(["tools/devnet.sh", "start", restart_target])
+    restarted = wait_for(
+        joiner_port,
+        lambda body: body.get("ready") is True
+        and body.get("maxObservedHeight") is not None
+        and body["maxObservedHeight"] >= pre_restart_height,
+        args.restore_timeout,
+        args.poll,
+        "restart control",
+    )
+    restart_seconds = time.monotonic() - restart_started
+    restarted_certificate = try_http_json(joiner_port, "/api/v1/checkpoint")
+    restarted_fields = certificate_fields(restarted_certificate) or {}
+    restart = {
+        "seconds": restart_seconds,
+        "max_observed_height": restarted.get("maxObservedHeight"),
+        "ready": restarted.get("ready"),
+        "finalized_height": restarted.get("finalizedHeight"),
+        "certified_anchor_height": restarted_fields.get("anchor_height"),
+        "checkpoint_digest": restarted_fields.get("digest"),
+    }
 
     capture(raw / "joiner-health.json",
             json.dumps(restored, indent=2, sort_keys=True) + "\n")
@@ -239,8 +505,10 @@ def main() -> int:
     capture(raw / "bootstrap.log", docker(["logs", "--timestamps", BOOTSTRAP]))
 
     log_text = (raw / "joiner.log").read_text(errors="replace")
+    baseline_fields = certificate_fields(bootstrap_certificate) or {}
     result = {
         "tool": "c339_mature_replay.py",
+        "join_mode": args.join_mode,
         "source_sha": source_sha,
         "image_id": image_id,
         "target_height": args.target_height,
@@ -250,6 +518,8 @@ def main() -> int:
             "finalized_height": chain.get("finalizedHeight"),
             "finalized_lag": chain.get("finalizedLag"),
             "boot_id": chain.get("bootId"),
+            "checkpoint_anchor_height": baseline_fields.get("anchor_height"),
+            "checkpoint_digest": baseline_fields.get("digest"),
         },
         "joiner": {
             "mode": "observer" if args.observer else "validator",
@@ -260,14 +530,20 @@ def main() -> int:
             "finalized_height": restored.get("finalizedHeight"),
             "ready": restored.get("ready"),
             "reached_bootstrap_finalized": restored.get("maxObservedHeight", -1) >= bootstrap_finalized,
+            "checkpoint": joiner_fields,
+            "bootstrap_post_state": bootstrap_post_state,
+            "metadata_committed": bool(joiner_fields and joiner_fields.get("metadata_root")),
         },
-        "restart": {
-            "seconds": restart_seconds,
-            "max_observed_height": restarted.get("maxObservedHeight"),
-            "ready": restarted.get("ready"),
-        },
+        "restart": restart,
+        "post_join_progress": post_join_progress,
         "log_signals": {
             "lfs_restored": "LFS state is successfully restored" in log_text,
+            "replayed_none": "replayed none" in log_text,
+            "replay_markers": "RecoveryReplay" in log_text or "Replaying" in log_text,
+            "certified_join": (
+                "LFS state accepted under the checkpoint certificate" in log_text
+                or "checkpoint certificate accepted" in log_text
+            ),
             "running_transition": "Making a transition to Running state" in log_text,
             "active_bonds_error": "active-bonds leaf not found" in log_text,
             "receiver_overflow": "block receiver state full" in log_text,
@@ -282,12 +558,17 @@ def main() -> int:
         "wrong_pin_control": "covered by spec/audit/evidence/n479-native-join-20261029/",
         "execution_proven": False,
     }
-    if not result["joiner"]["reached_bootstrap_finalized"]:
-        result["verdict_hint"] = "INCONCLUSIVE"
-    elif result["log_signals"]["active_bonds_error"] or result["log_signals"]["receiver_overflow"]:
-        result["verdict_hint"] = "FAIL"
-    else:
-        result["verdict_hint"] = "PASS"
+    verdict, reasons = checkpoint_acceptance(
+        joiner_health=restored,
+        bootstrap_finalized=bootstrap_finalized,
+        joiner_certificate=joiner_certificate,
+        bootstrap_post_state=bootstrap_post_state,
+        restart=restart,
+        post_join_progress=post_join_progress,
+        log_signals=result["log_signals"],
+    )
+    result["verdict_hint"] = verdict
+    result["verdict_reasons"] = reasons
     capture(raw / "result.json", json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0

@@ -200,8 +200,24 @@ impl Backfill {
     ) -> Result<BlockMessage, String> {
         for attempt in 1..=MAX_BODY_ATTEMPTS {
             crate::engine::sync_metrics::census().add_backfill_request();
-            let _ = comm_util.request_lfs_block_from(&hash, &[]).await;
+            // The send is bounded by the same body deadline the receive uses; a blocked transport
+            // is this attempt's failure, not a stall.
             let deadline = tokio::time::Instant::now() + BODY_TIMEOUT;
+            let requested = tokio::time::timeout(
+                deadline.saturating_duration_since(tokio::time::Instant::now()),
+                comm_util.request_lfs_block_from(&hash, &[]),
+            )
+            .await;
+            if requested.is_err() {
+                log.warn(
+                    LogSource::new("casper.engine.Backfill"),
+                    &format!(
+                        "the body request for {} did not complete within {BODY_TIMEOUT:?}",
+                        hash.to_hex()
+                    ),
+                );
+                continue;
+            }
             loop {
                 let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                 if remaining.is_zero() {

@@ -1169,8 +1169,20 @@ async fn fetch_genesis_body(
     comm_util: &CommUtil,
     log: &dyn Log,
 ) -> Result<(), String> {
-    let _ = comm_util.request_lfs_block_from(&genesis, &[]).await;
+    // **The send is inside the deadline.** A blocked transport used to sit outside the receive
+    // deadline, so the one body the certified path downloads could stall before the clock started.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let requested = tokio::time::timeout(
+        deadline.saturating_duration_since(tokio::time::Instant::now()),
+        comm_util.request_lfs_block_from(&genesis, &[]),
+    )
+    .await;
+    if requested.is_err() {
+        return Err(format!(
+            "the genesis body {} was requested but the request could not be sent within 30s",
+            genesis.to_hex()
+        ));
+    }
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
