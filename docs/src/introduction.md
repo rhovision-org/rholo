@@ -42,7 +42,8 @@ decade.
   to its machine-checked formalization, and the [folder's index](formal/README.md) says which document
   carries which set.
 - **Part III — The node** describes the software that executes rholang: the tuple space, the Merkle
-  state, and the Casper consensus protocol.
+  state, the Casper consensus protocol, and how a node joins, syncs from a checkpoint, serves
+  history and runs an audit.
 - **Part IV — Building applications** is the developer guide: stand up the local Docker devnet and
   configure your app's endpoints to deploy rholang and read back the results.
 - **Part V — Contributor / port** is the engineering appendix: why the node is written in Rust, and

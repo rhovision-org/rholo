@@ -122,8 +122,9 @@ Total in-scope (non-orphaned): roughly **200–220 person-days**.
 The execution core, RSpace, rholang, casper, and the node's pure/API surface are ported — including
 the LMDB store, the node transport binding + `runCLI` (thin-client deploy/propose/status/keygen/
 repl/eval/listen over tonic gRPC clients), the comm/discovery engine wiring (`CommUtil`/
-`BlockReceiver`/`BlockRetriever`/`NodeRunning`), and the full casper engine (LFS requesters,
-`NodeSyncing`, `NodeRunning`, `NodeLaunch.apply`, `BlockReceiver.apply`, `BlockProcessor.apply`).
+`BlockReceiver`/`BlockRetriever`/`NodeRunning`), and the full casper engine (the checkpoint and
+metadata requesters, `NodeSyncing`, `NodeRunning`, `NodeLaunch.apply`, `BlockReceiver.apply`,
+`BlockProcessor.apply`).
 The node runtime wiring (`setupNodeProgram`) is also ported: the `RSpaceImporterStore` factory, the
 block receiver/processor streams, the transport/protocol server + peer-message stream,
 `NodeLaunch.apply`, and the request-dependencies loop.

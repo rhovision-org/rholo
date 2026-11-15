@@ -74,14 +74,18 @@ differently as a different mechanism:
   rather than the block, because native state is written at boundaries.
 
 **The boundary of the "creator and joiner agree" claim.** Two nodes that both **replay** the genesis
-derive the same vaults and so the same post-state hash — that is the property the derivation buys. A node
-that instead **restores** the chain over LFS does *not* replay genesis (`insert_genesis` marks it
-validated as it stands). The restore-completion guard (`check_running_dev_vesting`) enforces a **local
-claim** when the joiner has one — bonds and wallets files present, and a non-empty `dev-tax-address` —
-and trusts the bootstrap's allocation when it has none; an absent claim is *no claim*, not a claim of no
-allocation, which is the normal public-testnet bootstrap. The guard also checks the imported leaf's own
-schedule before Running: nothing has vested at the genesis post-state, and the unreleased amount can
-never exceed the allocation.
+derive the same vaults and so the same post-state hash — that is the property the derivation buys. A
+node that **joins** a chain does not replay: it accepts a verified checkpoint certificate (or, on a
+genesis-only network, the pinned genesis) and hydrates the certified state. The joiner is not
+trusting a bootstrap's unverified allocation: the certificate is quorate over the genesis active
+bonds, and the genesis anchor must be the pinned block (height zero, pinned hash and post-state).
+The restore-completion guard (`check_running_dev_vesting`) enforces a **local claim** when the
+joiner has one — bonds and wallets files present, and a non-empty `dev-tax-address` — and trusts the
+certified allocation when it has none; an absent claim is *no claim*, not a claim of no allocation,
+which is the normal public-testnet bootstrap. The guard also checks the imported leaf's own schedule
+before Running: nothing has vested at the genesis post-state, and the unreleased amount can never
+exceed the allocation. The independent check on the certified state is the audit: `rnode audit`
+replays the genesis and the chain from the bodies and reports `AGREE`, `DISAGREE` or `INCOMPLETE`.
 
 The rule, its two crossover directions and its non-vacuity witness are Law 78
 ([`spec/Rchain/Genesis.lean`](../../../spec/Rchain/Genesis.lean)); the deviation from the Scala oracle is

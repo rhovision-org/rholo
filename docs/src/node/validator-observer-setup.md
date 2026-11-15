@@ -99,7 +99,7 @@ them**: it sits at height 0 with a healthy peer count and fails after three idle
 | inbound allowed from | result |
 |---|---|
 | every peer | joined, reached the tip, followed the next deploy |
-| the bootstrap only | stuck at `h=0`, `peers=6`, `LFS state sync failed` |
+| the bootstrap only | stuck at `h=0`, `peers=6`, `LFS state sync failed` (the then-current binary's wording; the current failure names the outstanding headers and their peers) |
 
 So open **40400 and 40404 inbound from every validator and observer**, and open outbound to them too.
 The bootstrap must additionally be reachable outbound for the fringe request. `peers=N` on
@@ -181,8 +181,9 @@ files. They change when the genesis changes.
 
 ## 6. Joining a running chain (observer first)
 
-A joiner receives the approved fringe from a bootstrap and restores the state over LFS. It must be given
-the **same genesis inputs** as the master (the files and parameters above):
+A joiner accepts a verified checkpoint certificate (or, on a genesis-only network, the pinned genesis)
+and hydrates the certified state; it does **not** replay the chain. It must be given the **same
+genesis inputs** as the master (the files and parameters above):
 
 ```sh
 rnode --profile docker run --propose-on-deploy --no-upnp --host <its-public-ip> \
@@ -194,18 +195,20 @@ rnode --profile docker run --propose-on-deploy --no-upnp --host <its-public-ip> 
   --validator-private-key-path /etc/rnode/validator.key
 ```
 
-Success is these lines, then the node serving:
+Success is the certificate acceptance — naming the anchor, the signing stake, the published headers,
+the one downloaded genesis body and `replayed none` — or the genesis-only acceptance, then:
 
 ```
-INFO [casper.engine.NodeSyncing] Blocks for approved state added to DAG.
-INFO [casper.engine.NodeSyncing] LFS state is successfully restored.
+INFO [casper.engine.NodeSyncing] LFS state accepted under the checkpoint certificate at anchor <h> (<s> of <t> stake signed): published <n> header(s), downloaded one body (genesis), replayed none.
 INFO [casper.engine.NodeLaunch] Making a transition to Running state.
 ```
 
-A fresh chain restores in seconds; a **mature** chain takes longer and needs the inbound rule of §3. If
+A fresh chain joins in seconds; a **mature** chain takes longer and needs the inbound rule of §3. If
 the sync fails, check the three usual causes in order: inbound reachability from every peer, the
-bootstrap's node id and host, and identical genesis inputs. The failed attempt's log now names the
-outstanding hashes and the peers they were requested from.
+bootstrap's node id and host, and identical genesis inputs. The failed attempt's log names the
+outstanding headers and the peers they were requested from. A checkpoint sync does not replay; a
+replay is the audit (`rnode audit`), run separately. The full procedure is [Sync
+operations](sync-operations.md).
 
 Once running, the node is an **observer**: it follows and serves, but does not vote.
 
@@ -269,9 +272,10 @@ shard named and read the reply out of the term, not only from `deploy-status`
 
 ## 8. Monitoring
 
-- `GET /api/status` — `latestBlockNumber` (rounds, not blocks), `sync` (non-null means the LFS sync task
-  is running and names its last failure), `acceptsDeploys` (the deploy pool's count/byte capacity),
-  `degraded` (the **advisory** fallback word; it does not gate admission).
+- `GET /api/status` — `latestBlockNumber` (rounds, not blocks), `sync` (non-null means the sync task
+  is running and names its last failure), the checkpoint anchor fields, `acceptsDeploys` (the deploy
+  pool's count/byte capacity), `degraded` (the **advisory** fallback word; it does not gate
+  admission).
 - `GET /api/last-finalized-block` — finality, the number that matters for consensus health.
 - `GET /health` — **a node route** (200 while serving): `ok`, `degraded`, `acceptsDeploys`, height,
   pool, and the peer-liveness fields `finalityStalled`/`finalityStallEpisodes`. The public testnet's
@@ -340,7 +344,8 @@ the anchor; the rebuild-from-config shortcut is not a mainnet procedure.
 - [ ] inbound 40400/40404 open **from every peer**, outbound open to them
 - [ ] validator key at `0600`, path passed, admin on loopback
 - [ ] genesis inputs identical on every node (files, multi-sig list/quorum, all parameters)
-- [ ] LFS restore reached `LFS state is successfully restored`, then `Running`
+- [ ] the certificate (or the pinned genesis) was accepted, then `Running`; `/api/status` reports
+      the checkpoint anchor
 - [ ] `/api/status` shows `sync` null and `acceptsDeploys` true (`degraded` may be `throttled` on an
       undersized host; that is the advisory word, not a refusal)
 - [ ] `/api/last-finalized-block` advances
