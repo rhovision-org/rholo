@@ -13150,6 +13150,7 @@ evidence, never the closure.
 | C387 | done | Law 112, the canonical statement, the replay-derived root and replay head |
 | C388 | done | Law 112's acceptance and chain rules, the nonce, the pull-only rate-limited service |
 | C389 | done | the docs/runbook pages, Laws 101–112 in the reading, HAZOP U24 and acceptance U25 |
+| C390 | in progress | the audit's INCOMPLETE fallback is done (a replay that cannot read the genesis state does not disagree); the genesis post-state transfer/execution is open, so the live signed-claim run is owed |
 
 ### Non-claims
 
@@ -13167,3 +13168,7 @@ evidence, never the closure.
   and a re-measurement is an operational follow-up.
 - The attestation evidence run is a **local devnet** with throwaway keys: it shows the mechanism, not
   a live acceptance, and `execution_proven` stays `false`.
+- **The live signed-claim run is not done.** The devnet audit returned INCOMPLETE (after the fallback
+  fix; it returned DISAGREE before it) because the audit cannot establish a dev-mode genesis
+  post-state — C390. The verifier, store, acceptance and service behaviour are evidenced by their
+  tests; a signed claim from a live replay is owed with the state transfer, not claimed here.

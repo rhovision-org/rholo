@@ -102,9 +102,9 @@ on the rows that are not reads.
 
 ## Check-off
 
-**Findings  TODO 0 · IN PROGRESS 4 · DONE 420** &nbsp;&nbsp;·&nbsp;&nbsp; **Coverage  all 89 T1 modules read**
+**Findings  TODO 0 · IN PROGRESS 5 · DONE 420** &nbsp;&nbsp;·&nbsp;&nbsp; **Coverage  all 89 T1 modules read**
 
-**Laws  218 of 424 findings name one** (ceiling 206; 206 done row(s) unclassified)
+**Laws  219 of 425 findings name one** (ceiling 206; 206 done row(s) unclassified)
 
 **Both halves are closed.** A `done` row is settled -- fixed, assessed faithful, a
 deliberate deviation, or refuted -- and names what holds it where there is evidence to
@@ -112,7 +112,7 @@ name. What that does *not* mean is stated under each half below.
 
 ### Findings — closed
 
-All 424 are settled: **360 name the evidence that holds them** and **64 do not** — the
+All 425 are settled: **361 name the evidence that holds them** and **64 do not** — the
 second number is the honest residual, and a column rather than an implication. A `done`
 row says the fix is in the tree or that the decision was taken; it does not say either is
 right. Read a row that matters at the § its account cites.
@@ -124,7 +124,7 @@ verdict of `cleared`, 24 produced a finding, and 4 are `exempt` with a reason cl
 The twenty reads of the 2026-09-27 coverage pass are in the pass record, and two of them found
 defects this register had not recorded (C164, C165).
 
-### IN PROGRESS (4)
+### IN PROGRESS (5)
 
 | id | what | what closes it | account |
 |---|---|---|---|
@@ -132,6 +132,7 @@ defects this register had not recorded (C164, C165).
 | `C343` | **A stored block can have no acceptance disposition and a proposer can run a private chain.** The live build stored block bodies through height 250 on B/C/D while its DAG stayed at height 5, and A reached 267 against finality 3. The RCA found the processor's no-insert arms, the partial-insert short-circuit, the missing failed-parent release and the absent finality gate; dev #494 closed the receiver begin-lease leak. This pass adds Law 88a/88b, a per-shard phase, the start-up audit before Running, and the keys-only legacy body scan with its durable marker; the remaining evidence is the live status/operator and block-6 logs. | owed: the read-only /health and /api/v1/status/operator snapshots plus the block-6 journal lines from live hosts B/C/D, and U19-11's aggregate backlog surface. The local U19/U20 falsifiers and the isolation halt/resume drill are in spec/audit/evidence/c343-proposer-isolation-20261114 (PASS, local-devnet). Blocked on the live-host operator's read-only access; no deployment, restart or key use is in scope. | §145 |
 | `C344` | **A stuck validator is not priced, and the first liveness response could take a bond through no fault.** A validator absent from the advancing finality set keeps its bond, counts in the denominator and (with absence-slack 0) is paid; RCHIP #55 adds an automatic bond-preserving jail and a >2/3 active-stake vote that alone may slash and permanently eject. The mechanism is default-off, genesis-armed, and its live testnet arm (jail, vote-slash, partition negative, restart/expiry) is owed; H-RS-17 and HAZOP U21 record the residuals, including the boundary-CloseBlock skip.  | owed: a repair of the pos:liveness-anchor persistence the local devnet arm exposed (the anchor is absent at the next boundary, so absences never accrue; see spec/audit/evidence/c344-liveness-enforcement-20261114, FAIL), then the live testnet jail/vote-slash/partition/restart-expiry/exact-threshold arms; a validity rule requiring CloseBlock at a boundary (hard-fork class, deliberately deferred); mainnet arming (#428). | §147 |
 | `C357` | **A deterministic self-replay refusal was read as a divergence and retried for ~45 hours; the recovery is now a state machine, not a retry.** Provenance decides the cause (Law 92: a self-built replay failure is a local fault, never divergence), one refusal rebuilds once as an attestation-only block with no user deploy, and a node-level fault writes a durable record, raises one reset to the last finalised anchor, and latches a halt read by every proposal trigger. The 45-hour harm is RC-A (C361) and is closed. RC-B is now reconstructed from authenticated BYOID deploys and complete Merkle-verified historical states (the original rejected BlockMessage/processed trace remain unrecovered; trace regenerated, source-pinned runs without captured executable SHA-256): the newest-first event log was appended into replay candidate lists without restoring execution order, so a later request could precede the peek repetition its recorded COMM required. Restoring chronological binding order preserves the original 5576-phlo cost and both declared post-state hashes while complete strict replay succeeds. [Historical reproduction and single-variable controls](https://github.com/aixaria0/rchain-rust/actions/runs/43101946226). The local operational arm is delivered on the integrated build: a corrected proposer self-replayed and broadcast the natural pending-peek block, a second corrected node strictly replayed it at the same per-deploy accounting and post-state, and the merged #568 recovery arms pass. A [pinned-binary qualification](audit/evidence/n564-binary-qualification-20261113/README.md) on pristine 1ceabd291 (debug profile, executable SHA-256 5ff2b4f9d77a4694d3efa4df46cb1a86fb6a31a157929cc4770a5e43436cd1b8) also passes the natural arm and all three recovery arms, with independent same-block/content-address and binary-file checks; this is an unselected single-host qualification build, not installed release or public acceptance. | owed: independent compatibility acceptance and lockstep rollout under section 6 (no complete accepted-history sweep); the live/selected-candidate operational acceptance. Blocked externally on the release owner selecting the candidate and every validator activating it in lockstep (or a coordinated new genesis), on an independent reviewer's category-A sign-off, and on the incident operator's unrecovered rejected block/trace bytes. The 2026-11-13 pinned-binary qualification is not installed-release or public acceptance. | §153 |
+| `C390` | **The audit never establishes the genesis post-state, and reported the failure as DISAGREE.** `rnode audit` replays from the genesis body's post-state, but the scratch runtime only holds the genesis the configuration names (the PoS/vault leaves); on a chain whose genesis carries the blessed contracts — the devnet evidence run (one validator, one archive observer, checkpoint at anchor height 3) — the first non-genesis block failed with 'block summary failed: PoS params leaf not found in committed state' and the audit answered DISAGREE. Missing input is not a divergence (Law 106): the audit now checks the genesis post-state's native leaves before replaying and reports INCOMPLETE, so the metered service answers a report with no signed claim. The root fix — transferring (or executing) the genesis post-state so the replay can actually start — is open. | Partially closed: the verdict classification is fixed (a replay that cannot read its one external state is INCOMPLETE, and no attestation is signed for it). Open: the genesis post-state transfer/execution, which would let a non-genesis chain reach AGREE; the live evidence run is INCOMPLETE until then. Owner: the user (directed this pass). | §169 |
 
 ### DONE (420)
 
