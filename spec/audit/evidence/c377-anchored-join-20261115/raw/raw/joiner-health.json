@@ -1,0 +1,43 @@
+{
+  "acceptsDeploys": true,
+  "blockPipeline": {
+    "capacity": 1024,
+    "pending": 0,
+    "sampledPeak": 3
+  },
+  "bootId": "1-1794739809908",
+  "degraded": "normal",
+  "diagVersion": 2,
+  "finalityStallEpisodes": 0,
+  "finalityStalled": false,
+  "finalizedHeight": 2794,
+  "finalizedHeightError": null,
+  "finalizedLag": 3,
+  "height": 2798,
+  "lastBlockAgeMs": 8612,
+  "lastFinalityAgeMs": 8677,
+  "lastPeerAgeMs": 3286,
+  "lastPipelineFault": "33aad681f49ac8eb197cfae62e5919378815657bf5739042681c2b9d45525cf1 at validation internal: block summary failed: validated parent BlockHash(Hash32([57, 123, 228, 124, 255, 57, 126, 131, 36, 209, 251, 7, 74, 199, 201, 246, 114, 27, 184, 92, 72, 245, 152, 162, 209, 152, 168, 37, 12, 50, 170, 207])) is absent from the block store",
+  "maxObservedHeight": 2797,
+  "nodePhase": "running",
+  "ok": true,
+  "orphanBodies": 0,
+  "orphanDetections": 0,
+  "phase": "running",
+  "pipelineFaults": 4,
+  "pipelineFaultsOutstanding": 0,
+  "pool": {
+    "bytes": 0,
+    "deploys": 0,
+    "maxBytes": 67108864,
+    "maxDeploys": 10000
+  },
+  "proposalHaltReason": null,
+  "proposalHalted": false,
+  "ready": true,
+  "readyReasons": [],
+  "selfValidationRefusal": null,
+  "shardPhases": {
+    "/root": "running"
+  }
+}

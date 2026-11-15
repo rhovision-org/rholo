@@ -1,0 +1,105 @@
+{
+  "bootstrap": {
+    "boot_id": "1-1794739809877",
+    "checkpoint_anchor_height": 2794,
+    "checkpoint_digest": "e43bbc4e4ac4597dc80e0f92321a321eadca47fbb313159b3e83dbc8db644c60",
+    "finalized_height": 2794,
+    "finalized_lag": 3,
+    "max_observed_height": 2797
+  },
+  "chain_seconds": null,
+  "compatibility": {
+    "arm": "current-source-to-current-source",
+    "note": "A mixed-version arm requires a retained prior image; none was supplied to this run. The n479 record is the mixed-version control and is not extended.",
+    "previous_binary_available": false
+  },
+  "execution_proven": false,
+  "image_id": "sha256:b6e03c835de44e09e306fadc501596f7e3ef7c3ae47a3b9d1cfce256da597711",
+  "join_mode": "checkpoint",
+  "joiner": {
+    "bootstrap_post_state": "6fcc32b6b4706900093e9f16b1d816b80d6e22b0093200449a634fd508b29195",
+    "checkpoint": {
+      "anchor": "397be47cff397e8324d1fb074ac7c9f6721bb85c48f598a2d198a8250c32aacf",
+      "anchor_height": 2794,
+      "anchor_post_state": "6fcc32b6b4706900093e9f16b1d816b80d6e22b0093200449a634fd508b29195",
+      "attestations": 1,
+      "digest": "e43bbc4e4ac4597dc80e0f92321a321eadca47fbb313159b3e83dbc8db644c60",
+      "metadata_root": "944b0976a9b648696fab0784283800aeb93ea0f729cda33982140a8410edd5d9"
+    },
+    "finalized_height": 2794,
+    "max_observed_height": 2797,
+    "metadata_committed": true,
+    "mode": "observer",
+    "name": "syncmeas-observer-1",
+    "reached_bootstrap_finalized": true,
+    "ready": true,
+    "restore_seconds": 817.079488,
+    "validator": null
+  },
+  "log_signals": {
+    "active_bonds_error": true,
+    "certified_join": true,
+    "lfs_restored": true,
+    "out_of_memory": false,
+    "receiver_overflow": false,
+    "replay_markers": false,
+    "replayed_none": true,
+    "running_transition": true
+  },
+  "post_join_progress": {
+    "deploy": {
+      "block": {
+        "blockHash": "397be47cff397e8324d1fb074ac7c9f6721bb85c48f598a2d198a8250c32aacf",
+        "blockNumber": 2794,
+        "blockSize": "579",
+        "bonds": [
+          {
+            "stake": 100,
+            "validator": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+          }
+        ],
+        "deployCount": 1,
+        "justifications": [
+          "a929cd4a6e2acf224e76d5439d0e5bdb56ff76aa9c3f260902e2e74165cd36c2"
+        ],
+        "postStateHash": "6fcc32b6b4706900093e9f16b1d816b80d6e22b0093200449a634fd508b29195",
+        "preStateHash": "2761370a5b0e30d90aa5e82fd9c504eeb968cc2d60a0cd569b08c70dc3b2ece1",
+        "rejectedDeploys": [],
+        "sender": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4",
+        "seqNum": 2794,
+        "shardId": "/root",
+        "sig": "3045022100da3f5206a7078d5ae535444181da5fb8d1a1d9397f330c2488a61fb481b3e31b02207246458dbb4910fbc07352627886db6aea27f2a51fc3e8f309f46060c7cc0a73",
+        "sigAlgorithm": "secp256k1",
+        "timestamp": 1794739658256,
+        "version": 1
+      },
+      "expr": [
+        {
+          "ExprInt": {
+            "data": 1
+          }
+        }
+      ],
+      "replySource": "firstPrivateName"
+    },
+    "finality_advanced": true,
+    "finalized_height": 2795,
+    "height_advanced": true,
+    "observed_height": 2798,
+    "propose": "Success! Block 38ff336085b204cc542d8dc5a99e5aba93dc6c7c43616af5dffe1c25c53c75ab created and added."
+  },
+  "restart": {
+    "certified_anchor_height": 2795,
+    "checkpoint_digest": "e1cfc12f52a5b4bca1c4458a37b6e9268d4dd4ba5a154b3bcc2d3c967c7f7dad",
+    "finalized_height": 2795,
+    "max_observed_height": 2798,
+    "ready": true,
+    "seconds": 11.385204555932432
+  },
+  "source_sha": "ed221e9a6364f073605fca14092a270e6d8f0a80",
+  "target_height": 2432,
+  "tool": "c339_mature_replay.py",
+  "verdict_hint": "PASS",
+  "verdict_reasons": [],
+  "wrong_pin_control": "covered by spec/audit/evidence/n479-native-join-20261029/"
+}
