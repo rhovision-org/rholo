@@ -6157,6 +6157,39 @@ def lawsC : List Law := [
       challenge time is not retention for ever, and a failed challenge is fee forfeiture/reputation, \
       not consensus slashing. Observers enter the tier by staking hardware, not tokens; validators \
       can archive too." },
+
+  { number := 108, layer := "Sync",
+    statement := "**A running node is anchored.** The node runs from either the operator's pinned \
+      genesis or a verified quorum checkpoint; its current root is the anchor's root, and a failed \
+      sync is not running. A genesis anchor names the pinned genesis, not a bootstrap's unverified \
+      claim, and an accepted state cannot carry a root its anchor does not name.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Anchor.running_is_anchored,
+      `Rchain.Sync.Anchor.a_refused_sync_is_not_running,
+      `Rchain.Sync.Anchor.a_genesis_anchor_is_the_pinned_genesis,
+      `Rchain.Sync.Anchor.a_foreign_root_is_not_accepted],
+    axioms := [],
+    rust := ["casper/src/engine/anchor.rs", "casper/src/engine/node_launch.rs"],
+    rustWitness := [
+      "casper/src/engine/anchor.rs:an_accepted_state_carries_its_anchors_root",
+      "casper/src/engine/anchor.rs:a_genesis_anchor_must_match_the_pin"],
+    witness := [`Rchain.Sync.Anchor.running_is_anchored,
+      `Rchain.Sync.Anchor.a_foreign_root_is_not_accepted],
+    falsifiable := "Give `Accepted` a public constructor that omits the root equality and \
+      `a_foreign_root_is_not_accepted` fails; let the failed-sync transition reach `running` and \
+      `a_refused_sync_is_not_running` fails. In Rust, the anchor tests redden if the accepted state \
+      derives a root other than the certificate's checkpoint root, or if the genesis anchor accepts a \
+      block other than the pin.",
+    note := "**The anchor union is the design.** A node's trust anchor is either the operator's \
+      genesis (the manifest/descriptors and the genesis block's post-state) or a quorum checkpoint \
+      certificate; there is no third source. The prior sync path could leave `CURRENT_ROOT` at genesis \
+      after accepting a checkpoint because the running state's root came from a DAG/tip heuristic; the \
+      `AcceptedState` type and this law remove that state rather than patch it. **What this law does \
+      not claim:** the certificate is quorate (Law 14a) or honest (Law 83/85); it is the shape of the \
+      running state. The genesis-only case is the anchor's genesis branch: no certificate is \
+      requested, because a network with no finalized fringe has no quorum to ask. A cold bonded \
+      validator still needs the remaining validators to form a quorum (N≥4 under the strict rule); \
+      that liveness boundary is recorded, not claimed." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

@@ -53,6 +53,7 @@ import Rchain.Sync.Checkpoint
 import Rchain.Sync.Separation
 import Rchain.Sync.Audit
 import Rchain.Sync.Availability
+import Rchain.Sync.Anchor
 import Rchain.Casper.Stake
 import Rchain.Proto
 import Rchain.Casper.Dag
