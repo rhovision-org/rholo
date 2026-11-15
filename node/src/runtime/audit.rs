@@ -785,6 +785,7 @@ pub async fn run_attested(
 pub fn verify_against_report(
     attestation: &AuditAttestation,
     report: &AuditReport,
+    head: Option<&rchain_casper::audit::AuditChainHead>,
 ) -> Result<rchain_casper::audit::VerifiedAuditAttestation, String> {
     let expectation = AuditExpectation {
         checkpoint_digest: report.checkpoint_digest.clone(),
@@ -807,7 +808,7 @@ pub fn verify_against_report(
             .clone()
             .ok_or_else(|| "the report names no replay head".to_string())?,
     };
-    verify_audit_attestation(attestation, &expectation, None).map_err(|e| e.to_string())
+    verify_audit_attestation(attestation, &expectation, head).map_err(|e| e.to_string())
 }
 
 fn incomplete(

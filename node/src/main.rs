@@ -398,7 +398,12 @@ async fn async_main(options: Options, log_level: rchain_shared::log::Level) {
 
     // **Verify a signed claim against a local report.** The attestation arrives on stdin, so a
     // consumer can pipe a node's answer into the checker.
-    if let Commands::VerifyAuditAttestation { report } = &options.subcommand {
+    if let Commands::VerifyAuditAttestation {
+        report,
+        head_digest,
+        head_sequence,
+    } = &options.subcommand
+    {
         let report_text = match std::fs::read_to_string(report) {
             Ok(text) => text,
             Err(e) => {
@@ -427,7 +432,19 @@ async fn async_main(options: Options, log_level: rchain_shared::log::Level) {
                     std::process::exit(2);
                 }
             };
-        match rchain_node::runtime::audit::verify_against_report(&attestation, &report) {
+        let head = match (head_digest, head_sequence) {
+            (Some(digest), Some(sequence)) => Some(rchain_casper::audit::AuditChainHead {
+                signer: attestation.signer.clone(),
+                sequence: *sequence,
+                digest: digest.clone(),
+            }),
+            _ => None,
+        };
+        match rchain_node::runtime::audit::verify_against_report(
+            &attestation,
+            &report,
+            head.as_ref(),
+        ) {
             Ok(verified) => println!(
                 "OK signer {} sequence {} digest {}",
                 verified.signer(),

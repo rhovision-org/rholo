@@ -266,6 +266,12 @@ pub enum Commands {
         /// The report the claim must match.
         #[arg(long = "report", required = true)]
         report: PathBuf,
+        /// The signer's accepted head digest, when the claim is chained (with `--head-sequence`).
+        #[arg(long = "head-digest")]
+        head_digest: Option<String>,
+        /// The signer's accepted head sequence, when the claim is chained.
+        #[arg(long = "head-sequence")]
+        head_sequence: Option<u64>,
     },
     /// **Sign a history credit receipt** with the archive's settlement key (Laws 110/111). The
     /// receipt is printed as JSON; the payer deposits it at `POST /api/v1/history/credit`.
