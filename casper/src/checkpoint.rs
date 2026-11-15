@@ -10,6 +10,12 @@
 //! the previous checkpoint's digest, the epoch and the finalized fringe. A signature over one
 //! checkpoint is therefore not a signature over another, and a certificate cannot cross shards.
 //!
+//! **An absent parent is encoded as 32 zero bytes, and an explicit zero parent is refused.** The
+//! sentinel is deliberate: without it `parent_digest: None` and `Some("00…00")` would be two
+//! distinct wire statements with one digest. A zero digest is never a real parent, so the generic
+//! verifier rejects it as malformed before hashing; the genesis-only wrapper additionally refuses
+//! any named parent on the sync path.
+//!
 //! **What the certificate does and does not establish.** It attributes the root to a supermajority of
 //! the bonded set: a quorum that all computed the same wrong root still certifies it (Law 85's
 //! residual is unchanged). The historical audit — `rnode audit` — is the independent counterweight;
@@ -118,10 +124,31 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
             "the anchor height is negative".to_string(),
         ));
     }
+    // **The epoch is a nonnegative shape field.** The producer derives it from a nonnegative
+    // anchor height and a positive epoch length; a signed statement that carries a negative epoch
+    // is not a statement this build can have produced, and accepting it would put an impossible
+    // value inside a digest every verifier agrees on.
+    if checkpoint.epoch < 0 {
+        return Err(CheckpointError::Malformed(
+            "the checkpoint epoch is negative".to_string(),
+        ));
+    }
     let anchor = decode_32(&checkpoint.anchor, "anchor")?;
     let post = decode_32(&checkpoint.anchor_post_state, "anchorPostState")?;
     let parent = match &checkpoint.parent_digest {
-        Some(hex) => decode_32(hex, "parentDigest")?,
+        Some(hex) => {
+            let bytes = decode_32(hex, "parentDigest")?;
+            // **A zero parent is invalid, not absent.** An absent parent is encoded as 32 zero
+            // bytes below; if an explicit zero digest were hashed as well, `None` and
+            // `Some(00…00)` would be two distinct wire statements with one digest. The sentinel
+            // makes the explicit zero unrepresentable, so the two cannot alias.
+            if bytes == [0u8; 32] {
+                return Err(CheckpointError::Malformed(
+                    "parentDigest is the zero digest".to_string(),
+                ));
+            }
+            bytes
+        }
         None => [0u8; 32],
     };
     let fringe_hex = &checkpoint.fringe_hashes;
@@ -272,6 +299,10 @@ pub fn verify_genesis_rooted_certificate(
     certificate: &CheckpointCertificate,
     bonds: &BTreeMap<Validator, NonNegI64>,
 ) -> Result<VerifiedCheckpoint, CheckpointError> {
+    // **The statement's shape is validated before the parent rule.** `named_parent` decodes a
+    // parent but does not hash; without this, an explicit zero parent would be reported
+    // `WrongParent` here and `Malformed` by the generic verifier. One statement, one refusal.
+    checkpoint_digest(&certificate.checkpoint)?;
     if let Some(parent) = named_parent(certificate) {
         return Err(CheckpointError::WrongParent {
             expected: None,
@@ -553,5 +584,160 @@ mod tests {
         let a: BTreeSet<Validator> = [v1, v2].into_iter().collect();
         let b: BTreeSet<Validator> = [v2, v3].into_iter().collect();
         assert!(!a.is_disjoint(&b));
+    }
+
+    /// **The absent-parent encoding is unchanged.** The sentinel fix rejects an explicit zero
+    /// parent without moving any digest a `None`-parent statement already had; this value is the
+    /// pre-fix fixture's digest.
+    #[test]
+    fn a_none_parent_statement_keeps_its_v1_digest() {
+        assert_eq!(
+            checkpoint_digest(&checkpoint()).expect("digest").to_hex(),
+            "688779f55fb88078a2a5939ca49ee62e726131d3dfbe2fdf4ce6d6c8d0ed803d"
+        );
+    }
+
+    /// **A zero parent is invalid, not absent.** `None` hashes as 32 zero bytes; an explicit
+    /// `Some(00…00)` must not reach the hash, or two distinct statements would share a digest.
+    #[test]
+    fn an_explicit_zero_parent_is_malformed() {
+        let mut c = checkpoint();
+        c.parent_digest = Some(hash(0));
+        assert!(matches!(
+            checkpoint_digest(&c),
+            Err(CheckpointError::Malformed(_))
+        ));
+    }
+
+    /// The mutation the audit named: change an absent parent to an explicit zero and keep the
+    /// existing signature. The digest cannot be recomputed, so the attestation cannot verify.
+    #[test]
+    fn changing_an_absent_parent_to_zero_without_resigning_is_refused() {
+        let (v1, k1) = validator(1);
+        let bonds: BTreeMap<Validator, NonNegI64> = [(v1, NonNegI64::try_from(100).unwrap())]
+            .into_iter()
+            .collect();
+        let c = checkpoint();
+        let mut mutated = c.clone();
+        mutated.parent_digest = Some(hash(0));
+        let cert = CheckpointCertificate {
+            checkpoint: mutated,
+            attestations: vec![attest(&c, &k1)],
+        };
+        assert!(matches!(
+            verify_checkpoint_certificate(&cert, &bonds, None),
+            Err(CheckpointError::Malformed(_))
+        ));
+        // The genesis-only wrapper validates the shape before `named_parent`, so both entry
+        // points name the same fact.
+        assert!(matches!(
+            verify_genesis_rooted_certificate(&cert, &bonds),
+            Err(CheckpointError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn an_epoch_below_zero_is_malformed() {
+        let mut c = checkpoint();
+        c.epoch = -1;
+        assert!(matches!(
+            checkpoint_digest(&c),
+            Err(CheckpointError::Malformed(_))
+        ));
+    }
+
+    /// **A forged signature over the correct digest must fail in the cryptographic check, not in
+    /// the declared-digest comparison.** This is the test the old suite lacked: disabling
+    /// `alg.verify` left every other case green.
+    #[test]
+    fn a_corrupted_signature_over_the_correct_digest_is_refused() {
+        let (v1, k1) = validator(1);
+        let bonds: BTreeMap<Validator, NonNegI64> = [(v1, NonNegI64::try_from(100).unwrap())]
+            .into_iter()
+            .collect();
+        let c = checkpoint();
+        let mut attestation = attest(&c, &k1);
+        let mut sig = base16::decode(&attestation.sig).expect("sig is hex");
+        sig[0] ^= 0xff;
+        attestation.sig = base16::encode(&sig);
+        let cert = CheckpointCertificate {
+            checkpoint: c,
+            attestations: vec![attestation],
+        };
+        assert!(matches!(
+            verify_checkpoint_certificate(&cert, &bonds, None),
+            Err(CheckpointError::BadSignature(_))
+        ));
+    }
+
+    /// A signature over the correct prehash but made by another key, declared under a bonded
+    /// sender, must fail in `alg.verify`.
+    #[test]
+    fn a_signature_from_another_key_is_refused() {
+        let (v1, _k1) = validator(1);
+        let (_v2, k2) = validator(2);
+        let bonds: BTreeMap<Validator, NonNegI64> =
+            [(v1.clone(), NonNegI64::try_from(100).unwrap())]
+                .into_iter()
+                .collect();
+        let c = checkpoint();
+        let mut attestation = attest(&c, &k2);
+        attestation.sender = base16::encode(v1.as_bytes());
+        let cert = CheckpointCertificate {
+            checkpoint: c,
+            attestations: vec![attestation],
+        };
+        assert!(matches!(
+            verify_checkpoint_certificate(&cert, &bonds, None),
+            Err(CheckpointError::BadSignature(_))
+        ));
+    }
+
+    /// **The stateless half of the conflict witness.** Two actually signed 3-of-4 certificates at
+    /// one parent both verify; a verifier alone cannot reject the second, which is why the store
+    /// must detect the conflict (U2). The signer sets intersect, as Law 104 says.
+    #[test]
+    fn two_signed_conflicting_certificates_both_verify() {
+        let keys = [validator(1), validator(2), validator(3), validator(4)];
+        let bonds: BTreeMap<Validator, NonNegI64> = keys
+            .iter()
+            .map(|(v, _)| (v.clone(), NonNegI64::try_from(100).unwrap()))
+            .collect();
+        let a = checkpoint();
+        let mut b = checkpoint();
+        b.anchor_post_state = hash(9);
+        let cert_a = CheckpointCertificate {
+            checkpoint: a.clone(),
+            attestations: vec![
+                attest(&a, &keys[0].1),
+                attest(&a, &keys[1].1),
+                attest(&a, &keys[2].1),
+            ],
+        };
+        let cert_b = CheckpointCertificate {
+            checkpoint: b.clone(),
+            attestations: vec![
+                attest(&b, &keys[1].1),
+                attest(&b, &keys[2].1),
+                attest(&b, &keys[3].1),
+            ],
+        };
+        let verified_a =
+            verify_checkpoint_certificate(&cert_a, &bonds, None).expect("certificate a");
+        let verified_b =
+            verify_checkpoint_certificate(&cert_b, &bonds, None).expect("certificate b");
+        assert_eq!(verified_a.supporting_stake, 300);
+        assert_eq!(verified_b.supporting_stake, 300);
+        assert_ne!(verified_a.digest, verified_b.digest);
+        let senders = |cert: &CheckpointCertificate| -> BTreeSet<Validator> {
+            cert.attestations
+                .iter()
+                .map(|attestation| {
+                    let bytes = base16::decode(&attestation.sender).expect("sender is hex");
+                    Validator::try_from(bytes.as_slice()).expect("sender is a key")
+                })
+                .collect()
+        };
+        assert!(!senders(&cert_a).is_disjoint(&senders(&cert_b)));
     }
 }
