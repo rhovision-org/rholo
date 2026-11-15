@@ -94,8 +94,12 @@ pub struct NodeSyncing<I: RSpaceImporter> {
 ///
 /// The count is a bound and not a policy: each attempt already gives up on its own after
 /// `lfs_block_requester::MAX_IDLE_ROUNDS` idle rounds, so this caps the *retries*, and the total
-/// wait is bounded by the product of the two.
-pub const MAX_SYNC_ATTEMPTS: u32 = 3;
+/// wait is bounded by the product of the two. **Ten rather than three** because the certified path
+/// fails fast when the bootstrap has not yet assembled a certificate (its collector ticks every two
+/// seconds after a finality advance), and a loaded host can take a minute to reach that point: three
+/// attempts spent before the first certificate exists would stop a joiner that had done nothing
+/// wrong. The terminal state — and its operator signal — is unchanged.
+pub const MAX_SYNC_ATTEMPTS: u32 = 10;
 
 /// How long a retry waits for a newer fringe before re-attempting the one it has.
 ///
