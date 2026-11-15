@@ -309,6 +309,9 @@ mod tests {
                 latest_block_number: 0,
                 history_availability: "available".to_string(),
                 checkpoint_age: None,
+                sync_phase: None,
+                checkpoint: None,
+                audit: None,
             }
         }
         async fn deploy(&self, _deploy: &SignedDeployData) -> ApiErr<String> {

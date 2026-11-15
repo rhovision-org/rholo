@@ -4475,7 +4475,12 @@ def lawsC : List Law := [
       not derivable on the join path, so the residual stands. The witnesses are the join path's own \
       tests: membership, duplicate, derived-fringe, and the state-hash residual stated as one. A \
       singleton state pin was attempted and the node's restore suite refuted it; the law records the \
-      absence rather than the false check." },
+      absence rather than the false check. **Reconciled by Laws 105/108-109 (§168, post-#591/#592): \
+      this row models the removed transfer boundary. The checkpoint path no longer trusts the \
+      bootstrap's choice of finalised root — acceptance is a verified quorum certificate (Law 105) \
+      and the running root is the anchor's (Law 108) — and the per-block `fringe_state_hash` residual \
+      is replaced by the committed validation window (Law 109). The content-trustlessness half \
+      remains as stated; C339 is superseded by §168.**" },
   { number := 84, layer := "Casper",
     statement := "**The genesis anchor is a function of the genesis inputs, and the ceremony refuses \
       any other key.** The block's sender, the blessed deploys' signer and the governance admin are \
@@ -6225,6 +6230,102 @@ def lawsC : List Law := [
       an extension of the statement, appended after `metadataRoot` only when present, so a legacy \
       certificate keeps its v1 digest and is accepted only by the audit, with `windowCommitted: \
       false`." },
+
+  { number := 110, layer := "Sync",
+    statement := "**A served history range is accounted before it leaves.** A history range is \
+      served only when the peer's durable credit pays for its bytes: the debit is exact (the served \
+      total grows by the range and the remaining credit is the credit before minus the range), an \
+      account short of the range is refused without a partial debit, and a credit invoice or a \
+      range nonce is single-use. The meter is the enforcement point; the fee itself is an external \
+      decision, not a consensus rule.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Service.served_requires_credit,
+      `Rchain.Sync.Service.an_unpaid_range_is_refused,
+      `Rchain.Sync.Service.a_served_range_is_accounted,
+      `Rchain.Sync.Service.a_paid_range_is_served,
+      `Rchain.Sync.Service.a_short_account_is_refused],
+    axioms := [],
+    rust := ["block-storage/src/history_meter.rs"],
+    rustWitness := [
+      "block-storage/src/history_meter.rs:a_range_with_credit_is_served_and_debited_exactly",
+      "block-storage/src/history_meter.rs:a_range_without_credit_is_refused_before_a_body_is_read"],
+    witness := [`Rchain.Sync.Service.a_served_range_is_accounted,
+      `Rchain.Sync.Service.an_unpaid_range_is_refused],
+    falsifiable := "Remove the credit check from `serve` and `an_unpaid_range_is_refused` fails; \
+      debit any amount other than the range's cost and `a_served_range_is_accounted` fails. In Rust, \
+      the meter tests redden if a range is debited without credit, if a short account is partially \
+      debited, or if a replayed invoice or nonce credits/serves twice.",
+    note := "**What is metered is bodies, not headers.** Headers and checkpoint metadata are small, \
+      committed by the certificate and needed to join cheaply, so joins are not taxed; the archive's \
+      custody and bandwidth are. The funding rail is the direct REV service fee — the decision of \
+      record (2026-11-15, owner: Patrick): no consensus change, no new token and no new slashing rule. \
+      **What this law does not claim:** the meter does not price the service or prove the on-chain \
+      transfer; the receipt's settlement key is the operator's, and on-chain payment proof is future \
+      work. Peer-to-peer body replication remains the sync path and is not a substitute for the paid \
+      on-demand tier. See Law 111 for the challenge outcome." },
+
+  { number := 111, layer := "Sync",
+    statement := "**Settlement is determined by the possession-challenge outcome.** A paid period \
+      ends with the caller's possession challenge: a pass carries the unused fee and leaves the \
+      archive selected; a failure forfeits the period and marks the peer, excluding it from selection \
+      until the operator's cooldown. The two outcomes are observably different, so a settlement \
+      cannot be confused with the other one, and neither is a consensus event.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Settlement.a_failed_challenge_forfeits,
+      `Rchain.Sync.Settlement.a_passed_challenge_refunds,
+      `Rchain.Sync.Settlement.settlement_is_determined,
+      `Rchain.Sync.Settlement.the_two_outcomes_differ],
+    axioms := [],
+    rust := ["block-storage/src/history_meter.rs"],
+    rustWitness := [
+      "block-storage/src/history_meter.rs:a_failed_challenge_forfeits_the_period_and_marks_the_peer",
+      "block-storage/src/history_meter.rs:a_passed_challenge_carries_the_unused_credit"],
+    witness := [`Rchain.Sync.Settlement.a_failed_challenge_forfeits,
+      `Rchain.Sync.Settlement.the_two_outcomes_differ],
+    falsifiable := "Make `settle` constant and `the_two_outcomes_differ` fails; swap its branches and \
+      both the forfeit and the carry theorems fail. In Rust, the meter tests redden if a failed \
+      challenge leaves credit or does not mark the peer, or if a pass forfeits.",
+    note := "**Forfeiture is service-level, not a slash.** The direct REV payment is not reversed \
+      on-chain; the consequence is non-renewal, credit write-off and selection exclusion. The \
+      challenge proves possession at challenge time (Law 107's boundary), so the settlement is about \
+      the period the challenge covers, not retention for ever. **What this law does not claim:** the \
+      consumer trusts the archive it chose; the settlement key's signature and expiry are verified, \
+      not the on-chain transfer." },
+
+  { number := 112, layer := "Sync",
+    statement := "**An accepted audit claim is one this node reproduced.** A signed audit \
+      attestation names the checkpoint, the state root the replay derived, a replay head over the \
+      anchor's canonical ancestor closure, and a challenge nonce; a node accepts it only when its \
+      own replay agrees on the root and the head, and the claim extends its signer's chain \
+      (`previous`/`sequence`). A mismatched claim is refused rather than stored, and an unchained \
+      claim cannot extend a head.",
+    status := .provedModel,
+    declarations := [`Rchain.Sync.Claim.only_a_reproduced_claim_is_accepted,
+      `Rchain.Sync.Claim.a_mismatched_claim_is_refused,
+      `Rchain.Sync.Claim.a_reproduced_claim_is_accepted,
+      `Rchain.Sync.Claim.an_unchained_claim_is_refused,
+      `Rchain.Sync.Claim.a_chained_claim_extends],
+    axioms := [],
+    rust := ["models/src/casper/protocol/audit.rs", "casper/src/audit.rs",
+      "node/src/runtime/audit.rs"],
+    rustWitness := [
+      "casper/src/audit.rs:a_reproduced_claim_is_accepted",
+      "casper/src/audit.rs:a_chained_claim_extends_the_head_and_an_unchained_one_is_refused"],
+    witness := [`Rchain.Sync.Claim.only_a_reproduced_claim_is_accepted,
+      `Rchain.Sync.Claim.an_unchained_claim_is_refused],
+    falsifiable := "Make `accept` total (always `some`) and `a_mismatched_claim_is_refused` fails; \
+      ignore `previous` in `chain` and `an_unchained_claim_is_refused` fails. In Rust, the verifier \
+      tests redden if a claim whose derived root or replay head differs from the local replay is \
+      accepted, if another key's signature verifies, if a replayed nonce is accepted, or if an \
+      unchained claim extends a head.",
+    note := "**The statement and its encoding are separate from acceptance.** `AuditAttestation` \
+      fixes the claim and its canonical bytes (a golden digest pins the encoding); this law is the \
+      acceptance relation over a local reproduction. A signature alone is not acceptance: the \
+      accepted store's type has no public constructor, so an unverified claim is not representable. \
+      **What this law does not claim:** the replay is correct (Law 106 is the audit's soundness); \
+      the nonce's freshness and the request rate limit are the service's (Law 110's accounting), \
+      not this law; and a claim is not a zero-knowledge proof — `witnessType` is part of the signed \
+      preimage so a future witness can be added, but none is claimed here." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

@@ -158,10 +158,124 @@ mod tests {
     }
 }
 
+/// Wall-clock milliseconds since the Unix epoch, for a signed statement's issue time.
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 async fn async_main(options: Options, log_level: rchain_shared::log::Level) {
     // The one logger the node installs, at the operator's level (AUDIT C145). `StderrLog` writes the
     // wall clock on every line, so this is also what makes a cross-node timeline reconstructable.
     let log: Arc<StderrLog> = Arc::new(StderrLog::new(log_level));
+
+    // **The history-service signing commands are offline** (Laws 110/111): they read a key file and
+    // print a signed receipt or authorization. They need neither a node configuration nor a peer.
+    match &options.subcommand {
+        Commands::HistoryCredit {
+            key_path,
+            payer,
+            archive,
+            period,
+            rev_amount,
+            bytes,
+            invoice,
+            payment_deploy_id,
+            expires_at_unix_ms,
+        } => {
+            let Some(algorithm) =
+                rchain_crypto::signatures::signatures_alg::from_algorithm("secp256k1")
+            else {
+                eprintln!("secp256k1 is not registered in this build");
+                std::process::exit(1);
+            };
+            let key = match rchain_node::web::history_credit::read_private_key(key_path) {
+                Ok(key) => key,
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            };
+            let credit = rchain_node::web::history_credit::HistoryCredit {
+                payer: payer.clone(),
+                archive: archive.clone(),
+                period: *period,
+                rev_amount: *rev_amount,
+                bytes: *bytes,
+                invoice: invoice.clone(),
+                payment_deploy_id: payment_deploy_id.clone(),
+                issued_at_unix_ms: unix_ms(),
+                expires_at_unix_ms: *expires_at_unix_ms,
+            };
+            match rchain_node::web::history_credit::sign_credit(credit, &key, algorithm) {
+                Ok(signed) => match serde_json::to_string_pretty(&signed) {
+                    Ok(text) => println!("{text}"),
+                    Err(e) => {
+                        eprintln!("the signed receipt could not be printed: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        Commands::HistoryAuthorize {
+            key_path,
+            payer,
+            archive,
+            period,
+            from,
+            to,
+            nonce,
+        } => {
+            let Some(algorithm) =
+                rchain_crypto::signatures::signatures_alg::from_algorithm("secp256k1")
+            else {
+                eprintln!("secp256k1 is not registered in this build");
+                std::process::exit(1);
+            };
+            let key = match rchain_node::web::history_credit::read_private_key(key_path) {
+                Ok(key) => key,
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            };
+            let authorization = rchain_node::web::history_credit::HistoryAuthorization {
+                payer: payer.clone(),
+                archive: archive.clone(),
+                period: *period,
+                from: *from,
+                to: *to,
+                nonce: nonce.clone(),
+                issued_at_unix_ms: unix_ms(),
+            };
+            match rchain_node::web::history_credit::sign_authorization(
+                authorization,
+                &key,
+                algorithm,
+            ) {
+                Ok(signed) => match serde_json::to_string_pretty(&signed) {
+                    Ok(text) => println!("{text}"),
+                    Err(e) => {
+                        eprintln!("the signed authorization could not be printed: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        _ => {}
+    }
 
     // **`audit` is an offline replay that needs the node's genesis configuration** (sync/verification
     // separation). It is neither a thin-client command nor a served node: it builds a replay runtime
@@ -171,6 +285,11 @@ async fn async_main(options: Options, log_level: rchain_shared::log::Level) {
         checkpoint,
         data_dir,
         out,
+        attest_key_path,
+        attest_out,
+        nonce,
+        previous,
+        sequence,
     } = &options.subcommand
     {
         let (node_conf, _, _) = match Configuration::build(&options) {
@@ -187,14 +306,81 @@ async fn async_main(options: Options, log_level: rchain_shared::log::Level) {
             out: out.clone(),
         };
         let audit_log: Arc<dyn Log> = log.clone();
-        match rchain_node::runtime::audit::run(&node_conf, &request, &audit_log).await {
-            Ok(report) => {
+        let outcome = match attest_key_path {
+            None => rchain_node::runtime::audit::run(&node_conf, &request, &audit_log)
+                .await
+                .map(|report| rchain_node::runtime::audit::AuditOutcome {
+                    report,
+                    attestation: None,
+                }),
+            Some(path) => {
+                let text = match std::fs::read_to_string(path) {
+                    Ok(text) => text,
+                    Err(e) => {
+                        eprintln!("the audit key {} could not be read: {e}", path.display());
+                        std::process::exit(1);
+                    }
+                };
+                let signer = match rchain_casper::validator_identity::ValidatorIdentity::from_hex(
+                    text.trim(),
+                ) {
+                    Some(signer) => signer,
+                    None => {
+                        eprintln!("the audit key is not a hex secp256k1 private key");
+                        std::process::exit(1);
+                    }
+                };
+                let challenge = nonce
+                    .clone()
+                    .unwrap_or_else(|| format!("audit-{}", unix_ms()));
+                rchain_node::runtime::audit::run_attested(
+                    &node_conf,
+                    &request,
+                    &signer,
+                    &challenge,
+                    previous.clone(),
+                    *sequence,
+                    &audit_log,
+                )
+                .await
+            }
+        };
+        match outcome {
+            Ok(outcome) => {
+                let report = &outcome.report;
                 println!(
                     "{} checkpoint {} at anchor {} ({} bodies)",
                     report.verdict, report.checkpoint_digest, report.anchor, report.blocks
                 );
                 if let Some(reason) = &report.reason {
                     eprintln!("{reason}");
+                }
+                if let Some(attestation) = outcome.attestation {
+                    let text = match serde_json::to_string_pretty(&attestation) {
+                        Ok(text) => text,
+                        Err(e) => {
+                            eprintln!("the attestation could not be printed: {e}");
+                            std::process::exit(1);
+                        }
+                    };
+                    match attest_out {
+                        Some(path) => {
+                            if let Err(e) = std::fs::write(path, format!("{text}\n")) {
+                                eprintln!(
+                                    "the attestation could not be written to {}: {e}",
+                                    path.display()
+                                );
+                                std::process::exit(1);
+                            }
+                        }
+                        None => println!("{text}"),
+                    }
+                } else if attest_key_path.is_some() {
+                    eprintln!(
+                        "no attestation was signed: the verdict is {} (and a legacy certificate \
+                         cannot be attested)",
+                        report.verdict
+                    );
                 }
                 // 0 = AGREE; 2 = DISAGREE/INCOMPLETE, so a script can gate on the verdict. 1 stays
                 // the usage/configuration failure.
@@ -204,6 +390,69 @@ async fn async_main(options: Options, log_level: rchain_shared::log::Level) {
             }
             Err(e) => {
                 eprintln!("audit failed: {e}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+
+    // **Verify a signed claim against a local report.** The attestation arrives on stdin, so a
+    // consumer can pipe a node's answer into the checker.
+    if let Commands::VerifyAuditAttestation {
+        report,
+        head_digest,
+        head_sequence,
+    } = &options.subcommand
+    {
+        let report_text = match std::fs::read_to_string(report) {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("the report {} could not be read: {e}", report.display());
+                std::process::exit(1);
+            }
+        };
+        let report: rchain_node::runtime::audit::AuditReport =
+            match serde_json::from_str(&report_text) {
+                Ok(report) => report,
+                Err(e) => {
+                    eprintln!("the report is not an audit report: {e}");
+                    std::process::exit(1);
+                }
+            };
+        let mut input = String::new();
+        if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut input) {
+            eprintln!("the attestation could not be read from stdin: {e}");
+            std::process::exit(1);
+        }
+        let attestation: rchain_models::casper::protocol::audit::AuditAttestation =
+            match serde_json::from_str(&input) {
+                Ok(attestation) => attestation,
+                Err(e) => {
+                    eprintln!("stdin is not an audit attestation: {e}");
+                    std::process::exit(2);
+                }
+            };
+        let head = match (head_digest, head_sequence) {
+            (Some(digest), Some(sequence)) => Some(rchain_casper::audit::AuditChainHead {
+                signer: attestation.signer.clone(),
+                sequence: *sequence,
+                digest: digest.clone(),
+            }),
+            _ => None,
+        };
+        match rchain_node::runtime::audit::verify_against_report(
+            &attestation,
+            &report,
+            head.as_ref(),
+        ) {
+            Ok(verified) => println!(
+                "OK signer {} sequence {} digest {}",
+                verified.signer(),
+                verified.sequence(),
+                verified.digest()
+            ),
+            Err(e) => {
+                eprintln!("refused: {e}");
                 std::process::exit(2);
             }
         }

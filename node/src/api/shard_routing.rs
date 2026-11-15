@@ -374,6 +374,19 @@ impl BlockApi for ShardRoutingBlockApi {
         .await
     }
 
+    async fn header_commitment(
+        &self,
+        hash: &str,
+    ) -> ApiErr<rchain_models::casper::protocol::deploy_service::HeaderCommitment> {
+        // Keyed by a block hash for the same reason as `get_raw_block`: a hash belongs to one shard.
+        let hash = hash.to_string();
+        self.probe(move |api| {
+            let hash = hash.clone();
+            async move { api.header_commitment(&hash).await }
+        })
+        .await
+    }
+
     async fn finality_attestation(&self, nonce: &str) -> ApiErr<FinalityAttestation> {
         // Names no shard and no key, so it resolves to the primary — the same rule as
         // `last_finalized_block`, and for the same reason: it is a statement about *this node's*
@@ -397,6 +410,15 @@ impl BlockApi for ShardRoutingBlockApi {
         digest: Option<&str>,
     ) -> ApiErr<rchain_models::casper::protocol::checkpoint::CheckpointCertificate> {
         self.primary_api().checkpoint_certificate(digest).await
+    }
+
+    async fn verify_checkpoint_certificate(
+        &self,
+        certificate: &rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
+    ) -> ApiErr<rchain_models::casper::protocol::deploy_service::VerifiedCertificate> {
+        self.primary_api()
+            .verify_checkpoint_certificate(certificate)
+            .await
     }
 
     async fn checkpoint_attestation(
@@ -529,6 +551,23 @@ mod tests {
             )
         }
 
+        async fn verify_checkpoint_certificate(
+            &self,
+            _certificate: &rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
+        ) -> ApiErr<rchain_models::casper::protocol::deploy_service::VerifiedCertificate> {
+            self.record("verify_checkpoint_certificate");
+            Ok(
+                rchain_models::casper::protocol::deploy_service::VerifiedCertificate {
+                    verified: true,
+                    digest: "11".repeat(32),
+                    anchor: "22".repeat(32),
+                    anchor_height: 1,
+                    supporting_stake: 3,
+                    total_stake: 4,
+                },
+            )
+        }
+
         async fn status(&self) -> Status {
             self.record("status");
             Status {
@@ -545,6 +584,9 @@ mod tests {
                 latest_block_number: 1,
                 history_availability: "available".to_string(),
                 checkpoint_age: None,
+                sync_phase: None,
+                checkpoint: None,
+                audit: None,
             }
         }
         async fn proposer_health(&self) -> ProposerHealth {

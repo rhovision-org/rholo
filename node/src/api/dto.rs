@@ -149,6 +149,15 @@ pub struct PublicStatus {
     pub history_availability: String,
     /// Latest block minus the served checkpoint's anchor, or `None` when no certificate exists.
     pub checkpoint_age: Option<i64>,
+    /// The shard's start-up phase (`starting`, `syncing`, `running`, `blocked`).
+    #[serde(default)]
+    pub sync_phase: Option<String>,
+    /// The trust anchor this node runs from: a verified checkpoint or the pinned genesis.
+    #[serde(default)]
+    pub checkpoint: Option<rchain_models::casper::protocol::deploy_service::CheckpointStatus>,
+    /// Whether this node offers audit attestations, and the last run it completed.
+    #[serde(default)]
+    pub audit: Option<rchain_models::casper::protocol::deploy_service::AuditAvailability>,
 }
 
 /// **The deploy pool's public capacity answer** (Law 86a). Counts and bytes only; per-deployer keys
@@ -608,6 +617,70 @@ pub struct ArchivesResponse {
     pub archives: Vec<String>,
 }
 
+/// The most heights one history-range response carries. A consumer asks smaller windows; an
+/// archive never answers a whole chain in one response.
+pub const MAX_HISTORY_RANGE_HEIGHTS: i64 = 64;
+
+/// The most body bytes one history-range response carries. The range is refused, not truncated,
+/// so a consumer can retry a smaller window rather than misread a short answer.
+pub const MAX_HISTORY_RANGE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Validate a history window before any body is read. A malformed or oversized window is refused;
+/// the consumer retries a smaller one rather than receiving a silently shortened answer.
+pub fn validate_history_range(from: i64, to: i64) -> Result<(), String> {
+    if from < 0 || to < from {
+        return Err(format!(
+            "a history range must satisfy 0 <= from <= to, got from={from} to={to}"
+        ));
+    }
+    let heights = to - from + 1;
+    if heights > MAX_HISTORY_RANGE_HEIGHTS {
+        return Err(format!(
+            "a history range covers at most {MAX_HISTORY_RANGE_HEIGHTS} heights, asked for {heights}"
+        ));
+    }
+    Ok(())
+}
+
+/// `POST /api/v1/history/range` — a bounded request for the bodies at consecutive heights.
+///
+/// `authorization` is a payer-signed range authorization when the archive meters its service; it is
+/// `null` for an open archive. The signed form is verified over canonical bytes, not this JSON.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryRangeRequest {
+    pub from: i64,
+    pub to: i64,
+    #[serde(default)]
+    pub authorization: Option<crate::web::history_credit::SignedHistoryAuthorization>,
+}
+
+/// One block at a height. `body` is absent when this node does not hold the body; `block_hash` is
+/// absent when it holds no block at the height at all.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryRangeEntry {
+    pub height: i64,
+    pub block_hash: Option<String>,
+    pub body: Option<rchain_models::casper::protocol::deploy_service::RawBlock>,
+}
+
+/// `POST /api/v1/history/range` — the bodies a bounded window holds, all blocks at each height.
+/// `complete` is `false` when any requested height had no body; a consumer must not read a gap as
+/// "the history has no block there".
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryRange {
+    pub from: i64,
+    pub to: i64,
+    pub complete: bool,
+    /// Bytes this response was charged for (`0` on an open archive).
+    pub charged_bytes: u64,
+    /// The charged payer's key, when the archive is metered.
+    pub payer: Option<String>,
+    pub entries: Vec<HistoryRangeEntry>,
+}
+
 /// A pooled (not-yet-included) deploy (an entry in the `/api/v1/deploys` response).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -713,6 +786,9 @@ mod tests {
             latest_block_number: 4,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
             autopropose: true,
             propose_on_deploy: true,
             manual_propose: false,
@@ -948,5 +1024,25 @@ impl TxnRecordDto {
                 .collect(),
             reason: record.reason.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod history_range_window_tests {
+    use super::*;
+
+    /// A window is bounded before any body is read: negative, reversed and oversized windows are
+    /// refusals, not silently shortened answers.
+    #[test]
+    fn a_history_range_is_bounded_before_a_body_is_read() {
+        assert!(validate_history_range(0, 0).is_ok());
+        assert!(validate_history_range(0, MAX_HISTORY_RANGE_HEIGHTS - 1).is_ok());
+        assert!(validate_history_range(5, 5 + MAX_HISTORY_RANGE_HEIGHTS - 1).is_ok());
+
+        assert!(validate_history_range(-1, 5).is_err(), "negative from");
+        assert!(validate_history_range(5, 4).is_err(), "reversed");
+        let err = validate_history_range(0, MAX_HISTORY_RANGE_HEIGHTS)
+            .expect_err("one height over the cap is refused");
+        assert!(err.contains("at most"), "{err}");
     }
 }

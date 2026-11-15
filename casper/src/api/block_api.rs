@@ -16,7 +16,7 @@ use rchain_models::casper::protocol::checkpoint::{
 };
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, BondInfo, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
-    FinalityAttestation, LightBlockInfo, RawBlock, Status,
+    FinalityAttestation, LightBlockInfo, RawBlock, Status, VerifiedCertificate,
 };
 use rchain_models::validator::Validator;
 use rchain_shared::base16;
@@ -930,6 +930,16 @@ pub trait BlockApi: Send + Sync {
 
     async fn get_block(&self, hash: &str) -> ApiErr<BlockInfo>;
 
+    /// **The block's header commitment** — hash, height and the pre/post/fringe state roots. A
+    /// body does not carry the fringe state root, so a validation-window audit reads it here. The
+    /// default refuses: a surface with no DAG cannot answer for one.
+    async fn header_commitment(
+        &self,
+        _hash: &str,
+    ) -> ApiErr<rchain_models::casper::protocol::deploy_service::HeaderCommitment> {
+        Err("this surface serves no block header commitment".to_string())
+    }
+
     async fn bond_status(&self, public_key: &[u8]) -> ApiErr<bool>;
 
     /// The reply *and where it was read from*: a bare `Vec<Par>` cannot say whether the term
@@ -984,6 +994,16 @@ pub trait BlockApi: Send + Sync {
 
     async fn checkpoint_certificate(&self, _digest: Option<&str>) -> ApiErr<CheckpointCertificate> {
         Err("this surface holds no checkpoint certificate".to_string())
+    }
+
+    /// **Verify a certificate with this node's own verifier.** The digest is recomputed, every
+    /// signature over it is checked against the signer's bonded stake, and the strict quorum rule is
+    /// applied. A refusal is an error; a success names the stake that signed. Default refuses.
+    async fn verify_checkpoint_certificate(
+        &self,
+        _certificate: &CheckpointCertificate,
+    ) -> ApiErr<VerifiedCertificate> {
+        Err("this surface cannot verify checkpoint certificates".to_string())
     }
 
     /// **This node's signature over its current checkpoint digest.** Default refuses, and the

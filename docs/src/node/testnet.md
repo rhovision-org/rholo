@@ -454,9 +454,11 @@ stating what it does and does not do, because **it is not a sync**.
   no usable finalised block anywhere — is recovered by
   `--restore-from-master`, measured on that exact state (meet at genesis, one head, identical per-height
   hashes, finality resumed on one hash: `spec/audit/evidence/n-reconcile-drill/restore-disarmed.txt`).
-- **Two costs the restore still pays, stated rather than implied.** The LFS restore hydrates the tuple space
-  of every block from its root down to genesis, so it is **O(chain)** (`Requesting tuple-space data for 316
-  approved block state roots`, ~2.5 minutes on the control) — and a node-side anchor restore pays the same.
+- **Two costs the state-restore tool still pays, stated rather than implied.** `--restore-from-master`
+  hydrates the tuple space of every block from its root down to genesis, so it is **O(chain)**
+  (`Requesting tuple-space data for 316 approved block state roots`, ~2.5 minutes on the control) —
+  a checkpoint join does not pay this: it hydrates the anchor post-state and the certified validation
+  window only.
   And the **sidecar stores a merge needs** (`mergeable-channel-cache`, `native-changes-cache`) are *not* part
   of the state a sync transfers, so a restored block regenerates them: either by extending the sync or by
   bounding that regeneration once, and that is an open decision rather than a defect. Neither is a recovery
@@ -690,8 +692,8 @@ The generalised procedure — prerequisites, the firewall rule below, the genesi
 admission and recovery — is [Running a node: testnet now, mainnet later](validator-observer-setup.md).
 This section records **this live net's own run**.
 
-Successful restoration logs these markers in order. The historical genesis-only run used the
-approved-genesis fringe; a populated chain restores its selected finalized fringe and ancestry:
+The historical genesis-only run logged these markers in order (it used the approved-genesis
+fringe):
 
 ```
 INFO [casper.engine.NodeSyncing] Blocks for approved state added to DAG.
@@ -699,9 +701,11 @@ INFO [casper.engine.NodeSyncing] LFS state is successfully restored.
 INFO [casper.engine.NodeLaunch] Making a transition to Running state.
 ```
 
-The historical genesis-only join took about 15 seconds and ~19 MB. That measurement
-does not bound mature-chain recovery, which downloads ancestry and state roots and
-independently replays non-genesis history before entering Running.
+The current checkpoint join logs the certificate acceptance instead — the anchor, the signing stake,
+the published headers, the one downloaded genesis body and `replayed none` — and does not replay
+non-genesis history. The historical genesis-only join took about 15 seconds and ~19 MB; that
+measurement does not bound a mature-chain join, whose cost is the header walk plus the certified
+window hydration.
 
 See the [source-pinned public-genesis recovery evidence](../../../spec/audit/evidence/n457-public-genesis-20261029/README.md) for the missing-input refusal and the limits of the current mature-history campaign.
 
@@ -717,7 +721,7 @@ isolated the joiner's inbound firewall rule as the cause:
 | Bootstrap only | Stalled at `h=0` despite `peers=6` and incoming gossip; LFS timed out after three 30 s rounds |
 
 For that revision, the joiner needed inbound protocol and discovery traffic from every validator
-on its configured ports. LFS ancestry now
+on its configured ports. The ancestry walk now
 uses its configured bootstrap, which must be able to deliver replies. Full peer connectivity still
 matters for discovery and post-sync consensus; the historical all-validator requirement above
 is not the current ancestry-request selection rule.

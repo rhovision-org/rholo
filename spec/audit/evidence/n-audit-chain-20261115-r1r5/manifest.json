@@ -1,0 +1,106 @@
+{
+  "arms": [],
+  "binary_sha256": "04a65bda48953d03a7a71e3cac390ec72922b89e9f49eb449a9dcf00f0d07998",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 1977,
+      "kind": "json",
+      "path": "raw/accepted.json",
+      "sha256": "eb0db4b210aa1a010400daeb86dc95598a44617fd19af8a8d37dc3321ebbca3c"
+    },
+    {
+      "bytes": 87,
+      "kind": "sha256",
+      "path": "raw/binary.sha256",
+      "sha256": "4cce874e3a22bedd1d8a2b13382c0dc6b347c5faf0e33cf32237cbc4566abd54"
+    },
+    {
+      "bytes": 508,
+      "kind": "json",
+      "path": "raw/checkpoint.json",
+      "sha256": "3f62e122b06d00395c61d2e34bc8f29cbf03bf4a345725272ce87430496823a2"
+    },
+    {
+      "bytes": 1865,
+      "kind": "txt",
+      "path": "raw/commands.txt",
+      "sha256": "de128d0a60732ec75453e3b24bfd80ed4127bf0d4a921158e86073385de73137"
+    },
+    {
+      "bytes": 2,
+      "kind": "json",
+      "path": "raw/conflicts.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "bytes": 1026,
+      "kind": "json",
+      "path": "raw/r1r5-ev1-attestation.json",
+      "sha256": "dc2a54deee3f246f23ef02bede47d9fe5af7d7088c93594ef25b017748c9cb44"
+    },
+    {
+      "bytes": 754,
+      "kind": "json",
+      "path": "raw/r1r5-ev1-report.json",
+      "sha256": "a9f41b1d80948741d7de5ff0c69d7a5362496e36b281903561cdcac0da65493e"
+    },
+    {
+      "bytes": 1702,
+      "kind": "json",
+      "path": "raw/r1r5-ev1-request-response.json",
+      "sha256": "9884d5d1905ce526212334bc07125a8a9575be839defbc3858b421a23750a97f"
+    },
+    {
+      "bytes": 224,
+      "kind": "txt",
+      "path": "raw/r1r5-ev1-verify-line.txt",
+      "sha256": "aa800f380dce6d77ed854a6be5f2cd34a1936dd777a45b25af94660e531c1313"
+    },
+    {
+      "bytes": 1088,
+      "kind": "json",
+      "path": "raw/r1r5-ev2-attestation.json",
+      "sha256": "8ad8e0399ad5b968d5d8a7e0e303dad3d88a92be12666e784e3f743265998088"
+    },
+    {
+      "bytes": 754,
+      "kind": "json",
+      "path": "raw/r1r5-ev2-report.json",
+      "sha256": "e153c5fee6640ea6f11cf45fede8cc4343833d8199c01db5ec75c54d0c64b615"
+    },
+    {
+      "bytes": 1764,
+      "kind": "json",
+      "path": "raw/r1r5-ev2-request-response.json",
+      "sha256": "cd023101f08cc47a79c7d24467548385a7f2bb9285fe588ac5d9c5c7965b3999"
+    },
+    {
+      "bytes": 224,
+      "kind": "txt",
+      "path": "raw/r1r5-ev2-verify-line.txt",
+      "sha256": "6479c76a273fe9ae505b52d7e4724dcc2b8abf58b52972774c0b99ea42c14397"
+    },
+    {
+      "bytes": 939,
+      "kind": "json",
+      "path": "raw/status.json",
+      "sha256": "d7b0f1b78575ae77820eb15abf4d074e794c69525d17d463df0c787cff1e8bac"
+    }
+  ],
+  "gate_id": "n-audit-chain",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-15T19:08:55+00:00",
+    "tool": "evidence-pack",
+    "version": 1
+  },
+  "redactions": [],
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "a1e013490cde6cd56411f1720b12b6cd5ed008a5",
+  "verdict": "PASS"
+}

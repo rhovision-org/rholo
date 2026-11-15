@@ -1,6 +1,6 @@
 # The laws — what they guarantee
 
-rholo's behaviour is pinned by **<!-- counts:laws -->109 laws<!-- counts:end -->** — one invariant per layer of
+rholo's behaviour is pinned by **<!-- counts:laws -->112 laws<!-- counts:end -->** — one invariant per layer of
 the system. A law says what must be true of the node (or of the model it is proved over), why it matters,
 and what would falsify it. This page is the **reading**: one line per law, grouped by layer. The checked
 register is the authority for status, declarations and falsifiers; where this page and the register
@@ -8,10 +8,10 @@ disagree, the register is right.
 
 > **How to read a law number**
 >
-> - **`Law N`** — a stable number, 1–100. Numbers are never reused; a new law takes the next one.
+> - **`Law N`** — a stable number, 1–112. Numbers are never reused; a new law takes the next one.
 > - **`Law Nx`** — a *clause* of a law whose parts have different proofs or statuses (`16a`, `16b`, …).
 >   <!-- counts:clause-laws -->27<!-- counts:end --> laws carry clauses; the register has one **entry** per clause.
-> - **Entry** — one row of the register. **<!-- counts:laws -->109 laws<!-- counts:end --> = <!-- counts:entries -->164 entries<!-- counts:end -->**, and the
+> - **Entry** — one row of the register. **<!-- counts:laws -->112 laws<!-- counts:end --> = <!-- counts:entries -->167 entries<!-- counts:end -->**, and the
 >   status counts are per entry. Laws 14, 16 and 86 have clauses on both sides of `proved-tied`/`proved-model`,
 >   which is why the number of *laws* proved is smaller than the sum of the two status columns.
 > - **`C###`** — an audit finding (`spec/audit/passes.md`), never a law. HAZOP rows are `F-U…`/`H-U…`,
@@ -42,13 +42,14 @@ disagree, the register is right.
 | 66–71 | **Distributed state and sync** | the record key and join, versioned reads, the page walk, import, the catch-up window |
 | 72–77 | **Durability** | the reset bracket, its request, checkpoints, dependent actions, the stop, the reset's projection |
 | 78–79 | **Genesis** | the developer allocation and its vesting schedule |
-| 80–85 | **The join and the chain's identity** | root publication, the verified-answer join, the validator lifecycle, the trust model, the genesis anchor, the fringe state |
+| 80–85 | **The join and the chain's identity** | root publication, the verified-answer join, the validator lifecycle, the content-transfer trust model (its finality residual is closed on the checkpoint path by 105/108), the genesis anchor, the fringe state |
 | 86 | **Admission and the pool** | the pool is the throttle: a bounded queue, no silent loss, independent work in parallel, one permit progresses, pending work relays |
 | 87 | **Decimal — retired** | the exact value algebra was **removed before mainnet** (issue #527); the clause rows are `retired` in the register and the record is [the decimal type, withdrawn](decimal-removed.md) |
 | 88–90 | **Disposition, liveness, hostlist** | a stored body is accounted for and the proposal gate is total in its anchor (88); jail before any vote reaches a bond (89); the published hostlist is earned, bounded and fresh (90) |
 | 91 | **The cost model** | a canonicalisation and a union charge their elements, `censure` its cubic fold, a tally its option lists; the register and the census that keep the shapes honest are [here](cost-model.md) |
 | 92–97 | **Replay evidence and split accounting** | a cost verdict is not a state verdict (93) and a replay failure's cause is provenance-dependent (92); a local fault has a bounded exit (94); the replay record is the play's order (95); a split execution does not change the accounting (96); a merge's accounting is total and single-counted (97) |
 | 98–100 | **Cross-shard acceptance** | the escrow moves exactly and conserves value (98); the decision is durable before its effects and recovery closes (99); every phase is a shard-local deploy and the DAG is single-shard (100) |
+| 101–112 | **Certified sync, history and its service** | peer-independent verified answers (101); replay's chain and its one external state (102); bounded concurrent serving (103); an attributable checkpoint certificate (104); sync separated from verification (105); audit equivalence (106); history as a checked service (107); a running node is anchored (108); a post-anchor block reads only certified roots (109); a served range is accounted before it leaves (110); settlement follows the possession challenge (111); an accepted audit claim is one this node reproduced (112) |
 
 ## Rholang — the language (Laws 1–6)
 
@@ -294,6 +295,28 @@ transactions; acceptance is the register plus the resolution of issue #33.
 | 100c | Block and deploy ingress is shard-local, so every accepted block and every merge input is one shard — the reason the shard-blind DAG and Law 97's accounting are safe per shard. |
 | 100d | A deploy is dispatched to its named member or refused with the membership, never relayed; a keyed lookup probes the primary first. |
 
+## Certified sync, history and its service (Laws 101–112)
+
+The sync/verification split. These laws replace the replay-based join as the *acceptance* path:
+replay remains, as the audit's counterweight. The design and its safe fallbacks are stated in
+[Sync, checkpoints and history](../node/sync-and-history.md); the machine forms are in
+`spec/Rchain/Sync/`.
+
+| Law | What it guarantees |
+|---|---|
+| 101 | A verified sync answer is peer-independent: a body is accepted only when it hashes to the key it was requested under, a hedge completes no key of its own, and the per-key fan-out is bounded. |
+| 102 | Replay reconstructs the chain's states, and the genesis post-state is the only external one: a block whose pre-state is not the previous post-state is refused, not filled from a downloaded state. |
+| 103 | Concurrent serving preserves answer identity and bounds the pool: the answer is a read of immutable state, another request does not change it, and the in-flight set is bounded. |
+| 104 | A checkpoint certificate is attributable: strict `3s > 2t`, so two quorate certificates for one parent share a signer; the digest binds the anchor, post-state, fringe, shard, parent and metadata commitment. |
+| 105 | Sync and verification are separate: acceptance is a function of the certificate, the metadata walk and the checkpoint state; a failed audit is an alarm on an accepted state, never a rewind. |
+| 106 | Audit equivalence: agreement implies the replay derived the claimed root and the commitments matched the bodies; a covered difference is a disagreement; missing history is **not** agreement. |
+| 107 | History availability is a service with a check: a challenge proves possession at challenge time, a sample detects a gap, and a nonzero floor is reported `unavailable`, never `available`. |
+| 108 | A running node is anchored: the genesis pin or a verified quorum checkpoint; the current root is the anchor's root; a failed sync is not running; a genesis anchor names the pinned genesis. |
+| 109 | A post-anchor block validates only against certified roots: the statement commits the validation window, the joiner hydrates exactly it, and an uncertified root is refused, never guessed. |
+| 110 | A served history range is accounted before it leaves: the durable credit pays for its bytes, the debit is exact, an account short of the range is refused without a partial debit, and invoices and nonces are single-use. Bodies are metered; headers and checkpoint metadata are not, so joins stay cheap. |
+| 111 | Settlement is determined by the possession-challenge outcome: a pass carries the unused fee, a failure forfeits the period and marks the peer, and neither is a consensus event. |
+| 112 | An accepted audit claim is one this node reproduced: the claim names the checkpoint, the derived root, the replay head and a nonce; a node stores it only when its own replay agrees and the claim extends its signer's chain, so a mismatched or unchained claim is refused. |
+
 ## Proved, assumed, and open
 
 The register classifies every entry; the words mean different things:
@@ -301,16 +324,16 @@ The register classifies every entry; the words mean different things:
 - **proved-tied** — proved, *and* tied to the node by a conformance corpus the Rust consumer runs.
   <!-- counts:proved-tied-entries -->31<!-- counts:end --> entries.
 - **proved-model** — proved about a model that a person keeps in sync with the Rust.
-  <!-- counts:proved-model-entries -->119<!-- counts:end --> entries.
+  <!-- counts:proved-model-entries -->122<!-- counts:end --> entries.
 - **axiom-by-design** — a primitive assumed rather than proved (cryptography): <!-- counts:axioms -->10 axioms<!-- counts:end --> across the tree.
 - **owed / deferred** — stated, with the proof or the decision outstanding; **open** — a recorded design
   question, not a proof gap; **vacuous** — proved but restating its own definition (kept visible, never
   counted as coverage); **orphaned** — out of scope (the Rosette rows); **retired** — the port has no
   rule of that shape, evidenced by naming the code that was read.
 
-The count arithmetic, in one sentence: **<!-- counts:laws -->109 laws<!-- counts:end -->, <!-- counts:entries -->164 entries<!-- counts:end -->**, because <!-- counts:clause-laws -->27<!-- counts:end --> laws
-carry clauses; **<!-- counts:proved-laws -->101<!-- counts:end --> laws are proved in at least one clause**, split over entries as
-<!-- counts:proved-tied-entries -->31<!-- counts:end --> tied and <!-- counts:proved-model-entries -->119<!-- counts:end --> over the model. The two status columns overlap on
+The count arithmetic, in one sentence: **<!-- counts:laws -->112 laws<!-- counts:end -->, <!-- counts:entries -->167 entries<!-- counts:end -->**, because <!-- counts:clause-laws -->27<!-- counts:end --> laws
+carry clauses; **<!-- counts:proved-laws -->104<!-- counts:end --> laws are proved in at least one clause**, split over entries as
+<!-- counts:proved-tied-entries -->31<!-- counts:end --> tied and <!-- counts:proved-model-entries -->122<!-- counts:end --> over the model. The two status columns overlap on
 laws 14, 16 and 86, which is why they do not add up to the law-level union. No total on this page is
 hand-written: the spans are emitted from the register.
 
@@ -319,7 +342,7 @@ hand-written: the spans are emitted from the register.
 - [`spec/LAWS.md`](../../../spec/LAWS.md) — the generated tables: every entry's status, declarations,
   axioms, witnesses and falsifier. **The authority.**
 - [`spec/INVENTORY.md`](../../../spec/INVENTORY.md) — the long-form catalogue with the Rust realization per
-  law. Its hand-written table currently ends at **Law 77**; the register covers 1–100, and where the two
+  law. Its hand-written table currently ends at **Law 77**; the register covers 1–112, and where the two
   disagree the register is right.
 - [The laws → Rust code](../contributor/laws-to-rust.md) — per-law Lean/Rust anchors and tests, scoped to
   Laws 1–29 by design.

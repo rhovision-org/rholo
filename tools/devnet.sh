@@ -794,8 +794,10 @@ cmd_up() {
     # the opt-in, since archiving is a service commitment rather than a consensus role.
     archive_flag=()
     if [[ "${DEVNET_OBSERVER_ARCHIVE:-0}" == "1" ]]; then
-      archive_flag=(--archive)
-      echo "    (archive tier: on)"
+      # A metered archive is the production default; a devnet has no REV settlement, so it serves
+      # explicitly unmetered (`--archive-open`) and logs that choice.
+      archive_flag=(--archive --archive-open)
+      echo "    (archive tier: on, unmetered)"
     fi
     # **An observer needs the genesis manifest too** (sync/verification separation): the checkpoint
     # certificate is verified against the genesis bond set, which is the trust anchor a joiner

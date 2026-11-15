@@ -93,6 +93,18 @@ pub trait WebApi: Send + Sync {
         ))
     }
 
+    /// `GET /api/v1/block/{hash}/header` — the block's pre/post/fringe state roots. The fringe root
+    /// is not in a body, so a validation-window audit reads it here. The default refuses.
+    async fn block_header(
+        &self,
+        _hash: &str,
+    ) -> Result<rchain_models::casper::protocol::deploy_service::HeaderCommitment, BlockApiException>
+    {
+        Err(BlockApiException(
+            "this surface serves no block header commitment".to_string(),
+        ))
+    }
+
     /// `GET /api/v1/finality-attestation` — this node's finalised block, signed by its validator key,
     /// bound to the caller's nonce. The default refuses: a surface with no identity attests for no one.
     async fn finality_attestation(
@@ -122,6 +134,21 @@ pub trait WebApi: Send + Sync {
         ))
     }
 
+    /// `POST /api/v1/checkpoint/verify` — this node's verifier applied to a caller-supplied
+    /// certificate. A refusal is an error; a verdict names the recomputed digest and the stake that
+    /// signed it.
+    async fn verify_checkpoint_certificate(
+        &self,
+        _certificate: &CheckpointCertificate,
+    ) -> Result<
+        rchain_models::casper::protocol::deploy_service::VerifiedCertificate,
+        BlockApiException,
+    > {
+        Err(BlockApiException(
+            "this surface cannot verify checkpoint certificates".to_string(),
+        ))
+    }
+
     /// `GET /api/v1/history/challenge` — a deterministic sample of bodies at the caller's nonce
     /// (the archive tier's proof of possession). The default refuses: a surface with no history
     /// tier cannot answer for one.
@@ -133,6 +160,17 @@ pub trait WebApi: Send + Sync {
     ) -> Result<super::dto::HistoryChallenge, BlockApiException> {
         Err(BlockApiException(
             "this surface keeps no history to challenge".to_string(),
+        ))
+    }
+
+    /// `POST /api/v1/history/range` — the bodies at a bounded window of heights. The default
+    /// refuses: a surface with no history tier cannot answer for one.
+    async fn history_range(
+        &self,
+        _request: &super::dto::HistoryRangeRequest,
+    ) -> Result<super::dto::HistoryRange, BlockApiException> {
+        Err(BlockApiException(
+            "this surface keeps no history to serve".to_string(),
         ))
     }
 

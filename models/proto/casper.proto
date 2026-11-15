@@ -300,8 +300,17 @@ message StoreItemsMessageProto {
 // The header carries what the DAG store and the proposer need, and `bodyAvailable` lets a peer
 // advertise which headers it can also back with a content-verifiable body.
 
+// An optional height window over each named tip's ancestry. When present, the answer contains
+// each named tip's header and its ancestors whose height is in `[from, to]`. When absent, the
+// answer contains only the named headers (the original hashes-only walk).
+message BlockMetadataRangeProto {
+  int64 from = 1;
+  int64 to   = 2;
+}
+
 message BlockMetadataRequestProto {
   repeated bytes hashes = 1;
+  BlockMetadataRangeProto range = 2;
 }
 
 message BlockHeaderProto {

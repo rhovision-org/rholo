@@ -1,0 +1,19 @@
+{
+  "witnessType": "signed-hash-chain-v1",
+  "shardId": "/root",
+  "checkpointDigest": "ae5531450460b2d28c3530e67a584be4ff085dd8334ee1ee7f960970ba73d4bb",
+  "anchor": "8b34f22b6db661e2a8da0ef8796b3102e7b41ecdb23fae0daf911dcc40d2e217",
+  "anchorHeight": 50,
+  "fromHeight": 0,
+  "toHeight": 50,
+  "metadataRoot": "79013464fc63221b69ea690ace080fa368eddc32dfc1f92964b25cb36a0cec5b",
+  "historyRoot": "199fa080f7fe17358f2ea9b9821f44b5a21f907f2cbdb4be2fef78720191c5eb",
+  "derivedRoot": "5bf0d89943171316b571241e55916f0725fbc3f66a27b734464a6a6e1fcc81d3",
+  "replayHead": "5370b4f34a54a2b8c641c17c6deeb4966f88847e531db9ae60934c1e8f21dec9",
+  "previous": "1d614e5f9e21c8728f515bcf9e5f48453d756c8cfd6a20cdc03abed11130442e",
+  "sequence": 1,
+  "nonce": "r1r5-ev-2",
+  "signer": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4",
+  "sigAlgorithm": "secp256k1",
+  "sig": "3044022007cb8f5bb4e98d56bc172bc30431deaa86897e78b8d6e5dd1faf680d3700445e022079e10394466fe6ae57f10ba28b84265e7a7b4337765587a8be03f1eaf58c1bcf"
+}

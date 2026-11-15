@@ -2,6 +2,7 @@
 //!
 //! Mirrors `models/src/main/scala/coop/rchain/casper/protocol/`.
 
+pub mod audit;
 pub mod casper_message;
 pub mod casper_message_protocol;
 pub mod checkpoint;

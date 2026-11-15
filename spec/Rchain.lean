@@ -55,6 +55,9 @@ import Rchain.Sync.Audit
 import Rchain.Sync.Availability
 import Rchain.Sync.Anchor
 import Rchain.Sync.Window
+import Rchain.Sync.Service
+import Rchain.Sync.Settlement
+import Rchain.Sync.Claim
 import Rchain.Casper.Stake
 import Rchain.Proto
 import Rchain.Casper.Dag

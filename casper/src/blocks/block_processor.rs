@@ -9,6 +9,7 @@ use rchain_block_storage::dag::dag_storage::BlockDagStorage;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
+use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
 use rchain_shared::lock::Unpoison;
 use rchain_shared::log::{Log, LogSource};
@@ -22,6 +23,7 @@ use tokio::task::{JoinError, JoinHandle, JoinSet};
 use crate::block_disposition::{
     BlockDispositionStore, EQUIVOCATION_VERDICT_STAGE, MAX_FAULT_RETRIES,
 };
+use crate::block_status::BlockStatus;
 use crate::interpreter_util::ShardHealth;
 use crate::merging::BlockIndex;
 use crate::multi_parent_casper::ValidateError;
@@ -551,6 +553,11 @@ pub async fn apply<F, Fut>(
     block_index: F,
     log: Arc<dyn Log>,
     health: ShardHealth,
+    // **The runtime's admissible pre-state roots** (review R2). A received block whose pre-state is
+    // not the accepted root, a certified window root or a root this node derived by accepting a
+    // validated post-anchor block is refused before replay. `None` (before boot installs it) is a
+    // retryable internal fault, never an acceptance.
+    accepted_window: crate::engine::anchor::SharedAcceptedWindow,
 ) where
     F: Fn(BlockHash) -> Fut + Clone + Send + Sync + 'static,
     Fut: std::future::Future<Output = Result<Arc<BlockIndex>, String>> + Send + 'static,
@@ -586,6 +593,9 @@ pub async fn apply<F, Fut>(
         // Validate each block concurrently. Validation is verify-only (replay) and forks its own
         // replay runtime per block, so blocks in the batch are independent.
         let mut handles = Vec::with_capacity(batch.len());
+        // One snapshot for the batch: a block accepted earlier in this batch feeds `derived` only
+        // after its insert, and its children arrive in a later batch.
+        let window = accepted_window.read().await.clone();
         for block in &batch {
             let dag = dag.clone();
             let block_store = block_store.clone();
@@ -595,7 +605,14 @@ pub async fn apply<F, Fut>(
             let block = block.clone();
             let log = log.clone();
             let health = health.clone();
+            // **The gate runs before replay.** A missing window is a retryable fault; an unpermitted
+            // pre-state is a verdict about this node's accepted history, not about the block's
+            // execution, and it never reaches the runtime.
+            let refusal = pre_replay_refusal(window.as_ref(), &block);
             handles.push(tokio::spawn(async move {
+                if let Some(refusal) = refusal {
+                    return refusal;
+                }
                 crate::multi_parent_casper::validate(
                     dag.as_ref(),
                     &block_store,
@@ -697,6 +714,9 @@ pub async fn apply<F, Fut>(
                     continue;
                 }
             };
+            // A validated block's roots become admissible only if the insert commits; keep the
+            // metadata for the note below.
+            let accepted_meta = status.is_ok().then(|| block_meta.clone());
             if let Err(e) = dag.insert(block_meta, block.clone()).await {
                 if is_equivocation_refusal(&e) {
                     record_equivocation_verdict(
@@ -718,6 +738,14 @@ pub async fn apply<F, Fut>(
             settle_block(&disposition, &block, &log, source).await;
             match status {
                 Ok(()) => {
+                    // **The block's derived roots are now inputs a child may build on.** Noted beside
+                    // the accepted insert, so a rejected block never widens the window.
+                    if let Some(meta) = accepted_meta {
+                        let mut guard = accepted_window.write().await;
+                        if let Some(window) = guard.as_mut() {
+                            window.note_roots(&meta);
+                        }
+                    }
                     // **The block-age stamp.** Only a new highest height moves it (the cell compares),
                     // so a same-height sibling or a backfilled block does not make an idle shard look
                     // live. This is the writer `lastBlockAgeMs` reads.
@@ -765,6 +793,28 @@ pub async fn apply<F, Fut>(
         }
     }
     announcements.finish().await;
+}
+
+/// **The pre-replay gate's decision** (review R2). `None` admits the block to replay; `Some` is the
+/// outcome the processor records instead — a retryable internal fault when the boot has not installed
+/// the window, or a `ValidationFailed` with the failed metadata when the pre-state is not admissible.
+fn pre_replay_refusal(
+    window: Option<&crate::engine::anchor::AcceptedWindow>,
+    block: &BlockMessage,
+) -> Option<Result<BlockMetadata, ValidateError>> {
+    match window {
+        None => Some(Err(ValidateError::Internal(
+            "the accepted validation window is not installed yet".to_string(),
+        ))),
+        Some(window) if !window.permits(block.pre_state_hash) => {
+            let status = BlockStatus::UncertifiedPreState;
+            Some(Err(ValidateError::ValidationFailed(
+                crate::multi_parent_casper::mark_failed(&BlockMetadata::from_block(block), status),
+                status,
+            )))
+        }
+        Some(_) => None,
+    }
 }
 
 #[cfg(test)]
@@ -1163,6 +1213,56 @@ mod tests {
                 .map(|n| n.get())
                 .unwrap_or(4),
             "the cap follows the host's parallelism"
+        );
+    }
+
+    /// **Review R2 — the pre-replay gate consults the accepted window, not the store.** A root that
+    /// is merely historical is refused with the named status; the anchor root is admitted; and a
+    /// boot that has not installed the window yet is a retryable fault, never an acceptance.
+    #[test]
+    fn the_pre_replay_gate_refuses_an_uncertified_historical_pre_state() {
+        use crate::engine::anchor::{AcceptedState, GenesisPin};
+
+        let genesis = sample_block();
+        let pin = GenesisPin {
+            block: genesis.block_hash,
+            post_state: genesis.post_state_hash,
+        };
+        let accepted = AcceptedState::from_genesis(pin, &genesis).expect("genesis anchor");
+        let window = crate::engine::anchor::AcceptedWindow::from_accepted(&accepted);
+
+        let mut child = sample_block();
+        child.block_number = BlockHeight::try_from(10).expect("height");
+        child.block_hash = BlockHash::new([0xcd; 32]);
+        child.pre_state_hash = StateHash::new([9u8; 32]);
+        match pre_replay_refusal(Some(&window), &child) {
+            Some(Err(ValidateError::ValidationFailed(meta, status))) => {
+                assert_eq!(status, BlockStatus::UncertifiedPreState);
+                assert!(
+                    meta.validation_failed,
+                    "the refusal must be recorded as a failed validation"
+                );
+                assert_eq!(
+                    meta.failure_cause,
+                    Some(rchain_models::block_metadata::FailureCause::Divergence),
+                    "a local view of the accepted history is a divergence, not the block's fault"
+                );
+            }
+            _ => panic!("an uncertified historical pre-state must be refused before replay"),
+        }
+
+        child.pre_state_hash = genesis.post_state_hash;
+        assert!(
+            pre_replay_refusal(Some(&window), &child).is_none(),
+            "the anchor root is an admissible pre-state"
+        );
+
+        assert!(
+            matches!(
+                pre_replay_refusal(None, &child),
+                Some(Err(ValidateError::Internal(_)))
+            ),
+            "an uninstalled window is a retryable fault, not an acceptance"
         );
     }
 }

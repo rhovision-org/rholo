@@ -347,6 +347,66 @@ pub fn from_options(options: &Options) -> Hocon {
                 Hocon::String(peers.clone()),
             ));
         }
+        if let Some(policy) = &run.archive_credit_policy {
+            e.push((
+                "api-server.archive-credit-policy".to_string(),
+                Hocon::String(policy.clone()),
+            ));
+        }
+        if let Some(key) = &run.archive_settlement_key {
+            e.push((
+                "api-server.archive-settlement-key".to_string(),
+                Hocon::String(key.clone()),
+            ));
+        }
+        if !run.archive_allow.is_empty() {
+            e.push((
+                "api-server.archive-allow".to_string(),
+                Hocon::String(run.archive_allow.join(",")),
+            ));
+        }
+        if let Some(seconds) = run.archive_period_seconds {
+            e.push((
+                "api-server.archive-period-seconds".to_string(),
+                Hocon::Integer(i64::try_from(seconds).unwrap_or(i64::MAX)),
+            ));
+        }
+        if let Some(bytes) = run.archive_rate_bytes_per_sec {
+            e.push((
+                "api-server.archive-rate-bytes-per-sec".to_string(),
+                Hocon::Integer(i64::try_from(bytes).unwrap_or(i64::MAX)),
+            ));
+        }
+        if let Some(bytes) = run.archive_max_bytes_per_period {
+            e.push((
+                "api-server.archive-max-bytes-per-period".to_string(),
+                Hocon::Integer(i64::try_from(bytes).unwrap_or(i64::MAX)),
+            ));
+        }
+        if run.archive_open {
+            e.push(("api-server.archive-open".to_string(), Hocon::Boolean(true)));
+        }
+        if run.audit_attest {
+            e.push(("api-server.audit-attest".to_string(), Hocon::Boolean(true)));
+        }
+        if let Some(path) = &run.audit_key_path {
+            e.push((
+                "api-server.audit-key-path".to_string(),
+                Hocon::String(path.display().to_string()),
+            ));
+        }
+        if let Some(url) = &run.audit_bootstrap {
+            e.push((
+                "api-server.audit-bootstrap".to_string(),
+                Hocon::String(url.clone()),
+            ));
+        }
+        if let Some(count) = run.audit_requests_per_hour {
+            e.push((
+                "api-server.audit-requests-per-hour".to_string(),
+                Hocon::Integer(i64::try_from(count).unwrap_or(i64::MAX)),
+            ));
+        }
         if let Some(mode) = &run.self_replay_injection {
             e.push((
                 "casper.self-replay-injection".to_string(),

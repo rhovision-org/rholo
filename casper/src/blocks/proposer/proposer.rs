@@ -1393,6 +1393,9 @@ impl Proposer {
         // **This shard's finality-and-merge health** (W-N10-02/03), held like the two counters above:
         // the proposer drives `validate` on its own blocks, so it is one of the writers.
         health: ShardHealth,
+        // **The runtime's admissible pre-state window** (review R2): this node's own validated
+        // blocks derive roots that its peers' children may build on, so the proposer notes them.
+        accepted_window: crate::engine::anchor::SharedAcceptedWindow,
     ) -> Proposer
     where
         F: Fn(BlockHash) -> Fut + Send + Sync + 'static,
@@ -1540,6 +1543,9 @@ impl Proposer {
                 let log = log.clone();
                 let health = health.clone();
                 let injected = injected.clone();
+                // The async block is `move`; the outer closure is `Fn`, so hand the future its own
+                // `Arc` rather than moving the captured one.
+                let accepted_window = accepted_window.clone();
                 let max_number_of_parents = max_number_of_parents;
                 Box::pin(async move {
                     // **The devnet injector** (#564): a refusal on this node's own block, through the
@@ -1598,6 +1604,7 @@ impl Proposer {
                             put_block(&block_store, block.clone()).await.map_err(|e| {
                                 ValidateError::Internal(format!("failed to store block body: {e}"))
                             })?;
+                            let accepted_meta = meta.clone();
                             dag.insert(meta, block.clone()).await.map_err(|e| {
                                 // A stale-snapshot self-equivocation (§48): the DAG advanced between
                                 // the parent-set read and this insert, so the node's own earlier block
@@ -1612,6 +1619,14 @@ impl Proposer {
                                     ))
                                 }
                             })?;
+                            // **This node's own validated block derives roots its peers' children
+                            // may build on.** Noted only after the insert committed.
+                            {
+                                let mut guard = accepted_window.write().await;
+                                if let Some(window) = guard.as_mut() {
+                                    window.note_roots(&accepted_meta);
+                                }
+                            }
                             // **The block is accepted: publish its state** (law 80, B40). The
                             // checkpoint recorded the root as known; this moves `CURRENT_ROOT`.
                             crate::blocks::block_processor::publish_accepted_root(

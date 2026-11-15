@@ -14,7 +14,7 @@ use rchain_shared::refined::{BlockHeight, NonNegI64, SeqNum};
 
 use crate::block::state_hash::StateHash;
 use crate::block_hash::BlockHash;
-use crate::casper::protocol::casper_message::BlockMessage;
+use crate::casper::protocol::casper_message::{BlockHeader, BlockMessage};
 use crate::proto::casper::{BlockMetadataProto, BondProto};
 use crate::validator::Validator;
 
@@ -268,6 +268,27 @@ impl Hash for BlockMetadata {
 }
 
 impl BlockMetadata {
+    /// **The header view of this record.** Every committed field comes from the metadata;
+    /// `body_available` is a per-peer transport detail the caller supplies, and it is the one field
+    /// the metadata commitment excludes.
+    pub fn to_header(&self, body_available: bool) -> BlockHeader {
+        BlockHeader {
+            block_hash: self.block_hash,
+            block_num: self.block_num,
+            sender: self.sender,
+            seq_num: self.seq_num,
+            justifications: self.justifications.clone(),
+            bonds_map: self.bonds_map.clone(),
+            fringe: self.fringe.clone(),
+            fringe_state_hash: self.fringe_state_hash,
+            pre_state_hash: self.pre_state_hash,
+            post_state_hash: self.post_state_hash,
+            body_available,
+            sig: self.sig.clone(),
+            sig_algorithm: self.sig_algorithm.clone(),
+        }
+    }
+
     pub fn from_proto(b: &BlockMetadataProto) -> Result<Self, crate::errors::ModelsError> {
         Ok(BlockMetadata {
             block_hash: BlockHash::try_from(b.block_hash.as_slice())?,

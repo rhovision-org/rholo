@@ -90,6 +90,11 @@ fn status_from_wire(s: &wire::Status) -> Result<Status, String> {
         // A client reading the wire must not infer coverage it was not told.
         history_availability: "unknown".to_string(),
         checkpoint_age: None,
+        // The gRPC `Status` predates the anchor and audit fields too; the HTTP surface carries
+        // them, and a wire client must not infer an anchor it was not told.
+        sync_phase: None,
+        checkpoint: None,
+        audit: None,
     })
 }
 

@@ -18,6 +18,22 @@ To serve "give me the block at height N" efficiently, the node maintains a **hei
 → block hash. Law 18 requires it to be **contiguous** — no holes — so a range query walks a complete
 sequence, and the *lowest* and *highest* heights are meaningful bounds for the DAG.
 
+## The checkpoint store
+
+A node that joins from a checkpoint keeps the certificates it has seen. The store separates
+**evidence** from **service**:
+
+- **evidence** — one row per certificate digest, plus an index from the anchor it names. Recording a
+  certificate never changes what the node serves, and a second statement at the same anchor is
+  reported as a conflict rather than overwriting the first;
+- **service** — the *head*: the certificate whose anchor the node is currently serving. Adoption is
+  monotonic: the head never moves backwards, across shards, or between two different statements at
+  one anchor. The store also records the history floor (`history_from`), the lowest height below
+  which this node holds headers but not bodies.
+
+The head is re-verified at boot. A populated DAG above genesis with no verified certificate has no
+head to serve and is refused rather than run.
+
 ## The tuple-space history
 
 The rholang state is stored as a **history** of the tuple space: a persistent, content-addressed radix

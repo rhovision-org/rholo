@@ -174,6 +174,27 @@ When the node cannot read its own status, `/health` cannot assemble the snapshot
 read error; no age, fence or phase map is claimed. A client must treat this as **unknown**, not as a
 not-ready node: the two readings differ, and only one of them is the node's verdict.
 
+### 4.4 Public: the anchor, phase and audit reading
+
+`GET /api/v1/status` carries three fields beyond the raw counts:
+
+- `syncPhase` — `starting`, `syncing`, `running` or `blocked` for this shard. It answers "is this
+  node serving a chain", which `latestBlockNumber` cannot: a node can hold blocks and serve none.
+- `checkpoint` — the trust anchor. `kind` is `checkpoint` (with the certificate `digest`) or
+  `genesis` (digest `null`); it carries `anchor`, `anchorHeight`, `ageBlocks`,
+  `validationWindowBlocks` (8), and whether the statement committed to the validation window
+  (`historyRoot`) and the ancestor metadata (`metadataRoot`). `null` means the node has **no
+  anchor**, and a node with no anchor is not running (Law 108).
+- `audit` — whether this node serves audit attestations (`available`), whether a replay is
+  `running`, and the last `verdict`/`checkpoint`/`runAtUnixMs`.
+
+All three fields are `#[serde(default)]`: a pre-change transport decodes them as `null`, and a
+reader must not read that as "no anchor". They are public because a client choosing where to ask for
+history, or whether to ask this node for an audit, needs them; no operator-only data is added.
+
+Regime: sampled at request time. Scope: the phase and anchor are this shard's; the audit tier is
+process-wide. Freshness: immediate; `ageBlocks` is a height difference, not a wall clock.
+
 ## 5. The gap register
 
 These are diagnostics this standard calls for and the node does **not** publish yet. Each is a
@@ -181,7 +202,7 @@ counted debt, not an implied field.
 
 | owed diagnostic | why it matters | issue evidence |
 |---|---|---|
-| `syncPhase`, `syncBlockLegAgeMs`, `syncTrieLegAgeMs` | the trie leg has no idle bound, so a join can hang at h=0 with no field | #100, #457, #13 |
+| `syncBlockLegAgeMs`, `syncTrieLegAgeMs` | the trie leg has no idle bound, so a join can hang at h=0 with no per-leg age. (`syncPhase` is now published on `/api/v1/status` — §4.4.) | #100, #457, #13 |
 | `unrestorableRecords` acting rule | the counter is published but **nothing in the node acts on it**; an operator can see a permanent divergence and do nothing with it. (An external consumer does act: the N8 partition/rejoin harness fails with `FAIL_PERMANENT_DIVERGENCE` when it is non-zero — `tests/consensus-partition-rejoin.py`.) | #287, #320 |
 | `peerStatus` / per-peer observations | **the surface exists — this is a consumer gap.** `/health` is already the peer-visible projection (§6), and the only in-tree reader of a peer's `/health` is the acceptance harness's container-loopback read. No connection decision reads it, and no node polls a peer's health. What is missing is a consumer and a reason to trust it, not another endpoint. | this standard, §6 |
 | `epoch` / `livenessEpoch` | RCHIP-55's clock is not on the health route, so a jailed validator's boundary distance is invisible | #428, RCHIP-55 |

@@ -261,6 +261,12 @@ pub struct HttpState {
     /// The operator's history tier (`api-server.archive*`), served by `/api/v1/archives` and the
     /// challenge route.
     pub history: crate::web::archives::HistoryConfig,
+    /// **The metered history service** (Laws 110/111), present on an archive. The range route charges
+    /// through it before a body leaves; `None` is an unmetered surface (and a non-archive).
+    pub history_service: Option<Arc<crate::web::history_service::HistoryService>>,
+    /// **The attested-audit service** (Law 112), present only when the operator enabled it. No
+    /// service means the routes answer 404 exactly like a node built before they existed.
+    pub audit_service: Option<Arc<crate::runtime::audit_service::AuditService>>,
 }
 
 /// State shared by the admin HTTP server (port of the `adminWebApiRoutes` argument of
@@ -1003,7 +1009,38 @@ async fn api_get_block(State(state): State<HttpState>, Path(hash): Path<String>)
 /// or a justification from it is reading the node's word. With the preimage, the client hashes it,
 /// compares to `blockHash`, and then reads the fields off bytes it has verified.
 async fn api_get_raw_block(State(state): State<HttpState>, Path(hash): Path<String>) -> Response {
+    // **Below the archive's floor a body is the paid service.** A metered archive does not hand it
+    // out on the raw route: the payer asks for a bounded range with an authorization, so the debit
+    // precedes the body. Above the floor the raw route is the ordinary block surface.
+    if let Some(service) = state.history_service.as_ref() {
+        if service.policy() != crate::web::history_service::CreditPolicy::Open {
+            let mut below_floor = false;
+            if let Ok(info) = state.web_api.get_block(&hash).await {
+                if let Ok(caps) = state.web_api.capabilities().await {
+                    below_floor = info.block_info.block_number < caps.history.bodies_from;
+                }
+            }
+            if below_floor {
+                return history_error_response(
+                    crate::web::history_service::HistoryServiceError::Unauthorized(
+                        "this body is below the archive floor; request it with \
+                         POST /api/v1/history/range and a payer authorization"
+                            .to_string(),
+                    ),
+                );
+            }
+        }
+    }
     json_result(state.web_api.raw_block(&hash).await)
+}
+
+/// `GET /api/v1/block/{hash}/header` — the block's state-root commitments (the fringe root is not
+/// in a body, so an audit reads it here).
+async fn api_get_block_header(
+    State(state): State<HttpState>,
+    Path(hash): Path<String>,
+) -> Response {
+    json_result(state.web_api.block_header(&hash).await)
 }
 
 /// `GET /api/v1/finality-attestation?nonce=…` — what this node has finalised, signed by its validator
@@ -1037,6 +1074,22 @@ async fn api_checkpoint_by_digest(
     json_result(state.web_api.checkpoint_certificate(Some(&digest)).await)
 }
 
+/// `POST /api/v1/checkpoint/verify` — apply **this node's verifier** to a caller-supplied
+/// certificate: the digest is recomputed, every signature over it is checked against bonded stake,
+/// and the strict quorum rule is applied. A consumer that cannot verify secp256k1 reads this
+/// verdict rather than counting attestation strings.
+async fn api_verify_checkpoint(
+    State(state): State<HttpState>,
+    Json(certificate): Json<rchain_models::casper::protocol::checkpoint::CheckpointCertificate>,
+) -> Response {
+    json_result(
+        state
+            .web_api
+            .verify_checkpoint_certificate(&certificate)
+            .await,
+    )
+}
+
 /// `GET /api/v1/checkpoint-attestation` — this node's signature over **its own** current checkpoint
 /// digest. No caller input: a digest chosen by the caller would make the route a signing oracle.
 async fn api_checkpoint_attestation(State(state): State<HttpState>) -> Response {
@@ -1066,6 +1119,228 @@ async fn api_history_challenge(
             .history_challenge(&query.nonce, count, query.max_height)
             .await,
     )
+}
+
+/// `POST /api/v1/history/range` — a bounded window of bodies. The body names the window and,
+/// for a metered archive, carries the payer's authorization. The response is built first (no body
+/// leaves), then charged, then sent: a refusal sends nothing.
+async fn api_history_range(
+    State(state): State<HttpState>,
+    Json(request): Json<crate::api::dto::HistoryRangeRequest>,
+) -> Response {
+    let mut range = match state.web_api.history_range(&request).await {
+        Ok(range) => range,
+        Err(e) => {
+            return json_result(Err::<crate::api::dto::HistoryRange, _>(e));
+        }
+    };
+    let Some(service) = state.history_service.as_ref() else {
+        return json_result(Ok(range));
+    };
+    let bytes: u64 = range
+        .entries
+        .iter()
+        .filter_map(|entry| entry.body.as_ref())
+        .map(|body| (body.encoded.len() + body.sig.len()) as u64)
+        .sum();
+    match service
+        .charge(
+            request.authorization.as_ref(),
+            request.from,
+            request.to,
+            bytes,
+            now_unix_ms(),
+        )
+        .await
+    {
+        Ok(_) => {
+            range.charged_bytes = bytes;
+            range.payer = request
+                .authorization
+                .as_ref()
+                .map(|signed| signed.authorization.payer.clone());
+            json_result(Ok(range))
+        }
+        Err(e) => history_error_response(e),
+    }
+}
+
+/// A signed credit receipt submitted by a payer.
+#[derive(serde::Deserialize)]
+struct HistoryCreditRequest {
+    receipt: crate::web::history_credit::SignedHistoryCredit,
+}
+
+/// `POST /api/v1/history/credit` — deposit a settlement-key receipt into the payer's meter.
+async fn api_history_credit(
+    State(state): State<HttpState>,
+    Json(request): Json<HistoryCreditRequest>,
+) -> Response {
+    let Some(service) = state.history_service.as_ref() else {
+        return history_error_response(
+            crate::web::history_service::HistoryServiceError::Unauthorized(
+                "this node is not a metered archive".to_string(),
+            ),
+        );
+    };
+    match service.grant(&request.receipt, now_unix_ms()).await {
+        Ok(account) => json_result(Ok(serde_json::json!({
+            "payer": request.receipt.credit.payer,
+            "credit": account.credit,
+            "served": account.served,
+            "period": account.period,
+        }))),
+        Err(e) => history_error_response(e),
+    }
+}
+
+/// `GET /api/v1/history/meter/{payer}` — a payer's own prepaid meter.
+async fn api_history_meter(State(state): State<HttpState>, Path(payer): Path<String>) -> Response {
+    let Some(service) = state.history_service.as_ref() else {
+        return history_error_response(
+            crate::web::history_service::HistoryServiceError::Unauthorized(
+                "this node is not a metered archive".to_string(),
+            ),
+        );
+    };
+    match service.account(&payer).await {
+        Ok(Some(account)) => json_result(Ok(serde_json::json!({
+            "payer": payer,
+            "credit": account.credit,
+            "served": account.served,
+            "spent": account.spent,
+            "period": account.period,
+            "periodSpent": account.period_spent,
+            "marked": account.marked,
+        }))),
+        Ok(None) => json_result(Ok(serde_json::json!({
+            "payer": payer,
+            "credit": 0,
+            "served": 0,
+            "spent": 0,
+            "period": 0,
+            "periodSpent": 0,
+            "marked": false,
+        }))),
+        Err(e) => history_error_response(
+            crate::web::history_service::HistoryServiceError::NoCredit(e),
+        ),
+    }
+}
+
+/// `POST /api/v1/audit/request` — run one attested audit. Idempotent on the nonce, rate-limited,
+/// one replay at a time; a node without the service answers 404.
+async fn api_audit_request(
+    State(state): State<HttpState>,
+    Json(request): Json<crate::runtime::audit_service::AuditRequestDto>,
+) -> Response {
+    let Some(service) = state.audit_service.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "this node does not serve attested audits" })),
+        )
+            .into_response();
+    };
+    match service.request(&request).await {
+        Ok(produced) => json_result(Ok(produced)),
+        Err(error) => {
+            let status = match error {
+                crate::runtime::audit_service::AuditServiceError::RateLimited => {
+                    StatusCode::TOO_MANY_REQUESTS
+                }
+                crate::runtime::audit_service::AuditServiceError::BadNonce => {
+                    StatusCode::BAD_REQUEST
+                }
+                crate::runtime::audit_service::AuditServiceError::AlreadyAnswered => {
+                    StatusCode::CONFLICT
+                }
+                crate::runtime::audit_service::AuditServiceError::Failed(_) => {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
+            };
+            (
+                status,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// `GET /api/v1/audit/attestation/{request_id}` — the signed claim produced for a request.
+async fn api_audit_attestation(
+    State(state): State<HttpState>,
+    Path(request_id): Path<String>,
+) -> Response {
+    let Some(service) = state.audit_service.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "this node does not serve attested audits" })),
+        )
+            .into_response();
+    };
+    match service.produced(&request_id) {
+        Some(produced) => json_result(Ok(produced)),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "no attestation was produced for this request id; request it first"
+            })),
+        )
+            .into_response(),
+    }
+}
+
+/// `GET /api/v1/audit/attestations` — the claims this node itself reproduced and accepted.
+async fn api_audit_attestations(State(state): State<HttpState>) -> Response {
+    let Some(service) = state.audit_service.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "this node does not serve attested audits" })),
+        )
+            .into_response();
+    };
+    json_result(
+        service
+            .accepted()
+            .await
+            .map_err(crate::api::dto::BlockApiException),
+    )
+}
+
+/// `GET /api/v1/audit/conflicts` — the claims this node refused, with the local reason.
+async fn api_audit_conflicts(State(state): State<HttpState>) -> Response {
+    let Some(service) = state.audit_service.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "this node does not serve attested audits" })),
+        )
+            .into_response();
+    };
+    json_result(
+        service
+            .conflicts()
+            .await
+            .map_err(crate::api::dto::BlockApiException),
+    )
+}
+
+/// A service refusal, with the status it maps to (`401` authorization, `402` unpaid, `429` rate).
+fn history_error_response(error: crate::web::history_service::HistoryServiceError) -> Response {
+    let status = StatusCode::from_u16(error.status_code()).unwrap_or(StatusCode::BAD_REQUEST);
+    (
+        status,
+        Json(serde_json::json!({ "error": error.to_string() })),
+    )
+        .into_response()
+}
+
+/// Wall-clock milliseconds since the Unix epoch; a clock read, kept at the HTTP boundary.
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// `GET /api/v1/archives` — this node's history capability and the archives it was configured with.
@@ -1327,6 +1602,89 @@ pub const OPENAPI_JSON: &str = r##"{
         }
       }
     },
+    "/history/range": {
+      "post": {
+        "summary": "Bounded history bodies for a height window",
+        "description": "At most 64 heights and 64 MiB. A metered archive requires a payer-signed authorization and debits the exact bytes before the response leaves; an open archive answers without one.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": {
+          "200": { "description": "The window's bodies, with a per-height gap reported", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "description": "Missing or invalid authorization" },
+          "402": { "description": "The account cannot pay for the range" },
+          "429": { "description": "The per-peer rate window is exhausted" }
+        }
+      }
+    },
+    "/history/credit": {
+      "post": {
+        "summary": "Deposit a settlement-key credit receipt",
+        "description": "The receipt is verified over its canonical bytes and its invoice is single-use.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": {
+          "200": { "description": "The payer's updated meter", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "description": "The receipt is not signed by this archive's settlement key, or has expired" }
+        }
+      }
+    },
+    "/history/meter/{payer}": {
+      "get": {
+        "summary": "A payer's prepaid history meter",
+        "parameters": [{ "in": "path", "name": "payer", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Credit, served and period counters", "content": { "application/json": { "schema": { "type": "object" } } } }
+        }
+      }
+    },
+    "/checkpoint/verify": {
+      "post": {
+        "summary": "Apply this node's verifier to a certificate",
+        "description": "The digest is recomputed, every signature over it is checked against the signer's bonded stake, and the strict quorum rule (3s > 2t) is applied. A refusal is an error response; a verdict names the recomputed digest and the stake that signed it.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": {
+          "200": { "description": "The verified digest, anchor and signed stake", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "400": { "description": "The certificate is malformed, a signature is not over the recomputed digest, a signer is unbonded, or the quorum is not met" }
+        }
+      }
+    },
+    "/audit/request": {
+      "post": {
+        "summary": "Run one attested audit",
+        "description": "Opt-in, rate-limited, one replay at a time. Answers 404 when the node does not serve attested audits.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": {
+          "200": { "description": "The report and, on AGREE, the signed claim", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "400": { "description": "The nonce is not a simple identifier" },
+          "404": { "description": "This node does not serve attested audits" },
+          "429": { "description": "The hourly request budget is spent" }
+        }
+      }
+    },
+    "/audit/attestation/{request_id}": {
+      "get": {
+        "summary": "The signed claim produced for a request",
+        "parameters": [{ "in": "path", "name": "request_id", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "The produced report and claim", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "404": { "description": "No answer is held for this request id" }
+        }
+      }
+    },
+    "/audit/attestations": {
+      "get": {
+        "summary": "Claims this node itself reproduced and accepted",
+        "responses": {
+          "200": { "description": "Accepted claims", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object" } } } } }
+        }
+      }
+    },
+    "/audit/conflicts": {
+      "get": {
+        "summary": "Claims this node refused, with the local reason",
+        "responses": {
+          "200": { "description": "Conflict records", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object" } } } } }
+        }
+      }
+    },
     "/finality-observation": {
       "get": {
         "summary": "Node-local finalized frontier and observed lag (network availability unknown)",
@@ -1520,6 +1878,17 @@ pub const OPENAPI_JSON: &str = r##"{
         }
       }
     },
+    "/block/{hash}/header": {
+      "get": {
+        "summary": "The block's pre-state, post-state and fringe-state roots, and its fringe membership",
+        "description": "A body carries neither the fringe membership nor the fringe state root; the metadata commitment covers both, so an audit reads them here.",
+        "parameters": [ { "name": "hash", "in": "path", "required": true, "schema": { "type": "string" } } ],
+        "responses": {
+          "200": { "description": "The header commitment", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "400": { "description": "Invalid block hash, or a block this node's DAG does not hold" }
+        }
+      }
+    },
     "/finality-attestation": {
       "get": {
         "summary": "This node's finalised block, signed by its validator key and bound to the caller's nonce",
@@ -1665,7 +2034,25 @@ pub const OPENAPI_JSON: &str = r##"{
             "maxBytes": { "type": "integer" }
           } },
           "historyAvailability": { "type": "string", "description": "Where this node's body history begins: available | backfilling | unavailable | unknown (a transport that does not carry the field). unavailable means the node joined at a checkpoint and holds no earlier bodies; ask for a block below the checkpoint only after reading this" },
-          "checkpointAge": { "type": "integer", "format": "int64", "nullable": true, "description": "The distance from the served checkpoint's anchor to the latest observed block, or null when no checkpoint certificate is stored" }
+          "checkpointAge": { "type": "integer", "format": "int64", "nullable": true, "description": "The distance from the served checkpoint's anchor to the latest observed block, or null when no checkpoint certificate is stored" },
+          "syncPhase": { "type": "string", "description": "This shard's start-up phase: starting | syncing | running | blocked. A node can hold blocks and serve none, which latestBlockNumber cannot express" },
+          "checkpoint": { "type": "object", "description": "The trust anchor this node runs from (Law 108). kind is checkpoint (with the certificate digest) or genesis; null means this node has no anchor and is not running", "properties": {
+            "kind": { "type": "string", "description": "checkpoint | genesis" },
+            "digest": { "type": "string", "nullable": true, "description": "The certificate's signed digest; null for a genesis anchor" },
+            "anchor": { "type": "string" },
+            "anchorHeight": { "type": "integer", "format": "int64" },
+            "ageBlocks": { "type": "integer", "format": "int64", "nullable": true, "description": "Latest observed block minus the anchor; a height difference, not a wall clock" },
+            "validationWindowBlocks": { "type": "integer", "format": "int64", "description": "The recent headers whose state roots a post-anchor block may read (8)" },
+            "validationWindowCommitted": { "type": "boolean", "description": "Whether the statement commits to the validation window (historyRoot, Law 109)" },
+            "metadataCommitted": { "type": "boolean", "description": "Whether the statement commits to the ancestor metadata (metadataRoot)" }
+          } },
+          "audit": { "type": "object", "description": "Whether this node serves audit attestations, and the last run it completed", "properties": {
+            "available": { "type": "boolean", "description": "This node mounts the attested-audit service" },
+            "running": { "type": "boolean", "description": "A replay is running now" },
+            "lastVerdict": { "type": "string", "nullable": true, "description": "AGREE | DISAGREE | INCOMPLETE" },
+            "lastCheckpoint": { "type": "string", "nullable": true },
+            "lastRunAtUnixMs": { "type": "integer", "format": "int64", "nullable": true }
+          } }
         }
       },
       "OperatorStatus": {
@@ -1695,6 +2082,24 @@ pub const OPENAPI_JSON: &str = r##"{
           } },
           "historyAvailability": { "type": "string", "description": "Where this node's body history begins: available | backfilling | unavailable | unknown (a transport that does not carry the field). unavailable means the node joined at a checkpoint and holds no earlier bodies; ask for a block below the checkpoint only after reading this" },
           "checkpointAge": { "type": "integer", "format": "int64", "nullable": true, "description": "The distance from the served checkpoint's anchor to the latest observed block, or null when no checkpoint certificate is stored" },
+          "syncPhase": { "type": "string", "description": "This shard's start-up phase: starting | syncing | running | blocked. A node can hold blocks and serve none, which latestBlockNumber cannot express" },
+          "checkpoint": { "type": "object", "description": "The trust anchor this node runs from (Law 108). kind is checkpoint (with the certificate digest) or genesis; null means this node has no anchor and is not running", "properties": {
+            "kind": { "type": "string", "description": "checkpoint | genesis" },
+            "digest": { "type": "string", "nullable": true, "description": "The certificate's signed digest; null for a genesis anchor" },
+            "anchor": { "type": "string" },
+            "anchorHeight": { "type": "integer", "format": "int64" },
+            "ageBlocks": { "type": "integer", "format": "int64", "nullable": true, "description": "Latest observed block minus the anchor; a height difference, not a wall clock" },
+            "validationWindowBlocks": { "type": "integer", "format": "int64", "description": "The recent headers whose state roots a post-anchor block may read (8)" },
+            "validationWindowCommitted": { "type": "boolean", "description": "Whether the statement commits to the validation window (historyRoot, Law 109)" },
+            "metadataCommitted": { "type": "boolean", "description": "Whether the statement commits to the ancestor metadata (metadataRoot)" }
+          } },
+          "audit": { "type": "object", "description": "Whether this node serves audit attestations, and the last run it completed", "properties": {
+            "available": { "type": "boolean", "description": "This node mounts the attested-audit service" },
+            "running": { "type": "boolean", "description": "A replay is running now" },
+            "lastVerdict": { "type": "string", "nullable": true, "description": "AGREE | DISAGREE | INCOMPLETE" },
+            "lastCheckpoint": { "type": "string", "nullable": true },
+            "lastRunAtUnixMs": { "type": "integer", "format": "int64", "nullable": true }
+          } },
           "adminHttp": { "type": "boolean", "description": "The admin HTTP surface is published" },
           "consecutiveSelfValidationFailures": { "type": "integer", "format": "int64", "description": "Self-validation failures the proposer has recorded in a row; cleared by a successful propose" },
           "selfValidationRefusal": { "$ref": "#/components/schemas/SelfValidationRefusalDto" },
@@ -2376,14 +2781,26 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/v1/blocks", get(api_get_blocks))
         .route("/api/v1/block/{hash}", get(api_get_block))
         .route("/api/v1/block/{hash}/raw", get(api_get_raw_block))
+        .route("/api/v1/block/{hash}/header", get(api_get_block_header))
         .route(
             "/api/v1/finality-attestation",
             get(api_finality_attestation),
         )
         .route("/api/v1/checkpoint", get(api_checkpoint))
         .route("/api/v1/checkpoint/{digest}", get(api_checkpoint_by_digest))
+        .route("/api/v1/checkpoint/verify", post(api_verify_checkpoint))
         .route("/api/v1/archives", get(api_archives))
         .route("/api/v1/history/challenge", get(api_history_challenge))
+        .route("/api/v1/history/range", post(api_history_range))
+        .route("/api/v1/history/credit", post(api_history_credit))
+        .route("/api/v1/history/meter/{payer}", get(api_history_meter))
+        .route("/api/v1/audit/request", post(api_audit_request))
+        .route(
+            "/api/v1/audit/attestation/{request_id}",
+            get(api_audit_attestation),
+        )
+        .route("/api/v1/audit/attestations", get(api_audit_attestations))
+        .route("/api/v1/audit/conflicts", get(api_audit_conflicts))
         .route(
             "/api/v1/checkpoint-attestation",
             get(api_checkpoint_attestation),
@@ -2635,6 +3052,10 @@ pub async fn acquire_http_server(
     enable_reporting: bool,
     // The history tier (`api-server.archive*`): advertised by /api/v1/archives and the challenge.
     history: crate::web::archives::HistoryConfig,
+    // The metered service, present on an archive.
+    history_service: Option<Arc<crate::web::history_service::HistoryService>>,
+    // The attested-audit service, present when `--audit-attest` is set.
+    audit_service: Option<Arc<crate::runtime::audit_service::AuditService>>,
     // Whether to mount the faucet routes (AUDIT R34): dev mode **and** a deployer key, resolved by
     // the caller because that is where both are known.
     faucet_enabled: bool,
@@ -2752,6 +3173,8 @@ pub async fn acquire_http_server(
             MAX_TRACKED_PEERS,
         )),
         history,
+        history_service,
+        audit_service,
     })
     .layer(TimeoutLayer::with_status_code(
         StatusCode::REQUEST_TIMEOUT,
@@ -3107,6 +3530,9 @@ mod tests {
             latest_block_number: 4,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
             autopropose: true,
             propose_on_deploy: true,
             manual_propose: false,
@@ -3204,6 +3630,25 @@ mod tests {
                         .await
                         .map(|a| vec![a])
                         .unwrap_or_default(),
+                },
+            )
+        }
+
+        async fn verify_checkpoint_certificate(
+            &self,
+            certificate: &rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
+        ) -> Result<
+            rchain_models::casper::protocol::deploy_service::VerifiedCertificate,
+            BlockApiException,
+        > {
+            Ok(
+                rchain_models::casper::protocol::deploy_service::VerifiedCertificate {
+                    verified: true,
+                    digest: "22".repeat(32),
+                    anchor: certificate.checkpoint.anchor.clone(),
+                    anchor_height: certificate.checkpoint.anchor_height,
+                    supporting_stake: 3,
+                    total_stake: 4,
                 },
             )
         }
@@ -3410,6 +3855,8 @@ mod tests {
             // off case is pinned by its own test below.
             faucet_enabled: true,
             history: Default::default(),
+            history_service: None,
+            audit_service: None,
         }
     }
 
@@ -4497,6 +4944,37 @@ mod tests {
         assert_eq!(json["sigAlgorithm"], "secp256k1");
     }
 
+    /// **The verifier is on the public surface** (the mature-join benchmark consumes it): the route
+    /// applies the node's verifier to the posted certificate and serves the verdict, digest and
+    /// signed stake. A consumer that cannot do secp256k1 reads this, not an attestation count.
+    #[tokio::test]
+    async fn the_verify_route_serves_the_verifier_verdict() {
+        let checkpoint = rchain_models::casper::protocol::checkpoint::Checkpoint {
+            shard_id: "root".to_string(),
+            anchor: "44".repeat(32),
+            anchor_height: 9,
+            anchor_post_state: "55".repeat(32),
+            fringe_hashes: vec!["44".repeat(32)],
+            parent_digest: None,
+            epoch: 0,
+            metadata_root: Some("66".repeat(32)),
+            history_root: Some("77".repeat(32)),
+        };
+        let certificate = rchain_models::casper::protocol::checkpoint::CheckpointCertificate {
+            checkpoint,
+            attestations: Vec::new(),
+        };
+        let response = api_verify_checkpoint(State(state()), Json(certificate)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["verified"], true);
+        assert_eq!(json["digest"], "22".repeat(32));
+        assert_eq!(json["anchor"], "44".repeat(32));
+        assert_eq!(json["supportingStake"], 3);
+        assert_eq!(json["totalStake"], 4);
+    }
+
     #[tokio::test]
     async fn the_archives_route_serves_the_capability_and_the_configured_archives() {
         let mut st = state();
@@ -4504,6 +4982,7 @@ mod tests {
             archive: true,
             history_retention: 0,
             archive_peers: vec!["http://archive.example:40403".to_string()],
+            ..Default::default()
         };
         let response = api_archives(State(st)).await;
         assert_eq!(response.status(), StatusCode::OK);
@@ -4692,6 +5171,36 @@ mod tests {
         assert_eq!(doc["openapi"], "3.0.0");
         assert!(doc["paths"].is_object());
         assert!(doc["components"]["schemas"].is_object());
+    }
+
+    /// **The served document names every history and audit route the node mounts.** The document is
+    /// hand-written, so a route added to the router and not here is a contract a client cannot see;
+    /// this test is the join between the two.
+    #[test]
+    fn the_openapi_documents_the_history_and_audit_routes() {
+        let doc: serde_json::Value =
+            serde_json::from_str(OPENAPI_JSON).expect("served OpenAPI parses");
+        for (path, method) in [
+            ("/block/{hash}/header", "get"),
+            ("/history/range", "post"),
+            ("/history/credit", "post"),
+            ("/history/meter/{payer}", "get"),
+            ("/checkpoint/verify", "post"),
+            ("/audit/request", "post"),
+            ("/audit/attestation/{request_id}", "get"),
+            ("/audit/attestations", "get"),
+            ("/audit/conflicts", "get"),
+        ] {
+            assert!(
+                doc["paths"][path][method].is_object(),
+                "the served OpenAPI does not document {method} {path}"
+            );
+        }
+        assert_eq!(
+            doc["paths"]["/history/range"]["post"]["responses"]["402"]["description"],
+            "The account cannot pay for the range",
+            "the unpaid refusal is the one a consumer must handle"
+        );
     }
 
     /// The served schema must describe the same refusal on every legacy/v1
@@ -5213,6 +5722,9 @@ mod tests {
                 latest_block_number: if self.shard_id == "/root" { 7 } else { 3 },
                 history_availability: "available".to_string(),
                 checkpoint_age: None,
+                sync_phase: None,
+                checkpoint: None,
+                audit: None,
             }
         }
         async fn deploy_status(

@@ -126,6 +126,24 @@ pub fn rnode_db_mapping() -> Vec<(Db, LmdbEnvConfig)> {
             Db::new("work-seen-store"),
             LmdbEnvConfig::new("dagstorage", 100 * GB),
         ),
+        // **The archive's durable history meter** (Laws 110/111): one account per paying peer. Small
+        // rows, the same DAG environment; absent on a node that does not archive.
+        (
+            Db::new("history-meter"),
+            LmdbEnvConfig::new("dagstorage", 100 * GB),
+        ),
+        // **The accepted audit claims, their chains and their answers** (Law 112). One store, so
+        // the claim, its signer's head, the spent nonce and the answer commit in one transaction:
+        // `attestation:<digest>`, `head:<signer>`, `nonce:<signer>:<nonce>`,
+        // `response:<signer>:<nonce>`.
+        (
+            Db::new("audit-claims"),
+            LmdbEnvConfig::new("dagstorage", 100 * GB),
+        ),
+        (
+            Db::new("audit-conflicts"),
+            LmdbEnvConfig::new("dagstorage", 100 * GB),
+        ),
         // Deploys from blocks
         (
             Db::new("deploy-index"),

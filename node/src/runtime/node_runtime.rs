@@ -26,6 +26,7 @@ use rchain_block_storage::dag::codecs::{
 };
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
 use rchain_block_storage::dag::message_state::DagMessageState;
+use rchain_block_storage::history_meter::HistoryMeter;
 use rchain_block_storage::work_seen::{self, WorkSeenStore};
 use rchain_casper::api::block_api::{BlockApi, ProposeHealth, ProposerHealth};
 use rchain_casper::api::block_api_impl::{
@@ -486,6 +487,10 @@ pub struct NodeProgram {
     enable_reporting: bool,
     // The history tier (`api-server.archive*`): the archives route and the challenge route.
     history: crate::web::archives::HistoryConfig,
+    /// The metered service an archive runs (Laws 110/111). `None` on a node that does not archive.
+    history_service: Option<Arc<crate::web::history_service::HistoryService>>,
+    /// The on-demand attested-audit service (Law 112). `None` unless `--audit-attest` is set.
+    audit_service: Option<Arc<crate::runtime::audit_service::AuditService>>,
     // Whether the faucet routes are mounted (AUDIT R34): dev mode and a deployer key, resolved where
     // both are known and passed through to `acquire_http_server`.
     faucet_enabled: bool,
@@ -558,6 +563,8 @@ impl NodeProgram {
             max_connection_idle,
             enable_reporting,
             history,
+            history_service,
+            audit_service,
             enable_txn_api,
             enable_devnet_cors,
             enable_devnet_admin_public,
@@ -635,6 +642,8 @@ impl NodeProgram {
                     max_connection_idle,
                     enable_reporting,
                     history,
+                    history_service,
+                    audit_service,
                     faucet_enabled,
                     node_list,
                     stop,
@@ -806,6 +815,11 @@ pub struct ShardParts {
     /// the finalized state by verifying a quorum over the checkpoint statement; this is the record
     /// the collector writes and the API serves.
     pub checkpoint_store: CheckpointStore,
+    /// **The archive's durable history meter** (Laws 110/111). One account per paying peer; the
+    /// metered service reads and debits it before a body leaves.
+    pub history_meter: HistoryMeter,
+    /// **The accepted audit claims and their chains** (Law 112).
+    pub audit_store: rchain_block_storage::audit_store::AuditStore,
     /// **When this shard's proposer first saw each piece of unfinalised work** (#583). Local and
     /// non-consensus: it ages the prompt-attestation licence, so an advancing fringe cannot renew
     /// the same work.
@@ -893,6 +907,7 @@ pub fn wire_block_processing(
     autopropose: Option<Arc<dyn Fn() + Send + Sync>>,
     attest_on_new_blocks: Option<Arc<dyn Fn(&BlockMessage) + Send + Sync>>,
     health: ShardHealth,
+    accepted_window: rchain_casper::engine::anchor::SharedAcceptedWindow,
 ) -> (mpsc::Sender<BlockMessage>, mpsc::Sender<BlockMessage>) {
     let handles = wire_block_processing_observed(
         comm_state,
@@ -905,6 +920,7 @@ pub fn wire_block_processing(
         attest_on_new_blocks,
         None,
         health,
+        accepted_window,
     );
     (handles.incoming_blocks, handles.validated_blocks)
 }
@@ -929,6 +945,7 @@ fn wire_block_processing_observed(
     attest_on_new_blocks: Option<Arc<dyn Fn(&BlockMessage) + Send + Sync>>,
     queue_metrics: Option<(Arc<MetricsRegistry>, usize)>,
     health: ShardHealth,
+    accepted_window: rchain_casper::engine::anchor::SharedAcceptedWindow,
 ) -> BlockProcessingHandles {
     let (incoming_blocks_tx, incoming_blocks_rx) =
         mpsc::channel(rchain_casper::engine::node_running::MAX_PENDING_BLOCKS);
@@ -1116,6 +1133,7 @@ fn wire_block_processing_observed(
         block_index,
         log,
         health,
+        accepted_window,
     );
     tokio::spawn(processor);
 
@@ -1581,6 +1599,16 @@ pub async fn setup_node_program(
             archive: conf.api_server.archive,
             history_retention: conf.api_server.history_retention,
             archive_peers: conf.api_server.archive_peers.clone(),
+            credit_policy: if conf.api_server.archive_open {
+                "open".to_string()
+            } else {
+                conf.api_server.archive_credit_policy.clone()
+            },
+            settlement_key: conf.api_server.archive_settlement_key.clone(),
+            allowances: conf.api_server.archive_allow.clone(),
+            period_seconds: conf.api_server.archive_period_seconds,
+            rate_bytes_per_sec: conf.api_server.archive_rate_bytes_per_sec,
+            max_bytes_per_period: conf.api_server.archive_max_bytes_per_period,
         }),
     );
     // The PoS read (AUDIT C148): the primary shard's live native state through the runtime manager
@@ -1639,6 +1667,66 @@ pub async fn setup_node_program(
     // and a signing key — so a single-shard or key-less node is untouched.
     let gateway = build_gateway(conf, &shards, &primary_parts.store_manager, &log).await?;
 
+    // **The metered history service.** Built only by an archive. A metered policy without a
+    // settlement key is a startup error here, before the listener binds, so the node cannot run as a
+    // silently unmetered archive.
+    let history_service = if conf.api_server.archive {
+        let policy = if conf.api_server.archive_open {
+            "open".to_string()
+        } else {
+            conf.api_server.archive_credit_policy.clone()
+        };
+        let config = crate::web::history_service::HistoryServiceConfig {
+            policy: crate::web::history_service::CreditPolicy::parse(&policy)?,
+            settlement_key: conf.api_server.archive_settlement_key.clone(),
+            allowances: crate::web::history_credit::parse_allowances(
+                &conf.api_server.archive_allow,
+            )?,
+            period_seconds: conf.api_server.archive_period_seconds,
+            rate_bytes_per_sec: conf.api_server.archive_rate_bytes_per_sec,
+            max_bytes_per_period: conf.api_server.archive_max_bytes_per_period,
+        };
+        Some(crate::web::history_service::service(
+            primary_parts.history_meter.clone(),
+            config,
+        )?)
+    } else {
+        None
+    };
+
+    // **The attested-audit service.** Off unless the operator opts in; a service with no key is a
+    // startup error rather than a signing oracle with an empty identity.
+    let audit_service = if conf.api_server.audit_attest {
+        let key = match &conf.api_server.audit_key_path {
+            Some(path) => {
+                let text = std::fs::read_to_string(path)
+                    .map_err(|e| format!("audit key {}: {e}", path.display()))?;
+                ValidatorIdentity::from_hex(text.trim()).ok_or_else(|| {
+                    "the audit key file is not a hex secp256k1 private key".to_string()
+                })?
+            }
+            None => validator_opt.clone().ok_or_else(|| {
+                "--audit-attest needs --audit-key-path or a validator key".to_string()
+            })?,
+        };
+        let bootstrap = conf
+            .api_server
+            .audit_bootstrap
+            .clone()
+            .unwrap_or_else(|| format!("http://127.0.0.1:{}", conf.api_server.port_http));
+        Some(Arc::new(crate::runtime::audit_service::AuditService::new(
+            conf.clone(),
+            primary_parts.audit_store.clone(),
+            key,
+            bootstrap,
+            conf.storage.data_dir.join("audit-scratch"),
+            conf.api_server.audit_requests_per_hour,
+            log.clone(),
+        )))
+    } else {
+        None
+    };
+
     Ok(NodeProgram {
         grpc_services,
         web_api,
@@ -1667,7 +1755,19 @@ pub async fn setup_node_program(
             archive: conf.api_server.archive,
             history_retention: conf.api_server.history_retention,
             archive_peers: conf.api_server.archive_peers.clone(),
+            credit_policy: if conf.api_server.archive_open {
+                "open".to_string()
+            } else {
+                conf.api_server.archive_credit_policy.clone()
+            },
+            settlement_key: conf.api_server.archive_settlement_key.clone(),
+            allowances: conf.api_server.archive_allow.clone(),
+            period_seconds: conf.api_server.archive_period_seconds,
+            rate_bytes_per_sec: conf.api_server.archive_rate_bytes_per_sec,
+            max_bytes_per_period: conf.api_server.archive_max_bytes_per_period,
         },
+        history_service,
+        audit_service,
         faucet_enabled,
         enable_txn_api: conf.api_server.enable_txn_api,
         enable_devnet_cors: conf.api_server.enable_devnet_cors,
@@ -2245,6 +2345,10 @@ async fn setup_shard_runtime(
         _ => None,
     };
 
+    // **The runtime's admissible pre-state window** (review R2): installed by the launch when the
+    // accepted anchor is known, then read by the block processor and grown by every validated insert.
+    let accepted_window: rchain_casper::engine::anchor::SharedAcceptedWindow =
+        Arc::new(tokio::sync::RwLock::new(None));
     // Block receiver + processor streams (spawned internally).
     let handles = wire_block_processing_observed(
         comm_state,
@@ -2257,6 +2361,7 @@ async fn setup_shard_runtime(
         attest_on_new_blocks,
         Some((metrics, index)),
         shard_health.clone(),
+        accepted_window.clone(),
     );
     let incoming_blocks_tx = handles.incoming_blocks;
 
@@ -2343,6 +2448,7 @@ async fn setup_shard_runtime(
         exporter,
         parts.phase.clone(),
         checkpoint_source,
+        accepted_window.clone(),
         log.clone(),
     );
     let node_launch_log = log.clone();
@@ -2462,6 +2568,7 @@ async fn setup_shard_runtime(
             conf.casper.equivocation_injection,
             conf.casper.self_replay_injection,
             shard_health.clone(),
+            accepted_window.clone(),
         );
         let proposer_stream = proposer_instance::create(
             proposer_parts.queue_rx,
@@ -2685,6 +2792,8 @@ pub async fn setup_shard(
     let block_store = block_store::create(&store_manager).await?;
     let approved_store = approved_store::create(&store_manager).await?;
     let checkpoint_store = checkpoint_store::CheckpointStore::open(&store_manager).await?;
+    let history_meter = HistoryMeter::open(&store_manager).await?;
+    let audit_store = rchain_block_storage::audit_store::AuditStore::open(&store_manager).await?;
     let work_seen = work_seen::create(&store_manager).await?;
     let block_metadata_kv: Arc<dyn KeyValueTypedStore<BlockHash, BlockMetadata>> = Arc::new(
         database(
@@ -3083,6 +3192,8 @@ pub async fn setup_shard(
         runtime_manager,
         approved_store,
         checkpoint_store,
+        history_meter,
+        audit_store,
         work_seen,
         store_manager,
         validator_identity_opt: validator_opt,

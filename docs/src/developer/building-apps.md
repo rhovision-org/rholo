@@ -68,6 +68,22 @@ Against the bootstrap: public HTTP at `http://localhost:40403`, admin HTTP at
 > host-mapped; `tools/devnet.sh` reaches it via `docker exec`. From an app, drive block production via
 > the admin HTTP `POST /api/v1/propose` instead.
 
+### Sync, history and audit
+
+An app normally asks its node for blocks and deploys; these public routes expose the sync and
+history machinery beneath that:
+
+| Route | Answers |
+|---|---|
+| `GET /api/v1/checkpoint`, `/api/v1/checkpoint/{digest}` | The certificate a joining node verifies (statement plus signatures) |
+| `GET /api/v1/checkpoint-attestation` | This node's signature over **its own** checkpoint digest |
+| `GET /api/v1/capabilities`, `/api/v1/archives` | The history floor this node holds and the archives it was configured with |
+| `GET /api/v1/history/challenge?nonce=…&count=…&max_height=…` | A nonce-derived sample of bodies, each verifiable by `hash_block` |
+
+`GET /api/v1/status` reports `historyAvailability` and `checkpointAge`. The model is
+[Sync, checkpoints and history](../node/sync-and-history.md); the procedures are [Sync
+operations](../node/sync-operations.md).
+
 ### The OpenAPI document
 
 The v1 HTTP API is described by a hand-written OpenAPI 3.0 document the node serves itself:

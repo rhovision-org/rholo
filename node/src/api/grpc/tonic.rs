@@ -1752,6 +1752,9 @@ mod tests {
                 latest_block_number: 6,
                 history_availability: "available".to_string(),
                 checkpoint_age: None,
+                sync_phase: None,
+                checkpoint: None,
+                audit: None,
             });
             assert_eq!(status.version.expect("version").api, "1");
             assert_eq!(status.address, "addr");

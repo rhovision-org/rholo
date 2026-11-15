@@ -130,6 +130,12 @@ pub struct CheckpointStore {
     head: HeadRow,
     history: HistoryRow,
     anchors: AnchorRow,
+    /// **One in-process writer at a time.** `record` and `adopt` make a read-then-write decision
+    /// (the anchor index, the serving head); two concurrent writers could both read the old value and
+    /// one would silently overwrite the other's decision. The gate serializes them. It is
+    /// process-local by design: the node is the only process over its store directory, and a second
+    /// OS process over the same LMDB files is outside this guarantee.
+    write_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl CheckpointStore {
@@ -160,6 +166,7 @@ impl CheckpointStore {
                 Arc::new(Blake2b256HashCodec),
                 Arc::new(Blake2b256HashCodec),
             )),
+            write_gate: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -177,6 +184,7 @@ impl CheckpointStore {
 
     /// Record the history floor. Written read-back like every other accepted fact in this store.
     pub async fn set_history_from(&self, height: i64) -> Result<(), String> {
+        let _guard = self.write_gate.lock().await;
         self.history.put(&[(HISTORY_FROM_KEY, height)]).await?;
         if self.history.get(&[HISTORY_FROM_KEY]).await? != vec![Some(height)] {
             return Err("checkpoint history marker read-back mismatch".to_string());
@@ -193,6 +201,7 @@ impl CheckpointStore {
         digest: &Blake2b256Hash,
         certificate: &CheckpointCertificate,
     ) -> Result<Recorded, String> {
+        let _guard = self.write_gate.lock().await;
         let anchor = anchor_hash(certificate)?;
         self.certificates
             .put(&[(*digest, certificate.clone())])
@@ -236,6 +245,7 @@ impl CheckpointStore {
         certificate: &CheckpointCertificate,
         allow_sibling: bool,
     ) -> Result<Adoption, String> {
+        let _guard = self.write_gate.lock().await;
         let incoming_anchor = anchor_hash(certificate)?;
         let incoming_height = certificate.checkpoint.anchor_height;
         let Some(head) = self.latest().await? else {
@@ -575,6 +585,78 @@ mod tests {
             store.get(&digest(0x22)).await.expect("get"),
             None,
             "a lookup names the exact statement, not whatever is latest"
+        );
+    }
+
+    /// **Two concurrent records at one absent anchor leave one mapping and one conflict.** The
+    /// decision (read the anchor index, then write it) is serialized by the store's write gate; both
+    /// digest rows are evidence, but only one statement can be the anchor's referent.
+    #[tokio::test]
+    async fn two_absent_anchor_records_leave_one_mapping_and_one_conflict() {
+        let kvm = InMemoryStoreManager::default();
+        let store = CheckpointStore::open(&kvm).await.expect("open");
+        let a = certificate(7, 0xaa);
+        let b = certificate(7, 0xbb);
+        let (d1, d2) = (digest(1), digest(2));
+        let (first, second) = tokio::join!(store.record(&d1, &a), store.record(&d2, &b));
+        let first = first.expect("record");
+        let second = second.expect("record");
+        let fresh = [&first, &second]
+            .iter()
+            .filter(|recorded| matches!(recorded, Recorded::Fresh))
+            .count();
+        let conflict = [&first, &second]
+            .iter()
+            .filter(|recorded| matches!(recorded, Recorded::Conflict { .. }))
+            .count();
+        assert_eq!((fresh, conflict), (1, 1), "{first:?} / {second:?}");
+        let mapped = store
+            .find_by_anchor(&anchor_of(&a))
+            .await
+            .expect("anchor")
+            .expect("one mapping");
+        assert!(
+            mapped == d1 || mapped == d2,
+            "the mapping is one of the two statements"
+        );
+        assert!(store.get(&d1).await.expect("get").is_some());
+        assert!(store.get(&d2).await.expect("get").is_some());
+    }
+
+    /// **A lower adoption never regresses a concurrently adopted higher head.** Whichever order the
+    /// gate admits, the served head is the higher anchor; a later lower adoption is stale.
+    #[tokio::test]
+    async fn a_lower_anchor_never_regresses_a_concurrent_higher_head() {
+        let kvm = InMemoryStoreManager::default();
+        let store = CheckpointStore::open(&kvm).await.expect("open");
+        let lower = certificate(7, 0xaa);
+        let higher = certificate(9, 0xbb);
+        let (d1, d2) = (digest(1), digest(2));
+        let _ = tokio::join!(
+            store.adopt(&d1, &lower, false),
+            store.adopt(&d2, &higher, false)
+        );
+        let head = store.latest().await.expect("latest").expect("head");
+        assert_eq!(
+            head.checkpoint.anchor_height, 9,
+            "the higher anchor is the head"
+        );
+        assert!(matches!(
+            store
+                .adopt(&digest(3), &lower, true)
+                .await
+                .expect("adopt lower"),
+            Adoption::Stale { .. }
+        ));
+        assert_eq!(
+            store
+                .latest()
+                .await
+                .expect("latest")
+                .expect("head")
+                .checkpoint
+                .anchor_height,
+            9
         );
     }
 }

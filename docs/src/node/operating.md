@@ -38,8 +38,9 @@ Notes for operators:
   state (`NodeRunning.scala:314-320`; the port serves the request otherwise, bounded by a per-peer
   rate limit and a `take` cap). A node that refuses still *receives* state from others: the flag
   gates the serving half only.
-- **Sync.** LFS sync is not shard-aware, so a multi-shard node must reach its shards from their own
-  genesis (genesis master / `--standalone`) or from existing local state.
+- **Sync.** Checkpoint sync is not shard-aware, so a multi-shard node must reach its shards from
+  their own genesis (genesis master / `--standalone`) or from existing local state. A shard is
+  synced from a certificate for that shard, not from a sibling shard's state.
 - **Cross-shard transactions.** Set `api-server.enable-txn-api = true` on a gateway to serve
   `POST /api/v1/txn` (plus `GET /api/v1/txn` and `/api/v1/txn/{txnId}`). A single-shard node, or one
   without a validator key, answers 404. The legs are ordinary deploys, so they take effect when a
@@ -365,8 +366,8 @@ consequences operators run into:
 - If the only proposer holds ≤ 2/3 of the pool, blocks keep extending the DAG but nothing finalises:
   `GET /api/last-finalized-block` answers `"Finalized fringe is not available."`, and a health check that
   treats a missing fringe as a failure will report an idle chain as unhealthy. Joining nodes can still
-  sync — they restore from the **approved** fringe, persisted at the genesis ceremony by
-  `put_approved_block` — but a node needing a *later* fringe to catch up quickly has none available.
+  sync — they anchor on the pinned genesis or on the checkpoint certificate the node serves — but a
+  node needing a *later* certificate to catch up quickly has none available.
 - `withdraw` does **not** remove stake from the pool at once, and does not deactivate the validator
   either: the request only stages a deadline (`pendingWithdrawers`), so the validator keeps validating,
   keeps earning, and its stake keeps counting against the 2/3 threshold until the next epoch boundary.
@@ -449,9 +450,9 @@ included, or a signature made off-chain, is outside what any node can see).
   indexed, so `null` means "in no block this node holds". A node upgraded onto an existing chain
   starts above `0` and backfills the older blocks once, in the background (`deployer index backfilled
   from N stored blocks` in the log). Until then a `null` only covers the heights from there up.
-  A node that joined by last-finalized-state sync never stored the blocks below the fringe, so it
-  reports the lowest height it holds and stays above `0`; ask a node that has the whole chain for a
-  full answer.
+  A node that joined from a checkpoint never stored the bodies below its anchor until the background
+  backfill reaches them, so it reports the lowest height it holds and stays above `0`; ask a node
+  that has backfilled the whole chain for a full answer.
 - On a multi-shard node the lookup searches every member shard. `block` is the first hit (the primary
   shard first), and `indexedFromHeight` is the highest of the members' values, so `0` still means
   "complete on every shard".

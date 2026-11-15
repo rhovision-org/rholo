@@ -13093,3 +13093,101 @@ the register):
 
 No row closes on a benchmark PASS. The join evidence is cited where it supports a witness; the law and
 the type are the close.
+
+## 169. Sync in the book, a metered archive, and attested re-execution (C384–C399)
+
+This pass does three things the #592 close-out left open: it states the post-#591/#592 model in the
+book and the runbook; it turns history below an anchor into a **metered service**; and it makes a
+re-execution claim **attributable and reproducible**. The unsafe states are removed in types, the
+laws forbid them, and each failure lands in a named refusal or a defined fallback. The benchmark is
+evidence, never the closure.
+
+### The design, in one screen
+
+1. **Anchor.** A running node has one: the pinned genesis or a verified quorum checkpoint. The boot
+   refuses a populated DAG with no verified certificate (Law 108).
+2. **Validation window.** A post-anchor block reads only the statement's `historyRoot` set; a root
+   that cannot be hydrated is a refusal, never a widened window (Law 109).
+3. **Join cost.** The header walk asks for height windows, not one generation per round; the range
+   is a transport optimization and the walked set is still checked against `metadataRoot`
+   (C384). Bodies are fetched in 64-height batches; every body is reconstructed and re-hashed.
+4. **History as a service.** A settlement-key receipt prepays bytes; a payer-signed authorization
+   names the archive, period and exact heights; the meter debits before a body leaves; invoices and
+   nonces are single-use (Law 110). Settlement follows the possession challenge: pass carries,
+   failure forfeits and marks (Law 111). A metered archive with no settlement key refuses to start;
+   `--archive-open` is the explicit unmetered opt-out.
+5. **The economics balance.** Bodies are metered because custody and bandwidth are the archive's
+   cost; headers and checkpoint metadata stay free and bounded so a join is not taxed. A consumer
+   with no credit falls through to the next archive; a failed archive is excluded for a cooldown.
+6. **Re-execution.** An audit attestation is a canonical, domain-tagged signed claim over the
+   checkpoint, the derived root, a replay head and a nonce, chained by `previous`/`sequence`. A node
+   stores a claim only after its own replay reproduces it; a mismatch is conflict evidence, never an
+   accepted row (Law 112). `rnode audit --attest-key-path` signs offline;
+   `verify-audit-attestation` checks a claim against a local report; the opt-in service answers
+   pull requests, rate-limited, one replay at a time.
+
+### Safe fallbacks
+
+| Situation | Fallback |
+|---|---|
+| No anchor / no verified certificate at boot | Refuse to run, naming the missing anchor (terminal) |
+| Metadata or window mismatch | Refuse; retry another peer; then Syncing/terminal |
+| Range unsupported by a peer | Fall back to the hash-frontier walk |
+| Body range gap | Per-height fallback in the audit; a gap is `body: null`, not "absent history" |
+| No credit / valid authorization | `402`; the consumer tries the next archive |
+| Rate window exhausted | `429` + retry-after |
+| Failed possession challenge | Period forfeited, peer marked, archive excluded for a cooldown |
+| Audit claim mismatched or unchained | Refused and recorded as conflict; never accepted |
+| Audit replay not AGREE | A report with no signature; the service answers the report, not a claim |
+
+### Row dispositions
+
+| Row | Disposition | What closes it |
+|---|---|---|
+| C384 | done | the height-window walk and its tests; the 45.5 s target is evidence, not re-run |
+| C385 | done | Law 110, the durable meter, the range authorization and the capability checks |
+| C386 | done | Law 111, settlement by challenge outcome, the selector's cooldown |
+| C387 | done | Law 112, the canonical statement, the replay-derived root and replay head |
+| C388 | done | Law 112's acceptance and chain rules, the nonce, the pull-only rate-limited service |
+| C389 | done | the docs/runbook pages, Laws 101–112 in the reading, HAZOP U24 and acceptance U25 |
+| C390 | done | the audit re-executes the genesis body's blessed deploys, checks the derived root against the body, and answers INCOMPLETE if it cannot; the devnet evidence run reaches AGREE |
+| C391 | done | the audit reads the last eight window headers' fringe roots from `GET /api/v1/block/{hash}/header` and reports INCOMPLETE for a header it cannot read; the producer/joiner window check now holds |
+| C392 | done | review R1: the metadata commitment includes each header's fringe and fringe state root, the producer/joiner check the set's shape, and the audit hydrates every closure header and checks the genesis header against its body |
+| C393 | done | review R2: `AcceptedWindow` (anchor, certified, derived) is enforced by a pre-replay gate and rebuilt/verified at boot; an uncertified historical root in the store is not permission; a verified certificate with no recorded fringe is adopted at boot instead of refusing to run |
+| C394 | done | review R3: the optional commitments use a presence bitmap and per-slot domain tags; the shared Rust/Python fixture pins all four shapes and the transposition |
+| C395 | done | review R4: the benchmark digest includes `historyRoot`; PASS requires the certificate, commitments, digest-naming attestation, quorum and the proposed block's finalization; the tests run in CI |
+| C396 | done | review R5: the genesis pin is checked before any acceptance write and before boot publication; the checkpoint store serializes its read-then-write decisions |
+| C397 | done | follow-up review: the benchmark posts both served certificates to the node's verifier (`POST /api/v1/checkpoint/verify`); an unsigned attestation is structurally refused, a missing verdict is INCONCLUSIVE and a verifier refusal is FAIL |
+| C398 | done | follow-up review: the accepted audit record (claim, head, nonce, answer) commits in one store batch, with a spent-once nonce and a strictly advancing head under one gate; an injected write failure leaves no row |
+| C399 | done | follow-up review: the answer is persisted with the claim and read before replay, so a same-nonce retry after a restart returns the original answer; a spent nonce without an answer is a defined 409 |
+
+### Non-claims
+
+- **No zero-knowledge proof.** A ZK witness is a future `witnessType`; the signed hash chain is what
+  this pass implements. Verification is a replay, not a succinct proof.
+- **No consensus change.** The fee, the meter, the settlement, the attestation and the audit are
+  service and sync artifacts. `witnessType` is in the signed preimage precisely so adding a witness
+  later is an extension, not a chain split.
+- **No on-chain payment proof.** The node verifies the settlement key's signature and expiry, not
+  the REV transfer. Forfeiture is service-level.
+- **No new light-client mode.** A bodies-optional observer is the consumer in scope; a header-only
+  client is deferred post-mainnet.
+- **No benchmark re-run.** The join's 817.1 s measurement and the 45.5 s target are recorded in
+  `spec/audit/evidence/c377-anchored-join-20261115/`; this pass changes the mechanism and tests it.
+  The final-source mature-chain cold-restore/restart measurement is still owed and is not implied by
+  any unit result here.
+- **The benchmark's signature evidence is the node's verifier.** `PASS` requires
+  `POST /api/v1/checkpoint/verify` for the joiner and the bootstrap; Python verifies no signature
+  itself, so the verdict is only as trustworthy as the node asked. The verifier's negative cases
+  (corrupted signature, another key, unbonded signer, below quorum) are its own Rust tests.
+- The attestation evidence run is a **local devnet** with throwaway keys: it shows the mechanism, not
+  a live acceptance, and `execution_proven` stays `false`.
+- **The audit reads every committed header, not just the window.** The metadata commitment now covers
+  each ancestor's fringe claim, so the audit's header reads are O(ancestor closure); a header-range
+  batch is a performance follow-up, not a trust change.
+- **The signed-claim evidence is local.** `spec/audit/evidence/n-audit-chain-20261115-r1r5/` records
+  two AGREE audits on a local devnet at the R1–R5 source (anchors 21 and 50), a claim verified
+  offline at sequence 0, a second claim chained to it at sequence 1 and verified against its head,
+  and both accepted with no conflict. It has one signer on one short chain with the checker sharing
+  the producer's codebase, and it carries no restart control — a witness for the mechanism, not a
+  live or independent acceptance. The pre-R1/R3 pack is retained and marked superseded.

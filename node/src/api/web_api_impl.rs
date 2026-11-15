@@ -330,6 +330,9 @@ mod tests {
             latest_block_number: 42,
             history_availability: "available".to_string(),
             checkpoint_age: None,
+            sync_phase: None,
+            checkpoint: None,
+            audit: None,
         }
     }
 
@@ -1288,6 +1291,72 @@ impl WebApi for WebApiImpl {
         })
     }
 
+    /// `POST /api/v1/history/range` — every body this node holds in a bounded height window. The
+    /// response is bounded by heights and bytes; a gap is reported per height and makes `complete`
+    /// false. The authorization is carried on the wire for the metered tier; this (open) surface
+    /// does not require one.
+    async fn history_range(
+        &self,
+        request: &super::dto::HistoryRangeRequest,
+    ) -> Result<super::dto::HistoryRange, BlockApiException> {
+        super::dto::validate_history_range(request.from, request.to).map_err(BlockApiException)?;
+        let mut entries = Vec::new();
+        let mut complete = true;
+        let mut bytes = 0usize;
+        for height in request.from..=request.to {
+            let infos = self
+                .block_api
+                .get_blocks_by_heights(height, height)
+                .await
+                .map_err(BlockApiException)?;
+            if infos.is_empty() {
+                complete = false;
+                entries.push(super::dto::HistoryRangeEntry {
+                    height,
+                    block_hash: None,
+                    body: None,
+                });
+                continue;
+            }
+            for info in infos {
+                match self.block_api.get_raw_block(&info.block_hash).await {
+                    Ok(body) => {
+                        bytes += body.encoded.len() + body.sig.len();
+                        if bytes > super::dto::MAX_HISTORY_RANGE_BYTES {
+                            return Err(BlockApiException(format!(
+                                "a history range carries at most {} bytes; ask for a smaller window",
+                                super::dto::MAX_HISTORY_RANGE_BYTES
+                            )));
+                        }
+                        entries.push(super::dto::HistoryRangeEntry {
+                            height,
+                            block_hash: Some(info.block_hash),
+                            body: Some(body),
+                        });
+                    }
+                    // `info` names the block but its body is not here: a per-height gap, not a
+                    // failed request.
+                    Err(_) => {
+                        complete = false;
+                        entries.push(super::dto::HistoryRangeEntry {
+                            height,
+                            block_hash: Some(info.block_hash),
+                            body: None,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(super::dto::HistoryRange {
+            from: request.from,
+            to: request.to,
+            complete,
+            charged_bytes: 0,
+            payer: None,
+            entries,
+        })
+    }
+
     async fn deploy_status(&self, deploy_id: &str) -> Result<DeployExecStatus, BlockApiException> {
         let id = base16::decode(deploy_id).ok_or_else(invalid_deploy_id)?;
         let status = self
@@ -1521,6 +1590,17 @@ impl WebApi for WebApiImpl {
             .map_err(BlockApiException)
     }
 
+    async fn block_header(
+        &self,
+        hash: &str,
+    ) -> Result<rchain_models::casper::protocol::deploy_service::HeaderCommitment, BlockApiException>
+    {
+        self.block_api
+            .header_commitment(hash)
+            .await
+            .map_err(BlockApiException)
+    }
+
     async fn finality_attestation(
         &self,
         nonce: &str,
@@ -1555,6 +1635,19 @@ impl WebApi for WebApiImpl {
     ) -> Result<CheckpointCertificate, BlockApiException> {
         self.block_api
             .checkpoint_certificate(digest)
+            .await
+            .map_err(BlockApiException)
+    }
+
+    async fn verify_checkpoint_certificate(
+        &self,
+        certificate: &CheckpointCertificate,
+    ) -> Result<
+        rchain_models::casper::protocol::deploy_service::VerifiedCertificate,
+        BlockApiException,
+    > {
+        self.block_api
+            .verify_checkpoint_certificate(certificate)
             .await
             .map_err(BlockApiException)
     }

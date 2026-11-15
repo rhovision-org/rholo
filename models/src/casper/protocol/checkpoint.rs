@@ -18,6 +18,14 @@ use crate::casper::protocol::casper_message::BlockHeader;
 /// Domain tag of the metadata-set commitment.
 pub const METADATA_SET_TAG: &[u8] = b"rchain-metadata-set-v1";
 
+/// Domain tag of the optional metadata-root slot in the statement digest. The two optional slots are
+/// tagged separately so a statement cannot be reinterpreted with its commitments transposed; see
+/// `casper/src/checkpoint.rs::checkpoint_digest`.
+pub const METADATA_ROOT_TAG: &[u8] = b"rchain-checkpoint-metadata-root-v1";
+
+/// Domain tag of the optional history-root slot in the statement digest.
+pub const HISTORY_ROOT_TAG: &[u8] = b"rchain-checkpoint-history-root-v1";
+
 /// Domain tag of one header's canonical projection.
 pub const HEADER_COMMITMENT_TAG: &[u8] = b"rchain-header-v1";
 
@@ -38,12 +46,13 @@ fn lp(out: &mut Vec<u8>, bytes: &[u8]) {
 
 /// **The canonical projection of a header the metadata commitment binds.**
 ///
-/// It covers exactly the fields a body carries — hash, height, sender, sequence number,
-/// justifications, bonds, the two state roots, the signature and its algorithm. It deliberately
-/// **excludes** `fringe`, `fringe_state_hash` and `body_available`: the first two are derived from
-/// the DAG and are absent from `BlockMessage` (so an offline audit could not recompute a commitment
-/// that included them), and the last is a per-peer transport detail. The walk's shape check bounds
-/// the fringe; the audit's replay bounds the state. The exclusion is recorded, not implied.
+/// It covers every consensus field the DAG reads — hash, height, sender, sequence number,
+/// justifications, bonds, the **fringe membership**, the **fringe state root**, the two state roots,
+/// the signature and its algorithm. `fringe` and `fringe_state_hash` were once excluded because a
+/// `BlockMessage` does not carry them; that let a peer change consensus-relevant metadata under the
+/// same certificate (review R1). They are now committed, and the audit reads them from the node's
+/// header route before checking the commitment. The only field still excluded is `body_available`, a
+/// per-peer transport detail.
 pub fn header_commitment_bytes(header: &BlockHeader) -> Vec<u8> {
     let mut out = Vec::new();
     lp(&mut out, HEADER_COMMITMENT_TAG);
@@ -58,6 +67,14 @@ pub fn header_commitment_bytes(header: &BlockHeader) -> Vec<u8> {
     for hash in &justifications {
         out.extend_from_slice(hash.as_bytes());
     }
+
+    let mut fringe: Vec<BlockHash> = header.fringe.iter().copied().collect();
+    fringe.sort();
+    out.extend_from_slice(&(fringe.len() as u32).to_be_bytes());
+    for hash in &fringe {
+        out.extend_from_slice(hash.as_bytes());
+    }
+    out.extend_from_slice(header.fringe_state_hash.as_bytes());
 
     out.extend_from_slice(&(header.bonds_map.len() as u32).to_be_bytes());
     for (validator, stake) in &header.bonds_map {

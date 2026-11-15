@@ -166,7 +166,10 @@ sed -e 's/→/->/g' -e 's/·/@SEP@/g' "$sheet" \
       if (fals ~ /^owed:/) { fals_owed++; next }
       okp = 0; oksym = 0; anycol = 0; lastp = ""; lastsym = ""
       m = fals
-      while (match(m, /[A-Za-z0-9_.\/-]+\.(rs|lean|md|sh|tsv|txt|json|toml|v)/)) {
+      # A falsifier is a test or a checked artefact. The tools tests are Python (tools/tests/*.py)
+      # and CI runs them; the same two checks apply to the extension (the path exists, the symbol
+      # occurs in it), so the class is not weaker for naming one.
+      while (match(m, /[A-Za-z0-9_.\/-]+\.(rs|lean|md|sh|py|tsv|txt|json|toml|v)/)) {
         p = substr(m, RSTART, RLENGTH); m = substr(m, RSTART + RLENGTH)
         sub(/:.*$/, "", p)
         if (system("test -e \"" root "/" p "\"") != 0) continue

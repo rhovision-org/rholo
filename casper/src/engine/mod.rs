@@ -5,6 +5,7 @@
 //! `NodeLaunch`'s genesis-from-config helpers + `apply` mode-dispatch are ported.
 
 pub mod anchor;
+pub mod audit_status;
 pub mod backfill;
 pub mod catchup;
 pub mod checkpoint_source;

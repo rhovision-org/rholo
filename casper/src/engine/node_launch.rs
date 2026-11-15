@@ -397,6 +397,9 @@ pub async fn apply<
     // engine owns the sync protocol and has no HTTP client; the node wires the bootstrap's client
     // endpoint. `None` makes sync fail closed: a fringe is not a state root without a quorum.
     checkpoint_source: Option<Arc<dyn crate::engine::checkpoint_source::CheckpointSource>>,
+    // **The runtime's admissible pre-state window** (review R2). Installed below from the accepted
+    // anchor; `None` until then is a retryable fault for any block that arrives early.
+    accepted_window: crate::engine::anchor::SharedAcceptedWindow,
     log: Arc<dyn Log>,
 ) -> Result<(), String> {
     let source = LogSource::new("casper.engine.NodeLaunch");
@@ -759,52 +762,71 @@ pub async fn apply<
                     verified.checkpoint.shard_id, spec.shard_id
                 ));
             }
-            if let Some(accepted) = approved_store
+            let recorded = approved_store
                 .get(&[rchain_block_storage::approved_store::FINALIZED_FRINGE_KEY])
                 .await?
                 .into_iter()
                 .next()
                 .flatten()
-            {
-                let accepted_set: std::collections::BTreeSet<_> =
-                    accepted.hashes.iter().copied().collect();
-                let certified_set: std::collections::BTreeSet<_> = verified
-                    .checkpoint
-                    .fringe_hashes
-                    .iter()
-                    .filter_map(|hex| {
-                        rchain_shared::base16::decode(hex)
-                            .and_then(|bytes| BlockHash::try_from(bytes.as_slice()).ok())
-                    })
-                    .collect();
-                if certified_set == accepted_set {
+                .map(|accepted| accepted.hashes.iter().copied().collect());
+            let certified_set: BTreeSet<_> = verified
+                .checkpoint
+                .fringe_hashes
+                .iter()
+                .filter_map(|hex| {
+                    rchain_shared::base16::decode(hex)
+                        .and_then(|bytes| BlockHash::try_from(bytes.as_slice()).ok())
+                })
+                .collect();
+            match stored_fringe_agreement(recorded.as_ref(), &certified_set) {
+                StoredFringeAgreement::Reverified => {
                     log.info(
                         source,
                         &format!(
                             "boot: the accepted fringe ({} block(s)) is re-verified by its stored \
                              checkpoint certificate at anchor {}",
-                            accepted_set.len(),
+                            certified_set.len(),
                             verified.checkpoint.anchor_height
                         ),
                     );
                     // **The stored certificate is the anchor** (Law 108): its checkpoint root is the
                     // root this node runs from. The approved fringe's state is the finality fringe's
                     // merged state, not the execution root, so it is not substituted here.
+                    let window = rebuild_window_from_dag(dag.as_ref(), &verified).await?;
                     accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
                         verified.clone(),
-                        BTreeSet::new(),
+                        window,
                     )?);
-                } else {
+                }
+                StoredFringeAgreement::Mismatch {
+                    certified,
+                    accepted,
+                } => {
                     log.warn(
                         source,
                         &format!(
                             "boot: the stored checkpoint certificate names another fringe than the \
-                             accepted fringe ({} certified, {} accepted); the accepted state is not \
-                             re-verified by it",
-                            certified_set.len(),
-                            accepted_set.len()
+                             accepted fringe ({certified} certified, {accepted} accepted); the \
+                             accepted state is not re-verified by it"
                         ),
                     );
+                }
+                StoredFringeAgreement::Absent => {
+                    // **No accepted fringe is recorded, but a verified certificate is.** A genesis
+                    // master — and a node whose approved-fringe write was interrupted — has no
+                    // fringe to compare against; the certificate is the only accepted-state record
+                    // and is adopted as the anchor (Law 108). The DAG must still hold the anchor's
+                    // closure, which the window rebuild verifies.
+                    log.warn(
+                        source,
+                        "boot: no accepted fringe is recorded; adopting the verified stored \
+                         checkpoint certificate as the anchor",
+                    );
+                    let window = rebuild_window_from_dag(dag.as_ref(), &verified).await?;
+                    accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
+                        verified.clone(),
+                        window,
+                    )?);
                 }
             }
         } else {
@@ -847,8 +869,15 @@ pub async fn apply<
                     .flatten()
                     .next()
                     .ok_or_else(|| "the genesis block has no stored body".to_string())?;
+                // **The operator's pin is checked before any accepted state exists** (review R5).
+                // `from_genesis` also refuses a body that is not the pin, but it words that refusal
+                // differently; the canonical `differs from pinned genesis` sentence belongs to the
+                // pin check, so the check runs first and the state then carries the proven identity.
+                if let Some(expected) = expected_genesis_hash {
+                    check_expected_genesis(dag.as_ref(), &expected).await?;
+                }
                 let pin = crate::engine::anchor::GenesisPin {
-                    block: genesis_hash,
+                    block: expected_genesis_hash.unwrap_or(genesis_hash),
                     post_state: genesis_post,
                 };
                 accepted_state = Some(crate::engine::anchor::AcceptedState::from_genesis(
@@ -900,6 +929,17 @@ pub async fn apply<
          so it refuses to run"
             .to_string()
     })?;
+    // **Install the runtime's admissible pre-state window** (review R2) before any block can be
+    // accepted: the anchor root, the certified window, and the roots this node already derived above
+    // the anchor. The state store's contents are never consulted for permission.
+    let mut runtime_window = crate::engine::anchor::AcceptedWindow::from_accepted(&accepted);
+    seed_derived_roots(dag.as_ref(), accepted.anchor(), &mut runtime_window).await?;
+    *accepted_window.write().await = Some(runtime_window);
+    // **The pin is enforced before publication** (review R5): a boot that would refuse must not have
+    // moved `CURRENT_ROOT` first.
+    if let Some(expected) = expected_genesis_hash {
+        check_expected_genesis(dag.as_ref(), &expected).await?;
+    }
     match runtime_manager.publish_accepted_root(accepted.root()).await {
         Ok(true) => log.info(source, "published CURRENT_ROOT from the accepted anchor"),
         Ok(false) => {
@@ -909,10 +949,6 @@ pub async fn apply<
             ))
         }
         Err(e) => return Err(format!("could not publish the accepted root: {e}")),
-    }
-
-    if let Some(expected) = expected_genesis_hash {
-        check_expected_genesis(dag.as_ref(), &expected).await?;
     }
 
     // The synced root is content-addressed, but its params must also be readable by this binary
@@ -1457,6 +1493,131 @@ async fn start_catchup_if_anchored(
     });
 }
 
+/// **The anchor's ancestor closure from DAG metadata** — the same walk the producer and joiner use.
+/// **Which record anchors a boot?** (Law 108, review R2) A restart trusts the state on disk only
+/// when a verified certificate says what that state is. Three cases, and none may be collapsed into
+/// "run unanchored":
+///
+/// - the approved fringe is recorded and the certificate names exactly it — **re-verified**;
+/// - both are recorded and disagree — **mismatch**, and the node must not adopt the certificate
+///   silently over a newer accepted fringe;
+/// - no approved fringe is recorded at all — a genesis master, or an interrupted approved-fringe
+///   write — the verified certificate is the only accepted-state record, so it is **adopted**.
+///   Refusing to run here was the observed defect: a validator that had certified normally could
+///   not restart at all.
+#[derive(Debug, PartialEq, Eq)]
+enum StoredFringeAgreement {
+    Reverified,
+    Mismatch { certified: usize, accepted: usize },
+    Absent,
+}
+
+fn stored_fringe_agreement(
+    recorded: Option<&BTreeSet<BlockHash>>,
+    certified: &BTreeSet<BlockHash>,
+) -> StoredFringeAgreement {
+    match recorded {
+        Some(accepted) if accepted == certified => StoredFringeAgreement::Reverified,
+        Some(accepted) => StoredFringeAgreement::Mismatch {
+            certified: certified.len(),
+            accepted: accepted.len(),
+        },
+        None => StoredFringeAgreement::Absent,
+    }
+}
+
+async fn anchor_closure(
+    dag: &dyn BlockDagStorage,
+    anchor: BlockHash,
+) -> Result<Vec<rchain_models::casper::protocol::casper_message::BlockHeader>, String> {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![anchor];
+    let mut headers = Vec::new();
+    while let Some(hash) = stack.pop() {
+        if !seen.insert(hash) {
+            continue;
+        }
+        let metadata = dag.lookup(&hash).await?.ok_or_else(|| {
+            format!(
+                "the accepted anchor's ancestor {} has no DAG metadata, so the stored certificate \
+                 cannot be re-verified",
+                hash.to_hex()
+            )
+        })?;
+        headers.push(metadata.to_header(false));
+        stack.extend(metadata.justifications.iter().copied());
+    }
+    Ok(headers)
+}
+
+/// **Rebuild and verify the certified validation window at boot** (review R2). The stored
+/// certificate must carry both commitments; the DAG must hold the anchor's closure; the walked
+/// headers must reproduce both commitments. A missing commitment, header or match refuses to run
+/// with a named reason rather than substituting an empty window.
+async fn rebuild_window_from_dag(
+    dag: &dyn BlockDagStorage,
+    verified: &crate::checkpoint::VerifiedCheckpoint,
+) -> Result<BTreeSet<Blake2b256Hash>, String> {
+    if verified.checkpoint.metadata_root.is_none() {
+        return Err(
+            "the stored certificate has no metadata commitment; this build refuses to run \
+             without one"
+                .to_string(),
+        );
+    }
+    if verified.checkpoint.history_root.is_none() {
+        return Err(
+            "the stored certificate has no validation-window commitment; this build refuses to \
+             run without one"
+                .to_string(),
+        );
+    }
+    let anchor = BlockHash::try_from_hex(&verified.checkpoint.anchor)
+        .map_err(|e| format!("the stored certificate's anchor is not a block hash: {e}"))?;
+    let closure = anchor_closure(dag, anchor).await?;
+    crate::checkpoint::check_committed_headers(closure.iter())
+        .map_err(|e| format!("the stored certificate's committed headers are inconsistent: {e}"))?;
+    crate::checkpoint::verify_metadata_root(&verified.checkpoint, closure.iter()).map_err(|e| {
+        format!("the stored certificate's metadata commitment does not verify: {e}")
+    })?;
+    crate::checkpoint::verify_validation_window(&verified.checkpoint, closure.iter()).map_err(
+        |e| format!("the stored certificate's validation-window commitment does not verify: {e}"),
+    )?;
+    Ok(
+        rchain_models::casper::protocol::checkpoint::validation_window_roots(closure.iter())
+            .into_iter()
+            .map(|root| Blake2b256Hash::from_byte_array(&root))
+            .collect(),
+    )
+}
+
+/// **Seed the runtime window with roots this node already derived above the anchor.** A restart's
+/// DAG holds post-anchor blocks whose children may arrive before this node produces a new block.
+async fn seed_derived_roots(
+    dag: &dyn BlockDagStorage,
+    anchor: &crate::engine::anchor::TrustAnchor,
+    window: &mut crate::engine::anchor::AcceptedWindow,
+) -> Result<(), String> {
+    let anchor_height = match anchor {
+        crate::engine::anchor::TrustAnchor::Genesis(_) => 0,
+        crate::engine::anchor::TrustAnchor::Checkpoint { verified, .. } => {
+            verified.checkpoint.anchor_height
+        }
+    };
+    let representation = dag.get_representation().await;
+    let topo = representation
+        .topo_sort_unsafe(anchor_height + 1, None)
+        .map_err(|e| format!("the DAG above the accepted anchor is unreadable: {e}"))?;
+    for hashes in topo {
+        for hash in hashes {
+            if let Some(metadata) = dag.lookup(&hash).await? {
+                window.note_roots(&metadata);
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1502,6 +1663,225 @@ mod tests {
         assert!(check_genesis_height_map(&valid, &fork)
             .unwrap_err()
             .contains("differs from pinned genesis"));
+    }
+
+    /// **The boot anchor is a decision, not an accident** (Law 108, review R2). A verified
+    /// certificate with no recorded accepted fringe must be adopted — refusing to run there is the
+    /// genesis-master restart defect this test pins — while a certificate that names another fringe
+    /// than the recorded one must never be adopted over it.
+    #[test]
+    fn a_missing_fringe_record_adopts_the_certificate_but_a_disagreement_does_not() {
+        let set = |bytes: &[u8]| -> std::collections::BTreeSet<BlockHash> {
+            bytes
+                .iter()
+                .map(|b| BlockHash::try_from(vec![*b; 32].as_slice()).expect("32 bytes"))
+                .collect()
+        };
+        let certified = set(&[1, 2]);
+
+        assert_eq!(
+            stored_fringe_agreement(None, &certified),
+            StoredFringeAgreement::Absent,
+            "a genesis master has no fringe record; the verified certificate is the only anchor"
+        );
+        assert_eq!(
+            stored_fringe_agreement(Some(&set(&[2, 1])), &certified),
+            StoredFringeAgreement::Reverified,
+            "set order is not membership"
+        );
+        assert_eq!(
+            stored_fringe_agreement(Some(&set(&[2, 3])), &certified),
+            StoredFringeAgreement::Mismatch {
+                certified: 2,
+                accepted: 2
+            },
+            "a newer accepted fringe is not replaced by an older certificate"
+        );
+    }
+
+    /// **A read-only DAG holding one ancestor closure**, so the boot rebuild can be exercised without
+    /// a live store.
+    struct ClosureDag {
+        by_hash: BTreeMap<BlockHash, rchain_models::block_metadata::BlockMetadata>,
+    }
+
+    #[async_trait::async_trait]
+    impl BlockDagStorage for ClosureDag {
+        async fn get_representation(
+            &self,
+        ) -> Arc<rchain_block_storage::dag::representation::DagRepresentation> {
+            Arc::new(
+                rchain_block_storage::dag::representation::DagRepresentation {
+                    dag_set: Arc::new(self.by_hash.keys().copied().collect()),
+                    child_map: Arc::new(BTreeMap::new()),
+                    height_map: Arc::new(BTreeMap::new()),
+                    dag_message_state:
+                        rchain_block_storage::dag::message_state::DagMessageState::empty(),
+                },
+            )
+        }
+
+        async fn lookup(
+            &self,
+            block_hash: &BlockHash,
+        ) -> Result<Option<rchain_models::block_metadata::BlockMetadata>, String> {
+            Ok(self.by_hash.get(block_hash).cloned())
+        }
+
+        async fn insert(
+            &self,
+            _metadata: rchain_models::block_metadata::BlockMetadata,
+            _block: BlockMessage,
+        ) -> Result<(), String> {
+            Err("the boot rebuild only reads".to_string())
+        }
+
+        async fn lookup_by_deploy_id(
+            &self,
+            _deploy_id: &rchain_block_storage::dag::dag_storage::DeployId,
+        ) -> Result<Option<BlockHash>, String> {
+            Ok(None)
+        }
+
+        async fn add_deploy(
+            &self,
+            _deploy: rchain_models::casper::protocol::casper_message::SignedDeployData,
+        ) -> Result<(), String> {
+            Err("the boot rebuild only reads".to_string())
+        }
+
+        async fn pooled_deploys(
+            &self,
+        ) -> Result<
+            BTreeMap<
+                rchain_block_storage::dag::dag_storage::DeployId,
+                rchain_models::casper::protocol::casper_message::SignedDeployData,
+            >,
+            String,
+        > {
+            Ok(BTreeMap::new())
+        }
+
+        async fn contains_deploy_in_pool(
+            &self,
+            _deploy_id: &rchain_block_storage::dag::dag_storage::DeployId,
+        ) -> Result<bool, String> {
+            Ok(false)
+        }
+    }
+
+    /// One DAG record. `seed` is both the block hash's fill byte and the block's identity in the
+    /// closure; the state roots are fill bytes so a test can count distinct roots by eye.
+    fn header_meta(
+        seed: u8,
+        height: i64,
+        parents: &[u8],
+        fringe: &[u8],
+        pre: u8,
+        post: u8,
+        fringe_state: u8,
+    ) -> rchain_models::block_metadata::BlockMetadata {
+        use rchain_models::block::state_hash::StateHash;
+        let hash = |fill: u8| BlockHash::try_from(vec![fill; 32].as_slice()).expect("32 bytes");
+        rchain_models::block_metadata::BlockMetadata {
+            block_hash: hash(seed),
+            block_num: if height == 0 {
+                BlockHeight::zero()
+            } else {
+                BlockHeight::try_from(height).expect("a non-negative height")
+            },
+            sender: rchain_models::validator::Validator::new([7u8; 65]),
+            seq_num: rchain_shared::refined::SeqNum::zero(),
+            justifications: parents.iter().map(|fill| hash(*fill)).collect(),
+            bonds_map: BTreeMap::new(),
+            validated: true,
+            validation_failed: false,
+            slashable: false,
+            failure_cause: None,
+            slash_severity: rchain_models::block_metadata::SlashSeverity::Unspecified,
+            restore_attempts: 0,
+            fringe: fringe.iter().map(|fill| hash(*fill)).collect(),
+            fringe_state_hash: StateHash::new([fringe_state; 32]),
+            pre_state_hash: StateHash::new([pre; 32]),
+            post_state_hash: StateHash::new([post; 32]),
+            sig: Vec::new(),
+            sig_algorithm: String::new(),
+            member_of_fringe: None,
+        }
+    }
+
+    /// **The boot rebuild is a verification, not a reconstruction** (review R2): the window is
+    /// derived from the DAG only after both commitments reproduce, and each missing or altered
+    /// fact is refused by name rather than leading to an empty window.
+    #[tokio::test]
+    async fn the_boot_rebuild_verifies_both_commitments_and_refuses_a_tampered_one() {
+        use rchain_models::casper::protocol::checkpoint as model;
+        let genesis = header_meta(1, 0, &[], &[], 1, 1, 1);
+        let child = header_meta(2, 1, &[1], &[1], 1, 2, 3);
+        let anchor = child.block_hash;
+        let headers = [genesis.to_header(false), child.to_header(false)];
+        let checkpoint = model::Checkpoint {
+            shard_id: "boot-test".to_string(),
+            anchor: anchor.to_hex(),
+            anchor_height: 1,
+            anchor_post_state: rchain_shared::base16::encode(child.post_state_hash.as_bytes()),
+            fringe_hashes: vec![anchor.to_hex()],
+            parent_digest: None,
+            epoch: 0,
+            metadata_root: Some(model::metadata_root(headers.iter()).to_hex()),
+            history_root: Some(model::validation_window_root(headers.iter()).to_hex()),
+        };
+        let verified = crate::checkpoint::VerifiedCheckpoint {
+            checkpoint,
+            digest: Blake2b256Hash::create(b"boot-test"),
+            supporting_stake: 1,
+            total_stake: 1,
+        };
+        let dag = ClosureDag {
+            by_hash: BTreeMap::from([
+                (genesis.block_hash, genesis.clone()),
+                (child.block_hash, child),
+            ]),
+        };
+
+        let window = rebuild_window_from_dag(&dag, &verified)
+            .await
+            .expect("the closure reproduces both commitments");
+        let expected: BTreeSet<_> = model::validation_window_roots(headers.iter())
+            .into_iter()
+            .map(|root| Blake2b256Hash::from_byte_array(&root))
+            .collect();
+        assert_eq!(window, expected);
+        assert_eq!(
+            window.len(),
+            3,
+            "the shared pre-state, the anchor post-state and the fringe state are the three roots"
+        );
+
+        let mut tampered = verified.clone();
+        tampered.checkpoint.metadata_root = Some(Blake2b256Hash::create(b"elsewhere").to_hex());
+        let error = rebuild_window_from_dag(&dag, &tampered)
+            .await
+            .expect_err("a metadata root the closure does not reproduce is refused");
+        assert!(
+            error.contains("metadata commitment does not verify"),
+            "{error}"
+        );
+
+        let mut uncommitted = verified.clone();
+        uncommitted.checkpoint.history_root = None;
+        let error = rebuild_window_from_dag(&dag, &uncommitted)
+            .await
+            .expect_err("a certificate with no window commitment is refused");
+        assert!(error.contains("no validation-window commitment"), "{error}");
+
+        let incomplete = ClosureDag {
+            by_hash: BTreeMap::from([(genesis.block_hash, genesis)]),
+        };
+        let error = rebuild_window_from_dag(&incomplete, &verified)
+            .await
+            .expect_err("an anchor the DAG does not hold is refused");
+        assert!(error.contains("no DAG metadata"), "{error}");
     }
 
     use rchain_comm::peer_node::NodeIdentifier;

@@ -5,7 +5,7 @@ first, then jump to the single page that answers your question. It mirrors the d
 [`AGENTS.md`](../../AGENTS.md) but is organized by *goal* rather than by artifact.
 
 The **authoritative formal specification** is the [`spec/`](../../spec/) tree — the law register
-([`spec/LAWS.md`](../../spec/LAWS.md), **<!-- counts:entries -->164 entries<!-- counts:end -->**: the calculus laws, the rows covering the
+([`spec/LAWS.md`](../../spec/LAWS.md), **<!-- counts:entries -->167 entries<!-- counts:end -->**: the calculus laws, the rows covering the
 surface a client writes, the Proof-of-Stake epoch, the fee and charging rows, the progress set, and the
 bounded-work, namespace, wire, session and distributed-system rows that follow; its long-form
 catalogue is [`spec/INVENTORY.md`](../../spec/INVENTORY.md)), the ρ-calculus core
@@ -34,6 +34,9 @@ catalogue is [`spec/INVENTORY.md`](../../spec/INVENTORY.md)), the ρ-calculus co
 | Understand the "no silent partiality" / totality guarantee | [Closedness and the Calculus of Constructions](formal/closedness-coc.md) |
 | Understand consensus / finality | [Consensus (Casper)](node/consensus.md) |
 | Understand the tuple space / storage | [The tuple space (RSpace)](node/rspace.md), [Storage](node/storage.md) |
+| Know **how a node joins, syncs from a checkpoint and serves history** | [Sync, checkpoints and history](node/sync-and-history.md), [Sync operations](node/sync-operations.md) |
+| **Run the audit** or verify a re-execution claim | [Audit attestations](node/audit-attestations.md), [Sync operations](node/sync-operations.md) |
+| Run an archive, or understand what history costs and who pays | [The archive service and its economics](node/archive-service.md) |
 | Run a validator (hardware requirements / sizing) | [Running a validator: hardware requirements](node/validator-requirements.md) |
 | Understand what a validator is **paid** and what it can **lose** (epoch pot, slashing, the draw) | [Validator economics](node/validator-economics.md) |
 | Know whether the node is **ready for outside validators** (the testnet gate and the falsifiers that decide it) | [Testnet acceptance specification](spec/testnet-acceptance.md) |
@@ -45,7 +48,7 @@ catalogue is [`spec/INVENTORY.md`](../../spec/INVENTORY.md)), the ρ-calculus co
 
 ## The invariant catalog
 
-rholo's behaviour is pinned by **<!-- counts:laws -->109 laws<!-- counts:end -->**, one per layer of the
+rholo's behaviour is pinned by **<!-- counts:laws -->112 laws<!-- counts:end -->**, one per layer of the
 system. The reading — one plain-English line per law, grouped by layer, with the numbering scheme and
 the proved/assumed decomposition — is [The laws](formal/laws.md). The register
 ([`spec/LAWS.md`](../../spec/LAWS.md), emitted from `Rchain/Laws.lean`) is the authority for every
@@ -61,5 +64,5 @@ into a third place is a catalog nothing checks.
 | `spec/Rchain/*.lean` (Lean 4) | the model half of the register: each law's Lean declarations, its status (`proved-tied`/`proved-model`/`owed`/…), the axioms it rests on and the declarations that would falsify it. **Per-law status lives in one place** — [`spec/LAWS.md`](../../spec/LAWS.md), emitted from `Rchain/Laws.lean` and refused stale by the gate; this table no longer restates it, because a status repeated here is a status nothing checks (see `laws.md` for what that cost) | `cd spec && lake build` |
 | `spec/coq/*.v` (Coq) | Laws 2–6 (substitution / α-equivalence metatheory) **stated** | `make -C spec/coq` |
 | `spec/conformance/*.tsv` | the conformance corpora: *emitted* from the Lean definitions, committed, and read by a Rust consumer that runs the same cases through the node | `tools/emit-lean-corpus.sh` |
-| `spec/INVENTORY.md` | the long-form law catalogue (its table ends at Law 77; the register covers <!-- counts:laws-entries -->109 laws and 164 entries<!-- counts:end -->) with source-of-truth + Rust realization | — |
+| `spec/INVENTORY.md` | the long-form law catalogue (its table ends at Law 77; the register covers <!-- counts:laws-entries -->112 laws and 167 entries<!-- counts:end -->) with source-of-truth + Rust realization | — |
 | `spec/TYPE-SYSTEM.md` | the ρ→CoC type discipline (totality, refinements) | — |

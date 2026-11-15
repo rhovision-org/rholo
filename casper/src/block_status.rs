@@ -102,6 +102,15 @@ pub enum BlockStatus {
     /// inside `hash_block`'s cover, so it is consensus-visible and a future version bump would not
     /// have been enforced at all.
     InvalidVersion,
+    /// **A post-anchor block's pre-state is not a certified or locally derived root** (review R2).
+    ///
+    /// The sync hydrates the checkpoint root and the certificate's validation window; the runtime
+    /// may also hold older historical roots from before the join or from a restart. Those are not
+    /// certifiable inputs: a block that reads one is asking this node to validate against a state
+    /// the quorum did not sign and no validated post-anchor block produced. The refusal consults the
+    /// accepted window, never the state store, so a root's mere presence is not permission. It is a
+    /// [`FailureCause::Divergence`] (this node's view of the accepted history), not an offence.
+    UncertifiedPreState,
 }
 
 impl BlockStatus {
@@ -135,7 +144,8 @@ impl BlockStatus {
             | BlockStatus::InvalidPreStateHash
             | BlockStatus::InvalidRejectedDeploy
             | BlockStatus::InvalidBondsCache
-            | BlockStatus::UnjustifiedSlash => FailureCause::Divergence,
+            | BlockStatus::UnjustifiedSlash
+            | BlockStatus::UncertifiedPreState => FailureCause::Divergence,
 
             // Refused because a justification failed. One transient failure must not fabricate slash
             // evidence against every validator above it (#125).
@@ -248,6 +258,7 @@ impl BlockStatus {
             | BlockStatus::InvalidRejectedDeploy
             | BlockStatus::InvalidBondsCache
             | BlockStatus::UnjustifiedSlash
+            | BlockStatus::UncertifiedPreState
             | BlockStatus::NeglectedInvalidBlock => None,
         }
     }
@@ -280,6 +291,7 @@ impl BlockStatus {
             BlockStatus::TooManyJustifications => "too-many-justifications",
             BlockStatus::ExceedsBlockPhloLimit => "exceeds-block-phlo-limit",
             BlockStatus::InvalidVersion => "invalid-version",
+            BlockStatus::UncertifiedPreState => "uncertified-pre-state",
         }
     }
 }
@@ -329,6 +341,11 @@ impl std::fmt::Display for BlockStatus {
             BlockStatus::InvalidVersion => {
                 "the block's version is not one this node supports"
             }
+            BlockStatus::UncertifiedPreState => {
+                "the block's pre-state is neither the accepted checkpoint root, nor a root in the \
+                 certificate's validation window, nor a root this node derived from a validated \
+                 post-anchor block"
+            }
         };
         write!(f, "{s}")
     }
@@ -339,7 +356,7 @@ mod tests {
     use super::*;
 
     /// Every status, so a variant added without a message (or with a copy-pasted one) fails here.
-    const ALL: [BlockStatus; 21] = [
+    const ALL: [BlockStatus; 22] = [
         BlockStatus::Valid,
         BlockStatus::InvalidBlockNumber,
         BlockStatus::InvalidRepeatDeploy,
@@ -361,6 +378,7 @@ mod tests {
         BlockStatus::TooManyJustifications,
         BlockStatus::ExceedsBlockPhloLimit,
         BlockStatus::InvalidVersion,
+        BlockStatus::UncertifiedPreState,
     ];
 
     /// `Valid` is the **only** status that is valid: `is_valid` is the one predicate the block
@@ -455,12 +473,13 @@ mod tests {
     /// does not compile, because [`BlockStatus::failure_cause`] matches on all of them.
     #[test]
     fn the_causes_partition_the_statuses() {
-        const DIVERGENCE: [BlockStatus; 5] = [
+        const DIVERGENCE: [BlockStatus; 6] = [
             BlockStatus::InvalidStateHash,
             BlockStatus::InvalidPreStateHash,
             BlockStatus::InvalidRejectedDeploy,
             BlockStatus::InvalidBondsCache,
             BlockStatus::UnjustifiedSlash,
+            BlockStatus::UncertifiedPreState,
         ];
 
         for status in ALL {

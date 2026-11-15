@@ -1,6 +1,8 @@
 //! Node runtime (port of `coop.rchain.node.runtime`).
 
 pub mod audit;
+pub mod audit_attestation;
+pub mod audit_service;
 pub mod checkpoint_collector;
 pub mod node_call_ctx;
 pub mod node_environment;
