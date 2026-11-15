@@ -14,6 +14,7 @@ use rchain_block_storage::approved_store::{
 };
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
+use rchain_block_storage::syntax::{insert_genesis, put_approved_block, put_block};
 use rchain_comm::peer_node::PeerNode;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_comm::transport::transport_layer::TransportLayer;
@@ -88,6 +89,10 @@ pub struct NodeSyncing<I: RSpaceImporter> {
     /// so the *caller* owns what to do, and so an exit inside the sync task cannot take a test
     /// binary with it.
     terminal: Arc<tokio::sync::Notify>,
+    /// **The accepted state the successful sync constructed** (Law 108). The sync task writes it
+    /// before `finished`; the launch reads it and refuses a `finished` signal without it. A node
+    /// cannot reach Running on a sync that did not produce an anchor.
+    accepted_state: Arc<tokio::sync::Mutex<Option<crate::engine::anchor::AcceptedState>>>,
 }
 
 /// How many times one sync attempt is retried before the node gives up and signals terminal.
@@ -216,7 +221,16 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             latest_fringe: Arc::new(tokio::sync::Mutex::new(None)),
             fringe_arrived: Arc::new(tokio::sync::Notify::new()),
             terminal: Arc::new(tokio::sync::Notify::new()),
+            accepted_state: Arc::new(tokio::sync::Mutex::new(None)),
         }
+    }
+
+    /// **The accepted state's slot** (Law 108): the sync task writes it before signalling
+    /// `finished`; the launch reads it and refuses a `finished` signal without one.
+    pub fn accepted_state_handle(
+        &self,
+    ) -> Arc<tokio::sync::Mutex<Option<crate::engine::anchor::AcceptedState>>> {
+        self.accepted_state.clone()
     }
 
     /// A sync without a replay context fails closed before publishing any DAG metadata.
@@ -420,6 +434,7 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             let comm_util = self.comm_util.clone();
             let log = self.log.clone();
             let finished = self.finished.clone();
+            let accepted_state = self.accepted_state.clone();
             let latest_fringe = self.latest_fringe.clone();
             let fringe_arrived = self.fringe_arrived.clone();
             let terminal = self.terminal.clone();
@@ -529,7 +544,11 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                     )
                     .await;
                     let outcome = match outcome {
-                        Ok(()) => {
+                        Ok(state) => {
+                            // **The accepted state is written before `finished`.** The launch reads
+                            // this slot and refuses a `finished` signal without it (Law 108): a sync
+                            // that did not produce an anchor cannot move the node to Running.
+                            *accepted_state.lock().await = Some(state);
                             report_restored_checkpoint(&approved_store, &target, log.as_ref()).await
                         }
                         Err(error) => Err(error),
@@ -667,10 +686,63 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     >,
     replay: Option<&RecoveryReplay>,
     approved_store: &ApprovedStore,
-) -> Result<(), String> {
+) -> Result<crate::engine::anchor::AcceptedState, String> {
     let source = LogSource::new("casper.engine.NodeSyncing");
     let replay =
         replay.ok_or_else(|| "LFS recovery has no independent replay context".to_string())?;
+
+    // **A target whose only member is the genesis block is the trust anchor, not a certificate
+    // target.** A genesis-only network has no finalized fringe to certify — the bootstrap's
+    // `/api/v1/checkpoint` answers 400 — and the genesis is agreed by the operator's manifest and
+    // this node's genesis configuration, not by a quorum that does not exist yet. A target above
+    // genesis still requires a certificate (`an_unsigned_sync_has_no_fallback_path`).
+    if fringe.hashes.len() == 1 && dag.get_representation().await.dag_set.is_empty() {
+        let candidate = fringe.hashes[0];
+        let block = fetch_block_body(
+            &block_store,
+            candidate,
+            incoming_blocks_rx,
+            comm_util.as_ref(),
+            log.as_ref(),
+        )
+        .await?;
+        if i64::from(block.block_number) == 0 {
+            if block.post_state_hash != fringe.state_hash {
+                return Err(format!(
+                    "the genesis body's post-state {} is not the target's {}",
+                    rchain_shared::base16::encode(block.post_state_hash.as_bytes()),
+                    rchain_shared::base16::encode(fringe.state_hash.as_bytes())
+                ));
+            }
+            put_block(&block_store, block.clone()).await?;
+            insert_genesis(dag.as_ref(), block.clone()).await?;
+            put_approved_block(approved_store, fringe.clone()).await?;
+            if let Some(store) = replay.checkpoint_store.as_ref() {
+                store.set_history_from(0).await?;
+            }
+            if let Err(e) = replay
+                .runtime
+                .publish_accepted_root(Blake2b256Hash::from_byte_array(
+                    block.post_state_hash.as_bytes(),
+                ))
+                .await
+            {
+                log.warn(source, &format!("could not publish the genesis root: {e}"));
+            }
+            log.info(
+                source,
+                "genesis-only network: accepted the genesis block and its state; no checkpoint \
+                 certificate is required below the first finalized height",
+            );
+            let pin = crate::engine::anchor::GenesisPin {
+                block: replay.expected_genesis.unwrap_or(block.block_hash),
+                post_state: block.post_state_hash,
+            };
+            return crate::engine::anchor::AcceptedState::from_genesis(pin, &block);
+        }
+        // A target above genesis: the body is now stored, so the certified path's genesis fetch is
+        // a store hit; continue with the certificate as usual.
+    }
 
     // **The certificate comes first** (sync/verification separation). The fringe a bootstrap offers
     // is an unsigned claim, and a state root is not acceptable on the strength of a message this
@@ -934,7 +1006,10 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
             entries.len()
         ),
     );
-    Ok(())
+    // **The accepted state: the anchor is the certificate and the root is its checkpoint root.**
+    // The validation window is filled by the certified-window unit; until then the sync hydrates the
+    // measured close history and this state carries an empty window (the launch does not use it yet).
+    crate::engine::anchor::AcceptedState::from_certificate(verified.clone(), BTreeSet::new())
 }
 
 /// **Fetch, verify and tie the certificate to the fringe the bootstrap served.**
@@ -1189,60 +1264,90 @@ async fn fetch_genesis_body(
     comm_util: &CommUtil,
     log: &dyn Log,
 ) -> Result<(), String> {
+    let block = fetch_block_body(block_store, genesis, incoming_blocks_rx, comm_util, log).await?;
+    if i64::from(block.block_number) != 0 {
+        return Err(format!(
+            "the body served for genesis {} is not that block (height {})",
+            genesis.to_hex(),
+            block.block_number
+        ));
+    }
+    log.info(
+        LogSource::new("casper.engine.NodeSyncing"),
+        &format!(
+            "genesis body {} fetched and content-verified",
+            genesis.to_hex()
+        ),
+    );
+    Ok(())
+}
+
+/// **Fetch one body by hash**, content-checked against the hash it was requested by. The genesis
+/// path adds the height-zero rule; the genesis-only target probe needs the generic form, because it
+/// must be able to ask for a target above genesis and then decide.
+async fn fetch_block_body(
+    block_store: &BlockStore,
+    requested: BlockHash,
+    incoming_blocks_rx: &mut tokio::sync::mpsc::Receiver<BlockMessage>,
+    comm_util: &CommUtil,
+    log: &dyn Log,
+) -> Result<BlockMessage, String> {
+    if let Some(block) = block_store
+        .get(&[requested])
+        .await?
+        .into_iter()
+        .flatten()
+        .next()
+    {
+        return Ok(block);
+    }
     // **The send is inside the deadline.** A blocked transport used to sit outside the receive
     // deadline, so the one body the certified path downloads could stall before the clock started.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    let requested = tokio::time::timeout(
+    let sent = tokio::time::timeout(
         deadline.saturating_duration_since(tokio::time::Instant::now()),
-        comm_util.request_lfs_block_from(&genesis, &[]),
+        comm_util.request_lfs_block_from(&requested, &[]),
     )
     .await;
-    if requested.is_err() {
+    if sent.is_err() {
         return Err(format!(
-            "the genesis body {} was requested but the request could not be sent within 30s",
-            genesis.to_hex()
+            "the body {} was requested but the request could not be sent within 30s",
+            requested.to_hex()
         ));
     }
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
             return Err(format!(
-                "the genesis body {} was requested but did not arrive within 30s",
-                genesis.to_hex()
+                "the body {} was requested but did not arrive within 30s",
+                requested.to_hex()
             ));
         }
         match tokio::time::timeout(remaining, incoming_blocks_rx.recv()).await {
             Ok(Some(block)) => {
-                if block.block_hash != genesis {
+                if block.block_hash != requested {
                     continue;
                 }
-                if i64::from(block.block_number) != 0
-                    || !crate::validate::format_of_fields(&block)
+                if !crate::validate::format_of_fields(&block)
                     || !crate::validate::block_hash(&block)
                 {
                     return Err(format!(
-                        "the body served for genesis {} is not that block (hash, height or field \
-                         format)",
-                        genesis.to_hex()
+                        "the body served for {} is not that block (hash or field format)",
+                        requested.to_hex()
                     ));
                 }
-                block_store.put(&[(genesis, block)]).await?;
+                block_store.put(&[(requested, block.clone())]).await?;
                 log.info(
                     LogSource::new("casper.engine.NodeSyncing"),
-                    &format!(
-                        "genesis body {} fetched and content-verified",
-                        genesis.to_hex()
-                    ),
+                    &format!("body {} fetched and content-verified", requested.to_hex()),
                 );
-                return Ok(());
+                return Ok(block);
             }
-            Ok(None) => {
-                return Err("the block ingress closed before the genesis arrived".to_string())
-            }
+            Ok(None) => return Err("the block ingress closed before the body arrived".to_string()),
             Err(_) => {
                 return Err(format!(
-                    "the genesis body {} did not arrive before the deadline",
-                    genesis.to_hex()
+                    "the body {} did not arrive before the deadline",
+                    requested.to_hex()
                 ))
             }
         }

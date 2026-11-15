@@ -43,9 +43,7 @@ impl TrustAnchor {
     /// The state root the node runs from.
     pub fn root(&self) -> Blake2b256Hash {
         match self {
-            TrustAnchor::Genesis(pin) => {
-                Blake2b256Hash::from_byte_array(pin.post_state.as_bytes())
-            }
+            TrustAnchor::Genesis(pin) => Blake2b256Hash::from_byte_array(pin.post_state.as_bytes()),
             TrustAnchor::Checkpoint { root, .. } => *root,
         }
     }
