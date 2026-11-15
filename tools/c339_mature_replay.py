@@ -30,6 +30,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -132,14 +133,82 @@ def measure_post_join(joiner_port: int, before: dict) -> dict:
         )
     except TimeoutError as exc:
         return {"error": str(exc), "deploy": deploy, "propose": propose}
+    # **The proposed block itself must be proven finalized.** A height increase can come from any
+    # block; the claim is that *this* block entered the finalized closure. The propose response names
+    # it; `/api/is-finalized/{hash}` answers for it.
+    proposed = _propose_hash(propose)
+    if not proposed:
+        return {
+            "error": "the propose response did not name a block hash",
+            "deploy": deploy,
+            "propose": propose,
+        }
+    observed_false = False
+    deadline = time.monotonic() + 180.0
+    while time.monotonic() < deadline:
+        verdict = _is_finalized(joiner_port, proposed)
+        if verdict is True:
+            return {
+                "height_advanced": True,
+                "finality_advanced": True,
+                "observed_height": advanced.get("maxObservedHeight"),
+                "finalized_height": finalized.get("finalizedHeight"),
+                "proposed_block_hash": proposed,
+                "proposed_block_finalized": True,
+                "deploy": deploy,
+                "propose": propose,
+            }
+        if verdict is False:
+            observed_false = True
+        time.sleep(5.0)
+    if observed_false:
+        return {
+            "height_advanced": True,
+            "finality_advanced": True,
+            "observed_height": advanced.get("maxObservedHeight"),
+            "finalized_height": finalized.get("finalizedHeight"),
+            "proposed_block_hash": proposed,
+            "proposed_block_finalized": False,
+            "deploy": deploy,
+            "propose": propose,
+        }
     return {
-        "height_advanced": True,
-        "finality_advanced": True,
-        "observed_height": advanced.get("maxObservedHeight"),
-        "finalized_height": finalized.get("finalizedHeight"),
+        "error": f"the joiner's is-finalized route did not answer for {proposed}",
+        "proposed_block_hash": proposed,
         "deploy": deploy,
         "propose": propose,
     }
+
+
+def _propose_hash(propose) -> str | None:
+    """The block hash the propose response names, from a string or `{"raw": ...}` answer."""
+    if isinstance(propose, dict):
+        text = propose.get("raw") or propose.get("result") or json.dumps(propose)
+    else:
+        text = "" if propose is None else str(propose)
+    match = re.search(r"([0-9a-fA-F]{64})", text)
+    return match.group(1).lower() if match else None
+
+
+def _is_finalized(port: int, block_hash: str) -> bool | None:
+    """`GET /api/is-finalized/{hash}`: True/False, or None when the route did not answer."""
+    try:
+        body = http_json(port, f"/api/is-finalized/{block_hash}")
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        json.JSONDecodeError,
+        ConnectionError,
+        ValueError,
+    ):
+        return None
+    if isinstance(body, bool):
+        return body
+    if isinstance(body, dict):
+        for key in ("finalized", "isFinalized", "value"):
+            if key in body:
+                return bool(body[key])
+    return None
 
 
 def _lp(value: bytes) -> bytes:
@@ -185,13 +254,28 @@ def certificate_fields(certificate) -> dict | None:
         digest = checkpoint_digest_hex(checkpoint)
     except (KeyError, TypeError, ValueError):
         digest = None
+    attestations = certificate.get("attestations") or []
+    naming = (
+        sum(
+            1
+            for attestation in attestations
+            if isinstance(attestation, dict)
+            and isinstance(attestation.get("checkpointDigest"), str)
+            and digest is not None
+            and attestation["checkpointDigest"].lower() == digest
+        )
+        if digest is not None
+        else 0
+    )
     return {
         "digest": digest,
         "anchor": checkpoint.get("anchor"),
         "anchor_height": checkpoint.get("anchorHeight"),
         "anchor_post_state": checkpoint.get("anchorPostState"),
         "metadata_root": checkpoint.get("metadataRoot"),
-        "attestations": len(certificate.get("attestations") or []),
+        "history_root": checkpoint.get("historyRoot"),
+        "attestations": len(attestations),
+        "attestations_naming_digest": naming,
     }
 
 
@@ -200,7 +284,9 @@ def checkpoint_acceptance(
     joiner_health: dict,
     bootstrap_finalized,
     joiner_certificate,
+    bootstrap_certificate,
     bootstrap_post_state,
+    quorum,
     restart: dict,
     post_join_progress,
     log_signals: dict,
@@ -218,10 +304,43 @@ def checkpoint_acceptance(
     joiner = certificate_fields(joiner_certificate)
     if joiner is None:
         return "INCONCLUSIVE", ["the joiner serves no checkpoint certificate"]
+    baseline = certificate_fields(bootstrap_certificate)
+    if baseline is None:
+        return "INCONCLUSIVE", ["the bootstrap's checkpoint certificate was not readable"]
     if bootstrap_post_state is None:
         return "INCONCLUSIVE", [
             "the bootstrap's post-state for the joiner's certified anchor was not readable"
         ]
+    # **A certificate is evidence only with its commitments and a signature that names it.**
+    if joiner["digest"] is None:
+        return "INCONCLUSIVE", [
+            "the joiner's certificate's canonical digest could not be recomputed"
+        ]
+    if not joiner["metadata_root"] or not joiner["history_root"]:
+        return "INCONCLUSIVE", [
+            "the joiner's certificate carries no metadata and validation-window commitment; an "
+            "uncommitted certificate cannot be a PASS"
+        ]
+    if joiner["attestations_naming_digest"] == 0:
+        return "INCONCLUSIVE", [
+            "no attestation names the recomputed canonical digest; the certificate's signatures "
+            "were not checked against this statement"
+        ]
+    if joiner["digest"] != baseline["digest"] or (
+        joiner["anchor"],
+        joiner["anchor_post_state"],
+    ) != (baseline["anchor"], baseline["anchor_post_state"]):
+        reasons.append(
+            "the joiner's certificate disagrees with the bootstrap's (digest, anchor or post-state)"
+        )
+    if not isinstance(quorum, dict) or quorum.get("supporting") is None or quorum.get("total") is None:
+        return "INCONCLUSIVE", [
+            "the joiner's quorum line (supporting of total stake signed) was not found"
+        ]
+    if 3 * int(quorum["supporting"]) <= 2 * int(quorum["total"]):
+        reasons.append(
+            f"the certificate is not quorate: {quorum['supporting']} of {quorum['total']} stake"
+        )
 
     if joiner_health.get("ready") is not True:
         reasons.append("the joiner is not ready")
@@ -246,10 +365,19 @@ def checkpoint_acceptance(
         return "INCONCLUSIVE", [
             f"post-join progress was not measured: {post_join_progress}"
         ]
-    if not post_join_progress.get("height_advanced"):
-        reasons.append("the joiner did not observe a post-join block")
-    if not post_join_progress.get("finality_advanced"):
-        reasons.append("the post-join block did not finalize")
+    # **The proposed block itself must finalize**, not merely a height increase: a node can observe
+    # a new height whose block never enters the finalized closure.
+    proposed = post_join_progress.get("proposed_block_hash")
+    if not proposed:
+        return "INCONCLUSIVE", [
+            "the propose response did not name the block, so its finality cannot be checked"
+        ]
+    if post_join_progress.get("proposed_block_finalized") is False:
+        reasons.append(f"the proposed block {proposed} did not finalize")
+    elif post_join_progress.get("proposed_block_finalized") is not True:
+        return "INCONCLUSIVE", [
+            f"the finality of the proposed block {proposed} was not measured"
+        ]
 
     if restart.get("ready") is not True:
         reasons.append("the joiner is not ready after restart")
@@ -520,6 +648,16 @@ def main() -> int:
 
     log_text = (raw / "joiner.log").read_text(errors="replace")
     baseline_fields = certificate_fields(bootstrap_certificate) or {}
+    # **The quorum line the joining node itself verified** (`<supporting> of <total> stake signed`).
+    # Python cannot check secp256k1; this line plus attestations naming the recomputed digest is the
+    # evidence class, and its absence is INCONCLUSIVE rather than a PASS.
+    quorum = None
+    quorum_match = re.search(r"(\d+) of (\d+) stake signed", log_text)
+    if quorum_match:
+        quorum = {
+            "supporting": int(quorum_match.group(1)),
+            "total": int(quorum_match.group(2)),
+        }
     result = {
         "tool": "c339_mature_replay.py",
         "join_mode": args.join_mode,
@@ -547,7 +685,12 @@ def main() -> int:
             "checkpoint": joiner_fields,
             "bootstrap_post_state": bootstrap_post_state,
             "metadata_committed": bool(joiner_fields and joiner_fields.get("metadata_root")),
+            "window_committed": bool(joiner_fields and joiner_fields.get("history_root")),
+            "attestations_naming_digest": (
+                None if joiner_fields is None else joiner_fields.get("attestations_naming_digest")
+            ),
         },
+        "quorum": quorum,
         "restart": restart,
         "post_join_progress": post_join_progress,
         "log_signals": {
@@ -576,7 +719,9 @@ def main() -> int:
         joiner_health=restored,
         bootstrap_finalized=bootstrap_finalized,
         joiner_certificate=joiner_certificate,
+        bootstrap_certificate=bootstrap_certificate,
         bootstrap_post_state=bootstrap_post_state,
+        quorum=quorum,
         restart=restart,
         post_join_progress=post_join_progress,
         log_signals=result["log_signals"],

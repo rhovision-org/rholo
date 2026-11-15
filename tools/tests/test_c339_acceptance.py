@@ -25,23 +25,35 @@ c339 = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(c339)
 
 
-def certificate(anchor: str, post: str, height: int, root=None) -> dict:
-    return {
-        "checkpoint": {
-            "shardId": "root",
-            "anchor": anchor,
-            "anchorHeight": height,
-            "anchorPostState": post,
-            "fringeHashes": [anchor],
-            "parentDigest": None,
-            "epoch": 0,
-            "metadataRoot": root,
-        },
-        "attestations": [],
+def certificate(
+    anchor: str,
+    post: str,
+    height: int,
+    root="03" * 32,
+    history="04" * 32,
+    attestations=True,
+) -> dict:
+    checkpoint = {
+        "shardId": "root",
+        "anchor": anchor,
+        "anchorHeight": height,
+        "anchorPostState": post,
+        "fringeHashes": [anchor],
+        "parentDigest": None,
+        "epoch": 0,
+        "metadataRoot": root,
+        "historyRoot": history,
     }
+    certificate = {"checkpoint": checkpoint, "attestations": []}
+    if attestations:
+        certificate["attestations"] = [
+            {"checkpointDigest": c339.checkpoint_digest_hex(checkpoint)}
+        ]
+    return certificate
 
 
 def accepted(**overrides) -> tuple[str, list[str]]:
+    joiner_certificate = certificate("01" * 32, "02" * 32, 10)
     fields = {
         "joiner_health": {
             "ready": True,
@@ -49,8 +61,10 @@ def accepted(**overrides) -> tuple[str, list[str]]:
             "finalizedHeight": 10,
         },
         "bootstrap_finalized": 10,
-        "joiner_certificate": certificate("01" * 32, "02" * 32, 10),
+        "joiner_certificate": joiner_certificate,
+        "bootstrap_certificate": joiner_certificate,
         "bootstrap_post_state": "02" * 32,
+        "quorum": {"supporting": 3, "total": 3},
         "restart": {
             "ready": True,
             "certified_anchor_height": 10,
@@ -59,6 +73,8 @@ def accepted(**overrides) -> tuple[str, list[str]]:
         "post_join_progress": {
             "height_advanced": True,
             "finality_advanced": True,
+            "proposed_block_hash": "ab" * 32,
+            "proposed_block_finalized": True,
         },
         "log_signals": {
             "replayed_none": True,
@@ -155,16 +171,70 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(verdict, "FAIL")
         self.assertTrue(any("anchor" in reason for reason in reasons))
 
-    def test_a_missing_post_join_block_fails(self) -> None:
+    def test_a_missing_proposed_block_identity_is_inconclusive(self) -> None:
+        # A height increase without the proposed block's hash cannot prove which block finalized.
         verdict, reasons = accepted(
-            post_join_progress={"height_advanced": False, "finality_advanced": False}
+            post_join_progress={"height_advanced": True, "finality_advanced": True}
+        )
+        self.assertEqual(verdict, "INCONCLUSIVE")
+        self.assertTrue(any("did not name the block" in reason for reason in reasons))
+
+    def test_a_proposed_block_that_did_not_finalize_fails(self) -> None:
+        verdict, reasons = accepted(
+            post_join_progress={
+                "height_advanced": True,
+                "finality_advanced": True,
+                "proposed_block_hash": "ab" * 32,
+                "proposed_block_finalized": False,
+            }
         )
         self.assertEqual(verdict, "FAIL")
-        self.assertTrue(any("post-join block" in reason for reason in reasons))
+        self.assertTrue(any("did not finalize" in reason for reason in reasons))
 
     def test_an_unmeasured_post_join_arm_is_inconclusive(self) -> None:
         verdict, _ = accepted(post_join_progress={"error": "propose refused"})
         self.assertEqual(verdict, "INCONCLUSIVE")
+
+    def test_no_attestation_naming_the_digest_is_inconclusive(self) -> None:
+        verdict, reasons = accepted(
+            joiner_certificate=certificate(
+                "01" * 32, "02" * 32, 10, attestations=False
+            )
+        )
+        self.assertEqual(verdict, "INCONCLUSIVE")
+        self.assertTrue(any("attestation" in reason for reason in reasons))
+
+    def test_a_certificate_without_commitments_is_inconclusive(self) -> None:
+        verdict, reasons = accepted(
+            joiner_certificate=certificate(
+                "01" * 32, "02" * 32, 10, root=None, history=None
+            )
+        )
+        self.assertEqual(verdict, "INCONCLUSIVE")
+        self.assertTrue(any("commitment" in reason for reason in reasons))
+
+    def test_a_certificate_that_disagrees_with_the_bootstrap_fails(self) -> None:
+        other = certificate("01" * 32, "02" * 32, 10, root="05" * 32)
+        verdict, reasons = accepted(bootstrap_certificate=other)
+        self.assertEqual(verdict, "FAIL")
+        self.assertTrue(any("disagrees with the bootstrap" in r for r in reasons))
+
+    def test_a_below_quorum_certificate_fails(self) -> None:
+        verdict, reasons = accepted(quorum={"supporting": 2, "total": 3})
+        self.assertEqual(verdict, "FAIL")
+        self.assertTrue(any("not quorate" in reason for reason in reasons))
+
+    def test_an_absent_quorum_line_is_inconclusive(self) -> None:
+        verdict, _ = accepted(quorum=None)
+        self.assertEqual(verdict, "INCONCLUSIVE")
+
+    def test_the_propose_response_names_the_block_hash(self) -> None:
+        named = "cd" * 32
+        self.assertEqual(
+            c339._propose_hash({"raw": f"Block {named} added to the DAG"}), named
+        )
+        self.assertEqual(c339._propose_hash(f"Block ({named.upper()})"), named)
+        self.assertIsNone(c339._propose_hash({"raw": "Success!"}))
 
     def test_a_restart_that_loses_the_certified_anchor_fails(self) -> None:
         verdict, reasons = accepted(

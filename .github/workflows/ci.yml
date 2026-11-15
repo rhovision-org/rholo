@@ -125,6 +125,11 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      # The benchmark's verdict predicate is a tool, not prose: its digest goldens, certificate
+      # evidence and post-join finality checks are pinned here (review R4).
+      - name: C339 mature-join acceptance predicate tests
+        run: python3 tools/tests/test_c339_acceptance.py
+
       - name: Run Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings $CLIPPY_DEBT
 
