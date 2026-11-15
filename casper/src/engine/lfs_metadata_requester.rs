@@ -241,7 +241,24 @@ async fn ask_peers(
     if let Some(bootstrap) = &conf.bootstrap {
         chosen.push(bootstrap.clone());
     }
-    let connected = comm_util.connected_peers().await;
+    // **A connections read that never returns must not stop the walk.** The bootstrap is known from
+    // the configuration; the connected set is only the fan-out. A writer holding the connections
+    // cell (a discovery cycle) left the walker awaiting this read with no round timeout and no log,
+    // which is how a 2,175-header walk froze silently.
+    let connected =
+        match tokio::time::timeout(METADATA_ROUND_TIMEOUT, comm_util.connected_peers()).await {
+            Ok(peers) => peers,
+            Err(_) => {
+                log.warn(
+                    LogSource::new("casper.engine.LfsMetadataRequester"),
+                    &format!(
+                        "metadata walk: the connections read did not return within \
+                     {METADATA_ROUND_TIMEOUT:?}; asking the bootstrap only this round"
+                    ),
+                );
+                Vec::new()
+            }
+        };
     for peer in connected {
         if chosen.len() > METADATA_FANOUT {
             break;
