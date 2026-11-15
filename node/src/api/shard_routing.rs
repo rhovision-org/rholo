@@ -381,6 +381,34 @@ impl BlockApi for ShardRoutingBlockApi {
         self.primary_api().finality_attestation(nonce).await
     }
 
+    /// **The checkpoint surfaces are the primary's** (sync/verification separation), for the same
+    /// reason as the finality attestation beside it: a checkpoint names one finalized state, and the
+    /// client route has no shard argument. A wrapper that left these to the trait defaults would
+    /// answer "this surface holds no checkpoint certificate" on a node that certifies every block —
+    /// which is exactly what the first five-thousand-height join measured.
+    async fn current_checkpoint(
+        &self,
+    ) -> ApiErr<rchain_models::casper::protocol::checkpoint::Checkpoint> {
+        self.primary_api().current_checkpoint().await
+    }
+
+    async fn checkpoint_certificate(
+        &self,
+        digest: Option<&str>,
+    ) -> ApiErr<rchain_models::casper::protocol::checkpoint::CheckpointCertificate> {
+        self.primary_api().checkpoint_certificate(digest).await
+    }
+
+    async fn checkpoint_attestation(
+        &self,
+    ) -> ApiErr<rchain_models::casper::protocol::checkpoint::CheckpointAttestation> {
+        self.primary_api().checkpoint_attestation().await
+    }
+
+    async fn history_floor(&self) -> i64 {
+        self.primary_api().history_floor().await
+    }
+
     async fn is_finalized(&self, hash: &str) -> ApiErr<bool> {
         let hash = hash.to_string();
         self.probe(move |api| {
@@ -471,6 +499,34 @@ mod tests {
     #[async_trait]
     impl BlockApi for StubApi {
         // --- the methods the router forwards to the primary ---
+        async fn current_checkpoint(
+            &self,
+        ) -> ApiErr<rchain_models::casper::protocol::checkpoint::Checkpoint> {
+            self.record("current_checkpoint");
+            Ok(rchain_models::casper::protocol::checkpoint::Checkpoint {
+                shard_id: self.shard_id.clone(),
+                anchor: "00".repeat(32),
+                anchor_height: 1,
+                anchor_post_state: "11".repeat(32),
+                fringe_hashes: vec!["00".repeat(32)],
+                parent_digest: None,
+                epoch: 0,
+            })
+        }
+
+        async fn checkpoint_certificate(
+            &self,
+            _digest: Option<&str>,
+        ) -> ApiErr<rchain_models::casper::protocol::checkpoint::CheckpointCertificate> {
+            self.record("checkpoint_certificate");
+            Ok(
+                rchain_models::casper::protocol::checkpoint::CheckpointCertificate {
+                    checkpoint: self.current_checkpoint().await?,
+                    attestations: Vec::new(),
+                },
+            )
+        }
+
         async fn status(&self) -> Status {
             self.record("status");
             Status {
@@ -805,6 +861,26 @@ mod tests {
             primary,
             child,
         )
+    }
+
+    /// **The checkpoint surfaces reach the primary, not the trait defaults.** A wrapper that left
+    /// them to the default answered "this surface holds no checkpoint certificate" on a node that
+    /// certifies every block; the first mature join measured exactly that (a 400 from the bootstrap
+    /// and a sync that exhausted its retries). The stub answers a sentinel, so an inherited default
+    /// is visible as an error rather than as an empty success.
+    #[tokio::test]
+    async fn the_checkpoint_surfaces_are_the_primarys() {
+        let (api, primary, _child) = router();
+        let certificate = api
+            .checkpoint_certificate(None)
+            .await
+            .expect("the primary answers the certificate");
+        assert_eq!(certificate.checkpoint.shard_id, "/root");
+        assert!(primary.calls().contains(&"checkpoint_certificate"));
+        assert!(
+            api.current_checkpoint().await.is_ok(),
+            "the statement forwards too"
+        );
     }
 
     #[tokio::test]
