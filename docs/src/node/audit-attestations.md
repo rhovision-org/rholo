@@ -131,7 +131,8 @@ then no ZK claim is made.
 
 ## Evidence
 
-The local-devnet run (`spec/audit/evidence/n-audit-chain-20261115/`) shows two observers auditing
-the same certified checkpoint, one attestation verified against the other's local report, and a
-second attestation chained to the first. It is evidence for the mechanism, not an independent
-implementation and not a live-network acceptance.
+The local-devnet run (`spec/audit/evidence/n-audit-chain-20261115-r1r5/`) shows the service
+reproducing two checkpoints, each signed claim verified offline against its own local report, and the
+second claim chained to the first — both entering the node's accepted store with no conflict
+recorded. It is evidence for the mechanism, not an independent implementation and not a live-network
+acceptance; the run has one signer and no restart control.

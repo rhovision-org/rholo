@@ -1,0 +1,16 @@
+{
+  "raw/accepted.json": "eb0db4b210aa1a010400daeb86dc95598a44617fd19af8a8d37dc3321ebbca3c",
+  "raw/binary.sha256": "4cce874e3a22bedd1d8a2b13382c0dc6b347c5faf0e33cf32237cbc4566abd54",
+  "raw/checkpoint.json": "3f62e122b06d00395c61d2e34bc8f29cbf03bf4a345725272ce87430496823a2",
+  "raw/commands.txt": "de128d0a60732ec75453e3b24bfd80ed4127bf0d4a921158e86073385de73137",
+  "raw/conflicts.json": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "raw/r1r5-ev1-attestation.json": "dc2a54deee3f246f23ef02bede47d9fe5af7d7088c93594ef25b017748c9cb44",
+  "raw/r1r5-ev1-report.json": "a9f41b1d80948741d7de5ff0c69d7a5362496e36b281903561cdcac0da65493e",
+  "raw/r1r5-ev1-request-response.json": "9884d5d1905ce526212334bc07125a8a9575be839defbc3858b421a23750a97f",
+  "raw/r1r5-ev1-verify-line.txt": "aa800f380dce6d77ed854a6be5f2cd34a1936dd777a45b25af94660e531c1313",
+  "raw/r1r5-ev2-attestation.json": "8ad8e0399ad5b968d5d8a7e0e303dad3d88a92be12666e784e3f743265998088",
+  "raw/r1r5-ev2-report.json": "e153c5fee6640ea6f11cf45fede8cc4343833d8199c01db5ec75c54d0c64b615",
+  "raw/r1r5-ev2-request-response.json": "cd023101f08cc47a79c7d24467548385a7f2bb9285fe588ac5d9c5c7965b3999",
+  "raw/r1r5-ev2-verify-line.txt": "6479c76a273fe9ae505b52d7e4724dcc2b8abf58b52972774c0b99ea42c14397",
+  "raw/status.json": "d7b0f1b78575ae77820eb15abf4d074e794c69525d17d463df0c787cff1e8bac"
+}

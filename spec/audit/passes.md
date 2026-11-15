@@ -13185,8 +13185,9 @@ evidence, never the closure.
 - **The audit reads every committed header, not just the window.** The metadata commitment now covers
   each ancestor's fringe claim, so the audit's header reads are O(ancestor closure); a header-range
   batch is a performance follow-up, not a trust change.
-- **The signed-claim evidence is local.** `spec/audit/evidence/n-audit-chain-20261115/` records two
-  AGREE audits on a local devnet (anchors 15 and 44), a claim verified offline at sequence 0, a
-  second claim chained to it at sequence 1 and verified against its head, and both accepted with no
-  conflict. It is one signer on one short chain with the checker sharing the producer's codebase —
-  a witness for the mechanism, not a live or independent acceptance.
+- **The signed-claim evidence is local.** `spec/audit/evidence/n-audit-chain-20261115-r1r5/` records
+  two AGREE audits on a local devnet at the R1–R5 source (anchors 21 and 50), a claim verified
+  offline at sequence 0, a second claim chained to it at sequence 1 and verified against its head,
+  and both accepted with no conflict. It has one signer on one short chain with the checker sharing
+  the producer's codebase, and it carries no restart control — a witness for the mechanism, not a
+  live or independent acceptance. The pre-R1/R3 pack is retained and marked superseded.
