@@ -19,9 +19,7 @@ use rchain_models::ast::Par;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
-use rchain_models::casper::protocol::casper_message::{
-    BlockHeader, BlockMessage, SignedDeployData,
-};
+use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
 use rchain_models::casper::protocol::checkpoint::{
     Checkpoint, CheckpointAttestation, CheckpointCertificate, VALIDATION_WINDOW_BLOCKS,
 };
@@ -572,9 +570,12 @@ impl BlockApiImpl {
                     hash.to_hex()
                 )
             })?;
-            headers.push(header_from_metadata(&metadata));
+            headers.push(metadata.to_header(false));
             stack.extend(metadata.justifications.iter().copied());
         }
+        // The commitment now covers each header's fringe claim; check the claims are consistent
+        // before signing a root over them.
+        crate::checkpoint::check_committed_headers(headers.iter()).map_err(|e| e.to_string())?;
         let metadata = rchain_models::casper::protocol::checkpoint::metadata_root(&headers);
         let window = rchain_models::casper::protocol::checkpoint::validation_window_root(&headers);
         Ok((metadata, window))
@@ -604,27 +605,6 @@ impl BlockApiImpl {
                 hash.to_hex()
             )
         })
-    }
-}
-
-/// **The header a stored metadata record describes.** The commitment projection reads only the
-/// fields a body carries; `fringe`, `fringe_state_hash` and `body_available` are carried here for
-/// completeness of the type but are not hashed (see `header_commitment_bytes`).
-fn header_from_metadata(metadata: &BlockMetadata) -> BlockHeader {
-    BlockHeader {
-        block_hash: metadata.block_hash,
-        block_num: metadata.block_num,
-        sender: metadata.sender,
-        seq_num: metadata.seq_num,
-        justifications: metadata.justifications.clone(),
-        bonds_map: metadata.bonds_map.clone(),
-        fringe: metadata.fringe.clone(),
-        fringe_state_hash: metadata.fringe_state_hash,
-        pre_state_hash: metadata.pre_state_hash,
-        post_state_hash: metadata.post_state_hash,
-        body_available: false,
-        sig: metadata.sig.clone(),
-        sig_algorithm: metadata.sig_algorithm.clone(),
     }
 }
 
@@ -1233,12 +1213,15 @@ impl BlockApi for BlockApiImpl {
             .lookup(&hash)
             .await?
             .ok_or_else(|| format!("block {} is not in this node's DAG", hash.to_hex()))?;
+        let mut fringe: Vec<String> = meta.fringe.iter().map(|hash| hash.to_hex()).collect();
+        fringe.sort();
         Ok(HeaderCommitment {
             block_hash: meta.block_hash.to_hex(),
             height: i64::from(meta.block_num),
             pre_state_hash: base16::encode(meta.pre_state_hash.as_bytes()),
             post_state_hash: base16::encode(meta.post_state_hash.as_bytes()),
             fringe_state_hash: base16::encode(meta.fringe_state_hash.as_bytes()),
+            fringe,
         })
     }
 

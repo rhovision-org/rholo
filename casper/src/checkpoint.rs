@@ -24,6 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::BlockHeader;
 use rchain_models::casper::protocol::checkpoint::{
     Checkpoint, CheckpointAttestation, CheckpointCertificate,
@@ -253,6 +254,129 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
         }
     }
     Ok(Blake2b256Hash::create(&buf))
+}
+
+/// **The shape and self-consistency of the headers the metadata commitment covers.**
+///
+/// The commitment now includes each header's fringe membership and fringe state root, so the set
+/// must be checked for the claims those fields make: one parentless genesis with an empty fringe and
+/// `fringe_state_hash == pre_state_hash` (the `insert_genesis` invariant); every non-genesis header
+/// has a committed fringe state root (zero is the absence marker); every fringe member is an older
+/// header in the set; and two entries for one hash agree in every projected field. A violation is a
+/// refusal before the commitment is computed, not a root over an inconsistent set.
+pub fn check_committed_headers<'a>(
+    headers: impl IntoIterator<Item = &'a BlockHeader>,
+) -> Result<(), CheckpointError> {
+    let mut by_hash: BTreeMap<BlockHash, &BlockHeader> = BTreeMap::new();
+    let mut genesis: Option<&BlockHeader> = None;
+    for header in headers {
+        if let Some(previous) = by_hash.get(&header.block_hash) {
+            if rchain_models::casper::protocol::checkpoint::header_commitment_bytes(previous)
+                != rchain_models::casper::protocol::checkpoint::header_commitment_bytes(header)
+            {
+                return Err(CheckpointError::Malformed(format!(
+                    "two headers disagree for block {}",
+                    header.block_hash.to_hex()
+                )));
+            }
+            continue;
+        }
+        if i64::from(header.block_num) == 0 {
+            if genesis.replace(header).is_some() {
+                return Err(CheckpointError::Malformed(
+                    "the committed header set has more than one height-zero block".to_string(),
+                ));
+            }
+        }
+        by_hash.insert(header.block_hash, header);
+    }
+    let Some(genesis) = genesis else {
+        return Err(CheckpointError::Malformed(
+            "the committed header set has no height-zero block".to_string(),
+        ));
+    };
+    if !genesis.justifications.is_empty()
+        || !genesis.fringe.is_empty()
+        || genesis.fringe_state_hash != genesis.pre_state_hash
+    {
+        return Err(CheckpointError::Malformed(format!(
+            "the genesis header {} is not the parentless, empty-fringe, pre-state-rooted block \
+             this node's genesis rule requires",
+            genesis.block_hash.to_hex()
+        )));
+    }
+    let zero = rchain_models::block::state_hash::StateHash::new([0u8; 32]);
+    for header in by_hash.values() {
+        if i64::from(header.block_num) == 0 {
+            continue;
+        }
+        if header.fringe_state_hash == zero {
+            return Err(CheckpointError::Malformed(format!(
+                "block {} commits no fringe state root (zero is the absence marker)",
+                header.block_hash.to_hex()
+            )));
+        }
+        for member in &header.fringe {
+            match by_hash.get(member) {
+                Some(member_header) if member_header.block_num < header.block_num => {}
+                Some(_) => {
+                    return Err(CheckpointError::Malformed(format!(
+                        "block {} names fringe member {} at a height that is not older",
+                        header.block_hash.to_hex(),
+                        member.to_hex()
+                    )))
+                }
+                None => {
+                    return Err(CheckpointError::Malformed(format!(
+                        "block {} names fringe member {}, which the committed set does not hold",
+                        header.block_hash.to_hex(),
+                        member.to_hex()
+                    )))
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// **The genesis header must agree with the genesis body.** The metadata set excludes genesis, so
+/// its fringe fields are not covered by `metadataRoot`; this is the separate check. Every
+/// body-derived field is compared, and the `insert_genesis` invariant (empty fringe,
+/// `fringe_state_hash == pre_state_hash`) is required.
+pub fn verify_genesis_header(
+    header: &BlockHeader,
+    body: &rchain_models::casper::protocol::casper_message::BlockMessage,
+) -> Result<(), String> {
+    if header.block_hash != body.block_hash
+        || i64::from(header.block_num) != 0
+        || header.sender != body.sender
+        || header.seq_num != body.seq_num
+        || header.justifications != body.justifications.iter().copied().collect()
+        || header.bonds_map != body.bonds
+        || header.pre_state_hash != body.pre_state_hash
+        || header.post_state_hash != body.post_state_hash
+        || header.sig != body.sig
+        || header.sig_algorithm != body.sig_algorithm
+    {
+        return Err(format!(
+            "the genesis header {} does not agree with the downloaded genesis body {}",
+            header.block_hash.to_hex(),
+            body.block_hash.to_hex()
+        ));
+    }
+    if !header.fringe.is_empty() {
+        return Err(format!(
+            "the genesis header {} names a fringe",
+            header.block_hash.to_hex()
+        ));
+    }
+    if header.fringe_state_hash != body.pre_state_hash {
+        return Err(format!(
+            "the genesis header's fringe state root is not its pre-state root (block {})",
+            header.block_hash.to_hex()
+        ));
+    }
+    Ok(())
 }
 
 /// **Recompute the validation-window commitment from the headers a joiner walked.** The statement
@@ -499,6 +623,7 @@ mod tests {
     }
 
     fn header(height: i64, hash_byte: u8) -> BlockHeader {
+        let pre = rchain_models::block::state_hash::StateHash::new([4u8; 32]);
         BlockHeader {
             block_hash: rchain_models::block_hash::BlockHash::new([hash_byte; 32]),
             block_num: rchain_shared::refined::BlockHeight::try_from(height).expect("height"),
@@ -507,8 +632,14 @@ mod tests {
             justifications: BTreeSet::new(),
             bonds_map: BTreeMap::new(),
             fringe: BTreeSet::new(),
-            fringe_state_hash: rchain_models::block::state_hash::StateHash::new([3u8; 32]),
-            pre_state_hash: rchain_models::block::state_hash::StateHash::new([4u8; 32]),
+            // Genesis carries the insert-genesis invariant; every other header commits a fringe
+            // state root distinct from its pre-state.
+            fringe_state_hash: if height == 0 {
+                pre
+            } else {
+                rchain_models::block::state_hash::StateHash::new([3u8; 32])
+            },
+            pre_state_hash: pre,
             post_state_hash: rchain_models::block::state_hash::StateHash::new([5u8; 32]),
             body_available: false,
             sig: vec![1, 2, 3],
@@ -1008,6 +1139,111 @@ mod tests {
             verify_metadata_root(&legacy, [&genesis, &child]),
             Err(CheckpointError::MissingMetadataRoot)
         ));
+    }
+
+    /// **Review R1 — the per-header fringe claim is committed.** A changed recent fringe member, a
+    /// changed older fringe state root and a swap of two recent fringe states each change the
+    /// metadata root. The window is a *set*, so the swap can leave it unchanged; the per-header
+    /// commitment is what detects it. `body_available` stays a transport detail.
+    #[test]
+    fn the_fringe_claim_is_committed_per_header() {
+        use rchain_models::casper::protocol::checkpoint::{metadata_root, validation_window_roots};
+
+        let genesis = header(0, 1);
+        let mut recent = header(1, 2);
+        recent.fringe = BTreeSet::from([genesis.block_hash]);
+        recent.fringe_state_hash = rchain_models::block::state_hash::StateHash::new([7u8; 32]);
+        let mut older = header(2, 3);
+        older.fringe_state_hash = rchain_models::block::state_hash::StateHash::new([8u8; 32]);
+        let base = metadata_root([&genesis, &recent, &older]);
+
+        let mut changed_member = recent.clone();
+        changed_member.fringe.insert(BlockHash::new([9u8; 32]));
+        assert_ne!(
+            base,
+            metadata_root([&genesis, &changed_member, &older]),
+            "a fringe member is committed"
+        );
+
+        let mut changed_older = older.clone();
+        changed_older.fringe_state_hash =
+            rchain_models::block::state_hash::StateHash::new([9u8; 32]);
+        assert_ne!(
+            base,
+            metadata_root([&genesis, &recent, &changed_older]),
+            "an older fringe state root is committed"
+        );
+
+        let mut swapped_recent = recent.clone();
+        swapped_recent.fringe_state_hash = older.fringe_state_hash;
+        let mut swapped_older = older.clone();
+        swapped_older.fringe_state_hash = recent.fringe_state_hash;
+        assert_ne!(
+            base,
+            metadata_root([&genesis, &swapped_recent, &swapped_older]),
+            "a transposition of two fringe states is committed"
+        );
+        assert_eq!(
+            validation_window_roots([&genesis, &recent, &older]),
+            validation_window_roots([&genesis, &swapped_recent, &swapped_older]),
+            "the window is a set; the per-header commitment is what detects the swap"
+        );
+
+        let mut transport = recent.clone();
+        transport.body_available = true;
+        assert_eq!(
+            base,
+            metadata_root([&genesis, &transport, &older]),
+            "body availability is a per-peer transport detail"
+        );
+    }
+
+    #[test]
+    fn a_committed_header_set_with_an_absent_fringe_member_is_refused() {
+        let genesis = header(0, 1);
+        let mut child = header(1, 2);
+        child.fringe = BTreeSet::from([BlockHash::new([9u8; 32])]);
+        assert!(check_committed_headers([&genesis, &child]).is_err());
+    }
+
+    #[test]
+    fn a_genesis_header_that_breaks_the_insert_genesis_invariant_is_refused() {
+        let mut genesis = header(0, 1);
+        genesis.fringe_state_hash = rchain_models::block::state_hash::StateHash::new([9u8; 32]);
+        assert!(check_committed_headers([&genesis]).is_err());
+    }
+
+    #[test]
+    fn the_genesis_header_must_agree_with_its_body() {
+        use rchain_models::casper::protocol::casper_message::{BlockMessage, RholangState};
+
+        let genesis = header(0, 1);
+        let body = BlockMessage {
+            version: 1,
+            shard_id: "root".to_string(),
+            block_hash: genesis.block_hash,
+            block_number: genesis.block_num,
+            sender: genesis.sender,
+            seq_num: genesis.seq_num,
+            pre_state_hash: genesis.pre_state_hash,
+            post_state_hash: genesis.post_state_hash,
+            justifications: Vec::new(),
+            bonds: BTreeMap::new(),
+            rejected_deploys: BTreeSet::new(),
+            rejected_blocks: BTreeSet::new(),
+            rejected_senders: BTreeSet::new(),
+            state: RholangState::default(),
+            sig_algorithm: genesis.sig_algorithm.clone(),
+            sig: genesis.sig.clone(),
+            timestamp: 0,
+        };
+        assert!(verify_genesis_header(&genesis, &body).is_ok());
+        let mut fringe = genesis.clone();
+        fringe.fringe.insert(BlockHash::new([9u8; 32]));
+        assert!(verify_genesis_header(&fringe, &body).is_err());
+        let mut state = genesis.clone();
+        state.fringe_state_hash = rchain_models::block::state_hash::StateHash::new([9u8; 32]);
+        assert!(verify_genesis_header(&state, &body).is_err());
     }
 
     /// **The validation window is committed, and only the committed window validates.** The

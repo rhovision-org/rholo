@@ -503,6 +503,165 @@ pub async fn run(
                 return Ok(report);
             }
         };
+        // **The commitment covers the fringe claim too, and a body carries neither the fringe
+        // membership nor its state root.** Hydrate every closure header from the node's header
+        // route and check the route's body-derived fields against the body it served. A header that
+        // cannot be read is missing evidence (INCOMPLETE); a served header that disagrees with the
+        // body it came with is a disagreement.
+        for header in closure.iter_mut() {
+            let height = i64::from(header.block_num);
+            let hash = header.block_hash.to_hex();
+            let info = match fetch_header_commitment(&client, base, &hash).await {
+                Ok(info) => info,
+                Err(e) => {
+                    return Ok(incomplete(
+                        &verified,
+                        height,
+                        format!("the committed header {hash} could not be read: {e}"),
+                    ))
+                }
+            };
+            if !info.block_hash.eq_ignore_ascii_case(&hash) || info.height != height {
+                return Ok(incomplete(
+                    &verified,
+                    height,
+                    format!(
+                        "the header route answered {} at height {} for the requested {hash} at \
+                         {height}; this node cannot establish the committed set",
+                        info.block_hash, info.height
+                    ),
+                ));
+            }
+            let route_pre = base16::decode(&info.pre_state_hash).and_then(|bytes| {
+                rchain_models::block::state_hash::StateHash::try_from(bytes.as_slice()).ok()
+            });
+            let route_post = base16::decode(&info.post_state_hash).and_then(|bytes| {
+                rchain_models::block::state_hash::StateHash::try_from(bytes.as_slice()).ok()
+            });
+            if route_pre != Some(header.pre_state_hash)
+                || route_post != Some(header.post_state_hash)
+            {
+                let report = AuditReport {
+                    verdict: "DISAGREE".to_string(),
+                    checkpoint_digest: verified.digest.to_hex(),
+                    anchor: anchor.to_hex(),
+                    anchor_height: certificate.checkpoint.anchor_height,
+                    shard_id: certificate.checkpoint.shard_id.clone(),
+                    claimed_root: certificate.checkpoint.anchor_post_state.clone(),
+                    metadata_root: certificate.checkpoint.metadata_root.clone(),
+                    history_root: certificate.checkpoint.history_root.clone(),
+                    derived_root: None,
+                    replay_head: replay_head.clone(),
+                    blocks: heights.values().map(|set| set.len()).sum(),
+                    metadata_committed,
+                    window_committed,
+                    reason: Some(format!(
+                        "the header route's state roots for {hash} disagree with the body this node \
+                         served"
+                    )),
+                };
+                write_report(&request.out, &report).await?;
+                return Ok(report);
+            }
+            let mut fringe = BTreeSet::new();
+            for member in &info.fringe {
+                match base16::decode(member)
+                    .and_then(|bytes| BlockHash::try_from(bytes.as_slice()).ok())
+                {
+                    Some(member) => {
+                        fringe.insert(member);
+                    }
+                    None => {
+                        return Ok(incomplete(
+                            &verified,
+                            height,
+                            format!("the fringe member {member} of {hash} is not a block hash"),
+                        ))
+                    }
+                }
+            }
+            header.fringe = fringe;
+            let Some(bytes) = base16::decode(&info.fringe_state_hash) else {
+                return Ok(incomplete(
+                    &verified,
+                    height,
+                    format!("the fringe state root of {hash} is not base16"),
+                ));
+            };
+            match rchain_models::block::state_hash::StateHash::try_from(bytes.as_slice()) {
+                Ok(root) => header.fringe_state_hash = root,
+                Err(e) => {
+                    return Ok(incomplete(
+                        &verified,
+                        height,
+                        format!("the fringe state root of {hash} is not a state root: {e}"),
+                    ))
+                }
+            }
+        }
+        if let Err(e) = rchain_casper::checkpoint::check_committed_headers(closure.iter()) {
+            let report = AuditReport {
+                verdict: "DISAGREE".to_string(),
+                checkpoint_digest: verified.digest.to_hex(),
+                anchor: anchor.to_hex(),
+                anchor_height: certificate.checkpoint.anchor_height,
+                shard_id: certificate.checkpoint.shard_id.clone(),
+                claimed_root: certificate.checkpoint.anchor_post_state.clone(),
+                metadata_root: certificate.checkpoint.metadata_root.clone(),
+                history_root: certificate.checkpoint.history_root.clone(),
+                derived_root: None,
+                replay_head: replay_head.clone(),
+                blocks: heights.values().map(|set| set.len()).sum(),
+                metadata_committed,
+                window_committed,
+                reason: Some(format!("the committed header set is inconsistent: {e}")),
+            };
+            write_report(&request.out, &report).await?;
+            return Ok(report);
+        }
+        // **The genesis header is checked against its body separately.** Genesis is excluded from
+        // the metadata set, so its fringe fields are not covered by the commitment.
+        if let Some(genesis_header) = closure
+            .iter()
+            .find(|header| i64::from(header.block_num) == 0)
+        {
+            let body = store
+                .get(&[genesis_header.block_hash])
+                .await
+                .ok()
+                .and_then(|bodies| bodies.into_iter().flatten().next());
+            let Some(body) = body else {
+                return Ok(incomplete(
+                    &verified,
+                    0,
+                    format!(
+                        "the genesis body {} is not in the staging store",
+                        genesis_header.block_hash.to_hex()
+                    ),
+                ));
+            };
+            if let Err(e) = rchain_casper::checkpoint::verify_genesis_header(genesis_header, &body)
+            {
+                let report = AuditReport {
+                    verdict: "DISAGREE".to_string(),
+                    checkpoint_digest: verified.digest.to_hex(),
+                    anchor: anchor.to_hex(),
+                    anchor_height: certificate.checkpoint.anchor_height,
+                    shard_id: certificate.checkpoint.shard_id.clone(),
+                    claimed_root: certificate.checkpoint.anchor_post_state.clone(),
+                    metadata_root: certificate.checkpoint.metadata_root.clone(),
+                    history_root: certificate.checkpoint.history_root.clone(),
+                    derived_root: None,
+                    replay_head: replay_head.clone(),
+                    blocks: heights.values().map(|set| set.len()).sum(),
+                    metadata_committed,
+                    window_committed,
+                    reason: Some(format!("the genesis header is refused: {e}")),
+                };
+                write_report(&request.out, &report).await?;
+                return Ok(report);
+            }
+        }
         if metadata_committed {
             if let Err(e) = rchain_casper::checkpoint::verify_metadata_root(
                 &certificate.checkpoint,
@@ -523,7 +682,7 @@ pub async fn run(
                     metadata_committed,
                     window_committed,
                     reason: Some(format!(
-                        "the metadata commitment does not match the bodies: {e}"
+                        "the metadata commitment does not match the served headers: {e}"
                     )),
                 };
                 write_report(&request.out, &report).await?;
@@ -531,63 +690,6 @@ pub async fn run(
             }
         }
         if window_committed {
-            // **The window commits fringe state roots, and a body does not carry its fringe root.**
-            // Reconstruct the last `VALIDATION_WINDOW_BLOCKS` headers' fringe roots from the node's
-            // header route; a header that cannot be read is missing evidence (INCOMPLETE), not a
-            // disagreement.
-            let mut ordered: Vec<&BlockHeader> = closure.iter().collect();
-            ordered.sort_by_key(|header| (i64::from(header.block_num), header.block_hash));
-            let window: BTreeSet<BlockHash> = ordered
-                .iter()
-                .rev()
-                .take(rchain_models::casper::protocol::checkpoint::VALIDATION_WINDOW_BLOCKS)
-                .map(|header| header.block_hash)
-                .collect();
-            for header in closure
-                .iter_mut()
-                .filter(|header| window.contains(&header.block_hash))
-            {
-                let height = i64::from(header.block_num);
-                let hash = header.block_hash.to_hex();
-                let info = match fetch_header_commitment(&client, base, &hash).await {
-                    Ok(info) => info,
-                    Err(e) => {
-                        return Ok(incomplete(
-                            &verified,
-                            height,
-                            format!("the validation-window header {hash} could not be read: {e}"),
-                        ))
-                    }
-                };
-                if !info.block_hash.eq_ignore_ascii_case(&hash) || info.height != height {
-                    return Ok(incomplete(
-                        &verified,
-                        height,
-                        format!(
-                            "the header route answered {} at height {} for the requested {hash} at \
-                             {height}; this node cannot establish the window",
-                            info.block_hash, info.height
-                        ),
-                    ));
-                }
-                let Some(bytes) = base16::decode(&info.fringe_state_hash) else {
-                    return Ok(incomplete(
-                        &verified,
-                        height,
-                        format!("the fringe state root of {hash} is not base16"),
-                    ));
-                };
-                match rchain_models::block::state_hash::StateHash::try_from(bytes.as_slice()) {
-                    Ok(root) => header.fringe_state_hash = root,
-                    Err(e) => {
-                        return Ok(incomplete(
-                            &verified,
-                            height,
-                            format!("the fringe state root of {hash} is not a state root: {e}"),
-                        ))
-                    }
-                }
-            }
             if let Err(e) = rchain_casper::checkpoint::verify_validation_window(
                 &certificate.checkpoint,
                 closure.iter(),
@@ -607,7 +709,7 @@ pub async fn run(
                     metadata_committed,
                     window_committed,
                     reason: Some(format!(
-                        "the validation-window commitment does not match the bodies: {e}"
+                        "the validation-window commitment does not match the served headers: {e}"
                     )),
                 };
                 write_report(&request.out, &report).await?;

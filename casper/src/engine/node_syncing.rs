@@ -923,7 +923,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
             pin.to_hex()
         ));
     }
-    fetch_genesis_body(
+    let genesis_body = fetch_genesis_body(
         &block_store,
         genesis,
         incoming_blocks_rx,
@@ -931,6 +931,15 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         log.as_ref(),
     )
     .await?;
+    // **The genesis header must agree with the body it was served with.** Genesis is excluded from
+    // the metadata set, so its fringe fields are not covered by `metadataRoot`; this is the
+    // separate check (review R1).
+    let genesis_header = walk
+        .headers
+        .get(&genesis)
+        .ok_or_else(|| "the walked genesis header vanished".to_string())?;
+    crate::checkpoint::verify_genesis_header(genesis_header, &genesis_body)
+        .map_err(|e| format!("the certified history's genesis header is refused: {e}"))?;
 
     // **The bond drift check is the last gate.** The signatures were weighed against the genesis
     // active bonds; if the anchor state's active bonds differ, those signatures were cast under a
@@ -1179,6 +1188,9 @@ pub(super) fn certified_metadata_entries(
     ),
     String,
 > {
+    // **The walked headers' fringe claims are committed now**, so check their shape before any
+    // root is computed over them (review R1).
+    crate::checkpoint::check_committed_headers(walk.headers.values()).map_err(|e| e.to_string())?;
     let anchor = decode_hash(&checkpoint.anchor, "certificate anchor")?;
     let anchor_header = walk.headers.get(&anchor).ok_or_else(|| {
         format!(
@@ -1304,7 +1316,7 @@ async fn fetch_genesis_body(
     incoming_blocks_rx: &mut tokio::sync::mpsc::Receiver<BlockMessage>,
     comm_util: &CommUtil,
     log: &dyn Log,
-) -> Result<(), String> {
+) -> Result<BlockMessage, String> {
     let block = fetch_block_body(block_store, genesis, incoming_blocks_rx, comm_util, log).await?;
     if i64::from(block.block_number) != 0 {
         return Err(format!(
@@ -1320,7 +1332,7 @@ async fn fetch_genesis_body(
             genesis.to_hex()
         ),
     );
-    Ok(())
+    Ok(block)
 }
 
 /// **Fetch one body by hash**, content-checked against the hash it was requested by. The genesis
@@ -2795,7 +2807,16 @@ mod tests {
             justifications: block.justifications.iter().copied().collect(),
             bonds_map: block.bonds.clone(),
             fringe: BTreeSet::new(),
-            fringe_state_hash: block.post_state_hash,
+            // Genesis carries the insert-genesis invariant (its fringe state is its pre-state);
+            // every other header commits a non-zero fringe state root. The toy chain's bodies carry
+            // no state roots, so a non-genesis header gets a stable synthetic fringe state.
+            fringe_state_hash: if height == 0 {
+                block.pre_state_hash
+            } else if block.post_state_hash == StateHash::new([0u8; 32]) {
+                StateHash::new([0x5A; 32])
+            } else {
+                block.post_state_hash
+            },
             pre_state_hash: block.pre_state_hash,
             post_state_hash: block.post_state_hash,
             body_available: false,

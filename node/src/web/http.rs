@@ -1850,8 +1850,8 @@ pub const OPENAPI_JSON: &str = r##"{
     },
     "/block/{hash}/header": {
       "get": {
-        "summary": "The block's pre-state, post-state and fringe-state roots",
-        "description": "A body does not carry the fringe state root, so a validation-window audit reads it here.",
+        "summary": "The block's pre-state, post-state and fringe-state roots, and its fringe membership",
+        "description": "A body carries neither the fringe membership nor the fringe state root; the metadata commitment covers both, so an audit reads them here.",
         "parameters": [ { "name": "hash", "in": "path", "required": true, "schema": { "type": "string" } } ],
         "responses": {
           "200": { "description": "The header commitment", "content": { "application/json": { "schema": { "type": "object" } } } },

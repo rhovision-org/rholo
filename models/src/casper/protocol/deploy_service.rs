@@ -178,6 +178,10 @@ pub struct HeaderCommitment {
     pub pre_state_hash: String,
     pub post_state_hash: String,
     pub fringe_state_hash: String,
+    /// The block's finalized-fringe membership, sorted hex. Committed by the metadata root, and not
+    /// carried by a body, so an audit reads it here.
+    #[serde(default)]
+    pub fringe: Vec<String>,
 }
 
 /// The status surface's view of the anchor a node runs from.
