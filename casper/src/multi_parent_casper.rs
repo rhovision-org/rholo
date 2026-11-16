@@ -25,8 +25,8 @@ use crate::interpreter_util::{
     ValidationOrigin,
 };
 use crate::merging::{
-    BlockIndex, DeployChainIndex, MergeOutcome, MergeReport, MergeScope, ParentsMergedState,
-    RejectionsMap,
+    is_system_deploy_id, BlockIndex, DeployChainIndex, MergeOutcome, MergeReport, MergeScope,
+    ParentsMergedState, RejectionsMap,
 };
 use crate::rholang::ReplayFailure;
 use crate::runtime_manager::RuntimeManager;
@@ -250,9 +250,18 @@ pub async fn final_scope_rejections(
             .collect();
         let newly_finalized = message_map::between(msg_map, &meta.fringe, &previous);
         for member in newly_finalized.intersection(final_scope) {
-            map.entry(*member)
-                .or_default()
-                .extend(block.rejected_deploys.iter().cloned());
+            // **A close chain is not a rejected user deploy** (C344). `rejected_deploys` can carry
+            // the 33-byte `blockHash ++ 02` id of a CloseBlock system deploy; the merge reads a
+            // chain's first id, so propagating it would reject the close chain and drop its native
+            // writes — the liveness anchor among them. The merge also refuses to reject a system
+            // chain; this is the derivation-side half, so the map never carries the id at all.
+            map.entry(*member).or_default().extend(
+                block
+                    .rejected_deploys
+                    .iter()
+                    .filter(|id| !is_system_deploy_id(id))
+                    .cloned(),
+            );
         }
     }
     Ok(map)

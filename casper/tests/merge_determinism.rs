@@ -1225,6 +1225,56 @@ async fn later_finalisers_cannot_change_a_parents_rejection_input() {
     );
 }
 
+/// **A CloseBlock system-deploy id is not a rejected user deploy.** A finaliser's
+/// `rejected_deploys` can carry the 33-byte `blockHash ++ 02` id of a close chain — the log that
+/// exposed C344 shows exactly that. `final_scope_rejections` must not propagate it: the merge's
+/// rejection test reads the chain's first deploy id, so a propagated system id rejects a
+/// consensus-mandated close chain and drops its native writes (the liveness anchor is one).
+#[tokio::test]
+async fn system_deploy_ids_are_not_final_scope_rejections() {
+    use rchain_block_storage::block_store::BlockStore;
+    use rchain_casper::multi_parent_casper::final_scope_rejections;
+    let dag = build_storage().await;
+    let store: BlockStore = Arc::new(KeyValueTypedStoreCodec::new(
+        in_memory(),
+        Arc::new(BlockHashCodec),
+        Arc::new(BlockMessageCodec),
+    ));
+    let g = shell(0x01, 1, 0, 0, &[]);
+    let x = shell(0x11, 1, 1, 1, &[g.block_hash]);
+    let mut y = shell(0x21, 2, 0, 2, &[x.block_hash]);
+    let user_id = vec![7u8; 32];
+    let mut close_id = x.block_hash.as_bytes().to_vec();
+    close_id.push(2);
+    y.rejected_deploys = BTreeSet::from([user_id.clone(), close_id.clone()]);
+    for (b, fringe, state) in [
+        (&g, vec![], 1),
+        (&x, vec![g.block_hash], 2),
+        (&y, vec![x.block_hash], 3),
+    ] {
+        store.put(&[(b.block_hash, b.clone())]).await.unwrap();
+        insert(&dag, meta(b, &fringe, state), b.clone()).await;
+    }
+    let scope = BTreeSet::from([x.block_hash]);
+    let past = BTreeSet::from([g.block_hash, x.block_hash, y.block_hash]);
+    let children = dag.get_representation().await.child_map.clone();
+    let map = final_scope_rejections(&*dag, &store, &children, &scope, &past)
+        .await
+        .unwrap();
+    let rejected = map
+        .get(&x.block_hash)
+        .expect("the finaliser's rejection evidence must reach the member");
+    assert!(
+        rejected.contains(&user_id),
+        "a user deploy id must remain an effective final-scope rejection"
+    );
+    assert!(
+        !rejected.contains(&close_id),
+        "a CloseBlock system-deploy id must not reject the close chain — its native writes, \
+         including the liveness anchor, would be dropped"
+    );
+}
+
 /// A concurrent wider fringe may overwrite a local membership index. Replaying
 /// an earlier parent view must still derive that view's own rejection evidence.
 #[tokio::test]

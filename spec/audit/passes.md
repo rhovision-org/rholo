@@ -13289,3 +13289,44 @@ operator/tool policy into laws. One mathematical item stays owed, plus one code 
 - **Law 37** — the fast path is a *modelling* item, not a missing lemma: `spatial_match` short-circuits
   at `if !pattern.connective_used { pattern == target }` (`spatial_matcher.rs:235-237`), which the
   clauses do not include.
+
+**Correction (2026-11-16).** The U15-02 bullet above says the Rust guard is “the remaining code
+change”. It is not: #596 landed it — `SoftCheckpoint` carries the history root it was taken over and
+`revert_to_soft_checkpoint` refuses a moved base with `SoftCheckpointBaseMoved` — pinned by
+`rspace/src/rspace.rs::a_soft_checkpoint_revert_over_a_moved_base_is_refused`. The register (law 74b)
+already records it; this line was stale.
+
+## 171. C301's contract layer, re-verified (2026-11-16)
+
+**Base.** `dev` at `d4b9bfbaf529fa754630c0ddfc695a5f2b62e576` (the #596 merge). The input was the
+read-class document at `f9521edd7`; every one of its 19 findings was re-derived from the merged tree.
+The matrix is `spec/audit/evidence/c301-contract-layer-20261116.md`.
+
+**A1 is refuted, and that is the phase's central result.** The evidence claimed the published
+`bundle+{*AuthKey}` exposes `extractState`, handing out `_authKey` and `_multiSigRevVault` and
+collapsing multi-signature custody. It does not: the extract arms listen on
+`@(*AuthKey, "extractState")`, a name *derived from the private name*, while the registry publishes
+`bundle+{*AuthKey}`, a different name. A genesis-replay probe calls both the public method and the
+derived name; neither receives a reply, while both lookups fire and `AuthKey!("make", …)` answers.
+`casper/tests/genesis_registry.rs::the_published_auth_key_surface_does_not_hand_out_its_private_names`
+asserts the negative with that live control. **No genesis change is made**, and the pre-authorised
+whitelist/removal fix is not applied because its condition (a confirmed forge) was not met.
+
+**A2 is corrected, and its branch is still unreachable.** The adapted term now uses
+`unsealers.nth(info.nth(0))`; the vendored original stays pristine and the marker is asserted
+(`standard_deploys.rs::tests::the_adapted_multi_sig_vault_corrects_the_vendored_thn_typo`). A
+functional quorum-2 sealer/unsealer probe produced no reply even after the correction: `verify` joins
+`loopFindAny` — which calls `AuthKey!("check", auth, …)` and sends `"challenge"` to the auth — with
+the unsealer fold, and a sealed box is a plain name with no receiver. The join never fires, so the
+branch is unreachable. **C401** records that defect; its fix is contract-layer and hard-fork class.
+
+**Already fixed in dev.** C1/C2/C3 are stale: `check_inert_config` now refuses
+`synchrony-constraint-threshold`, `height-constraint-threshold`, `fork-choice-stale-threshold` and
+`fork-choice-check-if-stale-interval` (`node/src/configuration/configuration.rs:316-344`). E3 is a
+duplicate of C348 (`done`).
+
+**What remains.** The other fifteen findings hold and are ranked in the evidence document. Phase 1
+fixed only the custody/liveness path — A2's correction and C344's anchor repair — and deliberately did
+not start the small web/config fixes (B4, C4, D1, D4, E1, E2, E4) or the consensus-class decisions
+(B2, C5, D2, D3). The thirty T3 process rows stay `deferred` for C401 and Phase 3's contract-layer
+tranche. No public-validator run or deployment is claimed.

@@ -34,7 +34,7 @@ use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::{DeployData, SignedDeployData};
 use rchain_models::validator::Validator;
 use rchain_rholang::merging::SidecarRecord;
-use rchain_rholang::native_state::NativeSystemState;
+use rchain_rholang::native_state::{pos_liveness_anchor_key, NativeSystemState, PosParams};
 use rchain_rholang::scheduler::EffectMode;
 use rchain_rholang::system_processes::BlockData;
 use rchain_rholang::util::rev_address::RevAddress;
@@ -356,6 +356,114 @@ async fn a_boundary_round_merge_keeps_the_base_states_user_write() {
             "the deploy block's write is absent and the report names no rejection"
         );
     }
+}
+
+/// **C344, at the merge boundary.** A finalised close chain is a system deploy, not a rejected user
+/// deploy. The retained devnet log names the liveness-anchor slot (`04/688c6e…`) among the native
+/// slots that "went unwritten" on merges whose final scope rejected chains named by 33-byte
+/// `blockHash ++ 02` ids. This test arms the liveness prelude and plays a boundary block that writes
+/// the anchor, then feeds the merge a rejection map still naming that close chain (the pre-fix
+/// derivation shape). The assertion is the merge's **decision**: the system chain is accepted, so it
+/// cannot be a reason for a later conflict-scope close chain to be rejected. (The final scope is the
+/// base state by design; the end-to-end survival is the devnet drill's assertion.)
+#[tokio::test]
+async fn a_final_scope_system_deploy_chain_is_not_rejected() {
+    use rchain_rspace::native_store::InMemNativeStore;
+
+    let rm = build_runtime_manager_with_mode(EffectMode::Sequential).await;
+    let native = NativeSystemState::new(rm.runtime().native_store());
+    let pk = PublicKey::new(DEPLOYER.to_vec());
+    let addr = RevAddress::from_public_key(&pk)
+        .expect("the test key is a valid address")
+        .to_base58();
+    native.set_vault_balance(
+        &addr,
+        NonNegI64::try_from(1_000_000_000).expect("a test balance"),
+    );
+    native.set_trusted(&BTreeSet::from([Validator::new(DEPLOYER)]));
+    let mut params = PosParams::default();
+    params.epoch_length = BOUNDARY;
+    params.quarantine_length = 60;
+    params.liveness_absence_threshold = 1;
+    params.liveness_jail_after_boundaries = 2;
+    params.liveness_jail_epochs = 10;
+    params.liveness_vote_window = 6;
+    params.liveness_slash_severity = 1;
+    native.set_params(&params);
+    let bonds: BTreeMap<Validator, NonNegI64> = VALIDATORS
+        .iter()
+        .map(|v| (Validator::new(*v), NonNegI64::try_from(100).expect("stake")))
+        .collect();
+    native.set_bonds(&bonds);
+    native.set_active(&bonds);
+    let start = rm
+        .runtime()
+        .create_checkpoint()
+        .await
+        .expect("seeding checkpoint")
+        .root;
+
+    let participation: BTreeMap<Validator, rchain_shared::refined::BlockHeight> = VALIDATORS
+        .iter()
+        .map(|v| {
+            (
+                Validator::new(*v),
+                rchain_shared::refined::BlockHeight::try_from(1).expect("height"),
+            )
+        })
+        .collect();
+    let close =
+        SystemDeploy::close_block(BOUNDARY, start, participation, fixed_rand().split_byte(9));
+    let block = play(&rm, 0x41, VALIDATORS[0], start, None, &[close]).await;
+
+    let at_post = NativeSystemState::new(std::sync::Arc::new(InMemNativeStore::new(
+        rm.get_history_repo().get_native_reader(block.post).await,
+    )));
+    assert!(
+        at_post.liveness_anchor().await.expect("anchor read").is_some(),
+        "control: the boundary block's own post-state must carry the anchor the merge is asked to keep"
+    );
+
+    // The pre-fix derivation's shape: a finaliser's `rejected_deploys` names the close chain by its
+    // 33-byte system id. The merge must refuse to reject a system-deploy chain even when handed one.
+    let mut close_id = block.hash.as_bytes().to_vec();
+    close_id.push(2);
+    let rejections: RejectionsMap = BTreeMap::from([(block.hash, BTreeSet::from([close_id]))]);
+    let indexes: BTreeMap<BlockHash, std::sync::Arc<BlockIndex>> =
+        BTreeMap::from([(block.hash, std::sync::Arc::new(block.index.clone()))]);
+    let lookup = move |h: BlockHash| {
+        let found = indexes.get(&h).cloned();
+        async move { found.ok_or_else(|| format!("no index for {h:?}")) }
+    };
+    let scope = MergeScope {
+        final_scope: BTreeSet::from([block.hash]),
+        conflict_scope: BTreeSet::new(),
+        ancestry: BTreeMap::new(),
+    };
+    let outcome = MergeScope::merge(
+        &scope,
+        start,
+        &rejections,
+        rm.get_history_repo(),
+        &lookup,
+        |_| 0,
+    )
+    .await
+    .expect("the finalised close block merges");
+
+    assert_eq!(
+        outcome.report.final_scope_rejected_chains, 0,
+        "a CloseBlock system deploy is not a user deploy and must not be a final-scope rejection"
+    );
+    let anchor_key = pos_liveness_anchor_key();
+    assert!(
+        !outcome
+            .report
+            .dropped_native_slots
+            .iter()
+            .any(|(_, slot)| slot.1 == anchor_key),
+        "the liveness anchor is a native slot the merge must not drop"
+    );
 }
 
 /// **Does a deploy's three parallel register-shaped RMWs serialize under the deployed scheduler?**
