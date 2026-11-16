@@ -810,6 +810,67 @@ impl DeployChainIndex {
     }
 }
 
+/// **A write that leaves a slot as it found it is not a write** (law 17e).
+///
+/// `NativeStore::put` records a `Put` even when the bytes equal what the pre-state already holds.
+/// The trie ends at the same value, so the block's post-state is unchanged — but `NativeRelations`
+/// keys conflicts on the **slots a chain wrote**, and the distinction is not harmless there. The
+/// armed liveness prelude rewrites `pos:slash-votes`, `pos:vote-windows` and `pos:liveness` at every
+/// advancing boundary; a boundary that rewrote an unchanged leaf therefore became a conflict partner
+/// of every concurrent user chain that did write it. When that boundary is finalised and the user
+/// chain is not, `incompatible_with_final` (`sdk/src/dag/merging.rs:54-72`) forces the user chain out
+/// and its deploy's effect dies with a boundary that changed nothing (C344's exact-threshold arm:
+/// `casper/src/merging.rs::a_finalized_boundary_noop_does_not_reject_a_concurrent_ballot`).
+///
+/// The filter belongs **where a chain index is built**, not in the store: `BlockIndex::apply` trusts a
+/// stored sidecar when it has one, and a store-level filter would make an old sidecar and a
+/// regenerated one disagree about the same block's slots after a rolling upgrade. Filtering here
+/// normalises both to the effective set, so indexing is idempotent.
+///
+/// Ordinals are walked in deploy order against a local view seeded from the block pre-state, so a
+/// later deploy that restores a value an earlier deploy changed is kept. Values are compared as
+/// `Option<Vec<u8>>`: a `Put` is `Some`, a `Delete` is `None`.
+pub async fn effective_native_effects<C, P, A, K>(
+    history_repository: &HistoryRepository<C, P, A, K>,
+    pre_state_hash: Blake2b256Hash,
+    effects: BlockNativeEffects,
+) -> Result<BlockNativeEffects, String>
+where
+    C: Serialize<C> + Send + Sync + 'static,
+    P: Serialize<P> + Send + Sync + 'static,
+    A: Serialize<A> + Send + Sync + 'static,
+    K: Serialize<K> + Send + Sync + 'static,
+{
+    let reader = history_repository.get_native_reader(pre_state_hash).await;
+    // The value each slot holds in the block pre-state or after an earlier ordinal's write. A
+    // missing entry means "not consulted yet", not "absent": an absolute `Delete` of a slot the
+    // pre-state already lacks is a no-op too, and the pre-state is what says so.
+    let mut current: BTreeMap<(u8, Blake2b256Hash), Option<Vec<u8>>> = BTreeMap::new();
+    let mut effective: BTreeMap<u32, Vec<NativeStoreAction>> = BTreeMap::new();
+    for (ordinal, actions) in effects.into_map() {
+        let mut kept = Vec::new();
+        for action in actions {
+            let slot = action.slot();
+            let after = match &action {
+                NativeStoreAction::Put { value, .. } => Some(value.clone()),
+                NativeStoreAction::Delete { .. } => None,
+            };
+            let before = match current.get(&slot) {
+                Some(value) => value.clone(),
+                None => reader.get_native(slot.0, slot.1).await?,
+            };
+            current.insert(slot, after.clone());
+            if before != after {
+                kept.push(action);
+            }
+        }
+        if !kept.is_empty() {
+            effective.insert(ordinal, kept);
+        }
+    }
+    Ok(BlockNativeEffects::from_map(effective))
+}
+
 /// The index of a block: its deploy chains (port of `BlockIndex`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockIndex {
@@ -1042,6 +1103,12 @@ impl BlockIndex {
         let deploy_chains =
             compute_greedy_non_intersecting_branches(&deploy_indices, &dependency_map);
 
+        // **A write that changes nothing is not a write** (law 17e). The sidecar records what the
+        // store recorded, and the store records an unchanged `Put`; filtering here is what keeps a
+        // boundary's equal rewrite out of its chain's slot set, and it is idempotent across stored
+        // and regenerated sidecars. It runs before placement: the refusal below is about placing
+        // **writes**, so an effect that writes nothing has nothing to place.
+        let effects = effective_native_effects(history_repository, pre_state_hash, effects).await?;
         let host_block = Blake2b256Hash::from_bytes(*block_hash.as_bytes());
         let mut chains = Vec::new();
         let mut placed: BTreeSet<u32> = BTreeSet::new();
@@ -3819,10 +3886,15 @@ mod boundary_merge_tests {
     use std::sync::Arc;
 
     use rchain_crypto::public_key::PublicKey;
-    use rchain_rholang::native_state::{NativeSystemState, PosGenesis, PosParams};
+    use rchain_rholang::native_state::{
+        pos_slash_votes_key, NativeSystemState, PosGenesis, PosParams,
+    };
+    use rchain_rholang::pos_liveness::BallotKey;
     use rchain_rholang::util::rev_address::RevAddress;
     use rchain_rspace::factory::create_history_repository;
-    use rchain_rspace::native_store::{InMemNativeStore, NativeWriter, PREFIX_POS};
+    use rchain_rspace::native_store::{
+        BlockNativeEffects, InMemNativeStore, NativeWriter, PREFIX_POS,
+    };
     use rchain_shared::store_manager::InMemoryStoreManager;
 
     const EPOCH: i64 = 10;
@@ -3903,6 +3975,9 @@ mod boundary_merge_tests {
         Withdraw,
         /// A user deploy by `payer(byte)` whose phlo, 500, goes into the staking vault.
         Deploy(u8),
+        /// A `voteSlash` deploy by `voter` against validator 4, which the liveness fixture has
+        /// already jailed. It writes `pos:slash-votes` from the block's own pre-state.
+        Vote(u8),
     }
 
     /// What playing a block left behind, split the way the block path splits it (AUDIT C207): the
@@ -3916,6 +3991,10 @@ mod boundary_merge_tests {
         /// what the block's own post-state holds. Only `own` travels in the sidecar; a test that
         /// needs to stand up a descendant's pre-state needs both.
         full: Vec<NativeStoreAction>,
+        /// The block's own writes keyed by the deploy ordinal that made them — the sidecar's shape,
+        /// and what lets a fixture put a user deploy's ballot on the deploy's chain and the
+        /// boundary's writes on the CloseBlock chain.
+        by_deploy: BTreeMap<u32, Vec<NativeStoreAction>>,
     }
 
     /// Play block `number` on `pre_state`: its body, then `close_block`. Returns the block's own
@@ -3928,6 +4007,20 @@ mod boundary_merge_tests {
         fringe: u8,
         body: Body,
     ) -> Played {
+        play_with(repo, pre_state, number, fringe, body, &[]).await
+    }
+
+    /// [`play`], with the participation map the liveness prelude reads. The original helper passes an
+    /// empty map, which the prelude treats as "not this boundary" (`native_state.rs:2540-2543`); the
+    /// C344 fixtures need a real one to advance and tally.
+    async fn play_with(
+        repo: &RhoHistoryRepository,
+        pre_state: Blake2b256Hash,
+        number: i64,
+        fringe: u8,
+        body: Body,
+        participation: &[(u8, i64)],
+    ) -> Played {
         let store = Arc::new(InMemNativeStore::new(
             repo.get_native_reader(pre_state).await,
         ));
@@ -3939,7 +4032,7 @@ mod boundary_merge_tests {
         // it, which is the type doing its job rather than a fixture inconvenience.
         let user_ordinal = match body {
             Body::Nothing | Body::Withdraw => None,
-            Body::Deploy(_) => Some(0u32),
+            Body::Deploy(_) | Body::Vote(_) => Some(0u32),
         };
         let sys_ordinal = if user_ordinal.is_some() { 1u32 } else { 0u32 };
         match body {
@@ -3973,10 +4066,26 @@ mod boundary_merge_tests {
                     },
                 );
             }
+            Body::Vote(voter) => {
+                // The deploy's own window, exactly as the vote system process writes it. The deploy
+                // is played from the block's pre-state, so its value contains every ballot that
+                // state has and its own — which is what a stale-voter block would not.
+                store.begin_writer(NativeWriter::Deploy(user_ordinal.unwrap()));
+                native
+                    .cast_vote(&validator(voter), &validator(4), true)
+                    .await
+                    .unwrap()
+                    .expect("the jailed target has an open window");
+                store.end_writer();
+            }
         }
         store.begin_writer(NativeWriter::Deploy(sys_ordinal));
         native
-            .close_block(number, Blake2b256Hash::create(&[fringe]), &BTreeMap::new())
+            .close_block(
+                number,
+                Blake2b256Hash::create(&[fringe]),
+                &present(participation),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -3991,7 +4100,173 @@ mod boundary_merge_tests {
             .values()
             .flat_map(|actions| actions.iter().cloned())
             .collect();
-        Played { own, moves, full }
+        let by_deploy = drain.by_deploy.clone();
+        Played {
+            own,
+            moves,
+            full,
+            by_deploy,
+        }
+    }
+
+    /// The participation map `close_block` reads, in the shape `native_state`'s liveness tests use:
+    /// a validator absent from the list said nothing at that boundary.
+    fn present(heights: &[(u8, i64)]) -> BTreeMap<Validator, BlockHeight> {
+        heights
+            .iter()
+            .map(|(b, h)| {
+                (
+                    validator(*b),
+                    BlockHeight::try_from(*h).expect("a test height"),
+                )
+            })
+            .collect()
+    }
+
+    /// The state a played block leaves: its own pre-state plus the block's complete native effect.
+    async fn checkpoint(
+        repo: &RhoHistoryRepository,
+        pre_state: Blake2b256Hash,
+        played: &Played,
+    ) -> Blake2b256Hash {
+        repo.reset(pre_state)
+            .await
+            .unwrap()
+            .do_checkpoint_with_native(&[], &played.full)
+            .await
+            .unwrap()
+            .root()
+    }
+
+    /// A genesis armed for C344: four validators at 10 each, jail after two advancing boundaries,
+    /// a five-boundary jail term and a five-boundary vote window. Epoch 10 and quarantine 50 make
+    /// `PosParams::validate` accept the window (5 x 10 <= 50).
+    async fn liveness_genesis() -> (RhoHistoryRepository, Blake2b256Hash) {
+        let manager = InMemoryStoreManager::default();
+        let repo = create_history_repository::<
+            SortedProc,
+            BindPattern,
+            ListParWithRandom,
+            TaggedContinuation,
+        >(&manager, "rspace")
+        .await
+        .unwrap();
+        let store = Arc::new(InMemNativeStore::empty());
+        let native = NativeSystemState::new(store.clone());
+        native
+            .install_genesis(&PosGenesis {
+                bonds: (1..=4).map(|b| (validator(b), nn(10))).collect(),
+                trusted: (1..=4).map(validator).collect(),
+                params: PosParams {
+                    epoch_length: EPOCH,
+                    quarantine_length: 50,
+                    minimum_bond: nn(1),
+                    maximum_bond: nn(1000),
+                    number_of_active_validators: 0,
+                    executor_share: nn(0),
+                    absence_slack: nn(0),
+                    participation_grace: nn(0),
+                    min_phlo_price: NonNegI64::zero(),
+                    max_number_of_parents: 0,
+                    dev_tax_vesting_blocks: NonNegI64::zero(),
+                    liveness_absence_threshold: 10,
+                    liveness_jail_after_boundaries: 2,
+                    liveness_jail_epochs: 5,
+                    liveness_vote_window: 5,
+                    liveness_slash_severity: 2,
+                },
+                dev_vesting: None,
+            })
+            .unwrap();
+        let repo = repo
+            .do_checkpoint_with_native(&[], &store.drain_changes())
+            .await
+            .unwrap();
+        let root = repo.root();
+        (repo, root)
+    }
+
+    /// A block whose chains carry exactly what their own deploys wrote: ordinal 0's writes on the
+    /// user-deploy chain (`user_id` when the block carried one) and every other ordinal's on the
+    /// CloseBlock chain. This is the shape `BlockIndex::apply` builds from a sidecar, which the
+    /// module-level `index` fixture flattens onto one chain — and, like `apply`, it filters the
+    /// chain's slot set to the writes that changed a value (law 17e).
+    async fn index_from_by_deploy(
+        repo: &RhoHistoryRepository,
+        n: u8,
+        pre_state: Blake2b256Hash,
+        played: &Played,
+        user_id: Option<u8>,
+    ) -> BlockIndex {
+        let effects = effective_native_effects(
+            repo,
+            pre_state,
+            BlockNativeEffects::from_map(played.by_deploy.clone()),
+        )
+        .await
+        .expect("the block pre-state is readable");
+        let host = Blake2b256Hash::from_bytes([n; 32]);
+        let mut chains = Vec::new();
+        for (ordinal, actions) in effects.into_map() {
+            let is_user = user_id.is_some() && ordinal == 0;
+            let (id, cost) = if is_user {
+                (vec![user_id.expect("checked")], 500)
+            } else {
+                // A system deploy's id is `blockHash ++ prefix` (`sys_deploy_id`) and costs 0.
+                let mut id = block_hash(n).as_bytes().to_vec();
+                id.push(2);
+                (id, 0)
+            };
+            chains.push(Arc::new(DeployChainIndex {
+                first_deploy_ordinal: ordinal,
+                native_effects: actions.clone(),
+                host_block: host,
+                deploys_with_cost: BTreeSet::from([DeployIdWithCost { id, cost }]),
+                pre_state_hash: pre_state,
+                post_state_hash: Blake2b256Hash::create(&[n, ordinal as u8]),
+                event_log_index: EventLogIndex::empty(),
+                state_changes: StateChange::empty(),
+                cost_moves: BTreeMap::new(),
+                executor: String::new(),
+            }));
+        }
+        BlockIndex {
+            block_hash: block_hash(n),
+            deploy_chains: chains,
+        }
+    }
+
+    /// [`merge_with_report`], with a final scope — the shape the production fringe merge has and the
+    /// sibling-boundary fixtures do not.
+    async fn merge_scoped(
+        repo: &RhoHistoryRepository,
+        base: Blake2b256Hash,
+        blocks: Vec<BlockIndex>,
+        final_scope: BTreeSet<BlockHash>,
+        conflict_scope: BTreeSet<BlockHash>,
+        ancestry: BTreeMap<BlockHash, BTreeSet<BlockHash>>,
+    ) -> Result<MergeOutcome, String> {
+        let lookup = move |h: BlockHash| {
+            let found = blocks.iter().find(|b| b.block_hash == h).cloned();
+            async move {
+                found
+                    .map(Arc::new)
+                    .ok_or_else(|| format!("no index for {h:?}"))
+            }
+        };
+        MergeScope::merge(
+            &MergeScope {
+                final_scope,
+                conflict_scope,
+                ancestry,
+            },
+            base,
+            &RejectionsMap::new(),
+            repo,
+            &lookup,
+            DeployChainIndex::deploy_chain_cost,
+        )
+        .await
     }
 
     fn block_hash(n: u8) -> BlockHash {
@@ -4611,6 +4886,319 @@ mod boundary_merge_tests {
                  answerable for"
             );
         }
+    }
+
+    /// The state the C344 merge fixtures fork from: v4 jailed at boundary 30 with a vote window
+    /// open, validator 1's ballot recorded in block 31, then a boundary block at 40 that rewrites
+    /// the ballot map **unchanged** and a concurrent block at 32 that adds validator 2's ballot.
+    /// Both are played from the same pre-state and neither has seen the other.
+    async fn exact_threshold_branch() -> (RhoHistoryRepository, Blake2b256Hash, Played, Played) {
+        let (repo, base) = liveness_genesis().await;
+        let anchor = play_with(
+            &repo,
+            base,
+            10,
+            10,
+            Body::Nothing,
+            &[(1, 10), (2, 10), (3, 10), (4, 10)],
+        )
+        .await;
+        let after_anchor = checkpoint(&repo, base, &anchor).await;
+        let first_absence = play_with(
+            &repo,
+            after_anchor,
+            20,
+            20,
+            Body::Nothing,
+            &[(1, 20), (2, 20), (3, 20)],
+        )
+        .await;
+        let after_first = checkpoint(&repo, after_anchor, &first_absence).await;
+        let jail = play_with(
+            &repo,
+            after_first,
+            30,
+            30,
+            Body::Nothing,
+            &[(1, 30), (2, 30), (3, 30)],
+        )
+        .await;
+        let after_jail = checkpoint(&repo, after_first, &jail).await;
+
+        // The fixture's premise: v4 is jailed and a vote window is open for it.
+        let armed = NativeSystemState::new(Arc::new(InMemNativeStore::new(
+            repo.get_native_reader(after_jail).await,
+        )));
+        assert!(
+            armed.liveness().await.unwrap()[&validator(4)].is_jailed(),
+            "the fixture must have jailed v4 before it votes"
+        );
+        assert!(
+            armed
+                .vote_windows()
+                .await
+                .unwrap()
+                .contains_key(&validator(4)),
+            "the fixture must have an open window before it votes"
+        );
+
+        // Validator 1's ballot lands in block 31. It is not a boundary, so its only native write is
+        // the ballot map itself.
+        let ballot = play_with(&repo, after_jail, 31, 31, Body::Vote(1), &[]).await;
+        let after_ballot = checkpoint(&repo, after_jail, &ballot).await;
+        let with_one = NativeSystemState::new(Arc::new(InMemNativeStore::new(
+            repo.get_native_reader(after_ballot).await,
+        )));
+        assert_eq!(
+            with_one.slash_votes().await.unwrap().len(),
+            1,
+            "block 31 records exactly one ballot"
+        );
+
+        // **A** is a boundary block built on the same pre-state. Its prelude tallies the one ballot
+        // (10 of 30 active stake — not a passing vote) and writes the map back **unchanged**. **B**
+        // is a concurrent block that casts validator 2's ballot from the same pre-state, so its value
+        // is `{v1, v2}`. B does not see A.
+        let block_a_played = play_with(
+            &repo,
+            after_ballot,
+            40,
+            40,
+            Body::Nothing,
+            &[(1, 40), (2, 40), (3, 40)],
+        )
+        .await;
+        let block_b_played = play_with(&repo, after_ballot, 32, 32, Body::Vote(2), &[]).await;
+        (repo, after_ballot, block_a_played, block_b_played)
+    }
+
+    /// **C344's exact-threshold failure, reduced to a merge fixture.**
+    ///
+    /// The live run lost validator 1's ballot while the target stayed jailed: the prelude rewrites
+    /// `pos:slash-votes` at **every** advancing boundary, and `NativeStore` records the `Put` even when
+    /// the map is byte-for-byte what the pre-state already held. That no-op write is enough to make a
+    /// finalized boundary chain a conflict partner of a concurrent user `voteSlash` chain — and the
+    /// conflict is resolved by rejecting the **user** chain, because a conflict-scope chain that
+    /// conflicts with a finally-accepted one is forced out (`incompatible_with_final`,
+    /// `sdk/src/dag/merging.rs:54-72`). The ballot dies though nothing wrote a different value.
+    ///
+    /// This is the shape the cost-based tests cannot see: with both chains in the conflict scope the
+    /// resolver would reject the **zero-cost** boundary instead (`merge_by_cost`, below). The veto only
+    /// exists across the final/conflict boundary, so the fixture puts the boundary in the final scope.
+    #[tokio::test]
+    async fn a_finalized_boundary_noop_does_not_reject_a_concurrent_ballot() {
+        let (repo, after_ballot, block_a_played, block_b_played) = exact_threshold_branch().await;
+        let block_a = index_from_by_deploy(&repo, 0xa0, after_ballot, &block_a_played, None).await;
+        let block_b =
+            index_from_by_deploy(&repo, 0xb0, after_ballot, &block_b_played, Some(0xb1)).await;
+
+        let outcome = merge_scoped(
+            &repo,
+            after_ballot,
+            vec![block_a, block_b],
+            BTreeSet::from([block_hash(0xa0)]),
+            BTreeSet::from([block_hash(0xb0)]),
+            BTreeMap::new(),
+        )
+        .await
+        .expect("the two-block scope merges");
+
+        let merged = NativeSystemState::new(Arc::new(InMemNativeStore::new(
+            repo.get_native_reader(outcome.state).await,
+        )));
+        let ballots = merged.slash_votes().await.unwrap();
+        let first = BallotKey {
+            target: validator(4),
+            voter: validator(1),
+        };
+        let second = BallotKey {
+            target: validator(4),
+            voter: validator(2),
+        };
+        assert!(
+            ballots.contains_key(&first),
+            "validator 1's ballot must survive: {ballots:?}"
+        );
+        assert!(
+            ballots.contains_key(&second),
+            "the concurrent ballot must not die with a boundary that wrote the same bytes back: \
+             rejected={:?}, dropped={:?}",
+            outcome.rejected_deploys,
+            outcome.report.dropped_native_slots
+        );
+        assert!(
+            outcome.rejected_deploys.is_empty(),
+            "nothing had to be rejected: the finalized boundary changed nothing: {:?}",
+            outcome.rejected_deploys
+        );
+        assert_eq!(
+            outcome.report.rejected_chains, 0,
+            "the merge report must agree: {:?}",
+            outcome.report
+        );
+        assert_eq!(
+            outcome
+                .report
+                .native_writer_of_slot
+                .get(&(PREFIX_POS, pos_slash_votes_key()))
+                .copied(),
+            Some(Blake2b256Hash::from_bytes([0xb0; 32])),
+            "the surviving ballot map is the vote block's, not the boundary's equal rewrite"
+        );
+    }
+
+    /// **The same two blocks with both in the conflict scope.** Production cost would already reject
+    /// the zero-cost boundary here, so this fixture is not what caught the defect — it pins that the
+    /// fix does not need cost ordering to keep the ballot, and that the fold does not let the
+    /// boundary's equal rewrite win after the conflict is gone.
+    #[tokio::test]
+    async fn a_concurrent_boundary_noop_does_not_overwrite_a_ballot() {
+        let (repo, after_ballot, block_a_played, block_b_played) = exact_threshold_branch().await;
+        let block_a = index_from_by_deploy(&repo, 0xa0, after_ballot, &block_a_played, None).await;
+        let block_b =
+            index_from_by_deploy(&repo, 0xb0, after_ballot, &block_b_played, Some(0xb1)).await;
+        let outcome = merge_scoped(
+            &repo,
+            after_ballot,
+            vec![block_a, block_b],
+            BTreeSet::new(),
+            BTreeSet::from([block_hash(0xa0), block_hash(0xb0)]),
+            BTreeMap::new(),
+        )
+        .await
+        .expect("the two-block scope merges");
+        let merged = NativeSystemState::new(Arc::new(InMemNativeStore::new(
+            repo.get_native_reader(outcome.state).await,
+        )));
+        let ballots = merged.slash_votes().await.unwrap();
+        assert_eq!(ballots.len(), 2, "both ballots survive: {ballots:?}");
+        assert!(ballots.contains_key(&BallotKey {
+            target: validator(4),
+            voter: validator(1),
+        }));
+        assert!(ballots.contains_key(&BallotKey {
+            target: validator(4),
+            voter: validator(2),
+        }));
+        assert!(outcome.rejected_deploys.is_empty());
+        assert_eq!(outcome.report.conflict_chains, 2);
+        assert_eq!(outcome.report.kept_chains, 2);
+        assert_eq!(outcome.report.rejected_chains, 0);
+    }
+
+    /// **The negative control: a boundary that changes the ballot map is still a conflict partner.**
+    /// The window opened at boundary 30 has five boundaries; at boundary 80 it expires and the
+    /// prelude clears the target's ballots (`native_state.rs:2700-2720`). That `Delete` is a change,
+    /// so it survives the effective-write filter and the boundary chain keeps the slot.
+    #[tokio::test]
+    async fn a_boundary_that_changes_the_ballot_map_still_conflicts() {
+        let (repo, base) = liveness_genesis().await;
+        let anchor = play_with(
+            &repo,
+            base,
+            10,
+            10,
+            Body::Nothing,
+            &[(1, 10), (2, 10), (3, 10), (4, 10)],
+        )
+        .await;
+        let mut state = checkpoint(&repo, base, &anchor).await;
+        for (number, participation) in [
+            (20i64, vec![(1u8, 20i64), (2, 20), (3, 20)]),
+            (30, vec![(1, 30), (2, 30), (3, 30)]),
+        ] {
+            let played = play_with(
+                &repo,
+                state,
+                number,
+                number as u8,
+                Body::Nothing,
+                &participation,
+            )
+            .await;
+            state = checkpoint(&repo, state, &played).await;
+        }
+        let ballot = play_with(&repo, state, 31, 31, Body::Vote(1), &[]).await;
+        state = checkpoint(&repo, state, &ballot).await;
+        // The window opened at 30 has five boundaries; at 80 the prelude closes it and clears the
+        // target's ballots. Capture that boundary with its own pre-state.
+        let mut expiring = None;
+        for number in [40i64, 50, 60, 70, 80] {
+            let pre = state;
+            let played = play_with(
+                &repo,
+                pre,
+                number,
+                number as u8,
+                Body::Nothing,
+                &[(1, number), (2, number), (3, number)],
+            )
+            .await;
+            if number == 80 {
+                expiring = Some((pre, played.clone()));
+            }
+            state = checkpoint(&repo, pre, &played).await;
+        }
+        let (pre80, played80) = expiring.expect("the fixture walked five boundaries");
+        let effects = effective_native_effects(
+            &repo,
+            pre80,
+            BlockNativeEffects::from_map(played80.by_deploy.clone()),
+        )
+        .await
+        .unwrap()
+        .into_map();
+        let slot = (PREFIX_POS, pos_slash_votes_key());
+        let action = effects
+            .values()
+            .flatten()
+            .find(|action| action.slot() == slot)
+            .expect("the expiring boundary changes the ballot map, so its write survives");
+        assert!(
+            matches!(action, NativeStoreAction::Delete { .. }),
+            "the change is the window's close clearing the ballots: {action:?}"
+        );
+    }
+
+    /// **Law 17e's unit half**: the ordered walk drops unchanged writes and keeps changes, including
+    /// a later ordinal that restores an earlier value.
+    #[tokio::test]
+    async fn a_noop_native_write_is_not_a_chain_slot() {
+        let (repo, base) = liveness_genesis().await;
+        let slot = pos_slash_votes_key();
+        let put = |prefix, key, value: &[u8]| NativeStoreAction::Put {
+            prefix,
+            key,
+            value: value.to_vec(),
+        };
+        let effects = BlockNativeEffects::from_map(BTreeMap::from([
+            (0u32, vec![put(PREFIX_POS, slot, &[1])]), // absent -> 1: kept
+            (1u32, vec![put(PREFIX_POS, slot, &[1])]), // 1 -> 1: dropped
+            (2u32, vec![put(PREFIX_POS, slot, &[2])]), // 1 -> 2: kept
+            (
+                3u32,
+                vec![NativeStoreAction::Delete {
+                    prefix: PREFIX_POS,
+                    key: slot,
+                }],
+            ), // 2 -> absent: kept
+            (
+                4u32,
+                vec![NativeStoreAction::Delete {
+                    prefix: PREFIX_POS,
+                    key: slot,
+                }],
+            ), // absent -> absent: dropped
+            (5u32, vec![put(PREFIX_POS, slot, &[1])]), // absent -> 1: kept (a restore)
+        ]));
+        let effective = effective_native_effects(&repo, base, effects)
+            .await
+            .unwrap()
+            .into_map();
+        assert_eq!(
+            effective.keys().copied().collect::<Vec<_>>(),
+            vec![0, 2, 3, 5]
+        );
     }
 
     /// `merge`, but with the rejection key the **production** path uses.

@@ -9331,6 +9331,19 @@ mod liveness_tests {
             "a removed validator has no liveness record"
         );
         assert!(
+            !native.vote_windows().await.unwrap().contains_key(&v4),
+            "a passing vote closes the target's window"
+        );
+        assert!(
+            !native
+                .slash_votes()
+                .await
+                .unwrap()
+                .keys()
+                .any(|ballot| ballot.target == v4),
+            "and clears its ballots"
+        );
+        assert!(
             i64::from(native.coop_balance().await.unwrap()) > 0,
             "the configured tier's share reached the Coop vault"
         );
@@ -9381,6 +9394,55 @@ mod liveness_tests {
         assert_eq!(
             native.bonds().await.unwrap().get(&v4).copied(),
             Some(nn(10))
+        );
+    }
+
+    /// **A release sweeps the window and ballots with the jail.** The window is as long as the jail
+    /// term here, so it is still open when the returning validator is released: the release path,
+    /// not window expiry, is what must clear it (`native_state.rs:2694-2699`).
+    #[tokio::test]
+    async fn a_released_jail_leaves_no_window_or_ballot() {
+        let mut params = armed_params();
+        params.liveness_vote_window = params.liveness_jail_epochs;
+        let native = four(params).await;
+        jail_v4(&native).await;
+        let v4 = validator(4);
+        native
+            .cast_vote(&validator(1), &v4, true)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(native.vote_windows().await.unwrap().contains_key(&v4));
+        assert!(native.slash_votes().await.unwrap().len() == 1);
+        for block in [40i64, 50, 60, 70, 80] {
+            boundary(
+                &native,
+                block,
+                &[(1, block), (2, block), (3, block), (4, block)],
+            )
+            .await;
+        }
+        assert!(
+            !native.liveness().await.unwrap().contains_key(&v4),
+            "the returning validator is released"
+        );
+        assert!(
+            !native.vote_windows().await.unwrap().contains_key(&v4),
+            "the release clears the target's window"
+        );
+        assert!(
+            !native
+                .slash_votes()
+                .await
+                .unwrap()
+                .keys()
+                .any(|ballot| ballot.target == v4),
+            "and its ballots"
+        );
+        assert_eq!(
+            native.bonds().await.unwrap().get(&v4).copied(),
+            Some(nn(10)),
+            "the bond is untouched by jail or release"
         );
     }
 

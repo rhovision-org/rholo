@@ -43,7 +43,9 @@ use rchain_rspace::native_store::{
 };
 
 use crate::batch;
-use crate::merging::{BlockIndex, DeployChainIndex, DeployIndex, MergeScope};
+use crate::merging::{
+    effective_native_effects, BlockIndex, DeployChainIndex, DeployIndex, MergeScope,
+};
 use rchain_rspace::rspace::RSpace;
 use rchain_shared::refined::{BlockHeight, NonNegI64};
 use rchain_shared::typed_store::KeyValueTypedStore;
@@ -1958,6 +1960,12 @@ impl RuntimeManager {
             event_log_index,
         });
         let effects = BlockNativeEffects::from_drain(&fork.last_native_drain())
+            .map_err(RuntimeRunError::Other)?;
+        // **A write that changes nothing is not a write** (law 17e): filter against the state this
+        // deploy was played on, so the chain's slot set — and `batch::compatible`'s view of it — is
+        // the same effective set `BlockIndex::apply` will build from the sidecar.
+        let effects = effective_native_effects(&self.history_repo, base, effects)
+            .await
             .map_err(RuntimeRunError::Other)?;
         let native = effects.of_deploy(ordinal).to_vec();
         let chain = DeployChainIndex::apply(
