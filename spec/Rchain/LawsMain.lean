@@ -1,4 +1,5 @@
 import Rchain
+import Lean.Util.FoldConsts
 
 /-!
 # `rchain-laws` — emit the law register, and check the tree against it
@@ -67,7 +68,7 @@ conservation and its withdrawal — the four the port did not implement when the
 48 is the fee consequence of a denied deploy, which the plan's Programme B opened as a row because it
 is a rule neither this port nor the Scala it was ported from implements, and 49 is the gas a matched
 deploy is charged — the first row about cost rather than state." -/
-def lawCeiling : Nat := 112
+def lawCeiling : Nat := 113
 
 /-- **The ceiling the completeness check requires: the number of *entries*, hand-maintained for
 `lawCeiling`'s own reason.** The numbering check above validates *numbers* (1..`lawCeiling`) and
@@ -78,7 +79,22 @@ check stayed green, while the emitter's summary read "57 entries" against a base
 C80). Pinned by hand rather than derived, because a check that counted the rows would compare the
 register to itself and a dropped row would take its own evidence along. **Adding a row means bumping
 this** — the same tax `lawCeiling` already carries. -/
-def entryCeiling : Nat := 167
+def entryCeiling : Nat := 171
+
+/-- **The layers a row may name.** `layer` is not prose: it is the key the emitted `LAWS.md` groups by,
+so a note pasted into it silently becomes a table heading — which happened to laws 3, 4a and 16a and
+survived because nothing read the field. Check 1c refuses a value outside this list. A new layer is a
+deliberate edit here, which is the point: it makes the vocabulary a decision rather than an accident. -/
+def validLayers : List String :=
+  ["Admission", "Casper", "Cross-shard", "Crypto", "Decimal", "Disposition", "JSON", "Node", "PoS",
+   "Progress", "Protocol", "RSpace", "Rholang", "Rosette", "Scheduler", "Storage", "Sync", "Wire"]
+
+/-- **How many proved rows have not yet named their proposition.** The formal-proposition fields are
+new (2026-11-16), so the register is retrofitted as rows are revisited rather than in one rewrite. The
+ceiling may only fall; a new or materially edited law must set `formal` and `falsifier`, and check 10
+requires both to resolve. Publishing the number keeps the remaining work visible instead of letting a
+ratchet at an unstated baseline look finished. -/
+def formalMissingCeiling : Nat := 152
 
 /-- **The declarations the register names whose proofs rest on the *compiler* — empty as of 2026-09-25,
 and checked in both directions by check 6b.**
@@ -126,6 +142,20 @@ def logicAxioms : List Name := [``propext, ``Quot.sound, ``Classical.choice]
 
 /-- How many laws carry a given status, for the summary line. -/
 def statusCount (s : Status) : Nat := (laws.filter (·.status == s)).length
+
+/-- Rows that name their proposition and a falsifier — the formal rung's progress. -/
+def formalCount : Nat := (laws.filter fun l => l.formal.isSome && l.falsifier.isSome).length
+
+/-- Proved rows still on prose alone. Check 10 holds this to `formalMissingCeiling`. -/
+def formalMissing : Nat :=
+  (laws.filter fun l =>
+    (l.status == .provedTied || l.status == .provedModel) && l.formal.isNone).length
+
+/-- Proved rows with neither a corpus nor an executable Rust witness — the honest prose-only residual. -/
+def proseOnly : Nat :=
+  (laws.filter fun l =>
+    (l.status == .provedTied || l.status == .provedModel)
+      && l.corpus.isNone && l.rustWitness.isEmpty).length
 
 def joinNames (ns : List Name) : String :=
   if ns.isEmpty then "-" else String.intercalate ", " (ns.map (·.toString))
@@ -287,11 +317,14 @@ def tsvRow (l : Law) : String :=
   String.intercalate "\t" [
     toString l.number, l.clause, l.layer, l.status.wire, joinNames l.declarations,
     joinNames l.axioms, l.corpus.getD "-", joinStrs l.rust, joinStrs l.coq, joinNames l.witness,
-    flat (l.falsifiable.getD "-"), flat l.statement, flat l.note, joinStrs l.rustWitness]
+    flat (l.falsifiable.getD "-"), flat l.statement, flat l.note, joinStrs l.rustWitness,
+    (l.formal.map (fun n => n.toString)).getD "-",
+    (l.mutant.map (fun n => n.toString)).getD "-",
+    (l.falsifier.map (fun n => n.toString)).getD "-"]
 
 def tsv : String :=
   String.intercalate "\n" <|
-    ("number\tclause\tlayer\tstatus\tdeclarations\taxioms\tcorpus\trust\tcoq\twitness\tfalsifiable\tstatement\tnote\trustWitness"
+    ("number\tclause\tlayer\tstatus\tdeclarations\taxioms\tcorpus\trust\tcoq\twitness\tfalsifiable\tstatement\tnote\trustWitness\tformal\tmutant\tfalsifier"
       :: ordered.map tsvRow)
 
 /-- How many rows carry a Rust witness — the Rust counterpart of `witness`, and the number that says how
@@ -313,6 +346,8 @@ def rustWitnessDistinct : Nat := rustWitnessEntries.eraseDups.length
 /-- The summary sentence both documents open with — the one number that replaces the three competing
 counts (19 in a stale note, 29 in two documents, 43 in the tree). -/
 def summary : String :=
+  let propositionRows := if formalCount == 1 then "row" else "rows"
+  let propositionVerb := if formalCount == 1 then "names its" else "name their"
   s!"{lawCount} laws, {entryCount} entries: {statusCount .provedTied} proved and tied to the node by a \
 conformance corpus, {statusCount .provedModel} proved over the model — of which {rustWitnessCount} carry \
 a Rust witness the gate runs ({rustWitnessEntries.length} witness entries, {rustWitnessDistinct} \
@@ -321,7 +356,9 @@ distinct tests, a test being able to witness two laws) — \
 {statusCount .axiomByDesign} axiomatized by design (the cryptographic primitives), \
 {statusCount .owed} owed, {statusCount .deferred} deferred, {statusCount .open} open, \
 {statusCount .retired} retired (the port has no rule of that shape — the row says what was read), \
-{statusCount .orphaned} orphaned."
+{statusCount .orphaned} orphaned. {formalCount} {propositionRows} {propositionVerb} proposition and \
+a falsifier; {formalMissing} proved rows are still prose-only (ceiling {formalMissingCeiling}); \
+{proseOnly} proved rows carry neither a corpus nor an executable Rust witness."
 
 /-- A Markdown table cell. A literal `|` ends the cell, and this catalog is full of them — Law 1 is
 `sort (p | q) = sort (q | p)` — so it is escaped; GFM honours `\|` inside a code span, which is where ours
@@ -462,6 +499,15 @@ run_cmd do
       {entryCeiling} — a row dropped from the list takes its own evidence with it, which is what this \
       ceiling exists to catch; bump `entryCeiling` when a row is added (the tax `lawCeiling` carries)"
 
+  -- 1c. The layer vocabulary is a decision, not free text. `layer` is the key `LAWS.md` groups by, so
+  -- prose pasted into it becomes a table heading; laws 3, 4a and 16a carried whole notes there and the
+  -- build stayed green because nothing read the field. A new layer is an edit to `validLayers`.
+  for l in register do
+    if !validLayers.contains l.layer then
+      failures := failures.push s!"layer: law {l.number}{l.clause} names `{l.layer}`, which is not one \
+        of the register's layers ({validLayers}) — `layer` is the key the Markdown groups by, so prose \
+        here becomes a heading"
+
   -- 2. Clauses: a law's clause letters are distinct, so `16a`/`16b` cannot collide.
   for n in nums do
     let cs := (register.filter (·.number == n)).map (·.clause)
@@ -581,6 +627,36 @@ run_cmd do
         carrying a `corpus` — say in its `note` why the corpus is not the tie that word means (the layer \
         may be partial, as law 1a's is: the model's algebra is coarser than the node's)"
 
+  -- 5d. The `falsifiable` sentence must name something a machine can resolve: a declared witness, an
+  -- executable Rust witness, the corpus layer, or at least a backticked identifier. The sentence is the
+  -- register's account of how the law could be false, and a sentence naming none of the row's evidence is
+  -- prose floating free of the proof. Measured at introduction: four cells (23, 96d, 97a, 97d) needed a
+  -- backticked name added; every other proved row already named its witness, test, or corpus.
+  for l in register do
+    match l.falsifiable with
+    | none => pure ()
+    | some s =>
+      if l.status == .provedTied || l.status == .provedModel then
+        let witnessNames := l.witness.map fun n => (n.toString.splitOn ".").getLast!
+        let rustNames := l.rustWitness.map fun a =>
+          ((a.splitOn ":").getLast!.splitOn ".").getLast!
+        let corpusNames := l.corpus.toList
+        let named := (witnessNames ++ rustNames ++ corpusNames).any fun n =>
+          !n.isEmpty && (s.splitOn n).length > 1
+        let anchored := named || (s.splitOn "`").length > 2
+        if !anchored then
+          failures := failures.push s!"non-vacuity: law {l.number}{l.clause}'s `falsifiable` names no \
+            witness, Rust test, corpus layer, or backticked identifier — the sentence is prose nothing \
+            can resolve"
+
+  -- 5e. A proved row with no corpus and no executable Rust witness is a model↔code tie by prose. That is
+  -- allowed, but the note must say why; the count is published in the summary rather than hidden.
+  for l in register do
+    if (l.status == .provedTied || l.status == .provedModel)
+        && l.corpus.isNone && l.rustWitness.isEmpty && l.note.isEmpty then
+      failures := failures.push s!"tie: law {l.number}{l.clause} is proved with neither a corpus nor an \
+        executable Rust witness and no note saying why — name the tie, or why one cannot exist"
+
   -- 6. A proved law that rests on an axiom must say so in its own row. Law 1a is the case this exists
   -- for: "proven, residually 30 axioms" in a document, with the qualification nowhere near the claim.
   for l in register do
@@ -643,6 +719,63 @@ run_cmd do
     if l.status == .retired && l.note.isEmpty then
       failures := failures.push s!"law {l.number}{l.clause} is `retired` with no note — name the code \
         that was read and why the port has no rule of this shape (its `rust` anchor says where)"
+
+  -- 10. **The formal proposition, and the mutation that breaks it.** The register's `statement` is
+  -- prose and its `declarations` are names; neither says which term *is* the law, and a `witness` is only
+  -- checked to exist and be a theorem. These fields close that seam: `formal` names a `Prop`, `mutant`
+  -- names the rule being broken, and `falsifier` is a theorem whose type *mentions* the mutant (or the
+  -- formal proposition when no mutant is named). The mention check is `Expr.getUsedConstants` on the
+  -- falsifier's elaborated type — a witness about something else no longer passes as this row's.
+  -- The retrofit is a ratchet: `formalMissing` may only fall.
+  let propTyped (n : Name) : Bool :=
+    match env.find? n with
+    | some (.thmInfo _) => true
+    | some (.defnInfo v) =>
+      match v.type with
+      | .sort .zero => true
+      | _ => false
+    | _ => false
+  let mentions (n : Name) (e : Lean.Expr) : Bool := (Lean.Expr.getUsedConstants e).contains n
+  for l in register do
+    match l.formal with
+    | none =>
+      if l.mutant.isSome || l.falsifier.isSome then
+        failures := failures.push s!"formal: law {l.number}{l.clause} names a mutant or falsifier but \
+          no `formal` proposition — the mutant has nothing to be a mutant of"
+    | some f =>
+      if !propTyped f then
+        failures := failures.push s!"formal: law {l.number}{l.clause}'s `formal` {f} is not a theorem \
+          or a `def` of type `Prop`"
+      match l.mutant, l.falsifier with
+      | some m, some fa =>
+        if !propTyped m then
+          failures := failures.push s!"formal: law {l.number}{l.clause}'s `mutant` {m} is not a \
+            theorem or a `def` of type `Prop`"
+        match env.find? fa with
+        | some (.thmInfo v) =>
+          if !mentions m v.type then
+            failures := failures.push s!"formal: law {l.number}{l.clause}'s `falsifier` {fa} does not \
+              mention its mutant {m} — a witness that says nothing about the mutation is decoration"
+        | _ =>
+          failures := failures.push s!"formal: law {l.number}{l.clause}'s `falsifier` {fa} is not a \
+            theorem"
+      | some _, none =>
+        failures := failures.push s!"formal: law {l.number}{l.clause} names a `mutant` with no \
+          `falsifier` — the mutation is stated and nothing breaks it"
+      | none, some fa =>
+        match env.find? fa with
+        | some (.thmInfo v) =>
+          if !mentions f v.type then
+            failures := failures.push s!"formal: law {l.number}{l.clause}'s `falsifier` {fa} does not \
+              mention its `formal` proposition {f}"
+        | _ =>
+          failures := failures.push s!"formal: law {l.number}{l.clause}'s `falsifier` {fa} is not a \
+            theorem"
+      | none, none => pure ()
+  if formalMissing > formalMissingCeiling then
+    failures := failures.push s!"formal: {formalMissing} proved rows have no `formal` proposition, \
+      above the ceiling {formalMissingCeiling} — a new or materially edited law must name its \
+      proposition and its falsifier; raise the ceiling only with the work that reduces it"
 
   if failures.isEmpty then
     logInfo m!"rchain-laws: the register is consistent — {lawCount} laws, {entryCount} entries, \

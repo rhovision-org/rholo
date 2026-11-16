@@ -1,6 +1,6 @@
 # The laws — what they guarantee
 
-rholo's behaviour is pinned by **<!-- counts:laws -->112 laws<!-- counts:end -->** — one invariant per layer of
+rholo's behaviour is pinned by **<!-- counts:laws -->113 laws<!-- counts:end -->** — one invariant per layer of
 the system. A law says what must be true of the node (or of the model it is proved over), why it matters,
 and what would falsify it. This page is the **reading**: one line per law, grouped by layer. The checked
 register is the authority for status, declarations and falsifiers; where this page and the register
@@ -8,14 +8,18 @@ disagree, the register is right.
 
 > **How to read a law number**
 >
-> - **`Law N`** — a stable number, 1–112. Numbers are never reused; a new law takes the next one.
+> - **`Law N`** — a stable number, 1–113. Numbers are never reused; a new law takes the next one.
 > - **`Law Nx`** — a *clause* of a law whose parts have different proofs or statuses (`16a`, `16b`, …).
->   <!-- counts:clause-laws -->27<!-- counts:end --> laws carry clauses; the register has one **entry** per clause.
-> - **Entry** — one row of the register. **<!-- counts:laws -->112 laws<!-- counts:end --> = <!-- counts:entries -->167 entries<!-- counts:end -->**, and the
+>   <!-- counts:clause-laws -->30<!-- counts:end --> laws carry clauses; the register has one **entry** per clause.
+> - **Entry** — one row of the register. **<!-- counts:laws -->113 laws<!-- counts:end --> = <!-- counts:entries -->171 entries<!-- counts:end -->**, and the
 >   status counts are per entry. Laws 14, 16 and 86 have clauses on both sides of `proved-tied`/`proved-model`,
 >   which is why the number of *laws* proved is smaller than the sum of the two status columns.
 > - **`C###`** — an audit finding (`spec/audit/passes.md`), never a law. HAZOP rows are `F-U…`/`H-U…`,
 >   wargame rows `W-N…`, and an audit pass is `§N`. They are different namespaces.
+> - **`formal` / `mutant` / `falsifier`** — where a row has been retrofitted, `formal` names the law's
+>   proposition as a Lean `Prop`, `mutant` the rule being weakened, and `falsifier` the theorem that
+>   breaks the mutant. Five rows carry it today (104, 72b, 63b, 74b, 113); the register is the authority and
+>   <!-- counts:formal-missing -->152<!-- counts:end --> proved rows are still prose-only.
 >
 > The machine-readable register is [`spec/laws.tsv`](../../../spec/laws.tsv); the rendered tables, with every
 > law's status and falsifier, are [`spec/LAWS.md`](../../../spec/LAWS.md). Both are emitted from
@@ -50,6 +54,7 @@ disagree, the register is right.
 | 92–97 | **Replay evidence and split accounting** | a cost verdict is not a state verdict (93) and a replay failure's cause is provenance-dependent (92); a local fault has a bounded exit (94); the replay record is the play's order (95); a split execution does not change the accounting (96); a merge's accounting is total and single-counted (97) |
 | 98–100 | **Cross-shard acceptance** | the escrow moves exactly and conserves value (98); the decision is durable before its effects and recovery closes (99); every phase is a shard-local deploy and the DAG is single-shard (100) |
 | 101–112 | **Certified sync, history and its service** | peer-independent verified answers (101); replay's chain and its one external state (102); bounded concurrent serving (103); an attributable checkpoint certificate (104); sync separated from verification (105); audit equivalence (106); history as a checked service (107); a running node is anchored (108); a post-anchor block reads only certified roots (109); a served range is accounted before it leaves (110); settlement follows the possession challenge (111); an accepted audit claim is one this node reproduced (112) |
+| 113 | **Merge and finality** | a merge above a finalised base preserves a tuple-space datum unless a kept chain consumes it; the native absolute-write half is refuted and its guard named (§170) |
 
 ## Rholang — the language (Laws 1–6)
 
@@ -324,16 +329,16 @@ The register classifies every entry; the words mean different things:
 - **proved-tied** — proved, *and* tied to the node by a conformance corpus the Rust consumer runs.
   <!-- counts:proved-tied-entries -->31<!-- counts:end --> entries.
 - **proved-model** — proved about a model that a person keeps in sync with the Rust.
-  <!-- counts:proved-model-entries -->122<!-- counts:end --> entries.
+  <!-- counts:proved-model-entries -->126<!-- counts:end --> entries.
 - **axiom-by-design** — a primitive assumed rather than proved (cryptography): <!-- counts:axioms -->10 axioms<!-- counts:end --> across the tree.
 - **owed / deferred** — stated, with the proof or the decision outstanding; **open** — a recorded design
   question, not a proof gap; **vacuous** — proved but restating its own definition (kept visible, never
   counted as coverage); **orphaned** — out of scope (the Rosette rows); **retired** — the port has no
   rule of that shape, evidenced by naming the code that was read.
 
-The count arithmetic, in one sentence: **<!-- counts:laws -->112 laws<!-- counts:end -->, <!-- counts:entries -->167 entries<!-- counts:end -->**, because <!-- counts:clause-laws -->27<!-- counts:end --> laws
-carry clauses; **<!-- counts:proved-laws -->104<!-- counts:end --> laws are proved in at least one clause**, split over entries as
-<!-- counts:proved-tied-entries -->31<!-- counts:end --> tied and <!-- counts:proved-model-entries -->122<!-- counts:end --> over the model. The two status columns overlap on
+The count arithmetic, in one sentence: **<!-- counts:laws -->113 laws<!-- counts:end -->, <!-- counts:entries -->171 entries<!-- counts:end -->**, because <!-- counts:clause-laws -->30<!-- counts:end --> laws
+carry clauses; **<!-- counts:proved-laws -->106<!-- counts:end --> laws are proved in at least one clause**, split over entries as
+<!-- counts:proved-tied-entries -->31<!-- counts:end --> tied and <!-- counts:proved-model-entries -->126<!-- counts:end --> over the model. The two status columns overlap on
 laws 14, 16 and 86, which is why they do not add up to the law-level union. No total on this page is
 hand-written: the spans are emitted from the register.
 

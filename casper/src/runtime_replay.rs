@@ -104,7 +104,7 @@ pub trait ReplayRuntime {
     async fn revert_to_soft_checkpoint(
         &self,
         checkpoint: SoftCheckpoint<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>,
-    );
+    ) -> std::result::Result<(), rchain_rspace::errors::RSpaceError>;
 
     async fn rig(&self, log: Log);
 
@@ -488,7 +488,10 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
             .await
             .map_err(|e| ReplayFailure::internal_error(e.to_string()))?;
         if result.failed() {
-            self.runtime.revert_to_soft_checkpoint(fallback).await;
+            self.runtime
+                .revert_to_soft_checkpoint(fallback)
+                .await
+                .map_err(|e| ReplayFailure::internal_error(e.to_string()))?;
         }
 
         // Verify deploy status matches.
@@ -842,7 +845,7 @@ impl ReplayRuntime for ReplayRhoRuntime {
     async fn revert_to_soft_checkpoint(
         &self,
         checkpoint: SoftCheckpoint<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>,
-    ) {
+    ) -> std::result::Result<(), rchain_rspace::errors::RSpaceError> {
         ReplayRhoRuntime::revert_to_soft_checkpoint(self, checkpoint).await
     }
 
@@ -922,7 +925,7 @@ impl ReplayRuntime for ReportingRuntime {
     async fn revert_to_soft_checkpoint(
         &self,
         checkpoint: SoftCheckpoint<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>,
-    ) {
+    ) -> std::result::Result<(), rchain_rspace::errors::RSpaceError> {
         ReportingRuntime::revert_to_soft_checkpoint(self, checkpoint).await
     }
 

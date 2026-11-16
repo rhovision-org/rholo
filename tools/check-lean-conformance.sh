@@ -292,6 +292,8 @@ if [[ -d "$ROOT/spec/conformance" ]]; then
       admission) test_name="lean_admission_corpus"; crate="rchain-casper" ;;
       hostlist) test_name="lean_hostlist_corpus";  crate="rchain-node" ;;
       recovery) test_name="lean_recovery_corpus";  crate="rchain-casper" ;;
+      checkpoint) test_name="lean_checkpoint_corpus"; crate="rchain-casper" ;;
+      namespace) test_name="lean_namespace_corpus"; crate="rchain-casper" ;;
       protocol) test_name="lean_protocol_corpus";  crate="rchain-rholang" ;;
       envelope) test_name="lean_envelope_corpus";  crate="rchain-node" ;;
       lex)      test_name="lean_lex_corpus";       crate="rchain-node" ;;
@@ -378,7 +380,7 @@ fi
 # exactly how both documents came to say "29 laws" while the tree held 43, and how they came to disagree
 # with each other on Laws 5 and 24.
 if [[ -x "$ROOT/tools/emit-lean-laws.sh" ]]; then
-  if "$ROOT/tools/emit-lean-laws.sh" >/tmp/lean-laws.log 2>&1; then
+  if "$ROOT/tools/emit-lean-laws.sh" --check >/tmp/lean-laws.log 2>&1; then
     ok "law register emitted from the Lean"
   else
     fail "law register emission failed — see /tmp/lean-laws.log"

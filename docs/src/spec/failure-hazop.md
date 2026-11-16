@@ -378,7 +378,7 @@ and unrecorded — and the bodies it drops go with the metadata so nothing can s
 | deviation | law that captures it, or the law owed | why |
 |---|---|---|
 | U12-01 | **law 72**, a completion record brackets every durable effect (`Rchain/Durability.lean`) | `rewindStep` (law 53c) gives the rewind's *effect*; law 72 gives its *durability* |
-| U12-02 | owed: law 72's release condition — when the record may be cleared | law 72 states that the record is written and what it brackets, not when it is released |
+| U12-02 | **law 72b**, the release condition — a record may be released only from the completed phase | law 72 states that the record is written and what it brackets; 72b states when it may be cleared, and the unguarded mutant is the falsifier |
 | U12-03 | owed, and written first as **law 76**: a concluded stop stops (`Rchain/Stop.lean`) | the fault's response is the process's own liveness, stated over law 51's system |
 
 ### U13 — The runtime root
@@ -399,8 +399,8 @@ node validates and serves from the state it rewound to.
 
 | deviation | law that captures it, or the law owed | why |
 |---|---|---|
-| U13-01 | owed: the completion-record law (U12), whose shape is *three effects, one record* | no existing law orders a record against a set of durable effects |
-| U13-02 | owed: the same law's repair clause | the guard's repair must be total over the effects the record brackets |
+| U13-01 | **law 72** — a completion record brackets every durable effect (four effects, one record) | the record may be written only once every effect it brackets has been applied |
+| U13-02 | **laws 72 and 72b** — the repair clause and the release condition | the guard's repair is total over the effects the record brackets, and release starts only from `rewound` |
 
 ### U14 — The refusal budget
 
@@ -443,7 +443,7 @@ neither.
 | deviation | law that captures it, or the law owed | why |
 |---|---|---|
 | U15-01 | owed, and written first as law 74: **a checkpoint does not drain an overlay it has not folded** | no existing law models the overlay's drain against its fold; `Rchain/RSpace/*.lean` models the trie, not the clear |
-| U15-02 | owed: the same law, with the soft checkpoint's base as a modelled field | the missing field is the absent root |
+| U15-02 | **law 74b** — a soft checkpoint reverts only over the base it was taken over | the base is now a modelled field (`SoftState`, `guardedRevert`); adding the root to `SoftCheckpoint` and checking it at revert is the remaining code change |
 | U15-03 | law 49 / `Rchain/RSpace/Merkle.lean` cover content addressing; the *ordering* is owed | content-addressing makes the orphans harmless; the write order is not a modelled state |
 
 ### U16 — The operator's reconciliation
@@ -473,6 +473,11 @@ absence of a phase record.
 | U16-01 | owed: nothing in the register speaks of an operator's asides | the register is the node's mathematics and the tool is not modelled — the fix is a shell refusal, not a theorem |
 | U16-02 | owed: — | same; the fix is a copy-beside-then-swap |
 | U16-03 | owed: — | the tool's phases are not modelled, and this row is not fixed here either |
+
+**Reading this table.** The U16/U17/U18 “owed law” cells do **not** mark mathematical debt. They are
+operator/tool policy — a shell refusal, a copy-beside-then-swap, a preflight, a restart loop — and the
+Lean4-first rule applies where a *state relation* is at stake. Their fixes are the falsifiers in Table A,
+not theorems; counting them as owed laws would make the register's arithmetic look worse and say less.
 
 ### U17 — Resource admission and degradation
 

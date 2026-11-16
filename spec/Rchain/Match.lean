@@ -24,16 +24,19 @@ This module replaces all three with a definition and the theorems that hold of i
   (`spatialMatch_implies_linear`) — the Scala's `addedVars.distinct`, the Rust's `BindPattern::free_count`;
 - law 37's tie to law 35: a modelled pattern with nothing connective in it and a **singleton**
   expression list matches exactly the targets structurally equal to it, which is why `spatial_match`'s
-  fast path (`if !pattern.connective_used { pattern == target }`) is sound. **Owed — and the axiom that
-  stood here was false**: the version quantifying over `modelledPar` alone admits a `Par` with two
-  expressions, which is modelled, connective-free and unmatchable
-  (`a_two_expression_pattern_refutes_the_modelled_tie`, AUDIT C51), so it was deleted rather than
-  narrowed in place, and `spec/INVENTORY.md` row 37 names what is owed now.
+  fast path (`if !pattern.connective_used { pattern == target }`) is sound. **The proof landed on
+  2026-09-24** as `spatialMatches_iff_eq` over `pathPar` — soundness by `spatialMatches_imp_eq`,
+  completeness by the mirror family at the same depth-indexed bounds. The axiom that stood here was
+  false twice (AUDIT C51: `modelledPar` alone admits a two-expression pattern, `a_two_expression_pattern_
+  refutes_the_modelled_tie`; AUDIT C60: the domain must hold at every level), so it was deleted rather
+  than narrowed, and `pathPar` is the predicate the row now states.
 
-One thing is owed rather than proven, and is named rather than left implicit: that proof. `fuel_saturation`
-— the statement that the fuel is *enough* — is a **theorem** now (the family of depth-indexed bounds
-below), so a fuel shortfall is ruled out rather than merely unobserved; the tie's proof is the residue,
-and its content is checked by the corpus meanwhile.
+The remaining item is **not the tie**: it is modelling `spatial_match`'s fast path
+(`if !pattern.connective_used { pattern == target }`, `spatial_matcher.rs:235-237`) and the
+canonicalization either side of it, which the row names as its next step. `fuel_saturation` — that the
+fuel is enough — is a **theorem** (the family of depth-indexed bounds below), so a shortfall is ruled out
+rather than merely unobserved; the clauses here fail closed outside `pathPar`, and the corpus pins that
+boundary.
 
 **The boundary, stated rather than implied — and now named by a predicate.** The clauses cover:
 variables, wildcards, ground values, and `[…]`/`Set(…)`/`{…}`/`(…)` with remainders and nesting — which

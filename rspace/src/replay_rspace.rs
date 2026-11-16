@@ -598,8 +598,11 @@ where
         self.space.create_soft_checkpoint().await
     }
 
-    async fn revert_to_soft_checkpoint(&self, checkpoint: SoftCheckpoint<C, P, A, K>) {
-        self.space.revert_to_soft_checkpoint(checkpoint).await;
+    async fn revert_to_soft_checkpoint(
+        &self,
+        checkpoint: SoftCheckpoint<C, P, A, K>,
+    ) -> std::result::Result<(), crate::errors::RSpaceError> {
+        self.space.revert_to_soft_checkpoint(checkpoint).await
     }
 }
 

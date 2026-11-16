@@ -89,6 +89,15 @@ that had rotted — naming a theorem since renamed, or one never written — wou
 live one. `witness` is the part that can be checked; a `proved*` row must name at least one declaration
 or carry a `corpus`, and no witness may be an `axiom` — a row whose falsifier is the assumption that
 cannot fail is naming decoration.
+
+**The formal rung (2026-11-16).** A row may also name `formal` — the law's proposition, as a theorem or
+a `def … : Prop` — with `mutant` (the rule being weakened: a hypothesis dropped, `>` weakened to `>=`,
+a projection removed) and `falsifier` (a theorem whose type *mentions* the mutant, checked with
+`Expr.getUsedConstants`). `Rchain/LawsMain.lean`'s check 10 resolves all three. The retrofit is a
+ratchet: `formalMissingCeiling` is 152 and may only fall, and the first five rows are 104 (the
+weighted checkpoint quorum), 72b (a completion record's release), 63b (the relay's conditional),
+74b (a soft checkpoint's base) and 113 (a merge above a finalised base).
+The declaration is now the statement, not a description of it.
 -/
 
 -- The register is data, and `Name` is the one type it needs from outside the prelude. `autoImplicit`
@@ -211,6 +220,23 @@ structure Law where
   witness : List Lean.Name := []
   /-- A note where the status needs qualifying. -/
   note : String := ""
+  /-- **The law's proposition, as a named declaration of type `Prop`.** The register's `statement` is
+  prose, and `declarations` are names: neither says *which term is the law*. This field does, so the
+  statement can be checked rather than read. `Rchain/LawsMain.lean`'s check 10 requires the name to
+  resolve to a theorem or a `def` of type `Prop`. `none` means the row has not been retrofitted; the
+  ratchet is `formalMissingCeiling`, which may only fall. -/
+  formal : Option Lean.Name := none
+  /-- **The mutant the falsifier refutes**, when the falsifier is a mutation rather than a plain
+  counterexample: the law's rule with a hypothesis dropped, a strict inequality weakened, or a
+  projection removed. Check 10 requires it to be a `Prop`-typed declaration and requires the
+  `falsifier`'s type to mention it — so a witness cannot be an unrelated theorem wearing the row's
+  name. -/
+  mutant : Option Lean.Name := none
+  /-- **The theorem that makes the mutation fail.** Its type must mention `mutant` (or `formal` when no
+  mutant is named); check 10 resolves both names, and check 4c's "must be a theorem" discipline is
+  applied to it too. This is the machine half of "clearly falsifiable": the register now points at the
+  proposition and at the theorem that breaks its mutant, not only at prose. -/
+  falsifier : Option Lean.Name := none
 
 -- **The budget is raised for these literals, measured.** Elaborating a register chunk is a unification
 -- problem over the rows' field types rather than a proof: one list fit the default 200 000 heartbeats at
@@ -411,7 +437,7 @@ def lawsA : List Law := [
       with `refl`/`symm`/`trans` as **constructors** rather than axioms, a weight invariant \
       (`alpha_equiv_weight`) and a non-vacuity witness (`a_send_is_not_alpha_equiv_to_nil`). The note \
       this replaces said the deep-α half was Coq's obligation; no track can deliver it and none needs it" },
-  { number := 3, layer := "Rholang **A witness was added on 2026-09-27 (AUDIT C139): the converse, without which the hash half of this law was not falsifiable.** The equality-facing witness asserts `equal => same hash`, which a *constant* `Hash` satisfies — measured: an empty `Hash for Sorted` body left both of law 2's witnesses green and the whole `rchain-models` suite green (168 tests). `law2_unequal_canonical_forms_do_not_hash_alike` states the other direction, and it is the one that fails under that mutation.",
+  { number := 3, layer := "Rholang",
     rustWitness := [
       "rholang/src/substitute.rs:substitutes_bound_var",
       "rholang/src/property_tests.rs:an_open_value_at_the_variable_leaves_a_free_variable"],
@@ -486,8 +512,13 @@ def lawsA : List Law := [
       justifies it — Lean rejects the block — so they are structural inductions whose only two calls, \
       the head's element law and the tail's theorem, are subterms. This row has **no axioms of its \
       own**: `sort_subst` was the last one, and what the row's theorems still rest on is `cmpExpr`'s \
-      three, which law 1's row owns and counts" },
-  { number := 4, clause := "a", layer := "Rholang **The witness column changed on 2026-09-27 (AUDIT C138), because both names it carried were vacuous.** `law3_substituting_a_closed_value_keeps_the_term_closed` asserts closedness before and after the substitution — which the *identity* substitution satisfies — and `law3_substitution_and_sorting_commute` reduces to `sort p = sort p` under the same mutation. Measured: `substitute_par` returning its input leaves both green, while the two now named go red. The right pointer was already in this row's `falsifiable` cell (`an_open_value_at_the_variable_leaves_a_free_variable`); the witness column is where a reader looks to ask whether the law is falsified, so it is the column that had to move.",
+      three, which law 1's row owns and counts. **Witness column (AUDIT C139).** A witness was added \
+      on 2026-09-27: the converse, without which the hash half of this law was not falsifiable. The \
+      equality-facing witness asserts `equal => same hash`, which a *constant* `Hash` satisfies — \
+      measured: an empty `Hash for Sorted` body left both of law 2's witnesses green and the whole \
+      `rchain-models` suite green (168 tests). `law2_unequal_canonical_forms_do_not_hash_alike` states \
+      the other direction, and it is the one that fails under that mutation" },
+  { number := 4, clause := "a", layer := "Rholang",
     rustWitness := [
       "rholang/tests/execution.rs:peek_and_persistent_work",
       "rholang/tests/execution.rs:list_channel_matches"],
@@ -499,8 +530,15 @@ def lawsA : List Law := [
     coq := ["spec/coq/Laws.v:reduce"],
     witness := [`Rchain.reduce_not_deterministic],
     falsifiable := some "`reduce_not_deterministic` proves confluence is **false** on the flat `Par`, \
-      so the law's statement is bounded by a published disproof rather than an assertion"
-    },
+      so the law's statement is bounded by a published disproof rather than an assertion",
+    note := "**Witness column (AUDIT C138).** The witness column changed on 2026-09-27, because both \
+      names it carried were vacuous. `law3_substituting_a_closed_value_keeps_the_term_closed` asserts \
+      closedness before and after the substitution — which the *identity* substitution satisfies — and \
+      `law3_substitution_and_sorting_commute` reduces to `sort p = sort p` under the same mutation. \
+      Measured: `substitute_par` returning its input leaves both green, while the two now named go red. \
+      The right pointer was already in this row's `falsifiable` cell \
+      (`an_open_value_at_the_variable_leaves_a_free_variable`); the witness column is where a reader \
+      looks to ask whether the law is falsified, so it is the column that had to move" },
   { number := 4, clause := "b", layer := "Rholang",
     rustWitness := ["rholang/tests/execution.rs:law4_new_allocates_fresh_names_and_the_reduct_is_closed"],
     statement := "`new` yields fresh unforgeable names: reduction introduces no free variables it did \
@@ -1189,7 +1227,7 @@ def lawsA : List Law := [
       **property test** (`block-storage/src/property_tests.rs:law15_adding_blocks_only_grows_the_state`): \
       this row's statement is the derivation-level fact, and the tie to the state it is tested against is \
       the port's own guard, which the fold above is now the model of rather than an approximation to" },
-  { number := 16, clause := "a", layer := "Casper **This witness was strengthened on 2026-09-27 (AUDIT C140).** It asserted only that the seen set does not shrink and that the counts do not fall, and a DAG state that never changes satisfies both: making `add_block_to_dag_state` return its input left it green (measured), while five of law 18's tests and `add_block_to_dag_state_builds_child_map` went red. It now requires the block that was added to be *in* the new seen set and its height to be *in* the index — the growth the law is about, rather than its direction.",
+  { number := 16, clause := "a", layer := "Casper",
     rustWitness := ["casper/src/validate.rs:block_number_must_be_parent_max_plus_one"],
     statement := "Block number = max(parent) + 1 — as the port's check, which **rejects** a block whose \
       number is not one more than the maximum of its non-failed justifications (`0` when there is none \
@@ -1214,7 +1252,13 @@ def lawsA : List Law := [
       failed ones and seeded `-1` (`validate.rs:222-234`) — and the proof is that predicate's \
       elimination, which is the honest shape: the port enforces this by *refusing blocks*, not by \
       maintaining an invariant it states. The model's `Block` carries `justifications` because the check \
-      reads them; the `parents : List Nat` field this row's model used does not exist in the port" },
+      reads them; the `parents : List Nat` field this row's model used does not exist in the port. \
+      **Witness column (AUDIT C140).** This witness was strengthened on 2026-09-27. It asserted only \
+      that the seen set does not shrink and that the counts do not fall, and a DAG state that never \
+      changes satisfies both: making `add_block_to_dag_state` return its input left it green \
+      (measured), while five of law 18's tests and `add_block_to_dag_state_builds_child_map` went red. \
+      It now requires the block that was added to be *in* the new seen set and its height to be *in* \
+      the index — the growth the law is about, rather than its direction" },
   { number := 16, clause := "b", layer := "Casper",
     rustWitness := ["casper/src/validate.rs:sequence_number_must_be_creator_latest_plus_one"],
     statement := "`seqNum` strictly increases **under the sender's justification**: the port requires the \
@@ -1685,7 +1729,8 @@ def lawsA : List Law := [
     witness := [`Rchain.certificate_blind_late_writer_diverges],
     falsifiable := some "stated as an implication from two states agreeing on the effect's closure, so \
       it is falsifiable by a state pair that agrees on the closure yet yields different traces — the \
-      depth-2 stale read of Law 24 is exactly the shape that would produce one",
+      depth-2 stale read of Law 24 is exactly the shape that would produce one; \
+      `certificate_blind_late_writer_diverges` is the instance",
     note := "the property test `law23_read_state_determines_outcome` (`rspace/src/property_tests.rs`) \
       names it on the Rust side (commit 35dd13b62)" },
   { number := 24, layer := "Scheduler",
@@ -3343,6 +3388,7 @@ def lawsB : List Law := [
       "casper/tests/master_dictionary.rs:seal_closes_a_path_and_the_key_still_resolves",
       "casper/tests/master_dictionary.rs:a_granted_key_works_until_it_is_revoked",
       "casper/tests/genesis_registry.rs:only_the_ceremony_key_can_reach_the_admin_handle"],
+    corpus := some "namespace",
     witness := [`Rchain.a_stranger_publishing_under_alices_root_is_refused,
       `Rchain.alice_publishing_under_her_own_root_is_accepted,
       `Rchain.a_forged_identity_is_refused,
@@ -3376,7 +3422,11 @@ def lawsB : List Law := [
       than a different address, are properties of `rho:rev:address` and are pinned by \
       `casper/tests/master_dictionary.rs`, not here. Nor does it claim that a contract cannot *disclose* \
       a deployer id it was given: that is a discipline over the chain's contracts, not a mechanism the \
-      calculus can enforce, and the source scan is the floor under it" },
+      calculus can enforce, and the source scan is the floor under it. **The `namespace` corpus** pins \
+      the four verdicts (`not-your-namespace`, `published`, `sealed`, `not-root-authority`) against the \
+      deployed dictionary through `lean_namespace_corpus`; the row stays `proved-model` because the \
+      model's paths are `Nat` tokens, not base58, and the corpus pins the verdict shape rather than the \
+      encoding." },
   { number := 57, layer := "PoS",
     statement := "**A delegator's stake is the operator's bond, attributed.** A delegation moves a \
       principal from the delegator's own vault into the staking vault and adds it to the operator's key \
@@ -3767,6 +3817,28 @@ def lawsC : List Law := [
       nothing about what a reply holds; the surviving growth is a chain-wide property of the registry \
       (no delete anywhere), bounded economically by whoever pays, and that property is the registry \
       layer's rather than this one's." },
+  { number := 63, clause := "b", layer := "Protocol",
+    statement := "**Given the relay, a bridged delivery is attributable.** If the peer signs the \
+      `DeployData` the node hands it, the write's payer is the caller and its state is bounded by the \
+      caller's own phlo — the shape 63a names as its close.",
+    status := .provedModel,
+    formal := `Rchain.law63b_statement,
+    mutant := `Rchain.law63b_mutant,
+    falsifier := `Rchain.law63b_falsifier,
+    declarations := [`Rchain.law63b_statement, `Rchain.law63b, `Rchain.law63b_mutant,
+      `Rchain.law63b_falsifier, `Rchain.the_relay_would_satisfy_it, `Rchain.AttributableWrite],
+    axioms := [],
+    rust := ["casper/src/shard_invoke.rs"],
+    witness := [`Rchain.law63b_falsifier, `Rchain.the_relay_would_satisfy_it],
+    falsifiable := "`law63b_falsifier` is the current bridge: `bridgedWrite` is an unattributable write, \
+      so the conditional is not vacuous — the relay is what removes the mutant's witness. The relay \
+      itself is not in this tree, which is why 63a stays `open`.",
+    note := "**This clause does not close 63a.** The relay is a cross-implementation protocol change \
+      (Endo does not speak this shard's `DeployData`), so no code here can satisfy it; what is proved is \
+      the conditional shape a fix must have. **No executable Rust witness exists** for the same reason: \
+      `casper/src/shard_invoke.rs` is the unrelayed path, and the model's \
+      `the_relay_would_satisfy_it` is the positive half." },
+
   { number := 64, clause := "a", layer := "Wire",
     statement := "**Where the draft and the implementations differ, the port speaks the \
       implementations' reading.** The prose is not the oracle; what every peer actually speaks is.",
@@ -4087,6 +4159,35 @@ def lawsC : List Law := [
       **F-U17-11** (docs/src/spec/failure-hazop.md): the root half landed earlier; the index half is \
       B39, and its rule is that stale rows are derived from the **surviving** block set, not from the \
       list the current call happened to drop." },
+  { number := 72, clause := "b", layer := "Casper",
+    statement := "**A completion record is released only from the completed phase.** The catch-up \
+      release — the marker is cleared once the frontier passes the anchor it rewound to — may clear a \
+      record only when every effect it brackets has been applied, so a release cannot hide a partial \
+      reset.",
+    status := .provedModel,
+    formal := `Rchain.law72b_statement,
+    mutant := `Rchain.law72b_mutant,
+    falsifier := `Rchain.law72b_falsifier,
+    declarations := [`Rchain.releaseStep, `Rchain.resetReleaseStep, `Rchain.law72b_statement,
+      `Rchain.law72b, `Rchain.law72b_falsifier, `Rchain.a_completed_reset_can_be_released],
+    axioms := [],
+    rust := ["casper/src/engine/catchup.rs", "casper/src/engine/reset.rs", "casper/src/dag.rs"],
+    rustWitness := ["casper/tests/reset.rs:a_crash_after_the_rewind_is_repaired_at_boot_by_the_marker",
+      "casper/src/engine/catchup.rs:a_rewinding_marker_is_never_released"],
+    witness := [`Rchain.law72b_falsifier, `Rchain.a_completed_reset_can_be_released],
+    falsifiable := "`unsafeReleaseStep` drops the `phase = .rewound` requirement, and \
+      `law72b_falsifier` exhibits a reachable `rewinding` state released by it — the partial reset the \
+      guarded rule forbids. The catch-up branch's condition (`frontier > marker.height`) is the `rust` \
+      anchor; the marker test pins the `Rewound` semantics the release depends on.",
+    note := "**The release condition is the walk's own result, not its exit reason** \
+      (`casper/src/engine/catchup.rs:273-299`): a walk that ended with nothing above the anchor — a \
+      silent peer, a closed door — leaves the marker, so the next boot re-enters the guard. The model \
+      states the safety half: release starts only from `rewound`, so the marker cannot be cleared while \
+      an effect is missing. **What it does not model:** the frontier itself is a `Nat` hypothesis, not a \
+      walk; the walk's liveness is Law 71's. **HAZOP U12-02** asked when the record may be cleared; the \
+      answer is this clause plus the status surface (C287), not an unbounded lifetime. **The code \
+      guard is landed:** `may_release` (`casper/src/engine/catchup.rs`) clears only a `Rewound` \
+      marker, pinned by `a_rewinding_marker_is_never_released`." },
 
   { number := 73, layer := "Casper",
     statement := "**A raised request is not spent until the act commits.** The self-reset's request cell \
@@ -4141,6 +4242,30 @@ def lawsC : List Law := [
       overlay before the drain and restores it if the fold fails, and writes `last_native_*` only after \
       the fold has committed. `rustWitness` is empty: the fold's failure path has no fault-injection \
       point in the rspace tests yet, so that falsifier is owed." },
+  { number := 74, clause := "b", layer := "RSpace",
+    statement := "**A soft checkpoint reverts only over the base it was taken over.** The soft \
+      checkpoint carries the history root it snapshotted; a hard checkpoint between the snapshot and \
+      the revert makes the revert unavailable, so the old overlay is never applied over a new base.",
+    status := .provedModel,
+    formal := `Rchain.law74b_statement,
+    mutant := `Rchain.law74b_mutant,
+    falsifier := `Rchain.law74b_falsifier,
+    declarations := [`Rchain.SoftState, `Rchain.guardedRevert, `Rchain.law74b_statement,
+      `Rchain.law74b, `Rchain.law74b_falsifier, `Rchain.a_guarded_revert_uses_the_snapshots_base],
+    axioms := [],
+    rust := ["rspace/src/checkpoint.rs", "rspace/src/rspace.rs"],
+    rustWitness := ["rspace/src/rspace.rs:a_soft_checkpoint_revert_over_a_moved_base_is_refused"],
+    witness := [`Rchain.law74b_falsifier],
+    falsifiable := "The port's `revert_to_soft_checkpoint` re-reads `history.root()` at revert time; \
+      `law74b_falsifier` reaches a state where the unguarded rule used the new base. The guarded rule's \
+      invariant is `a_guarded_revert_uses_the_snapshots_base`.",
+    note := "**The Rust guard is landed.** `SoftCheckpoint` carries the history root it was taken over \
+      (`rspace/src/checkpoint.rs`), and `revert_to_soft_checkpoint` refuses with \
+      `SoftCheckpointBaseMoved` when the root moved (`rspace/src/rspace.rs`), pinned by \
+      `a_soft_checkpoint_revert_over_a_moved_base_is_refused`; the old code re-read \
+      `history.root()` at revert time. **What it does not model:** the history's own base derivation is \
+      Law 70's trie, not this file. HAZOP U15-02's owed law is this clause; the interleaving test is \
+      the Rust witness above." },
 
   { number := 75, layer := "Casper",
     statement := "**A dependent action is taken only on a committed record.** The refusal budget's \
@@ -5431,7 +5556,8 @@ def lawsC : List Law := [
       `Rchain.Split.the_local_rule_publishes_a_disagreement],
     falsifiable := "Publish the local verdict despite the peer's disagreement — the local rule \
       exhibits it, and the incident's divergence reading was that shape; the agreed rule is what \
-      the node must keep. The Rust cost-only tamper test pins the refusal.",
+      the node must keep. The Rust cost-only tamper test pins the refusal; \
+      `a_disagreement_publishes_nothing` is the local-rule theorem.",
     note := "This is the composition of Law 92 (a self-built replay failure is a local fault) and \
       Law 94 (a local fault has a bounded exit). It does not say the raw verdicts are equal — that \
       is 96b's canonical-path statement; it says a difference is not reconciled into a \
@@ -5458,7 +5584,7 @@ def lawsC : List Law := [
       nowhere, #280) — the totality theorem has no fourth state, and the kept theorem fails if a \
       resolved chain is reported kept. Make the reason always zero — the non-zero conclusion of the \
       reason theorem fails. The Rust witness asserts the report's partition and the I1/I2 \
-      emptiness.",
+      emptiness; the totality theorem is `every_chain_is_classified`.",
     note := "**The fixture identity is not the general theorem.** \
       `resolve_conflict_set_with_census` returns `kept = conflictSet \\ enforce_rejected \\ \
       resolved` and `rejected = resolved ∪ enforce_rejected` (`sdk/src/dag/merging.rs:926-978`), \
@@ -5533,7 +5659,7 @@ def lawsC : List Law := [
     falsifiable := "Make the cost total non-additive (for example, subtract a shared fee once per \
       merge): the additive theorem fails. The state half's falsifier is Law 86c's, which reddens if \
       the merge orders dependent chains. The Rust parallel-register witness pins the state \
-      outcome.",
+      outcome; the additive theorem is `independent_merges_commute_and_add`.",
     note := "The state half is cited to Law 86c, not reproved; this row adds the cost carrier. The \
       model's two chains are a concrete disjoint pair; the general independence criterion is Law \
       17c's `chainConflict`/`resolves`." },
@@ -6017,11 +6143,19 @@ def lawsC : List Law := [
       absent parent is not an explicit zero parent, and a negative epoch is not a well-shaped \
       statement.",
     status := .provedModel,
+    formal := `Rchain.Sync.Checkpoint.law104_statement,
+    mutant := `Rchain.Sync.Checkpoint.law104_threshold_mutant,
+    falsifier := `Rchain.Sync.Checkpoint.law104_falsifier,
     declarations := [`Rchain.Sync.Checkpoint.two_quorums_intersect,
       `Rchain.Sync.Checkpoint.a_conflicting_checkpoint_requires_an_equivocator,
       `Rchain.Sync.Checkpoint.the_digest_binds_the_anchor_and_parent,
       `Rchain.Sync.Checkpoint.the_absence_of_a_parent_is_not_the_zero_parent,
-      `Rchain.Sync.Checkpoint.a_negative_epoch_is_not_well_shaped],
+      `Rchain.Sync.Checkpoint.a_negative_epoch_is_not_well_shaped,
+      `Rchain.Sync.Checkpoint.law104_statement,
+      `Rchain.Sync.Checkpoint.law104_threshold_mutant,
+      `Rchain.Sync.Checkpoint.law104_falsifier,
+      `Rchain.Sync.Checkpoint.two_weighted_quorums_intersect,
+      `Rchain.Sync.Checkpoint.law104],
     axioms := [],
     rust := ["casper/src/checkpoint.rs", "casper/src/api/block_api_impl.rs"],
     rustWitness := [
@@ -6029,19 +6163,27 @@ def lawsC : List Law := [
       "casper/src/checkpoint.rs:two_conflicting_checkpoints_share_a_signer_under_a_split",
       "casper/src/checkpoint.rs:an_explicit_zero_parent_is_malformed",
       "casper/src/checkpoint.rs:an_epoch_below_zero_is_malformed"],
+    corpus := some "checkpoint",
     witness := [`Rchain.Sync.Checkpoint.two_quorums_intersect,
       `Rchain.Sync.Checkpoint.the_digest_binds_the_anchor_and_parent,
       `Rchain.Sync.Checkpoint.the_absence_of_a_parent_is_not_the_zero_parent],
-    falsifiable := "Make the rule `>=` and `two_quorums_intersect` fails on two disjoint halves of an \
-      even signer set; the Rust witness `a_certificate_at_exactly_two_thirds_is_refused` reddens for \
-      the same change. Drop the digest's anchor projection and \
+    falsifiable := "Make the threshold `>=` and a certificate at exactly two thirds is admitted — \
+      `law104_threshold_mutant` is that rule, and `law104_falsifier` shows `{0, 1}` of three signers \
+      passes it while `Quorate` refuses it; the Rust witness \
+      `a_certificate_at_exactly_two_thirds_is_refused` reddens for the same change. Intersection itself \
+      survives `>=` for every signer count, so the falsifiable edge is the admission threshold, not the \
+      intersection. Drop the digest's anchor projection and \
       `the_digest_binds_the_anchor_and_parent` fails; `the_digest_separates_two_anchors` is the \
       non-vacuity half. Hash an explicit zero parent and \
       `an_explicit_zero_parent_is_malformed` fails; accept a negative epoch and \
       `an_epoch_below_zero_is_malformed` fails.",
-    note := "**The model is equal-weight over a fixed signer set; the Rust weighs stake.** \
-      `two_quorums_intersect` is the equal-weight projection of `is_super_majority`, and the Rust's \
-      `verify_checkpoint_certificate` sums stake in `i128` and deduplicates signers. **The shape \
+    note := "**The model carries both the weighted rule and its equal-weight projection.** \
+      `two_weighted_quorums_intersect` is the law's proposition (two stake-quorate sets meet in \
+      positive weight), `two_quorums_intersect` is the projection, and the `checkpoint` corpus pins \
+      `rchain_sdk::consensus::is_super_majority`'s arithmetic at the boundary (17 rows). **The corpus \
+      does not pin the digest binding** — the Rust's `checkpoint_digest` tests and the benchmark's \
+      digest recomputation do; that is why this row stays `proved-model` rather than `proved-tied`. \
+      The Rust's `verify_checkpoint_certificate` sums stake in `i128` and deduplicates signers. **The shape \
       rules are part of the law, not an assumption:** `Parent` carries a presence bit, so an absent \
       parent and an explicit zero are different statements, and the Rust refuses the explicit zero \
       before hashing; `WellShaped` requires a nonnegative epoch, which the Rust enforces. **What this \
@@ -6326,6 +6468,58 @@ def lawsC : List Law := [
       the nonce's freshness and the request rate limit are the service's (Law 110's accounting), \
       not this law; and a claim is not a zero-knowledge proof — `witnessType` is part of the signed \
       preimage so a future witness can be added, but none is claimed here." },
+  { number := 113, layer := "Casper",
+    statement := "**A merge above a finalised base does not undo a tuple-space write.** The multi-parent \
+      merge applies only the **kept** half of its conflict scope to the finalised base, so a datum \
+      present at that base survives unless a kept chain removed it — a later accepted block consumed \
+      it — and the rejected half is never applied. **This is the qualified law**: the unqualified \
+      reading, that a finalised write is never removed, is false, and \
+      `merging_a_tuple_space_rmw_block_duplicates_its_produce` witnesses a kept chain consuming a base \
+      datum. **Native absolute writes are not covered**, and the unqualified law is refuted there: a \
+      stale conflict-scope block's whole-slot `Put` can overwrite a finalised boundary value, because \
+      the conflict relation sees finalised chains only down to `prune_fringe` and \
+      `NativeRelations::fold` never compares against the base (§170, the stale-fork trace). **The \
+      guard is landed**: the merge widens the final scope to the whole finalised closure when the \
+      conflict scope contains a block that does not descend from the final fringe, so the stale \
+      writer is compared and rejected; the genesis fallback is keyed on the final fringe. The two \
+      `casper/src/merging.rs` tests pin both.",
+    status := .provedModel,
+    formal := `Rchain.FinalizedMerge.law113_statement,
+    mutant := `Rchain.FinalizedMerge.law113_mutant,
+    falsifier := `Rchain.FinalizedMerge.law113_falsifier,
+    declarations := [`Rchain.FinalizedMerge.State, `Rchain.FinalizedMerge.Change,
+      `Rchain.FinalizedMerge.applyKept, `Rchain.FinalizedMerge.law113_statement,
+      `Rchain.FinalizedMerge.law113, `Rchain.FinalizedMerge.law113_mutant,
+      `Rchain.FinalizedMerge.law113_falsifier],
+    axioms := [],
+    rust := ["casper/src/merging.rs", "casper/src/multi_parent_casper.rs",
+      "rspace/src/merger/state_change.rs", "rspace/src/merger/state_change_merger.rs"],
+    rustWitness := [
+      "casper/tests/n420_boundary_merge.rs:a_boundary_round_merge_keeps_the_base_states_user_write",
+      "casper/tests/n420_boundary_merge.rs:merging_a_tuple_space_rmw_block_duplicates_its_produce",
+      "casper/src/merging.rs:a_non_empty_final_fringe_never_falls_back_to_genesis",
+      "casper/src/merging.rs:a_non_descendant_conflict_block_widens_the_final_scope_to_the_closure"],
+    witness := [`Rchain.FinalizedMerge.law113_falsifier,
+      `Rchain.FinalizedMerge.the_same_fixture_survives_under_the_law],
+    falsifiable := "`law113_mutant` applies the **rejected** half of the scope as well; \
+      `law113_falsifier` exhibits a rejected chain's removal dropping a datum the kept slice preserved. \
+      The code applies `to_merge` alone, so the mutation is `compute_merged_state(&conflict_set)`. \
+      **The law's own qualifier is falsified by the code's existing consume case**: \
+      `merging_a_tuple_space_rmw_block_duplicates_its_produce` has a kept chain remove a base datum, \
+      which the law allows and the unqualified reading forbids.",
+    note := "**The scope, and what is now enforced.** The tuple-space half is proved: the applied slice \
+      is the kept conflict scope (`merging.rs:2049-2071`, `:2122-2129`), the base is its input not an \
+      output, and `net_datum_change` cancels a produce-and-consume inside the batch. **The native \
+      half is now guarded** (C400): when the conflict scope contains a block that does not descend \
+      from the final fringe, `from_fringes` widens the final scope to the whole finalised closure, so \
+      `native.conflicting` sees the older writer and the stale chain is rejected; the genesis fallback \
+      keys on `final_fringe.is_empty()` (`merging.rs:1916-1922`). Both are pinned by the two \
+      `casper/src/merging.rs` tests. **What the Lean model does not cover:** native slots themselves \
+      (the guard is a code rule, not a theorem about `NativeStoreAction`), and the honest-quorum \
+      hypothesis (less than one third Byzantine) needed to lift the local merge invariant to \"every \
+      honest node's finalised write survives\". The Rust tie is the four tests above: base surviving, \
+      consume, the genesis fallback, and the closure widening. The rejected-slice arm is pinned by the \
+      Lean model, not yet by a Rust test." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

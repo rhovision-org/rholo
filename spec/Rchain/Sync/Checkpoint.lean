@@ -16,16 +16,21 @@ another.
 
 **What it does not claim.** It does not claim a quorum is honest, or that the root it signs is
 correct: a quorum that all computed the same wrong root still certifies it. That residual is Law 85's,
-and the audit (Law 106) is its counterweight. This model assumes equal weight per signer over a fixed
-`Fin n` set; the Rust weighs stake, and `two_quorums_intersect` is the equal-weight projection of the
-same strict-majority arithmetic.
+and the audit (Law 106) is its counterweight. The model carries **both** forms: `Quorate` is the
+equal-weight projection over a fixed `Fin n` set, and `WeightedQuorate` states the stake rule the Rust
+applies — two weighted quorums intersect in positive weight
+(`two_weighted_quorums_intersect`), which is the law's proposition.
 
 **The shape rules are modelled, not assumed.** An explicit zero parent is a different statement from
 an absent parent (`the_absence_of_a_parent_is_not_the_zero_parent`), and a negative epoch is not well
 shaped (`a_negative_epoch_is_not_well_shaped`) — the two input-shape gaps the stage-one audit found.
 
-**Why it is not vacuous.** Make the rule `>=` and `two_quorums_intersect` fails on two disjoint halves
-of an even set; drop the digest's anchor projection and `the_digest_binds_the_anchor_and_parent` fails.
+**Why it is not vacuous.** The strict inequality is load-bearing at the boundary: `law104_falsifier`
+exhibits a certificate at exactly two thirds that the `>=` rule admits and the law's `>` refuses (the
+Rust's `a_certificate_at_exactly_two_thirds_is_refused` reddens for the same change). Intersection itself
+survives `>=` for every `n` — two sets each at least two thirds of a total must meet — so the threshold,
+not the intersection, is the falsifiable edge. Drop the digest's anchor projection and
+`the_digest_binds_the_anchor_and_parent` fails.
 -/
 
 namespace Rchain
@@ -48,6 +53,31 @@ theorem two_quorums_intersect (a b : Finset (Fin n)) (ha : Quorate a) (hb : Quor
     simpa using Finset.card_le_univ (a ∪ b)
   have : 0 < (a ∩ b).card := by omega
   exact Finset.card_pos.mp this
+
+/-- **A signer set is quorate by stake** when it holds strictly more than two thirds of the total
+    bonded weight. This is the rule the Rust verifier applies (`3 * supporting > 2 * total` over
+    `i128`), and it is the model the equal-weight `Quorate` projects. -/
+def WeightedQuorate {n : Nat} (w : Fin n → Nat) (s : Finset (Fin n)) : Prop :=
+  3 * s.sum w > 2 * Finset.univ.sum w
+
+/-- **Law 104a at stake: two weighted quorums intersect in positive weight.** This is the weighted
+    form of `two_quorums_intersect`, and it is the statement the node's rule actually needs: a set
+    whose weight is more than two thirds of the total cannot be disjoint in weight from another such
+    set, whatever the individual weights. The proof is the sum analogue of the cardinality
+    pigeonhole: `a.sum + b.sum = (a ∪ b).sum + (a ∩ b).sum`, and `(a ∪ b).sum ≤ total`. -/
+theorem two_weighted_quorums_intersect {n : Nat} (w : Fin n → Nat) (a b : Finset (Fin n))
+    (ha : WeightedQuorate w a) (hb : WeightedQuorate w b) :
+    (a ∩ b).sum w > 0 := by
+  unfold WeightedQuorate at ha hb
+  have hunion : (a ∪ b).sum w ≤ Finset.univ.sum w :=
+    Finset.sum_le_univ_sum_of_nonneg (fun x => Nat.zero_le (w x))
+  have hident : (a ∪ b).sum w + (a ∩ b).sum w = a.sum w + b.sum w :=
+    Finset.sum_union_inter
+  by_contra h
+  rw [Nat.not_lt] at h
+  have hzero : (a ∩ b).sum w = 0 := Nat.eq_zero_of_le_zero h
+  rw [hzero, add_zero] at hident
+  omega
 
 /-- **A parent is either absent or present.** The Rust digest encodes absence as 32 zero bytes and
     refuses an explicit zero parent as malformed; a presence bit is the model of that sentinel, so
@@ -117,6 +147,41 @@ theorem the_digest_separates_two_anchors (s t : Statement) (h : s.anchor ≠ t.a
     digest s ≠ digest t := by
   intro heq
   exact h (the_digest_binds_the_anchor_and_parent s t heq).1
+
+/-! ## The formal proposition, and the mutation that breaks it
+
+The register's `formal`/`mutant`/`falsifier` columns point here: `law104_statement` is the law as a
+`Prop`, `law104_threshold_mutant` is the threshold with `≥` in place of `>`, and `law104_falsifier` is
+the theorem that the mutant admits a set the law refuses. -/
+
+/-- **Law 104's proposition, at stake.** Two signer sets each holding more than two thirds of the
+bonded weight intersect in positive weight — the weighted rule, not the equal-weight projection. -/
+def law104_statement : Prop :=
+  ∀ {n : Nat} (w : Fin n → Nat) (a b : Finset (Fin n)),
+    WeightedQuorate w a → WeightedQuorate w b → (a ∩ b).sum w > 0
+
+/-- The law, as its named proposition. -/
+theorem law104 : law104_statement :=
+  fun w a b ha hb => two_weighted_quorums_intersect w a b ha hb
+
+/-- The rule with `≥` in place of `>`. It is weaker, so the intersection theorem survives — the mutation
+that matters is the *admission* threshold, not intersection. -/
+def QuorateAtLeast {n : Nat} (s : Finset (Fin n)) : Prop := 3 * s.card ≥ 2 * n
+
+/-- **The mutant the falsifier refutes**: some certificate is admitted by `≥` that the law's `>` refuses.
+The witness is a set of exactly two thirds of a three-signer set — precisely the case the Rust's
+`a_certificate_at_exactly_two_thirds_is_refused` pins. -/
+def law104_threshold_mutant : Prop :=
+  ∃ (n : Nat) (s : Finset (Fin n)), QuorateAtLeast s ∧ ¬ Quorate s
+
+/-- **The falsifier.** At three signers, `{0, 1}` is exactly two thirds: `3 * 2 ≥ 2 * 3` holds, while
+`3 * 2 > 2 * 3` does not. So the strict inequality is load-bearing at the boundary, and a rule that
+weakened it would admit a certificate the law's statement refuses. -/
+theorem law104_falsifier : law104_threshold_mutant := by
+  have hcard : ({0, 1} : Finset (Fin 3)).card = 2 := by decide
+  refine ⟨3, ({0, 1} : Finset (Fin 3)), ?_, ?_⟩
+  · simp [QuorateAtLeast, hcard]
+  · simp [Quorate, hcard]
 
 end Checkpoint
 end Sync

@@ -41,5 +41,11 @@ pub trait ISpace<
 
     async fn create_soft_checkpoint(&self) -> SoftCheckpoint<C, P, A, K>;
 
-    async fn revert_to_soft_checkpoint(&self, checkpoint: SoftCheckpoint<C, P, A, K>);
+    /// **Revert only over the base the snapshot was taken over (Law 74b).** A hard checkpoint moves
+    /// the history base; the old overlay must not be rebuilt over the new one, so the revert refuses
+    /// with [`RSpaceError::SoftCheckpointBaseMoved`].
+    async fn revert_to_soft_checkpoint(
+        &self,
+        checkpoint: SoftCheckpoint<C, P, A, K>,
+    ) -> std::result::Result<(), RSpaceError>;
 }

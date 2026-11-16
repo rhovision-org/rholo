@@ -1,0 +1,4 @@
+namespace	publish	12	11	1	false	not-your-namespace
+namespace	publish	11	11	2	false	published
+namespace	publish	11	11	3	true	sealed
+namespace	alias	12	7	0	false	not-root-authority

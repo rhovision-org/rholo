@@ -14,7 +14,8 @@ issue #527), block disposition (88), PoS liveness
 enforcement (89), the published node hostlist (90), the collection/censure charge magnitudes
 (91), provenance-dependent replay-failure classification (92), the independence of a cost verdict from a state verdict (93), the bounded exit of a local fault (94), the replay record's execution order (95), a split execution's accounting (96), the merge's accounting (97), cross-shard value conservation and the durable decision (98–99), and shard-local ingress/routing (100) — are in the register and read in
 [`../docs/src/formal/laws.md`](../docs/src/formal/laws.md).
-Backfilling them here is open work; where this page and the register disagree, the register is right.
+The long-form entries above stop at 77; 78–112 are indexed in the backfill table at the end of this
+page. Where this page and the register disagree, the register is right.
 
 **Owed by the rejoin acceptance (2026-10-31).** The acceptance harness's fixed-anchor limb is a
 **layer of protection**, not a proved law. It rests on Law 15's `seen_monotone_of_reaches` and, for the
@@ -226,3 +227,79 @@ the merge optimizes.
 | 76 | Casper | **A concluded stop stops.** Once a fault the node cannot serve through is reported, the node is not serving and cannot return to serving: the report and the stop are one step, and it is the last step available | `node/src/runtime/shutdown.rs`, `node/src/main.rs` | `Rchain/Stop.lean` — `a_reported_fault_stops_the_node`, `serve_target_is_not_serving`, `a_reported_fault_reaches_a_stopped_state` | **proved-model** — the falsifier is the port's old shape: `a_note_without_a_stop_leaves_the_node_serving` exhibits the reachable state it admits — the latch set, the listeners up. **Fixed 2026-10-13**: `shutdown::report_fatal` sets a latch the spawn wrapper writes and `main`'s wait selects on, so a failed reset and the LFS terminal path stop the process without draining. Witnessed by `node/src/runtime/shutdown.rs::a_reported_fatal_resolves_the_wait_with_the_first_reason` |
 
 | 77 | RSpace | **A reset is a projection onto its root.** The reset keeps the root it names and drops the overlay, so an install made *before* a reset to that root is **unobservable** after it — and the read path's construction, which installs the system-process definitions, resets to the block's root and installs them again, is therefore the **same function** as the one that resets and installs once. The first pass cannot change any read's answer | `rholang/src/runtime.rs`, `rspace/src/rspace.rs`, `casper/src/runtime_manager.rs` | `Rchain/Reset.lean` — `the_first_pass_is_erased`, `an_install_before_a_reset_is_unobservable`, `StoreView`/`installInto`/`resetTo`/`foldingResetTo` | **proved-model** — the falsifier is the shape a *folding* reset would have, and folding an overlay in rather than dropping it is what a **checkpoint** does (Law 74): `a_folding_reset_keeps_the_first_pass` shows the same pre-reset install observable under that rule, so the law is a claim about the reset's rule rather than a restatement of a container, and `the_two_reset_rules_differ` keeps it from being vacuous. **What it does not claim**: nothing here is about cost — `casper::runtime_manager::read_path_census` (issue #364) is what says what removing the pass buys |
+
+## Laws 78–112 — the backfilled index
+
+The long-form entries above stop at 77; the register is the authority for 78–112. This table is the
+backfill of the *index*: one line per entry, with the first Lean declaration and the first Rust anchor
+so a reader can find the row's home. The one-line statements, falsifiers and full evidence are in
+[`LAWS.md`](LAWS.md) and [`laws.tsv`](laws.tsv), emitted from `Rchain/Laws.lean`. A `—` in the Tie
+column means neither a corpus nor an executable Rust witness; the row's `note` says why.
+
+| Law | Layer | Lean (first) | Rust (first) | Status | Tie |
+|---|---|---|---|---|---|
+| 78 | Casper | `devTaxAmount, devTaxFloor` | `casper/src/genesis/dev_tax.rs` | proved-model | witness |
+| 79 | Casper | `devTaxVested, devTaxVested_zero_duration` | `rholang/src/native_state.rs` | proved-model | witness |
+| 80 | Casper | `PubState, pubStep` | `rspace/src/history/roots_store.rs` | proved-model | — |
+| 81 | Sync | `Sync.Join.accepted_answer_is_verified, Sync.Join.every_outstanding_key_is_requested_on_a_resend` | `casper/src/engine/mod.rs` | proved-model | witness |
+| 82 | PoS | `Lifecycle, LifecycleStep` | `rholang/src/native_state.rs` | proved-model | witness |
+| 83 | Sync | `Sync.Trust.Join, Sync.Trust.derivedFringe` | `casper/src/engine/node_syncing.rs` | proved-model | witness |
+| 84 | Casper | `GenesisInputs, genesisCreator` | `casper/src/engine/node_launch.rs` | proved-model | witness |
+| 85 | Casper | `FringeClaim, ClaimsTheStateAtItsFringe` | `casper/src/engine/node_running.rs` | proved-model | — |
+| 86a | Admission | `Admission.Pool, Admission.enqueue` | `casper/src/dag.rs` | proved-tied | admission |
+| 86b | Admission | `Admission.Accepted, Admission.StatusStep` | `casper/src/dag.rs` | proved-model | — |
+| 86c | Admission | `Admission.Independent, Admission.independent_pair_commutes` | `casper/src/runtime_manager.rs` | proved-model | — |
+| 86d | Admission | `Admission.Node, Admission.scheduleBatch` | `casper/src/budget.rs` | proved-tied | admission |
+| 86e | Admission | `Admission.TwoNodes, Admission.relay` | `casper/src/dag.rs` | proved-model | — |
+| 87a | Decimal | — | `models/src/decimal.rs` | retired | — |
+| 87b | Decimal | — | `models/src/decimal.rs` | retired | — |
+| 87c | Decimal | — | `models/src/decimal.rs` | retired | — |
+| 87d | Decimal | — | `models/src/decimal.rs` | retired | — |
+| 87e | Decimal | — | `models/src/decimal.rs` | retired | — |
+| 88a | Disposition | `Disposition.State, Disposition.Disposition` | `casper/src/block_disposition.rs` | proved-model | witness |
+| 88b | Disposition | `Disposition.Phase, Disposition.MAX_PROPOSAL_FINALITY_LAG` | `casper/src/blocks/proposer/proposer.rs` | proved-model | witness |
+| 88c | Disposition | `Disposition.Recovery.Row, Disposition.Recovery.eligible` | `casper/src/block_disposition.rs` | proved-tied | recovery |
+| 88d | Disposition | `Disposition.Recovery.Outcome, Disposition.Recovery.classify` | `casper/src/validate.rs` | proved-tied | recovery |
+| 89 | PoS | `Liveness.State, Liveness.stepJail` | `rholang/src/native_state.rs` | proved-model | witness |
+| 90a | Node | `HostList.valid, HostList.peerPart` | `node/src/web/node_list.rs` | proved-tied | hostlist |
+| 90b | Node | `HostList.servedIds, HostList.peerPart` | `node/src/web/node_list.rs` | proved-tied | hostlist |
+| 90c | Node | `HostList.peerPart, HostList.servedIds` | `node/src/web/node_list.rs` | proved-tied | hostlist |
+| 91a | Rholang | `canonicalizationCost, unionCost` | `rholang/src/reduce.rs` | proved-model | witness |
+| 91b | Rholang | `censureCost, censureCost_exceeds_the_universe` | `rholang/src/system_processes.rs` | proved-model | witness |
+| 91c | Rholang | `tallyCost, tallyCost_covers_the_entries` | `rholang/src/system_processes.rs` | proved-model | witness |
+| 92 | Casper | `ProvenanceOrigin, ProvenanceRefusal` | `casper/src/interpreter_util.rs` | proved-model | witness |
+| 93 | Casper | `StateVerdict, ReplayEvidence` | `casper/src/runtime_replay.rs` | proved-model | witness |
+| 94 | Casper | `RecoveryState, RecoveryStep` | `casper/src/blocks/proposer/proposer.rs` | proved-model | witness |
+| 95a | RSpace | `ReplayOrder.Event, ReplayOrder.ReplayData` | `rspace/src/replay_rspace.rs` | proved-model | witness |
+| 95b | RSpace | `ReplayOrder.Store, ReplayOrder.run` | `rspace/src/replay_rspace.rs` | proved-model | witness |
+| 96a | Scheduler | `Split.BatchPolicy, Split.canonicalize` | `casper/src/runtime_manager.rs` | proved-model | witness |
+| 96b | Scheduler | `Split.Outcome, Split.publishedBatch` | `casper/src/runtime_manager.rs` | proved-model | witness |
+| 96c | Scheduler | `Split.Block, Split.Verdict` | `casper/src/blocks/block_processor.rs` | proved-model | witness |
+| 96d | Scheduler | `Split.publishAgreed, Split.publishLocal` | `casper/src/interpreter_util.rs` | proved-model | witness |
+| 97a | Casper | `MergeAccounting.Verdict, MergeAccounting.classify` | `casper/src/merging.rs` | proved-model | witness |
+| 97b | Casper | `MergeAccounting.covers, MergeAccounting.coverage_is_reflexive` | `casper/src/merging.rs` | proved-model | witness |
+| 97c | Casper | `MergeAccounting.CostMove, MergeAccounting.applies` | `casper/src/merging.rs` | proved-model | witness |
+| 97d | Casper | `MergeAccounting.moveTotal, MergeAccounting.totalCost` | `casper/src/merging.rs` | proved-model | witness |
+| 98a | Casper | `Acceptance.escrow, Acceptance.recordTotal` | `rholang/src/native_state.rs` | proved-model | witness |
+| 98b | Casper | `Acceptance.commit_credits_the_payee_exactly, Acceptance.commit_conserves_the_leg_total` | `rholang/src/native_state.rs` | proved-model | witness |
+| 98c | Casper | `Acceptance.Book, Acceptance.Book.commit` | `casper/src/gateway/mod.rs` | proved-model | witness |
+| 99a | Casper | `Acceptance.hasVote, Acceptance.voteFor` | `casper/src/gateway/mod.rs` | proved-model | witness |
+| 99b | Casper | `Acceptance.prepareLoop, Acceptance.prepareAll` | `casper/src/gateway/mod.rs` | proved-model | witness |
+| 99c | Casper | `Acceptance.resume, Acceptance.resumeUnguarded` | `casper/src/gateway/mod.rs` | proved-model | witness |
+| 99d | Casper | `Acceptance.prepareLoop, Acceptance.sentBy` | `casper/src/gateway/mod.rs` | proved-model | witness |
+| 100a | Casper | `Acceptance.allMembers, Acceptance.openTxn` | `casper/src/gateway/mod.rs` | proved-model | witness |
+| 100b | Casper | `Acceptance.PhaseResult, Acceptance.phaseWithHead` | `casper/src/gateway/mod.rs` | proved-model | witness |
+| 100c | Casper | `Acceptance.Deploy, Acceptance.Block` | `casper/src/blocks/block_receiver.rs` | proved-model | witness |
+| 100d | Node | `Acceptance.Route, Acceptance.Router` | `node/src/api/shard_routing.rs` | proved-model | witness |
+| 101 | Sync | `Sync.Redundancy.any_verified_answer_is_the_answer, Sync.Redundancy.peer_is_not_an_input` | `casper/src/protocol/comm_util.rs` | proved-model | witness |
+| 102 | Sync | `Sync.ReplayState.linked_iff_replay_has_a_result, Sync.ReplayState.replay_reconstructs_every_produced_state` | `casper/src/engine/recovery.rs` | proved-model | witness |
+| 103 | Sync | `Sync.Serve.an_answer_is_a_function_of_its_own_request, Sync.Serve.the_peer_is_not_an_input` | `casper/src/engine/node_launch.rs` | proved-model | witness |
+| 104 | Sync | `Sync.Checkpoint.two_quorums_intersect, Sync.Checkpoint.a_conflicting_checkpoint_requires_an_equivocator` | `casper/src/checkpoint.rs` | proved-model | checkpoint |
+| 105 | Sync | `Sync.Separation.sync_reads_only_the_checkpoint_and_metadata, Sync.Separation.replay_cannot_change_acceptance` | `casper/src/engine/node_syncing.rs` | proved-model | witness |
+| 106 | Sync | `Sync.Audit.a_replay_that_agrees_derives_the_checkpoint_root, Sync.Audit.a_divergence_is_reported` | `node/src/runtime/audit.rs` | proved-model | witness |
+| 107 | Sync | `Sync.Availability.a_challenge_answer_proves_possession, Sync.Availability.a_gap_is_detected_with_probability` | `node/src/web/archives.rs` | proved-model | witness |
+| 108 | Sync | `Sync.Anchor.running_is_anchored, Sync.Anchor.a_refused_sync_is_not_running` | `casper/src/engine/anchor.rs` | proved-model | witness |
+| 109 | Sync | `Sync.Window.a_validated_block_reads_only_certified_roots, Sync.Window.an_uncertified_root_is_refused` | `casper/src/checkpoint.rs` | proved-model | witness |
+| 110 | Sync | `Sync.Service.served_requires_credit, Sync.Service.an_unpaid_range_is_refused` | `block-storage/src/history_meter.rs` | proved-model | witness |
+| 111 | Sync | `Sync.Settlement.a_failed_challenge_forfeits, Sync.Settlement.a_passed_challenge_refunds` | `block-storage/src/history_meter.rs` | proved-model | witness |
+| 112 | Sync | `Sync.Claim.only_a_reproduced_claim_is_accepted, Sync.Claim.a_mismatched_claim_is_refused` | `models/src/casper/protocol/audit.rs` | proved-model | witness |

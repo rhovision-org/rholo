@@ -79,4 +79,28 @@ theorem bounding_the_state_does_not_make_it_attributable (state bound : Nat) :
     ¬ AttributableWrite (bridgedWrite state) bound := by
   simp [AttributableWrite, Attributable, bridgedWrite]
 
+/-! ## 63b — the relay's conditional
+
+63a is `open` because the relay is a cross-implementation change. The conditional is still a law: if
+the peer signs the `DeployData` the node hands it, the write is attributable and bounded by the peer's
+own phlo. Stating it separately keeps 63a's honest `open` status from hiding the half that is proved. -/
+
+/-- **63b's proposition: the relay's shape is inhabited.** For every bound, some write has the caller
+as payer and state within the bound — what the relay produces when the peer signs its own deploy. -/
+def law63b_statement : Prop :=
+  ∀ bound : Nat, ∃ w : LedgerWrite, AttributableWrite w bound
+
+/-- The conditional law. -/
+theorem law63b : law63b_statement :=
+  the_relay_would_satisfy_it
+
+/-- **The defect mutant**: an unattributable write exists. The node's current `bridgedWrite` is one,
+which is why 63a stays open until the relay lands. -/
+def law63b_mutant : Prop :=
+  ∃ w : LedgerWrite, ¬ Attributable w
+
+/-- The falsifier: the current bridge is the mutant's witness. -/
+theorem law63b_falsifier : law63b_mutant :=
+  ⟨bridgedWrite 0, a_bridged_write_is_not_attributable 0⟩
+
 end Rchain

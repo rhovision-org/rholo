@@ -760,23 +760,39 @@ where
         let snapshot = self.current_store().snapshot().await;
         let log = std::mem::take(&mut *crate::lock::wlock(&self.event_log));
         let produce_counter = std::mem::take(&mut *crate::lock::wlock(&self.produce_counter));
+        // **Law 74b: the snapshot carries the base it was taken over.** The revert must not re-read
+        // `history.root()` later, because a hard checkpoint between the snapshot and the revert moves
+        // the base and the old overlay would then be applied to the wrong trie.
+        let base = self.current_history().root();
         SoftCheckpoint {
             cache_snapshot: snapshot,
             log,
             produce_counter,
             native_snapshot: self.native_store.snapshot(),
+            base,
         }
     }
 
-    async fn revert_to_soft_checkpoint(&self, checkpoint: SoftCheckpoint<C, P, A, K>) {
+    async fn revert_to_soft_checkpoint(
+        &self,
+        checkpoint: SoftCheckpoint<C, P, A, K>,
+    ) -> std::result::Result<(), crate::errors::RSpaceError> {
         let history = self.current_history();
-        let history_reader = history.get_history_reader(history.root()).await;
+        let current_root = history.root();
+        if current_root != checkpoint.base {
+            // A hard checkpoint moved the history root since the snapshot. The snapshot's overlay
+            // belongs over the base it was taken over, not the new one; Law 74b says the revert is
+            // unavailable, so refuse rather than silently rebase.
+            return Err(crate::errors::RSpaceError::SoftCheckpointBaseMoved);
+        }
+        let history_reader = history.get_history_reader(current_root).await;
         let base = history_reader.base();
         *crate::lock::wlock(&self.store) =
             Arc::new(InMemHotStore::from_state(checkpoint.cache_snapshot, base));
         *crate::lock::wlock(&self.event_log) = checkpoint.log;
         *crate::lock::wlock(&self.produce_counter) = checkpoint.produce_counter;
         self.native_store.revert(checkpoint.native_snapshot);
+        Ok(())
     }
 }
 
@@ -858,10 +874,36 @@ mod tests {
         s.produce("c".to_string(), "extra".to_string(), false)
             .await
             .unwrap();
-        s.revert_to_soft_checkpoint(soft).await;
+        s.revert_to_soft_checkpoint(soft)
+            .await
+            .expect("the soft checkpoint revert is over its own base");
         assert!(
             s.get_data(&"c".to_string()).await.unwrap().is_empty(),
             "reverted produce must be gone"
+        );
+    }
+
+    /// **Law 74b's guard.** A hard checkpoint between the snapshot and the revert moves the history
+    /// root. The snapshot's overlay belongs over the base it was taken over, so the revert must
+    /// refuse — and the committed state must remain untouched.
+    #[tokio::test]
+    async fn a_soft_checkpoint_revert_over_a_moved_base_is_refused() {
+        let s = space().await;
+        let soft = s.create_soft_checkpoint().await;
+        s.produce("c".to_string(), "committed".to_string(), false)
+            .await
+            .unwrap();
+        s.create_checkpoint().await.expect("a hard checkpoint");
+
+        let err = s
+            .revert_to_soft_checkpoint(soft)
+            .await
+            .expect_err("the history root moved since the snapshot");
+        assert_eq!(err, crate::errors::RSpaceError::SoftCheckpointBaseMoved);
+        assert_eq!(
+            s.get_data(&"c".to_string()).await.unwrap().len(),
+            1,
+            "the refused revert must not touch the committed state"
         );
     }
 

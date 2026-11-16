@@ -4,6 +4,8 @@
 //! not use would warn there — hence the module-wide `dead_code` allowance below.
 #![allow(dead_code)]
 
+pub mod dictionary;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
