@@ -287,7 +287,7 @@ def pos_status(port: int = HTTP_BASE) -> dict:
     return http_json(port, "/api/v1/pos")
 
 
-def recent_blocks(depth: int = 200, port: int = HTTP_BASE) -> list:
+def recent_blocks(depth: int = 100, port: int = HTTP_BASE) -> list:
     body = http_json(port, f"/api/blocks/{depth}")
     if isinstance(body, dict):
         body = body.get("blocks", [])
@@ -396,7 +396,7 @@ def deploy_status(deploy: dict):
     return None
 
 
-def rejected_in_dag(deploy_id: str, depth: int = 200) -> list:
+def rejected_in_dag(deploy_id: str, depth: int = 100) -> list:
     """Blocks whose `rejectedDeploys` names this deploy — the merge-loss instrument."""
     wanted = deploy_id.lower()
     found = []
