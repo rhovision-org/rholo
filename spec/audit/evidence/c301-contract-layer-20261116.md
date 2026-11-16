@@ -94,7 +94,7 @@ row cleared, the missing `rho:rchain:ertp:ledger` row added, and the roster now 
 code by `tools/check-review-ledger.sh`. The tranche section below records the row fixes; the roster
 review records the process-level verdicts and the findings it produced (uncharged native work,
 censure's charge universe, the vault destination rule, the txn coordinator length, `rev:address`'s
-Nil). Two residuals no code change closes are named rather than hidden: the foreign-box auth and the
+wrong-type ambiguity in `validate`). Two residuals no code change closes are named rather than hidden: the foreign-box auth and the
 relaxed on-chain extension.
 
 ## The Phase-3 tranche (2026-11-16, PR #599)

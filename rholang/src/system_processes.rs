@@ -1613,10 +1613,17 @@ impl SystemProcesses {
                 let Some(op) = RhoString::unapply(op) else {
                     return Err(illegal_arg("revAddress expects an operation string"));
                 };
-                // **A wrong argument type is refused, not answered `Nil`** (C301's contract-layer
-                // review). `validate` replies `Nil` for a *valid* address and an error string for an
-                // invalid one; replying `Nil` to a non-string made "you passed a number" look
-                // exactly like "the address is valid".
+                // **A wrong argument type is refused, not answered `Nil`**, where `Nil` would be
+                // read as a value (C301's contract-layer review). `validate` replies `Nil` for a
+                // *valid* address and an error string for an invalid one, so replying `Nil` to a
+                // non-string made "you passed a number" look exactly like "the address is valid";
+                // `fromPublicKey` likewise requires a 65-byte key.
+                //
+                // `fromDeployerId` is the exception, and it is deliberate: its `Nil` is the
+                // **"no identity" answer** the genesis master dictionary guards on for a forged or
+                // absent id (Law 56, `MasterDictionary.rho` shape rule 5), not an accident of a
+                // wrong type. Raising there would abort every forged-identity refusal instead of
+                // letting the contract answer `("dir-error", "no identity")`.
                 let response = match op {
                     "validate" => {
                         let address = RhoString::unapply(arg)
@@ -1638,14 +1645,14 @@ impl SystemProcesses {
                             .map(|ra| RhoString::apply(ra.to_base58()))
                             .unwrap_or_default()
                     }
-                    "fromDeployerId" => {
-                        let id = RhoDeployerId::unapply(arg).ok_or_else(|| {
-                            illegal_arg("revAddress fromDeployerId expects a deployerId")
-                        })?;
-                        RevAddress::from_deployer_id(id)
+                    "fromDeployerId" => match RhoDeployerId::unapply(arg) {
+                        Some(id) => RevAddress::from_deployer_id(id)
                             .map(|ra| RhoString::apply(ra.to_base58()))
-                            .unwrap_or_default()
-                    }
+                            .unwrap_or_default(),
+                        // The documented "no identity" answer (see the comment above): the master
+                        // dictionary's forged/absent-id guard is `me == Nil`.
+                        None => RhoNil::apply(),
+                    },
                     "fromUnforgeable" => {
                         let g = RhoName::unapply(arg).ok_or_else(|| {
                             illegal_arg("revAddress fromUnforgeable expects a name")
@@ -5428,6 +5435,25 @@ mod tests {
         .await
         .expect_err("a short key is not a public key");
         assert!(err.to_string().contains("65-byte"), "{err}");
+
+        // `fromDeployerId` is the deliberate exception: `Nil` is its "no identity" answer, which
+        // the master dictionary's forged/absent-id guard reads (Law 56, shape rule 5).
+        let ack = FixedChannels::stdout();
+        (rev.handler)(
+            vec![lpw(vec![
+                RhoString::apply("fromDeployerId".to_string()),
+                RhoString::apply("not-an-id".to_string()),
+                ack.clone(),
+            ])],
+            DfsPath::root(),
+        )
+        .await
+        .expect("a non-deployerId is answered Nil");
+        let produced = mock.produced.lock().unpoison();
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0].0.as_par(), &ack);
+        assert_eq!(produced[0].1.pars.len(), 1);
+        assert_eq!(produced[0].1.pars[0].as_par(), &RhoNil::apply());
     }
 
     /// **A coordinator is a 65-byte key and a destination a REV address** (C301's contract-layer

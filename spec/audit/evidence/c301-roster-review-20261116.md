@@ -60,7 +60,7 @@ For each of the **31** URNs in `rholang/src/system_processes.rs` (the thirty led
 | `rho:registry:insertSigned:secp256k1` | cleared after fix | Same uncharged native write; nonce-monotonic and own-slot only, now priced (`registry_insert_arbitrary_then_lookup_round_trips`) |
 | `rho:registry:lookup` | cleared | `registry_lookup`; public read, now priced by the decoded value |
 | `rho:registry:ops` | cleared | `the_registry_ops_build_a_uri_and_refuse_what_they_cannot`; pure URI derivation |
-| `rho:rev:address` | cleared after fix | **A wrong argument type replied `Nil`**, which is also the reply for a *valid* address; both arms now refuse the type (`rev_address_refuses_a_wrong_argument_type`) |
+| `rho:rev:address` | cleared after fix | **`validate` replied `Nil` to a non-string**, which is also the reply for a *valid* address; `validate` and `fromPublicKey` now refuse the type. `fromDeployerId` deliberately keeps `Nil`: it is the master dictionary's documented "no identity" answer for a forged/absent id (Law 56, shape rule 5) (`rev_address_refuses_a_wrong_argument_type`) |
 | `rho:txn` | cleared after fix | **A non-65-byte coordinator wrote a record `decode_txn` could never read**, so the escrow was taken and could never be released; the coordinator length and the REV destination are now checked, and the record is priced (`txn_prepare_refuses_a_short_coordinator_and_a_non_rev_destination`) |
 | `sys:authToken:ops` | cleared | `the_sys_auth_token_contract_recognizes_the_token_and_nothing_else` — nothing mints the token; the path fails closed |
 
@@ -81,8 +81,11 @@ For each of the **31** URNs in `rholang/src/system_processes.rs` (the thirty led
 3. **`gov:censure` charged the entry sum, not the work universe.** **Fixed:** the distinct members
    are counted and charged; the bound stays on the entry sum so the accepted input set does not move.
    Test: `censure_is_charged_the_cube_of_its_universe`.
-4. **`rho:rev:address` answered `Nil` to a wrong argument type**, indistinguishable from "valid".
-   **Fixed:** wrong types are `Err`. Test: `rev_address_refuses_a_wrong_argument_type`.
+4. **`rho:rev:address`'s `validate` answered `Nil` to a wrong argument type**, indistinguishable
+   from "valid". **Fixed:** `validate` and `fromPublicKey` refuse wrong types. `fromDeployerId`
+   deliberately keeps `Nil`: it is the master dictionary's "no identity" signal for a forged/absent
+   id (Law 56, shape rule 5), and raising there would abort the contract's refusal rather than let
+   it answer. Test: `rev_address_refuses_a_wrong_argument_type`.
 5. **`rho:txn` accepted a coordinator of any length**, producing a record `decode_txn` (fixed 65-byte
    read) rejects; the escrow was unrecoverable. **Fixed:** the handler refuses a non-65-byte
    coordinator and a non-REV destination, and prices the record. Test:
