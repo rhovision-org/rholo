@@ -3277,7 +3277,7 @@ async fn check_shard_data_dir(
                     }
                 }
             }
-            std::fs::write(&marker, &expected).map_err(|e| {
+            write_marker_durably(&marker, &expected).map_err(|e| {
                 format!(
                     "cannot write the shard-id marker to {}: {e}",
                     marker.display()
@@ -3285,6 +3285,27 @@ async fn check_shard_data_dir(
             })
         }
     }
+}
+
+/// **Stamp a marker so the decision it records survives the next crash** (C301's D4).
+///
+/// The shard-id and store-format markers are not diagnostics: [`check_shard_data_dir`] reads the
+/// first to decide whose data directory this is, and [`check_store_format`] reads the second before
+/// it will open the store. A `std::fs::write` that returns is a write to the page cache, not a
+/// durable stamp — a crash can leave the file absent or, after a torn write, unreadable. The faucet
+/// ledger already uses the durable shape (`write_faucet_ledger`: write, `sync_all`, rename, sync the
+/// directory); this is the same rule for the two markers, kept in one place so the next marker does
+/// not have to remember it.
+fn write_marker_durably(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    std::fs::write(path, contents)?;
+    std::fs::File::open(path)?.sync_all()?;
+    // The file's *name* is part of the stamp: a sync of the file alone does not make a newly created
+    // directory entry durable.
+    #[cfg(unix)]
+    if let Some(dir) = path.parent() {
+        std::fs::File::open(dir)?.sync_all()?;
+    }
+    Ok(())
 }
 
 /// **Refuse a store written by a newer build, and stamp the ones this build opens** (W-N11-03).
@@ -3318,20 +3339,12 @@ fn check_store_format(dir: &std::path::Path) -> Result<(), String> {
         }
     };
     let stamp = || -> Result<(), String> {
-        std::fs::write(&marker, STORE_FORMAT_VERSION.to_string()).map_err(|error| {
+        write_marker_durably(&marker, &STORE_FORMAT_VERSION.to_string()).map_err(|error| {
             format!(
                 "cannot write store-format marker {}: {error}",
                 marker.display()
             )
-        })?;
-        std::fs::File::open(&marker)
-            .and_then(|file| file.sync_all())
-            .map_err(|error| format!("cannot sync store-format marker: {error}"))?;
-        #[cfg(unix)]
-        std::fs::File::open(dir)
-            .and_then(|file| file.sync_all())
-            .map_err(|error| format!("cannot sync store-format directory: {error}"))?;
-        Ok(())
+        })
     };
     let Some(recorded) = recorded else {
         return stamp();
@@ -4000,6 +4013,26 @@ mod tests {
         std::fs::write(&marker, "not-a-version").unwrap();
         let err = check_store_format(&dir).expect_err("a marker that is not a number");
         assert!(err.contains("not-a-version"), "{err}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **The marker is the decision, so it is stamped durably** (C301's D4). Both markers are read
+    /// at boot to decide whether a directory may be opened; a `write` that only reached the page
+    /// cache is not a stamp. The helper writes, syncs the file, and syncs the directory entry — the
+    /// shape the faucet ledger already uses. Durability itself is a property of the syscalls, so the
+    /// test pins the path and the content; the sync calls are the code under review.
+    #[test]
+    fn a_marker_is_written_before_the_directory_is_trusted() {
+        let dir = temp_dir("node-runtime-durable-marker");
+        let marker = dir.join(SHARD_ID_MARKER);
+
+        write_marker_durably(&marker, "/root").expect("write the marker");
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "/root");
+
+        // A second stamp replaces the first rather than appending to it.
+        write_marker_durably(&marker, "/root/child").expect("overwrite the marker");
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "/root/child");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
