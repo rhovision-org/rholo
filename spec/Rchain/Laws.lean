@@ -3803,6 +3803,28 @@ def lawsC : List Law := [
       nothing about what a reply holds; the surviving growth is a chain-wide property of the registry \
       (no delete anywhere), bounded economically by whoever pays, and that property is the registry \
       layer's rather than this one's." },
+  { number := 63, clause := "b", layer := "Protocol",
+    statement := "**Given the relay, a bridged delivery is attributable.** If the peer signs the \
+      `DeployData` the node hands it, the write's payer is the caller and its state is bounded by the \
+      caller's own phlo — the shape 63a names as its close.",
+    status := .provedModel,
+    formal := `Rchain.law63b_statement,
+    mutant := `Rchain.law63b_mutant,
+    falsifier := `Rchain.law63b_falsifier,
+    declarations := [`Rchain.law63b_statement, `Rchain.law63b, `Rchain.law63b_mutant,
+      `Rchain.law63b_falsifier, `Rchain.the_relay_would_satisfy_it, `Rchain.AttributableWrite],
+    axioms := [],
+    rust := ["casper/src/shard_invoke.rs"],
+    witness := [`Rchain.law63b_falsifier, `Rchain.the_relay_would_satisfy_it],
+    falsifiable := "`law63b_falsifier` is the current bridge: `bridgedWrite` is an unattributable write, \
+      so the conditional is not vacuous — the relay is what removes the mutant's witness. The relay \
+      itself is not in this tree, which is why 63a stays `open`.",
+    note := "**This clause does not close 63a.** The relay is a cross-implementation protocol change \
+      (Endo does not speak this shard's `DeployData`), so no code here can satisfy it; what is proved is \
+      the conditional shape a fix must have. **No executable Rust witness exists** for the same reason: \
+      `casper/src/shard_invoke.rs` is the unrelayed path, and the model's \
+      `the_relay_would_satisfy_it` is the positive half." },
+
   { number := 64, clause := "a", layer := "Wire",
     statement := "**Where the draft and the implementations differ, the port speaks the \
       implementations' reading.** The prose is not the oracle; what every peer actually speaks is.",
@@ -6090,7 +6112,9 @@ def lawsC : List Law := [
       `Rchain.Sync.Checkpoint.a_negative_epoch_is_not_well_shaped,
       `Rchain.Sync.Checkpoint.law104_statement,
       `Rchain.Sync.Checkpoint.law104_threshold_mutant,
-      `Rchain.Sync.Checkpoint.law104_falsifier],
+      `Rchain.Sync.Checkpoint.law104_falsifier,
+      `Rchain.Sync.Checkpoint.two_weighted_quorums_intersect,
+      `Rchain.Sync.Checkpoint.law104],
     axioms := [],
     rust := ["casper/src/checkpoint.rs", "casper/src/api/block_api_impl.rs"],
     rustWitness := [
