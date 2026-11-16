@@ -117,6 +117,18 @@ impl Costs {
             format!("{left} x {right} elements diff cost"),
         )
     }
+    /// **The cost of touching the HTTP claim registry** (C301's B2). The table is one trie leaf, so
+    /// every read decodes it whole and every write re-encodes it whole: the encoded size *is* the
+    /// work. The registry's own bounds (256 records, 1 KiB URL, 4 KiB value) cap that size; this
+    /// charge makes the deploy pay for it instead of the validator. A floor of one keeps an
+    /// empty-table read from being free work.
+    pub fn http_record_cost(bytes: i64) -> Cost {
+        Cost::new(
+            bytes.max(1),
+            format!("{bytes}-byte HTTP claim registry access"),
+        )
+    }
+
     /// The cost of a `rho:gov:*` fold, proportional to the square of the member universe (audit F-3).
     ///
     /// These four handlers were charging **nothing at all** — not the storage path (which charges for

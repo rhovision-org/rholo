@@ -29,6 +29,12 @@ Name ::=  @ Proc                            -- quote a process
 `;` in a receive is a **join** (simultaneous receive on every listed channel). `<=` is a peek; `!!` is a
 persistent send.
 
+**A `contract` is a persistent receive, so it claims the name it is installed on.** Every later send
+to that name is consumed by the contract's body; a second `for` on the same name waits in silence.
+`new` names are unforgeable and immune — only a holder can name them — while quoted and
+registry-published names are public by construction. Installing a contract on a public name is a
+deliberate claim on it, not an accident the runtime can distinguish (Law 38).
+
 ## Patterns
 
 ```
@@ -103,7 +109,7 @@ do differently are in [the decimal type, withdrawn](../formal/decimal-removed.md
 | `rho:rchain:revVault` | the REV vault contract |
 | `rho:rchain:pos` | the proof-of-stake contract |
 | `rho:block:data` | the current block's number, sender and informational timestamp (the proposer's wall clock, unverified — validators never judge it) |
-| `rho:io:http` | the deterministic HTTP-result oracle: `record` (first writer wins), `get`, `check`, `height` |
+| `rho:io:http` | the deploy-supplied HTTP **claim registry** (no fetch): `record` (first writer wins), `get`, `check`, `height` |
 | `rho:txn` | the cross-shard two-phase-commit participant (`prepare` / `commit` / `abort`) |
 | `rho:crypto:blake2b256Hash` / `keccak256Hash` | hashing |
 | `rho:crypto:secp256k1Verify` / `ed25519Verify` | signature verification |

@@ -2300,22 +2300,31 @@ impl SystemProcesses {
         })
     }
 
-    // --- native HTTP-result oracle (RCHIP #54) ---------------------------
+    // --- native HTTP claim registry (RCHIP #54) --------------------------
 
-    /// `rho:io:http` — the deterministic HTTP-result oracle, framed as a **Git pull request** on
-    /// external data:
+    /// `rho:io:http` — a **deploy-supplied claim registry**, not a fetch and not an oracle
+    /// (C301's B1). It is framed as a **Git pull request** on external data:
     ///
-    /// * `record(url, value)` — *capture* a value the deployer fetched off-chain. First writer
-    ///   wins; a later capture of an already-recorded URL is a no-op returning `false`. This is the
-    ///   "initial value", asserted inside a signed deploy, so the chain records *who* claimed *what*.
+    /// * `record(url, value)` — *assert* a value the deployer fetched off-chain. First writer wins;
+    ///   a later capture of an already-recorded URL is a no-op returning `false`. The chain records
+    ///   *what* was claimed and *in which block*; the deployer's identity is not recorded, so a
+    ///   reader cannot name the claimant from the record alone.
     /// * `get(url)` — read the recorded value (or `Nil`), deterministically.
     /// * `check(url, expected)` — is the record equal to `expected`?
     /// * `height(url)` — the block at which the value was captured (or `Nil`).
     ///
-    /// Consensus safety comes from the capture being **part of the deploy**: replay/validation
-    /// never performs a network fetch, so the result is a pure function of the deploy and the
-    /// recorded state. (A proposer-side live fetch would have to commit its value into the block
-    /// for validators to reproduce it; that is a follow-up that changes the block format.)
+    /// **No network read happens on any path**, at proposal or replay: the value is whatever the
+    /// first writer supplied, which is also why every URL is squattable by whoever writes first.
+    /// What makes it usable under consensus is only that the capture is part of the deploy, so the
+    /// result is a pure function of the deploy and the recorded state. (A live fetch would have to
+    /// commit its value into the block for validators to reproduce it; that is a block-format change
+    /// and is not this contract.)
+    ///
+    /// **The registry is bounded and charged** (C301's B2): the table is one trie leaf that every
+    /// read decodes and every write re-encodes, so each operation is charged its encoded size
+    /// ([`crate::accounting::Costs::http_record_cost`]) and the table is capped at
+    /// `NativeSystemState::MAX_HTTP_RECORDS` records, `MAX_HTTP_URL_BYTES` per URL and
+    /// `MAX_HTTP_VALUE_BYTES` per value.
     fn http(&self) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
         let native = self.native_state.clone();
@@ -2350,6 +2359,14 @@ impl SystemProcesses {
                             .ok_or_else(|| illegal_arg("http record expects a string url"))?;
                         let value = RhoString::unapply(value_par)
                             .ok_or_else(|| illegal_arg("http record expects a string value"))?;
+                        let cost_bytes = native
+                            .http_record_write_len(url, value)
+                            .await
+                            .map_err(|e| illegal_arg(&e))?;
+                        cc.cost()
+                            .charge(crate::accounting::Costs::http_record_cost(
+                                cost_bytes as i64,
+                            ))?;
                         let recorded = native
                             .record_http(url, value, block_number)
                             .await
@@ -2363,6 +2380,14 @@ impl SystemProcesses {
                         };
                         let url = RhoString::unapply(url_par)
                             .ok_or_else(|| illegal_arg("http get expects a string url"))?;
+                        let cost_bytes = native
+                            .http_records_encoded_len()
+                            .await
+                            .map_err(|e| illegal_arg(&e))?;
+                        cc.cost()
+                            .charge(crate::accounting::Costs::http_record_cost(
+                                cost_bytes as i64,
+                            ))?;
                         let out =
                             match native.http_record(url).await.map_err(|e| illegal_arg(&e))? {
                                 Some((value, _)) => RhoString::apply(value),
@@ -2380,6 +2405,14 @@ impl SystemProcesses {
                             .ok_or_else(|| illegal_arg("http check expects a string url"))?;
                         let expected = RhoString::unapply(expected_par)
                             .ok_or_else(|| illegal_arg("http check expects a string value"))?;
+                        let cost_bytes = native
+                            .http_records_encoded_len()
+                            .await
+                            .map_err(|e| illegal_arg(&e))?;
+                        cc.cost()
+                            .charge(crate::accounting::Costs::http_record_cost(
+                                cost_bytes as i64,
+                            ))?;
                         let consistent =
                             match native.http_record(url).await.map_err(|e| illegal_arg(&e))? {
                                 Some((value, _)) => value == expected,
@@ -2396,6 +2429,14 @@ impl SystemProcesses {
                         };
                         let url = RhoString::unapply(url_par)
                             .ok_or_else(|| illegal_arg("http height expects a string url"))?;
+                        let cost_bytes = native
+                            .http_records_encoded_len()
+                            .await
+                            .map_err(|e| illegal_arg(&e))?;
+                        cc.cost()
+                            .charge(crate::accounting::Costs::http_record_cost(
+                                cost_bytes as i64,
+                            ))?;
                         let out =
                             match native.http_record(url).await.map_err(|e| illegal_arg(&e))? {
                                 Some((_, block)) => RhoNumber::apply(block),

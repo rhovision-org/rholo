@@ -24,7 +24,7 @@ pub const PREFIX_POS: u8 = 0x04;
 pub const PREFIX_VAULT: u8 = 0x05;
 /// Trie prefix for native cross-shard transaction state (`txn-id -> TxnRecord`).
 pub const PREFIX_TXN: u8 = 0x06;
-/// Trie prefix for the native HTTP-result oracle (`url -> recorded value`); RCHIP #54.
+/// Trie prefix for the native HTTP claim registry (`url -> recorded value`); RCHIP #54.
 pub const PREFIX_HTTP: u8 = 0x07;
 /// Trie prefix for the vault **handle** map (`minted-name -> base58 rev-address`) — the record that
 /// lets a name handed out by `findOrCreate` still resolve to its vault in a later block, and after a
