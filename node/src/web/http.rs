@@ -1608,6 +1608,13 @@ async fn api_deploy_settlement(
 /// types from. It is hand-written, so nothing but the corpus keeps it equal to what the endpoints
 /// actually serialize; `node/tests/lean_envelope_corpus.rs` (law 43) holds it to
 /// `spec/Rchain/Envelope.lean`'s catalog, which the DTOs are held to as well.
+///
+/// **Only the public listener's routes.** The document is served on the public listener, so it
+/// describes what that listener mounts. The admin routes (`/propose`, `/txn`, `/txn/{txnId}`, the
+/// resume actuators, the operator status) are on a different listener and are deliberately absent:
+/// documenting them here described a surface the reader could not reach, and on a node with
+/// `enable-devnet-admin-public` told a stranger which actuator to try (C301's E2). The join is
+/// asserted by `the_public_openapi_does_not_disclose_admin_routes`.
 pub const OPENAPI_JSON: &str = r##"{
   "openapi": "3.0.0",
   "info": { "title": "RNode API", "version": "1.0" },
@@ -1790,36 +1797,6 @@ pub const OPENAPI_JSON: &str = r##"{
         }
       }
     },
-    "/txn": {
-      "post": {
-        "summary": "Open or resume a cross-shard transaction",
-        "description": "Runs a two-phase commit across this node's own member shards: each leg is an ordinary deploy on the shard that owns it, so the call returns once every leg is in a block (seconds) and can fail by timeout. Idempotent under `txnId`: re-issuing a completed transaction returns its record and moves no funds. 404 when this node is not a multi-shard gateway.",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TxnRequest" } } } },
-        "responses": {
-          "200": { "description": "The durable coordinator record", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TxnRecord" } } } },
-          "400": { "description": "Invalid txnId, a non-member shard, or a failed leg" },
-          "404": { "description": "This node is not a gateway (`api-server.enable-txn-api` is off, or it has a single shard)" }
-        }
-      },
-      "get": {
-        "summary": "Transactions this node is still coordinating",
-        "responses": {
-          "200": { "description": "The in-flight records", "content": { "application/json": { "schema": { "type": "object", "properties": { "inFlight": { "type": "array", "items": { "$ref": "#/components/schemas/TxnRecord" } } } } } } },
-          "404": { "description": "This node is not a gateway" }
-        }
-      }
-    },
-    "/txn/{txnId}": {
-      "get": {
-        "summary": "A cross-shard transaction's durable record",
-        "parameters": [ { "name": "txnId", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Hex-encoded transaction id" } ],
-        "responses": {
-          "200": { "description": "The coordinator record", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TxnRecord" } } } },
-          "400": { "description": "txnId is not hex" },
-          "404": { "description": "Unknown transaction, or this node is not a gateway" }
-        }
-      }
-    },
     "/deploy": {
       "post": {
         "summary": "Deploy a signed rholang term",
@@ -1922,14 +1899,6 @@ pub const OPENAPI_JSON: &str = r##"{
         "responses": {
           "200": { "description": "The attestation", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FinalityAttestation" } } } },
           "400": { "description": "Missing or too-short nonce, or this node has no validator identity" }
-        }
-      }
-    },
-    "/propose": {
-      "post": {
-        "summary": "Propose a block",
-        "responses": {
-          "200": { "description": "Proposal result", "content": { "application/json": { "schema": { "type": "string" } } } }
         }
       }
     }
@@ -5197,6 +5166,33 @@ mod tests {
         assert_eq!(doc["openapi"], "3.0.0");
         assert!(doc["paths"].is_object());
         assert!(doc["components"]["schemas"].is_object());
+    }
+
+    /// **The served document describes the public listener, not the admin one** (C301's E2). The
+    /// admin routes are mounted by `admin_router`; listing them in a document served on the public
+    /// port told every reader that the node has a fund-moving `/txn` and a block-producing
+    /// `/propose`, and on a node with `enable-devnet-admin-public` told them where to try. The
+    /// document is public, so the list here is public-route-shaped: a path that only the admin
+    /// listener mounts must not appear.
+    #[test]
+    fn the_public_openapi_does_not_disclose_admin_routes() {
+        let doc: serde_json::Value =
+            serde_json::from_str(OPENAPI_JSON).expect("served OpenAPI parses");
+        for path in [
+            "/propose",
+            "/txn",
+            "/txn/{txnId}",
+            "/autopropose/resume",
+            "/proposer/resume",
+            "/resources/resume",
+            "/status/operator",
+            "/ocapn/dial",
+        ] {
+            assert!(
+                doc["paths"].get(path).is_none(),
+                "the public OpenAPI documents the admin route {path}"
+            );
+        }
     }
 
     /// **The served document names every history and audit route the node mounts.** The document is
