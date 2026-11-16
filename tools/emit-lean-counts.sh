@@ -67,6 +67,10 @@ n_proved="$(awk -F'\t' 'NR>1 && ($4=="proved-tied" || $4=="proved-model") {print
 # this population's extra rows. Stated separately so the arithmetic sentence is generated rather than
 # hand-written (2026-10-26: the page said eighteen while the register held sixteen).
 n_clause_laws="$(awk -F'\t' 'NR>1 {c[$1]++} END {n=0; for (k in c) if (c[k]>1) n++; print n+0}' "$TSV")"
+# Proved rows that have not yet named their formal proposition. The `formal` column is the last
+# group appended to `laws.tsv`; the register's own ratchet is `formalMissingCeiling`, and this is the
+# number the reader-facing page quotes. Derived, so it cannot drift from the register.
+n_formal_missing="$(awk -F'\t' 'NR>1 && ($4=="proved-tied" || $4=="proved-model") && ($15=="-" || $15=="") {n++} END {print n+0}' "$TSV")"
 
 value_of() {
   case "$1" in
@@ -81,6 +85,7 @@ value_of() {
     proved-model-entries) printf '%s' "$(col_rows proved-model)" ;;
     proved-tied-entries)  printf '%s' "$(col_rows proved-tied)" ;;
     clause-laws)          printf '%s' "$n_clause_laws" ;;
+    formal-missing)       printf '%s' "$n_formal_missing" ;;
     owed-laws)            col owed ;;
     open-laws)            col open ;;
     orphaned-laws)        col orphaned ;;
@@ -139,7 +144,7 @@ for f in "$ROOT"/docs/src/formal/*.md; do FILES+=("$f"); done
 # The map as `key=value` lines, reused for both the rewrite and the scan.
 map="$(for k in laws entries laws-entries axioms summary proved-laws proved-tied-laws proved-model-laws \
                  owed-laws open-laws orphaned-laws vacuous-laws axiom-by-design-laws \
-                 proved-model-entries proved-tied-entries clause-laws; do
+                 proved-model-entries proved-tied-entries clause-laws formal-missing; do
           printf '%s=%s\n' "$k" "$(value_of "$k")"
         done)"
 

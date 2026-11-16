@@ -13191,3 +13191,71 @@ evidence, never the closure.
   and both accepted with no conflict. It has one signer on one short chain with the checker sharing
   the producer's codebase, and it carries no restart control — a witness for the mechanism, not a
   live or independent acceptance. The pre-R1/R3 pack is retained and marked superseded.
+
+## 170. The Lean register at 10,000 ft — the proposition seam (2026-11-16)
+
+**What was reviewed.** The 112 laws / 169 entries in `Rchain/Laws.lean` against the audit's open
+items, asking whether the laws specify the chain as a mathematical object with falsifiable behaviour
+at every level. The structural checks were already strong — numbering, reference integrity, exact
+axiom accounting, witness-is-theorem, the non-vacuity sentence, tie vocabulary and the transitive
+trust surface — and the status vocabulary is honest (`vacuous`, `retired` and `orphaned` all exist and
+are used). The seam was semantic: `statement` was prose, `declarations` were names, and a `witness`
+was checked to exist and be a theorem, not to refute anything.
+
+**Landed in PR #596 (draft).**
+
+- `formal` / `mutant` / `falsifier` on `structure Law`; check 10 resolves all three and requires the
+  falsifier's type to mention the mutant (`Expr.getUsedConstants`). The retrofit is a ratchet:
+  `formalMissingCeiling` is 152 and may only fall. Three rows are formalised: 104, 72b, 63b.
+- `layer` is validated. Laws 3, 4a and 16a carried whole notes in the field, which rendered as
+  corrupted `LAWS.md` headings.
+- `falsifiable` must name resolvable evidence, and a proved row with neither a corpus nor a Rust
+  witness must say why; the summary publishes the 16 such rows.
+- **Law 104's old falsifier was false.** It claimed that weakening `>` to `>=` breaks quorum
+  intersection. It does not — two sets each at least two thirds of a total meet for every `n`
+  (`4n/3 > n`). The honest falsifier is the boundary: a certificate at exactly two thirds is admitted
+  by `>=` and refused by `>` (`law104_falsifier`; the Rust witness
+  `a_certificate_at_exactly_two_thirds_is_refused`). The defect was in the register's own record, and
+  the formal rung found it rather than a reader.
+- **Law 72b** — a completion record is released only from the completed phase; the unguarded mutant
+  clears a `rewinding` marker. Closes U12-02's owed law.
+- **Law 63b** — the relay's conditional: given the peer-signed `DeployData`, the write is attributable
+  and bounded by the peer's own phlo. 63a stays `open`, because the relay is a cross-implementation
+  change.
+- **Law 104 at stake** — `WeightedQuorate` and `two_weighted_quorums_intersect`; the `checkpoint`
+  corpus (17 boundary rows) runs `is_super_majority`, the function the verifier uses.
+
+**Verdicts on the consensus-safety statements.** The plan's rule is that a verdict may be *proved*,
+*refuted*, or *blocked with the missing model field named*. A blocked verdict is a result, not a
+claim, and no row is promoted on one.
+
+- **Law 113, a finalised write not undone by a later merge — blocked.** The corpus has three separate
+  models — finality (`Casper/Fringe.lean`), merge accounting (`Casper/MergeAccounting.lean`) and
+  state-change merging (`RSpace/Merge.lean`) — and no combined applied-state model with a finalised
+  base and a merge scope. `mergeChanges` can carry a `removed` list for any channel; whether a later
+  accepted merge may remove a datum already in the finalised base is a property of the merge's
+  *scope*, which is not modelled. Stating the law over the three models separately would be a claim
+  about a composite that does not exist. Falsifier-first has nothing to refute yet.
+- **`pairwise-finalized-imply-one-chain` — false as literally worded.** The finalised fringe is an
+  antichain (Law 14b): two messages in one fringe from different senders are both finalised and need
+  not reach one another. The predicate the rejoin harness needs is the *safety* reading — no two
+  **conflicting** finalised blocks — which requires a conflict relation and a quorum-honesty
+  hypothesis; neither is modelled. Restate before proving.
+- **`finalized-membership-monotone` — blocked.** `finalized : List Nat` is a parameter throughout
+  `Casper/Dag.lean`; there is no derivation-grown finalised set to be monotone. Law 15's
+  `derivedFringe_above_the_previous_fringe` is *height* monotonicity, not membership. The missing
+  field is a finalised set carried by the derivation.
+- **`post-state-is-a-function-of-block` — not promoted on a resemblance.** The closest law is Law 23
+  (`read_state_determines_outcome`: the chosen candidate, commit outcome and event trace are a
+  function of the state read), with Laws 11/92/94 on replay determinism. Whether that is exactly the
+  harness's predicate is the harness author's call; the slug stays a candidate until it is confirmed
+  or a block-level statement is proved.
+- **`rejoin-certificate-predicates-prefix` — blocked.** The rejoin certificate and its prefix are
+  modelled in the Python harness, not in Lean; `Rchain/Sync/Claim.lean` is the audit claim, not the
+  rejoin certificate. "Prefix" has no formal definition to prove against yet.
+
+**What this pass does not do.** It does not close C301's 30-process contract layer; it does not close
+the live-evidence rows (C343/C344/C357, the mature-chain measurement); and it does not turn
+operator/tool policy into laws. U15-02's soft-checkpoint base, Law 15's general sentinel comparison
+and Law 37's fast-path modelling remain owed, with their missing items named in the PR's closure
+list.

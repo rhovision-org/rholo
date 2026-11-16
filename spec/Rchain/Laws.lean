@@ -89,6 +89,14 @@ that had rotted — naming a theorem since renamed, or one never written — wou
 live one. `witness` is the part that can be checked; a `proved*` row must name at least one declaration
 or carry a `corpus`, and no witness may be an `axiom` — a row whose falsifier is the assumption that
 cannot fail is naming decoration.
+
+**The formal rung (2026-11-16).** A row may also name `formal` — the law's proposition, as a theorem or
+a `def … : Prop` — with `mutant` (the rule being weakened: a hypothesis dropped, `>` weakened to `>=`,
+a projection removed) and `falsifier` (a theorem whose type *mentions* the mutant, checked with
+`Expr.getUsedConstants`). `Rchain/LawsMain.lean`'s check 10 resolves all three. The retrofit is a
+ratchet: `formalMissingCeiling` is 152 and may only fall, and the first three rows are 104 (the
+weighted checkpoint quorum), 72b (a completion record's release) and 63b (the relay's conditional).
+The declaration is now the statement, not a description of it.
 -/
 
 -- The register is data, and `Name` is the one type it needs from outside the prelude. `autoImplicit`

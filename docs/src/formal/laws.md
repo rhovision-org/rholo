@@ -16,6 +16,10 @@ disagree, the register is right.
 >   which is why the number of *laws* proved is smaller than the sum of the two status columns.
 > - **`C###`** — an audit finding (`spec/audit/passes.md`), never a law. HAZOP rows are `F-U…`/`H-U…`,
 >   wargame rows `W-N…`, and an audit pass is `§N`. They are different namespaces.
+> - **`formal` / `mutant` / `falsifier`** — where a row has been retrofitted, `formal` names the law's
+>   proposition as a Lean `Prop`, `mutant` the rule being weakened, and `falsifier` the theorem that
+>   breaks the mutant. Three rows carry it today (104, 72b, 63b); the register is the authority and
+>   <!-- counts:formal-missing -->152<!-- counts:end --> proved rows are still prose-only.
 >
 > The machine-readable register is [`spec/laws.tsv`](../../../spec/laws.tsv); the rendered tables, with every
 > law's status and falsifier, are [`spec/LAWS.md`](../../../spec/LAWS.md). Both are emitted from
