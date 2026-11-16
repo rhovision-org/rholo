@@ -658,11 +658,15 @@ def vote_once(
         and record["own_block_target_absent"]
         and target_record(own_liveness, target) is None
     )
-    record["stale_snapshot"] = [
-        earlier
-        for earlier in earlier_voters
-        if keys_missing(record["own_block_ballots"], earlier)
-    ]
+    record["stale_snapshot"] = (
+        []
+        if record["consumed_in_own_block"]
+        else [
+            earlier
+            for earlier in earlier_voters
+            if keys_missing(record["own_block_ballots"], earlier)
+        ]
+    )
 
     # The merged state a later block builds on. A block at or below the vote block would not see it,
     # so wait for the tip to move past it, then pin that block's pre-state.
@@ -857,7 +861,9 @@ def run_exact_threshold_arm(keys: list[str], args, config: ArmConfig) -> tuple[d
         )
         observations["second_for_stake_expected"] = expected
         checks["second_ballot_counted_in_its_block"] = True
-        checks["second_ballot_is_strict_supermajority"] = expected * 3 > total_active * 2
+        checks["second_ballot_weights_are_strict_and_the_vote_slashed"] = (
+            expected * 3 > total_active * 2
+        )
     else:
         if second.get("merged_votes") is None:
             inconclusive.append("second window closed before the merged read")
