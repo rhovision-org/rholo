@@ -1124,7 +1124,7 @@ fn sys_deploy_id(block_hash: &BlockHash, prefix: u8) -> Vec<u8> {
 /// test reads a chain's first deploy id — so propagating a system id would reject a
 /// consensus-mandated close chain and drop its native writes (C344: the liveness anchor).
 pub fn is_system_deploy_id(id: &[u8]) -> bool {
-    id.len() == 33 && matches!(id[32], 1 | 2 | 3)
+    id.len() == 33 && matches!(id[32], 1..=3)
 }
 
 /// The in-memory block-index cache (port of `BlockIndex.cache`).
