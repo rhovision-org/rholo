@@ -78,7 +78,8 @@ All pass on the Phase 1 branch.
 
 ## What remains under C301
 
-The 18 confirmed findings above (B1–E4, minus the fixed C1–C3 and duplicate E3) and C401. They are
-prioritised in the Phase 3 tranche: B4 escaping, C4 disclosure, D1, D4 and E4 first (small); B1/B2/B3/
-C5/D2/D3 as recorded decisions or consensus-class work; E1/E2 as the web-layer fixes. The thirty T3
-process rows stay `deferred` until Phase 3's contract-layer review.
+Fourteen of the original nineteen still hold (A2 as corrected-but-limited, plus B1–B4, C4/C5,
+D1–D4, E1/E2 and E4), and A2b is new: **fifteen findings plus C401**. They are prioritised in the
+Phase 3 tranche: B4 escaping, C4 disclosure, D1, D4 and E4 first (small); B1/B2/B3/C5/D2/D3 as
+recorded decisions or consensus-class work; E1/E2 as the web-layer fixes. The thirty T3 process rows
+stay `deferred` until Phase 3's contract-layer review.
