@@ -10,6 +10,7 @@ import Rchain.Syrup
 import Rchain.Envelope
 import Rchain.Lex
 import Rchain.Parse
+import Rchain.Namespace
 import Rchain.Casper.Validate
 import Rchain.Casper.Rounds
 import Rchain.Progress
@@ -2007,6 +2008,69 @@ def checkpointLine (c : CheckpointCase) : String :=
       if c.expected then "true" else "false"]
 
 
+/-! ## Law 56 — the namespace layer
+
+The rooted-namespace model (`Rchain/Namespace.lean`) against the deployed `MasterDictionary.rho`. The
+rows are the four must-fail cases plus the owner's control; the Rust consumer
+(`casper/tests/master_dictionary.rs::lean_namespace_corpus`) drives the real contract through the same
+probes the law's own tests use. -/
+
+inductive NamespaceVerb where
+  | publish
+  | alias
+deriving DecidableEq, Repr
+
+structure NamespaceCase where
+  verb : NamespaceVerb
+  caller : Nat
+  owner : Nat
+  name : Nat
+  sealed : Bool
+  expected : String
+deriving Repr
+
+def verdictTag : Verdict → String
+  | .published _ _ => "published"
+  | .notYourNamespace => "not-your-namespace"
+  | .revoked => "revoked"
+  | .sealed => "sealed"
+  | .notRootAuthority => "not-root-authority"
+  | .noIdentity => "no-identity"
+
+def namespaceVerdict (c : NamespaceCase) : String :=
+  match c.verb with
+  | .publish =>
+      let p : NsPath := ⟨c.owner, c.name⟩
+      let st : NsState := { emptyState with sealed := if c.sealed then [p] else [] }
+      verdictTag (publish st (some c.caller) p 0)
+  | .alias =>
+      verdictTag (setAlias (stateRootedAt 7) (some c.caller) 5 ⟨1, 7⟩)
+
+def namespaceHolds (c : NamespaceCase) : Bool := namespaceVerdict c == c.expected
+
+def namespaceCases : List NamespaceCase :=
+  [ ⟨.publish, 12, 11, 1, false, "not-your-namespace"⟩
+  , ⟨.publish, 11, 11, 2, false, "published"⟩
+  , ⟨.publish, 11, 11, 3, true, "sealed"⟩
+  , ⟨.alias, 12, 7, 0, false, "not-root-authority"⟩
+  ]
+
+def namespaceCaseCount : Nat := 4
+
+theorem namespaceCases_decide : namespaceCases.all namespaceHolds = true := by decide
+
+theorem namespaceCases_length : namespaceCases.length = namespaceCaseCount := by decide
+
+def namespaceVerbName : NamespaceVerb → String
+  | .publish => "publish"
+  | .alias => "alias"
+
+def namespaceLine (c : NamespaceCase) : String :=
+  String.intercalate "\t"
+    ["namespace", namespaceVerbName c.verb, toString c.caller, toString c.owner,
+      toString c.name, if c.sealed then "true" else "false", c.expected]
+
+
 -- **The `decimal` layer (Law 87) was here and is retired** (issue #527): the 42-case algebra corpus
 -- — `DecimalOp` (mk/parts/scaled/cmp/add/sub/mul/div), `DecimalOutcome`, `DecimalCase`,
 -- `decimalCases`, `decimalCaseCount`, the four non-vacuity theorems and `decimalLine` — drove the
@@ -2025,7 +2089,7 @@ def main (args : List String) : IO UInt32 := do
       || a == "syrup"
       || a == "lex" || a == "sort" || a == "parse" || a == "body" || a == "closed"
       || a == "stake" || a == "block" || a == "liveness" || a == "admission"
-      || a == "hostlist" || a == "recovery" || a == "checkpoint")).getD "flags"
+      || a == "hostlist" || a == "recovery" || a == "checkpoint" || a == "namespace")).getD "flags"
   let (lines, count) :=
     if want == "c21" then (Corpus.c21Cases.map Corpus.c21Line, Corpus.c21CaseCount)
     else if want == "match" then (Corpus.matchCases.map Corpus.matchLine, Corpus.matchCaseCount)
@@ -2065,6 +2129,8 @@ def main (args : List String) : IO UInt32 := do
       (Corpus.recoveryCases.map Corpus.recoveryLine, Corpus.recoveryCaseCount)
     else if want == "checkpoint" then
       (Corpus.checkpointCases.map Corpus.checkpointLine, Corpus.checkpointCaseCount)
+    else if want == "namespace" then
+      (Corpus.namespaceCases.map Corpus.namespaceLine, Corpus.namespaceCaseCount)
     else (Corpus.flagCases.map Corpus.flagLine, Corpus.flagCaseCount)
   if lines.length != count then
     IO.eprintln s!"rchain-corpus: {want}: the case list and the declared count disagree"

@@ -10,15 +10,15 @@ disagree, the register is right.
 >
 > - **`Law N`** — a stable number, 1–112. Numbers are never reused; a new law takes the next one.
 > - **`Law Nx`** — a *clause* of a law whose parts have different proofs or statuses (`16a`, `16b`, …).
->   <!-- counts:clause-laws -->29<!-- counts:end --> laws carry clauses; the register has one **entry** per clause.
-> - **Entry** — one row of the register. **<!-- counts:laws -->112 laws<!-- counts:end --> = <!-- counts:entries -->169 entries<!-- counts:end -->**, and the
+>   <!-- counts:clause-laws -->30<!-- counts:end --> laws carry clauses; the register has one **entry** per clause.
+> - **Entry** — one row of the register. **<!-- counts:laws -->112 laws<!-- counts:end --> = <!-- counts:entries -->170 entries<!-- counts:end -->**, and the
 >   status counts are per entry. Laws 14, 16 and 86 have clauses on both sides of `proved-tied`/`proved-model`,
 >   which is why the number of *laws* proved is smaller than the sum of the two status columns.
 > - **`C###`** — an audit finding (`spec/audit/passes.md`), never a law. HAZOP rows are `F-U…`/`H-U…`,
 >   wargame rows `W-N…`, and an audit pass is `§N`. They are different namespaces.
 > - **`formal` / `mutant` / `falsifier`** — where a row has been retrofitted, `formal` names the law's
 >   proposition as a Lean `Prop`, `mutant` the rule being weakened, and `falsifier` the theorem that
->   breaks the mutant. Three rows carry it today (104, 72b, 63b); the register is the authority and
+>   breaks the mutant. Four rows carry it today (104, 72b, 63b, 74b); the register is the authority and
 >   <!-- counts:formal-missing -->152<!-- counts:end --> proved rows are still prose-only.
 >
 > The machine-readable register is [`spec/laws.tsv`](../../../spec/laws.tsv); the rendered tables, with every
@@ -328,16 +328,16 @@ The register classifies every entry; the words mean different things:
 - **proved-tied** — proved, *and* tied to the node by a conformance corpus the Rust consumer runs.
   <!-- counts:proved-tied-entries -->31<!-- counts:end --> entries.
 - **proved-model** — proved about a model that a person keeps in sync with the Rust.
-  <!-- counts:proved-model-entries -->124<!-- counts:end --> entries.
+  <!-- counts:proved-model-entries -->125<!-- counts:end --> entries.
 - **axiom-by-design** — a primitive assumed rather than proved (cryptography): <!-- counts:axioms -->10 axioms<!-- counts:end --> across the tree.
 - **owed / deferred** — stated, with the proof or the decision outstanding; **open** — a recorded design
   question, not a proof gap; **vacuous** — proved but restating its own definition (kept visible, never
   counted as coverage); **orphaned** — out of scope (the Rosette rows); **retired** — the port has no
   rule of that shape, evidenced by naming the code that was read.
 
-The count arithmetic, in one sentence: **<!-- counts:laws -->112 laws<!-- counts:end -->, <!-- counts:entries -->169 entries<!-- counts:end -->**, because <!-- counts:clause-laws -->29<!-- counts:end --> laws
+The count arithmetic, in one sentence: **<!-- counts:laws -->112 laws<!-- counts:end -->, <!-- counts:entries -->170 entries<!-- counts:end -->**, because <!-- counts:clause-laws -->30<!-- counts:end --> laws
 carry clauses; **<!-- counts:proved-laws -->105<!-- counts:end --> laws are proved in at least one clause**, split over entries as
-<!-- counts:proved-tied-entries -->31<!-- counts:end --> tied and <!-- counts:proved-model-entries -->124<!-- counts:end --> over the model. The two status columns overlap on
+<!-- counts:proved-tied-entries -->31<!-- counts:end --> tied and <!-- counts:proved-model-entries -->125<!-- counts:end --> over the model. The two status columns overlap on
 laws 14, 16 and 86, which is why they do not add up to the law-level union. No total on this page is
 hand-written: the spans are emitted from the register.
 

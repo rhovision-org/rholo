@@ -94,8 +94,9 @@ cannot fail is naming decoration.
 a `def … : Prop` — with `mutant` (the rule being weakened: a hypothesis dropped, `>` weakened to `>=`,
 a projection removed) and `falsifier` (a theorem whose type *mentions* the mutant, checked with
 `Expr.getUsedConstants`). `Rchain/LawsMain.lean`'s check 10 resolves all three. The retrofit is a
-ratchet: `formalMissingCeiling` is 152 and may only fall, and the first three rows are 104 (the
-weighted checkpoint quorum), 72b (a completion record's release) and 63b (the relay's conditional).
+ratchet: `formalMissingCeiling` is 152 and may only fall, and the first four rows are 104 (the
+weighted checkpoint quorum), 72b (a completion record's release), 63b (the relay's conditional) and
+74b (a soft checkpoint's base).
 The declaration is now the statement, not a description of it.
 -/
 
@@ -3387,6 +3388,7 @@ def lawsB : List Law := [
       "casper/tests/master_dictionary.rs:seal_closes_a_path_and_the_key_still_resolves",
       "casper/tests/master_dictionary.rs:a_granted_key_works_until_it_is_revoked",
       "casper/tests/genesis_registry.rs:only_the_ceremony_key_can_reach_the_admin_handle"],
+    corpus := some "namespace",
     witness := [`Rchain.a_stranger_publishing_under_alices_root_is_refused,
       `Rchain.alice_publishing_under_her_own_root_is_accepted,
       `Rchain.a_forged_identity_is_refused,
@@ -3420,7 +3422,11 @@ def lawsB : List Law := [
       than a different address, are properties of `rho:rev:address` and are pinned by \
       `casper/tests/master_dictionary.rs`, not here. Nor does it claim that a contract cannot *disclose* \
       a deployer id it was given: that is a discipline over the chain's contracts, not a mechanism the \
-      calculus can enforce, and the source scan is the floor under it" },
+      calculus can enforce, and the source scan is the floor under it. **The `namespace` corpus** pins \
+      the four verdicts (`not-your-namespace`, `published`, `sealed`, `not-root-authority`) against the \
+      deployed dictionary through `lean_namespace_corpus`; the row stays `proved-model` because the \
+      model's paths are `Nat` tokens, not base58, and the corpus pins the verdict shape rather than the \
+      encoding." },
   { number := 57, layer := "PoS",
     statement := "**A delegator's stake is the operator's bond, attributed.** A delegation moves a \
       principal from the delegator's own vault into the staking vault and adds it to the operator's key \
@@ -4233,6 +4239,27 @@ def lawsC : List Law := [
       overlay before the drain and restores it if the fold fails, and writes `last_native_*` only after \
       the fold has committed. `rustWitness` is empty: the fold's failure path has no fault-injection \
       point in the rspace tests yet, so that falsifier is owed." },
+  { number := 74, clause := "b", layer := "RSpace",
+    statement := "**A soft checkpoint reverts only over the base it was taken over.** The soft \
+      checkpoint carries the history root it snapshotted; a hard checkpoint between the snapshot and \
+      the revert makes the revert unavailable, so the old overlay is never applied over a new base.",
+    status := .provedModel,
+    formal := `Rchain.law74b_statement,
+    mutant := `Rchain.law74b_mutant,
+    falsifier := `Rchain.law74b_falsifier,
+    declarations := [`Rchain.SoftState, `Rchain.guardedRevert, `Rchain.law74b_statement,
+      `Rchain.law74b, `Rchain.law74b_falsifier, `Rchain.a_guarded_revert_uses_the_snapshots_base],
+    axioms := [],
+    rust := ["rspace/src/checkpoint.rs", "rspace/src/rspace.rs"],
+    witness := [`Rchain.law74b_falsifier],
+    falsifiable := "The port's `revert_to_soft_checkpoint` re-reads `history.root()` at revert time; \
+      `law74b_falsifier` reaches a state where the unguarded rule used the new base. The guarded rule's \
+      invariant is `a_guarded_revert_uses_the_snapshots_base`.",
+    note := "**The Rust guard is the remaining code change.** Adding the base to `SoftCheckpoint` and \
+      checking it at revert is not landed here; the model states the rule and the mutant, and \
+      `rspace/src/checkpoint.rs:14-21` is where the field is missing. **What it does not model:** the \
+      history's own base derivation is Law 70's trie, not this file. HAZOP U15-02's owed law is this \
+      clause; the fault-injection test of the interleaving remains owed." },
 
   { number := 75, layer := "Casper",
     statement := "**A dependent action is taken only on a committed record.** The refusal budget's \

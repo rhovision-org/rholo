@@ -103,4 +103,82 @@ theorem a_drain_before_the_fold_reaches_a_state_that_lost_the_overlay :
       ∧ σ.pending = false ∧ σ.folded = false :=
   ⟨⟨false, false⟩, Relation.ReflTransGen.single (Or.inl ⟨rfl, rfl⟩), rfl, rfl⟩
 
+/-! ## 74b — the soft checkpoint's base
+
+A `SoftCheckpoint` carries no root (`rspace/src/checkpoint.rs:14-21`), so the port's
+`revert_to_soft_checkpoint` re-reads `history.root()` at revert time (`rspace/src/rspace.rs:771-780`).
+A hard checkpoint between the snapshot and the revert therefore rebuilds the old overlay over a new
+base. The law models the missing field and the guard it enables. -/
+
+/-- A soft checkpoint's base, the history root now, and the root a revert used (if one ran). -/
+structure SoftState where
+  base : Nat
+  current : Nat
+  used : Option Nat
+deriving DecidableEq, Repr
+
+/-- A snapshot over `base`, nothing reverted. -/
+def softInitial (base : Nat) : SoftState := ⟨base, base, none⟩
+
+/-- The guarded revert: only while the history root is still the base the snapshot was taken over. -/
+def guardedRevert (s s' : SoftState) : Prop :=
+  s.used = none ∧ s.current = s.base ∧ s' = { s with used := some s.base }
+
+/-- A hard checkpoint moves the history root; it does not move the snapshot's base. -/
+def hardCheckpoint (root : Nat) (s s' : SoftState) : Prop :=
+  s' = { s with current := root }
+
+/-- The guarded system's steps: a revert at the snapshot's base, or a hard checkpoint moving the root. -/
+def guardedStep (root : Nat) (s s' : SoftState) : Prop :=
+  guardedRevert s s' ∨ hardCheckpoint root s s'
+
+/-- **74b — a revert uses the base it snapshotted.** In the guarded system, every root a revert used is
+the snapshot's base; a hard checkpoint between the snapshot and the revert only makes the revert
+unavailable, because it moves `current` away from `base`. -/
+theorem a_guarded_revert_uses_the_snapshots_base (root base : Nat) (σ : SoftState) (r : Nat)
+    (hr : Relation.ReflTransGen (guardedStep root) (softInitial base) σ)
+    (h : σ.used = some r) : r = σ.base := by
+  induction hr with
+  | refl => simp [softInitial] at h
+  | tail _ hstep ih =>
+      rcases hstep with hg | hh
+      · obtain ⟨_, _, hEq⟩ := hg
+        rw [hEq] at h ⊢
+        simp only [Option.some.injEq] at h
+        exact h.symm
+      · rw [hh] at h ⊢
+        exact ih h
+
+/-- The law as a named proposition, for the register's `formal` field. -/
+def law74b_statement : Prop :=
+  ∀ (root base : Nat) (σ : SoftState) (r : Nat),
+    Relation.ReflTransGen (guardedStep root) (softInitial base) σ →
+    σ.used = some r → r = σ.base
+
+/-- The law. -/
+theorem law74b : law74b_statement :=
+  fun root base σ r hr h => a_guarded_revert_uses_the_snapshots_base root base σ r hr h
+
+/-- **The port's unguarded revert**: re-read the history root at revert time and use it as the base. -/
+def unguardedRevert (s s' : SoftState) : Prop :=
+  s.used = none ∧ s' = { s with used := some s.current }
+
+/-- The unguarded system's steps. -/
+def unguardedStep (root : Nat) (s s' : SoftState) : Prop :=
+  unguardedRevert s s' ∨ hardCheckpoint root s s'
+
+/-- **The mutant**: a hard checkpoint after the snapshot, then an unguarded revert, uses the new root
+as the base — the state U15-02 names. -/
+def law74b_mutant : Prop :=
+  ∃ σ, Relation.ReflTransGen (unguardedStep 1) (softInitial 0) σ
+    ∧ σ.used = some 1 ∧ σ.base = 0
+
+/-- **The falsifier, fired.** Under the port's rule the revert's base is the root read at revert time,
+not the snapshot's: a hard checkpoint at `1` moves it, and the old overlay is rebuilt over `1`. -/
+theorem law74b_falsifier : law74b_mutant := by
+  refine ⟨⟨0, 1, some 1⟩, ?_, rfl, rfl⟩
+  have h1 : unguardedStep 1 (softInitial 0) ⟨0, 1, none⟩ := Or.inr rfl
+  have h2 : unguardedStep 1 ⟨0, 1, none⟩ ⟨0, 1, some 1⟩ := Or.inl ⟨rfl, rfl⟩
+  exact Relation.ReflTransGen.tail (Relation.ReflTransGen.single h1) h2
+
 end Rchain
