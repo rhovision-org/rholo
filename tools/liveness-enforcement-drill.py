@@ -21,21 +21,27 @@ devnet. Each arm is one behaviour:
   * `restart-expiry` — jail validator 3, restart it, and show a block it signs releases the jail;
     stop it again and show continued silence renews the term. The bond is untouched throughout.
 
-**Every native-state read is pinned to one finalised block.** An exploratory deploy with no block
-hash anchors at `exploration_anchor` — the **last finalised block** (`casper/src/api/block_api_impl.rs`
-`:174-182`) — which moves between polls. The drill therefore reads `/api/last-finalized-block`, records
-the anchor's hash and number with every observation, and asks
-`/api/v1/explore-deploy-by-block-hash` for that block's post-state. The exploratory reply must come
-from the term's first `new`-bound name (`replySource == "firstPrivateName"`); a reply from `@"out"`
-is a stale read, because that channel accumulates every deploy's output in the block's state
+**Every native-state read is pinned, and the merged view is a block's pre-state.** An exploratory
+deploy with no block hash anchors at `exploration_anchor` — the **last finalised block**
+(`casper/src/api/block_api_impl.rs:174-182`) — which moves between polls. Worse, a finalised *fringe*
+can hold several blocks at one height: each block's own post-state is that block's view, and a
+sibling that never saw a ballot does not carry its effect (the first run of this tool read a
+non-slashing sibling and thought the slash had failed while the merged state had it). The drill
+therefore reads the **pre-state of the latest block** through
+`/api/v1/explore-deploy-by-block-hash` (`usePreStateHash: true`) — the merge of that block's
+justifications, which is the state a later block builds on — and records that anchor's hash and
+number with every observation. The exploratory reply must come from the term's first `new`-bound
+name (`replySource == "firstPrivateName"`); a reply from `@"out"` is a stale read, because that
+channel accumulates every deploy's output in the block's state
 (`casper/src/runtime_manager.rs:2270-2305`).
 
 **Every vote deploy is tracked to its block.** `rnode deploy` reports a deploy id; the drill polls
 `/api/v1/deploy-status/{id}`, records whether the deploy processed and in which block, waits for that
 block to finalise, and then asks two questions of the same ballot: was it in its **own block's**
-post-state (the stale-voter discriminator), and is it in the **finalised** state (the merge-loss
-discriminator)? A `ProcessedWithError` is a rule-side refusal and is reported with its message, not
-as a lost ballot. A window that closed before the observation is INCONCLUSIVE, not FAIL.
+post-state (the stale-voter discriminator), and is it in the **merged** state a later block builds
+on (the merge-loss discriminator)? A `ProcessedWithError` is a rule-side refusal and is reported with
+its message, not as a lost ballot. A window that closed before the observation is INCONCLUSIVE, not
+FAIL.
 
 The tool asserts and records; it does not author a verdict. It writes `raw/result.json`, the route
 replies and the bootstrap journal. A failed assertion exits non-zero and the record is FAIL /
@@ -178,7 +184,13 @@ def decode(node):
 
 
 def last_finalized(port: int = HTTP_BASE) -> dict:
-    """The block every read in one observation is anchored at."""
+    """The last finalised block — the freeze surface, not the canonical state read.
+
+    A finalised **fringe** can hold several blocks at one height, and each block's own post-state is
+    that block's view; a sibling that never saw a ballot does not carry its effect. The canonical
+    merged state is the pre-state of the latest block (the merge of its justifications), which is what
+    `canonical_anchor` names.
+    """
     body = http_json(port, "/api/last-finalized-block")
     info = body.get("blockInfo") or body.get("block_info") or {}
     anchor = {"hash": info.get("blockHash"), "number": info.get("blockNumber"), "port": port}
@@ -187,14 +199,38 @@ def last_finalized(port: int = HTTP_BASE) -> dict:
     return anchor
 
 
-def explore_pinned(term: str, anchor: dict | None = None, port: int | None = None):
-    """Run `term` against one finalised block's post-state and return its reply.
+def latest_block(port: int = HTTP_BASE) -> dict:
+    body = http_json(port, "/api/blocks/1")
+    blocks = body if isinstance(body, list) else body.get("blocks", [])
+    if not blocks:
+        raise RuntimeError(f"no blocks on port {port}")
+    return max(blocks, key=lambda b: int(b.get("blockNumber", -1)))
 
-    The block hash is explicit, so the read cannot slide to a later finalised block between two
-    polls; `replySource` is checked so a stale `@"out"` read is a harness failure rather than state.
+
+def canonical_anchor(port: int = HTTP_BASE) -> dict:
+    """The latest block's **pre-state**: the merged state its proposer built on.
+
+    It is the state a block after the effect under test *sees*, so an effect a finalised sibling
+    carried is present here even when the last-finalised block the node names is a sibling that did
+    not carry it.
+    """
+    block = latest_block(port)
+    return {
+        "hash": block.get("blockHash"),
+        "number": block.get("blockNumber"),
+        "port": port,
+        "pre": True,
+    }
+
+
+def explore_pinned(term: str, anchor: dict | None = None, port: int | None = None):
+    """Run `term` against one block's post- or pre-state and return its reply.
+
+    The block hash is explicit, so the read cannot slide to a later block between two polls;
+    `replySource` is checked so a stale `@"out"` read is a harness failure rather than state.
     """
     if anchor is None:
-        anchor = last_finalized(port or HTTP_BASE)
+        anchor = canonical_anchor(port or HTTP_BASE)
     target_port = port or anchor.get("port", HTTP_BASE)
     reply = http_json(
         target_port,
@@ -203,7 +239,7 @@ def explore_pinned(term: str, anchor: dict | None = None, port: int | None = Non
         body={
             "term": term,
             "blockHash": anchor["hash"],
-            "usePreStateHash": False,
+            "usePreStateHash": bool(anchor.get("pre", False)),
         },
     )
     source = reply.get("replySource")
@@ -265,8 +301,8 @@ def vote_state(target_hex: str, anchor: dict | None = None, port: int | None = N
 
 
 def snapshot(anchor: dict | None = None, port: int | None = None) -> dict:
-    """Liveness, bonds and the active set read at **one** pinned finalised block."""
-    anchor = anchor or last_finalized(port or HTTP_BASE)
+    """Liveness, bonds and the active set read at **one** pinned canonical state."""
+    anchor = anchor or canonical_anchor(port or HTTP_BASE)
     return {
         "anchor": anchor,
         "liveness": liveness(anchor, port),
@@ -451,7 +487,7 @@ def wait_signer_synced(validator: int, min_height: int, args, label: str) -> dic
         args.poll,
         label,
     )
-    return last_finalized(port)
+    return canonical_anchor(port)
 
 
 def window_margin(config: ArmConfig) -> int:
@@ -549,7 +585,7 @@ def vote_once(
     shape, not a merge loss.
 
     Returns the deploy record plus a two-anchor reading: `own_block_ballots` is the ballot map in
-    the block that carried the deploy, and `finalized_ballots` is the map at the next finalised
+    the block that carried the deploy, and `merged_ballots` is the map a later block builds on
     anchor. The arm decides what a missing ballot means.
     """
     signer_anchor = wait_signer_synced(
@@ -601,6 +637,7 @@ def vote_once(
         "hash": committed["block"].get("blockHash"),
         "number": committed["block"].get("blockNumber"),
         "port": committed["signer_port"],
+        "pre": False,
     }
     try:
         own = vote_state(target, own_anchor, committed["signer_port"])
@@ -616,14 +653,23 @@ def vote_once(
         if keys_missing(record["own_block_ballots"], earlier)
     ]
 
-    finalized = last_finalized()
-    final_window = vote_state(target, finalized)
-    record["finalized_anchor"] = finalized
-    record["finalized_votes"] = final_window
-    record["finalized_ballots"] = ballot_keys(final_window["ballots"]) if final_window else []
+    # The merged state a later block builds on. A block at or below the vote block would not see it,
+    # so wait for the tip to move past it, then pin that block's pre-state.
+    merged = wait_until(
+        lambda: (lambda anchor: anchor if int(anchor["number"]) > committed["height"] else None)(
+            canonical_anchor()
+        ),
+        args.timeout,
+        args.poll,
+        "a block above the ballot's block exists",
+    )
+    merged_window = vote_state(target, merged)
+    record["merged_anchor"] = merged
+    record["merged_votes"] = merged_window
+    record["merged_ballots"] = ballot_keys(merged_window["ballots"]) if merged_window else []
     record["missing_ballot"] = (
-        f"validator {voter}'s ballot is not in the finalised ballot map"
-        if final_window is not None and keys_missing(record["finalized_ballots"], voter)
+        f"validator {voter}'s ballot is not in the merged ballot map"
+        if merged_window is not None and keys_missing(record["merged_ballots"], voter)
         else None
     )
     return record
@@ -668,8 +714,8 @@ def run_jail_vote_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, d
     if vote.get("outcome") != "committed":
         return checks, observations, [f"ballot not cast: {vote.get('outcome')}"]
     checks["vote_ballot_in_own_block"] = not keys_missing(vote.get("own_block_ballots", []), 0)
-    checks["vote_ballot_finalized"] = vote.get("finalized_votes") is not None and not keys_missing(
-        vote.get("finalized_ballots", []), 0
+    checks["vote_ballot_finalized"] = vote.get("merged_votes") is not None and not keys_missing(
+        vote.get("merged_ballots", []), 0
     )
 
     wait_until(
@@ -742,10 +788,10 @@ def run_exact_threshold_arm(keys: list[str], args, config: ArmConfig) -> tuple[d
     if first.get("outcome") != "committed":
         inconclusive.append(f"first ballot not cast: {first.get('outcome')}")
         return checks, observations, inconclusive
-    if first.get("finalized_votes") is None:
+    if first.get("merged_votes") is None:
         inconclusive.append("first window closed before the finalised read")
         return checks, observations, inconclusive
-    checks["first_ballot_recorded"] = not keys_missing(first.get("finalized_ballots", []), 0)
+    checks["first_ballot_recorded"] = not keys_missing(first.get("merged_ballots", []), 0)
 
     # A boundary must advance the clock. The jail clock only moves at an advancing boundary; the
     # tally's content is asserted next, on the pinned state at that boundary: if the ballot were
@@ -785,14 +831,14 @@ def run_exact_threshold_arm(keys: list[str], args, config: ArmConfig) -> tuple[d
         inconclusive.append(f"second ballot not cast: {second.get('outcome')}")
         return checks, observations, inconclusive
     observations["second_voter_stale_snapshot"] = second.get("stale_snapshot")
-    if second.get("finalized_votes") is None:
+    if second.get("merged_votes") is None:
         inconclusive.append("second window closed before the finalised read")
         return checks, observations, inconclusive
-    checks["second_ballot_recorded"] = not keys_missing(second.get("finalized_ballots", []), 1)
+    checks["second_ballot_recorded"] = not keys_missing(second.get("merged_ballots", []), 1)
     checks["both_ballots_in_finalised_state"] = not keys_missing(
-        second.get("finalized_ballots", []), 0
-    ) and not keys_missing(second.get("finalized_ballots", []), 1)
-    second_for_stake = for_stake(second["finalized_votes"]["ballots"], active_bonds)
+        second.get("merged_ballots", []), 0
+    ) and not keys_missing(second.get("merged_ballots", []), 1)
+    second_for_stake = for_stake(second["merged_votes"]["ballots"], active_bonds)
     observations["second_for_stake"] = second_for_stake
     checks["second_ballot_is_strict_supermajority"] = second_for_stake * 3 > total_active * 2
 
@@ -824,22 +870,25 @@ def run_stall_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, dict,
     before = snapshot()
     before["health"] = health()
     before["pos"] = pos_status()
+    before["finalized_anchor"] = last_finalized()
     time.sleep(STALL_WINDOW_S)
     after = snapshot()
     after["health"] = health()
     after["pos"] = pos_status()
+    after["finalized_anchor"] = last_finalized()
     observations["before"] = before
     observations["after"] = after
     observations["note"] = (
         "pos.epoch derives from DAG height, which the surviving proposer may keep extending; the "
-        "quorum claim is measured on /health.finalizedHeight, the finalised anchor and the liveness "
-        "counters."
+        "quorum claim is measured on /health.finalizedHeight, the last-finalised anchor and the "
+        "liveness counters. The canonical read anchor may advance with DAG blocks below quorum; "
+        "the freeze claim is the finalised one."
     )
     checks["finalized_height_frozen_below_quorum"] = (
         before["health"].get("finalizedHeight") == after["health"].get("finalizedHeight")
     )
     checks["finalized_anchor_unchanged_below_quorum"] = (
-        before["anchor"].get("hash") == after["anchor"].get("hash")
+        before["finalized_anchor"].get("hash") == after["finalized_anchor"].get("hash")
     )
     checks["liveness_counters_frozen_below_quorum"] = before["liveness"] == after["liveness"]
     checks["no_jail_below_quorum"] = not any(
