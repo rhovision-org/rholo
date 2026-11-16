@@ -731,12 +731,11 @@ def run_jail_vote_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, d
     if vote.get("outcome") != "committed":
         return checks, observations, [f"ballot not cast: {vote.get('outcome')}"]
     consumed = bool(vote.get("consumed_in_own_block"))
+    # The deploy's own block's post-state is the ballot's evidence: it shows the write. Whether a
+    # later boundary consumed it is proven by the slash the arm waits for, not by a merged ballot map
+    # — a tip above the vote may still be pre-tally, and a post-tally tip legitimately has no ballot.
     checks["vote_ballot_in_own_block"] = consumed or not keys_missing(
         vote.get("own_block_ballots", []), 0
-    )
-    checks["vote_ballot_merged"] = consumed or (
-        vote.get("merged_votes") is not None
-        and not keys_missing(vote.get("merged_ballots", []), 0)
     )
 
     wait_until(
