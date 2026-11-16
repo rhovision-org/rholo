@@ -1557,13 +1557,14 @@ mutual
   termination_by l => sizeOf l
 end
 
-/-! ## Lawfulness: `lt_trans` (the residual axioms are counted by the register, not here)
+/-! ## Lawfulness: `lt_trans` (discharged; the register owns the count)
 
-The **list** comparators' `eq_iff`/`swap`/`lt_trans` laws are now **discharged** (direct induction
+The **list** comparators' `eq_iff`/`swap`/`lt_trans` laws are **discharged** (direct induction
 on the list, composing the element law with `lex_eq_iff`/`swap_lex`/`lex_lt_trans`); they were never
 the hard part. The element comparators' `lt_trans` laws (`cmpPar`/`cmpSend`/…/`cmpConnective`;
-`cmpGUnforgeable_lt_trans` is proved) need mutual induction over the AST, which is why some of them are
-still axioms — and *which* ones, and how many, is `Rchain/Laws.lean`'s law 1b row to say.
+`cmpGUnforgeable_lt_trans` is proved) were the residual and **landed on 2026-09-24** — every comparator
+law below is a theorem, and `Rchain/Laws.lean`'s law 1b row records the route. **There is no axiom in
+this file**; the register's axiom-accounting check would fail if one appeared.
 
 **This header has twice carried a wrong number** (33, then 12, when the tree held 69 at one point and
 the register counts a different set). It carries none now, deliberately: the register's axiom-accounting
@@ -1571,7 +1572,8 @@ check compares the axioms its rows cite against the elaborated environment, so a
 cannot drift without the build failing, and a number written *here* can. `tools/emit-lean-counts.sh`
 holds the reader-facing documents to the same rule.
 
-Discharging the element laws is blocked by a Lean limitation, not by choice:
+The early attempts were blocked by a Lean limitation — recorded because the fix was a *shape*, not a
+measure:
 
   * a `mutual` theorem block over the **two-argument** `cmpX` family hangs the termination checker —
     both with bare `termination_by p q => sizeOf p + sizeOf q` and with

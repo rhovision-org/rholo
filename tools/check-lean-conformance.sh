@@ -378,7 +378,7 @@ fi
 # exactly how both documents came to say "29 laws" while the tree held 43, and how they came to disagree
 # with each other on Laws 5 and 24.
 if [[ -x "$ROOT/tools/emit-lean-laws.sh" ]]; then
-  if "$ROOT/tools/emit-lean-laws.sh" >/tmp/lean-laws.log 2>&1; then
+  if "$ROOT/tools/emit-lean-laws.sh" --check >/tmp/lean-laws.log 2>&1; then
     ok "law register emitted from the Lean"
   else
     fail "law register emission failed — see /tmp/lean-laws.log"

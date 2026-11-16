@@ -24,8 +24,12 @@ same strict-majority arithmetic.
 an absent parent (`the_absence_of_a_parent_is_not_the_zero_parent`), and a negative epoch is not well
 shaped (`a_negative_epoch_is_not_well_shaped`) — the two input-shape gaps the stage-one audit found.
 
-**Why it is not vacuous.** Make the rule `>=` and `two_quorums_intersect` fails on two disjoint halves
-of an even set; drop the digest's anchor projection and `the_digest_binds_the_anchor_and_parent` fails.
+**Why it is not vacuous.** The strict inequality is load-bearing at the boundary: `law104_falsifier`
+exhibits a certificate at exactly two thirds that the `>=` rule admits and the law's `>` refuses (the
+Rust's `a_certificate_at_exactly_two_thirds_is_refused` reddens for the same change). Intersection itself
+survives `>=` for every `n` — two sets each at least two thirds of a total must meet — so the threshold,
+not the intersection, is the falsifiable edge. Drop the digest's anchor projection and
+`the_digest_binds_the_anchor_and_parent` fails.
 -/
 
 namespace Rchain
@@ -117,6 +121,39 @@ theorem the_digest_separates_two_anchors (s t : Statement) (h : s.anchor ≠ t.a
     digest s ≠ digest t := by
   intro heq
   exact h (the_digest_binds_the_anchor_and_parent s t heq).1
+
+/-! ## The formal proposition, and the mutation that breaks it
+
+The register's `formal`/`mutant`/`falsifier` columns point here: `law104_statement` is the law as a
+`Prop`, `law104_threshold_mutant` is the threshold with `≥` in place of `>`, and `law104_falsifier` is
+the theorem that the mutant admits a set the law refuses. -/
+
+/-- **Law 104's proposition.** Two quorate signer sets intersect. -/
+def law104_statement : Prop :=
+  ∀ {n : Nat} (a b : Finset (Fin n)), Quorate a → Quorate b → (a ∩ b).Nonempty
+
+/-- The law, as its named proposition. -/
+theorem law104 : law104_statement :=
+  fun a b ha hb => two_quorums_intersect a b ha hb
+
+/-- The rule with `≥` in place of `>`. It is weaker, so the intersection theorem survives — the mutation
+that matters is the *admission* threshold, not intersection. -/
+def QuorateAtLeast {n : Nat} (s : Finset (Fin n)) : Prop := 3 * s.card ≥ 2 * n
+
+/-- **The mutant the falsifier refutes**: some certificate is admitted by `≥` that the law's `>` refuses.
+The witness is a set of exactly two thirds of a three-signer set — precisely the case the Rust's
+`a_certificate_at_exactly_two_thirds_is_refused` pins. -/
+def law104_threshold_mutant : Prop :=
+  ∃ (n : Nat) (s : Finset (Fin n)), QuorateAtLeast s ∧ ¬ Quorate s
+
+/-- **The falsifier.** At three signers, `{0, 1}` is exactly two thirds: `3 * 2 ≥ 2 * 3` holds, while
+`3 * 2 > 2 * 3` does not. So the strict inequality is load-bearing at the boundary, and a rule that
+weakened it would admit a certificate the law's statement refuses. -/
+theorem law104_falsifier : law104_threshold_mutant := by
+  have hcard : ({0, 1} : Finset (Fin 3)).card = 2 := by decide
+  refine ⟨3, ({0, 1} : Finset (Fin 3)), ?_, ?_⟩
+  · simp [QuorateAtLeast, hcard]
+  · simp [Quorate, hcard]
 
 end Checkpoint
 end Sync

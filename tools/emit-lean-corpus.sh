@@ -29,10 +29,15 @@ for layer in "${LAYERS[@]}"; do
 done
 
 if [[ "${1:-}" == "--check" ]]; then
-  if ( cd "$ROOT" && git diff --exit-code -- spec/conformance >/dev/null 2>&1 ); then
+  # `git status --porcelain`, not `git diff --exit-code`: a new, uncommitted layer has no diff to show,
+  # so the diff form passes exactly when a corpus was added and not committed. The gate learned this
+  # lesson for the register and used `git status`; this mode now matches it.
+  dirty="$( cd "$ROOT" && git status --porcelain -- spec/conformance )"
+  if [[ -z "$dirty" ]]; then
     echo "ok    the committed corpora match the Lean definitions"
   else
-    echo "FAIL  spec/conformance is stale — commit the re-emitted corpus (it IS the check)" >&2
+    echo "FAIL  spec/conformance is stale — commit the re-emitted corpus (it IS the check):" >&2
+    printf '%s\n' "$dirty" | sed 's/^/      /' >&2
     exit 1
   fi
 fi

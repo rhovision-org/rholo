@@ -948,8 +948,9 @@ def parseLine (c : ParseCase) : String :=
 /-! ## Law 1 — the canonical order, pairwise (the `sort` layer)
 
 Every state hash in the system is `sortPar`'s output, and until this layer existed **nothing tied that
-order to the node**: law 1a was `proved-model` over a model a human keeps in sync, and law 1b's
-comparator laws are `owed` (the twelve axioms in `Rchain/Sort.lean`).
+order to the node**: law 1a was `proved-model` over a model a human keeps in sync. (Law 1b's comparator
+laws are **theorems** now: the residual this note once called twelve axioms was discharged on 2026-09-24,
+and `Rchain/Laws.lean` law 1b's note records the route. `Rchain/Sort.lean` holds no axioms.)
 
 **The first design for this layer was vacuous, and finding that out is part of its content.** A corpus of
 "the sorted spelling of this par" cannot tie a comparator at all: the AST's fields are *canonical* values

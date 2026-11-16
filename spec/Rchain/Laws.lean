@@ -211,6 +211,23 @@ structure Law where
   witness : List Lean.Name := []
   /-- A note where the status needs qualifying. -/
   note : String := ""
+  /-- **The law's proposition, as a named declaration of type `Prop`.** The register's `statement` is
+  prose, and `declarations` are names: neither says *which term is the law*. This field does, so the
+  statement can be checked rather than read. `Rchain/LawsMain.lean`'s check 10 requires the name to
+  resolve to a theorem or a `def` of type `Prop`. `none` means the row has not been retrofitted; the
+  ratchet is `formalMissingCeiling`, which may only fall. -/
+  formal : Option Lean.Name := none
+  /-- **The mutant the falsifier refutes**, when the falsifier is a mutation rather than a plain
+  counterexample: the law's rule with a hypothesis dropped, a strict inequality weakened, or a
+  projection removed. Check 10 requires it to be a `Prop`-typed declaration and requires the
+  `falsifier`'s type to mention it — so a witness cannot be an unrelated theorem wearing the row's
+  name. -/
+  mutant : Option Lean.Name := none
+  /-- **The theorem that makes the mutation fail.** Its type must mention `mutant` (or `formal` when no
+  mutant is named); check 10 resolves both names, and check 4c's "must be a theorem" discipline is
+  applied to it too. This is the machine half of "clearly falsifiable": the register now points at the
+  proposition and at the theorem that breaks its mutant, not only at prose. -/
+  falsifier : Option Lean.Name := none
 
 -- **The budget is raised for these literals, measured.** Elaborating a register chunk is a unification
 -- problem over the rows' field types rather than a proof: one list fit the default 200 000 heartbeats at
@@ -411,7 +428,7 @@ def lawsA : List Law := [
       with `refl`/`symm`/`trans` as **constructors** rather than axioms, a weight invariant \
       (`alpha_equiv_weight`) and a non-vacuity witness (`a_send_is_not_alpha_equiv_to_nil`). The note \
       this replaces said the deep-α half was Coq's obligation; no track can deliver it and none needs it" },
-  { number := 3, layer := "Rholang **A witness was added on 2026-09-27 (AUDIT C139): the converse, without which the hash half of this law was not falsifiable.** The equality-facing witness asserts `equal => same hash`, which a *constant* `Hash` satisfies — measured: an empty `Hash for Sorted` body left both of law 2's witnesses green and the whole `rchain-models` suite green (168 tests). `law2_unequal_canonical_forms_do_not_hash_alike` states the other direction, and it is the one that fails under that mutation.",
+  { number := 3, layer := "Rholang",
     rustWitness := [
       "rholang/src/substitute.rs:substitutes_bound_var",
       "rholang/src/property_tests.rs:an_open_value_at_the_variable_leaves_a_free_variable"],
@@ -486,8 +503,13 @@ def lawsA : List Law := [
       justifies it — Lean rejects the block — so they are structural inductions whose only two calls, \
       the head's element law and the tail's theorem, are subterms. This row has **no axioms of its \
       own**: `sort_subst` was the last one, and what the row's theorems still rest on is `cmpExpr`'s \
-      three, which law 1's row owns and counts" },
-  { number := 4, clause := "a", layer := "Rholang **The witness column changed on 2026-09-27 (AUDIT C138), because both names it carried were vacuous.** `law3_substituting_a_closed_value_keeps_the_term_closed` asserts closedness before and after the substitution — which the *identity* substitution satisfies — and `law3_substitution_and_sorting_commute` reduces to `sort p = sort p` under the same mutation. Measured: `substitute_par` returning its input leaves both green, while the two now named go red. The right pointer was already in this row's `falsifiable` cell (`an_open_value_at_the_variable_leaves_a_free_variable`); the witness column is where a reader looks to ask whether the law is falsified, so it is the column that had to move.",
+      three, which law 1's row owns and counts. **Witness column (AUDIT C139).** A witness was added \
+      on 2026-09-27: the converse, without which the hash half of this law was not falsifiable. The \
+      equality-facing witness asserts `equal => same hash`, which a *constant* `Hash` satisfies — \
+      measured: an empty `Hash for Sorted` body left both of law 2's witnesses green and the whole \
+      `rchain-models` suite green (168 tests). `law2_unequal_canonical_forms_do_not_hash_alike` states \
+      the other direction, and it is the one that fails under that mutation" },
+  { number := 4, clause := "a", layer := "Rholang",
     rustWitness := [
       "rholang/tests/execution.rs:peek_and_persistent_work",
       "rholang/tests/execution.rs:list_channel_matches"],
@@ -499,8 +521,15 @@ def lawsA : List Law := [
     coq := ["spec/coq/Laws.v:reduce"],
     witness := [`Rchain.reduce_not_deterministic],
     falsifiable := some "`reduce_not_deterministic` proves confluence is **false** on the flat `Par`, \
-      so the law's statement is bounded by a published disproof rather than an assertion"
-    },
+      so the law's statement is bounded by a published disproof rather than an assertion",
+    note := "**Witness column (AUDIT C138).** The witness column changed on 2026-09-27, because both \
+      names it carried were vacuous. `law3_substituting_a_closed_value_keeps_the_term_closed` asserts \
+      closedness before and after the substitution — which the *identity* substitution satisfies — and \
+      `law3_substitution_and_sorting_commute` reduces to `sort p = sort p` under the same mutation. \
+      Measured: `substitute_par` returning its input leaves both green, while the two now named go red. \
+      The right pointer was already in this row's `falsifiable` cell \
+      (`an_open_value_at_the_variable_leaves_a_free_variable`); the witness column is where a reader \
+      looks to ask whether the law is falsified, so it is the column that had to move" },
   { number := 4, clause := "b", layer := "Rholang",
     rustWitness := ["rholang/tests/execution.rs:law4_new_allocates_fresh_names_and_the_reduct_is_closed"],
     statement := "`new` yields fresh unforgeable names: reduction introduces no free variables it did \
@@ -1189,7 +1218,7 @@ def lawsA : List Law := [
       **property test** (`block-storage/src/property_tests.rs:law15_adding_blocks_only_grows_the_state`): \
       this row's statement is the derivation-level fact, and the tie to the state it is tested against is \
       the port's own guard, which the fold above is now the model of rather than an approximation to" },
-  { number := 16, clause := "a", layer := "Casper **This witness was strengthened on 2026-09-27 (AUDIT C140).** It asserted only that the seen set does not shrink and that the counts do not fall, and a DAG state that never changes satisfies both: making `add_block_to_dag_state` return its input left it green (measured), while five of law 18's tests and `add_block_to_dag_state_builds_child_map` went red. It now requires the block that was added to be *in* the new seen set and its height to be *in* the index — the growth the law is about, rather than its direction.",
+  { number := 16, clause := "a", layer := "Casper",
     rustWitness := ["casper/src/validate.rs:block_number_must_be_parent_max_plus_one"],
     statement := "Block number = max(parent) + 1 — as the port's check, which **rejects** a block whose \
       number is not one more than the maximum of its non-failed justifications (`0` when there is none \
@@ -1214,7 +1243,13 @@ def lawsA : List Law := [
       failed ones and seeded `-1` (`validate.rs:222-234`) — and the proof is that predicate's \
       elimination, which is the honest shape: the port enforces this by *refusing blocks*, not by \
       maintaining an invariant it states. The model's `Block` carries `justifications` because the check \
-      reads them; the `parents : List Nat` field this row's model used does not exist in the port" },
+      reads them; the `parents : List Nat` field this row's model used does not exist in the port. \
+      **Witness column (AUDIT C140).** This witness was strengthened on 2026-09-27. It asserted only \
+      that the seen set does not shrink and that the counts do not fall, and a DAG state that never \
+      changes satisfies both: making `add_block_to_dag_state` return its input left it green \
+      (measured), while five of law 18's tests and `add_block_to_dag_state_builds_child_map` went red. \
+      It now requires the block that was added to be *in* the new seen set and its height to be *in* \
+      the index — the growth the law is about, rather than its direction" },
   { number := 16, clause := "b", layer := "Casper",
     rustWitness := ["casper/src/validate.rs:sequence_number_must_be_creator_latest_plus_one"],
     statement := "`seqNum` strictly increases **under the sender's justification**: the port requires the \
@@ -1685,7 +1720,8 @@ def lawsA : List Law := [
     witness := [`Rchain.certificate_blind_late_writer_diverges],
     falsifiable := some "stated as an implication from two states agreeing on the effect's closure, so \
       it is falsifiable by a state pair that agrees on the closure yet yields different traces — the \
-      depth-2 stale read of Law 24 is exactly the shape that would produce one",
+      depth-2 stale read of Law 24 is exactly the shape that would produce one; \
+      `certificate_blind_late_writer_diverges` is the instance",
     note := "the property test `law23_read_state_determines_outcome` (`rspace/src/property_tests.rs`) \
       names it on the Rust side (commit 35dd13b62)" },
   { number := 24, layer := "Scheduler",
@@ -5431,7 +5467,8 @@ def lawsC : List Law := [
       `Rchain.Split.the_local_rule_publishes_a_disagreement],
     falsifiable := "Publish the local verdict despite the peer's disagreement — the local rule \
       exhibits it, and the incident's divergence reading was that shape; the agreed rule is what \
-      the node must keep. The Rust cost-only tamper test pins the refusal.",
+      the node must keep. The Rust cost-only tamper test pins the refusal; \
+      `a_disagreement_publishes_nothing` is the local-rule theorem.",
     note := "This is the composition of Law 92 (a self-built replay failure is a local fault) and \
       Law 94 (a local fault has a bounded exit). It does not say the raw verdicts are equal — that \
       is 96b's canonical-path statement; it says a difference is not reconciled into a \
@@ -5458,7 +5495,7 @@ def lawsC : List Law := [
       nowhere, #280) — the totality theorem has no fourth state, and the kept theorem fails if a \
       resolved chain is reported kept. Make the reason always zero — the non-zero conclusion of the \
       reason theorem fails. The Rust witness asserts the report's partition and the I1/I2 \
-      emptiness.",
+      emptiness; the totality theorem is `every_chain_is_classified`.",
     note := "**The fixture identity is not the general theorem.** \
       `resolve_conflict_set_with_census` returns `kept = conflictSet \\ enforce_rejected \\ \
       resolved` and `rejected = resolved ∪ enforce_rejected` (`sdk/src/dag/merging.rs:926-978`), \
@@ -5533,7 +5570,7 @@ def lawsC : List Law := [
     falsifiable := "Make the cost total non-additive (for example, subtract a shared fee once per \
       merge): the additive theorem fails. The state half's falsifier is Law 86c's, which reddens if \
       the merge orders dependent chains. The Rust parallel-register witness pins the state \
-      outcome.",
+      outcome; the additive theorem is `independent_merges_commute_and_add`.",
     note := "The state half is cited to Law 86c, not reproved; this row adds the cost carrier. The \
       model's two chains are a concrete disjoint pair; the general independence criterion is Law \
       17c's `chainConflict`/`resolves`." },
@@ -6017,11 +6054,17 @@ def lawsC : List Law := [
       absent parent is not an explicit zero parent, and a negative epoch is not a well-shaped \
       statement.",
     status := .provedModel,
+    formal := `Rchain.Sync.Checkpoint.law104_statement,
+    mutant := `Rchain.Sync.Checkpoint.law104_threshold_mutant,
+    falsifier := `Rchain.Sync.Checkpoint.law104_falsifier,
     declarations := [`Rchain.Sync.Checkpoint.two_quorums_intersect,
       `Rchain.Sync.Checkpoint.a_conflicting_checkpoint_requires_an_equivocator,
       `Rchain.Sync.Checkpoint.the_digest_binds_the_anchor_and_parent,
       `Rchain.Sync.Checkpoint.the_absence_of_a_parent_is_not_the_zero_parent,
-      `Rchain.Sync.Checkpoint.a_negative_epoch_is_not_well_shaped],
+      `Rchain.Sync.Checkpoint.a_negative_epoch_is_not_well_shaped,
+      `Rchain.Sync.Checkpoint.law104_statement,
+      `Rchain.Sync.Checkpoint.law104_threshold_mutant,
+      `Rchain.Sync.Checkpoint.law104_falsifier],
     axioms := [],
     rust := ["casper/src/checkpoint.rs", "casper/src/api/block_api_impl.rs"],
     rustWitness := [
@@ -6032,9 +6075,12 @@ def lawsC : List Law := [
     witness := [`Rchain.Sync.Checkpoint.two_quorums_intersect,
       `Rchain.Sync.Checkpoint.the_digest_binds_the_anchor_and_parent,
       `Rchain.Sync.Checkpoint.the_absence_of_a_parent_is_not_the_zero_parent],
-    falsifiable := "Make the rule `>=` and `two_quorums_intersect` fails on two disjoint halves of an \
-      even signer set; the Rust witness `a_certificate_at_exactly_two_thirds_is_refused` reddens for \
-      the same change. Drop the digest's anchor projection and \
+    falsifiable := "Make the threshold `>=` and a certificate at exactly two thirds is admitted — \
+      `law104_threshold_mutant` is that rule, and `law104_falsifier` shows `{0, 1}` of three signers \
+      passes it while `Quorate` refuses it; the Rust witness \
+      `a_certificate_at_exactly_two_thirds_is_refused` reddens for the same change. Intersection itself \
+      survives `>=` for every signer count, so the falsifiable edge is the admission threshold, not the \
+      intersection. Drop the digest's anchor projection and \
       `the_digest_binds_the_anchor_and_parent` fails; `the_digest_separates_two_anchors` is the \
       non-vacuity half. Hash an explicit zero parent and \
       `an_explicit_zero_parent_is_malformed` fails; accept a negative epoch and \
