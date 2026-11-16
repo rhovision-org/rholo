@@ -26,7 +26,7 @@ pub trait EitherStringExt<T> {
 
 impl<T> EitherStringExt<T> for Result<T, String> {
     fn lift_to_block_api_err(self) -> Result<T, BlockApiException> {
-        self.map_err(BlockApiException)
+        self.map_err(BlockApiException::client)
     }
 }
 
@@ -54,7 +54,7 @@ mod tests {
         let err: Result<i32, String> = Err("bad".to_string());
         assert_eq!(
             err.lift_to_block_api_err().unwrap_err(),
-            BlockApiException("bad".to_string())
+            BlockApiException::client("bad".to_string())
         );
     }
 }

@@ -64,7 +64,7 @@ pub trait WebApi: Send + Sync {
     /// `blake2b256` hash of the public key, or the 65-byte public key itself. The default refuses, so
     /// a test double that does not care need not implement it.
     async fn find_deployer(&self, _key: &str) -> Result<DeployerInfo, BlockApiException> {
-        Err(BlockApiException(
+        Err(BlockApiException::client(
             "this node keeps no deployer index".to_string(),
         ))
     }
@@ -88,7 +88,7 @@ pub trait WebApi: Send + Sync {
     /// what it was given rather than take this node's word for the fields a `LightBlockInfo` reports
     /// (AUDIT C261's missing artefact). The default refuses, so a double need not implement it.
     async fn raw_block(&self, _hash: &str) -> Result<RawBlock, BlockApiException> {
-        Err(BlockApiException(
+        Err(BlockApiException::client(
             "this surface serves no raw block".to_string(),
         ))
     }
@@ -100,7 +100,7 @@ pub trait WebApi: Send + Sync {
         _hash: &str,
     ) -> Result<rchain_models::casper::protocol::deploy_service::HeaderCommitment, BlockApiException>
     {
-        Err(BlockApiException(
+        Err(BlockApiException::client(
             "this surface serves no block header commitment".to_string(),
         ))
     }
@@ -111,14 +111,14 @@ pub trait WebApi: Send + Sync {
         &self,
         _nonce: &str,
     ) -> Result<FinalityAttestation, BlockApiException> {
-        Err(BlockApiException(
+        Err(BlockApiException::client(
             "this surface holds no validator identity to attest with".to_string(),
         ))
     }
 
     /// `GET /api/v1/checkpoint` — the finalised checkpoint this node would serve to a joiner.
     async fn current_checkpoint(&self) -> Result<Checkpoint, BlockApiException> {
-        Err(BlockApiException(
+        Err(BlockApiException::client(
             "this surface serves no checkpoint".to_string(),
         ))
     }
@@ -129,7 +129,7 @@ pub trait WebApi: Send + Sync {
         &self,
         _digest: Option<&str>,
     ) -> Result<CheckpointCertificate, BlockApiException> {
-        Err(BlockApiException(
+        Err(BlockApiException::client(
             "this surface holds no checkpoint certificate".to_string(),
         ))
     }
@@ -144,7 +144,7 @@ pub trait WebApi: Send + Sync {
         rchain_models::casper::protocol::deploy_service::VerifiedCertificate,
         BlockApiException,
     > {
-        Err(BlockApiException(
+        Err(BlockApiException::client(
             "this surface cannot verify checkpoint certificates".to_string(),
         ))
     }
@@ -158,7 +158,7 @@ pub trait WebApi: Send + Sync {
         _count: usize,
         _max_height: Option<i64>,
     ) -> Result<super::dto::HistoryChallenge, BlockApiException> {
-        Err(BlockApiException(
+        Err(BlockApiException::client(
             "this surface keeps no history to challenge".to_string(),
         ))
     }
@@ -169,7 +169,7 @@ pub trait WebApi: Send + Sync {
         &self,
         _request: &super::dto::HistoryRangeRequest,
     ) -> Result<super::dto::HistoryRange, BlockApiException> {
-        Err(BlockApiException(
+        Err(BlockApiException::client(
             "this surface keeps no history to serve".to_string(),
         ))
     }
@@ -177,7 +177,7 @@ pub trait WebApi: Send + Sync {
     /// `GET /api/v1/checkpoint-attestation` — this node's signature over its **own** current
     /// checkpoint digest. It never signs a caller-chosen digest; that would be a signing oracle.
     async fn checkpoint_attestation(&self) -> Result<CheckpointAttestation, BlockApiException> {
-        Err(BlockApiException(
+        Err(BlockApiException::client(
             "this surface holds no validator identity to attest with".to_string(),
         ))
     }

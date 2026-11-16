@@ -396,7 +396,7 @@ pub async fn status(State(state): State<HttpState>) -> Response {
 fn json_result<T: Serialize>(result: Result<T, BlockApiException>) -> Response {
     match result {
         Ok(value) => (StatusCode::OK, Json(value)).into_response(),
-        Err(err) => (StatusCode::BAD_REQUEST, Json(err.0)).into_response(),
+        Err(err) => (StatusCode::BAD_REQUEST, Json(err.into_client_message())).into_response(),
     }
 }
 
@@ -750,10 +750,10 @@ async fn api_txn_list(State(state): State<AdminState>) -> Response {
 fn deploy_response(result: Result<String, BlockApiException>) -> Response {
     match result {
         Ok(id) => (StatusCode::OK, Json(id)).into_response(),
-        Err(err) if rchain_casper::api::block_api::deploy_refusal_is_bounded(&err.0) => {
-            in_flight_refused(&err.0)
+        Err(err) if rchain_casper::api::block_api::deploy_refusal_is_bounded(err.client_text()) => {
+            in_flight_refused(err.client_text())
         }
-        Err(err) => (StatusCode::BAD_REQUEST, Json(err.0)).into_response(),
+        Err(err) => (StatusCode::BAD_REQUEST, Json(err.into_client_message())).into_response(),
     }
 }
 
@@ -809,7 +809,7 @@ async fn api_health(State(state): State<HttpState>) -> Response {
     let (finalized_height, finalized_height_error) =
         match state.web_api.last_finalized_block().await {
             Ok(block) => (Some(block.block_info.block_number), None),
-            Err(error) => (None, Some(error.0)),
+            Err(error) => (None, Some(error.into_client_message())),
         };
     // #485: the proposer's last counted self-validation refusal. `None` is "none standing", not
     // unknown - the cell is cleared by the successful propose that clears the counter.
@@ -893,7 +893,7 @@ async fn api_health(State(state): State<HttpState>) -> Response {
         }
         Err(e) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(unavailable_health_body(e.0)),
+            Json(unavailable_health_body(e.into_client_message())),
         )
             .into_response(),
     }
@@ -1326,7 +1326,7 @@ async fn api_audit_attestations(State(state): State<HttpState>) -> Response {
         service
             .accepted()
             .await
-            .map_err(crate::api::dto::BlockApiException),
+            .map_err(crate::api::dto::BlockApiException::client),
     )
 }
 
@@ -1343,7 +1343,7 @@ async fn api_audit_conflicts(State(state): State<HttpState>) -> Response {
         service
             .conflicts()
             .await
-            .map_err(crate::api::dto::BlockApiException),
+            .map_err(crate::api::dto::BlockApiException::client),
     )
 }
 
@@ -2539,7 +2539,11 @@ async fn admin_resume_resources(State(state): State<AdminState>) -> Response {
             })),
         )
             .into_response(),
-        Err(BlockApiException(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!(e))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!(e.into_client_message())),
+        )
+            .into_response(),
     }
 }
 
@@ -3692,7 +3696,7 @@ mod tests {
         async fn deploy_status(&self, _: &str) -> Result<DeployExecStatus, BlockApiException> {
             self.deploy_result
                 .clone()
-                .ok_or_else(|| BlockApiException("deploy result unavailable".to_string()))
+                .ok_or_else(|| BlockApiException::client("deploy result unavailable".to_string()))
         }
 
         async fn pooled_deploys(&self) -> Result<PooledDeploys, BlockApiException> {
@@ -3720,7 +3724,7 @@ mod tests {
             // Not `unimplemented!()`, for the same reason `deploy` is not (AUDIT R34/R36): a mock that
             // can only panic tests that a route was *not* reached, and the mount test needs both
             // arms — absent, and present-and-answering.
-            Err(BlockApiException("stub faucet".to_string()))
+            Err(BlockApiException::client("stub faucet".to_string()))
         }
 
         async fn listen_for_data_at_name(
@@ -3740,7 +3744,7 @@ mod tests {
         async fn last_finalized_block(&self) -> Result<BlockInfo, BlockApiException> {
             self.finalized_block
                 .clone()
-                .ok_or_else(|| BlockApiException("finalized block unavailable".to_string()))
+                .ok_or_else(|| BlockApiException::client("finalized block unavailable".to_string()))
         }
 
         async fn get_block(&self, _: &str) -> Result<BlockInfo, BlockApiException> {
@@ -3775,7 +3779,7 @@ mod tests {
         async fn is_finalized(&self, hash: &str) -> Result<bool, BlockApiException> {
             assert_eq!(hash, "block-1781", "lookup must use the inclusion block");
             self.finalized_result
-                .ok_or_else(|| BlockApiException("finality unavailable".to_string()))
+                .ok_or_else(|| BlockApiException::client("finality unavailable".to_string()))
         }
 
         async fn get_transaction(&self, _: &str) -> Result<TransactionResponse, BlockApiException> {
@@ -4778,7 +4782,7 @@ mod tests {
     /// **A full pool is a 429 with a retry; a malformed deploy stays a 400** (Law 86a).
     #[test]
     fn a_bounded_deploy_refusal_is_429_with_retry_after() {
-        let full = deploy_response(Err(BlockApiException(
+        let full = deploy_response(Err(BlockApiException::client(
             "deploy pool is full: 67108864 of 67108864 term bytes in use".to_string(),
         )));
         assert_eq!(full.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -4789,12 +4793,12 @@ mod tests {
             "1"
         );
 
-        let share = deploy_response(Err(BlockApiException(
+        let share = deploy_response(Err(BlockApiException::client(
             "this deployer holds its share of the deploy pool".to_string(),
         )));
         assert_eq!(share.status(), StatusCode::TOO_MANY_REQUESTS);
 
-        let malformed = deploy_response(Err(BlockApiException(
+        let malformed = deploy_response(Err(BlockApiException::client(
             "deploy signature is invalid".to_string(),
         )));
         assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
