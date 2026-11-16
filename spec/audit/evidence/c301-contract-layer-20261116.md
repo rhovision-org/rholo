@@ -35,7 +35,7 @@ names.
 |---|---|---|---|---|
 | A1 | published bundle exposes `extractState` | `standard_deploys.rs:398-400`; `resources/AuthKey.rho:75-77`; `resources/MultiSigRevVault.rho:272-274`; new negative test | **refuted** | close — no genesis change |
 | A2 | `info.thn(0)` typo on the unsealer branch | `resources/MultiSigRevVault.rho:235`; corrected in `multi_sig_rev_vault_source` | **confirmed, corrected** | landed, source-pinned |
-| A2b | sealed auth stalls `verify`'s public-key probe, so the corrected branch is unreachable | `resources/MultiSigRevVault.rho:108-151` (`check` at 120, `partialFold` at 131, join at 151) | **confirmed** | **C401**, contract-layer fix (hard-fork class) |
+| A2b | sealed auth stalls `verify`'s public-key probe, so the corrected branch is unreachable | `resources/MultiSigRevVault.rho:108-151` (`check` at 120, `partialFold` at 131, join at 151) | **confirmed, closed** | C401: fold-first adaptation landed, test-pinned (hard-fork class) |
 | B1 | `rho:io:http` is not an oracle | `rholang/src/native_state.rs:1342-1375` — no fetch, first writer wins, no auth/expiry/delete | **confirmed** | record; docs correction |
 | B2 | uncharged quadratic state growth | `native_state.rs:475, 1358-1375` — whole table re-encoded, no charge | **confirmed** | record (charging is consensus class) |
 | B3 | channel squatting on quoted/registry names | Rholang persistent-receive semantics; `new` names immune (Law 38) | **confirmed (by semantics)** | decision/record |
@@ -62,9 +62,14 @@ A functional probe (a quorum-2 vault with one sealer/unsealer, confirming throug
 produced no reply even after the correction. The reason is upstream: `verify` joins
 `loopFindAny!(publicKeys, …)` with the unsealer fold, and `loopFindAny` calls
 `AuthKey!("check", auth, …)`, which sends `"challenge"` to the auth. A sealed box is a plain name with
-no receiver, so `check` never answers and the join never fires. The typo fix is necessary but not
-sufficient; C401 owns the reachability repair. The functional probe was removed rather than committed
-red; the source path above is the evidence.
+no receiver, so `check` never answers and the join never fires. The typo fix was necessary but not
+sufficient; C401 owned the reachability repair. **C401 landed**:
+`standard_deploys.rs::verify_fold_first` folds into an internal channel, forwards `(unsealed, info)`
+to the caller, and answers the public-key channel without challenging a sealed box. The functional
+probe is now the committed falsifier
+`casper/tests/genesis_registry.rs::a_multisig_vault_confirms_through_a_sealed_unsealer_auth` (mixed
+quorum-2 vault, two unsealer confirmations, exact 30,000,000 REV movement); `spec/GENESIS.md` records
+the consensus-visible change.
 
 ## Verification runs
 
