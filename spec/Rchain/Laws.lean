@@ -6122,6 +6122,7 @@ def lawsC : List Law := [
       "casper/src/checkpoint.rs:two_conflicting_checkpoints_share_a_signer_under_a_split",
       "casper/src/checkpoint.rs:an_explicit_zero_parent_is_malformed",
       "casper/src/checkpoint.rs:an_epoch_below_zero_is_malformed"],
+    corpus := some "checkpoint",
     witness := [`Rchain.Sync.Checkpoint.two_quorums_intersect,
       `Rchain.Sync.Checkpoint.the_digest_binds_the_anchor_and_parent,
       `Rchain.Sync.Checkpoint.the_absence_of_a_parent_is_not_the_zero_parent],
@@ -6135,9 +6136,13 @@ def lawsC : List Law := [
       non-vacuity half. Hash an explicit zero parent and \
       `an_explicit_zero_parent_is_malformed` fails; accept a negative epoch and \
       `an_epoch_below_zero_is_malformed` fails.",
-    note := "**The model is equal-weight over a fixed signer set; the Rust weighs stake.** \
-      `two_quorums_intersect` is the equal-weight projection of `is_super_majority`, and the Rust's \
-      `verify_checkpoint_certificate` sums stake in `i128` and deduplicates signers. **The shape \
+    note := "**The model carries both the weighted rule and its equal-weight projection.** \
+      `two_weighted_quorums_intersect` is the law's proposition (two stake-quorate sets meet in \
+      positive weight), `two_quorums_intersect` is the projection, and the `checkpoint` corpus pins \
+      `rchain_sdk::consensus::is_super_majority`'s arithmetic at the boundary (17 rows). **The corpus \
+      does not pin the digest binding** — the Rust's `checkpoint_digest` tests and the benchmark's \
+      digest recomputation do; that is why this row stays `proved-model` rather than `proved-tied`. \
+      The Rust's `verify_checkpoint_certificate` sums stake in `i128` and deduplicates signers. **The shape \
       rules are part of the law, not an assumption:** `Parent` carries a presence bit, so an absent \
       parent and an explicit zero are different statements, and the Rust refuses the explicit zero \
       before hashing; `WellShaped` requires a nonnegative epoch, which the Rust enforces. **What this \

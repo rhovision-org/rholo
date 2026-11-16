@@ -292,6 +292,7 @@ if [[ -d "$ROOT/spec/conformance" ]]; then
       admission) test_name="lean_admission_corpus"; crate="rchain-casper" ;;
       hostlist) test_name="lean_hostlist_corpus";  crate="rchain-node" ;;
       recovery) test_name="lean_recovery_corpus";  crate="rchain-casper" ;;
+      checkpoint) test_name="lean_checkpoint_corpus"; crate="rchain-casper" ;;
       protocol) test_name="lean_protocol_corpus";  crate="rchain-rholang" ;;
       envelope) test_name="lean_envelope_corpus";  crate="rchain-node" ;;
       lex)      test_name="lean_lex_corpus";       crate="rchain-node" ;;

@@ -1960,6 +1960,53 @@ def recoveryLine : RecoveryCase → String
           if regression then "true" else "false", expected]
 
 
+/-! ## Law 104 — the checkpoint quorum layer
+
+The node's rule is `rchain_sdk::consensus::is_super_majority` (`3 * stake > 2 * total`). This layer
+pins its boundary: exactly two thirds is refused, one unit above is admitted, and an empty total is
+refused. The Rust consumer is `casper/tests/lean_checkpoint_corpus.rs`. -/
+
+structure CheckpointCase where
+  supporting : Nat
+  total : Nat
+  expected : Bool
+deriving Repr
+
+def checkpointHolds (c : CheckpointCase) : Bool :=
+  (3 * c.supporting > 2 * c.total) == c.expected
+
+def checkpointCases : List CheckpointCase :=
+  [ ⟨0, 0, false⟩
+  , ⟨0, 3, false⟩
+  , ⟨1, 3, false⟩
+  , ⟨2, 3, false⟩
+  , ⟨3, 3, true⟩
+  , ⟨2, 4, false⟩
+  , ⟨3, 4, true⟩
+  , ⟨1, 2, false⟩
+  , ⟨2, 2, true⟩
+  , ⟨200, 300, false⟩
+  , ⟨201, 300, true⟩
+  , ⟨100, 300, false⟩
+  , ⟨0, 1, false⟩
+  , ⟨1, 1, true⟩
+  , ⟨250, 1000, false⟩
+  , ⟨666, 1000, false⟩
+  , ⟨667, 1000, true⟩
+  ]
+
+def checkpointCaseCount : Nat := 17
+
+theorem checkpointCases_decide : checkpointCases.all checkpointHolds = true := by decide
+
+theorem checkpointCases_length : checkpointCases.length = checkpointCaseCount := by decide
+
+def checkpointLine (c : CheckpointCase) : String :=
+  String.intercalate "\t"
+    ["checkpoint", toString c.supporting, toString c.total,
+      if c.expected then "true" else "false"]
+
+
 -- **The `decimal` layer (Law 87) was here and is retired** (issue #527): the 42-case algebra corpus
 -- — `DecimalOp` (mk/parts/scaled/cmp/add/sub/mul/div), `DecimalOutcome`, `DecimalCase`,
 -- `decimalCases`, `decimalCaseCount`, the four non-vacuity theorems and `decimalLine` — drove the
@@ -1969,7 +2016,7 @@ def recoveryLine : RecoveryCase → String
 end Corpus
 end Rchain
 
-/-- `rchain-corpus --layer {flags|match|silence|store|protocol} [--out FILE]` — print the corpus
+/-- `rchain-corpus --layer {flags|match|silence|store|protocol|checkpoint} [--out FILE]` — print the corpus
 (stdout by default). -/
 def main (args : List String) : IO UInt32 := do
   let want :=
@@ -1978,7 +2025,7 @@ def main (args : List String) : IO UInt32 := do
       || a == "syrup"
       || a == "lex" || a == "sort" || a == "parse" || a == "body" || a == "closed"
       || a == "stake" || a == "block" || a == "liveness" || a == "admission"
-      || a == "hostlist" || a == "recovery")).getD "flags"
+      || a == "hostlist" || a == "recovery" || a == "checkpoint")).getD "flags"
   let (lines, count) :=
     if want == "c21" then (Corpus.c21Cases.map Corpus.c21Line, Corpus.c21CaseCount)
     else if want == "match" then (Corpus.matchCases.map Corpus.matchLine, Corpus.matchCaseCount)
@@ -2016,6 +2063,8 @@ def main (args : List String) : IO UInt32 := do
       (Corpus.hostListCases.map Corpus.hostListLine, Corpus.hostListCaseCount)
     else if want == "recovery" then
       (Corpus.recoveryCases.map Corpus.recoveryLine, Corpus.recoveryCaseCount)
+    else if want == "checkpoint" then
+      (Corpus.checkpointCases.map Corpus.checkpointLine, Corpus.checkpointCaseCount)
     else (Corpus.flagCases.map Corpus.flagLine, Corpus.flagCaseCount)
   if lines.length != count then
     IO.eprintln s!"rchain-corpus: {want}: the case list and the declared count disagree"
