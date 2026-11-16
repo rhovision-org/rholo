@@ -176,18 +176,6 @@ theorem jail_that_burns_the_bond_reaches_a_stake :
     (burnStep s 1).pool ≠ s.pool ∧ (stepJail (fun _ => false) false 2 5 s).pool = s.pool := by
   decide
 
-/-- **A returning validator is released**: a jail with one boundary left and a present validator is
-    cleared. -/
-def releaseIfPresent (present : Validator → Bool) (s : State) (v : Validator) : State :=
-  if jailTerm s v ≤ 1 ∧ present v = true then
-    { s with jailed := s.jailed.filter (fun entry => entry.1 != v) }
-  else s
-
-theorem a_returning_validator_is_released (present : Validator → Bool) (s : State) (v : Validator)
-    (hterm : jailTerm s v ≤ 1) (hpresent : present v = true) :
-    v ∉ (releaseIfPresent present s v).jailed.map (fun entry => entry.1) := by
-  simp [releaseIfPresent, hterm, hpresent]
-
 /-- The head of a `validator → nat` list is that validator's value. -/
 theorem lookup_cons_self (v J : Nat) (entries : List (Validator × Nat)) :
     lookup ((v, J) :: entries) v = J := by
@@ -206,6 +194,64 @@ theorem a_still_absent_validator_is_renewed (present : Validator → Bool) (J : 
   simp only [renewIfAbsent]
   rw [if_pos ⟨hterm, habsent⟩]
   exact lookup_cons_self v J _
+
+/-- **A passing vote closes the target's window and clears its ballots.** `voteSlash` already filters
+    both (`:132-133`); this states it, because it is the condition the exact-threshold and jail-vote
+    arms assert after the slash (`vote_window_closed_after_slash`,
+    `liveness_record_cleared_after_slash`) and, until this theorem, nothing on the Lean side said it.
+    The Rust assertion is `rholang/src/native_state.rs::a_passing_vote_slashes_and_permanently_ejects`. -/
+theorem a_passing_vote_closes_the_window_and_clears_ballots (s : State) (target : Validator)
+    (h : passes s target = true) :
+    (voteSlash s target).windows = s.windows.filter (fun entry => entry.1 != target) ∧
+      (voteSlash s target).ballots = s.ballots.filter (fun ballot => ballot.1.1 != target) := by
+  simp [voteSlash, h]
+
+/-- **A released jail leaves no window or ballot behind.** The Rust release path removes the jail
+    record, the window and the target's ballots (`native_state.rs:2694-2699`). The model's
+    `releaseIfPresent` removed only the jail entry; this correction makes the model say what the code
+    does, and `release_clears_the_window_and_ballots` states it. The Rust witness is
+    `rholang/src/native_state.rs::a_released_jail_leaves_no_window_or_ballot`. -/
+def releaseIfPresent (present : Validator → Bool) (s : State) (v : Validator) : State :=
+  if jailTerm s v ≤ 1 ∧ present v = true then
+    { s with
+      jailed := s.jailed.filter (fun entry => entry.1 != v)
+      windows := s.windows.filter (fun entry => entry.1 != v)
+      ballots := s.ballots.filter (fun ballot => ballot.1.1 != v) }
+  else s
+
+theorem a_returning_validator_is_released (present : Validator → Bool) (s : State) (v : Validator)
+    (hterm : jailTerm s v ≤ 1) (hpresent : present v = true) :
+    v ∉ (releaseIfPresent present s v).jailed.map (fun entry => entry.1) := by
+  simp [releaseIfPresent, hterm, hpresent]
+
+theorem release_clears_the_window_and_ballots (present : Validator → Bool) (s : State)
+    (v : Validator) (hterm : jailTerm s v ≤ 1) (hpresent : present v = true) :
+    (releaseIfPresent present s v).windows = s.windows.filter (fun entry => entry.1 != v) ∧
+      (releaseIfPresent present s v).ballots =
+        s.ballots.filter (fun ballot => ballot.1.1 != v) := by
+  simp [releaseIfPresent, hterm, hpresent]
+
+/-- **A banished validator cannot rebond.** The Rust `bond` refuses a banished key before its own
+    checks (`native_state.rs:1874-1878`), which is the half that makes a passing vote's ejection
+    permanent. This models the guard; `a_banished_validator_cannot_rebond` is its Rust witness. -/
+def rebond (s : State) (v : Validator) (stake : Nat) : State :=
+  if v ∈ s.banned then s else { s with pool := (v, stake) :: s.pool }
+
+theorem a_banished_validator_cannot_rebond (s : State) (v : Validator) (stake : Nat)
+    (h : v ∈ s.banned) : (rebond s v stake).pool = s.pool := by
+  simp [rebond, h]
+
+/-- The unguarded shape is what the rule forbids: without the ban check, a banished validator's bond
+    re-enters the pool. This is the falsifier that keeps the guard from being an empty predicate. -/
+def unguardedRebond (s : State) (v : Validator) (stake : Nat) : State :=
+  { s with pool := (v, stake) :: s.pool }
+
+theorem an_unguarded_rebond_reaches_a_banished_validator :
+    let s : State :=
+      { pool := [], active := [], absent := [], jailed := [], banned := [1],
+        windows := [], ballots := [], anchor := 0 }
+    (unguardedRebond s 1 10).pool ≠ s.pool := by
+  decide
 
 end Liveness
 

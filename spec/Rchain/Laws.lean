@@ -1524,7 +1524,9 @@ def lawsA : List Law := [
       proved — `spec/TYPE-SYSTEM.md` — because the block-level *set* is not constructible any more: \
       `BlockIndex.native_changes` is gone, `DeployChainIndex::native_effects` carries each chain's own \
       writes, and `reject_whole_blocks` is deleted rather than narrowed, so 'reject every chain of a \
-      block because of a write the block made' has no operation left to express it." },
+      block because of a write the block made' has no operation left to express it. **Its `slots` are \
+      law 17e's effective writes**: a chain's slot set is the writes that changed a value, so this \
+      row's relation and 17e's rule are two halves of one fact and neither restates the other." },
   { number := 17, clause := "d", layer := "Casper",
     rustWitness := [
       "rholang/src/merging.rs:a_legacy_sidecar_decodes_as_unattributed_and_not_as_empty",
@@ -1557,6 +1559,51 @@ def lawsA : List Law := [
       `tools/audit-type-system.sh`'s construction scan. **Not a refinement in that gate's roster**, \
       deliberately: the gate's `escape` class is for types carrying a *predicate* (a validator the \
       constructor must run), and this type carries none — its invariant is its key type." },
+  { number := 17, clause := "e", layer := "Casper",
+    rustWitness := [
+      "casper/src/merging.rs:a_finalized_boundary_noop_does_not_reject_a_concurrent_ballot",
+      "casper/src/merging.rs:a_concurrent_boundary_noop_does_not_overwrite_a_ballot",
+      "casper/src/merging.rs:a_boundary_that_changes_the_ballot_map_still_conflicts",
+      "casper/src/merging.rs:a_noop_native_write_is_not_a_chain_slot"],
+    statement := "**A native write that leaves the slot as it found it is not a write.** Law 17c's \
+      relation is on the slots a chain *wrote*, and `NativeStore::put` records a `Put` even when the \
+      bytes equal the pre-state's. The armed liveness prelude rewrites `pos:slash-votes`, \
+      `pos:vote-windows` and `pos:liveness` at every advancing boundary, so counting an unchanged \
+      rewrite as a slot made a finalised boundary chain a conflict partner of a concurrent user \
+      chain — and a conflict-scope chain that conflicts with a finally-accepted one is forced out. \
+      A no-op write therefore contributes no slot: the chain index is built from the **effective** \
+      writes, those whose value changed, walked in deploy order",
+    status := .provedModel,
+    formal := `Rchain.law17e_statement,
+    falsifier := `Rchain.law17e,
+    declarations := [`Rchain.NativeWrite, `Rchain.NativeWrite.isNoop, `Rchain.effectiveSlots,
+      `Rchain.allSlots, `Rchain.law17e_statement, `Rchain.law17e,
+      `Rchain.all_writes_conflict_where_the_effective_ones_do_not],
+    axioms := [],
+    rust := ["casper/src/merging.rs", "casper/src/runtime_manager.rs",
+      "rspace/src/native_store.rs"],
+    witness := [`Rchain.law17e, `Rchain.all_writes_conflict_where_the_effective_ones_do_not],
+    falsifiable := "`all_writes_conflict_where_the_effective_ones_do_not` exhibits the same pair of \
+      chains under both rules: counted by its slot, the no-op writer conflicts with a chain that \
+      really writes the leaf; counted by its effective set, it does not. Drop the value comparison \
+      from `effectiveSlots` and the port is back to rejecting a user chain for bytes it did not \
+      change. The Rust side is the red-then-green fixture \
+      `a_finalized_boundary_noop_does_not_reject_a_concurrent_ballot`: before the fix the vote \
+      deploy's id appeared in `rejected_deploys` and its slot in `dropped_native_slots`.",
+    note := "**Why this is not a restatement of 17c.** 17c says *which chains* are conflict partners \
+      (per chain, not per block). This row says *which of a chain's writes count* (the ones that \
+      changed a value). Both are needed: the C207 fix made the relation chain-level and a user \
+      chain that wrote nothing contended stopped dying; the boundary still counted an unchanged \
+      rewrite as something it wrote, so a user chain that *did* write the leaf could still be \
+      vetoed by a finalised boundary that wrote it back byte-for-byte. **Where the port applies \
+      it:** `effective_native_effects` at index construction (`BlockIndex::apply`, and the batched \
+      play path), not in the store — `apply` trusts a stored sidecar, so a store-level filter would \
+      make an old sidecar and a regenerated one disagree about the same block's slots after a \
+      rolling upgrade, and the filter here is idempotent across both. **Hard-fork class:** two \
+      binaries can reject different chains at a merge; no deployment, and mainnet arming remains \
+      #428. **What it does not model:** the value is an `Option Nat` and the write list is flat, so \
+      the model states the comparison, not the port's byte codecs; the deploy-order walk is \
+      modelled by the list order." },
   { number := 18, layer := "Storage",
     rustWitness := [
       "block-storage/src/dag/metadata_store.rs:law18_contiguous_height_map_is_valid",
@@ -5042,8 +5089,9 @@ def lawsC : List Law := [
       absent across advancing epoch boundaries is removed from the active set for `J` boundaries and \
       paid nothing, while its bond and its delegators' principal are untouched. A stake-weighted vote \
       of strictly more than two thirds of the active stake, opened only against an already-jailed \
-      validator, may slash it at the configured tier and permanently eject it. A stalled boundary or \
-      an off-boundary block changes nothing",
+      validator, may slash it at the configured tier and permanently eject it; a passing vote and a \
+      release each close the target's window and clear its ballots, and a banished validator cannot \
+      rebond. A stalled boundary or an off-boundary block changes nothing",
     status := .provedModel,
     declarations := [`Rchain.Liveness.State, `Rchain.Liveness.stepJail,
       `Rchain.Liveness.boundaryStep, `Rchain.Liveness.jail_never_touches_the_bond,
@@ -5062,8 +5110,14 @@ def lawsC : List Law := [
       `Rchain.Liveness.jail_that_burns_the_bond_reaches_a_stake,
       `Rchain.Liveness.releaseIfPresent,
       `Rchain.Liveness.a_returning_validator_is_released,
+      `Rchain.Liveness.release_clears_the_window_and_ballots,
       `Rchain.Liveness.renewIfAbsent,
-      `Rchain.Liveness.a_still_absent_validator_is_renewed],
+      `Rchain.Liveness.a_still_absent_validator_is_renewed,
+      `Rchain.Liveness.a_passing_vote_closes_the_window_and_clears_ballots,
+      `Rchain.Liveness.rebond,
+      `Rchain.Liveness.unguardedRebond,
+      `Rchain.Liveness.a_banished_validator_cannot_rebond,
+      `Rchain.Liveness.an_unguarded_rebond_reaches_a_banished_validator],
     axioms := [],
     rust := ["rholang/src/native_state.rs", "rholang/src/pos_liveness.rs",
       "rholang/src/system_processes.rs", "casper/src/genesis/mod.rs",
@@ -5074,6 +5128,7 @@ def lawsC : List Law := [
       "rholang/src/native_state.rs:a_vote_below_two_thirds_does_not_slash",
       "rholang/src/native_state.rs:a_passing_vote_slashes_and_permanently_ejects",
       "rholang/src/native_state.rs:a_jailed_validator_returns_after_the_term",
+      "rholang/src/native_state.rs:a_released_jail_leaves_no_window_or_ballot",
       "rholang/src/native_state.rs:a_still_absent_validator_is_renewed",
       "rholang/src/native_state.rs:a_banished_validator_cannot_rebond",
       "rholang/src/native_state.rs:a_delegation_cannot_buy_slash_voting_power_mid_epoch",
@@ -5086,11 +5141,15 @@ def lawsC : List Law := [
       `Rchain.Liveness.a_stall_that_counts_jails_an_innocent,
       `Rchain.Liveness.vote_admits_only_above_threshold,
       `Rchain.Liveness.a_passing_vote_slashes_and_ejects,
+      `Rchain.Liveness.a_passing_vote_closes_the_window_and_clears_ballots,
       `Rchain.Liveness.a_simple_majority_is_not_enough,
       `Rchain.Liveness.a_vote_without_jail_is_not_opened,
       `Rchain.Liveness.jail_that_burns_the_bond_reaches_a_stake,
       `Rchain.Liveness.a_returning_validator_is_released,
-      `Rchain.Liveness.a_still_absent_validator_is_renewed],
+      `Rchain.Liveness.release_clears_the_window_and_ballots,
+      `Rchain.Liveness.a_still_absent_validator_is_renewed,
+      `Rchain.Liveness.a_banished_validator_cannot_rebond,
+      `Rchain.Liveness.an_unguarded_rebond_reaches_a_banished_validator],
     falsifiable := "`stallStep` counts absence without checking finality progress and jails a \
       validator during a stall (`a_stall_that_counts_jails_an_innocent`); `burnStep` jails by \
       removing the pool entry and `jail_that_burns_the_bond_reaches_a_stake` exhibits the bond that \
