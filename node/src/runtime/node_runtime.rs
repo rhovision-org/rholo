@@ -49,8 +49,8 @@ use rchain_casper::reporting::{rho_reporter, ReportingCasper};
 use rchain_casper::runtime_manager::RuntimeManager;
 use rchain_casper::state::ProposerState;
 use rchain_casper::storage::{
-    rnode_key_value_store_manager, shard_data_dir, RESET_MARKER_DB, SHARD_ID_MARKER,
-    STORE_FORMAT_MARKER, STORE_FORMAT_VERSION,
+    rnode_key_value_store_manager, shard_data_dir, EQUIVOCATION_EVIDENCE_DB, RESET_MARKER_DB,
+    SHARD_ID_MARKER, STORE_FORMAT_MARKER, STORE_FORMAT_VERSION,
 };
 use rchain_casper::validator_identity::ValidatorIdentity;
 use rchain_comm::discovery::grpc_kademlia_rpc::GrpcKademliaRpc;
@@ -2877,6 +2877,17 @@ pub async fn setup_shard(
         )
         .await?,
     );
+    // **The H-1 evidence survives a restart** (C301's D2). The in-memory map is the fast path; this
+    // store is the copy a proposer reads after the process that observed the offence is gone.
+    let equivocation_evidence: Arc<dyn KeyValueTypedStore<Vec<u8>, Vec<u8>>> = Arc::new(
+        database(
+            &store_manager,
+            EQUIVOCATION_EVIDENCE_DB,
+            Arc::new(BytesCodec),
+            Arc::new(BytesCodec),
+        )
+        .await?,
+    );
     let dag_kv = Arc::new(
         BlockDagKeyValueStorage::create(block_metadata_store, deploy_index, deploy_store)
             .await
@@ -2887,6 +2898,8 @@ pub async fn setup_shard(
             // `check_merge_divergence_injection`) injects nothing.
             .with_merge_divergence_injection(conf.casper.merge_divergence_injection)
             .with_deployer_index(deployer_index)
+            .await?
+            .with_equivocation_store(equivocation_evidence)
             .await?
             .with_reset_marker(reset_marker),
     );

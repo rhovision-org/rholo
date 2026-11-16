@@ -192,6 +192,10 @@ pub struct BlockDagKeyValueStorage {
     /// restart forgets: the *evidence* is what has to be checkable, and it is checked by the receiver
     /// against its own DAG, not against a store this node happens to keep.
     equivocations: tokio::sync::Mutex<BTreeMap<Validator, Vec<u8>>>,
+    /// **A durable home for the H-1 evidence** (C301's D2). `None` in the in-memory DAGs tests and
+    /// tools build; the production node attaches a store, so a restart between observing an
+    /// equivocation and proposing the slash no longer destroys the only copy of the offence.
+    equivocation_store: Option<Arc<dyn KeyValueTypedStore<Vec<u8>, Vec<u8>>>>,
     /// **Insert reservations** (F-U9-01): a block hash and a `(sender, seq_num)` key are reserved
     /// while the slow store writes run outside `self.lock`. The H-1 gate and the duplicate check
     /// therefore stay atomic without holding the global insertion lock across LMDB I/O.
@@ -322,6 +326,7 @@ impl BlockDagKeyValueStorage {
             deploy_store,
             metrics: Arc::new(MetricsNop),
             equivocations: tokio::sync::Mutex::new(BTreeMap::new()),
+            equivocation_store: None,
             insert_hashes: std::sync::Mutex::new(BTreeSet::new()),
             insert_equivocations: std::sync::Mutex::new(BTreeSet::new()),
             deployer_index: None,
@@ -600,6 +605,51 @@ impl BlockDagKeyValueStorage {
     ) -> Self {
         self.reset_marker = Some(store);
         self
+    }
+
+    /// **Attach the durable home of the H-1 evidence and load what is already there** (C301's D2).
+    ///
+    /// The in-memory map is the fast path; the store is what survives a restart. Loading at attach
+    /// time means a proposer reads evidence observed before the restart as well as since — the case
+    /// the finding names, where a restart between observing an equivocation and proposing the slash
+    /// destroyed the only copy of the offence.
+    pub async fn with_equivocation_store(
+        self,
+        store: Arc<dyn KeyValueTypedStore<Vec<u8>, Vec<u8>>>,
+    ) -> Result<Self, String> {
+        for (key, evidence) in store.to_map().await? {
+            // A key that is not a 65-byte validator is not evidence this DAG wrote. It is left in
+            // the store rather than deleted, and it is not read as a bond-holder.
+            if key.len() == rchain_models::validator::LENGTH {
+                self.equivocations
+                    .lock()
+                    .await
+                    .insert(Validator::from_slice(&key), evidence);
+            }
+        }
+        Ok(Self {
+            equivocation_store: Some(store),
+            ..self
+        })
+    }
+
+    /// Record the refused block's header in memory and, when attached, on disk (C301's D2).
+    async fn record_equivocation(
+        &self,
+        sender: Validator,
+        evidence: Vec<u8>,
+    ) -> Result<(), String> {
+        self.equivocations
+            .lock()
+            .await
+            .insert(sender, evidence.clone());
+        if let Some(store) = &self.equivocation_store {
+            store
+                .put(&[(sender.as_bytes().to_vec(), evidence)])
+                .await
+                .map_err(|e| format!("the equivocation evidence could not be persisted: {e}"))?;
+        }
+        Ok(())
     }
 
     /// Index every block already in the DAG, then record the index as complete (`0`). Run once in
@@ -1079,24 +1129,31 @@ impl BlockDagKeyValueStorage {
 
             // H-1: the same gate as `insert`, with evidence read from the metadata (which now
             // carries the signature) rather than from a body.
-            {
+            let equivocating = {
                 let repr = self.representation.read().await;
-                let equivocating = repr.dag_message_state.msg_map.values().any(|m| {
+                repr.dag_message_state.msg_map.values().any(|m| {
                     m.sender == block_metadata.sender && m.sender_seq == block_metadata.seq_num
-                });
-                if equivocating {
-                    self.equivocations.lock().await.insert(
-                        block_metadata.sender,
-                        rchain_models::casper::protocol::casper_message::EquivocationEvidence::from_metadata(
-                            &block_metadata,
-                        )
-                        .encode(),
-                    );
+                })
+            };
+            if equivocating {
+                let evidence =
+                    rchain_models::casper::protocol::casper_message::EquivocationEvidence::from_metadata(
+                        &block_metadata,
+                    )
+                    .encode();
+                if let Err(e) = self
+                    .record_equivocation(block_metadata.sender, evidence)
+                    .await
+                {
                     return Err(format!(
                         "{EQUIVOCATION_PREFIX}: sender produced two blocks with the same sequence \
-                         number"
+                         number ({e})"
                     ));
                 }
+                return Err(format!(
+                    "{EQUIVOCATION_PREFIX}: sender produced two blocks with the same sequence \
+                     number"
+                ));
             }
 
             let key = (block_metadata.sender, block_metadata.seq_num);
@@ -1649,30 +1706,39 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
             // H-1: equivocation detection — a second, distinct block by the same sender reusing a
             // `seq_num`. Reject it before any partial write so an equivocating validator can neither
             // enter the DAG nor stall finalization.
-            {
+            let equivocating = {
                 let repr = self.representation.read().await;
-                let equivocating = repr.dag_message_state.msg_map.values().any(|m| {
+                repr.dag_message_state.msg_map.values().any(|m| {
                     m.sender == block_metadata.sender && m.sender_seq == block_metadata.seq_num
-                });
-                if equivocating {
-                    // **Record the refused block's header before refusing it** (AUDIT C200). This is the
-                    // only copy of the offence that will ever exist — the gate returns before any write —
-                    // and it is what a proposer attaches as evidence so that every other node can check the
-                    // offence against its own DAG. The header and not the block: the payload lands in a
-                    // block's *state*, and a refused block's size is whatever its sender chose. A second
-                    // offence by the same sender replaces the first — one piece of evidence takes the bond,
-                    // and holding more would be unbounded.
-                    self.equivocations.lock().await.insert(
-                    block_metadata.sender,
+                })
+            };
+            if equivocating {
+                // **Record the refused block's header before refusing it** (AUDIT C200). This is the
+                // only copy of the offence that will ever exist — the gate returns before any write —
+                // and it is what a proposer attaches as evidence so that every other node can check the
+                // offence against its own DAG. The header and not the block: the payload lands in a
+                // block's *state*, and a refused block's size is whatever its sender chose. A second
+                // offence by the same sender replaces the first — one piece of evidence takes the bond,
+                // and holding more would be unbounded. **It is also written to the durable evidence
+                // store when one is attached** (C301's D2): the only copy of the offence must survive
+                // the restart that would otherwise forget it.
+                let evidence =
                     rchain_models::casper::protocol::casper_message::EquivocationEvidence::from_block(
                         &block,
                     )
-                    .encode(),
-                );
+                    .encode();
+                if let Err(e) = self
+                    .record_equivocation(block_metadata.sender, evidence)
+                    .await
+                {
                     return Err(format!(
+                        "{EQUIVOCATION_PREFIX}: sender produced two blocks with the same sequence \
+                         number ({e})"
+                    ));
+                }
+                return Err(format!(
                     "{EQUIVOCATION_PREFIX}: sender produced two blocks with the same sequence number"
                 ));
-                }
             }
 
             // Reserve the block hash and the `(sender, seq_num)` claim while the store writes below run
@@ -2657,6 +2723,51 @@ mod tests {
             decoded.block_hash, second,
             "and it is the *refused* block's own hash, not the one the DAG holds"
         );
+    }
+
+    /// **The evidence outlives the process** (C301's D2). The in-memory map alone forgot the
+    /// offence on restart, so a node that had refused an equivocation could never propose the
+    /// slash. The durable store is read at attach time; a second DAG over the same stores sees the
+    /// evidence the first one recorded.
+    #[tokio::test]
+    async fn the_equivocation_evidence_survives_a_restart() {
+        let metadata = empty_metadata_store().await;
+        let evidence_store: Arc<dyn KeyValueTypedStore<Vec<u8>, Vec<u8>>> = Arc::new(
+            KeyValueTypedStoreCodec::new(in_memory(), Arc::new(BytesCodec), Arc::new(BytesCodec)),
+        );
+        let first_dag = build_storage_over_unshared(metadata.clone())
+            .await
+            .with_equivocation_store(evidence_store.clone())
+            .await
+            .expect("attach the evidence store");
+
+        let first = hash(1);
+        let second = hash(2);
+        first_dag
+            .insert(meta(first, &[], 0), block(first))
+            .await
+            .unwrap();
+        assert!(first_dag
+            .insert(meta(second, &[], 0), block(second))
+            .await
+            .is_err());
+        assert_eq!(first_dag.recorded_equivocations().await.len(), 1);
+
+        // A fresh DAG over the same stores — the restart.
+        let restarted = build_storage_over_unshared(metadata)
+            .await
+            .with_equivocation_store(evidence_store)
+            .await
+            .expect("reload the evidence store");
+        let recorded = restarted.recorded_equivocations().await;
+        assert_eq!(recorded.len(), 1, "the evidence survived the restart");
+        assert_eq!(recorded[0].0, meta(second, &[], 0).sender);
+        let decoded =
+            rchain_models::casper::protocol::casper_message::EquivocationEvidence::decode(
+                &recorded[0].1,
+            )
+            .expect("the reloaded evidence decodes");
+        assert_eq!(decoded.block_hash, second);
     }
 
     #[tokio::test]
