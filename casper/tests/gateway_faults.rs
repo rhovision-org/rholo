@@ -216,6 +216,14 @@ async fn fixture_with_faults(
     )
 }
 
+/// A real REV destination: `rho:txn` refuses a destination it cannot decode (C301), so a literal
+/// placeholder is no longer a legal fixture.
+fn destination() -> String {
+    RevAddress::from_public_key(&construct_deploy::default_pub2().unwrap())
+        .unwrap()
+        .to_base58()
+}
+
 /// A record with both legs prepared-by-nobody, for seeding the ledger.
 fn seeded_record(txn_id: &[u8], destination: &str) -> CoordRecord {
     CoordRecord {
@@ -246,12 +254,12 @@ async fn drive_aborts_a_legless_record() {
     let manager = Arc::new(InMemoryStoreManager::default());
     let (gateway, _, _, ledger, ..) = fixture(manager, ShardFaults::default()).await;
 
-    let mut record = seeded_record(b"no-legs", "dest");
+    let mut record = seeded_record(b"no-legs", &destination());
     record.legs.clear();
     ledger.put(&record).await.expect("put");
 
     let record = gateway
-        .run(b"no-legs", &txn_legs("dest"))
+        .run(b"no-legs", &txn_legs(&destination()))
         .await
         .expect("a legless record is aborted, not an error");
     assert_eq!(record.state, CoordState::Aborted);
@@ -270,13 +278,13 @@ async fn run_resumes_an_existing_non_terminal_record() {
     // hand-written, so A has no real escrow: its later commit is rejected by the participant and the
     // coordinator ignores that by design — spec/audit/passes.md §15 C2 — which is why A's deploy list is only
     // asserted to contain no *prepare*.)
-    let mut record = seeded_record(b"resume", "dest");
+    let mut record = seeded_record(b"resume", &destination());
     record.record_vote(shard("/root"), Vote::Ready, None);
     assert_eq!(record.state, CoordState::Prepared);
     ledger.put(&record).await.expect("put");
 
     let decided = gateway
-        .run(b"resume", &txn_legs("dest"))
+        .run(b"resume", &txn_legs(&destination()))
         .await
         .expect("resume");
     assert_eq!(decided.state, CoordState::Committed);
@@ -308,7 +316,7 @@ async fn recover_in_flight_aborts_when_a_leg_errors() {
     .await;
 
     let record = gateway
-        .run(b"leg-errors", &txn_legs("dest"))
+        .run(b"leg-errors", &txn_legs(&destination()))
         .await
         .expect("run");
 
@@ -342,7 +350,7 @@ async fn a_leg_whose_reply_never_arrives_times_out() {
     .await;
 
     let record = gateway
-        .run(b"times-out", &txn_legs("dest"))
+        .run(b"times-out", &txn_legs(&destination()))
         .await
         .expect("run");
     assert_eq!(record.state, CoordState::Aborted);
@@ -387,7 +395,7 @@ async fn a_failed_phase_two_leaves_the_decision_intact() {
     .await;
 
     let decided = gateway
-        .run(b"phase-two-fails", &txn_legs("dest"))
+        .run(b"phase-two-fails", &txn_legs(&destination()))
         .await
         .expect("run");
 
@@ -434,7 +442,9 @@ async fn a_three_leg_transaction_commits() {
         .map(|(shard_id, _)| GatewayLeg {
             shard_id: shard_id.clone(),
             amount: 10,
-            to: "dest".to_string(),
+            to: RevAddress::from_public_key(&construct_deploy::default_pub2().unwrap())
+                .unwrap()
+                .to_base58(),
         })
         .collect();
 
@@ -449,7 +459,7 @@ async fn a_three_leg_transaction_commits() {
     }
     let native = NativeSystemState::new(rms[2].runtime().native_store());
     assert_eq!(
-        i64::from(native.vault_balance("dest").await.unwrap().unwrap()),
+        i64::from(native.vault_balance(&destination()).await.unwrap().unwrap()),
         10
     );
 }
@@ -480,7 +490,7 @@ async fn an_unreadable_head_refuses_the_leg_and_aborts() {
     .await;
 
     let record = gateway
-        .run(b"no-head", &txn_legs("dest"))
+        .run(b"no-head", &txn_legs(&destination()))
         .await
         .expect("run");
     assert_eq!(record.state, CoordState::Aborted);
@@ -527,7 +537,9 @@ async fn a_decision_that_cannot_be_written_sends_no_phase_two() {
     let legs = vec![GatewayLeg {
         shard_id: shard("/root"),
         amount: 30,
-        to: "dest".to_string(),
+        to: RevAddress::from_public_key(&construct_deploy::default_pub2().unwrap())
+            .unwrap()
+            .to_base58(),
     }];
 
     let err = gateway
@@ -564,11 +576,13 @@ async fn recover_in_flight_refuses_a_leg_that_left_the_membership() {
     let manager = Arc::new(InMemoryStoreManager::default());
     let (gateway, api_a, api_b, ledger, ..) = fixture(manager, ShardFaults::default()).await;
 
-    let mut record = seeded_record(b"left-membership", "dest");
+    let mut record = seeded_record(b"left-membership", &destination());
     record.legs = vec![LegRecord {
         shard_id: shard("/elsewhere"),
         amount: NonNegI64::try_from(30).unwrap(),
-        to: "dest".to_string(),
+        to: RevAddress::from_public_key(&construct_deploy::default_pub2().unwrap())
+            .unwrap()
+            .to_base58(),
     }];
     ledger.put(&record).await.expect("put");
 
