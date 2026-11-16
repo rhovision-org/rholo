@@ -94,9 +94,9 @@ cannot fail is naming decoration.
 a `def … : Prop` — with `mutant` (the rule being weakened: a hypothesis dropped, `>` weakened to `>=`,
 a projection removed) and `falsifier` (a theorem whose type *mentions* the mutant, checked with
 `Expr.getUsedConstants`). `Rchain/LawsMain.lean`'s check 10 resolves all three. The retrofit is a
-ratchet: `formalMissingCeiling` is 152 and may only fall, and the first four rows are 104 (the
-weighted checkpoint quorum), 72b (a completion record's release), 63b (the relay's conditional) and
-74b (a soft checkpoint's base).
+ratchet: `formalMissingCeiling` is 152 and may only fall, and the first five rows are 104 (the
+weighted checkpoint quorum), 72b (a completion record's release), 63b (the relay's conditional),
+74b (a soft checkpoint's base) and 113 (a merge above a finalised base).
 The declaration is now the statement, not a description of it.
 -/
 
@@ -6462,6 +6462,51 @@ def lawsC : List Law := [
       the nonce's freshness and the request rate limit are the service's (Law 110's accounting), \
       not this law; and a claim is not a zero-knowledge proof — `witnessType` is part of the signed \
       preimage so a future witness can be added, but none is claimed here." },
+  { number := 113, layer := "Casper",
+    statement := "**A merge above a finalised base does not undo a tuple-space write.** The multi-parent \
+      merge applies only the **kept** half of its conflict scope to the finalised base, so a datum \
+      present at that base survives unless a kept chain removed it — a later accepted block consumed \
+      it — and the rejected half is never applied. **This is the qualified law**: the unqualified \
+      reading, that a finalised write is never removed, is false, and \
+      `merging_a_tuple_space_rmw_block_duplicates_its_produce` witnesses a kept chain consuming a base \
+      datum. **Native absolute writes are not covered**, and the unqualified law is refuted there: a \
+      stale conflict-scope block's whole-slot `Put` can overwrite a finalised boundary value, because \
+      the conflict relation sees finalised chains only down to `prune_fringe` and \
+      `NativeRelations::fold` never compares against the base (§170, the stale-fork trace). The guard \
+      is a consensus-relevant decision and is not landed here.",
+    status := .provedModel,
+    formal := `Rchain.FinalizedMerge.law113_statement,
+    mutant := `Rchain.FinalizedMerge.law113_mutant,
+    falsifier := `Rchain.FinalizedMerge.law113_falsifier,
+    declarations := [`Rchain.FinalizedMerge.State, `Rchain.FinalizedMerge.Change,
+      `Rchain.FinalizedMerge.applyKept, `Rchain.FinalizedMerge.law113_statement,
+      `Rchain.FinalizedMerge.law113, `Rchain.FinalizedMerge.law113_mutant,
+      `Rchain.FinalizedMerge.law113_falsifier],
+    axioms := [],
+    rust := ["casper/src/merging.rs", "casper/src/multi_parent_casper.rs",
+      "rspace/src/merger/state_change.rs", "rspace/src/merger/state_change_merger.rs"],
+    rustWitness := [
+      "casper/tests/n420_boundary_merge.rs:a_boundary_round_merge_keeps_the_base_states_user_write",
+      "casper/tests/n420_boundary_merge.rs:merging_a_tuple_space_rmw_block_duplicates_its_produce"],
+    witness := [`Rchain.FinalizedMerge.law113_falsifier,
+      `Rchain.FinalizedMerge.the_same_fixture_survives_under_the_law],
+    falsifiable := "`law113_mutant` applies the **rejected** half of the scope as well; \
+      `law113_falsifier` exhibits a rejected chain's removal dropping a datum the kept slice preserved. \
+      The code applies `to_merge` alone, so the mutation is `compute_merged_state(&conflict_set)`. \
+      **The law's own qualifier is falsified by the code's existing consume case**: \
+      `merging_a_tuple_space_rmw_block_duplicates_its_produce` has a kept chain remove a base datum, \
+      which the law allows and the unqualified reading forbids.",
+    note := "**The scope, and what stays open.** The tuple-space half is proved: the applied slice is \
+      the kept conflict scope (`merging.rs:2049-2071`, `:2122-2129`), the base is its input not an \
+      output, and `net_datum_change` cancels a produce-and-consume inside the batch. **Not modelled \
+      here:** the merge's *native* absolute writes, where the same stale-fork shape refutes the \
+      unqualified law (the trace and the missing guard are recorded in §170); the base selection's \
+      genesis fallback keyed on `f_scope_ids.is_empty()` rather than `final_fringe.is_empty()` \
+      (`merging.rs:1916-1922`), a separate suspicious guard; and the honest-quorum hypothesis \
+      (less than one third Byzantine) needed to lift the local merge invariant to \"every honest \
+      node's finalised write survives\". The Rust tie is the pair of tests above: one pins a base \
+      datum surviving a merge that does not consume it, the other pins the consume direction. The \
+      rejected-slice arm is pinned by the Lean model, not yet by a Rust test." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

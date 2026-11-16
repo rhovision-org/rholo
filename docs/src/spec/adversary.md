@@ -17,9 +17,14 @@ in the table rather than implied.
 Two things are **explicitly outside** this statement, because saying so is more useful than implying
 otherwise:
 
-- **Whether an already-finalised write can be undone by a later merge.** That is a *safety* question, the
-  acceptance page deliberately excludes it ("a liveness and membership verdict, not a safety verdict"),
-  and it is **open**. Nothing below should be read as covering it.
+- **Whether an already-finalised write can be undone by a later merge.** That is a *safety* question, and
+  it is now **answered in two halves** (Law 113, §170). A **tuple-space** write in the finalised base
+  survives a later merge unless a kept chain consumed it — that is proved. A **native absolute** write
+  is **not** safe: a valid stale fork that does not descend from the finalised fringe can carry a
+  whole-slot `Put` over the base, because the conflict relation sees finalised chains only down to
+  `prune_fringe` and `NativeRelations::fold` never compares against the base; the stale-fork trace is
+  in §170. The guard is a consensus-relevant decision and is not landed. Nothing below should be read as
+  covering the native half.
 - **Post-quantum adversaries.** Tracked separately.
 
 ## What "handled" means here
