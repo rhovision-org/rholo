@@ -104,6 +104,13 @@ was honest. Both are required, and both are deterministic.
   (`spec/INVENTORY.md`); the `tests/` half is
   `casper/src/merging.rs::boundary_merge_tests`. The epoch-boundary write loss that motivated this is
   in [Incident history](incident-history.md#k8-write-loss-at-an-epoch-boundary);
+- **and a write that changes nothing is not a write (Law 17e).** A chain's slots are the writes whose
+  value differs from what the slot held; `effective_native_effects` filters them at index
+  construction, so a boundary that rewrites an unchanged liveness leaf is not a conflict partner of a
+  concurrent user chain that really writes it. The C344 exact-threshold ballot loss was this shape.
+  **Hard fork:** two binaries can reject different chains at a merge; the fix must be armed in
+  lockstep and is not deployed. `casper/src/merging.rs::boundary_merge_tests` carries the
+  red-then-green fixture and its negative control;
 - `StateChange::apply` diffs each affected channel once. This is a **deliberate deviation from the
   pinned Scala oracle**: `StateChange.scala::apply` at `1b7583649` maps the affected produces/consumes
   to sequences and appends `curVal.added ++ change.added`, so a consume-and-replace is diffed twice and

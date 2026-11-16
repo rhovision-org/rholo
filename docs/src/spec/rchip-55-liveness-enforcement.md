@@ -64,50 +64,56 @@ The tally and slash are a **boundary state transition**, not a block-level `Slas
 `validate::slashed_validators` does not list it and `slash_is_unjustified` does not apply; its
 authority is the on-chain tally every node replays. This is hard-fork class (#51 category A).
 
+**A no-op rewrite is not a native write (Law 17e).** The prelude rewrites its leaves at every
+advancing boundary, and the native store records the write even when the bytes are the pre-state's.
+Counting that as a slot a chain wrote made a finalised boundary chain a conflict partner of a
+concurrent `voteSlash` chain, which `incompatible_with_final` then rejected — the ballot died though
+nothing changed. Chain indices are now built from the **effective** writes (those whose value changed,
+walked in deploy order), at index construction rather than in the store so stored and regenerated
+sidecars agree. This is also hard-fork class: two binaries can reject different chains at a merge.
+
 ## 6. Safety properties (Law 89)
 
 Jail never writes the pool; one lapse is not sustained absence; a stalled or off-boundary step changes
 nothing; a vote is admitted only above strict 2/3; a passing vote slashes and ejects; a returning
-validator is released; continued silence renews. The Lean model is `spec/Rchain/Liveness.lean`, the
-register row 89, the HAZOP U21 and safety-case B48/B49/H-RS-17.
+validator is released; continued silence renews. A passing vote and a release each close the target's
+window and clear its ballots, and a banished validator cannot rebond. The Lean model is
+`spec/Rchain/Liveness.lean`, the register row 89 (with row 17e for the merge rule), the HAZOP U21 and
+safety-case B48/B49/H-RS-17. The behaviour-by-behaviour coverage table, including what is not
+covered, is `spec/audit/evidence/c344-law-coverage-20261116.md`.
 
-## 7. Acceptance (not yet met)
+## 7. Acceptance (capstone pending)
 
 A four-validator devnet and then a live testnet must show: jail after two advancing boundaries with the
 bond unchanged; a >2/3 vote slash and permanent ejection with replay agreement; a partition that jails
 but does not slash without a vote; a stall that moves neither clock; a restart during jail that returns
 at expiry and renews while silent; the exact 2/3 boundary.
 
-**The harness exists and its first arm failed (2026-11-14).** `tools/liveness-enforcement-drill.py`
+**The harness exists and its reads are finalised-state reads.** `tools/liveness-enforcement-drill.py`
 stages the devnet with the five genesis keys in one shared `network.conf`, stops a validator and reads
-`getLiveness`/`getBonds`/`getVotes` through `rho:rchain:pos`. On the first run the three survivors
-advanced to height 305 while the stopped validator was never jailed: an instrumented build showed
-`liveness_anchor()` returning `None` at every boundary after the first armed one, so the absence
-counter never advances past the first comparison point. The `pos:liveness-anchor` write is not
-visible in the next boundary's merged pre-state on this path. The record is
-`spec/audit/evidence/c344-liveness-enforcement-20261114/` (verdict FAIL). The unit tests share one
-in-memory store and do not exercise the block merge.
+`getLiveness`/`getBonds`/`getVotes`/`getActiveValidators` through `rho:rchain:pos`. Every read is
+pinned to one `/api/last-finalized-block` hash through
+`/api/v1/explore-deploy-by-block-hash`, and the anchor is recorded with the observation; the
+exploratory reply must come from the term's own `new`-bound name, because `@"out"` accumulates every
+deploy's output. Each vote deploy is followed from its id through `/api/v1/deploy-status` to its
+block, the block is waited to finality, and the ballot is read in that block and again at a finalised
+anchor.
 
-**The merge rule is repaired; the arm is blocked by a pre-existing stall (2026-11-16).** The retained
-log names the anchor slot (`blake2b256("pos:liveness-anchor")`) among the slots dropped when the
-final scope rejected chains whose deploy ids end in `02` — the CloseBlock system-deploy suffix.
-`final_scope_rejections` now filters 33-byte system-deploy ids, and `MergeScope::merge` refuses to
-reject a system-deploy chain; two tests pin the derivation and the merge decision. The repaired run
-contains no final-scope-rejection lines and no anchor-slot drop, but it advances only to height 12
-with finality at 2: from block `7e276d01…` the bootstrap cannot regenerate a received block's sidecar
-(`regenerated mergeable channels … but replay computed …`), so it cannot index the block and the chain
-stops. The same arm on the unmodified `d4b9bfb` image stalls identically, so the stall is **C402**, not
-this repair. **Acceptance is not met**: C402 must be fixed before the jail/vote/partition arms or the
-live testnet run can be evidenced. Records:
-`spec/audit/evidence/c344-anchor-persistence-20261116/` and
-`spec/audit/evidence/c402-partition-stall-20261116/` (both FAIL).
+**The exact-threshold failure is explained and fixed at unit level (2026-11-16).** The arm lost
+validator 1's ballot with the target still jailed. The cause was Law 17e's absence: a finalised
+boundary's unchanged rewrite of `pos:slash-votes` forced the concurrent vote chain out of the merge.
+`casper/src/merging.rs::a_finalized_boundary_noop_does_not_reject_a_concurrent_ballot` reproduced the
+rejection before the fix (the deploy id in `rejected_deploys`, the slot in `dropped_native_slots`) and
+keeps both ballots after it. The four-arm capstone has **not** run yet; when it does, its bundle and
+the per-arm results are the acceptance evidence.
 
 ## 8. Known residuals
 
 A >2/3 active stake can eject a dissenter after a jail (fixed policy, no unban); a minority partition
 can be jailed on the finalising side; a proposer can present a stale reachable fringe; **nothing
 requires a boundary block to carry `CloseBlock`**, so the epoch transition (and this rule) is
-skippable until a validity rule lands; no live evidence yet.
+skippable until a validity rule lands. The accepted discharge of the live-testnet clause is a locally
+operated four-validator devnet; public-testnet and mainnet arming remain external under **#428**.
 
 ## 9. Voting-weight consistency at an epoch boundary
 
