@@ -7,8 +7,8 @@
 //! * `attestation:<digest>` — one row per accepted claim;
 //! * `head:<signer>` — one head per signer (`sequence`, digest), so the next claim must extend it;
 //! * `nonce:<signer>:<nonce>` — the spent nonce, mapped to the claim digest;
-//! * `response:<signer>:<nonce>` — the answer this node gave for that nonce, so a retry after a
-//!   restart returns the same claim rather than replaying the nonce.
+//! * `response:<signer>:<nonce>` — the answer for any completed audit verdict, including an
+//!   unsigned `DISAGREE` or `INCOMPLETE`, so a retry cannot silently re-execute another result.
 //!
 //! **One `put` batch is one LMDB write transaction**, so the four rows cannot be observed
 //! half-written: a crash leaves either the whole claim or none of it. A separate
@@ -47,14 +47,15 @@ pub struct AuditConflict {
     pub recorded_at_unix_ms: u64,
 }
 
-/// **The answer this node gave for a request nonce.** Persisted in the same atomic batch as the
-/// accepted claim, so a same-nonce retry after a restart returns exactly the original answer.
+/// **The answer this node gave for a request nonce.** Signed AGREE claims and unsigned
+/// DISAGREE/INCOMPLETE reports share this wire shape; old signed rows remain decodable.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuditResponse {
     /// The reproduced report, as the node served it.
     pub report: serde_json::Value,
-    pub attestation: AuditAttestation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<AuditAttestation>,
 }
 
 /// One row of the claims store. The key prefix says which arm it is, and the arm is checked on
@@ -62,10 +63,20 @@ pub struct AuditResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "row", rename_all = "camelCase")]
 enum ClaimRow {
-    Attestation { attestation: AuditAttestation },
-    Head { head: AuditHead },
-    Nonce { digest: String },
-    Response { response: AuditResponse },
+    Attestation {
+        attestation: AuditAttestation,
+    },
+    Head {
+        head: AuditHead,
+    },
+    Nonce {
+        digest: String,
+    },
+    /// A completed replay with no signed claim still consumes its nonce.
+    UnattestedNonce,
+    Response {
+        response: AuditResponse,
+    },
 }
 
 #[derive(Default)]
@@ -225,6 +236,55 @@ impl AuditStore {
         Ok(())
     }
 
+    /// Persist a completed unsigned audit report without altering the accepted signature chain.
+    ///
+    /// An INCOMPLETE or DISAGREE is a result, not an accepted attestation. Its spent nonce and
+    /// original answer commit in the same batch; a retry after restart must not re-run it.
+    pub async fn record_unattested_response(
+        &self,
+        signer: &str,
+        nonce: &str,
+        response: &AuditResponse,
+    ) -> Result<(), String> {
+        if response.attestation.is_some()
+            || !matches!(
+                response
+                    .report
+                    .get("verdict")
+                    .and_then(serde_json::Value::as_str),
+                Some("INCOMPLETE" | "DISAGREE")
+            )
+        {
+            return Err(
+                "only an unsigned INCOMPLETE or DISAGREE is stored without a claim".to_string(),
+            );
+        }
+        let _gate = self.gate.lock().await;
+        let key = nonce_key(signer, nonce);
+        if self.get_row(&key).await?.is_some() {
+            return Err(format!(
+                "the request nonce {nonce:?} for signer {signer} has already been answered"
+            ));
+        }
+        self.claims
+            .put(&[
+                (key, ClaimRow::UnattestedNonce),
+                (
+                    response_key(signer, nonce),
+                    ClaimRow::Response {
+                        response: response.clone(),
+                    },
+                ),
+            ])
+            .await?;
+        if !self.nonce_seen(signer, nonce).await?
+            || self.response(signer, nonce).await?.as_ref() != Some(response)
+        {
+            return Err("unsigned audit result read-back mismatch".to_string());
+        }
+        Ok(())
+    }
+
     /// A stored claim by digest.
     pub async fn get(&self, digest: &str) -> Result<Option<AuditAttestation>, String> {
         match self.get_row(&attestation_key(digest)).await? {
@@ -358,7 +418,7 @@ mod tests {
     fn response(claim: &AuditAttestation) -> AuditResponse {
         AuditResponse {
             report: serde_json::json!({"verdict": "AGREE", "nonce": claim.nonce}),
-            attestation: claim.clone(),
+            attestation: Some(claim.clone()),
         }
     }
 
@@ -446,42 +506,39 @@ mod tests {
         assert_eq!(store.accepted().await.expect("accepted").len(), 1);
     }
 
-    /// **A failed batch leaves no row at all** — the store's one commit point. The failing store
-    /// rejects the `put` before applying it, which is the strongest fault this interface exposes;
-    /// after the fault is cleared the same acceptance succeeds.
-    #[tokio::test]
-    async fn a_failed_batch_writes_none_of_the_claim() {
-        struct FailingStore {
-            inner: InMemoryKeyValueStore,
-            fail: Arc<AtomicBool>,
+    struct FailingStore {
+        inner: InMemoryKeyValueStore,
+        fail: Arc<AtomicBool>,
+    }
+    impl KeyValueStore for FailingStore {
+        fn get(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>, String> {
+            self.inner.get(keys)
         }
-        impl KeyValueStore for FailingStore {
-            fn get(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>, String> {
-                self.inner.get(keys)
+        fn put(&mut self, pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
+            if self.fail.load(Ordering::SeqCst) {
+                return Err("injected write failure".to_string());
             }
-            fn put(&mut self, pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
-                if self.fail.load(Ordering::SeqCst) {
-                    return Err("injected write failure".to_string());
-                }
-                self.inner.put(pairs)
-            }
-            fn delete(&mut self, keys: &[Vec<u8>]) -> Result<usize, String> {
-                self.inner.delete(keys)
-            }
-            fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
-                self.inner.entries()
-            }
+            self.inner.put(pairs)
         }
-        struct FailingManager {
-            store: SharedStore,
+        fn delete(&mut self, keys: &[Vec<u8>]) -> Result<usize, String> {
+            self.inner.delete(keys)
         }
-        #[async_trait::async_trait]
-        impl KeyValueStoreManager for FailingManager {
-            async fn store(&self, _name: &str) -> Result<SharedStore, String> {
-                Ok(self.store.clone())
-            }
-            async fn shutdown(&self) {}
+        fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+            self.inner.entries()
         }
+    }
+    struct FailingManager {
+        store: SharedStore,
+    }
+    #[async_trait::async_trait]
+    impl KeyValueStoreManager for FailingManager {
+        async fn store(&self, _name: &str) -> Result<SharedStore, String> {
+            Ok(self.store.clone())
+        }
+        async fn shutdown(&self) {}
+    }
+
+    fn failing_manager() -> (FailingManager, Arc<AtomicBool>) {
         let fail = Arc::new(AtomicBool::new(true));
         let kvm = FailingManager {
             store: Arc::new(tokio::sync::Mutex::new(Box::new(FailingStore {
@@ -489,6 +546,15 @@ mod tests {
                 fail: fail.clone(),
             }))),
         };
+        (kvm, fail)
+    }
+
+    /// **A failed batch leaves no row at all** — the store's one commit point. The failing store
+    /// rejects the `put` before applying it, which is the strongest fault this interface exposes;
+    /// after the fault is cleared the same acceptance succeeds.
+    #[tokio::test]
+    async fn a_failed_batch_writes_none_of_the_claim() {
+        let (kvm, fail) = failing_manager();
         let store = AuditStore::open(&kvm).await.expect("open");
         let claim = attestation(0, "nonce-1");
         let answer = response(&claim);
@@ -516,6 +582,130 @@ mod tests {
             .await
             .expect("the same acceptance succeeds once the fault is cleared");
         assert_eq!(store.accepted().await.expect("accepted"), vec![claim]);
+    }
+
+    /// Fault injection on the unsigned commit point: neither nonce nor answer survives
+    /// a failed batch, and the same request becomes durable once the failure clears.
+    /// This falsifies pre-commit write failure; it does not simulate an LMDB process crash.
+    #[tokio::test]
+    async fn a_failed_unsigned_batch_leaves_no_spent_nonce_or_response() {
+        let (kvm, fail) = failing_manager();
+        let store = AuditStore::open(&kvm).await.expect("open");
+        let signer = "07".repeat(33);
+        let nonce = "unsigned-fault";
+        let answer = AuditResponse {
+            report: serde_json::json!({"verdict": "INCOMPLETE", "reason": "header unavailable"}),
+            attestation: None,
+        };
+
+        let error = store
+            .record_unattested_response(&signer, nonce, &answer)
+            .await
+            .expect_err("injected put failure is surfaced");
+        assert!(error.contains("injected write failure"), "{error}");
+
+        let reopened = AuditStore::open(&kvm).await.expect("reopen after failure");
+        assert!(!reopened
+            .nonce_seen(&signer, nonce)
+            .await
+            .expect("nonce absent"));
+        assert!(reopened
+            .response(&signer, nonce)
+            .await
+            .expect("answer absent")
+            .is_none());
+        assert!(reopened.accepted().await.expect("no claims").is_empty());
+        assert!(reopened
+            .head(&signer)
+            .await
+            .expect("no chain head")
+            .is_none());
+
+        fail.store(false, Ordering::SeqCst);
+        reopened
+            .record_unattested_response(&signer, nonce, &answer)
+            .await
+            .expect("retry after clearing fault succeeds");
+
+        let reopened_again = AuditStore::open(&kvm).await.expect("reopen after success");
+        assert!(reopened_again
+            .nonce_seen(&signer, nonce)
+            .await
+            .expect("nonce persisted"));
+        assert_eq!(
+            reopened_again
+                .response(&signer, nonce)
+                .await
+                .expect("response persisted"),
+            Some(answer.clone())
+        );
+        assert!(reopened_again
+            .accepted()
+            .await
+            .expect("no claims")
+            .is_empty());
+        assert!(reopened_again
+            .head(&signer)
+            .await
+            .expect("no head")
+            .is_none());
+        assert!(reopened_again
+            .record_unattested_response(&signer, nonce, &answer)
+            .await
+            .is_err());
+    }
+
+    /// Unsigned outcomes survive reopen, are idempotent and cannot create a signed-chain head.
+    #[tokio::test]
+    async fn unsigned_verdicts_are_atomic_durable_and_never_accepted() {
+        let kvm = InMemoryStoreManager::default();
+        let store = AuditStore::open(&kvm).await.expect("open");
+        let signer = "07".repeat(33);
+        for (idx, verdict) in ["DISAGREE", "INCOMPLETE"].iter().enumerate() {
+            let nonce = format!("unsigned-{idx}");
+            let answer = AuditResponse {
+                report: serde_json::json!({"verdict": verdict, "reason": "fixture"}),
+                attestation: None,
+            };
+            store
+                .record_unattested_response(&signer, &nonce, &answer)
+                .await
+                .expect("persist");
+            let reopened = AuditStore::open(&kvm).await.expect("reopen");
+            assert_eq!(
+                reopened.response(&signer, &nonce).await.expect("response"),
+                Some(answer.clone())
+            );
+            assert!(reopened
+                .nonce_seen(&signer, &nonce)
+                .await
+                .expect("spent nonce"));
+            assert!(reopened.head(&signer).await.expect("head").is_none());
+            assert!(reopened.accepted().await.expect("claims").is_empty());
+            assert!(reopened
+                .record_unattested_response(&signer, &nonce, &answer)
+                .await
+                .is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_agree_report_cannot_be_stored_as_unsigned() {
+        let kvm = InMemoryStoreManager::default();
+        let store = AuditStore::open(&kvm).await.expect("open");
+        let signer = "07".repeat(33);
+        let reply = AuditResponse {
+            report: serde_json::json!({"verdict": "AGREE"}),
+            attestation: None,
+        };
+        assert!(store
+            .record_unattested_response(&signer, "n", &reply)
+            .await
+            .is_err());
+        assert!(!store
+            .nonce_seen(&signer, "n")
+            .await
+            .expect("nonce remains unused"));
     }
 
     /// A conflict is durable evidence and is not an accepted claim.
