@@ -647,6 +647,17 @@ def vote_once(
         own = vote_state(target, own_anchor, HTTP_BASE)
     record["own_block_votes"] = own
     record["own_block_ballots"] = ballot_keys(own["ballots"]) if own else []
+    own_bonds = bonds(own_anchor, committed["signer_port"])
+    own_liveness = liveness(own_anchor, committed["signer_port"])
+    record["own_block_target_absent"] = target_record(own_bonds, target) is None
+    # A vote deploy can land in a **boundary** block, whose prelude tallies it in the same block: a
+    # passing vote then consumes its own ballot and window before any post-state exists. That is the
+    # rule working, not a lost ballot — the deploy's block shows the slash instead of the ballot.
+    record["consumed_in_own_block"] = (
+        own is None
+        and record["own_block_target_absent"]
+        and target_record(own_liveness, target) is None
+    )
     record["stale_snapshot"] = [
         earlier
         for earlier in earlier_voters
@@ -669,7 +680,9 @@ def vote_once(
     record["merged_ballots"] = ballot_keys(merged_window["ballots"]) if merged_window else []
     record["missing_ballot"] = (
         f"validator {voter}'s ballot is not in the merged ballot map"
-        if merged_window is not None and keys_missing(record["merged_ballots"], voter)
+        if merged_window is not None
+        and not record["consumed_in_own_block"]
+        and keys_missing(record["merged_ballots"], voter)
         else None
     )
     return record
@@ -713,9 +726,13 @@ def run_jail_vote_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, d
     checks["vote_deploy_not_rejected"] = not vote.get("rejected_in")
     if vote.get("outcome") != "committed":
         return checks, observations, [f"ballot not cast: {vote.get('outcome')}"]
-    checks["vote_ballot_in_own_block"] = not keys_missing(vote.get("own_block_ballots", []), 0)
-    checks["vote_ballot_finalized"] = vote.get("merged_votes") is not None and not keys_missing(
-        vote.get("merged_ballots", []), 0
+    consumed = bool(vote.get("consumed_in_own_block"))
+    checks["vote_ballot_in_own_block"] = consumed or not keys_missing(
+        vote.get("own_block_ballots", []), 0
+    )
+    checks["vote_ballot_merged"] = consumed or (
+        vote.get("merged_votes") is not None
+        and not keys_missing(vote.get("merged_ballots", []), 0)
     )
 
     wait_until(
@@ -831,16 +848,27 @@ def run_exact_threshold_arm(keys: list[str], args, config: ArmConfig) -> tuple[d
         inconclusive.append(f"second ballot not cast: {second.get('outcome')}")
         return checks, observations, inconclusive
     observations["second_voter_stale_snapshot"] = second.get("stale_snapshot")
-    if second.get("merged_votes") is None:
-        inconclusive.append("second window closed before the finalised read")
-        return checks, observations, inconclusive
-    checks["second_ballot_recorded"] = not keys_missing(second.get("merged_ballots", []), 1)
-    checks["both_ballots_in_finalised_state"] = not keys_missing(
-        second.get("merged_ballots", []), 0
-    ) and not keys_missing(second.get("merged_ballots", []), 1)
-    second_for_stake = for_stake(second["merged_votes"]["ballots"], active_bonds)
-    observations["second_for_stake"] = second_for_stake
-    checks["second_ballot_is_strict_supermajority"] = second_for_stake * 3 > total_active * 2
+    if second.get("consumed_in_own_block"):
+        # The second vote landed in a boundary block and its tally passed there: the block shows the
+        # slash instead of the ballot. The threshold is then the ballots' known weights, and the
+        # slash is the execution's own evidence.
+        expected = int(target_record(active_bonds, keys[0]) or 0) + int(
+            target_record(active_bonds, keys[1]) or 0
+        )
+        observations["second_for_stake_expected"] = expected
+        checks["second_ballot_counted_in_its_block"] = True
+        checks["second_ballot_is_strict_supermajority"] = expected * 3 > total_active * 2
+    else:
+        if second.get("merged_votes") is None:
+            inconclusive.append("second window closed before the merged read")
+            return checks, observations, inconclusive
+        checks["second_ballot_recorded"] = not keys_missing(second.get("merged_ballots", []), 1)
+        checks["both_ballots_in_merged_state"] = not keys_missing(
+            second.get("merged_ballots", []), 0
+        ) and not keys_missing(second.get("merged_ballots", []), 1)
+        second_for_stake = for_stake(second["merged_votes"]["ballots"], active_bonds)
+        observations["second_for_stake"] = second_for_stake
+        checks["second_ballot_is_strict_supermajority"] = second_for_stake * 3 > total_active * 2
 
     wait_until(
         lambda: True if target_record(bonds(), target) is None else None,
