@@ -7,7 +7,8 @@ devnet. Each arm is one behaviour:
 
   * `jail-vote` — stakes 700,100,100,100; stop validator 3; wait two advancing boundaries; read
     `getLiveness` until its record shows a jail, and `getBonds` to show the bond is untouched; then
-    submit a signed `voteSlash` from validator 0, cross a boundary, and show the bond is removed.
+    submit a signed `voteSlash` from validator 0, wait for its block to finalise and a boundary to
+    tally it, and show the bond is removed.
   * `exact-threshold` — stakes 600,200,100,100; jail validator 3. The active snapshot after the jail
     excludes the jailed validator, so the tally denominator is 900 and validator 0's 600 is exactly
     two thirds: the boundary must **not** slash. Validator 1 then votes 200; 800/900 is strict and
@@ -19,6 +20,22 @@ devnet. Each arm is one behaviour:
     proposer's finality bound.
   * `restart-expiry` — jail validator 3, restart it, and show a block it signs releases the jail;
     stop it again and show continued silence renews the term. The bond is untouched throughout.
+
+**Every native-state read is pinned to one finalised block.** An exploratory deploy with no block
+hash anchors at `exploration_anchor` — the **last finalised block** (`casper/src/api/block_api_impl.rs`
+`:174-182`) — which moves between polls. The drill therefore reads `/api/last-finalized-block`, records
+the anchor's hash and number with every observation, and asks
+`/api/v1/explore-deploy-by-block-hash` for that block's post-state. The exploratory reply must come
+from the term's first `new`-bound name (`replySource == "firstPrivateName"`); a reply from `@"out"`
+is a stale read, because that channel accumulates every deploy's output in the block's state
+(`casper/src/runtime_manager.rs:2270-2305`).
+
+**Every vote deploy is tracked to its block.** `rnode deploy` reports a deploy id; the drill polls
+`/api/v1/deploy-status/{id}`, records whether the deploy processed and in which block, waits for that
+block to finalise, and then asks two questions of the same ballot: was it in its **own block's**
+post-state (the stale-voter discriminator), and is it in the **finalised** state (the merge-loss
+discriminator)? A `ProcessedWithError` is a rule-side refusal and is reported with its message, not
+as a lost ballot. A window that closed before the observation is INCONCLUSIVE, not FAIL.
 
 The tool asserts and records; it does not author a verdict. It writes `raw/result.json`, the route
 replies and the bootstrap journal. A failed assertion exits non-zero and the record is FAIL /
@@ -55,6 +72,7 @@ STALL_QUIESCE_S = 10.0
 STALL_WINDOW_S = 30.0
 VOTE_PHLO_LIMIT = 1_000_000
 VOTE_FUNDING = 1_000_000
+REPLY_SOURCE = "firstPrivateName"
 
 
 @dataclass(frozen=True)
@@ -156,18 +174,54 @@ def decode(node):
     return node
 
 
-def explore(term: str):
-    reply = http_json(HTTP_BASE, "/api/v1/explore-deploy", method="POST", body=term)
+# --- the pinned observation surface -------------------------------------------------------------
+
+
+def last_finalized(port: int = HTTP_BASE) -> dict:
+    """The block every read in one observation is anchored at."""
+    body = http_json(port, "/api/last-finalized-block")
+    info = body.get("blockInfo") or body.get("block_info") or {}
+    anchor = {"hash": info.get("blockHash"), "number": info.get("blockNumber"), "port": port}
+    if not anchor["hash"]:
+        raise RuntimeError(f"no finalised block on port {port}: {body}")
+    return anchor
+
+
+def explore_pinned(term: str, anchor: dict | None = None, port: int | None = None):
+    """Run `term` against one finalised block's post-state and return its reply.
+
+    The block hash is explicit, so the read cannot slide to a later finalised block between two
+    polls; `replySource` is checked so a stale `@"out"` read is a harness failure rather than state.
+    """
+    if anchor is None:
+        anchor = last_finalized(port or HTTP_BASE)
+    target_port = port or anchor.get("port", HTTP_BASE)
+    reply = http_json(
+        target_port,
+        "/api/v1/explore-deploy-by-block-hash",
+        method="POST",
+        body={
+            "term": term,
+            "blockHash": anchor["hash"],
+            "usePreStateHash": False,
+        },
+    )
+    source = reply.get("replySource")
+    if source != REPLY_SOURCE:
+        raise RuntimeError(
+            f"exploratory reply came from {source!r}, not the term's private channel "
+            f"(anchor {anchor['hash']})"
+        )
     return [decode(item) for item in reply.get("expr", [])]
 
 
-def read_value(term: str):
-    values = explore(term)
+def read_value(term: str, anchor: dict | None = None, port: int | None = None):
+    values = explore_pinned(term, anchor, port)
     return values[0] if values else None
 
 
-def read_map(term: str):
-    values = explore(term)
+def read_map(term: str, anchor: dict | None = None, port: int | None = None):
+    values = explore_pinned(term, anchor, port)
     if not values:
         return {}
     value = values[0]
@@ -176,66 +230,89 @@ def read_map(term: str):
     return value if isinstance(value, dict) else {}
 
 
-def liveness() -> dict:
-    # The reply goes to the term's **first `new`-bound name**: exploratory deploy reads that name
-    # and falls back to `@"out"` only when it is empty. `@"out"` accumulates every real deploy's
-    # reply in the block's state, so a read there can return a stale map or an old vote ack.
+def liveness(anchor: dict | None = None, port: int | None = None) -> dict:
     return read_map(
-        'new reply, pos(`rho:rchain:pos`) in { pos!("getLiveness", [*reply]) }'
+        'new reply, pos(`rho:rchain:pos`) in { pos!("getLiveness", [*reply]) }', anchor, port
     )
 
 
-def bonds() -> dict:
+def bonds(anchor: dict | None = None, port: int | None = None) -> dict:
     return read_map(
-        'new reply, pos(`rho:rchain:pos`) in { pos!("getBonds", [*reply]) }'
+        'new reply, pos(`rho:rchain:pos`) in { pos!("getBonds", [*reply]) }', anchor, port
     )
 
 
-def active_validators() -> list[str]:
+def active_validators(anchor: dict | None = None, port: int | None = None) -> list[str]:
     value = read_value(
-        'new reply, pos(`rho:rchain:pos`) in { pos!("getActiveValidators", [*reply]) }'
+        'new reply, pos(`rho:rchain:pos`) in { pos!("getActiveValidators", [*reply]) }',
+        anchor,
+        port,
     )
     return value if isinstance(value, list) else []
 
 
-def vote_state(target_hex: str):
+def vote_state(target_hex: str, anchor: dict | None = None, port: int | None = None):
     """`getVotes` answers Nil when no window is open, else (opened_at, remaining, ballots)."""
     value = read_value(
         'new reply, pos(`rho:rchain:pos`) in { '
-        f'pos!("getVotes", ["{target_hex}".hexToBytes(), *reply]) }}'
+        f'pos!("getVotes", ["{target_hex}".hexToBytes(), *reply]) }}',
+        anchor,
+        port,
     )
     if isinstance(value, tuple) and len(value) == 3:
         return {"opened_at": value[0], "remaining": value[1], "ballots": value[2]}
     return None
 
 
-def health() -> dict:
-    return http_json(HTTP_BASE, "/health")
+def snapshot(anchor: dict | None = None, port: int | None = None) -> dict:
+    """Liveness, bonds and the active set read at **one** pinned finalised block."""
+    anchor = anchor or last_finalized(port or HTTP_BASE)
+    return {
+        "anchor": anchor,
+        "liveness": liveness(anchor, port),
+        "bonds": bonds(anchor, port),
+        "active": active_validators(anchor, port),
+    }
 
 
-def latest_height() -> int:
-    return int(http_json(HTTP_BASE, "/api/status").get("latestBlockNumber", 0))
+def health(port: int = HTTP_BASE) -> dict:
+    return http_json(port, "/health")
 
 
-def pos_status() -> dict:
-    return http_json(HTTP_BASE, "/api/v1/pos")
+def latest_height(port: int = HTTP_BASE) -> int:
+    return int(http_json(port, "/api/status").get("latestBlockNumber", 0))
 
 
-def recent_blocks(depth: int = 100) -> list:
-    body = http_json(HTTP_BASE, f"/api/blocks/{depth}")
+def pos_status(port: int = HTTP_BASE) -> dict:
+    return http_json(port, "/api/v1/pos")
+
+
+def recent_blocks(depth: int = 200, port: int = HTTP_BASE) -> list:
+    body = http_json(port, f"/api/blocks/{depth}")
     if isinstance(body, dict):
         body = body.get("blocks", [])
     return body if isinstance(body, list) else []
 
 
-def find_block(sender_hex: str, min_height: int):
+def find_block(sender_hex: str, min_height: int, port: int = HTTP_BASE):
     wanted = sender_hex.lower()
-    for block in recent_blocks():
+    for block in recent_blocks(port=port):
         sender = str(block.get("sender", "")).lower()
         height = int(block.get("blockNumber", -1))
         if height >= min_height and (sender == wanted or wanted in sender):
             return block
     return None
+
+
+def is_finalized(block: dict, port: int = HTTP_BASE) -> bool:
+    block_hash = block.get("blockHash")
+    height = int(block.get("blockNumber", -1))
+    if block_hash:
+        try:
+            return bool(http_json(port, f"/api/is-finalized/{block_hash}"))
+        except urllib.error.HTTPError:
+            pass
+    return int(health(port).get("finalizedHeight") or 0) >= height
 
 
 def validator_keys() -> list[str]:
@@ -262,18 +339,22 @@ def node_container(validator: int = 0) -> str:
     return f"{PREFIX}-bootstrap" if validator == 0 else f"{PREFIX}-validator-{validator}"
 
 
+# --- signed deploys and their outcome -----------------------------------------------------------
+
+
 def submit_signed(
     term: str,
-    height: int,
     *,
     validator: int = 0,
     phlo_limit: int = VOTE_PHLO_LIMIT,
     phlo_price: int = 1,
-) -> str:
+) -> dict:
     """Deploy `term` signed by `validator`'s own key, in that validator's container.
 
     The signer *is* the deployer id, so a ballot from validator 1 must be signed by validator 1's
     key; the CLI can reach the network from any validator container, so no key leaves its volume.
+    The validity floor is left to the CLI, which resolves `-1` against **the signer's own** height;
+    passing the bootstrap's height here made the deploy future-dated on a lagging signer.
     """
     with tempfile.NamedTemporaryFile("w", suffix=".rho", delete=False) as handle:
         handle.write(term)
@@ -284,13 +365,94 @@ def submit_signed(
         "exec", node_container(validator), "rnode", "deploy",
         "--phlo-limit", str(phlo_limit), "--phlo-price", str(phlo_price),
         "--private-key-path", "/var/lib/rnode/validator.hex",
-        "--shard-id", "/root", "--valid-after-block-number", str(max(height - 1, 0)),
+        "--shard-id", "/root",
         f"/tmp/{container}",
     ])
     match = re.search(r"DeployId is:\s*([0-9a-f]+)", deployed.stdout)
     if not match:
         raise RuntimeError(f"signed deploy rejected: {deployed.stdout[-1200:]}")
-    return match.group(1)
+    return {
+        "deploy_id": match.group(1),
+        "validator": validator,
+        "signer_port": HTTP_BASE + validator * 1000,
+    }
+
+
+def deploy_status(deploy: dict):
+    """The signer's answer first, then the bootstrap's; `None` while nothing has processed it."""
+    for port in (deploy["signer_port"], HTTP_BASE):
+        try:
+            body = http_json(port, f"/api/v1/deploy-status/{deploy['deploy_id']}")
+        except urllib.error.HTTPError as exc:
+            if exc.code in (400, 404):
+                continue
+            raise
+        if not isinstance(body, dict) or len(body) != 1:
+            continue
+        (kind, payload), = body.items()
+        if kind == "NotProcessed":
+            continue
+        return {"kind": kind, "payload": payload, "port": port}
+    return None
+
+
+def rejected_in_dag(deploy_id: str, depth: int = 200) -> list:
+    """Blocks whose `rejectedDeploys` names this deploy — the merge-loss instrument."""
+    wanted = deploy_id.lower()
+    found = []
+    for block in recent_blocks(depth):
+        ids = [str(item).lower() for item in block.get("rejectedDeploys", [])]
+        if any(wanted == item or wanted in item or item in wanted for item in ids):
+            found.append({"block": block.get("blockHash"), "height": block.get("blockNumber")})
+    return found
+
+
+def commit_deploy(deploy: dict, args, label: str) -> dict:
+    """Wait for the deploy to process, refuse a rule-side error, and finalise its block."""
+    status = wait_until(
+        lambda: deploy_status(deploy), args.timeout, args.poll, f"{label}: deploy processes"
+    )
+    if status["kind"] == "ProcessedWithError":
+        raise RuntimeError(
+            f"{label}: the deploy was refused: {status['payload'].get('deployError')}"
+        )
+    block = status["payload"].get("block") or {}
+    height = int(block.get("blockNumber", -1))
+    if height < 0 or not block.get("blockHash"):
+        raise RuntimeError(f"{label}: processed but the status names no block: {status}")
+    wait_until(
+        lambda: True if is_finalized(block) else None,
+        args.timeout,
+        args.poll,
+        f"{label}: the processing block finalises",
+    )
+    return {
+        "deploy_id": deploy["deploy_id"],
+        "validator": deploy["validator"],
+        "signer_port": deploy["signer_port"],
+        "status": status["kind"],
+        "block": block,
+        "height": height,
+        "rejected_in": rejected_in_dag(deploy["deploy_id"]),
+    }
+
+
+def wait_signer_synced(validator: int, min_height: int, args, label: str) -> dict:
+    """The next signer's own finalised height must have reached the previous step's block."""
+    port = HTTP_BASE + validator * 1000
+    wait_until(
+        lambda: True
+        if int(health(port).get("finalizedHeight") or 0) >= min_height
+        else None,
+        args.timeout,
+        args.poll,
+        label,
+    )
+    return last_finalized(port)
+
+
+def window_margin(config: ArmConfig) -> int:
+    return max(5, config.vote_window // 4)
 
 
 def propose() -> None:
@@ -352,6 +514,10 @@ def for_stake(ballots: dict, active_bonds: dict) -> int:
     )
 
 
+def ballot_keys(ballots: dict) -> list[str]:
+    return [str(key) for key in ballots]
+
+
 def bootstrap_log() -> str:
     return docker(["logs", "--timestamps", f"{PREFIX}-bootstrap"]).stdout
 
@@ -360,132 +526,265 @@ def count_log(log: str, needle: str) -> int:
     return log.count(needle)
 
 
-def run_jail_vote_arm(keys: list[str], args) -> tuple[dict, dict]:
+def vote_once(
+    target: str,
+    voter: int,
+    config: ArmConfig,
+    args,
+    *,
+    after_height: int = 0,
+    earlier_voters: tuple[int, ...] = (),
+) -> dict:
+    """Submit one signed ballot and follow it from the signer's status to the finalised state.
+
+    `after_height` is the previous step's finalised block: the signer must have finalised at least
+    that much before it builds the ballot. `earlier_voters` are the ballots this one must contain if
+    the block that carried it was built on a current view — a block missing one is the stale-voter
+    shape, not a merge loss.
+
+    Returns the deploy record plus a two-anchor reading: `own_block_ballots` is the ballot map in
+    the block that carried the deploy, and `finalized_ballots` is the map at the next finalised
+    anchor. The arm decides what a missing ballot means.
+    """
+    signer_anchor = wait_signer_synced(
+        voter,
+        max(0, after_height),
+        args,
+        f"validator {voter} has finalised the previous step",
+    )
+    window = vote_state(target, signer_anchor, HTTP_BASE + voter * 1000)
+    record = {
+        "window_at_submission": window,
+        "signer_anchor": signer_anchor,
+        "margin_required": window_margin(config),
+    }
+    if window is None:
+        record["outcome"] = "window_closed_before_submission"
+        return record
+    if int(window["remaining"]) < window_margin(config):
+        record["outcome"] = "window_margin_too_low"
+        return record
+
+    deploy = submit_signed(vote_term(target), validator=voter)
+    propose()
+    committed = commit_deploy(deploy, args, f"validator {voter}'s ballot")
+    record.update(committed)
+    record["outcome"] = "committed"
+
+    own_anchor = {
+        "hash": committed["block"].get("blockHash"),
+        "number": committed["block"].get("blockNumber"),
+        "port": committed["signer_port"],
+    }
+    try:
+        own = vote_state(target, own_anchor, committed["signer_port"])
+    except urllib.error.HTTPError:
+        # The signer may not serve an exploratory read until it has indexed its own block; the
+        # bootstrap has the same block once it validated it, and the reading is block-addressed.
+        own = vote_state(target, own_anchor, HTTP_BASE)
+    record["own_block_votes"] = own
+    record["own_block_ballots"] = ballot_keys(own["ballots"]) if own else []
+    record["stale_snapshot"] = [
+        earlier
+        for earlier in earlier_voters
+        if keys_missing(record["own_block_ballots"], earlier)
+    ]
+
+    finalized = last_finalized()
+    final_window = vote_state(target, finalized)
+    record["finalized_anchor"] = finalized
+    record["finalized_votes"] = final_window
+    record["finalized_ballots"] = ballot_keys(final_window["ballots"]) if final_window else []
+    record["missing_ballot"] = (
+        f"validator {voter}'s ballot is not in the finalised ballot map"
+        if final_window is not None and keys_missing(record["finalized_ballots"], voter)
+        else None
+    )
+    return record
+
+
+def keys_missing(ballot_keys_: list[str], voter: int) -> bool:
+    wanted = validator_keys()[voter].lower()
+    return not any(wanted in key.lower() or key.lower() in wanted for key in ballot_keys_)
+
+
+# --- the arms -----------------------------------------------------------------------------------
+
+
+def run_jail_vote_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, dict, list[str]]:
     checks: dict[str, bool] = {}
     observations: dict = {}
     target = keys[3]
-    baseline_bonds = bonds()
-    observations["bonds_before"] = baseline_bonds
-    baseline_stake = target_record(baseline_bonds, target)
+    baseline = snapshot()
+    observations["baseline"] = baseline
+    baseline_stake = target_record(baseline["bonds"], target)
 
     run(["tools/devnet.sh", "stop", "3"])
     record = wait_for_jail(target, args)
     observations["jail_record"] = record
     checks["jailed"] = int(record[1]) > 0
-    checks["bond_untouched_by_jail"] = target_record(bonds(), target) == baseline_stake
 
-    active = wait_until(
-        lambda: (lambda a: a if a and target not in a else None)(active_validators()),
-        args.timeout, args.poll, "the jailed validator leaves the active snapshot",
+    jailed = snapshot()
+    observations["after_jail"] = jailed
+    checks["bond_untouched_by_jail"] = target_record(jailed["bonds"], target) == baseline_stake
+    checks["target_excluded_from_active_after_jail"] = not any(
+        target in key or key in target for key in jailed["active"]
     )
-    observations["active_after_jail"] = active
-    checks["target_excluded_from_active_after_jail"] = target not in active
 
     window = wait_until(lambda: vote_state(target), args.timeout, args.poll, "vote window")
     observations["vote_window"] = window
     checks["vote_window_opened"] = window is not None and int(window["remaining"]) > 0
 
-    submit_signed(vote_term(target), latest_height())
-    propose()
+    vote = vote_once(target, 0, config, args)
+    observations["vote"] = vote
+    checks["vote_deploy_committed"] = vote.get("outcome") == "committed"
+    checks["vote_deploy_not_rejected"] = not vote.get("rejected_in")
+    if vote.get("outcome") != "committed":
+        return checks, observations, [f"ballot not cast: {vote.get('outcome')}"]
+    checks["vote_ballot_in_own_block"] = not keys_missing(vote.get("own_block_ballots", []), 0)
+    checks["vote_ballot_finalized"] = vote.get("finalized_votes") is not None and not keys_missing(
+        vote.get("finalized_ballots", []), 0
+    )
+
     wait_until(
-        lambda: True if target not in bonds() else None,
+        lambda: True if target_record(bonds(), target) is None else None,
         args.timeout, args.poll, "passing vote slashes the bond",
     )
-    observations["bonds_after_vote"] = bonds()
-    checks["vote_slashed_the_bond"] = target not in bonds()
-    checks["liveness_record_cleared_after_slash"] = target_record(liveness(), target) is None
-    checks["vote_window_closed_after_slash"] = vote_state(target) is None
-    return checks, observations
+    after = snapshot()
+    observations["after_slash"] = after
+    checks["vote_slashed_the_bond"] = target_record(after["bonds"], target) is None
+    checks["liveness_record_cleared_after_slash"] = target_record(after["liveness"], target) is None
+    checks["vote_window_closed_after_slash"] = vote_state(target, after["anchor"]) is None
+    inconclusive = []
+    if vote.get("missing_ballot"):
+        inconclusive.append(vote["missing_ballot"])
+    return checks, observations, inconclusive
 
 
-def run_exact_threshold_arm(keys: list[str], args) -> tuple[dict, dict]:
+def run_exact_threshold_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, dict, list[str]]:
     checks: dict[str, bool] = {}
     observations: dict = {}
+    inconclusive: list[str] = []
     target = keys[3]
 
     observations["second_voter_funding"] = fund_validator(keys[1])
     checks["second_voter_funded"] = observations["second_voter_funding"]["balance"] >= VOTE_FUNDING
 
-    baseline_bonds = bonds()
-    observations["bonds_before"] = baseline_bonds
+    baseline = snapshot()
+    observations["baseline"] = baseline
+    baseline_stake = target_record(baseline["bonds"], target)
 
     run(["tools/devnet.sh", "stop", "3"])
     record = wait_for_jail(target, args)
     observations["jail_record"] = record
     checks["jailed"] = int(record[1]) > 0
 
-    active = wait_until(
-        lambda: (lambda a: a if a and target not in a else None)(active_validators()),
+    wait_until(
+        lambda: (lambda a: a if a and not any(target in k or k in target for k in a) else None)(
+            active_validators()
+        ),
         args.timeout, args.poll, "the jailed validator leaves the active snapshot",
     )
-    observations["active_after_jail"] = active
-    checks["target_excluded_from_active_after_jail"] = target not in active
-    pool = bonds()
-    active_bonds = {key: int(pool[key]) for key in active if key in pool}
+    jailed = snapshot()
+    observations["after_jail"] = jailed
+    checks["target_excluded_from_active_after_jail"] = not any(
+        target in key or key in target for key in jailed["active"]
+    )
+    pool = jailed["bonds"]
+    active_bonds = {
+        key: int(pool[key]) for key in jailed["active"] if key in pool
+    }
     total_active = sum(active_bonds.values())
     observations["active_bonds"] = active_bonds
     observations["total_active"] = total_active
     checks["active_denominator_is_900"] = total_active == 900
 
-    window = wait_until(lambda: vote_state(target), args.timeout, args.poll, "vote window")
-    checks["vote_window_opens_with_margin"] = window is not None and int(window["remaining"]) >= 2
-
-    submit_signed(vote_term(target), latest_height())
-    propose()
-    first = wait_until(
-        lambda: (lambda w: w if w and w["ballots"].get(keys[0]) else None)(vote_state(target)),
-        args.timeout, args.poll, "validator 0's ballot is recorded",
+    window = wait_until(
+        lambda: (lambda w: w if w and int(w["remaining"]) >= window_margin(config) else None)(
+            vote_state(target)
+        ),
+        args.timeout, args.poll, "vote window opens with margin",
     )
-    observations["votes_after_first_ballot"] = first
-    checks["first_ballot_recorded"] = bool(first["ballots"].get(keys[0]))
+    observations["vote_window"] = window
+    checks["vote_window_opens_with_margin"] = int(window["remaining"]) >= window_margin(config)
 
-    # A boundary must tally. The jail clock only moves at an advancing boundary, and the ballot is
-    # already in state, so a decrement proves this ballot was in the tally.
-    jail_at_ballot = target_record(liveness(), target)
-    boundary = wait_until(
-        lambda: (lambda r: r if r and jail_at_ballot and int(r[1]) < int(jail_at_ballot[1]) else None)(
-            target_record(liveness(), target)),
+    jail_before_vote = int(target_record(liveness(), target)[1])
+    first = vote_once(target, 0, config, args)
+    observations["first_vote"] = first
+    checks["first_vote_deploy_committed"] = first.get("outcome") == "committed"
+    checks["first_vote_deploy_not_rejected"] = not first.get("rejected_in")
+    if first.get("outcome") != "committed":
+        inconclusive.append(f"first ballot not cast: {first.get('outcome')}")
+        return checks, observations, inconclusive
+    if first.get("finalized_votes") is None:
+        inconclusive.append("first window closed before the finalised read")
+        return checks, observations, inconclusive
+    checks["first_ballot_recorded"] = not keys_missing(first.get("finalized_ballots", []), 0)
+
+    # A boundary must advance the clock. The jail clock only moves at an advancing boundary; the
+    # tally's content is asserted next, on the pinned state at that boundary: if the ballot were
+    # lost, `first_ballot_is_exactly_two_thirds` would read an empty map.
+    wait_until(
+        lambda: True
+        if (lambda rec: rec and int(rec[1]) < jail_before_vote)(
+            target_record(liveness(), target)
+        )
+        else None,
         args.timeout, args.poll, "a boundary tallies the first ballot",
     )
-    observations["jail_after_first_tally"] = boundary
-    observations["bonds_after_first_tally"] = bonds()
-    tally_window = vote_state(target)
+    tallied = snapshot()
+    observations["after_first_tally"] = tallied
+    tally_window = vote_state(target, tallied["anchor"])
     observations["votes_after_first_tally"] = tally_window
+    if tally_window is None:
+        inconclusive.append("window closed before the first tally was observed")
+        return checks, observations, inconclusive
     first_for_stake = for_stake(tally_window["ballots"], active_bonds)
     observations["first_for_stake"] = first_for_stake
     checks["first_ballot_is_exactly_two_thirds"] = first_for_stake * 3 == total_active * 2
     checks["target_bond_unchanged_at_exactly_two_thirds"] = (
-        target_record(bonds(), target) == target_record(baseline_bonds, target)
+        target_record(tallied["bonds"], target) == baseline_stake
     )
-    second_window = vote_state(target)
     checks["vote_window_still_open_after_first_tally"] = (
-        second_window is not None and int(second_window["remaining"]) >= 2
+        tally_window is not None and int(tally_window["remaining"]) >= 2
     )
 
-    submit_signed(vote_term(target), latest_height(), validator=1)
-    propose()
-    second = wait_until(
-        lambda: (lambda w: w if w and w["ballots"].get(keys[1]) else None)(vote_state(target)),
-        args.timeout, args.poll, "validator 1's ballot is recorded",
+    second = vote_once(
+        target, 1, config, args, after_height=first["height"], earlier_voters=(0,)
     )
-    observations["votes_after_second_ballot"] = second
-    checks["second_ballot_recorded"] = bool(second["ballots"].get(keys[1]))
-    second_for_stake = for_stake(second["ballots"], active_bonds)
+    observations["second_vote"] = second
+    checks["second_vote_deploy_committed"] = second.get("outcome") == "committed"
+    checks["second_vote_deploy_not_rejected"] = not second.get("rejected_in")
+    if second.get("outcome") != "committed":
+        inconclusive.append(f"second ballot not cast: {second.get('outcome')}")
+        return checks, observations, inconclusive
+    observations["second_voter_stale_snapshot"] = second.get("stale_snapshot")
+    if second.get("finalized_votes") is None:
+        inconclusive.append("second window closed before the finalised read")
+        return checks, observations, inconclusive
+    checks["second_ballot_recorded"] = not keys_missing(second.get("finalized_ballots", []), 1)
+    checks["both_ballots_in_finalised_state"] = not keys_missing(
+        second.get("finalized_ballots", []), 0
+    ) and not keys_missing(second.get("finalized_ballots", []), 1)
+    second_for_stake = for_stake(second["finalized_votes"]["ballots"], active_bonds)
     observations["second_for_stake"] = second_for_stake
     checks["second_ballot_is_strict_supermajority"] = second_for_stake * 3 > total_active * 2
 
     wait_until(
-        lambda: True if target not in bonds() else None,
+        lambda: True if target_record(bonds(), target) is None else None,
         args.timeout, args.poll, "the strict supermajority slashes the bond",
     )
-    observations["bonds_after_slash"] = bonds()
-    checks["second_vote_slashed_the_bond"] = target not in bonds()
-    checks["liveness_record_cleared_after_slash"] = target_record(liveness(), target) is None
-    checks["vote_window_closed_after_slash"] = vote_state(target) is None
-    return checks, observations
+    after = snapshot()
+    observations["after_slash"] = after
+    checks["second_vote_slashed_the_bond"] = target_record(after["bonds"], target) is None
+    checks["liveness_record_cleared_after_slash"] = target_record(after["liveness"], target) is None
+    checks["vote_window_closed_after_slash"] = vote_state(target, after["anchor"]) is None
+    if second.get("missing_ballot"):
+        inconclusive.append(second["missing_ballot"])
+    return checks, observations, inconclusive
 
 
-def run_stall_arm(keys: list[str], args) -> tuple[dict, dict]:
+def run_stall_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, dict, list[str]]:
     checks: dict[str, bool] = {}
     observations: dict = {}
     for i in (1, 2, 3):
@@ -496,48 +795,48 @@ def run_stall_arm(keys: list[str], args) -> tuple[dict, dict]:
                                       args.timeout, args.poll, "finality quiesces below quorum")
     if frozen_height is None:
         raise RuntimeError("finalizedHeight was never readable while waiting for quiescence")
-    before = {
-        "health": health(),
-        "pos": pos_status(),
-        "liveness": liveness(),
-        "bonds": bonds(),
-    }
+    before = snapshot()
+    before["health"] = health()
+    before["pos"] = pos_status()
     time.sleep(STALL_WINDOW_S)
-    after = {
-        "health": health(),
-        "pos": pos_status(),
-        "liveness": liveness(),
-        "bonds": bonds(),
-    }
+    after = snapshot()
+    after["health"] = health()
+    after["pos"] = pos_status()
     observations["before"] = before
     observations["after"] = after
     observations["note"] = (
         "pos.epoch derives from DAG height, which the surviving proposer may keep extending; the "
-        "quorum claim is measured on /health.finalizedHeight and the liveness counters."
+        "quorum claim is measured on /health.finalizedHeight, the finalised anchor and the liveness "
+        "counters."
     )
     checks["finalized_height_frozen_below_quorum"] = (
         before["health"].get("finalizedHeight") == after["health"].get("finalizedHeight")
+    )
+    checks["finalized_anchor_unchanged_below_quorum"] = (
+        before["anchor"].get("hash") == after["anchor"].get("hash")
     )
     checks["liveness_counters_frozen_below_quorum"] = before["liveness"] == after["liveness"]
     checks["no_jail_below_quorum"] = not any(
         len(record) > 1 and int(record[1]) > 0 for record in after["liveness"].values()
     )
-    return checks, observations
+    return checks, observations, []
 
 
-def run_restart_expiry_arm(keys: list[str], args) -> tuple[dict, dict]:
+def run_restart_expiry_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, dict, list[str]]:
     checks: dict[str, bool] = {}
     observations: dict = {}
     target = keys[3]
-    baseline_bonds = bonds()
-    observations["bonds_before"] = baseline_bonds
-    baseline_stake = target_record(baseline_bonds, target)
+    baseline = snapshot()
+    observations["baseline"] = baseline
+    baseline_stake = target_record(baseline["bonds"], target)
 
     run(["tools/devnet.sh", "stop", "3"])
     first = wait_for_jail(target, args)
     observations["first_jail"] = first
+    jailed = snapshot()
+    observations["after_first_jail"] = jailed
     checks["first_jail_imposed"] = int(first[1]) > 0
-    checks["bond_untouched_by_first_jail"] = target_record(bonds(), target) == baseline_stake
+    checks["bond_untouched_by_first_jail"] = target_record(jailed["bonds"], target) == baseline_stake
 
     restart_height = latest_height()
     observations["restart_height"] = restart_height
@@ -552,10 +851,8 @@ def run_restart_expiry_arm(keys: list[str], args) -> tuple[dict, dict]:
     )
     observations["restarted_block"] = block
     checks["restarted_validator_spoke"] = block is not None
-    signed_height = int(block.get("blockNumber", -1))
-    observations["restarted_signed_height"] = signed_height
     wait_until(
-        lambda: True if int(health().get("finalizedHeight", 0)) >= signed_height else None,
+        lambda: True if is_finalized(block) else None,
         args.timeout, args.poll, "the restarted validator's block reaches finality",
     )
     checks["restarted_block_finalized"] = True
@@ -564,16 +861,13 @@ def run_restart_expiry_arm(keys: list[str], args) -> tuple[dict, dict]:
         lambda: True if target_record(liveness(), target) is None else None,
         args.timeout, args.poll, "the restarted validator is released",
     )
-    observations["liveness_after_release"] = liveness()
-    observations["bonds_after_release"] = bonds()
-    checks["released_after_term"] = target_record(liveness(), target) is None
-    released_active = wait_until(
-        lambda: (lambda a: a if a and target in a else None)(active_validators()),
-        args.timeout, args.poll, "the released validator is drawn again",
+    released = snapshot()
+    observations["after_release"] = released
+    checks["released_after_term"] = target_record(released["liveness"], target) is None
+    checks["target_reentered_active"] = any(
+        target in key or key in target for key in released["active"]
     )
-    observations["active_after_release"] = released_active
-    checks["target_reentered_active"] = target in released_active
-    checks["bond_untouched_by_release"] = target_record(bonds(), target) == baseline_stake
+    checks["bond_untouched_by_release"] = target_record(released["bonds"], target) == baseline_stake
 
     renewals_before = count_log(bootstrap_log(), "renewed the jail on")
     run(["tools/devnet.sh", "stop", "3"])
@@ -587,13 +881,16 @@ def run_restart_expiry_arm(keys: list[str], args) -> tuple[dict, dict]:
         else None,
         args.timeout, args.poll, "the jail renews while the validator stays silent",
     )
-    renewed = target_record(liveness(), target)
-    observations["renewed_record"] = renewed
+    renewed = snapshot()
+    observations["after_renewal"] = renewed
     observations["renewal_lines"] = count_log(bootstrap_log(), "renewed the jail on") - renewals_before
-    checks["jail_renewed_when_still_absent"] = bool(renewed) and int(renewed[1]) > 0
-    checks["bond_untouched_by_renewal"] = target_record(bonds(), target) == baseline_stake
-    checks["target_not_drawn_while_jailed"] = target not in active_validators()
-    return checks, observations
+    records = renewed["liveness"]
+    checks["jail_renewed_when_still_absent"] = target_is_jailed(records, target)
+    checks["bond_untouched_by_renewal"] = target_record(renewed["bonds"], target) == baseline_stake
+    checks["target_not_drawn_while_jailed"] = not any(
+        target in key or key in target for key in renewed["active"]
+    )
+    return checks, observations, []
 
 
 ARMS = {
@@ -634,8 +931,9 @@ def main() -> int:
 
     wait_until(ready, args.timeout, args.poll, "devnet ready")
 
+    inconclusive: list[str] = []
     try:
-        checks, observations = ARMS[args.arm](keys, args)
+        checks, observations, inconclusive = ARMS[args.arm](keys, args, config)
     except (TimeoutError, RuntimeError) as exc:
         # A failed arm is a result, not a missing record: keep the evidence that shows why.
         observations = {"error": str(exc)}
@@ -647,7 +945,14 @@ def main() -> int:
     except subprocess.CalledProcessError as exc:
         observations["log_error"] = str(exc)
 
-    verdict_hint = "PASS" if checks and all(checks.values()) else "FAIL"
+    if checks and not all(checks.values()):
+        verdict_hint = "FAIL"
+    elif inconclusive:
+        verdict_hint = "INCONCLUSIVE"
+    elif checks:
+        verdict_hint = "PASS"
+    else:
+        verdict_hint = "FAIL"
     result = {
         "tool": "liveness-enforcement-drill.py",
         "arm": args.arm,
@@ -656,6 +961,7 @@ def main() -> int:
         "epoch_length": EPOCH_LENGTH,
         "checks": checks,
         "observations": observations,
+        "inconclusive": inconclusive,
         "verdict_hint": verdict_hint,
         "execution_proven": False,
     }
@@ -665,4 +971,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
