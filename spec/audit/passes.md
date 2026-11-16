@@ -13256,6 +13256,12 @@ claim, and no row is promoted on one.
 
 **What this pass does not do.** It does not close C301's 30-process contract layer; it does not close
 the live-evidence rows (C343/C344/C357, the mature-chain measurement); and it does not turn
-operator/tool policy into laws. U15-02's soft-checkpoint base, Law 15's general sentinel comparison
-and Law 37's fast-path modelling remain owed, with their missing items named in the PR's closure
-list.
+operator/tool policy into laws. Three mathematical items stay owed, each with its missing piece named:
+
+- **U15-02** — the soft checkpoint's base is not a field of the overlay model (`Rchain/RSpace/`); the
+  fold/drain cannot be stated relative to a base that does not exist.
+- **Law 15** — the row proves `the_comparison_holds_on_fold5`; the general `the_comparison_holds` over
+  every fork-free fold is the missing theorem.
+- **Law 37** — the fast path is a *modelling* item, not a missing lemma: `spatial_match` short-circuits
+  at `if !pattern.connective_used { pattern == target }` (`spatial_matcher.rs:235-237`), which the
+  clauses do not include.
