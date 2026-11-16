@@ -4123,6 +4123,32 @@ def lawsC : List Law := [
       **F-U17-11** (docs/src/spec/failure-hazop.md): the root half landed earlier; the index half is \
       B39, and its rule is that stale rows are derived from the **surviving** block set, not from the \
       list the current call happened to drop." },
+  { number := 72, clause := "b", layer := "Casper",
+    statement := "**A completion record is released only from the completed phase.** The catch-up \
+      release — the marker is cleared once the frontier passes the anchor it rewound to — may clear a \
+      record only when every effect it brackets has been applied, so a release cannot hide a partial \
+      reset.",
+    status := .provedModel,
+    formal := `Rchain.law72b_statement,
+    mutant := `Rchain.law72b_mutant,
+    falsifier := `Rchain.law72b_falsifier,
+    declarations := [`Rchain.releaseStep, `Rchain.resetReleaseStep, `Rchain.law72b_statement,
+      `Rchain.law72b, `Rchain.law72b_falsifier, `Rchain.a_completed_reset_can_be_released],
+    axioms := [],
+    rust := ["casper/src/engine/catchup.rs", "casper/src/engine/reset.rs", "casper/src/dag.rs"],
+    rustWitness := ["casper/tests/reset.rs:a_crash_after_the_rewind_is_repaired_at_boot_by_the_marker"],
+    witness := [`Rchain.law72b_falsifier, `Rchain.a_completed_reset_can_be_released],
+    falsifiable := "`unsafeReleaseStep` drops the `phase = .rewound` requirement, and \
+      `law72b_falsifier` exhibits a reachable `rewinding` state released by it — the partial reset the \
+      guarded rule forbids. The catch-up branch's condition (`frontier > marker.height`) is the `rust` \
+      anchor; the marker test pins the `Rewound` semantics the release depends on.",
+    note := "**The release condition is the walk's own result, not its exit reason** \
+      (`casper/src/engine/catchup.rs:273-299`): a walk that ended with nothing above the anchor — a \
+      silent peer, a closed door — leaves the marker, so the next boot re-enters the guard. The model \
+      states the safety half: release starts only from `rewound`, so the marker cannot be cleared while \
+      an effect is missing. **What it does not model:** the frontier itself is a `Nat` hypothesis, not a \
+      walk; the walk's liveness is Law 71's. **HAZOP U12-02** asked when the record may be cleared; the \
+      answer is this clause plus the status surface (C287), not an unbounded lifetime." },
 
   { number := 73, layer := "Casper",
     statement := "**A raised request is not spent until the act commits.** The self-reset's request cell \

@@ -227,4 +227,77 @@ theorem a_skipped_index_cleanup_reaches_a_record_that_lies :
       (Relation.ReflTransGen.tail
         (Relation.ReflTransGen.tail (Relation.ReflTransGen.single h1) h2) h3) h4) h5
 
+/-! ## 72b — the release condition
+
+A completed record is released by the catch-up walk once the frontier has passed the anchor the reset
+rewound to (`casper/src/engine/catchup.rs:273-299`: the condition is `frontier > marker.height`, the
+walk's own result and not its exit reason). The model states the safety half: a release starts only from
+`rewound`, so it cannot hide a partially applied reset. -/
+
+/-- **The release transition.** The catch-up release clears a marker only when the frontier has passed
+the anchor (`anchor < frontier`) and the record is completed. The target is the initial state: no record,
+no effects — which is safe precisely because the source had every effect. -/
+def releaseStep (frontier anchor : Nat) (s s' : ResetState) : Prop :=
+  s.phase = .rewound ∧ anchor < frontier ∧ s' = resetInitial
+
+/-- The reset with the catch-up release: the port's own steps plus the release. -/
+def resetReleaseStep (frontier anchor : Nat) (s s' : ResetState) : Prop :=
+  resetStep s s' ∨ releaseStep frontier anchor s s'
+
+/-- **72b — release cannot hide a partial reset.** Every reachable state whose record is `rewound` has
+all four effects applied; the release only starts from such a state. Proved per step: the only step
+that writes `rewound` demands all four effects, and the release's source is `rewound`. -/
+theorem a_release_never_hides_a_partial_reset (frontier anchor : Nat) (σ : ResetState)
+    (hr : Relation.ReflTransGen (resetReleaseStep frontier anchor) resetInitial σ)
+    (hph : σ.phase = .rewound) :
+    σ.rewound = true ∧ σ.purged = true ∧ σ.rooted = true ∧ σ.indexed = true := by
+  induction hr with
+  | refl => exact absurd hph (by simp [resetInitial])
+  | tail _ hstep _ =>
+    rcases hstep with hs | hrl
+    · exact step_target_has_completion _ _ hs hph
+    · obtain ⟨_, _, hEq⟩ := hrl
+      rw [hEq] at hph
+      exact absurd hph (by simp [resetInitial])
+
+/-- The law as a named proposition, for the register's `formal` field. -/
+def law72b_statement : Prop :=
+  ∀ (frontier anchor : Nat) (σ : ResetState),
+    Relation.ReflTransGen (resetReleaseStep frontier anchor) resetInitial σ →
+    σ.phase = .rewound →
+    σ.rewound = true ∧ σ.purged = true ∧ σ.rooted = true ∧ σ.indexed = true
+
+/-- The law. -/
+theorem law72b : law72b_statement :=
+  fun frontier anchor σ hr hph => a_release_never_hides_a_partial_reset frontier anchor σ hr hph
+
+/-- **The defect mutant:** a release with no completion requirement — the marker may be cleared from
+any phase, including `rewinding`. -/
+def unsafeReleaseStep (frontier anchor : Nat) (s s' : ResetState) : Prop :=
+  anchor < frontier ∧ s' = resetInitial
+
+/-- The mutant proposition: a partially applied reset can be released under the unguarded rule. -/
+def law72b_mutant : Prop :=
+  ∃ (frontier anchor : Nat) (σ : ResetState),
+    Relation.ReflTransGen (fun s s' => resetStep s s' ∨ unsafeReleaseStep frontier anchor s s')
+      resetInitial σ ∧
+    σ.phase = .rewinding ∧ unsafeReleaseStep frontier anchor σ resetInitial
+
+/-- **The falsifier: the unguarded rule releases a partial reset.** Start a reset, then clear the
+marker with only the intent written — the state the guarded rule forbids. So the `phase = .rewound`
+conjunct is load-bearing, not decoration. -/
+theorem law72b_falsifier : law72b_mutant := by
+  refine ⟨10, 0, ⟨.rewinding, false, false, false, false⟩, ?_, rfl, ?_⟩
+  · exact Relation.ReflTransGen.single (Or.inl (Or.inl ⟨rfl, rfl⟩))
+  · exact ⟨by decide, rfl⟩
+
+/-- Non-vacuity: the guarded rule does release a completed reset. -/
+theorem a_completed_reset_can_be_released (frontier anchor : Nat) (h : anchor < frontier) :
+    ∃ σ, Relation.ReflTransGen (resetReleaseStep frontier anchor) resetInitial σ ∧ σ.phase = .idle := by
+  obtain ⟨σ, hσ, hrew, _, _, _, _⟩ := a_reset_can_complete
+  refine ⟨resetInitial, ?_, rfl⟩
+  have htrace : Relation.ReflTransGen (resetReleaseStep frontier anchor) resetInitial σ :=
+    hσ.mono (fun _ _ hs => Or.inl hs)
+  exact htrace.tail (Or.inr ⟨hrew, h, rfl⟩)
+
 end Rchain
