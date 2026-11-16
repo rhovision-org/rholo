@@ -287,7 +287,7 @@ def pos_status(port: int = HTTP_BASE) -> dict:
     return http_json(port, "/api/v1/pos")
 
 
-def recent_blocks(depth: int = 100, port: int = HTTP_BASE) -> list:
+def recent_blocks(depth: int = 50, port: int = HTTP_BASE) -> list:
     body = http_json(port, f"/api/blocks/{depth}")
     if isinstance(body, dict):
         body = body.get("blocks", [])
@@ -396,8 +396,11 @@ def deploy_status(deploy: dict):
     return None
 
 
-def rejected_in_dag(deploy_id: str, depth: int = 100) -> list:
-    """Blocks whose `rejectedDeploys` names this deploy — the merge-loss instrument."""
+def rejected_in_dag(deploy_id: str, depth: int = 50) -> list:
+    """Blocks whose `rejectedDeploys` names this deploy — the merge-loss instrument.
+
+    The node caps `/api/blocks/{depth}` at 50 ("Your request depth 100 exceed the max limit 50").
+    """
     wanted = deploy_id.lower()
     found = []
     for block in recent_blocks(depth):
