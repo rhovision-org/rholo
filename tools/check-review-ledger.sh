@@ -76,7 +76,26 @@ done < <(awk -F'\t' '$1 != "ceiling" && $1 !~ /^#/' "$LEDGER")
 printf '  ok    every T1 row names something that exists (%s row(s))\n' \
   "$(awk -F'\t' '$3 == "T1"' "$LEDGER" | wc -l)"
 
-# --- 3. the census' completeness, reported ---------------------------------------------------------
+# --- 3. the process roster is the code's roster ----------------------------------------------------
+# **The contract layer's roster is derived, not hand-maintained** (C301's close-out). A review that is
+# a list of names is only as good as the list: the ledger held 30 process rows while the node
+# installed 31 definitions — `rho:rchain:ertp:ledger` (issue #249) had no row — which is exactly the
+# drift the roster-self row recorded and nothing refused. The set is read from the `urn:` strings in
+# the definitions the node installs, so a new system process, a removed one, or a renamed URN fails
+# here until the ledger is updated. The config and tool rosters remain authored: their ids are not
+# the tree's names (a ledger `api-host` is `api-server.host`), and a derivation that guessed the
+# mapping would be the bookkeeping gate this check exists to avoid.
+derived_processes=$(grep -oE 'urn: "[^"]+"' rholang/src/system_processes.rs | cut -d'"' -f2 | sort -u)
+ledgered_processes=$(awk -F'\t' '$1 == "process" { print $2 }' "$LEDGER" | sort -u)
+process_diff=$(comm -3 <(printf '%s\n' "$derived_processes") <(printf '%s\n' "$ledgered_processes"))
+if [[ -n "$process_diff" ]]; then
+  fail "the process roster differs from the code (left: code, right: ledger): $(printf '%s ' "$process_diff")"
+else
+  printf '  ok    the process roster is the code'"'"'s (%s URN(s))\n' \
+    "$(printf '%s\n' "$derived_processes" | wc -l)"
+fi
+
+# --- 4. the census' completeness, reported ---------------------------------------------------------
 # Not a gate, by the reasoning in the header. But it is the number that says whether the roster is
 # current, and a number nobody prints is the silence this whole register keeps replacing.
 git ls-files '*.rs' | grep -v '^legacy/' | sort > /tmp/ledger_tracked.$$
@@ -103,4 +122,4 @@ EOF
   exit 0
 fi
 
-echo "check-review-ledger: the ceilings match their rows and every T1 row names something real."
+echo "check-review-ledger: the ceilings match their rows, every T1 row names something real, and the process roster is the code's."
