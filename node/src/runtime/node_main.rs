@@ -258,6 +258,14 @@ fn decrypt_key_from_pem_file(
     console: &mut dyn ConsoleIo,
     path: &Path,
 ) -> Result<PrivateKey, Vec<String>> {
+    // **A bare base16 scalar, or an unencrypted PKCS#8 PEM, needs no password.** The node's own
+    // validator loader accepts both (`load_validator_private_key`), and the disposable devnets
+    // write a 64-hex `validator.hex`; the deploy CLI must read the same file non-interactively or
+    // a signed drill deploy blocks on a console prompt that cannot exist in `docker exec` (C344's
+    // vote step). An encrypted PEM falls through to the environment/console password below.
+    if let Ok(key) = rchain_crypto::util::key_util::load_validator_private_key(path) {
+        return Ok(key);
+    }
     let password = get_validator_password(console);
     Secp256k1::parse_pem_file(path, &password).map_err(|e| vec![e])
 }
@@ -435,6 +443,30 @@ mod tests {
         )
         .expect_err("bad path");
         assert_eq!(err.len(), 1, "{err:?}");
+    }
+
+    /// **A hex keyfile is read without a password prompt** (C344's signed drill deploy). The devnet
+    /// writes a 64-character `validator.hex`, and `docker exec` has no terminal to answer a prompt.
+    #[cfg(unix)]
+    #[test]
+    fn a_hex_keyfile_is_read_without_a_console_password() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir("hex-keyfile");
+        let path = dir.join("validator.hex");
+        let hex = rchain_shared::base16::encode(&[7u8; 32]);
+        std::fs::write(&path, format!("{hex}\n")).expect("write the keyfile");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .expect("owner-only keyfile");
+
+        let mut console = ScriptedConsole::default();
+        let key = resolve_private_key(None, Some(&path), &mut console).expect("hex keyfile");
+        assert_eq!(key.bytes(), &[7u8; 32]);
+        assert!(
+            console.printed().is_empty(),
+            "a hex scalar must not prompt for a password"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `--generate-key` refuses an empty password and re-prompts on a mismatch, so a mistyped

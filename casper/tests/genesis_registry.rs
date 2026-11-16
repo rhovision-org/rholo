@@ -563,6 +563,92 @@ fn a_multisig_vault_spends_through_the_contract_that_holds_it() {
     });
 }
 
+/// The published surface's `extractState` arm, called the way a stranger calls it: look the contract
+/// up through the registry, send the method, and read what comes back. The reply names the contract's
+/// own private `new` name, which is the secret `AuthKey`'s `check` compares against.
+const AUTH_KEY_SURFACE_PROBE: &str = r#"new rl(`rho:registry:lookup`), akCh, msvCh,
+       makeRet, akByName, msvByName in {
+     rl!(`rho:rchain:authKey`, *akCh) |
+     rl!(`rho:rchain:multiSigRevVault`, *msvCh) |
+     for (@(_, *AuthKey) <- akCh & @(_, *MultiSigRevVault) <- msvCh) {
+       @"out"!("authkey-lookup") | @"out"!("msv-lookup") |
+       AuthKey!("make", "probe-shape", *makeRet) |
+       for (@_ <- makeRet) { @"out"!("make-answered") } |
+       @(*AuthKey, "extractState")!(*akByName) |
+       @(*MultiSigRevVault, "extractState")!(*msvByName) |
+       for (@ak <- akByName & @msv <- msvByName) {
+         @"out"!("private-name-reply")
+       }
+     }
+   }"#;
+
+/// **A1, corrected by the arm.** The evidence claimed the published `bundle+` exposes the
+/// `extractState` arms, which return `_authKey` and `_multiSigRevVault`. It does not: those arms
+/// listen on `@(*AuthKey, "extractState")`, a name **derived from the private name**, while the
+/// registry hands out `bundle+{*AuthKey}`, and a bundle is a different name. The probe below proves
+/// the surface is live (`make` answers and both lookups fire) and that neither the public method
+/// call nor the derived-name attempt receives a private name.
+#[test]
+fn the_published_auth_key_surface_does_not_hand_out_its_private_names() {
+    with_big_stack(async {
+        let rm = build_runtime_manager().await;
+        let rand = fixed_rand();
+
+        let mut terms = default_blessed_terms(
+            &proof_of_stake(),
+            &Registry {
+                system_contract_pub_key: String::new(),
+            },
+            &[],
+            "root",
+            &ceremony_identity(),
+        )
+        .expect("the blessed term list builds");
+        terms.push(deploy(AUTH_KEY_SURFACE_PROBE));
+
+        let (_, _, results) = rm
+            .compute_genesis(
+                &terms,
+                &rand,
+                BlockData::empty(),
+                &PosGenesis::default(),
+                &[],
+            )
+            .await
+            .expect("compute_genesis");
+        for (i, r) in results.iter().enumerate() {
+            assert!(
+                r.eval_result.succeeded(),
+                "genesis deploy #{i} failed: {:?}",
+                r.eval_result.errors
+            );
+        }
+
+        let produced = rm
+            .runtime()
+            .get_data_par(&rchain_models::sorted::SortedProc::new(
+                rchain_models::par_ops::from_expr(rchain_models::ast::Expr::GString(
+                    "out".to_string(),
+                )),
+            ))
+            .await
+            .expect("read the surface probe's output channel");
+        let text = format!("{produced:?}");
+        assert!(
+            text.contains("authkey-lookup")
+                && text.contains("msv-lookup")
+                && text.contains("make-answered"),
+            "the published surface must be live for the negative to mean anything: {text}"
+        );
+        assert!(
+            !text.contains("private-name-reply")
+                && !text.contains("authKeyUnf")
+                && !text.contains("multiSigVaultUnf"),
+            "the private-name arms must not be reachable from the published bundle: {text}"
+        );
+    });
+}
+
 #[test]
 fn the_seeded_registry_is_identical_across_fresh_genesis_ceremonies() {
     with_big_stack(async {

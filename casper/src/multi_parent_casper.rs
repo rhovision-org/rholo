@@ -25,8 +25,8 @@ use crate::interpreter_util::{
     ValidationOrigin,
 };
 use crate::merging::{
-    BlockIndex, DeployChainIndex, MergeOutcome, MergeReport, MergeScope, ParentsMergedState,
-    RejectionsMap,
+    is_system_deploy_id, BlockIndex, DeployChainIndex, MergeOutcome, MergeReport, MergeScope,
+    ParentsMergedState, RejectionsMap,
 };
 use crate::rholang::ReplayFailure;
 use crate::runtime_manager::RuntimeManager;
@@ -250,9 +250,18 @@ pub async fn final_scope_rejections(
             .collect();
         let newly_finalized = message_map::between(msg_map, &meta.fringe, &previous);
         for member in newly_finalized.intersection(final_scope) {
-            map.entry(*member)
-                .or_default()
-                .extend(block.rejected_deploys.iter().cloned());
+            // **A close chain is not a rejected user deploy** (C344). `rejected_deploys` can carry
+            // the 33-byte `blockHash ++ 02` id of a CloseBlock system deploy; the merge reads a
+            // chain's first id, so propagating it would reject the close chain and drop its native
+            // writes — the liveness anchor among them. The merge also refuses to reject a system
+            // chain; this is the derivation-side half, so the map never carries the id at all.
+            map.entry(*member).or_default().extend(
+                block
+                    .rejected_deploys
+                    .iter()
+                    .filter(|id| !is_system_deploy_id(id))
+                    .cloned(),
+            );
         }
     }
     Ok(map)
@@ -843,6 +852,7 @@ pub async fn clear_own_failure_record<F, Fut>(
     sender: &Validator,
     log: &Arc<dyn Log>,
     health: &ShardHealth,
+    accepted_window: Option<&crate::engine::anchor::SharedAcceptedWindow>,
 ) -> bool
 where
     F: Fn(BlockHash) -> Fut,
@@ -956,6 +966,13 @@ where
         let committed = record.clone();
         match dag.update_metadata(record).await {
             Ok(()) if cleared => {
+                // **The restored own block is a validated justification again** (C402), so a block
+                // that justifies it is not refused by the ancestry gate before the restore can run.
+                if let Some(window) = accepted_window {
+                    if let Some(window) = window.write().await.as_mut() {
+                        window.note_roots(&committed);
+                    }
+                }
                 log.warn(
                     source,
                     &format!(
@@ -1389,6 +1406,7 @@ async fn restore_divergent_justifications<F, Fut>(
     block_index: &F,
     log: &Arc<dyn Log>,
     health: &ShardHealth,
+    accepted_window: Option<&crate::engine::anchor::SharedAcceptedWindow>,
 ) where
     F: Fn(BlockHash) -> Fut,
     Fut: std::future::Future<Output = Result<Arc<BlockIndex>, String>>,
@@ -1498,6 +1516,14 @@ async fn restore_divergent_justifications<F, Fut>(
         note_unrestorable_if_exhausted(dag, shard_id, &committed, j, source, log, health).await;
 
         if restored {
+            // **A restored record is a validated justification again** (C402). The gate's ancestry
+            // rule reads this set; without the note, a child that justified the restored block would
+            // be refused before the restore path could run.
+            if let Some(window) = accepted_window {
+                if let Some(window) = window.write().await.as_mut() {
+                    window.note_roots(&committed);
+                }
+            }
             log.warn(
                 source,
                 &format!(
@@ -1545,6 +1571,45 @@ where
         block_index,
         log,
         health,
+        None,
+        ValidationOrigin::Peer,
+    )
+    .await
+}
+
+/// **The inbound validation, with the accepted window threaded through the restore path.** A record
+/// restored from `validation_failed` to valid is a validated justification for later blocks, so the
+/// caller that owns the window must be able to note it (C402).
+#[allow(clippy::too_many_arguments)]
+pub async fn validate_with_window<F, Fut>(
+    dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
+    runtime: &RuntimeManager,
+    block: &BlockMessage,
+    shard_id: &str,
+    min_phlo_price: i64,
+    max_number_of_parents: i32,
+    block_index: &F,
+    log: &Arc<dyn Log>,
+    health: &ShardHealth,
+    accepted_window: Option<&crate::engine::anchor::SharedAcceptedWindow>,
+) -> Result<BlockMetadata, ValidateError>
+where
+    F: Fn(BlockHash) -> Fut,
+    Fut: std::future::Future<Output = Result<Arc<BlockIndex>, String>>,
+{
+    validate_with_origin(
+        dag,
+        block_store,
+        runtime,
+        block,
+        shard_id,
+        min_phlo_price,
+        max_number_of_parents,
+        block_index,
+        log,
+        health,
+        accepted_window,
         ValidationOrigin::Peer,
     )
     .await
@@ -1568,6 +1633,7 @@ pub async fn validate_with_origin<F, Fut>(
     block_index: &F,
     log: &Arc<dyn Log>,
     health: &ShardHealth,
+    accepted_window: Option<&crate::engine::anchor::SharedAcceptedWindow>,
     origin: ValidationOrigin,
 ) -> Result<BlockMetadata, ValidateError>
 where
@@ -1585,6 +1651,7 @@ where
         block_index,
         log,
         health,
+        accepted_window,
     )
     .await;
 

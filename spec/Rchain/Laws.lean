@@ -6497,6 +6497,8 @@ def lawsC : List Law := [
     rustWitness := [
       "casper/tests/n420_boundary_merge.rs:a_boundary_round_merge_keeps_the_base_states_user_write",
       "casper/tests/n420_boundary_merge.rs:merging_a_tuple_space_rmw_block_duplicates_its_produce",
+      "casper/tests/merge_determinism.rs:system_deploy_ids_are_not_final_scope_rejections",
+      "casper/tests/n420_boundary_merge.rs:a_final_scope_system_deploy_chain_is_not_rejected",
       "casper/src/merging.rs:a_non_empty_final_fringe_never_falls_back_to_genesis",
       "casper/src/merging.rs:a_non_descendant_conflict_block_widens_the_final_scope_to_the_closure"],
     witness := [`Rchain.FinalizedMerge.law113_falsifier,
@@ -6514,12 +6516,18 @@ def lawsC : List Law := [
       from the final fringe, `from_fringes` widens the final scope to the whole finalised closure, so \
       `native.conflicting` sees the older writer and the stale chain is rejected; the genesis fallback \
       keys on `final_fringe.is_empty()` (`merging.rs:1916-1922`). Both are pinned by the two \
-      `casper/src/merging.rs` tests. **What the Lean model does not cover:** native slots themselves \
-      (the guard is a code rule, not a theorem about `NativeStoreAction`), and the honest-quorum \
-      hypothesis (less than one third Byzantine) needed to lift the local merge invariant to \"every \
-      honest node's finalised write survives\". The Rust tie is the four tests above: base surviving, \
-      consume, the genesis fallback, and the closure widening. The rejected-slice arm is pinned by the \
-      Lean model, not yet by a Rust test." },
+      `casper/src/merging.rs` tests. **The C344 repair (Phase 1) adds the system-chain rule:** a \
+      finaliser's `rejected_deploys` can name a close chain by its 33-byte `blockHash ++ 02` id, and \
+      the merge's rejection test reads a chain's first id — so a system id would reject a \
+      consensus-mandated close chain and drop its native writes (the `pos:liveness-anchor` slot is \
+      the measured case). `final_scope_rejections` does not propagate a system id, and `merge` \
+      refuses to reject a system-deploy chain; the two tests above pin the derivation and the merge \
+      decision. **What the Lean model does not cover:** native slots themselves (the guard is a code \
+      rule, not a theorem about `NativeStoreAction`), and the honest-quorum hypothesis (less than one \
+      third Byzantine) needed to lift the local merge invariant to \"every honest node's finalised \
+      write survives\". The Rust tie is the six tests above: base surviving, consume, the two \
+      system-chain guards, the genesis fallback, and the closure widening. The rejected-slice arm is \
+      pinned by the Lean model, not yet by a Rust test." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

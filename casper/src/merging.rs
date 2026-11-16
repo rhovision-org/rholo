@@ -1118,6 +1118,15 @@ fn sys_deploy_id(block_hash: &BlockHash, prefix: u8) -> Vec<u8> {
     id
 }
 
+/// **A system deploy is not a user deploy.** Its id is `blockHash ++ prefix` (33 bytes: 32-byte
+/// block hash plus `1` Slash, `2` CloseBlock, `3` Empty); a user deploy id is a 32-byte
+/// Blake2b-256. A finaliser's `rejected_deploys` can name a close chain, and the merge's rejection
+/// test reads a chain's first deploy id — so propagating a system id would reject a
+/// consensus-mandated close chain and drop its native writes (C344: the liveness anchor).
+pub fn is_system_deploy_id(id: &[u8]) -> bool {
+    id.len() == 33 && matches!(id[32], 1..=3)
+}
+
 /// The in-memory block-index cache (port of `BlockIndex.cache`).
 ///
 /// Entries are `Arc`-shared rather than owned. A `BlockIndex` holds a `Vec<DeployChainIndex>` and each
@@ -2028,7 +2037,10 @@ impl MergeScope {
                 // Borrowed rather than cloned: only used for a set lookup below.
                 let first_id = chain.deploys_with_cost.iter().next().map(|d| &d.id);
                 let is_rejected = match (rejected, first_id) {
-                    (Some(rej), Some(id)) => rej.contains(id),
+                    // A system deploy is consensus-mandated: even a map that still names one must
+                    // not reject its chain (C344). The derivation filters them too; this is the
+                    // second layer, so no caller can reintroduce the drop.
+                    (Some(rej), Some(id)) => rej.contains(id) && !is_system_deploy_id(id),
                     _ => false,
                 };
                 if is_rejected {

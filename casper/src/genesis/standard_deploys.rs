@@ -411,6 +411,20 @@ fn auth_key_source() -> Result<String, String> {
 /// `MultiSigRevVault.rho`, adapted (see [`registry_epilogue_adapted`]).
 fn multi_sig_rev_vault_source() -> Result<String, String> {
     let source = MULTI_SIG_REV_VAULT_RHO.to_string();
+    // **A2.** The vendored source records which unsealer confirmed with `info.thn(0)` — a typo for
+    // the list method `info.nth(0)`. It is on the contract-and-unsealer authorisation branch, so the
+    // first unsealer confirmation fails rather than recording the confirmer. Correct the adapted
+    // term; the vendored original stays pristine as the provenance of the source. The marker is
+    // asserted so a source that moves (or a correction that is already upstream) fails loudly.
+    let typo = "unsealers.nth(info.thn(0))";
+    if !source.contains(typo) {
+        return Err(
+            "MultiSigRevVault.rho: the `info.thn(0)` marker is missing from the vendored source, so \
+             the A2 correction would silently do nothing"
+                .to_string(),
+        );
+    }
+    let source = source.replace(typo, "unsealers.nth(info.nth(0))");
     let marker =
         "    @systemContractManager!(\"createDispatcher\", *MultiSigRevVault, *dispatcherCh)|";
     // Its gate waits on the two channels this port does not have; the rest of it (`listOps`,
@@ -634,6 +648,27 @@ mod tests {
         let code = load_template("T.rhox", "contract( $$name$$ )", &[("name", "42")]);
         assert!(code.contains("contract( 42 )"));
         assert!(code.contains(" //Loaded from resource file <<T.rhox>>"));
+    }
+
+    /// **A2 is corrected at adaptation time, and the correction is pinned to the source marker.**
+    /// The vendored `MultiSigRevVault.rho` still contains `info.thn(0)`; the adapted term must not.
+    #[test]
+    fn the_adapted_multi_sig_vault_corrects_the_vendored_thn_typo() {
+        assert!(
+            MULTI_SIG_REV_VAULT_RHO.contains("unsealers.nth(info.thn(0))"),
+            "the vendored source is the provenance of the typo — if it moved, re-derive the \
+             correction instead of leaving it silently inert"
+        );
+        let adapted =
+            multi_sig_rev_vault_source().expect("the adapted MultiSigRevVault source builds");
+        assert!(
+            !adapted.contains("info.thn(0)"),
+            "the adapted term must not ship the `thn` typo"
+        );
+        assert!(
+            adapted.contains("unsealers.nth(info.nth(0))"),
+            "the adapted term must use the list method the branch intends"
+        );
     }
 
     #[test]

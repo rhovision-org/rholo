@@ -344,7 +344,8 @@ impl std::fmt::Display for BlockStatus {
             BlockStatus::UncertifiedPreState => {
                 "the block's pre-state is neither the accepted checkpoint root, nor a root in the \
                  certificate's validation window, nor a root this node derived from a validated \
-                 post-anchor block"
+                 post-anchor block, and its justifications are not all the anchor or blocks this \
+                 node validated"
             }
         };
         write!(f, "{s}")

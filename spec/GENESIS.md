@@ -334,3 +334,23 @@ post-state carries. Chain state produced before this commit stays valid — the 
 whatever it was — and the wire is unchanged: a 5-field `transfer` send matches the new pattern exactly
 as it matched the old one, which `casper/tests/determinism.rs` asserts as a fund *movement* rather
 than a reply.
+
+## The multi-sig adaptation corrects `info.thn(0)` (2026-11-16)
+
+**A consensus-visible change, and it is deliberate.** The vendored `MultiSigRevVault.rho` records
+which unsealer confirmed with `unsealers.nth(info.thn(0))` — `thn` is not a list method; the branch
+intended `nth`. The adapted genesis term now uses `info.nth(0)`
+(`standard_deploys.rs::multi_sig_rev_vault_source`), with the source marker asserted so a moved
+source fails loudly. The vendored original stays pristine as the provenance of the source, and
+`standard_deploys.rs::tests::the_adapted_multi_sig_vault_corrects_the_vendored_thn_typo` pins both
+sides. **A newly created chain's genesis deploy and post-state hash therefore differ** from a chain
+created by the previous binary; no existing chain is rewritten, and the `rho:id` is unchanged because
+it is derived from the fixed signing key, not the term.
+
+**What this does not fix.** The unsealer-confirmation branch is still unreachable: `verify` joins its
+public-key probe with the unsealer fold, and the probe sends `"challenge"` to a sealed box, which is a
+plain name with no receiver, so the join never fires. **C401** owns that repair; it is contract-layer
+and hard-fork class. The related A1 claim — that the published bundle leaks `_authKey` through
+`extractState` — is **refuted**: the extract arms are on names derived from the private name, not on
+the published bundle (`casper/tests/genesis_registry.rs::the_published_auth_key_surface_does_not_hand_out_its_private_names`),
+so no whitelist/removal change is made.

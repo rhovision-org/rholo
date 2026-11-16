@@ -1591,8 +1591,12 @@ async fn rebuild_window_from_dag(
     )
 }
 
-/// **Seed the runtime window with roots this node already derived above the anchor.** A restart's
-/// DAG holds post-anchor blocks whose children may arrive before this node produces a new block.
+/// **Seed the runtime window with the anchor's certified closure and its descendants.** A restart's
+/// DAG holds post-anchor blocks whose children may arrive before this node produces a new block, and
+/// the first post-checkpoint block may justify an ancestor below the anchor (a validator whose latest
+/// message the proposer had not seen). Both are committed history, not a store guess. A block above
+/// the anchor is seeded only when every justification is already seeded, so a fork that does not
+/// descend from the anchor cannot enter the window.
 async fn seed_derived_roots(
     dag: &dyn BlockDagStorage,
     anchor: &crate::engine::anchor::TrustAnchor,
@@ -1604,14 +1608,49 @@ async fn seed_derived_roots(
             verified.checkpoint.anchor_height
         }
     };
+    let anchor_block = anchor.block();
+    let mut seeded = BTreeSet::new();
+    if let crate::engine::anchor::TrustAnchor::Checkpoint { fringe, .. } = anchor {
+        // The certificate's finalized fringe is committed at the anchor height. A post-checkpoint
+        // block may justify one of these siblings even though it is not an ancestor of the anchor.
+        seeded.extend(fringe.iter().copied());
+    }
+
+    // The anchor's ancestor closure: certified history the first post-anchor block may justify.
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![anchor_block];
+    while let Some(hash) = stack.pop() {
+        if !seen.insert(hash) {
+            continue;
+        }
+        let metadata = dag.lookup(&hash).await?.ok_or_else(|| {
+            format!(
+                "the accepted anchor's ancestor {} has no DAG metadata, so its roots cannot be \
+                 seeded",
+                hash.to_hex()
+            )
+        })?;
+        window.note_roots(&metadata);
+        seeded.insert(hash);
+        stack.extend(metadata.justifications.iter().copied());
+    }
+
+    // The descendants above the anchor, in topological order. A block that is not rooted in the
+    // seeded closure is not a descendant and is not admitted.
     let representation = dag.get_representation().await;
     let topo = representation
         .topo_sort_unsafe(anchor_height + 1, None)
         .map_err(|e| format!("the DAG above the accepted anchor is unreadable: {e}"))?;
     for hashes in topo {
         for hash in hashes {
-            if let Some(metadata) = dag.lookup(&hash).await? {
+            let Some(metadata) = dag.lookup(&hash).await? else {
+                continue;
+            };
+            if !metadata.justifications.is_empty()
+                && metadata.justifications.iter().all(|j| seeded.contains(j))
+            {
                 window.note_roots(&metadata);
+                seeded.insert(hash);
             }
         }
     }
@@ -1710,11 +1749,22 @@ mod tests {
         async fn get_representation(
             &self,
         ) -> Arc<rchain_block_storage::dag::representation::DagRepresentation> {
+            let mut child_map: BTreeMap<BlockHash, BTreeSet<BlockHash>> = BTreeMap::new();
+            let mut height_map: BTreeMap<BlockHeight, BTreeSet<BlockHash>> = BTreeMap::new();
+            for (hash, metadata) in &self.by_hash {
+                height_map
+                    .entry(metadata.block_num)
+                    .or_default()
+                    .insert(*hash);
+                for justification in &metadata.justifications {
+                    child_map.entry(*justification).or_default().insert(*hash);
+                }
+            }
             Arc::new(
                 rchain_block_storage::dag::representation::DagRepresentation {
                     dag_set: Arc::new(self.by_hash.keys().copied().collect()),
-                    child_map: Arc::new(BTreeMap::new()),
-                    height_map: Arc::new(BTreeMap::new()),
+                    child_map: Arc::new(child_map),
+                    height_map: Arc::new(height_map),
                     dag_message_state:
                         rchain_block_storage::dag::message_state::DagMessageState::empty(),
                 },
@@ -1808,6 +1858,72 @@ mod tests {
             sig_algorithm: String::new(),
             member_of_fringe: None,
         }
+    }
+
+    /// **The boot seed is the anchor's closure and its descendants, not every block above the
+    /// anchor height.** A fork at the anchor height whose child is above the anchor must not become
+    /// an admissible justification.
+    #[tokio::test]
+    async fn the_boot_seeds_only_the_anchor_closure_and_its_descendants() {
+        use rchain_models::casper::protocol::checkpoint as model;
+
+        let genesis = header_meta(1, 0, &[], &[], 1, 1, 1);
+        let anchor = header_meta(2, 1, &[1], &[2], 1, 2, 3);
+        let fork = header_meta(4, 1, &[1], &[4], 1, 4, 5);
+        let descendant = header_meta(5, 2, &[2], &[2], 2, 5, 6);
+        let fork_child = header_meta(3, 2, &[4], &[4], 4, 3, 4);
+
+        let checkpoint = model::Checkpoint {
+            shard_id: "seed-test".to_string(),
+            anchor: anchor.block_hash.to_hex(),
+            anchor_height: 1,
+            anchor_post_state: rchain_shared::base16::encode(anchor.post_state_hash.as_bytes()),
+            fringe_hashes: vec![anchor.block_hash.to_hex()],
+            parent_digest: None,
+            epoch: 0,
+            metadata_root: None,
+            history_root: None,
+        };
+        let verified = crate::checkpoint::VerifiedCheckpoint {
+            checkpoint,
+            digest: Blake2b256Hash::create(b"seed-test"),
+            supporting_stake: 1,
+            total_stake: 1,
+        };
+        let state =
+            crate::engine::anchor::AcceptedState::from_certificate(verified, BTreeSet::new())
+                .expect("the checkpoint anchor");
+        let mut window = crate::engine::anchor::AcceptedWindow::from_accepted(&state);
+        let dag = ClosureDag {
+            by_hash: BTreeMap::from([
+                (genesis.block_hash, genesis),
+                (anchor.block_hash, anchor.clone()),
+                (fork.block_hash, fork.clone()),
+                (descendant.block_hash, descendant.clone()),
+                (fork_child.block_hash, fork_child.clone()),
+            ]),
+        };
+
+        seed_derived_roots(&dag, state.anchor(), &mut window)
+            .await
+            .expect("the seed reads the DAG");
+
+        assert!(
+            window.permits_justifications(&[anchor.block_hash, descendant.block_hash]),
+            "the anchor and its descendant are seeded"
+        );
+        assert!(
+            !window.permits_justifications(&[fork.block_hash]),
+            "a fork at the anchor height is not in the anchor's closure or fringe"
+        );
+        assert!(
+            !window.permits_justifications(&[fork_child.block_hash]),
+            "a child of the fork does not descend from the anchor"
+        );
+        assert!(
+            !window.permits_justifications(&[descendant.block_hash, fork_child.block_hash]),
+            "one non-descendant evidence is enough to refuse the set"
+        );
     }
 
     /// **The boot rebuild is a verification, not a reconstruction** (review R2): the window is

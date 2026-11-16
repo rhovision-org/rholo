@@ -86,8 +86,21 @@ advanced to height 305 while the stopped validator was never jailed: an instrume
 counter never advances past the first comparison point. The `pos:liveness-anchor` write is not
 visible in the next boundary's merged pre-state on this path. The record is
 `spec/audit/evidence/c344-liveness-enforcement-20261114/` (verdict FAIL). The unit tests share one
-in-memory store and do not exercise the block merge. **Acceptance is not met**: the anchor
-persistence must be repaired before the remaining arms and the live testnet run can be evidenced.
+in-memory store and do not exercise the block merge.
+
+**The merge rule is repaired; the arm is blocked by a pre-existing stall (2026-11-16).** The retained
+log names the anchor slot (`blake2b256("pos:liveness-anchor")`) among the slots dropped when the
+final scope rejected chains whose deploy ids end in `02` — the CloseBlock system-deploy suffix.
+`final_scope_rejections` now filters 33-byte system-deploy ids, and `MergeScope::merge` refuses to
+reject a system-deploy chain; two tests pin the derivation and the merge decision. The repaired run
+contains no final-scope-rejection lines and no anchor-slot drop, but it advances only to height 12
+with finality at 2: from block `7e276d01…` the bootstrap cannot regenerate a received block's sidecar
+(`regenerated mergeable channels … but replay computed …`), so it cannot index the block and the chain
+stops. The same arm on the unmodified `d4b9bfb` image stalls identically, so the stall is **C402**, not
+this repair. **Acceptance is not met**: C402 must be fixed before the jail/vote/partition arms or the
+live testnet run can be evidenced. Records:
+`spec/audit/evidence/c344-anchor-persistence-20261116/` and
+`spec/audit/evidence/c402-partition-stall-20261116/` (both FAIL).
 
 ## 8. Known residuals
 

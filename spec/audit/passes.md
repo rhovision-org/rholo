@@ -13289,3 +13289,82 @@ operator/tool policy into laws. One mathematical item stays owed, plus one code 
 - **Law 37** — the fast path is a *modelling* item, not a missing lemma: `spatial_match` short-circuits
   at `if !pattern.connective_used { pattern == target }` (`spatial_matcher.rs:235-237`), which the
   clauses do not include.
+
+**Correction (2026-11-16).** The U15-02 bullet above says the Rust guard is “the remaining code
+change”. It is not: #596 landed it — `SoftCheckpoint` carries the history root it was taken over and
+`revert_to_soft_checkpoint` refuses a moved base with `SoftCheckpointBaseMoved` — pinned by
+`rspace/src/rspace.rs::a_soft_checkpoint_revert_over_a_moved_base_is_refused`. The register (law 74b)
+already records it; this line was stale.
+
+## 171. C301's contract layer, re-verified (2026-11-16)
+
+**Base.** `dev` at `d4b9bfbaf529fa754630c0ddfc695a5f2b62e576` (the #596 merge). The input was the
+read-class document at `f9521edd7`; every one of its 19 findings was re-derived from the merged tree.
+The matrix is `spec/audit/evidence/c301-contract-layer-20261116.md`.
+
+**A1 is refuted, and that is the phase's central result.** The evidence claimed the published
+`bundle+{*AuthKey}` exposes `extractState`, handing out `_authKey` and `_multiSigRevVault` and
+collapsing multi-signature custody. It does not: the extract arms listen on
+`@(*AuthKey, "extractState")`, a name *derived from the private name*, while the registry publishes
+`bundle+{*AuthKey}`, a different name. A genesis-replay probe calls both the public method and the
+derived name; neither receives a reply, while both lookups fire and `AuthKey!("make", …)` answers.
+`casper/tests/genesis_registry.rs::the_published_auth_key_surface_does_not_hand_out_its_private_names`
+asserts the negative with that live control. **No genesis change is made**, and the pre-authorised
+whitelist/removal fix is not applied because its condition (a confirmed forge) was not met.
+
+**A2 is corrected, and its branch is still unreachable.** The adapted term now uses
+`unsealers.nth(info.nth(0))`; the vendored original stays pristine and the marker is asserted
+(`standard_deploys.rs::tests::the_adapted_multi_sig_vault_corrects_the_vendored_thn_typo`). A
+functional quorum-2 sealer/unsealer probe produced no reply even after the correction: `verify` joins
+`loopFindAny` — which calls `AuthKey!("check", auth, …)` and sends `"challenge"` to the auth — with
+the unsealer fold, and a sealed box is a plain name with no receiver. The join never fires, so the
+branch is unreachable. **C401** records that defect; its fix is contract-layer and hard-fork class.
+
+**Already fixed in dev.** C1/C2/C3 are stale: `check_inert_config` now refuses
+`synchrony-constraint-threshold`, `height-constraint-threshold`, `fork-choice-stale-threshold` and
+`fork-choice-check-if-stale-interval` (`node/src/configuration/configuration.rs:316-344`). E3 is a
+duplicate of C348 (`done`).
+
+**What remains.** The other fifteen findings hold and are ranked in the evidence document. Phase 1
+fixed only the custody/liveness path — A2's correction and C344's anchor repair — and deliberately did
+not start the small web/config fixes (B4, C4, D1, D4, E1, E2, E4) or the consensus-class decisions
+(B2, C5, D2, D3). The thirty T3 process rows stay `deferred` for C401 and Phase 3's contract-layer
+tranche. No public-validator run or deployment is claimed.
+
+## 172. C344's liveness anchor: the merge rule repaired, the arm blocked (2026-11-16)
+
+**The mechanism, from the retained log.** The 2026-11-14 devnet log names the slot
+`04/688c6ea34a52e8382e84d63d4f50642e38e2f7e2f7d2d00ba509a7a0a33cb388` among the native slots that
+"went unwritten" on merges whose final scope rejected chains. That hash is exactly
+`blake2b256("pos:liveness-anchor")`, and the rejected deploy ids end in `02` — the
+`sys_deploy_id(block_hash, 2)` CloseBlock suffix. `final_scope_rejections` was copying a finaliser's
+`rejected_deploys` verbatim, so a 33-byte system-deploy id could reject a finalised close chain; the
+merge reads a chain's first deploy id, so its native writes were dropped.
+
+**The repair is landed and pinned.** `final_scope_rejections` filters system-deploy ids (33 bytes,
+suffix 1–3), and `MergeScope::merge` refuses to reject a system-deploy chain even if a map names one.
+`casper/tests/merge_determinism.rs::system_deploy_ids_are_not_final_scope_rejections` fails on the
+pre-fix derivation; `casper/tests/n420_boundary_merge.rs::a_final_scope_system_deploy_chain_is_not_rejected`
+arms the liveness prelude, plays a boundary block that writes the anchor, and feeds the merge a
+rejection map naming the close chain. Law 113's row now carries both as Rust witnesses and its note
+states the system-chain rule. This can change merged state for a chain that could previously reject a
+CloseBlock: **hard-fork class**, no deployment.
+
+**The devnet arm does not accept it yet.** The `jail-vote` drill on the repaired tree advanced to
+height 12 but finality stopped at height 2; from block `7e276d01…` the bootstrap failed sidecar
+regeneration every propose (`regenerated mergeable channels … but replay computed … instead of …`), so
+it could not index the block and the chain stopped. `getLiveness` stayed empty and no jail was
+imposed. The run has **zero** `final scope rejected` lines and no anchor-slot drop — the repaired
+path is gone from the log — but the jail arm never runs. Evidence:
+`spec/audit/evidence/c344-anchor-persistence-20261116/` (FAIL).
+
+**The base stalls identically.** The same arm on the unmodified `d4b9bfb` image (built from
+`git archive`) stalls at height 12 / finalised 2 with the same regeneration error, so the stall
+predates this repair. It is recorded as **C402** (`todo`) — a received-block sidecar-regeneration
+disagreement under a partition, with the replay's `participation_for_block` or pre-state as the
+suspect. Evidence: `spec/audit/evidence/c402-partition-stall-20261116/` (FAIL).
+
+**What this does not claim.** C344 is **not** closed: the anchor repair is pinned at the derivation
+and merge-decision layers, but no end-to-end jail, vote, partition, restart-expiry or live-testnet arm
+has run. The next step is C402, then the drill's arms; the CloseBlock validity rule and #428 mainnet
+arming remain deferred. No public-validator operation.
