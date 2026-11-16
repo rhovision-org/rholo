@@ -401,6 +401,114 @@ fn registry_epilogue_adapted(
     ))
 }
 
+/// **C401.** The vendored `verify` races the public-key probe against the unsealer fold. The probe
+/// calls `AuthKey!("check", auth, …)`, which sends `"challenge"` to `auth`; a sealer box is a bare
+/// `new` name with no receiver, so a sealed auth never answers `pubKeysCh` and the join in
+/// `transfer`/`confirm` blocks. Rewrite the orchestration to fold first: the fold answers
+/// `(unsealed, (position, value))` into an internal `foldCh`, `verify` forwards that pair to the
+/// caller's `unsealedCh`, and answers `pubKeysCh` with `(false, Nil)` for a sealed auth; only a
+/// non-sealed auth reaches the public-key probe. The vendored source stays pristine, and every
+/// marker is asserted so a source that moves fails the genesis build loudly.
+fn verify_fold_first(name: &str, source: &str) -> Result<String, String> {
+    let start_marker = "contract verify(@auth, pubKeysCh, unsealedCh) = {";
+    let starts: Vec<usize> = source.match_indices(start_marker).map(|(i, _)| i).collect();
+    let start = match starts.as_slice() {
+        [start] => *start,
+        [] => {
+            return Err(format!(
+                "{name}: the C401 verify marker is missing from the vendored source, so the \
+                 sealed-auth repair would silently do nothing"
+            ))
+        }
+        _ => {
+            return Err(format!(
+                "{name}: the C401 verify marker is ambiguous in the vendored source"
+            ))
+        }
+    };
+    // The marker ends with the contract's opening brace; walk to its matching close. The block has
+    // no braces inside strings or comments, so a byte walk is exact.
+    let open = start + start_marker.len() - 1;
+    let mut depth = 0usize;
+    let mut close = None;
+    for (i, byte) in source.bytes().enumerate().skip(open) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.checked_sub(1).ok_or_else(|| {
+                    format!("{name}: the C401 verify block closes more braces than it opens")
+                })?;
+                if depth == 0 {
+                    close = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return Err(format!(
+            "{name}: the C401 verify block is not brace-balanced"
+        ));
+    };
+    let replace_once = |block: &str, from: &str, to: &str, what: &str| -> Result<String, String> {
+        match block.match_indices(from).count() {
+            1 => Ok(block.replacen(from, to, 1)),
+            0 => Err(format!(
+                "{name}: the C401 {what} marker is missing from the vendored source, so the \
+                 sealed-auth repair would silently do nothing"
+            )),
+            n => Err(format!(
+                "{name}: the C401 {what} marker is ambiguous in the vendored source ({n} matches)"
+            )),
+        }
+    };
+    let block = &source[start..=close];
+    let block = replace_once(
+        block,
+        "new unsealerTest, loopFindAny in {",
+        "new unsealerTest, loopFindAny, foldCh in {",
+        "verify-scope",
+    )?;
+    let probe = concat!(
+        "                        // Check whether auth is valid to any public key\n",
+        "                        loopFindAny!(publicKeys, *pubKeysCh) |",
+    );
+    let block = replace_once(
+        &block,
+        probe,
+        "                        // C401: the unsealer fold answers first; a sealed box has no \
+         `\"challenge\"` receiver, so the public-key probe runs only for a non-sealed auth.",
+        "unconditional-probe",
+    )?;
+    let block = replace_once(
+        &block,
+        "*unsealerTest, *unsealedCh) |",
+        "*unsealerTest, *foldCh) |",
+        "fold-target",
+    )?;
+    let tail = "                        }\n                      }\n";
+    let dispatch = concat!(
+        "                        } |\n",
+        "                        for (@unsealed, @info <- foldCh) {\n",
+        "                          unsealedCh!(unsealed, info) |\n",
+        "                          if (unsealed) {\n",
+        "                            pubKeysCh!((false, Nil))\n",
+        "                          } else {\n",
+        "                            loopFindAny!(publicKeys, *pubKeysCh)\n",
+        "                          }\n",
+        "                        }\n",
+        "                      }\n",
+    );
+    let block = replace_once(&block, tail, dispatch, "dispatch-tail")?;
+    Ok(format!(
+        "{}{}{}",
+        &source[..start],
+        block,
+        &source[close + 1..]
+    ))
+}
+
 /// `AuthKey.rho`, adapted (see [`registry_epilogue_adapted`]).
 fn auth_key_source() -> Result<String, String> {
     let source = AUTH_KEY_RHO.to_string();
@@ -425,6 +533,9 @@ fn multi_sig_rev_vault_source() -> Result<String, String> {
         );
     }
     let source = source.replace(typo, "unsealers.nth(info.nth(0))");
+    // **C401.** A sealed multi-sig auth must not be challenged by the public-key probe: the sealer
+    // box has no `"challenge"` receiver, so the probe never answers and the caller's join blocks.
+    let source = verify_fold_first("MultiSigRevVault.rho", &source)?;
     let marker =
         "    @systemContractManager!(\"createDispatcher\", *MultiSigRevVault, *dispatcherCh)|";
     // Its gate waits on the two channels this port does not have; the rest of it (`listOps`,
@@ -669,6 +780,77 @@ mod tests {
             adapted.contains("unsealers.nth(info.nth(0))"),
             "the adapted term must use the list method the branch intends"
         );
+    }
+
+    /// **C401 is repaired at adaptation time, and the repair is pinned to the source markers.** The
+    /// vendored `verify` still races the public-key probe against the fold; the adapted term must not.
+    #[test]
+    fn the_adapted_multi_sig_vault_checks_the_sealed_tuple_before_the_public_key_probe() {
+        for marker in [
+            "new unsealerTest, loopFindAny in {",
+            "loopFindAny!(publicKeys, *pubKeysCh) |",
+            "@ListOps!(\"partialFold\", unsealers, (-1, Nil), *unsealerTest, *unsealedCh) |",
+        ] {
+            assert!(
+                MULTI_SIG_REV_VAULT_RHO.contains(marker),
+                "the vendored source is the provenance of the C401 marker {marker:?} — if it \
+                 moved, re-derive the repair instead of leaving it silently inert"
+            );
+        }
+        let adapted =
+            multi_sig_rev_vault_source().expect("the adapted MultiSigRevVault source builds");
+        for present in [
+            "new unsealerTest, loopFindAny, foldCh in {",
+            "for (@unsealed, @info <- foldCh) {",
+            "unsealedCh!(unsealed, info)",
+            "pubKeysCh!((false, Nil))",
+        ] {
+            assert!(
+                adapted.contains(present),
+                "the adapted term must contain {present:?}"
+            );
+        }
+        assert!(
+            !adapted.contains("*unsealerTest, *unsealedCh)"),
+            "the fold must write to its internal channel, not the caller's"
+        );
+        for unchanged in [
+            "contract unsealerTest(head, @(prevPos, _), result) = {",
+            "head!(auth, *retH) |",
+        ] {
+            assert!(
+                adapted.contains(unchanged),
+                "the unsealer combinator body must stay vendored: {unchanged:?}"
+            );
+        }
+        assert_eq!(
+            adapted
+                .matches("loopFindAny!(publicKeys, *pubKeysCh)")
+                .count(),
+            1,
+            "the public-key probe must appear exactly once, on the non-sealed path"
+        );
+        // The patch edits text, so parse and normalize the result: this catches an unbalanced splice.
+        let normalized = std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(move || rchain_rholang::normalizer::source_to_adt(&adapted).is_ok())
+            .expect("spawn")
+            .join()
+            .expect("join");
+        assert!(
+            normalized,
+            "the adapted MultiSigRevVault term must parse and normalize"
+        );
+    }
+
+    /// A drift that removes a C401 marker must fail the genesis build, not ship an inert repair.
+    #[test]
+    fn a_drifted_multi_sig_verify_block_is_an_error() {
+        let source = MULTI_SIG_REV_VAULT_RHO.replace(
+            "new unsealerTest, loopFindAny in {",
+            "new unsealerTest, loopFindAny, foldCh in {",
+        );
+        assert!(verify_fold_first("MultiSigRevVault.rho", &source).is_err());
     }
 
     #[test]

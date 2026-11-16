@@ -473,6 +473,62 @@ fn multi_sig_single_key_term(target: &str) -> String {
     )
 }
 
+/// The **sealed-box** multi-signature flow, with a deliberately **mixed** vault: one public key and
+/// two unsealers, quorum 2. The public-key list must be non-empty or this test proves nothing — a
+/// pure-sealer vault answers `loopFindAny` with `(false, Nil)` immediately and works even with
+/// C401 present. `verify` must fold the unsealers before it probes the public keys, because a sealer
+/// box has no `"challenge"` receiver and the probe would otherwise block the join in
+/// `transfer`/`confirm`.
+fn multi_sig_sealed_quorum_term(target: &str) -> String {
+    format!(
+        r#"new rl(`rho:registry:lookup`), ch, deployerId(`rho:rchain:deployerId`),
+               DeployerIdOps(`rho:rchain:deployerId:ops`),
+               mainVault(`rho:rchain:revVault`),
+               pkCh, createCh, fundCh, authACh, authBCh,
+               boxACh, boxBCh, transferCh, confirmCh, out(`rho:io:stdout`) in {{
+             rl!(`rho:rchain:multiSigRevVault`, *ch) |
+             for (@(_, *MultiSigRevVault) <- ch) {{
+               DeployerIdOps!("pubKeyBytes", *deployerId, *pkCh) |
+               MultiSigRevVault!("makeSealerUnsealer", *authACh) |
+               MultiSigRevVault!("makeSealerUnsealer", *authBCh) |
+               for (@pk <- pkCh &
+                    @(sealerA, unsealerA) <- authACh &
+                    @(sealerB, unsealerB) <- authBCh) {{
+                 // MIXED vault: the non-empty public-key list is the trigger for C401.
+                 MultiSigRevVault!("create", [pk], [unsealerA, unsealerB], 2, *createCh) |
+                 for (@created <- createCh) {{
+                   match created {{
+                     (true, (*multiSig, revAddr, *revVault)) => {{
+                       mainVault!("transfer", *deployerId, revAddr, 40000000, *fundCh) |
+                       for (_ <- fundCh) {{
+                         @sealerA!((bundle+{{*multiSig}}, "{target}", 30000000, *transferCh), *boxACh) |
+                         for (@boxA <- boxACh) {{
+                           multiSig!("transfer", "{target}", 30000000, boxA, *transferCh) |
+                           for (@first <- transferCh) {{
+                             match first {{
+                               (true, (true, nonce)) => {{
+                                 @"out"!("transfer-recorded") |
+                                 @sealerB!((bundle+{{*multiSig}}, "{target}", 30000000, nonce, *confirmCh), *boxBCh) |
+                                 for (@boxB <- boxBCh) {{
+                                   multiSig!("confirm", "{target}", 30000000, boxB, nonce, *confirmCh) |
+                                   for (@done <- confirmCh) {{ @"out"!(done) }}
+                                 }}
+                               }}
+                               other => {{ @"out"!(other) }}
+                             }}
+                           }}
+                         }}
+                       }}
+                     }}
+                     other => {{ @"out"!(other) }}
+                   }}
+                 }}
+               }}
+             }}
+           }}"#
+    )
+}
+
 #[test]
 fn a_multisig_vault_spends_through_the_contract_that_holds_it() {
     with_big_stack(async {
@@ -559,6 +615,101 @@ fn a_multisig_vault_spends_through_the_contract_that_holds_it() {
             balance, 30_000_000,
             "the contract's own transfer must move the funds: a reply without a movement is not the \
              delegated spend working (post-state {post:?})"
+        );
+    });
+}
+
+/// C401's falsifier: a sealed-box auth must reach the unsealer-confirmation branch. Pre-fix the
+/// public-key probe challenges the box (which has no receiver), `pubKeysCh` never answers, and the
+/// join in `transfer`/`confirm` stalls — evaluation still succeeds with no `@"out"` datum.
+#[test]
+fn a_multisig_vault_confirms_through_a_sealed_unsealer_auth() {
+    with_big_stack(async {
+        let rm = build_runtime_manager().await;
+        let rand = fixed_rand();
+        let target = rchain_rholang::util::rev_address::RevAddress::from_public_key(
+            &rchain_crypto::public_key::PublicKey::new(vec![2u8; 65]),
+        )
+        .expect("target address")
+        .to_base58();
+
+        let terms = default_blessed_terms(
+            &proof_of_stake(),
+            &Registry {
+                system_contract_pub_key: String::new(),
+            },
+            &[],
+            "root",
+            &ceremony_identity(),
+        )
+        .expect("the blessed term list builds");
+
+        let (_, post, _) = rm
+            .compute_genesis(
+                &terms,
+                &rand,
+                BlockData::empty(),
+                &PosGenesis::default(),
+                &[vault_for(vec![0u8; 65], 1_000_000_000)],
+            )
+            .await
+            .expect("compute_genesis");
+
+        let mut d = deploy_from(&multi_sig_sealed_quorum_term(&target), vec![0u8; 65]);
+        // Two sealer pairs, a two-element fold and two Set updates exceed the shared test default.
+        d.data.phlo_limit = 10_000_000;
+
+        let (post, results, _) = rm
+            .compute_state(
+                &post,
+                &[d],
+                &[],
+                &rand,
+                BlockData::empty(),
+                &fringe_state(1),
+            )
+            .await
+            .expect("the sealed multi-signature deploy runs");
+        let last = results.last().expect("the deploy ran");
+        assert!(
+            last.eval_result.succeeded(),
+            "the flow must run: {:?}",
+            last.eval_result.errors
+        );
+
+        {
+            let ch = rchain_models::sorted::SortedProc::new(rchain_models::par_ops::from_expr(
+                rchain_models::ast::Expr::GString("out".to_string()),
+            ));
+            let datums = rm.runtime().get_data_par(&ch).await.expect("read out");
+            assert!(
+                !datums.is_empty(),
+                "the sealed-auth transfer and confirmation must answer; a blocked join leaves no \
+                 redex and no output (post-state {post:?})"
+            );
+            let text = format!("{:?}", datums);
+            assert!(
+                text.contains("transfer-recorded"),
+                "the first sealed signature must record the quorum step: {text}"
+            );
+            assert!(
+                text.contains("done") && !text.contains("invalid auth"),
+                "the second sealed signature must confirm the transfer: {text}"
+            );
+        }
+
+        let native =
+            rchain_rholang::native_state::NativeSystemState::new(rm.runtime().native_store());
+        let balance = native
+            .vault_balance(&target)
+            .await
+            .expect("read the target balance")
+            .map(i64::from)
+            .unwrap_or(0);
+        assert_eq!(
+            balance, 30_000_000,
+            "the confirmed transfer must move the funds: a reply without a movement is not the \
+             unsealer branch working (post-state {post:?})"
         );
     });
 }

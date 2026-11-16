@@ -347,10 +347,39 @@ sides. **A newly created chain's genesis deploy and post-state hash therefore di
 created by the previous binary; no existing chain is rewritten, and the `rho:id` is unchanged because
 it is derived from the fixed signing key, not the term.
 
-**What this does not fix.** The unsealer-confirmation branch is still unreachable: `verify` joins its
-public-key probe with the unsealer fold, and the probe sends `"challenge"` to a sealed box, which is a
-plain name with no receiver, so the join never fires. **C401** owns that repair; it is contract-layer
-and hard-fork class. The related A1 claim — that the published bundle leaks `_authKey` through
-`extractState` — is **refuted**: the extract arms are on names derived from the private name, not on
-the published bundle (`casper/tests/genesis_registry.rs::the_published_auth_key_surface_does_not_hand_out_its_private_names`),
+**What this does not fix.** The unsealer-confirmation branch was unreachable: `verify` joined its
+public-key probe with the unsealer fold, and the probe sent `"challenge"` to a sealed box, which is a
+plain name with no receiver, so the join never fired. **C401** owned that repair; the section below
+lands it (contract-layer, hard-fork class). The related A1 claim — that the published bundle leaks
+`_authKey` through `extractState` — is **refuted**: the extract arms are on names derived from the
+private name, not on the published bundle
+(`casper/tests/genesis_registry.rs::the_published_auth_key_surface_does_not_hand_out_its_private_names`),
 so no whitelist/removal change is made.
+
+## The multi-sig verify answers a sealed auth without the public-key probe (2026-11-16)
+
+**A consensus-visible change, and it is deliberate.** `verify` used to race two probes: the public-key
+search (`loopFindAny`, which challenges the auth through `AuthKey!("check", …)`) and the unsealer fold.
+A sealed box is a plain name with no `"challenge"` receiver, so the challenge never answered,
+`pubKeysCh` never fired, and the join in `transfer`/`confirm` blocked — the unreachable branch C401
+described. The adapted term (`standard_deploys.rs::verify_fold_first`) now runs the fold into an
+internal `foldCh`, forwards the fold's `(unsealed, info)` reply to the caller's `unsealedCh`, answers
+`pubKeysCh` with `(false, Nil)` for a sealed auth, and runs `loopFindAny` only for a non-sealed one.
+The vendored `MultiSigRevVault.rho` stays pristine, and
+`standard_deploys.rs::tests::the_adapted_multi_sig_vault_checks_the_sealed_tuple_before_the_public_key_probe`
+pins the markers on both sides.
+
+The functional evidence is
+`casper/tests/genesis_registry.rs::a_multisig_vault_confirms_through_a_sealed_unsealer_auth`: a mixed
+quorum-2 vault (one public key, two unsealers) records the first sealed signature
+(`(true, (true, nonce))`), confirms with the second (`(true, (false, "done"))`), and moves exactly
+30,000,000 REV to the destination. **A newly created chain's genesis deploy and post-state hash (and
+therefore its genesis block hash) differ** from a chain created by the previous binary; no existing
+chain is rewritten, and the `rho:id` is unchanged because it is derived from the fixed signing key,
+not the term. Hard-fork class, coordinated genesis; no public-validator operation, and no deployment
+in this change.
+
+**What this does not fix.** An auth that is neither an `AuthKey` nor a box from *this* vault still
+leaves `loopFindAny` waiting on a challenge; the contract cannot distinguish such a name without
+challenging it, and this was already true before the change. It is recorded as a residual, not as part
+of C401.
