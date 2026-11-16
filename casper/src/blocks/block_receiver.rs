@@ -6,13 +6,14 @@
 
 use rchain_shared::chan;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
+use rchain_shared::lmdb::is_storage_exhausted;
 use rchain_shared::log::{Log, LogSource};
 use tokio::sync::mpsc;
 
@@ -32,6 +33,19 @@ const MAX_DEPENDENCY_HEADROOM: usize = 32;
 /// validated mpsc queue the stage observers measure.
 static PENDING_BLOCKS: AtomicUsize = AtomicUsize::new(0);
 static PEAK_PENDING_BLOCKS: AtomicUsize = AtomicUsize::new(0);
+
+/// **The receiver stopped because the store is full** (C301's D3). Ordinary store failures are
+/// logged and the block skipped, because the peer or retriever offers it again; a full disk is not
+/// retryable by the network and skipping every block would leave a node that falls behind while
+/// logging. The flag is set at the write that fails with ENOSPC and the loop breaks. A surface or a
+/// test reads it through [`storage_exhausted`] rather than parsing the log.
+static STORAGE_EXHAUSTED: AtomicBool = AtomicBool::new(false);
+
+/// Whether a body or disposition write failed because the disk is full (C301's D3). Once true, the
+/// receiver has stopped and the condition needs the operator — free space and restart — not a retry.
+pub fn storage_exhausted() -> bool {
+    STORAGE_EXHAUSTED.load(Ordering::SeqCst)
+}
 
 /// Record a sample. Advisory: no readiness term, no gate consumption.
 pub fn observe_pending(pending: usize) {
@@ -594,6 +608,22 @@ async fn incoming_blocks(
                 .store_body_and_mark_pending(&block, PendingStage::Stored)
                 .await
             {
+                // **A full disk is not a skipped block** (C301's D3). The transaction aborted, so
+                // the body is not stored; every later block would fail the same way, and the
+                // ordinary "skip and let the peer offer it again" would leave a node that logs and
+                // falls behind. Stop, and leave the condition readable without the log.
+                if is_storage_exhausted(&e) {
+                    log.error(
+                        source,
+                        &format!(
+                            "the block store is full while storing block {}: {e} — the receiver is \
+                             stopping rather than skipping; free space and restart",
+                            block.block_hash.to_hex()
+                        ),
+                    );
+                    STORAGE_EXHAUSTED.store(true, Ordering::SeqCst);
+                    break;
+                }
                 // The transaction aborted, so the body is *not* stored: the block is not ours to
                 // settle and the peer or retriever offers it again.
                 log.error(
@@ -611,6 +641,20 @@ async fn incoming_blocks(
             .mark_pending(block.block_hash, block.block_number, PendingStage::Stored)
             .await
         {
+            // **The same full-disk distinction on the disposition write** (C301's D3): the store
+            // cannot take the record either, and continuing would only repeat this line per block.
+            if is_storage_exhausted(&e) {
+                log.error(
+                    source,
+                    &format!(
+                        "the block store is full while recording the disposition of block {}: {e} \
+                         — the receiver is stopping rather than skipping; free space and restart",
+                        block.block_hash.to_hex()
+                    ),
+                );
+                STORAGE_EXHAUSTED.store(true, Ordering::SeqCst);
+                break;
+            }
             // A re-delivery of a body already in the store: there is no body write to pair this with
             // (and re-marking an existing row is idempotent), so a failure here is the fault surface.
             block_processor::note_pipeline_fault(&block, "disposition write", &e);
