@@ -1470,6 +1470,7 @@ impl Proposer {
             // The finalized hash whose work-seen rows were last pruned: the sweep runs only when
             // finality advances, so the local map stays bounded by the unfinalized region (#583).
             let work_seen_pruned: Arc<Mutex<Option<BlockHash>>> = Arc::new(Mutex::new(None));
+            let accepted_window_for_create = accepted_window.clone();
             Arc::new(
                 move |vi: &ValidatorIdentity,
                       source: ProposeSource,
@@ -1490,6 +1491,7 @@ impl Proposer {
                     let log = log.clone();
                     let health = health.clone();
                     let self_replay = self_replay_for_create.clone();
+                    let accepted_window = accepted_window_for_create.clone();
                     let max_number_of_parents = max_number_of_parents;
                     Box::pin(async move {
                         create_block(
@@ -1514,6 +1516,7 @@ impl Proposer {
                             &self_replay,
                             &work_seen_pruned,
                             batch_limit,
+                            Some(&accepted_window),
                         )
                         .await
                     })
@@ -1591,6 +1594,7 @@ impl Proposer {
                         block_index.as_ref(),
                         &log,
                         &health,
+                        Some(&accepted_window),
                         ValidationOrigin::SelfBuilt,
                     )
                     .await
@@ -2147,6 +2151,7 @@ async fn create_block<'a, F, Fut>(
     self_replay: &Mutex<SelfReplayTracker>,
     work_seen_pruned: &Mutex<Option<BlockHash>>,
     batch_limit: Option<usize>,
+    accepted_window: Option<&crate::engine::anchor::SharedAcceptedWindow>,
 ) -> Result<BlockCreatorResult, String>
 where
     F: Fn(BlockHash) -> Fut + Sync,
@@ -2183,6 +2188,7 @@ where
         &creators_validator_for_parents,
         log,
         health,
+        accepted_window,
     )
     .await;
     // **One block per validator per round, with a way out.** Every validator enforces the rule the numbers

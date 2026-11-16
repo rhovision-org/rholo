@@ -229,15 +229,33 @@ async fn fringe_state_of(
     dag: &dyn BlockDagStorage,
     hash: &BlockHash,
 ) -> Result<rchain_crypto::hash::blake2b256_hash::Blake2b256Hash, String> {
-    dag.lookup(hash)
+    let metadata = dag
+        .lookup(hash)
         .await
         .map_err(|e| e.to_string())?
-        .map(|m| {
-            rchain_crypto::hash::blake2b256_hash::Blake2b256Hash::from_byte_array(
-                m.fringe_state_hash.as_bytes(),
-            )
-        })
-        .ok_or_else(|| format!("no block metadata for {}: cannot index it", hash.to_hex()))
+        .ok_or_else(|| format!("no block metadata for {}: cannot index it", hash.to_hex()))?;
+    derived_fringe_state(&metadata)
+}
+
+/// **A failed record has no derived fringe state.** `BlockMetadata::from_block` leaves the fringe
+/// empty and its state hash zero; feeding that into a sidecar regeneration replays the block from a
+/// fabricated base and reports a misleading state-hash disagreement (C402). Name the real condition
+/// instead. A validated record, including a restored one, carries the fringe the validation computed.
+fn derived_fringe_state(
+    metadata: &BlockMetadata,
+) -> Result<rchain_crypto::hash::blake2b256_hash::Blake2b256Hash, String> {
+    if metadata.validation_failed {
+        return Err(format!(
+            "block {} has no derived fringe state: its record is marked validation_failed, so a \
+             sidecar regeneration would replay it from a fabricated zero fringe",
+            metadata.block_hash.to_hex()
+        ));
+    }
+    Ok(
+        rchain_crypto::hash::blake2b256_hash::Blake2b256Hash::from_byte_array(
+            metadata.fringe_state_hash.as_bytes(),
+        ),
+    )
 }
 
 /// The `BlockEventInfo` report-store codec (prost wire round-trip).
@@ -3370,6 +3388,30 @@ mod tests {
         };
         assert_eq!(value("rchain.shard_0.finality_stalled"), Some(1));
         assert_eq!(value("rchain.shard_0.finality_stall_episodes"), Some(1));
+    }
+
+    /// **A failed record is not indexed from a fabricated zero fringe** (C402). The old
+    /// `fringe_state_of` returned the zero `fringe_state_hash` of `BlockMetadata::from_block`, and
+    /// the sidecar regeneration replayed from it and reported a misleading state-hash disagreement.
+    #[test]
+    fn a_failed_record_has_no_derived_fringe_state() {
+        use rchain_models::block::state_hash::StateHash;
+
+        let block = block_for("/root");
+        let mut metadata = BlockMetadata::from_block(&block);
+        metadata.validation_failed = true;
+        let error = derived_fringe_state(&metadata).expect_err("a failed record has no fringe");
+        assert!(
+            error.contains("no derived fringe state") && error.contains("validation_failed"),
+            "the refusal names the real condition: {error}"
+        );
+
+        metadata.validation_failed = false;
+        metadata.fringe_state_hash = StateHash::new([7u8; 32]);
+        assert_eq!(
+            derived_fringe_state(&metadata).expect("a validated record has a fringe"),
+            rchain_crypto::hash::blake2b256_hash::Blake2b256Hash::from_byte_array(&[7u8; 32])
+        );
     }
 
     /// A block store whose every read fails, so a read error is observable as one.

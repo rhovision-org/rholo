@@ -158,7 +158,7 @@ def submit_signed(term: str, height: int) -> str:
         "exec", f"{PREFIX}-bootstrap", "rnode", "deploy",
         "--phlo-limit", "1000000", "--phlo-price", "1",
         "--private-key-path", "/var/lib/rnode/validator.hex",
-        "--shard-id", "root", "--valid-after-block-number", str(max(height - 1, 0)),
+        "--shard-id", "/root", "--valid-after-block-number", str(max(height - 1, 0)),
         f"/tmp/{container}",
     ])
     match = re.search(r"DeployId is:\s*([0-9a-f]+)", deployed.stdout)
@@ -218,10 +218,17 @@ def main() -> int:
             vote = (
                 'new pos(`rho:rchain:pos`), deployerId(`rho:rchain:deployerId`), ret in { '
                 f'pos!("voteSlash", [*deployerId, "{target}".hexToBytes(), true, *ret]) | '
-                'for (@r <- ret) { @"out"!(*r) } }'
+                'for (@r <- ret) { @"out"!(r) } }'
             )
             submit_signed(vote, http_json(HTTP_BASE, "/api/status").get("latestBlockNumber", 1))
-            http_json(ADMIN_BASE, "/api/v1/propose", method="POST")
+            try:
+                http_json(ADMIN_BASE, "/api/v1/propose", method="POST")
+            except urllib.error.HTTPError as exc:
+                # The network runs with `--autopropose`, so a proposal may already hold the lock.
+                # The deploy is in the pool and the running proposer will include it; only a
+                # different refusal is a real failure of the arm.
+                if exc.code != 400:
+                    raise
             slashed = wait_until(
                 lambda: True if target_record(bonds(), target) in (None, 0) else None,
                 args.timeout, args.poll, "passing vote slashes the bond")

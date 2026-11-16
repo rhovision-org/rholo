@@ -38,6 +38,11 @@ pub enum TrustAnchor {
     Checkpoint {
         verified: VerifiedCheckpoint,
         root: Blake2b256Hash,
+        /// The checkpoint's anchor block, parsed once from the verified certificate.
+        block: BlockHash,
+        /// The certificate's finalized fringe, parsed once. Its members are the justifications a
+        /// first post-checkpoint block may name; they are committed history, not a store read.
+        fringe: BTreeSet<BlockHash>,
     },
 }
 
@@ -47,6 +52,14 @@ impl TrustAnchor {
         match self {
             TrustAnchor::Genesis(pin) => Blake2b256Hash::from_byte_array(pin.post_state.as_bytes()),
             TrustAnchor::Checkpoint { root, .. } => *root,
+        }
+    }
+
+    /// The block the anchor names: the pinned genesis, or the checkpoint's anchor block.
+    pub fn block(&self) -> BlockHash {
+        match self {
+            TrustAnchor::Genesis(pin) => pin.block,
+            TrustAnchor::Checkpoint { block, .. } => *block,
         }
     }
 }
@@ -102,8 +115,15 @@ impl AcceptedState {
         window: BTreeSet<Blake2b256Hash>,
     ) -> Result<Self, String> {
         let root = checkpoint_root(&verified)?;
+        let block = checkpoint_anchor_hash(&verified)?;
+        let fringe = checkpoint_fringe(&verified)?;
         Ok(AcceptedState {
-            anchor: TrustAnchor::Checkpoint { verified, root },
+            anchor: TrustAnchor::Checkpoint {
+                verified,
+                root,
+                block,
+                fringe,
+            },
             root,
             window,
         })
@@ -132,19 +152,33 @@ impl AcceptedState {
 pub struct AcceptedWindow {
     /// The anchor's root: the state a post-anchor block may build on directly.
     anchor_root: Blake2b256Hash,
+    /// The anchor block: a valid justification even before it is in `validated`.
+    anchor_block: BlockHash,
     /// The certificate's validation window (Law 109).
     certified: BTreeSet<Blake2b256Hash>,
     /// Roots this node derived by accepting a validated post-anchor block.
     derived: BTreeSet<Blake2b256Hash>,
+    /// Blocks this node validated and did not mark failed. A block whose justifications are all
+    /// here (or the anchor) descends from the anchor; the gate admits its merged pre-state to
+    /// replay, which recomputes that pre-state from the same justifications.
+    validated: BTreeSet<BlockHash>,
 }
 
 impl AcceptedWindow {
-    /// The window an accepted state starts with: the anchor root and the certified set.
+    /// The window an accepted state starts with: the anchor root, the certified set and the
+    /// certificate's committed fringe. The fringe members are the justifications a first
+    /// post-checkpoint block may name, so a joiner does not refuse its first multi-parent round.
     pub fn from_accepted(state: &AcceptedState) -> Self {
+        let (anchor_block, validated) = match state.anchor() {
+            TrustAnchor::Genesis(pin) => (pin.block, BTreeSet::new()),
+            TrustAnchor::Checkpoint { block, fringe, .. } => (*block, fringe.clone()),
+        };
         AcceptedWindow {
             anchor_root: state.root(),
+            anchor_block,
             certified: state.window().clone(),
             derived: BTreeSet::new(),
+            validated,
         }
     }
 
@@ -154,6 +188,7 @@ impl AcceptedWindow {
         if !metadata.validated || metadata.validation_failed {
             return;
         }
+        self.validated.insert(metadata.block_hash);
         self.derived.insert(Blake2b256Hash::from_byte_array(
             metadata.post_state_hash.as_bytes(),
         ));
@@ -166,6 +201,30 @@ impl AcceptedWindow {
     pub fn permits(&self, pre_state: StateHash) -> bool {
         let root = Blake2b256Hash::from_byte_array(pre_state.as_bytes());
         root == self.anchor_root || self.certified.contains(&root) || self.derived.contains(&root)
+    }
+
+    /// **The ancestry rule.** A multi-parent block's pre-state is a fresh merge of its parents, so
+    /// it is not any validated block's recorded root. The block's justifications *are* the merge
+    /// input: when every one is the anchor or a block this node validated, the block descends from
+    /// the anchor, and replay recomputes the declared pre-state from the same set. An empty set is
+    /// never an exemption (the genesis shape is not a received post-anchor block).
+    pub fn permits_justifications(&self, justifications: &[BlockHash]) -> bool {
+        !justifications.is_empty()
+            && justifications
+                .iter()
+                .all(|h| *h == self.anchor_block || self.validated.contains(h))
+    }
+
+    /// The pre-replay gate's rule: a known accepted root, **or** an anchored justification set.
+    /// The second arm does not make the state store permission — replay still recomputes the
+    /// pre-state from the justifications and refuses a mismatch with `InvalidPreStateHash`.
+    pub fn permits_block(&self, pre_state: StateHash, justifications: &[BlockHash]) -> bool {
+        self.permits(pre_state) || self.permits_justifications(justifications)
+    }
+
+    /// The block this window is anchored to.
+    pub fn anchor_block(&self) -> BlockHash {
+        self.anchor_block
     }
 }
 
@@ -183,6 +242,24 @@ fn checkpoint_root(verified: &VerifiedCheckpoint) -> Result<Blake2b256Hash, Stri
         ));
     }
     Ok(Blake2b256Hash::from_byte_array(&bytes))
+}
+
+fn checkpoint_anchor_hash(verified: &VerifiedCheckpoint) -> Result<BlockHash, String> {
+    BlockHash::try_from_hex(&verified.checkpoint.anchor)
+        .map_err(|e| format!("the checkpoint anchor is not a block hash: {e}"))
+}
+
+fn checkpoint_fringe(verified: &VerifiedCheckpoint) -> Result<BTreeSet<BlockHash>, String> {
+    verified
+        .checkpoint
+        .fringe_hashes
+        .iter()
+        .map(|member| {
+            BlockHash::try_from_hex(member).map_err(|e| {
+                format!("the checkpoint fringe member {member} is not a block hash: {e}")
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -331,5 +408,120 @@ mod tests {
             !window.permits(meta.post_state_hash),
             "a failed block's root is not an input"
         );
+    }
+
+    /// **C402 — a multi-parent child's merged pre-state is admitted on its justifications.** The
+    /// fresh merge is not any parent's post/fringe root; the ancestry rule is what admits it.
+    #[test]
+    fn a_multi_parent_child_is_permitted_when_its_justifications_are_validated() {
+        let genesis = block(0, 1, 2);
+        let pin = GenesisPin {
+            block: genesis.block_hash,
+            post_state: genesis.post_state_hash,
+        };
+        let state = AcceptedState::from_genesis(pin, &genesis).expect("the pinned genesis");
+        let mut window = AcceptedWindow::from_accepted(&state);
+
+        let mut parent_a = BlockMetadata::from_block(&block(1, 3, 0xEE));
+        parent_a.validated = true;
+        parent_a.validation_failed = false;
+        window.note_roots(&parent_a);
+        let mut parent_b = BlockMetadata::from_block(&block(1, 4, 0xEF));
+        parent_b.validated = true;
+        parent_b.validation_failed = false;
+        window.note_roots(&parent_b);
+
+        let merged = StateHash::new([0x77; 32]);
+        assert!(
+            !window.permits(merged),
+            "the merged pre-state is not a recorded root"
+        );
+        assert!(
+            window.permits_justifications(&[
+                genesis.block_hash,
+                parent_a.block_hash,
+                parent_b.block_hash
+            ]),
+            "the anchor and both validated parents are anchored"
+        );
+        assert!(
+            window.permits_block(
+                merged,
+                &[genesis.block_hash, parent_a.block_hash, parent_b.block_hash]
+            ),
+            "the merged pre-state is admitted over anchored justifications"
+        );
+    }
+
+    /// A justification that is not the anchor and not a validated block gets no exemption.
+    #[test]
+    fn a_child_of_an_unvalidated_justification_is_refused() {
+        let genesis = block(0, 1, 2);
+        let pin = GenesisPin {
+            block: genesis.block_hash,
+            post_state: genesis.post_state_hash,
+        };
+        let state = AcceptedState::from_genesis(pin, &genesis).expect("the pinned genesis");
+        let mut window = AcceptedWindow::from_accepted(&state);
+
+        let mut parent = BlockMetadata::from_block(&block(1, 3, 0xEE));
+        parent.validated = false;
+        parent.validation_failed = false;
+        window.note_roots(&parent);
+
+        assert!(!window.permits_justifications(&[parent.block_hash]));
+        assert!(!window.permits_block(
+            StateHash::new([0x77; 32]),
+            &[genesis.block_hash, parent.block_hash]
+        ));
+    }
+
+    /// The genesis shape is not an ancestry exemption.
+    #[test]
+    fn an_empty_justification_set_gets_no_ancestry_exemption() {
+        let genesis = block(0, 1, 2);
+        let pin = GenesisPin {
+            block: genesis.block_hash,
+            post_state: genesis.post_state_hash,
+        };
+        let state = AcceptedState::from_genesis(pin, &genesis).expect("the pinned genesis");
+        let window = AcceptedWindow::from_accepted(&state);
+
+        assert!(!window.permits_justifications(&[]));
+        assert!(!window.permits_block(StateHash::new([0x77; 32]), &[]));
+    }
+
+    /// A failed record is not a validated justification, even though its hash was seen.
+    #[test]
+    fn a_failed_block_hash_is_not_a_validated_justification() {
+        let state =
+            AcceptedState::from_certificate(verified(0xAB), BTreeSet::new()).expect("anchor");
+        let mut window = AcceptedWindow::from_accepted(&state);
+        let mut meta = BlockMetadata::from_block(&block(10, 3, 0xEE));
+        meta.validated = true;
+        meta.validation_failed = true;
+        window.note_roots(&meta);
+
+        assert!(!window.permits_justifications(&[meta.block_hash]));
+    }
+
+    /// **A checkpoint joiner starts with its committed fringe as validated justifications.** Without
+    /// this seed, the first post-checkpoint multi-parent block would be refused like block #2.
+    #[test]
+    fn a_checkpoint_anchor_admits_its_committed_fringe_as_justifications() {
+        let mut checkpoint = verified(0xAB);
+        checkpoint
+            .checkpoint
+            .fringe_hashes
+            .push(base16::encode(&[2u8; 32]));
+        let state = AcceptedState::from_certificate(checkpoint, BTreeSet::new()).expect("anchor");
+        let window = AcceptedWindow::from_accepted(&state);
+
+        assert_eq!(window.anchor_block(), BlockHash::new([1u8; 32]));
+        assert!(
+            window.permits_justifications(&[BlockHash::new([1u8; 32]), BlockHash::new([2u8; 32])]),
+            "the anchor block and its committed fringe sibling are admissible justifications"
+        );
+        assert!(!window.permits_justifications(&[BlockHash::new([3u8; 32])]));
     }
 }

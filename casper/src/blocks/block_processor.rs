@@ -605,6 +605,7 @@ pub async fn apply<F, Fut>(
             let block = block.clone();
             let log = log.clone();
             let health = health.clone();
+            let accepted_window = accepted_window.clone();
             // **The gate runs before replay.** A missing window is a retryable fault; an unpermitted
             // pre-state is a verdict about this node's accepted history, not about the block's
             // execution, and it never reaches the runtime.
@@ -613,7 +614,7 @@ pub async fn apply<F, Fut>(
                 if let Some(refusal) = refusal {
                     return refusal;
                 }
-                crate::multi_parent_casper::validate(
+                crate::multi_parent_casper::validate_with_window(
                     dag.as_ref(),
                     &block_store,
                     runtime.as_ref(),
@@ -624,6 +625,7 @@ pub async fn apply<F, Fut>(
                     &block_index,
                     &log,
                     &health,
+                    Some(&accepted_window),
                 )
                 .await
             }));
@@ -798,6 +800,9 @@ pub async fn apply<F, Fut>(
 /// **The pre-replay gate's decision** (review R2). `None` admits the block to replay; `Some` is the
 /// outcome the processor records instead — a retryable internal fault when the boot has not installed
 /// the window, or a `ValidationFailed` with the failed metadata when the pre-state is not admissible.
+/// A multi-parent block's pre-state is a fresh merge, not a parent root; it is admissible when every
+/// justification is the anchor or a block this node validated (C402). The store is still not
+/// permission: replay recomputes that pre-state from the same justifications.
 fn pre_replay_refusal(
     window: Option<&crate::engine::anchor::AcceptedWindow>,
     block: &BlockMessage,
@@ -806,7 +811,7 @@ fn pre_replay_refusal(
         None => Some(Err(ValidateError::Internal(
             "the accepted validation window is not installed yet".to_string(),
         ))),
-        Some(window) if !window.permits(block.pre_state_hash) => {
+        Some(window) if !window.permits_block(block.pre_state_hash, &block.justifications) => {
             let status = BlockStatus::UncertifiedPreState;
             Some(Err(ValidateError::ValidationFailed(
                 crate::multi_parent_casper::mark_failed(&BlockMetadata::from_block(block), status),
@@ -1263,6 +1268,81 @@ mod tests {
                 Some(Err(ValidateError::Internal(_)))
             ),
             "an uninstalled window is a retryable fault, not an acceptance"
+        );
+    }
+
+    /// **C402 — the merged pre-state of a multi-parent block is not a parent root.** The gate must
+    /// admit the block when every justification is the anchor or a block this node validated, and
+    /// leave replay to recompute the merge. The same block with an unknown or empty justification set
+    /// stays refused; that is the C393 property.
+    #[test]
+    fn the_pre_replay_gate_admits_a_merged_pre_state_over_validated_justifications() {
+        use crate::engine::anchor::{AcceptedState, GenesisPin};
+        use rchain_models::block::state_hash::StateHash;
+
+        let genesis = sample_block();
+        let pin = GenesisPin {
+            block: genesis.block_hash,
+            post_state: genesis.post_state_hash,
+        };
+        let accepted = AcceptedState::from_genesis(pin, &genesis).expect("genesis anchor");
+        let mut window = crate::engine::anchor::AcceptedWindow::from_accepted(&accepted);
+
+        let mut parent_a = BlockMetadata::from_block(&sample_block());
+        parent_a.block_hash = BlockHash::new([0xaa; 32]);
+        parent_a.post_state_hash = StateHash::new([0xa1; 32]);
+        parent_a.fringe_state_hash = StateHash::new([0xa2; 32]);
+        parent_a.validated = true;
+        parent_a.validation_failed = false;
+        window.note_roots(&parent_a);
+
+        let mut parent_b = BlockMetadata::from_block(&sample_block());
+        parent_b.block_hash = BlockHash::new([0xbb; 32]);
+        parent_b.post_state_hash = StateHash::new([0xb1; 32]);
+        parent_b.fringe_state_hash = StateHash::new([0xb2; 32]);
+        parent_b.validated = true;
+        parent_b.validation_failed = false;
+        window.note_roots(&parent_b);
+
+        let mut child = sample_block();
+        child.block_number = BlockHeight::try_from(2).expect("height");
+        child.block_hash = BlockHash::new([0xcf; 32]);
+        child.pre_state_hash = StateHash::new([0x77; 32]);
+        child.justifications = vec![genesis.block_hash, parent_a.block_hash, parent_b.block_hash];
+
+        assert!(
+            !window.permits(child.pre_state_hash),
+            "the fixture must exercise the gap: the merged pre-state is not a recorded root"
+        );
+        assert!(
+            pre_replay_refusal(Some(&window), &child).is_none(),
+            "a multi-parent block with validated justifications must be admitted to replay"
+        );
+
+        let mut unknown = child.clone();
+        unknown.justifications = vec![BlockHash::new([0x99; 32])];
+        assert!(
+            matches!(
+                pre_replay_refusal(Some(&window), &unknown),
+                Some(Err(ValidateError::ValidationFailed(
+                    _,
+                    BlockStatus::UncertifiedPreState
+                )))
+            ),
+            "an unknown justification is not an ancestry exemption"
+        );
+
+        let mut orphan = child.clone();
+        orphan.justifications.clear();
+        assert!(
+            matches!(
+                pre_replay_refusal(Some(&window), &orphan),
+                Some(Err(ValidateError::ValidationFailed(
+                    _,
+                    BlockStatus::UncertifiedPreState
+                )))
+            ),
+            "an empty justification set is not an ancestry exemption"
         );
     }
 }
