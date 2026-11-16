@@ -381,14 +381,16 @@ async fn a_final_scope_system_deploy_chain_is_not_rejected() {
         NonNegI64::try_from(1_000_000_000).expect("a test balance"),
     );
     native.set_trusted(&BTreeSet::from([Validator::new(DEPLOYER)]));
-    let mut params = PosParams::default();
-    params.epoch_length = BOUNDARY;
-    params.quarantine_length = 60;
-    params.liveness_absence_threshold = 1;
-    params.liveness_jail_after_boundaries = 2;
-    params.liveness_jail_epochs = 10;
-    params.liveness_vote_window = 6;
-    params.liveness_slash_severity = 1;
+    let params = PosParams {
+        epoch_length: BOUNDARY,
+        quarantine_length: 60,
+        liveness_absence_threshold: 1,
+        liveness_jail_after_boundaries: 2,
+        liveness_jail_epochs: 10,
+        liveness_vote_window: 6,
+        liveness_slash_severity: 1,
+        ..Default::default()
+    };
     native.set_params(&params);
     let bonds: BTreeMap<Validator, NonNegI64> = VALIDATORS
         .iter()

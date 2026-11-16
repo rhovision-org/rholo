@@ -481,6 +481,7 @@ async fn the_node_targets_only_its_own_spent_record() {
         &node,
         &log,
         &ShardHealth::new(),
+        None,
     )
     .await;
 
