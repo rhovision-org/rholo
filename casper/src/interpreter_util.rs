@@ -15,9 +15,12 @@ use rchain_models::ast::Par;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::{BlockMetadata, FailureCause, SlashSeverity};
-use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
+use rchain_models::casper::protocol::casper_message::{
+    BlockMessage, ProcessedSystemDeploy, SignedDeployData, SystemDeployData,
+};
 use rchain_models::validator::Validator;
 use rchain_rholang::errors::RholangError;
+use rchain_rholang::native_state::NativeSystemState;
 use rchain_rholang::runtime::{ReplayCostCheck, ReplayRhoRuntime};
 use rchain_rholang::system_processes::BlockData;
 use rchain_shared::base16;
@@ -958,6 +961,54 @@ fn describe_no_advance(reason: &NoAdvance<Validator>) -> String {
     }
 }
 
+/// **A boundary block must carry the `CloseBlock` the chain's parameters define** (C301's C5).
+///
+/// `close_block` applies the epoch transition when the block carries
+/// `SystemDeployData::CloseBlock`; the boundary is `block_number % PosParams.epoch_length == 0`
+/// read from the **pre-state**, the same value the transition reads. Without this rule a proposer
+/// whose local `epoch_length` differs from the chain's emits boundary blocks with and without the
+/// close at the same heights, and every node accepts both — a silent fork in the epoch schedule.
+/// The rule requires the system-deploy set to match the boundary: a **successful** close at a
+/// boundary, none elsewhere. A surface with no `PosParams` record (bare tests and tools) imposes no
+/// rule.
+///
+/// Hard-fork class: a boundary block without the close that an earlier binary accepted is refused
+/// by this one. No deployment is part of this change.
+async fn epoch_boundary_violation(
+    forked: &ReplayRhoRuntime,
+    block: &BlockMessage,
+) -> Result<Option<BlockStatus>, String> {
+    let params = NativeSystemState::new(forked.native_store())
+        .params_opt()
+        .await?;
+    Ok(epoch_boundary_violation_for(
+        params.as_ref(),
+        i64::from(block.block_number),
+        &block.state.system_deploys,
+    ))
+}
+
+/// The pure half of [`epoch_boundary_violation`]: `None` when no `PosParams` record is installed
+/// (a bare surface imposes no rule), otherwise the boundary-versus-close comparison.
+fn epoch_boundary_violation_for(
+    params: Option<&rchain_rholang::native_state::PosParams>,
+    block_number: i64,
+    system_deploys: &[ProcessedSystemDeploy],
+) -> Option<BlockStatus> {
+    let params = params?;
+    let boundary =
+        params.epoch_length > 0 && block_number != 0 && block_number % params.epoch_length == 0;
+    let has_close = system_deploys.iter().any(|sd| match sd {
+        ProcessedSystemDeploy::Succeeded { system_deploy, .. } => {
+            matches!(system_deploy, SystemDeployData::CloseBlock)
+        }
+        // A `Failed` entry does not carry which system deploy it was, and a failed close did not
+        // apply the transition — so it is not a close for this rule.
+        ProcessedSystemDeploy::Failed { .. } => false,
+    });
+    (boundary != has_close).then_some(BlockStatus::InvalidEpochBoundary)
+}
+
 /// Validate a block by recomputing its pre-state and replaying its deploys (port of
 /// `validateBlockCheckpoint`). Returns the block metadata plus a [`ReplayVerdict`] (what the replay
 /// found) / `BlockStatus` (a pre-replay refusal) outcome.
@@ -1147,6 +1198,26 @@ where
         let forked = runtime
             .fork_replay_runtime(pre_state.pre_state_hash)
             .await?;
+        // C301's C5: the block's system-deploy shape must match the epoch boundary the pre-state
+        // defines. Refused before replay, and classified as the block's own fault rather than a
+        // replay divergence — the parameters are chain state, so every node reaches this verdict.
+        if let Some(status) = epoch_boundary_violation(&forked, block).await? {
+            log.warn(
+                source,
+                &format!("block {} refused: {status}", block.block_hash.to_hex()),
+            );
+            let bmd = BlockMetadata {
+                validated: true,
+                validation_failed: true,
+                failure_cause: Some(status.failure_cause()),
+                slash_severity: SlashSeverity::Unspecified,
+                slashable: false,
+                fringe: pre_state.fringe.clone(),
+                fringe_state_hash: StateHash::from_slice(pre_state.fringe_state.as_bytes()),
+                ..BlockMetadata::from_block(block)
+            };
+            return Ok((bmd, Err(status)));
+        }
         let mut replay_result = replay_block(
             runtime,
             &forked,
@@ -1310,6 +1381,52 @@ mod tests {
 
     fn hash(byte: u8) -> Blake2b256Hash {
         Blake2b256Hash::from_bytes([byte; 32])
+    }
+
+    /// **The boundary rule is a function of the chain's params, not the proposer's config**
+    /// (C301's C5): a boundary block must carry a successful `CloseBlock`; a non-boundary block
+    /// must not; a surface with no params record imposes no rule.
+    #[test]
+    fn a_boundary_block_carries_the_close_and_a_non_boundary_does_not() {
+        let params = rchain_rholang::native_state::PosParams {
+            epoch_length: 10,
+            ..Default::default()
+        };
+        let close = ProcessedSystemDeploy::Succeeded {
+            event_list: Vec::new(),
+            system_deploy: SystemDeployData::CloseBlock,
+        };
+        let empty: Vec<ProcessedSystemDeploy> = Vec::new();
+
+        assert_eq!(
+            epoch_boundary_violation_for(Some(&params), 10, std::slice::from_ref(&close)),
+            None,
+            "a boundary with the close is the honest block"
+        );
+        assert_eq!(
+            epoch_boundary_violation_for(Some(&params), 10, &empty),
+            Some(BlockStatus::InvalidEpochBoundary),
+            "a boundary without the close skips the epoch transition"
+        );
+        assert_eq!(
+            epoch_boundary_violation_for(Some(&params), 11, std::slice::from_ref(&close)),
+            Some(BlockStatus::InvalidEpochBoundary),
+            "a close off the boundary is the same disagreement, the other way"
+        );
+        assert_eq!(
+            epoch_boundary_violation_for(Some(&params), 11, &empty),
+            None
+        );
+        assert_eq!(
+            epoch_boundary_violation_for(Some(&params), 0, &empty),
+            None,
+            "genesis is never a boundary"
+        );
+        assert_eq!(
+            epoch_boundary_violation_for(None, 10, &empty),
+            None,
+            "no params record imposes no rule"
+        );
     }
 
     /// **The reset request's contract, which the engine's running loop depends on** (#320).
