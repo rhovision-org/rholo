@@ -41,6 +41,19 @@ use super::web_api::WebApi;
 use crate::resources::ResourceGuard;
 use crate::web::transaction::{TransactionApi, TransactionResponse};
 
+/// **The operator gets the detail; the client gets a refusal** (C301's E1).
+///
+/// `BlockApiException`'s string is returned verbatim in the HTTP body (`http::json_result` and
+/// `http::deploy_response`). A store, filesystem or protobuf error carries paths and internals that
+/// are not the client's business, so a site that was formatting such an error into the message uses
+/// this constructor instead: the detail goes to the node's stderr and the wire message names only
+/// the operation. Messages that echo the caller's own input (an invalid address, an unknown deploy
+/// id) are authored at their call sites and stay as they are.
+fn internal(context: &str, detail: impl std::fmt::Display) -> BlockApiException {
+    eprintln!("[web-api] {context}: {detail}");
+    BlockApiException(context.to_string())
+}
+
 /// The web API implementation (port of `WebApi.WebApiImpl`).
 pub struct WebApiImpl {
     block_api: Arc<dyn BlockApi>,
@@ -170,7 +183,7 @@ impl WebApiImpl {
     fn save_faucet_ledger(&self, ledger: &FaucetLedger) -> Result<(), BlockApiException> {
         if let Some(path) = &self.faucet_ledger_path {
             Self::write_faucet_ledger(path, ledger)
-                .map_err(|e| BlockApiException(format!("faucet ledger persistence failed: {e}")))?;
+                .map_err(|e| internal("faucet ledger persistence failed", e))?;
         }
         Ok(())
     }
@@ -274,6 +287,21 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::resources::{ResourceSnapshot, ResourceState};
+
+    /// **The wire message does not carry the internal detail** (C301's E1). The constructor is the
+    /// boundary between an operator-facing cause and a client-facing refusal: a filesystem path or a
+    /// decoder's message in the body is both a disclosure and a contract a client would start to
+    /// depend on.
+    #[test]
+    fn an_internal_failure_keeps_its_detail_out_of_the_response_message() {
+        let e = internal(
+            "faucet ledger persistence failed",
+            "permission denied: /var/lib/rnode/faucet-ledger.json",
+        );
+        assert_eq!(e.0, "faucet ledger persistence failed");
+        assert!(!e.0.contains("permission denied"), "{}", e.0);
+        assert!(!e.0.contains("/var/lib"), "{}", e.0);
+    }
 
     /// A block API that answers from its fields and records what it was asked — the `StubBlockApi`
     /// pattern `deploy_grpc_service_v1.rs` and `tonic.rs`'s tests use. The methods this file never
@@ -1427,8 +1455,13 @@ impl WebApi for WebApiImpl {
                         .unpoison()
                         .contains(address);
                     if recovering {
-                        let signed = SignedDeployData::from_bytes(&pending.signed)
-                            .map_err(|e| BlockApiException(format!("faucet recovery: {e}")))?;
+                        let signed =
+                            SignedDeployData::from_bytes(&pending.signed).map_err(|e| {
+                                internal(
+                                    "faucet recovery: the stored deploy could not be decoded",
+                                    e,
+                                )
+                            })?;
                         if signed.sig != deploy_id || !signed.verify_signature() {
                             return Err(BlockApiException(
                                 "faucet recovery: invalid signed deploy".to_string(),
