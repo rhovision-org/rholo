@@ -961,7 +961,11 @@ impl RuntimeManager {
             Err(RholangError::SpeculationInvalid { .. }) => {
                 // Revert the speculative partial state before the error escapes, so the caller's
                 // sequential re-run starts from the pre-deploy state (not the aborted run's commits).
-                runtime.revert_to_soft_checkpoint(fallback).await;
+                if let Err(e) = runtime.revert_to_soft_checkpoint(fallback).await {
+                    return Err(RuntimeRunError::Other(format!(
+                        "soft checkpoint revert refused: {e}"
+                    )));
+                }
                 return Err(RuntimeRunError::SpeculationInvalidated);
             }
             Err(e) => return Err(RuntimeRunError::Other(e.to_string())),
@@ -975,7 +979,11 @@ impl RuntimeManager {
         // landing while a DFS-later op held the channel). Either way, roll back and let the caller
         // fall back to the sequential reference.
         if runtime.observed_skew() {
-            runtime.revert_to_soft_checkpoint(fallback).await;
+            if let Err(e) = runtime.revert_to_soft_checkpoint(fallback).await {
+                return Err(RuntimeRunError::Other(format!(
+                    "soft checkpoint revert refused: {e}"
+                )));
+            }
             return Err(RuntimeRunError::SpeculationInvalidated);
         }
         let checkpoint =
@@ -1029,7 +1037,10 @@ impl RuntimeManager {
             system_deploy_error,
         };
         if !succeeded {
-            runtime.revert_to_soft_checkpoint(fallback).await;
+            runtime
+                .revert_to_soft_checkpoint(fallback)
+                .await
+                .map_err(|e| format!("soft checkpoint revert refused: {e}"))?;
         }
         Ok((processed, eval_result))
     }
@@ -1139,7 +1150,11 @@ impl RuntimeManager {
             measured_soft_checkpoint(runtime, soft_checkpoint_census::Site::CostUnitFallback).await;
         match Self::play_deploy_with_cost_accounting_once(runtime, deploy, rand).await {
             Err(RuntimeRunError::SpeculationInvalidated) => {
-                runtime.revert_to_soft_checkpoint(pre).await;
+                if let Err(e) = runtime.revert_to_soft_checkpoint(pre).await {
+                    return Err(RuntimeRunError::Other(format!(
+                        "soft checkpoint revert refused: {e}"
+                    )));
+                }
                 runtime.set_effect_mode(EffectMode::Sequential);
                 let retried =
                     Self::play_deploy_with_cost_accounting_once(runtime, deploy, rand).await;

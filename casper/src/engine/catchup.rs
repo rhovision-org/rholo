@@ -36,7 +36,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rchain_block_storage::dag::dag_storage::BlockDagStorage;
+use rchain_block_storage::dag::dag_storage::{BlockDagStorage, ResetMarker, ResetPhase};
 use rchain_comm::peer_node::PeerNode;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_comm::transport::transport_layer::TransportLayer;
@@ -143,6 +143,13 @@ impl CatchupWindow {
 /// window is released on **every** exit path — a catch-up that cannot finish must not leave the node
 /// with a narrowed ingest.
 #[allow(clippy::too_many_arguments)]
+/// **Law 72b's release condition.** A reset marker may be released only from the completed phase and
+/// only once the catch-up frontier has passed its anchor. A `Rewinding` record brackets effects that
+/// may be partially applied; clearing it would erase the record before the boot repair re-applies them.
+fn may_release(marker: &ResetMarker, frontier: i64) -> bool {
+    marker.phase == ResetPhase::Rewound && frontier > i64::from(marker.height)
+}
+
 pub async fn run_catchup(
     transport: Arc<dyn TransportLayer>,
     conf: RPConf,
@@ -276,7 +283,20 @@ pub async fn run_catchup(
     // the *next* boot re-enters the guard rather than reconnecting to a truncated DAG. Clearing on the
     // walk's mere completion would re-open exactly the window the marker exists to close.
     match dag.read_reset_marker().await {
-        Ok(Some(marker)) if frontier > i64::from(marker.height) => {
+        // **Law 72b: a record is released only from the completed phase.** A `Rewinding` marker
+        // brackets effects that may be partially applied; clearing it here would erase the record
+        // before the boot repair has re-applied them. It is kept, and the next boot re-enters the
+        // guard (which repairs rather than re-rewinds).
+        Ok(Some(marker)) if marker.phase == ResetPhase::Rewinding => log.warn(
+            source,
+            &format!(
+                "the reset marker at height {} is still `Rewinding` — a partial reset was recorded; \
+                 keeping it so the next boot repairs the effects rather than clearing a record that \
+                 brackets them (Law 72b)",
+                i64::from(marker.height)
+            ),
+        ),
+        Ok(Some(marker)) if may_release(&marker, frontier) => {
             // **A completed self-replay reset is resumed here** (#564, F-U23-11): the walk's own
             // result is the only evidence that this node is past the anchor it rewound to, and the
             // record names whether the reset was this fault's. The helper is store-first and fails
@@ -364,6 +384,30 @@ mod tests {
                 "height {height} was refused by a released window"
             );
         }
+    }
+
+    /// **Law 72b: release only from the completed phase.** A `Rewinding` marker may bracket effects
+    /// that are only partially applied; clearing it would erase the record before the boot repair.
+    #[test]
+    fn a_rewinding_marker_is_never_released() {
+        let marker = ResetMarker {
+            anchor: rchain_models::block_hash::BlockHash::new([1; 32]),
+            height: rchain_shared::refined::BlockHeight::zero(),
+            phase: ResetPhase::Rewinding,
+        };
+        assert!(
+            !may_release(&marker, 100),
+            "a partial reset is never released, however far the frontier has advanced"
+        );
+        let rewound = ResetMarker {
+            phase: ResetPhase::Rewound,
+            ..marker
+        };
+        assert!(may_release(&rewound, 100), "past the anchor releases");
+        assert!(
+            !may_release(&rewound, 0),
+            "at or below the anchor keeps the marker"
+        );
     }
 
     /// Held at a frontier, a window admits up to `frontier + width` and nothing above — and it admits

@@ -1911,15 +1911,36 @@ impl MergeScope {
         require_in_dag(prune_fringe, "prune fringe")?;
 
         let c_scope_ids = message_map::between(dag_data, merge_fringe, final_fringe);
-        let f_scope_ids = message_map::between(dag_data, final_fringe, prune_fringe);
 
-        let base_msg = if f_scope_ids.is_empty() {
+        // **Law 113's base guard.** The base is genesis only when the *final fringe* is empty. Keying
+        // this on `f_scope_ids` conflated "no finalised layer to prune" with "nothing is finalised",
+        // and could rebuild over genesis with a non-empty final fringe — the strongest form of an
+        // undone finalised write.
+        let base_msg = if final_fringe.is_empty() {
             let genesis = message_map::find_with_empty_parents(dag_data)
                 .ok_or_else(|| "Final scope is empty but no genesis found.".to_string())?;
             Some(genesis.id)
         } else {
             None
         };
+
+        // **Law 113's native-write guard.** The final scope normally trims to the newest finalised
+        // layer (`prune_fringe`); that is safe only because every conflict-scope block is assumed to
+        // descend from the final fringe, so it has already seen the older finalised writers. A block
+        // that does not descend breaks that premise and can carry a stale *absolute* native write over
+        // a newer finalised value (C400). When one is present, widen the final scope to the whole
+        // finalised closure so the conflict relation sees those writers and rejects the stale one.
+        let non_descendant = c_scope_ids.iter().any(|id| {
+            dag_data
+                .get(id)
+                .is_some_and(|m| !final_fringe.is_subset(m.seen.as_ref()))
+        });
+        let empty = BTreeSet::new();
+        let f_scope_ids = message_map::between(
+            dag_data,
+            final_fringe,
+            if non_descendant { &empty } else { prune_fringe },
+        );
         let conflict_scope: BTreeSet<BlockHash> = c_scope_ids
             .difference(&base_msg.into_iter().collect())
             .copied()
@@ -2485,6 +2506,61 @@ mod tests {
             "the merge fringe is the final fringe, so nothing is left to merge"
         );
         assert_eq!(base, None, "a non-empty final scope has no base block");
+    }
+
+    /// **Law 113's base guard.** A non-empty final fringe must never fall back to genesis, even when
+    /// the final scope happens to be empty (a child carries the same fringe, so `between` is empty).
+    /// The old condition keyed on `f_scope_ids` and returned genesis here — the strongest form of an
+    /// undone finalised write.
+    #[test]
+    fn a_non_empty_final_fringe_never_falls_back_to_genesis() {
+        let g = msg(1, &[], &[1]);
+        let c = msg(2, &[1], &[1, 2]);
+        let dag = BTreeMap::from([(g.id, g.clone()), (c.id, c.clone())]);
+
+        let (scope, base) = MergeScope::from_fringes(
+            &[c.id].into_iter().collect(),
+            &[c.id].into_iter().collect(),
+            &[c.id].into_iter().collect(), // a child carries the same fringe: between is empty
+            &dag,
+        )
+        .expect("a well-formed dag");
+
+        assert!(
+            scope.final_scope.is_empty(),
+            "between(final, prune) is empty"
+        );
+        assert_eq!(
+            base, None,
+            "a non-empty final fringe must not use genesis as its base"
+        );
+    }
+
+    /// **Law 113's native-write guard (C400).** A conflict-scope block that does not descend from the
+    /// final fringe breaks the prune premise: it may not have seen an older finalised writer, whose
+    /// absolute native write it could overwrite. The final scope is widened to the whole finalised
+    /// closure so the conflict relation can see that writer. Without the guard the final scope is only
+    /// the trimmed layer `{f}` and `h` is invisible.
+    #[test]
+    fn a_non_descendant_conflict_block_widens_the_final_scope_to_the_closure() {
+        let h = msg(1, &[], &[1]); // older finalised writer
+        let f = msg(2, &[1], &[1, 2]); // the final fringe
+        let c = msg(3, &[], &[3]); // a fork that does not see the final fringe
+        let dag = BTreeMap::from([(h.id, h.clone()), (f.id, f.clone()), (c.id, c.clone())]);
+
+        let (scope, _) = MergeScope::from_fringes(
+            &[c.id].into_iter().collect(), // merge fringe
+            &[f.id].into_iter().collect(), // final fringe
+            &[h.id].into_iter().collect(), // a child carries the older fringe: prune = {h}
+            &dag,
+        )
+        .expect("a well-formed dag");
+
+        assert!(
+            scope.final_scope.contains(&h.id),
+            "the closure must include the older finalised writer, not only the trimmed layer"
+        );
+        assert!(scope.conflict_scope.contains(&c.id));
     }
 
     /// A merge fringe that has *seen* a block the final fringe has not: that block is the conflict

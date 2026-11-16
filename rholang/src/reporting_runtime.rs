@@ -180,8 +180,8 @@ impl ReportingRuntime {
     pub async fn revert_to_soft_checkpoint(
         &self,
         checkpoint: SoftCheckpoint<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>,
-    ) {
-        self.space.revert_to_soft_checkpoint(checkpoint).await;
+    ) -> std::result::Result<(), rchain_rspace::errors::RSpaceError> {
+        self.space.revert_to_soft_checkpoint(checkpoint).await
     }
 
     pub async fn rig(&self, log: Log) {

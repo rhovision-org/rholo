@@ -13229,13 +13229,14 @@ was checked to exist and be a theorem, not to refute anything.
 *refuted*, or *blocked with the missing model field named*. A blocked verdict is a result, not a
 claim, and no row is promoted on one.
 
-- **Law 113 — split verdict: a law for tuple-space writes, refuted for native absolute writes.**
+- **Law 113 — a tuple-space law, with the native-absolute half refuted and now guarded.**
   The tuple-space half is **Law 113** (`proved-model`): the merge applies only the kept half of the
   conflict scope to the finalised base (`merging.rs:2049-2071`, `:2122-2129`), so a datum in that base
   survives unless a kept chain removed it. The unqualified reading — “a finalised write is never
   removed” — is false, and
   `casper/tests/n420_boundary_merge.rs::merging_a_tuple_space_rmw_block_duplicates_its_produce`
-  witnesses a kept chain consuming a base datum. **The native half is refuted.** Absolute native
+  witnesses a kept chain consuming a base datum. **The native half was refuted** (the trace below)
+  **and is now guarded.** Absolute native
   writes are whole-slot snapshots (`rspace/src/native_store.rs:56-88`), `NativeRelations::fold` never
   compares a kept write against the base, and the conflict relation sees finalised chains only down to
   `prune_fringe` (`block-storage/src/dag/message_map.rs:119-135`). The stale-fork trace:
@@ -13248,13 +13249,15 @@ claim, and no row is promoted on one.
   pre-state, so the erasure is consensus-wide and `MergeReport` records no rejection. The
   load-bearing condition is the one-layer `final_scope` (`merging.rs:1913-1926`): if the
   causal-children set is empty, `prune_fringe = ∅` and the final scope is the whole closure, so the
-  stale writer is compared and `enforce_rejected` fires. **The missing guard is a consensus-relevant
-  decision, not landed:** compare an accepted conflict-scope absolute write against the base’s writer,
-  or refuse a block whose justifications do not descend from the finalised fringe, or drop the
-  `prune_fringe` trim when the conflict scope contains a non-descendant. The base-selection genesis
-  fallback — keyed on `f_scope_ids.is_empty()` rather than `final_fringe.is_empty()`
-  (`merging.rs:1916-1922`) — is a second suspicious guard, unreachable only if finalizer-derived
-  fringes always leave a non-empty final scope.
+  stale writer is compared and `enforce_rejected` fires. **The guard is landed (C400):
+  `from_fringes` widens the final scope to the whole finalised closure when a conflict-scope block
+  does not descend from the final fringe, so `native.conflicting` sees the older writer and the stale
+  chain is rejected; the genesis fallback now keys on `final_fringe.is_empty()`**
+  (`merging.rs:1913-1935`). The two tests
+  `a_non_descendant_conflict_block_widens_the_final_scope_to_the_closure` and
+  `a_non_empty_final_fringe_never_falls_back_to_genesis` pin the guards. What remains is the
+  honest-quorum hypothesis for cross-node agreement (less than one third Byzantine), not the local
+  merge rule.
 - **`pairwise-finalized-imply-one-chain` — false as literally worded.** The finalised fringe is an
   antichain (Law 14b): two messages in one fringe from different senders are both finalised and need
   not reach one another. The predicate the rejoin harness needs is the *safety* reading — no two

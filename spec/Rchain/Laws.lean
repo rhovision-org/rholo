@@ -4172,7 +4172,8 @@ def lawsC : List Law := [
       `Rchain.law72b, `Rchain.law72b_falsifier, `Rchain.a_completed_reset_can_be_released],
     axioms := [],
     rust := ["casper/src/engine/catchup.rs", "casper/src/engine/reset.rs", "casper/src/dag.rs"],
-    rustWitness := ["casper/tests/reset.rs:a_crash_after_the_rewind_is_repaired_at_boot_by_the_marker"],
+    rustWitness := ["casper/tests/reset.rs:a_crash_after_the_rewind_is_repaired_at_boot_by_the_marker",
+      "casper/src/engine/catchup.rs:a_rewinding_marker_is_never_released"],
     witness := [`Rchain.law72b_falsifier, `Rchain.a_completed_reset_can_be_released],
     falsifiable := "`unsafeReleaseStep` drops the `phase = .rewound` requirement, and \
       `law72b_falsifier` exhibits a reachable `rewinding` state released by it — the partial reset the \
@@ -4184,7 +4185,9 @@ def lawsC : List Law := [
       states the safety half: release starts only from `rewound`, so the marker cannot be cleared while \
       an effect is missing. **What it does not model:** the frontier itself is a `Nat` hypothesis, not a \
       walk; the walk's liveness is Law 71's. **HAZOP U12-02** asked when the record may be cleared; the \
-      answer is this clause plus the status surface (C287), not an unbounded lifetime." },
+      answer is this clause plus the status surface (C287), not an unbounded lifetime. **The code \
+      guard is landed:** `may_release` (`casper/src/engine/catchup.rs`) clears only a `Rewound` \
+      marker, pinned by `a_rewinding_marker_is_never_released`." },
 
   { number := 73, layer := "Casper",
     statement := "**A raised request is not spent until the act commits.** The self-reset's request cell \
@@ -4251,15 +4254,18 @@ def lawsC : List Law := [
       `Rchain.law74b, `Rchain.law74b_falsifier, `Rchain.a_guarded_revert_uses_the_snapshots_base],
     axioms := [],
     rust := ["rspace/src/checkpoint.rs", "rspace/src/rspace.rs"],
+    rustWitness := ["rspace/src/rspace.rs:a_soft_checkpoint_revert_over_a_moved_base_is_refused"],
     witness := [`Rchain.law74b_falsifier],
     falsifiable := "The port's `revert_to_soft_checkpoint` re-reads `history.root()` at revert time; \
       `law74b_falsifier` reaches a state where the unguarded rule used the new base. The guarded rule's \
       invariant is `a_guarded_revert_uses_the_snapshots_base`.",
-    note := "**The Rust guard is the remaining code change.** Adding the base to `SoftCheckpoint` and \
-      checking it at revert is not landed here; the model states the rule and the mutant, and \
-      `rspace/src/checkpoint.rs:14-21` is where the field is missing. **What it does not model:** the \
-      history's own base derivation is Law 70's trie, not this file. HAZOP U15-02's owed law is this \
-      clause; the fault-injection test of the interleaving remains owed." },
+    note := "**The Rust guard is landed.** `SoftCheckpoint` carries the history root it was taken over \
+      (`rspace/src/checkpoint.rs`), and `revert_to_soft_checkpoint` refuses with \
+      `SoftCheckpointBaseMoved` when the root moved (`rspace/src/rspace.rs`), pinned by \
+      `a_soft_checkpoint_revert_over_a_moved_base_is_refused`; the old code re-read \
+      `history.root()` at revert time. **What it does not model:** the history's own base derivation is \
+      Law 70's trie, not this file. HAZOP U15-02's owed law is this clause; the interleaving test is \
+      the Rust witness above." },
 
   { number := 75, layer := "Casper",
     statement := "**A dependent action is taken only on a committed record.** The refusal budget's \
@@ -6472,8 +6478,11 @@ def lawsC : List Law := [
       datum. **Native absolute writes are not covered**, and the unqualified law is refuted there: a \
       stale conflict-scope block's whole-slot `Put` can overwrite a finalised boundary value, because \
       the conflict relation sees finalised chains only down to `prune_fringe` and \
-      `NativeRelations::fold` never compares against the base (§170, the stale-fork trace). The guard \
-      is a consensus-relevant decision and is not landed here.",
+      `NativeRelations::fold` never compares against the base (§170, the stale-fork trace). **The \
+      guard is landed**: the merge widens the final scope to the whole finalised closure when the \
+      conflict scope contains a block that does not descend from the final fringe, so the stale \
+      writer is compared and rejected; the genesis fallback is keyed on the final fringe. The two \
+      `casper/src/merging.rs` tests pin both.",
     status := .provedModel,
     formal := `Rchain.FinalizedMerge.law113_statement,
     mutant := `Rchain.FinalizedMerge.law113_mutant,
@@ -6487,7 +6496,9 @@ def lawsC : List Law := [
       "rspace/src/merger/state_change.rs", "rspace/src/merger/state_change_merger.rs"],
     rustWitness := [
       "casper/tests/n420_boundary_merge.rs:a_boundary_round_merge_keeps_the_base_states_user_write",
-      "casper/tests/n420_boundary_merge.rs:merging_a_tuple_space_rmw_block_duplicates_its_produce"],
+      "casper/tests/n420_boundary_merge.rs:merging_a_tuple_space_rmw_block_duplicates_its_produce",
+      "casper/src/merging.rs:a_non_empty_final_fringe_never_falls_back_to_genesis",
+      "casper/src/merging.rs:a_non_descendant_conflict_block_widens_the_final_scope_to_the_closure"],
     witness := [`Rchain.FinalizedMerge.law113_falsifier,
       `Rchain.FinalizedMerge.the_same_fixture_survives_under_the_law],
     falsifiable := "`law113_mutant` applies the **rejected** half of the scope as well; \
@@ -6496,17 +6507,19 @@ def lawsC : List Law := [
       **The law's own qualifier is falsified by the code's existing consume case**: \
       `merging_a_tuple_space_rmw_block_duplicates_its_produce` has a kept chain remove a base datum, \
       which the law allows and the unqualified reading forbids.",
-    note := "**The scope, and what stays open.** The tuple-space half is proved: the applied slice is \
-      the kept conflict scope (`merging.rs:2049-2071`, `:2122-2129`), the base is its input not an \
-      output, and `net_datum_change` cancels a produce-and-consume inside the batch. **Not modelled \
-      here:** the merge's *native* absolute writes, where the same stale-fork shape refutes the \
-      unqualified law (the trace and the missing guard are recorded in §170); the base selection's \
-      genesis fallback keyed on `f_scope_ids.is_empty()` rather than `final_fringe.is_empty()` \
-      (`merging.rs:1916-1922`), a separate suspicious guard; and the honest-quorum hypothesis \
-      (less than one third Byzantine) needed to lift the local merge invariant to \"every honest \
-      node's finalised write survives\". The Rust tie is the pair of tests above: one pins a base \
-      datum surviving a merge that does not consume it, the other pins the consume direction. The \
-      rejected-slice arm is pinned by the Lean model, not yet by a Rust test." },
+    note := "**The scope, and what is now enforced.** The tuple-space half is proved: the applied slice \
+      is the kept conflict scope (`merging.rs:2049-2071`, `:2122-2129`), the base is its input not an \
+      output, and `net_datum_change` cancels a produce-and-consume inside the batch. **The native \
+      half is now guarded** (C400): when the conflict scope contains a block that does not descend \
+      from the final fringe, `from_fringes` widens the final scope to the whole finalised closure, so \
+      `native.conflicting` sees the older writer and the stale chain is rejected; the genesis fallback \
+      keys on `final_fringe.is_empty()` (`merging.rs:1916-1922`). Both are pinned by the two \
+      `casper/src/merging.rs` tests. **What the Lean model does not cover:** native slots themselves \
+      (the guard is a code rule, not a theorem about `NativeStoreAction`), and the honest-quorum \
+      hypothesis (less than one third Byzantine) needed to lift the local merge invariant to \"every \
+      honest node's finalised write survives\". The Rust tie is the four tests above: base surviving, \
+      consume, the genesis fallback, and the closure widening. The rejected-slice arm is pinned by the \
+      Lean model, not yet by a Rust test." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

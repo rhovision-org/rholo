@@ -32,6 +32,10 @@ pub enum RSpaceError {
     InstallConflict(&'static str),
     /// A cached key was unexpectedly missing.
     CachedKeyMissing,
+    /// **A soft checkpoint's revert was refused because the history base moved since the snapshot**
+    /// (Law 74b). The snapshot's overlay belongs over the base it was taken over; rebuilding it over
+    /// a newer base would apply the old overlay to the wrong trie, so the revert does nothing.
+    SoftCheckpointBaseMoved,
     /// A radix action key had an empty prefix.
     EmptyPrefix,
     /// Replay data was expected to be empty at checkpoint.
@@ -69,6 +73,10 @@ impl fmt::Display for RSpaceError {
                 )
             }
             RSpaceError::CachedKeyMissing => write!(f, "cached key must be present"),
+            RSpaceError::SoftCheckpointBaseMoved => write!(
+                f,
+                "soft checkpoint base moved since the snapshot; revert refused (Law 74b)"
+            ),
             RSpaceError::EmptyPrefix => write!(f, "prefix must be non-empty"),
             RSpaceError::ReplayDataNotEmpty => write!(f, "replay data must be empty at checkpoint"),
             RSpaceError::ReplayCommNotInTrace => {
@@ -93,7 +101,7 @@ mod tests {
     /// that dropped its detail would leave a reader with "decode  failed" and no idea which decoder.
     #[test]
     fn every_variant_renders_and_the_carrying_variants_keep_their_detail() {
-        let cases: [(RSpaceError, &str); 11] = [
+        let cases: [(RSpaceError, &str); 12] = [
             (RSpaceError::LockPoisoned, "lock poisoned"),
             (RSpaceError::Codec("rnd"), "decode rnd failed"),
             (
@@ -123,6 +131,10 @@ mod tests {
             (
                 RSpaceError::ConsumeArity("2 channels, 1 pattern"),
                 "invalid scheduled consume: 2 channels, 1 pattern",
+            ),
+            (
+                RSpaceError::SoftCheckpointBaseMoved,
+                "soft checkpoint base moved since the snapshot; revert refused (Law 74b)",
             ),
         ];
 

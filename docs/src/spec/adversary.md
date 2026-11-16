@@ -20,11 +20,14 @@ otherwise:
 - **Whether an already-finalised write can be undone by a later merge.** That is a *safety* question, and
   it is now **answered in two halves** (Law 113, §170). A **tuple-space** write in the finalised base
   survives a later merge unless a kept chain consumed it — that is proved. A **native absolute** write
-  is **not** safe: a valid stale fork that does not descend from the finalised fringe can carry a
-  whole-slot `Put` over the base, because the conflict relation sees finalised chains only down to
-  `prune_fringe` and `NativeRelations::fold` never compares against the base; the stale-fork trace is
-  in §170. The guard is a consensus-relevant decision and is not landed. Nothing below should be read as
-  covering the native half.
+  was **not** safe: a valid stale fork that does not descend from the finalised fringe could carry a
+  whole-slot `Put` over the base, because the conflict relation saw finalised chains only down to
+  `prune_fringe` and `NativeRelations::fold` never compared against the base (the stale-fork trace is
+  in §170). **That is now guarded**: the merge widens the final scope to the whole finalised closure
+  when the conflict scope contains a non-descendant, so the stale writer is compared and rejected;
+  the genesis fallback is keyed on the final fringe. What remains outside this statement is the
+  honest-quorum hypothesis for cross-node agreement (less than one third Byzantine), not the local
+  merge rule.
 - **Post-quantum adversaries.** Tracked separately.
 
 ## What "handled" means here

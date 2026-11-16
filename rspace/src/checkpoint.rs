@@ -18,6 +18,10 @@ pub struct SoftCheckpoint<C, P, A, K> {
     pub log: Log,
     pub produce_counter: BTreeMap<Produce, usize>,
     pub native_snapshot: NativeStoreState,
+    /// **The history root this snapshot was taken over.** Law 74b: a revert may rebuild the snapshot's
+    /// overlay only over this base. The port used to re-read `history.root()` at revert time, so a hard
+    /// checkpoint in between silently applied the old overlay over a new base.
+    pub base: Blake2b256Hash,
 }
 
 /// A checkpoint (port of `Checkpoint`).
