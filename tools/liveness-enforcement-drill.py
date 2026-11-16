@@ -452,7 +452,10 @@ def wait_signer_synced(validator: int, min_height: int, args, label: str) -> dic
 
 
 def window_margin(config: ArmConfig) -> int:
-    return max(5, config.vote_window // 4)
+    """Enough window left that the deploy can land and be tallied without racing its close."""
+    if config.vote_window <= 0:
+        return 0
+    return min(5, max(2, config.vote_window // 2))
 
 
 def propose() -> None:
@@ -567,7 +570,27 @@ def vote_once(
 
     deploy = submit_signed(vote_term(target), validator=voter)
     propose()
-    committed = commit_deploy(deploy, args, f"validator {voter}'s ballot")
+    try:
+        committed = commit_deploy(deploy, args, f"validator {voter}'s ballot")
+    except RuntimeError as exc:
+        # A rule-side refusal (the window closed, the target was released, the voter is not
+        # active) is a precondition outcome, not a lost ballot: report it and let the arm decide.
+        message = str(exc)
+        if any(
+            needle in message
+            for needle in (
+                "no vote window is open",
+                "not jailed",
+                "not a bonded validator",
+                "only an active validator",
+                "banished validator",
+                "liveness voting is not enabled",
+            )
+        ):
+            record["outcome"] = "refused_by_the_rule"
+            record["refusal"] = message
+            return record
+        raise
     record.update(committed)
     record["outcome"] = "committed"
 
