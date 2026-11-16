@@ -865,14 +865,28 @@ def run_exact_threshold_arm(keys: list[str], args, config: ArmConfig) -> tuple[d
         )
     else:
         if second.get("merged_votes") is None:
-            inconclusive.append("second window closed before the merged read")
-            return checks, observations, inconclusive
-        checks["second_ballot_recorded"] = not keys_missing(second.get("merged_ballots", []), 1)
-        checks["both_ballots_in_merged_state"] = not keys_missing(
-            second.get("merged_ballots", []), 0
-        ) and not keys_missing(second.get("merged_ballots", []), 1)
-        second_for_stake = for_stake(second["merged_votes"]["ballots"], active_bonds)
-        observations["second_for_stake"] = second_for_stake
+            # The window is gone at the first tip above the vote. If the vote's **own block** holds
+            # both ballots, a later boundary tallied and consumed them; the arm's slash wait is the
+            # execution's evidence. If the own block lacks the second ballot too, nothing was cast.
+            own = second.get("own_block_ballots", [])
+            if keys_missing(own, 1):
+                inconclusive.append(
+                    "second ballot observed neither in its own block nor in the merged state"
+                )
+                return checks, observations, inconclusive
+            checks["second_ballot_recorded"] = True
+            checks["both_ballots_in_own_block"] = not keys_missing(own, 0)
+            second_for_stake = for_stake({key: True for key in own}, active_bonds)
+            observations["second_for_stake_from_own_block"] = second_for_stake
+        else:
+            checks["second_ballot_recorded"] = not keys_missing(
+                second.get("merged_ballots", []), 1
+            )
+            checks["both_ballots_in_merged_state"] = not keys_missing(
+                second.get("merged_ballots", []), 0
+            ) and not keys_missing(second.get("merged_ballots", []), 1)
+            second_for_stake = for_stake(second["merged_votes"]["ballots"], active_bonds)
+            observations["second_for_stake"] = second_for_stake
         checks["second_ballot_is_strict_supermajority"] = second_for_stake * 3 > total_active * 2
 
     wait_until(
