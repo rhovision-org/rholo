@@ -23,17 +23,21 @@
 > §1.7 and the bow-tie sections is read with that substitution; H-U7-01's threat is the one the
 > 2026-10-13 work closes.
 
-> **Update — 2026-10-14 (coverage-gap pass).** This page cites `FAUCET_MAX_DRIPS_PER_ADDRESS` in four
-> places — §1's U7 row H-U7-07, two §2 barrier rows, and §2.5's pair P9 — and that symbol **no longer
-> exists in `node/src`.** The per-address drip *budget* was replaced by a **finalised-balance
-> eligibility rule**: a drip is refused when the recipient's finalised REV balance already holds at
-> least one drip (`node/src/api/web_api_impl.rs::finalized_rev_balance`, refusals at `:1237` and
-> `:1255`), with the reservation persisted before submission. Every claim here that names the old
-> constant is read with that substitution. **The substitution is not a re-derivation, and one row
-> turns on that:** P9's shared cause — "the drip increment precedes the submit" — is a statement about
-> a counter that no longer exists, so the barrier that shares a cause with its threat may not be the
-> same barrier at all. That row is owed a re-derivation, recorded in
-> `spec/audit/evidence/coverage-gap-f9521edd7.md` (E4).
+> **Update — 2026-10-14, re-derived and corrected 2026-11-16 (C301's E4).** This page cited
+> `FAUCET_MAX_DRIPS_PER_ADDRESS` in four places — §1's U7 row H-U7-07, the §2 `[vs T11]` barrier, and
+> §2.5's pair P9 in both its forms — and that symbol **no longer exists in `node/src`.** The four
+> citations are rewritten below; none of them now names the constant. The per-address drip *budget*
+> was replaced by a **finalised-balance eligibility rule**: a drip is refused when the recipient's
+> finalised REV balance already holds at least one drip
+> (`node/src/api/web_api_impl.rs::finalized_rev_balance`), with the reservation persisted before
+> submission and refunded when the submit or its replay fails
+> (`node/src/api/web_api_impl.rs::clear_faucet_reservation`). **P9 is therefore retired as a pair**:
+> its stated shared cause — "the drip increment precedes the submit" — described a counter that no
+> longer exists, and the present rule is idempotent by construction: the same signed drip is
+> resubmitted after a crash, and a failed submit refunds the allocation. The tests that hold it are
+> `a_failed_submit_does_not_consume_faucet_budget`,
+> `crash_between_reservation_and_submit_resends_the_same_deploy`, and
+> `a_pending_drip_keeps_the_address_reserved`.
 
 > **What this page is, in one sentence.** A HAZOP worksheet and a bow-tie analysis of the node, and the
 > acceptance checklist that falls out of them, written so that nothing can be marked green without a
@@ -538,7 +542,7 @@ read: `rholang/src/native_state.rs` (bond, withdraw, close_block, slash, trust, 
 | H-U7-04 | `repeat_deploy` rejects a block re-carrying a deploy already in its parent chain, and `deploy_index` records the inclusion | `casper/src/validate.rs:repeat_deploy` (symbol read) | `[one-surface]` — `repeat_deploy`/`deploy_index` guards the double-inclusion surface only, not the pool-loss deviation H-U7-04 names | <!-- CH-U7-03 upheld; CH-U7-05 upheld -->
 | ⚠ **H-U7-05** | none distinct — expiry and selection read different clocks, so no barrier separates them; the two surfaces diverge structurally (round-snapshot lag) and on orphans without any finality lag | `casper/src/blocks/proposer/proposer.rs:select_deploys` (symbol read); no committed run — `unmeasured` | `[self-referential]` | <!-- CH-U7-04 upheld -->
 | H-U7-06 | `expire_deploys` runs on every accepted block insert | `casper/src/dag.rs:expire_deploys` (symbol read) | `[shared-cause]` — the same event (no accepted block / the #213 wedge) is what the barrier needs to run and what stops it |
-| H-U7-07 | Per-address drip budget (`FAUCET_MAX_DRIPS_PER_ADDRESS`) and the deployer-own-address guard | `node/src/api/web_api_impl.rs:faucet` (symbol read) | `[barrier-is-the-threat]` — the budget both bounds abuse and is what a failed submit consumes |
+| H-U7-07 | **Finalised-balance eligibility** (one drip per recipient) and the deployer-own-address guard: a drip is refused when the recipient's finalised REV balance already holds one, and the reservation is persisted before submission | `node/src/api/web_api_impl.rs::finalized_rev_balance` (symbol read); `faucet` (symbol read) | `[barrier-is-the-threat]` — the eligibility rule bounds abuse; the *burn on a failed submit* that used to make the barrier the threat is closed by the persisted reservation and its refund (`clear_faucet_reservation`) |
 
 ### Provenance
 
@@ -1378,7 +1382,7 @@ verdict cover it.
 - [vs T13] The merge rejects the losing sibling boundary block whole: `casper/src/merging.rs:sibling_boundaries_with_different_pots_merge` — Evidence: `spec/audit/passes.md` §61 (measured: a `delegate` in block 206 discarded). Independence `[barrier-is-the-threat]` (the same whole-block rejection is the harm).
 - [vs T14] `close_block` fires once per produced block and returns before any write off a boundary: `rholang/src/native_state.rs:is_epoch_boundary` — Evidence: `docs/src/node/testnet.md:619-623` (a reading on a live chain, not a committed run). Independence `[unhoused]`.
 - [vs T18] The documented constraint to keep the fringe non-empty: `spec/Rchain/Casper/Bonds.lean` (constraint near the file head) + `docs/src/node/testnet.md:624` — Evidence: `docs/src/node/testnet.md:619-628` (re-verified 2026-09-26 with a non-empty fringe; the empty-fringe wedge itself is `unmeasured`). Independence `[self-referential]`.
-- [vs T11] The per-address drip budget and own-address guard: `node/src/api/web_api_impl.rs:faucet` (`FAUCET_MAX_DRIPS_PER_ADDRESS = 10`) — Evidence: symbol read. Independence `[barrier-is-the-threat]`.
+- [vs T11] The finalised-balance eligibility rule and own-address guard: `node/src/api/web_api_impl.rs::finalized_rev_balance` — a drip is refused when the recipient's finalised balance already holds one, with the reservation persisted before submission and refunded on a failed submit — Evidence: committed unit tests `a_failed_submit_does_not_consume_faucet_budget` and `a_pending_drip_keeps_the_address_reserved`. Independence `[barrier-is-the-threat]` (the rule both bounds abuse and, before the refund, was what a failed submit consumed).
 - [vs T10] `shared/src/rate_limiter.rs:RateLimiter` bounds total request rate (fixed 1 s window) — Evidence: committed unit test `admits_exactly_max_per_window_then_refuses`. Independence `[barrier-is-the-threat]`.
 - [vs T9] `comm/src/transport/grpc_transport_receiver.rs:accept_tls`'s `MAX_CONCURRENT_HANDSHAKES` (128) semaphore + `HANDSHAKE_TIMEOUT` (10 s) frees stalled slots — Evidence: symbol read; a per-source admission or slot-fairness rule is `unmeasured`. Independence `[barrier-is-the-threat]`.
 - [vs T8] The exporter/importer moves the trie between nodes (`node/src/runtime/node_runtime.rs:create_rspace_importer`; `rspace/src/history/export.rs:sequentialExport`) — it shifts the sync cost but does not avoid the start-up DAG rebuild — Evidence: `docs/src/node/validator-requirements.md:ram-again-start-up-replay-is-the-floor`. Independence `[one-surface]`.
@@ -1431,7 +1435,7 @@ verdict cover it.
 - **P6.** *Threat* [T3: a joiner is evicted after 3 attempts] ↔ *Barrier* [B3, `casper/src/engine/node_syncing.rs:MAX_SYNC_ATTEMPTS`]. Shared cause: the single terminal bound. The same bound protects (a node will not serve a chain it never synced) and evicts the joiner riding out a short outage — `[barrier-is-the-threat]`.
 - **P7.** *Threat* [T2: the tuple leg hangs] ↔ *Barrier* [B4, `casper/src/engine/lfs_block_requester.rs:MAX_IDLE_ROUNDS`]. Shared cause: one `tokio::join!` over both legs. The bound on one leg does not bound the join, and the tuple leg's silence makes the bound unreachable — the guard exists and cannot fire.
 - **P8.** *Threat* [T8/T20: start-up replay never opens the API / the replaying validator looks stuck] ↔ *Barrier* [B19, the operator snapshot's `api_reachable`]. Shared cause: the start-up replay. The same replay that keeps a validator from rejoining suppresses the only liveness signal the operator surface has — `[self-referential]`.
-- **P9.** *Threat* [T11: the funding drip is burned on a failed submit] ↔ *Barrier* [B12, `node/src/api/web_api_impl.rs:faucet` `FAUCET_MAX_DRIPS_PER_ADDRESS`]. Shared cause: the drip increment precedes the submit. The failed submit is what consumes the barrier — `[barrier-is-the-threat]`.
+- **P9.** *Retired 2026-11-16 (E4).* *Threat* [T11: the funding drip is burned on a failed submit] ↔ *Barrier* [B12, the finalised-balance eligibility rule]. The pair's stated shared cause — "the drip increment precedes the submit" — was a per-address counter that no longer exists. The current rule persists the reservation before submission and refunds it when the submit or its replay fails (`node/src/api/web_api_impl.rs::clear_faucet_reservation`), so the threat is closed rather than sharing a cause with its barrier. Tests: `a_failed_submit_does_not_consume_faucet_budget`, `crash_between_reservation_and_submit_resends_the_same_deploy`, `a_pending_drip_keeps_the_address_reserved`.
 - **P10.** *Threat* [T10: one peer spends the discovery window] ↔ *Barrier* [B13, `shared/src/rate_limiter.rs:RateLimiter`]. Shared cause: the single global window counter. It is both the admission bound and the exhaustible resource — `[barrier-is-the-threat]`.
 - **P11.** *Threat* [T9: a joining validator cannot connect] ↔ *Barrier* [B14, `comm/src/transport/grpc_transport_receiver.rs:accept_tls` handshake semaphore]. Shared cause: the handshake-capacity semaphore is exactly what, when exhausted, makes `accept_tls` drop an honest peer pre-auth — `[barrier-is-the-threat]`.
 - **P12.** *Threat* [T16: round closure stalls on a newly bonded validator] ↔ *Barrier* [B16, `block-storage/src/dag/message_state.rs:advance_round`'s window retirement]. Shared cause: the frozen tip. The window's clock (`tip − round_height`) and the round's clock are the same tip, which the round veto freezes — `[self-referential]`.
@@ -1847,7 +1851,7 @@ The cross-node sweep returned **65** distinct pairs. Each names both members and
 19. P6: threat T3 (joiner evicted after 3 attempts) ↔ barrier B3 (casper/src/engine/node_syncing.rs:MAX_SYNC_ATTEMPTS) — shared cause the single terminal bound, which both protects against un-synced serving and evicts the joiner [barrier-is-the-threat]
 20. P7: threat T2 (tuple leg hangs) ↔ barrier B4 (casper/src/engine/lfs_block_requester.rs:MAX_IDLE_ROUNDS) — shared cause one tokio::join! over both legs; the bound on one leg does not bound the join and the tuple leg's silence makes the bound unreachable
 21. P8: threat T8/T20 (start-up replay never opens the API / the replaying validator looks stuck) ↔ barrier B19 (the operator snapshot's api_reachable) — shared cause the start-up replay, which keeps the validator from rejoining and suppresses the only liveness signal the surface has [self-referential]
-22. P9: threat T11 (funding drip burned on a failed submit) ↔ barrier B12 (node/src/api/web_api_impl.rs:faucet, FAUCET_MAX_DRIPS_PER_ADDRESS) — shared cause the drip increment precedes the submit; the failed submit is what consumes the barrier [barrier-is-the-threat]
+22. P9 (retired 2026-11-16, E4): threat T11 (funding drip burned on a failed submit) ↔ barrier B12 (finalised-balance eligibility plus a persisted reservation refunded on failure, node/src/api/web_api_impl.rs::clear_faucet_reservation) — the stated shared cause described a per-address counter that no longer exists; the refund closes the threat rather than sharing a cause with it
 23. P10: threat T10 (one peer spends the discovery window) ↔ barrier B13 (shared/src/rate_limiter.rs:RateLimiter) — shared cause the single global window counter, both the admission bound and the exhaustible resource [barrier-is-the-threat]
 24. P11: threat T9 (a joining validator cannot connect) ↔ barrier B14 (comm/src/transport/grpc_transport_receiver.rs:accept_tls handshake semaphore) — shared cause the handshake-capacity semaphore; its exhaustion is what makes accept_tls drop an honest peer pre-auth [barrier-is-the-threat]
 25. P12: threat T16 (round closure stalls on a newly bonded validator) ↔ barrier B16 (block-storage/src/dag/message_state.rs:advance_round window retirement) — shared cause the frozen tip, both the clock the barrier measures from and the state it exists to age past [self-referential]
