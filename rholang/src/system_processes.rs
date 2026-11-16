@@ -462,6 +462,28 @@ fn string_list(ss: &[String]) -> Par {
     RhoList::apply(ss.iter().map(|s| RhoString::apply(s.clone())).collect())
 }
 
+/// **A contract's output is one log line.** `rho:io:stdout` and `rho:io:stderr` take a value the
+/// contract chose, and the node's log is a line-oriented record an operator reads. Printing the
+/// value raw let a contract put a newline in it and forge a line, or drive the terminal with an
+/// escape sequence (C301's B4). Control characters are escaped; every other character is printed
+/// unchanged, including non-ASCII text.
+///
+/// **Charging, stated rather than changed.** These handlers are uncharged: the system-process body
+/// does its work outside the term's phlo accounting. Making them charged would change the cost of a
+/// term and therefore whether a block is valid, so it is consensus-class work, not part of this
+/// tranche. The finding is recorded with that decision.
+fn one_log_line(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// The system-process context (port of `SystemProcesses[F]`).
 pub struct SystemProcesses {
     contract_call: ContractCall<ChargingRSpace, Weak<RholangAndScalaDispatcher>>,
@@ -938,7 +960,7 @@ impl SystemProcesses {
                     .ok_or_else(|| illegal_arg("stdout expects one argument"))?;
                 match pars.as_slice() {
                     [arg] => {
-                        println!("{}", pp.build_string(arg));
+                        println!("{}", one_log_line(&pp.build_string(arg)));
                         Ok(())
                     }
                     _ => Err(illegal_arg("stdout expects one argument")),
@@ -959,7 +981,7 @@ impl SystemProcesses {
                     .ok_or_else(|| illegal_arg("stdoutAck expects two arguments"))?;
                 match pars.as_slice() {
                     [arg, ack] => {
-                        println!("{}", pp.build_string(arg));
+                        println!("{}", one_log_line(&pp.build_string(arg)));
                         cc.produce(&rand, &[Par::default()], ack, path).await
                     }
                     _ => Err(illegal_arg("stdoutAck expects two arguments")),
@@ -980,7 +1002,7 @@ impl SystemProcesses {
                     .ok_or_else(|| illegal_arg("stderr expects one argument"))?;
                 match pars.as_slice() {
                     [arg] => {
-                        eprintln!("{}", pp.build_string(arg));
+                        eprintln!("{}", one_log_line(&pp.build_string(arg)));
                         Ok(())
                     }
                     _ => Err(illegal_arg("stderr expects one argument")),
@@ -1001,7 +1023,7 @@ impl SystemProcesses {
                     .ok_or_else(|| illegal_arg("stderrAck expects two arguments"))?;
                 match pars.as_slice() {
                     [arg, ack] => {
-                        eprintln!("{}", pp.build_string(arg));
+                        eprintln!("{}", one_log_line(&pp.build_string(arg)));
                         cc.produce(&rand, &[Par::default()], ack, path).await
                     }
                     _ => Err(illegal_arg("stderrAck expects two arguments")),
@@ -5022,5 +5044,34 @@ mod tests {
         .await
         .expect_err("bytes are not a name");
         assert!(format!("{err:?}").contains("unforgeable name"), "{err:?}");
+    }
+
+    /// **A contract cannot forge a log line** (C301's B4). The value it sends to `stdout`/`stderr`
+    /// is untrusted: a newline would create a second record in the operator's log, and an escape
+    /// sequence would act on the terminal that displays it. Both are escaped, and ordinary text —
+    /// including non-ASCII — is not.
+    #[test]
+    fn contract_output_cannot_forge_a_second_log_line() {
+        let forged = one_log_line("ok\n[warning] bond slashed\r\u{1b}[2J");
+        assert!(
+            !forged.contains('\n'),
+            "a newline reached the log: {forged:?}"
+        );
+        assert!(
+            !forged.contains('\r'),
+            "a carriage return reached the log: {forged:?}"
+        );
+        assert!(
+            !forged.contains('\u{1b}'),
+            "an escape sequence reached the log: {forged:?}"
+        );
+        assert!(forged.starts_with("ok\\n"), "{forged:?}");
+        assert!(forged.contains("\\u{1b}"), "{forged:?}");
+
+        assert_eq!(
+            one_log_line("hello, τ — done"),
+            "hello, τ — done",
+            "ordinary text is printed unchanged"
+        );
     }
 }
