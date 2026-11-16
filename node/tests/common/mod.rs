@@ -436,6 +436,53 @@ pub async fn start(conf: &NodeConf, grpc_port: u16, http_port: u16) -> TestNode 
     build(conf, grpc_port, http_port, heavy).await
 }
 
+/// Start a standalone node with its ports allocated **inside** the heavyweight lock.
+///
+/// [`free_ports`] releases the listeners it probes, so a caller that allocates before [`start`]
+/// takes the lock can be handed a port an earlier node already bound — the collision class the
+/// harness's own lock exists to prevent, left open by the allocation happening outside it. Here the
+/// allocation happens while every earlier node is still alive and holding the lock, so the ephemeral
+/// range cannot return one of their ports. The tests that boot a node without a custom layout should
+/// use this rather than `free_ports` + `standalone_conf` + `start`.
+pub async fn start_standalone(dir: &Path, validator_hex: Option<&str>) -> (TestNode, Vec<u16>) {
+    let heavy = Arc::new(heavy_node_lock().lock_owned().await);
+    let ports = free_ports(4);
+    let conf = standalone_conf(dir, &ports, validator_hex);
+    let node = build(&conf, ports[2], ports[0], heavy).await;
+    (node, ports)
+}
+
+/// **Wait for the node's HTTP surface, and name the reason if the node is already gone.**
+///
+/// The readiness loops in the node tests reported only "HTTP server did not come up" — the same
+/// message for a port collision, a store error, a returned `serve` error and a slow machine.
+/// `serve` returns its error on the join handle, so a finished task is checked every iteration and
+/// its reason becomes the failure; a node that is merely slow still gets the deadline. The deadline
+/// is a tripwire (a local boot is under a second), not a performance budget.
+pub async fn wait_for_http(node: &mut TestNode, base: &str) -> String {
+    let client = reqwest::Client::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Ok(resp) = client.get(format!("{base}/version")).send().await {
+            if resp.status().is_success() {
+                return resp.text().await.unwrap_or_default();
+            }
+        }
+        if node.handle.is_finished() {
+            match (&mut node.handle).await {
+                Ok(Ok(())) => panic!("the node stopped before its HTTP server came up"),
+                Ok(Err(e)) => panic!("the node failed to start: {e}"),
+                Err(e) => panic!("the node task panicked: {e}"),
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "HTTP server did not come up within 30s"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 /// **Two nodes at once**, for the tests that need one node to *reach* another rather than a test
 /// client to reach one.
 ///

@@ -62,6 +62,11 @@ pub const GATEWAY_TXN_DB: &str = "gateway-txn";
 /// not block hashes or consensus state.
 pub const RESET_MARKER_DB: &str = "reset-marker";
 
+/// **The durable home of the H-1 equivocation evidence** (C301's D2): the header of a block this
+/// node refused, keyed by the validator that equivocated. Node-local evidence, not consensus state
+/// — it is what lets a proposer attach a proof after a restart, not a value any block commits to.
+pub const EQUIVOCATION_EVIDENCE_DB: &str = "equivocation-evidence";
+
 /// The data directory of the shard at `index` in the node's membership list.
 ///
 /// The primary membership (index 0) keeps `root` itself, so every existing single-shard deployment
@@ -157,6 +162,12 @@ pub fn rnode_db_mapping() -> Vec<(Db, LmdbEnvConfig)> {
         // The node's own record of a reset it performed (one literal key, usually absent)
         (
             Db::new(RESET_MARKER_DB),
+            LmdbEnvConfig::new("dagstorage", 100 * GB),
+        ),
+        // Equivocating block headers this node refused (C301's D2) — durable, so a restart does not
+        // destroy the only copy of the offence. DAG-local; shares the DAG's environment.
+        (
+            Db::new(EQUIVOCATION_EVIDENCE_DB),
             LmdbEnvConfig::new("dagstorage", 100 * GB),
         ),
         // Blocks this shard has stored and still owes an outcome (U19). One row per unsettled body.
@@ -319,6 +330,7 @@ mod tests {
         // The reset marker shares the DAG's environment (F-U5-01, C274): it is a fact about this
         // shard's chain, and one literal key does not warrant a file of its own.
         assert!(ids.contains(&RESET_MARKER_DB));
+        assert!(ids.contains(&EQUIVOCATION_EVIDENCE_DB));
         assert!(ids.contains(&BLOCK_DISPOSITION_DB));
         // **The disposition ledger shares the bodies' environment** (C350): the body and its row are
         // one transaction, and an LMDB transaction cannot span environments. A mapping that moves

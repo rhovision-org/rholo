@@ -29,6 +29,7 @@ use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::SlashSeverity;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, DeployData, SignedDeployData};
 use rchain_models::validator::Validator;
+use rchain_rholang::native_state::NativeSystemState;
 use rchain_sdk::consensus::is_super_majority;
 use rchain_shared::log::{Log, LogSource};
 use rchain_shared::refined::{BlockHeight, NonNegI64};
@@ -2128,6 +2129,33 @@ fn take_round_escape(since: &Mutex<Option<Instant>>, now: Instant) -> Option<i64
     Some(elapsed)
 }
 
+/// **The epoch trigger is the chain's, not the node's config file** (C301's C5).
+///
+/// `close_block` applies the epoch transition when the on-chain `PosParams.epoch_length` says the
+/// height is a boundary. A proposer that used a different local value would emit boundary blocks
+/// with and without the close at the same heights — a silent fork between nodes that agree on
+/// everything else. The node's configured value is used only when the chain has no `PosParams`
+/// record at all (tests and bare surfaces); on a chain that has one, a divergence is refused rather
+/// than proposed, so the operator sees it instead of the network.
+fn epoch_trigger(
+    local_epoch_length: i32,
+    on_chain_epoch_length: Option<i64>,
+    next_block_num: i64,
+) -> Result<bool, String> {
+    let epoch_length = match on_chain_epoch_length {
+        Some(on_chain) if i64::from(local_epoch_length) != on_chain => {
+            return Err(format!(
+                "the configured epoch length ({local_epoch_length}) differs from the on-chain \
+                 PosParams ({on_chain}); refusing to propose — the block's boundary trigger would \
+                 disagree with the transition `close_block` applies"
+            ))
+        }
+        Some(on_chain) => on_chain,
+        None => i64::from(local_epoch_length),
+    };
+    Ok(epoch_length > 0 && next_block_num != 0 && next_block_num % epoch_length == 0)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn create_block<'a, F, Fut>(
     runtime: &'a RuntimeManager,
@@ -2392,12 +2420,20 @@ where
         );
     }
 
-    // An epoch boundary is a block whose height is a positive multiple of `epoch_length` (matching
-    // the PoS contract's `blockNumber % epochLength == 0`). A non-positive `epoch_length` disables
-    // the epoch trigger (the native PoS lifecycle is otherwise block-driven).
-    let change_epoch = epoch_length > 0
-        && i64::from(next_block_num) != 0
-        && i64::from(next_block_num) % i64::from(epoch_length) == 0;
+    // An epoch boundary is a block whose height is a positive multiple of the **on-chain**
+    // `PosParams.epoch_length` (matching the PoS contract's `blockNumber % epochLength == 0`); the
+    // node's configured value is only a fallback for a surface with no params record, and a
+    // divergence is refused rather than proposed (C301's C5).
+    let on_chain_epoch_length = NativeSystemState::new(runtime.runtime().native_store())
+        .params_opt()
+        .await
+        .map_err(|e| format!("cannot read the on-chain PosParams for the epoch trigger: {e}"))?
+        .map(|params| params.epoch_length);
+    let change_epoch = epoch_trigger(
+        epoch_length,
+        on_chain_epoch_length,
+        i64::from(next_block_num),
+    )?;
 
     // Attestation suppression: no new state transitions, or not yet a super-majority.
     let dag_repr = dag.get_representation().await;
@@ -2723,6 +2759,25 @@ mod tests {
             0
         ));
         assert!(within_proposal_finality_bound(4, 0));
+    }
+
+    /// **The epoch trigger is the on-chain length, and a divergent local value is refused**
+    /// (C301's C5). A node configured with 5 on a chain whose `PosParams` say 10 would have
+    /// proposed a boundary block at 10 without the close its own transition applies — the silent
+    /// fork. The configured value is only the fallback for a surface with no params record.
+    #[test]
+    fn the_epoch_trigger_is_the_on_chain_length_and_a_divergence_is_refused() {
+        assert!(epoch_trigger(5, None, 10).expect("no params record"));
+        assert!(!epoch_trigger(5, None, 11).expect("no params record"));
+
+        let err = epoch_trigger(5, Some(10), 10).expect_err("a divergence is refused");
+        assert!(err.contains("differs from the on-chain"), "{err}");
+
+        assert!(epoch_trigger(10, Some(10), 10).expect("agreement"));
+        assert!(!epoch_trigger(10, Some(10), 11).expect("agreement"));
+
+        assert!(!epoch_trigger(0, None, 10).expect("a non-positive length disables"));
+        assert!(!epoch_trigger(10, Some(10), 0).expect("height 0 is genesis"));
     }
 
     /// **A view with no finalised block is still bounded** (C351). The gate used to be wrapped in

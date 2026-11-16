@@ -23,6 +23,7 @@ use rchain_models::rholang::RhoType::{
 use rchain_models::runtime::ListParWithRandom;
 use rchain_models::validator::Validator;
 use rchain_shared::refined::{BlockHeight, NonNegI64, SeqNum};
+use rchain_shared::serialize::Serialize;
 
 use crate::contract_call::ContractCall;
 use crate::dispatch::{RholangAndScalaDispatcher, ScalaBodyFn};
@@ -324,6 +325,12 @@ pub fn rev_reserve() -> String {
 }
 
 /// Parse a rholang list of integers 0..7 into a twist sequence.
+/// The encoded size of a value — what [`crate::accounting::Costs::native_store_cost`] prices for a
+/// native-store write or a decoded reply (C301's contract-layer review).
+fn encoded_len(value: &Par) -> usize {
+    <Par as Serialize<Par>>::encode(value).len()
+}
+
 fn parse_twists(p: &Par) -> Result<Vec<u8>, RholangError> {
     RhoList::unapply(p)
         .and_then(|ps| {
@@ -462,6 +469,28 @@ fn string_list(ss: &[String]) -> Par {
     RhoList::apply(ss.iter().map(|s| RhoString::apply(s.clone())).collect())
 }
 
+/// **A contract's output is one log line.** `rho:io:stdout` and `rho:io:stderr` take a value the
+/// contract chose, and the node's log is a line-oriented record an operator reads. Printing the
+/// value raw let a contract put a newline in it and forge a line, or drive the terminal with an
+/// escape sequence (C301's B4). Control characters are escaped; every other character is printed
+/// unchanged, including non-ASCII text.
+///
+/// **Charging, stated rather than changed.** These handlers are uncharged: the system-process body
+/// does its work outside the term's phlo accounting. Making them charged would change the cost of a
+/// term and therefore whether a block is valid, so it is consensus-class work, not part of this
+/// tranche. The finding is recorded with that decision.
+fn one_log_line(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// The system-process context (port of `SystemProcesses[F]`).
 pub struct SystemProcesses {
     contract_call: ContractCall<ChargingRSpace, Weak<RholangAndScalaDispatcher>>,
@@ -569,6 +598,9 @@ where
         .await
         .map_err(|e| illegal_arg(&e))?
         .unwrap_or(NonNegI64::zero());
+    // Price the leaf the arm decodes (C301's contract-layer review): the body is outside phlo.
+    cc.cost()
+        .charge(crate::accounting::Costs::native_store_cost(32 + 8))?;
     cc.produce(rand, &[RhoNumber::apply(i64::from(balance))], ret, path)
         .await
 }
@@ -603,6 +635,12 @@ where
     let amount = RhoNumber::unapply(amount)
         .ok_or_else(|| illegal_arg("transfer expects a number amount"))?;
     let amount = NonNegI64::try_from(amount).map_err(|e| illegal_arg(&e.to_string()))?;
+    // The same destination rule as the classic arm, because both call `transfer_vault` (C301's
+    // contract-layer review), and the same price for the two leaves the movement writes.
+    RevAddress::parse(to)
+        .map_err(|e| illegal_arg(&format!("transfer: {to} is not a REV address: {e}")))?;
+    cc.cost()
+        .charge(crate::accounting::Costs::native_store_cost(2 * (32 + 8)))?;
 
     // **Two authorities, and a handle is neither.** A `deployerId` authorises the vault at its own
     // address (the classic rule, reused here rather than re-spelled); a *name* authorises what
@@ -938,7 +976,7 @@ impl SystemProcesses {
                     .ok_or_else(|| illegal_arg("stdout expects one argument"))?;
                 match pars.as_slice() {
                     [arg] => {
-                        println!("{}", pp.build_string(arg));
+                        println!("{}", one_log_line(&pp.build_string(arg)));
                         Ok(())
                     }
                     _ => Err(illegal_arg("stdout expects one argument")),
@@ -959,7 +997,7 @@ impl SystemProcesses {
                     .ok_or_else(|| illegal_arg("stdoutAck expects two arguments"))?;
                 match pars.as_slice() {
                     [arg, ack] => {
-                        println!("{}", pp.build_string(arg));
+                        println!("{}", one_log_line(&pp.build_string(arg)));
                         cc.produce(&rand, &[Par::default()], ack, path).await
                     }
                     _ => Err(illegal_arg("stdoutAck expects two arguments")),
@@ -980,7 +1018,7 @@ impl SystemProcesses {
                     .ok_or_else(|| illegal_arg("stderr expects one argument"))?;
                 match pars.as_slice() {
                     [arg] => {
-                        eprintln!("{}", pp.build_string(arg));
+                        eprintln!("{}", one_log_line(&pp.build_string(arg)));
                         Ok(())
                     }
                     _ => Err(illegal_arg("stderr expects one argument")),
@@ -1001,7 +1039,7 @@ impl SystemProcesses {
                     .ok_or_else(|| illegal_arg("stderrAck expects two arguments"))?;
                 match pars.as_slice() {
                     [arg, ack] => {
-                        eprintln!("{}", pp.build_string(arg));
+                        eprintln!("{}", one_log_line(&pp.build_string(arg)));
                         cc.produce(&rand, &[Par::default()], ack, path).await
                     }
                     _ => Err(illegal_arg("stderrAck expects two arguments")),
@@ -1118,6 +1156,10 @@ impl SystemProcesses {
                             .ok_or_else(|| {
                                 illegal_arg("qucalc:zfa expects a list of twist values 0..7")
                             })?;
+                        // Price the linear fold (C301's contract-layer review): the body is outside
+                        // phlo accounting, and the twist list is caller-sized.
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(values.len()))?;
                         let zfa = achieves_zfa(&values);
                         let phase = pauli_phase(&values).map(|p| p.code()).unwrap_or(0);
                         let result =
@@ -1143,6 +1185,9 @@ impl SystemProcesses {
                 match pars.as_slice() {
                     [twists, ret] => {
                         let values = parse_twists(twists)?;
+                        // Price the fold, then the minted leaf (C301's contract-layer review).
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(values.len()))?;
                         if achieves_zfa(&values) {
                             // Mint a capability: a content-addressed registry URI whose value
                             // is the ZFA-balanced twist sequence. Persisted across deploys.
@@ -1153,6 +1198,10 @@ impl SystemProcesses {
                                     .map(|&v| RhoNumber::apply(i64::from(v)))
                                     .collect(),
                             );
+                            cc.cost()
+                                .charge(crate::accounting::Costs::native_store_cost(
+                                    uri.len() + encoded_len(&stored),
+                                ))?;
                             native.registry_insert(&uri, &stored);
                             cc.produce(&rand, &[RhoUri::apply(uri)], ret, path).await
                         } else {
@@ -1188,10 +1237,22 @@ impl SystemProcesses {
                             .await
                             .map_err(|e| illegal_arg(&e))?
                         {
-                            Some(stored) => parse_twists(&stored)
-                                .map(|v| achieves_zfa(&v))
-                                .unwrap_or(false),
-                            None => false,
+                            Some(stored) => {
+                                // Price the leaf this decoded and the fold it runs (C301's
+                                // contract-layer review).
+                                cc.cost()
+                                    .charge(crate::accounting::Costs::native_store_cost(
+                                        encoded_len(&stored),
+                                    ))?;
+                                parse_twists(&stored)
+                                    .map(|v| achieves_zfa(&v))
+                                    .unwrap_or(false)
+                            }
+                            None => {
+                                cc.cost()
+                                    .charge(crate::accounting::Costs::native_store_cost(1))?;
+                                false
+                            }
                         };
                         cc.produce(&rand, &[RhoBoolean::apply(ok)], ret, path).await
                     }
@@ -1217,6 +1278,11 @@ impl SystemProcesses {
                     [subject, predicate, ret] => {
                         let s = parse_twists(subject)?;
                         let p = parse_twists(predicate)?;
+                        // Price the two folds; the minted leaf is priced below (C301's review).
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(
+                                s.len() + p.len(),
+                            ))?;
                         let synth = dialectical_synthesis(&s, &p);
                         if synth.zfa {
                             // Blanket fusion resolved to a stable fluxoid: mint it as a capability.
@@ -1228,6 +1294,10 @@ impl SystemProcesses {
                                     .map(|&v| RhoNumber::apply(i64::from(v)))
                                     .collect(),
                             );
+                            cc.cost()
+                                .charge(crate::accounting::Costs::native_store_cost(
+                                    uri.len() + encoded_len(&geometry),
+                                ))?;
                             native.registry_insert(&uri, &geometry);
                             let out = RhoTupleN::apply(vec![geometry, RhoUri::apply(uri)]);
                             cc.produce(&rand, &[out], ret, path).await
@@ -1304,16 +1374,23 @@ impl SystemProcesses {
     /// been measured and that is named in the register rather than assumed away.
     fn charge_gov_censure(
         cc: &ContractCall<ChargingRSpace, std::sync::Weak<RholangAndScalaDispatcher>>,
-        universe: usize,
+        bound_universe: usize,
+        work_universe: usize,
     ) -> Result<(), RholangError> {
-        if universe > Self::MAX_GOV_UNIVERSE {
+        if bound_universe > Self::MAX_GOV_UNIVERSE {
             return Err(illegal_arg(&format!(
-                "governance input names {universe} members, over the {} limit",
+                "governance input names {bound_universe} members, over the {} limit",
                 Self::MAX_GOV_UNIVERSE
             )));
         }
-        cc.cost()
-            .charge(crate::accounting::Costs::gov_censure_cost(universe as i64))
+        // **The charge is the distinct members the fixed point iterates, not the entry sum**
+        // (C301's contract-layer review). A censure or voucher tuple contributes two distinct
+        // members, so the work universe can be up to twice the bound's sum and the cubic work up to
+        // 8× the charge — the measured bound table never runs that shape. The bound stays on the
+        // sum (so the accepted input set does not move); the charge follows the work.
+        cc.cost().charge(crate::accounting::Costs::gov_censure_cost(
+            work_universe as i64,
+        ))
     }
 
     /// `rho:gov:resolveWeights(directVoters, delegations, trust, ret)` — resolve liquid-democracy
@@ -1414,7 +1491,15 @@ impl SystemProcesses {
                 let c = parse_censure_list(censures)?;
                 let lv = parse_member_int_map(levels)?;
                 let v = parse_voucher_list(vouchers)?;
-                Self::charge_gov_censure(&cc, c.len() + lv.len() + v.len())?;
+                let bound = c.len() + lv.len() + v.len();
+                let distinct = c
+                    .iter()
+                    .flat_map(|(a, b)| [a.as_str(), b.as_str()])
+                    .chain(lv.keys().map(String::as_str))
+                    .chain(v.iter().flat_map(|(a, b, _)| [a.as_str(), b.as_str()]))
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len();
+                Self::charge_gov_censure(&cc, bound, distinct)?;
                 let (disc, new_levels) = qucalc::gov::censure(&c, &lv, &v);
                 let disc_list: Vec<String> = disc.into_iter().collect();
                 let out =
@@ -1528,30 +1613,52 @@ impl SystemProcesses {
                 let Some(op) = RhoString::unapply(op) else {
                     return Err(illegal_arg("revAddress expects an operation string"));
                 };
+                // **A wrong argument type is refused, not answered `Nil`**, where `Nil` would be
+                // read as a value (C301's contract-layer review). `validate` replies `Nil` for a
+                // *valid* address and an error string for an invalid one, so replying `Nil` to a
+                // non-string made "you passed a number" look exactly like "the address is valid";
+                // `fromPublicKey` likewise requires a 65-byte key.
+                //
+                // `fromDeployerId` is the exception, and it is deliberate: its `Nil` is the
+                // **"no identity" answer** the genesis master dictionary guards on for a forged or
+                // absent id (Law 56, `MasterDictionary.rho` shape rule 5), not an accident of a
+                // wrong type. Raising there would abort every forged-identity refusal instead of
+                // letting the contract answer `("dir-error", "no identity")`.
                 let response = match op {
-                    "validate" => match RhoString::unapply(arg) {
-                        Some(address) => RevAddress::parse(address)
+                    "validate" => {
+                        let address = RhoString::unapply(arg)
+                            .ok_or_else(|| illegal_arg("revAddress validate expects a string"))?;
+                        RevAddress::parse(address)
                             .err()
                             .map(RhoString::apply)
-                            .unwrap_or_default(),
-                        None => Par::default(),
-                    },
-                    "fromPublicKey" => match RhoByteArray::unapply(arg) {
-                        Some(pk) => RevAddress::from_public_key(&PublicKey::new(pk.to_vec()))
+                            .unwrap_or_default()
+                    }
+                    "fromPublicKey" => {
+                        let pk = RhoByteArray::unapply(arg)
+                            .ok_or_else(|| illegal_arg("revAddress fromPublicKey expects bytes"))?;
+                        if pk.len() != 65 {
+                            return Err(illegal_arg(
+                                "revAddress fromPublicKey expects a 65-byte uncompressed key",
+                            ));
+                        }
+                        RevAddress::from_public_key(&PublicKey::new(pk.to_vec()))
                             .map(|ra| RhoString::apply(ra.to_base58()))
-                            .unwrap_or_default(),
-                        None => Par::default(),
-                    },
+                            .unwrap_or_default()
+                    }
                     "fromDeployerId" => match RhoDeployerId::unapply(arg) {
                         Some(id) => RevAddress::from_deployer_id(id)
                             .map(|ra| RhoString::apply(ra.to_base58()))
                             .unwrap_or_default(),
-                        None => Par::default(),
+                        // The documented "no identity" answer (see the comment above): the master
+                        // dictionary's forged/absent-id guard is `me == Nil`.
+                        None => RhoNil::apply(),
                     },
-                    "fromUnforgeable" => match RhoName::unapply(arg) {
-                        Some(g) => RhoString::apply(RevAddress::from_unforgeable(g).to_base58()),
-                        None => Par::default(),
-                    },
+                    "fromUnforgeable" => {
+                        let g = RhoName::unapply(arg).ok_or_else(|| {
+                            illegal_arg("revAddress fromUnforgeable expects a name")
+                        })?;
+                        RhoString::apply(RevAddress::from_unforgeable(g).to_base58())
+                    }
                     _ => return Err(illegal_arg("revAddress: unknown operation")),
                 };
                 cc.produce(&rand, &[response], ack, path).await
@@ -1573,10 +1680,15 @@ impl SystemProcesses {
                     ));
                 };
                 let response = match RhoString::unapply(op) {
-                    Some("pubKeyBytes") => match RhoDeployerId::unapply(arg) {
-                        Some(pk) => RhoByteArray::apply(pk.to_vec()),
-                        None => Par::default(),
-                    },
+                    Some("pubKeyBytes") => {
+                        // A wrong type is refused rather than answered `Nil`, for the same reason
+                        // `revAddress` is (C301's contract-layer review): `Nil` is a value a caller
+                        // could accept, not a report that the call was malformed.
+                        let pk = RhoDeployerId::unapply(arg).ok_or_else(|| {
+                            illegal_arg("deployerIdOps pubKeyBytes expects a deployerId")
+                        })?;
+                        RhoByteArray::apply(pk.to_vec())
+                    }
                     _ => return Err(illegal_arg("deployerIdOps: unknown operation")),
                 };
                 cc.produce(&rand, &[response], ack, path).await
@@ -1687,8 +1799,19 @@ impl SystemProcesses {
                     .await
                     .map_err(|e| illegal_arg(&e))?
                 {
-                    Some(value) => cc.produce(&rand, &[value], ret, path).await,
-                    None => cc.produce(&rand, &[RhoNil::apply()], ret, path).await,
+                    Some(value) => {
+                        // Price the leaf the lookup decoded (C301's contract-layer review).
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(encoded_len(
+                                &value,
+                            )))?;
+                        cc.produce(&rand, &[value], ret, path).await
+                    }
+                    None => {
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(1))?;
+                        cc.produce(&rand, &[RhoNil::apply()], ret, path).await
+                    }
                 }
             })
         })
@@ -1711,6 +1834,12 @@ impl SystemProcesses {
                     ));
                 };
                 let uri = registry::build_uri(&blake2b256::hash(&rand.to_bytes()));
+                // Price the leaf this writes (C301's contract-layer review): the native write is
+                // permanent state and the body is outside phlo accounting.
+                cc.cost()
+                    .charge(crate::accounting::Costs::native_store_cost(
+                        uri.len() + encoded_len(data),
+                    ))?;
                 native.registry_insert(&uri, data);
                 cc.produce(&rand, &[RhoUri::apply(uri)], ret, path).await
             })
@@ -1760,10 +1889,13 @@ impl SystemProcesses {
                         return cc.produce(&rand, &[RhoNil::apply()], ret, path).await;
                     }
                 }
-                native.registry_insert(
-                    &uri,
-                    &RhoTupleN::apply(vec![RhoNumber::apply(nonce), data.clone()]),
-                );
+                let stored = RhoTupleN::apply(vec![RhoNumber::apply(nonce), data.clone()]);
+                // Price the leaf this writes, by the value it stores (C301's contract-layer review).
+                cc.cost()
+                    .charge(crate::accounting::Costs::native_store_cost(
+                        uri.len() + encoded_len(&stored),
+                    ))?;
+                native.registry_insert(&uri, &stored);
                 cc.produce(&rand, &[RhoUri::apply(uri)], ret, path).await
             })
         })
@@ -1953,7 +2085,14 @@ impl SystemProcesses {
                                 )
                             })
                             .collect();
-                        cc.produce(&rand, &[RhoMap::apply(kvs)], ret, path).await
+                        // Price the map the read decoded (C301's contract-layer review): a full
+                        // bond map is caller-sized work, and the getter is otherwise free.
+                        let reply = RhoMap::apply(kvs);
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(encoded_len(
+                                &reply,
+                            )))?;
+                        cc.produce(&rand, &[reply], ret, path).await
                     }
                     "getActiveValidators" => {
                         let [ret] = rest else {
@@ -1970,7 +2109,12 @@ impl SystemProcesses {
                             .iter()
                             .map(|v| RhoByteArray::apply(v.as_bytes().to_vec()))
                             .collect();
-                        cc.produce(&rand, &[RhoSet::apply(ps)], ret, path).await
+                        let reply = RhoSet::apply(ps);
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(encoded_len(
+                                &reply,
+                            )))?;
+                        cc.produce(&rand, &[reply], ret, path).await
                     }
                     // The admission diagnostic: what the *state* says about trust. Without it, a `trust`
                     // that reported success and did not stick is indistinguishable from one that never
@@ -1985,7 +2129,12 @@ impl SystemProcesses {
                             .iter()
                             .map(|v| RhoByteArray::apply(v.as_bytes().to_vec()))
                             .collect();
-                        cc.produce(&rand, &[RhoSet::apply(ps)], ret, path).await
+                        let reply = RhoSet::apply(ps);
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(encoded_len(
+                                &reply,
+                            )))?;
+                        cc.produce(&rand, &[reply], ret, path).await
                     }
                     // **The delegator's own position** (law 57, #193), symmetric with `getBonds`.
                     //
@@ -2042,8 +2191,12 @@ impl SystemProcesses {
                             })
                             .collect();
                         eprintln!("[pos] getDelegations -> {} entries", entries.len());
-                        cc.produce(&rand, &[RhoList::apply(entries)], ret, path)
-                            .await
+                        let reply = RhoList::apply(entries);
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(encoded_len(
+                                &reply,
+                            )))?;
+                        cc.produce(&rand, &[reply], ret, path).await
                     }
                     "bond" => {
                         let [deployer_id, amount, ret] = rest else {
@@ -2278,22 +2431,31 @@ impl SystemProcesses {
         })
     }
 
-    // --- native HTTP-result oracle (RCHIP #54) ---------------------------
+    // --- native HTTP claim registry (RCHIP #54) --------------------------
 
-    /// `rho:io:http` — the deterministic HTTP-result oracle, framed as a **Git pull request** on
-    /// external data:
+    /// `rho:io:http` — a **deploy-supplied claim registry**, not a fetch and not an oracle
+    /// (C301's B1). It is framed as a **Git pull request** on external data:
     ///
-    /// * `record(url, value)` — *capture* a value the deployer fetched off-chain. First writer
-    ///   wins; a later capture of an already-recorded URL is a no-op returning `false`. This is the
-    ///   "initial value", asserted inside a signed deploy, so the chain records *who* claimed *what*.
+    /// * `record(url, value)` — *assert* a value the deployer fetched off-chain. First writer wins;
+    ///   a later capture of an already-recorded URL is a no-op returning `false`. The chain records
+    ///   *what* was claimed and *in which block*; the deployer's identity is not recorded, so a
+    ///   reader cannot name the claimant from the record alone.
     /// * `get(url)` — read the recorded value (or `Nil`), deterministically.
     /// * `check(url, expected)` — is the record equal to `expected`?
     /// * `height(url)` — the block at which the value was captured (or `Nil`).
     ///
-    /// Consensus safety comes from the capture being **part of the deploy**: replay/validation
-    /// never performs a network fetch, so the result is a pure function of the deploy and the
-    /// recorded state. (A proposer-side live fetch would have to commit its value into the block
-    /// for validators to reproduce it; that is a follow-up that changes the block format.)
+    /// **No network read happens on any path**, at proposal or replay: the value is whatever the
+    /// first writer supplied, which is also why every URL is squattable by whoever writes first.
+    /// What makes it usable under consensus is only that the capture is part of the deploy, so the
+    /// result is a pure function of the deploy and the recorded state. (A live fetch would have to
+    /// commit its value into the block for validators to reproduce it; that is a block-format change
+    /// and is not this contract.)
+    ///
+    /// **The registry is bounded and charged** (C301's B2): the table is one trie leaf that every
+    /// read decodes and every write re-encodes, so each operation is charged its encoded size
+    /// ([`crate::accounting::Costs::http_record_cost`]) and the table is capped at
+    /// `NativeSystemState::MAX_HTTP_RECORDS` records, `MAX_HTTP_URL_BYTES` per URL and
+    /// `MAX_HTTP_VALUE_BYTES` per value.
     fn http(&self) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
         let native = self.native_state.clone();
@@ -2328,6 +2490,14 @@ impl SystemProcesses {
                             .ok_or_else(|| illegal_arg("http record expects a string url"))?;
                         let value = RhoString::unapply(value_par)
                             .ok_or_else(|| illegal_arg("http record expects a string value"))?;
+                        let cost_bytes = native
+                            .http_record_write_len(url, value)
+                            .await
+                            .map_err(|e| illegal_arg(&e))?;
+                        cc.cost()
+                            .charge(crate::accounting::Costs::http_record_cost(
+                                cost_bytes as i64,
+                            ))?;
                         let recorded = native
                             .record_http(url, value, block_number)
                             .await
@@ -2341,6 +2511,14 @@ impl SystemProcesses {
                         };
                         let url = RhoString::unapply(url_par)
                             .ok_or_else(|| illegal_arg("http get expects a string url"))?;
+                        let cost_bytes = native
+                            .http_records_encoded_len()
+                            .await
+                            .map_err(|e| illegal_arg(&e))?;
+                        cc.cost()
+                            .charge(crate::accounting::Costs::http_record_cost(
+                                cost_bytes as i64,
+                            ))?;
                         let out =
                             match native.http_record(url).await.map_err(|e| illegal_arg(&e))? {
                                 Some((value, _)) => RhoString::apply(value),
@@ -2358,6 +2536,14 @@ impl SystemProcesses {
                             .ok_or_else(|| illegal_arg("http check expects a string url"))?;
                         let expected = RhoString::unapply(expected_par)
                             .ok_or_else(|| illegal_arg("http check expects a string value"))?;
+                        let cost_bytes = native
+                            .http_records_encoded_len()
+                            .await
+                            .map_err(|e| illegal_arg(&e))?;
+                        cc.cost()
+                            .charge(crate::accounting::Costs::http_record_cost(
+                                cost_bytes as i64,
+                            ))?;
                         let consistent =
                             match native.http_record(url).await.map_err(|e| illegal_arg(&e))? {
                                 Some((value, _)) => value == expected,
@@ -2374,6 +2560,14 @@ impl SystemProcesses {
                         };
                         let url = RhoString::unapply(url_par)
                             .ok_or_else(|| illegal_arg("http height expects a string url"))?;
+                        let cost_bytes = native
+                            .http_records_encoded_len()
+                            .await
+                            .map_err(|e| illegal_arg(&e))?;
+                        cc.cost()
+                            .charge(crate::accounting::Costs::http_record_cost(
+                                cost_bytes as i64,
+                            ))?;
                         let out =
                             match native.http_record(url).await.map_err(|e| illegal_arg(&e))? {
                                 Some((_, block)) => RhoNumber::apply(block),
@@ -2506,6 +2700,17 @@ impl SystemProcesses {
                             .ok_or_else(|| illegal_arg("transfer expects a number amount"))?;
                         let amount =
                             NonNegI64::try_from(amount).map_err(|e| illegal_arg(&e.to_string()))?;
+                        // **A destination is a REV address, not any string** (C301's contract-layer
+                        // review). The vault map is keyed by address; an arbitrary string was a
+                        // free, permanently unspendable leaf. The same validation is on the
+                        // capability handle's arm, because it shares `transfer_vault`.
+                        RevAddress::parse(to).map_err(|e| {
+                            illegal_arg(&format!("transfer: {to} is not a REV address: {e}"))
+                        })?;
+                        // **Price the two leaves the movement writes**: the spend is permanent native
+                        // state, and the system-process body is outside phlo accounting.
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(2 * (32 + 8)))?;
                         // **The movement is `transfer_vault`, shared with the capability handle.**
                         // The two arms differ only in where `from` comes from — the caller's
                         // `deployerId` here, a presented name there — and the spend rule must not be
@@ -2548,6 +2753,18 @@ impl SystemProcesses {
                                 })?
                                 .to_string(),
                         };
+                        // **The address form is a REV address** (C301's contract-layer review): the
+                        // branch accepted any string, and each call wrote a vault leaf and a name
+                        // leaf for it. The deployerId form already derives a valid one.
+                        RevAddress::parse(&addr).map_err(|e| {
+                            illegal_arg(&format!("findOrCreate: {addr} is not a REV address: {e}"))
+                        })?;
+                        // Price the vault leaf and the name leaf the call writes; the handle's own
+                        // install moves a message through the charged space.
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(
+                                addr.len() + 2 * 32 + 8,
+                            ))?;
                         native
                             .find_or_create_vault(&addr)
                             .await
@@ -2654,6 +2871,21 @@ impl SystemProcesses {
                     .ok_or_else(|| illegal_arg("ertp method must be a string"))?;
                 let rest = RhoList::unapply(rest_par)
                     .ok_or_else(|| illegal_arg("ertp arguments must be a list"))?;
+                // **Price the ledger leaf the arm will write or decode** (C301's contract-layer
+                // review): the body runs outside phlo accounting, so without this every kit, purse,
+                // mint, withdrawal, deposit and redemption is permanent free state. The price is one
+                // or two leaf sizes — the bound the ledger's leaves have.
+                let native_bytes = match op {
+                    "makeKit" => 512,
+                    "makePurse" | "balance" | "revBrand" => 256,
+                    "mint" | "withdraw" | "deposit" | "revRedeem" | "revWithdraw" => 512,
+                    "revFund" => 768,
+                    _ => 0,
+                };
+                if native_bytes > 0 {
+                    cc.cost()
+                        .charge(crate::accounting::Costs::native_store_cost(native_bytes))?;
+                }
                 let mut rand = rand;
                 let ok = |value: Par| RhoTupleN::apply(vec![RhoBoolean::apply(true), value]);
                 let no = |reason: &str| {
@@ -2983,6 +3215,24 @@ impl SystemProcesses {
                         let from = RevAddress::from_deployer_id(deployer_id)
                             .ok_or_else(|| illegal_arg("prepare: invalid deployerId"))?
                             .to_base58();
+                        // **A coordinator is a 65-byte public key and a destination is a REV
+                        // address** (C301's contract-layer review). `encode_txn` writes the
+                        // coordinator at its actual length while `decode_txn` reads a fixed 65, so a
+                        // short coordinator produced a record every later `commit`/`abort` fails to
+                        // decode — the escrow was taken and could never be released.
+                        if coordinator.len() != 65 {
+                            return Err(illegal_arg(
+                                "prepare: coordinator must be a 65-byte public key",
+                            ));
+                        }
+                        RevAddress::parse(to).map_err(|e| {
+                            illegal_arg(&format!("prepare: {to} is not a REV address: {e}"))
+                        })?;
+                        // Price the record leaf and the vault write the prepare performs.
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(
+                                txn_id.len() + from.len() + to.len() + 65 + 32,
+                            ))?;
                         let vote = match native
                             .txn_prepare(txn_id, &coordinator_pk, amount, &from, to)
                             .await
@@ -3011,6 +3261,11 @@ impl SystemProcesses {
                         if deployer_id != rec.coordinator.bytes() {
                             return Err(illegal_arg("commit: not the coordinator"));
                         }
+                        // Price the record read and the state write (C301's contract-layer review).
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(
+                                txn_id.len() + 160,
+                            ))?;
                         let state = native
                             .txn_commit(txn_id)
                             .await
@@ -3040,6 +3295,11 @@ impl SystemProcesses {
                         if deployer_id != rec.coordinator.bytes() {
                             return Err(illegal_arg("abort: not the coordinator"));
                         }
+                        // Price the record read and the state write (C301's contract-layer review).
+                        cc.cost()
+                            .charge(crate::accounting::Costs::native_store_cost(
+                                txn_id.len() + 160,
+                            ))?;
                         let state = native
                             .txn_abort(txn_id)
                             .await
@@ -4655,11 +4915,14 @@ mod tests {
         call(ghosts, levels).await.expect("censure runs");
         let with_ten = cost.total_charged() - before;
 
-        // `universe` is the sum of the three lists: 8 members, then 8 + 2 censure pairs.
+        // **The charge follows the distinct members the fixed point iterates** (C301's review): 8
+        // levels, then 8 + 4 ghost members from the two censure pairs. The *bound* is still the entry
+        // sum (10 ≤ 512, so the call is accepted); the *charge* is the work universe, 12. Charging
+        // the sum under-priced this shape by 8× — the measurement the correction came from.
         assert_eq!(
             with_ten - with_eight,
-            (10i64 + 1).pow(3) - (8i64 + 1).pow(3),
-            "the charge must track (U+1)³ in the universe, not a square"
+            (12i64 + 1).pow(3) - (8i64 + 1).pow(3),
+            "the charge must track (U+1)³ in the distinct universe, not the entry sum"
         );
     }
 
@@ -5022,5 +5285,290 @@ mod tests {
         .await
         .expect_err("bytes are not a name");
         assert!(format!("{err:?}").contains("unforgeable name"), "{err:?}");
+    }
+
+    /// **A contract cannot forge a log line** (C301's B4). The value it sends to `stdout`/`stderr`
+    /// is untrusted: a newline would create a second record in the operator's log, and an escape
+    /// sequence would act on the terminal that displays it. Both are escaped, and ordinary text —
+    /// including non-ASCII — is not.
+    #[test]
+    fn contract_output_cannot_forge_a_second_log_line() {
+        let forged = one_log_line("ok\n[warning] bond slashed\r\u{1b}[2J");
+        assert!(
+            !forged.contains('\n'),
+            "a newline reached the log: {forged:?}"
+        );
+        assert!(
+            !forged.contains('\r'),
+            "a carriage return reached the log: {forged:?}"
+        );
+        assert!(
+            !forged.contains('\u{1b}'),
+            "an escape sequence reached the log: {forged:?}"
+        );
+        assert!(forged.starts_with("ok\\n"), "{forged:?}");
+        assert!(forged.contains("\\u{1b}"), "{forged:?}");
+
+        assert_eq!(
+            one_log_line("hello, τ — done"),
+            "hello, τ — done",
+            "ordinary text is printed unchanged"
+        );
+    }
+
+    /// **A destination is a REV address** (C301's contract-layer review). The vault map is keyed by
+    /// address; an arbitrary string wrote a free, permanently unspendable leaf, and a zero transfer
+    /// wrote both leaves. Both the classic arm and the handle's arm share `transfer_vault`, so the
+    /// rule is checked here and the handle arm uses the same parser.
+    #[tokio::test]
+    async fn rev_vault_refuses_a_destination_that_is_not_a_rev_address() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let charging = ChargingRSpace::new(
+            mock.clone(),
+            Arc::new(crate::accounting::CostAccounting::from_initial(
+                crate::accounting::Costs::unsafe_max(),
+            )),
+        );
+        let dispatcher = Arc::new(RholangAndScalaDispatcher::new(
+            std::collections::BTreeMap::new(),
+        ));
+        let block_data = Arc::new(Mutex::new(BlockData::empty()));
+        let native_store = Arc::new(rchain_rspace::native_store::InMemNativeStore::empty());
+        let native_state = Arc::new(NativeSystemState::new(native_store));
+        let sp = SystemProcesses::new(charging, dispatcher, block_data, native_state.clone());
+        let defs = sp.definitions();
+        let vault = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::REV_VAULT)
+            .expect("revVault definition");
+
+        let alice_id = RhoDeployerId::apply(vec![1; 65]);
+        let alice = RevAddress::from_deployer_id(&[1; 65])
+            .expect("alice address")
+            .to_base58();
+        native_state.set_vault_balance(&alice, NonNegI64::try_from(100).unwrap());
+
+        let ret = FixedChannels::stdout();
+        let err = (vault.handler)(
+            vec![lpw(vec![
+                RhoString::apply("transfer".to_string()),
+                RhoList::apply(vec![
+                    alice_id.clone(),
+                    RhoString::apply("not-a-rev-address".to_string()),
+                    RhoNumber::apply(1),
+                    ret,
+                ]),
+            ])],
+            DfsPath::root(),
+        )
+        .await
+        .expect_err("an arbitrary destination is refused");
+        assert!(err.to_string().contains("not a REV address"), "{err}");
+        assert_eq!(
+            native_state
+                .vault_balance(&alice)
+                .await
+                .unwrap()
+                .map(i64::from),
+            Some(100),
+            "the refusal moved nothing"
+        );
+        assert_eq!(
+            native_state
+                .vault_balance("not-a-rev-address")
+                .await
+                .unwrap(),
+            None,
+            "and created nothing"
+        );
+
+        // The address form of `findOrCreate` has the same rule.
+        let ret = FixedChannels::stdout();
+        let err = (vault.handler)(
+            vec![lpw(vec![
+                RhoString::apply("findOrCreate".to_string()),
+                RhoList::apply(vec![RhoString::apply("not-a-rev-address".to_string()), ret]),
+            ])],
+            DfsPath::root(),
+        )
+        .await
+        .expect_err("an arbitrary address form is refused");
+        assert!(err.to_string().contains("not a REV address"), "{err}");
+    }
+
+    /// **A wrong argument type is refused, not answered `Nil`** (C301's contract-layer review):
+    /// `validate` replies `Nil` for a *valid* address, so a number replied `Nil` read as "valid".
+    #[tokio::test]
+    async fn rev_address_refuses_a_wrong_argument_type() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+        let rev = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::REV_ADDRESS)
+            .expect("rev:address definition");
+        let ack = FixedChannels::stdout();
+
+        let err = (rev.handler)(
+            vec![lpw(vec![
+                RhoString::apply("validate".to_string()),
+                RhoNumber::apply(42),
+                ack.clone(),
+            ])],
+            DfsPath::root(),
+        )
+        .await
+        .expect_err("a number is not an address string");
+        assert!(err.to_string().contains("expects a string"), "{err}");
+
+        let err = (rev.handler)(
+            vec![lpw(vec![
+                RhoString::apply("fromPublicKey".to_string()),
+                RhoByteArray::apply(vec![1; 3]),
+                ack,
+            ])],
+            DfsPath::root(),
+        )
+        .await
+        .expect_err("a short key is not a public key");
+        assert!(err.to_string().contains("65-byte"), "{err}");
+
+        // `fromDeployerId` is the deliberate exception: `Nil` is its "no identity" answer, which
+        // the master dictionary's forged/absent-id guard reads (Law 56, shape rule 5).
+        let ack = FixedChannels::stdout();
+        (rev.handler)(
+            vec![lpw(vec![
+                RhoString::apply("fromDeployerId".to_string()),
+                RhoString::apply("not-an-id".to_string()),
+                ack.clone(),
+            ])],
+            DfsPath::root(),
+        )
+        .await
+        .expect("a non-deployerId is answered Nil");
+        let produced = mock.produced.lock().unpoison();
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0].0.as_par(), &ack);
+        assert_eq!(produced[0].1.pars.len(), 1);
+        assert_eq!(produced[0].1.pars[0].as_par(), &RhoNil::apply());
+    }
+
+    /// **A coordinator is a 65-byte key and a destination a REV address** (C301's contract-layer
+    /// review). `encode_txn` wrote the coordinator at its actual length while `decode_txn` reads a
+    /// fixed 65, so a short coordinator produced a record no later `commit`/`abort` could decode —
+    /// the escrow was taken and could never be released.
+    #[tokio::test]
+    async fn txn_prepare_refuses_a_short_coordinator_and_a_non_rev_destination() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+        let txn = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::TXN)
+            .expect("txn definition");
+        let dep = RhoDeployerId::apply(vec![1; 65]);
+        let to = RevAddress::from_deployer_id(&[2; 65])
+            .expect("bob address")
+            .to_base58();
+        let ret = FixedChannels::stdout();
+
+        let err = (txn.handler)(
+            vec![lpw(vec![
+                RhoString::apply("prepare".to_string()),
+                RhoList::apply(vec![
+                    RhoByteArray::apply(vec![7; 8]),
+                    RhoByteArray::apply(vec![9; 3]),
+                    RhoNumber::apply(1),
+                    RhoString::apply(to.clone()),
+                    dep.clone(),
+                    ret.clone(),
+                ]),
+            ])],
+            DfsPath::root(),
+        )
+        .await
+        .expect_err("a short coordinator is refused");
+        assert!(err.to_string().contains("65-byte"), "{err}");
+
+        let err = (txn.handler)(
+            vec![lpw(vec![
+                RhoString::apply("prepare".to_string()),
+                RhoList::apply(vec![
+                    RhoByteArray::apply(vec![7; 8]),
+                    RhoByteArray::apply(vec![9; 65]),
+                    RhoNumber::apply(1),
+                    RhoString::apply("not-a-rev-address".to_string()),
+                    dep,
+                    ret,
+                ]),
+            ])],
+            DfsPath::root(),
+        )
+        .await
+        .expect_err("a non-REV destination is refused");
+        assert!(err.to_string().contains("not a REV address"), "{err}");
+    }
+
+    /// **An insert is priced by the leaf it writes** (C301's contract-layer review): the native copy
+    /// was free, so a deploy could grow the registry at zero marginal phlo.
+    #[tokio::test]
+    async fn registry_insert_arbitrary_charges_the_stored_value() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs, cost) = mock_system_processes_with_cost(&mock);
+        let insert = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::REG_INSERT_RANDOM)
+            .expect("insertArbitrary definition");
+        let ret = FixedChannels::stdout();
+
+        let before = cost.total_charged();
+        (insert.handler)(
+            vec![lpw(vec![RhoNil::apply(), ret.clone()])],
+            DfsPath::root(),
+        )
+        .await
+        .unwrap();
+        let small = cost.total_charged() - before;
+
+        let before = cost.total_charged();
+        let large_data = RhoList::apply((0..64).map(|_| RhoNumber::apply(1)).collect());
+        (insert.handler)(vec![lpw(vec![large_data, ret])], DfsPath::root())
+            .await
+            .unwrap();
+        let large = cost.total_charged() - before;
+        assert!(
+            large > small,
+            "a larger stored value costs more: {small} vs {large}"
+        );
+    }
+
+    /// **The ERTP ledger's writes are priced** (C301's contract-layer review): a kit creates brand
+    /// and authority leaves, and every later purse, mint and withdrawal creates another.
+    #[tokio::test]
+    async fn the_ertp_ledger_charges_the_leaf_it_writes() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_, defs, cost) = mock_system_processes_with_cost(&mock);
+        let ledger = defs
+            .iter()
+            .find(|d| d.urn == "rho:rchain:ertp:ledger")
+            .expect("the ERTP ledger is defined");
+
+        let before = cost.total_charged();
+        (ledger.handler)(
+            vec![ertp_call("makeKit", vec![a_name(9)], 1)],
+            DfsPath::root(),
+        )
+        .await
+        .unwrap();
+        let kit = cost.total_charged() - before;
+        assert!(kit > 0, "a kit write is priced: {kit}");
     }
 }

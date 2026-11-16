@@ -43,7 +43,11 @@ struct Fixture {
 async fn fixture(manager: Arc<InMemoryStoreManager>) -> Fixture {
     let (key, pub_key) = construct_deploy::default_key_pair().unwrap();
     let coordinator_addr = RevAddress::from_public_key(&pub_key).unwrap().to_base58();
-    let destination = "destRevAddress".to_string();
+    // A real REV address: `rho:txn` refuses a destination it cannot decode (C301), so a literal
+    // placeholder is no longer a legal fixture.
+    let destination = RevAddress::from_public_key(&construct_deploy::default_pub2().unwrap())
+        .unwrap()
+        .to_base58();
 
     let rm_a = Arc::new(build_runtime_manager().await);
     let rm_b = Arc::new(build_runtime_manager().await);
@@ -195,7 +199,11 @@ async fn gateway_aborts_every_leg_when_one_cannot_prepare() {
     let manager = Arc::new(InMemoryStoreManager::default());
     let (key, pub_key) = construct_deploy::default_key_pair().unwrap();
     let coordinator_addr = RevAddress::from_public_key(&pub_key).unwrap().to_base58();
-    let destination = "destRevAddress".to_string();
+    // A real REV address: `rho:txn` refuses a destination it cannot decode (C301), so a literal
+    // placeholder is no longer a legal fixture.
+    let destination = RevAddress::from_public_key(&construct_deploy::default_pub2().unwrap())
+        .unwrap()
+        .to_base58();
 
     let rm_a = Arc::new(build_runtime_manager().await);
     let rm_b = Arc::new(build_runtime_manager().await);

@@ -713,12 +713,60 @@ pub struct PooledDeploys {
 }
 
 /// Exception thrown by the Block API (port of `BlockApiException`).
+///
+/// **Two kinds, because the HTTP body and the operator's log want different things** (C301's E1).
+/// A [`Self::Client`] message is authored for the caller — invalid input, not found, a policy
+/// refusal. An [`Self::Internal`] failure carries the detail that names the cause (a path, a
+/// decoder's message); the HTTP boundary logs it and the body carries only the context. The type,
+/// rather than a convention at each call site, is what keeps a future site from putting internals
+/// on the wire.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BlockApiException(pub String);
+pub enum BlockApiException {
+    Client(String),
+    Internal { context: String, detail: String },
+}
+
+impl BlockApiException {
+    /// A message authored for the client. The default constructor for the port's error sites,
+    /// which are almost all input and policy refusals.
+    pub fn client(message: impl Into<String>) -> Self {
+        Self::Client(message.into())
+    }
+
+    /// An internal failure: `detail` is for the log, `context` is what the client is told.
+    pub fn internal(context: impl Into<String>, detail: impl fmt::Display) -> Self {
+        Self::Internal {
+            context: context.into(),
+            detail: detail.to_string(),
+        }
+    }
+
+    /// The client-visible text, without logging. Used where a caller must classify the message
+    /// (`deploy_refusal_is_bounded`) before deciding how to answer.
+    pub fn client_text(&self) -> &str {
+        match self {
+            Self::Client(message) => message,
+            Self::Internal { context, .. } => context,
+        }
+    }
+
+    /// Consume to the client-visible text, writing an internal detail to the node's log. **The one
+    /// place an internal detail reaches the operator and not the wire** — every HTTP error response
+    /// passes through here.
+    pub fn into_client_message(self) -> String {
+        match self {
+            Self::Client(message) => message,
+            Self::Internal { context, detail } => {
+                eprintln!("[web-api] {context}: {detail}");
+                context
+            }
+        }
+    }
+}
 
 impl fmt::Display for BlockApiException {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.client_text())
     }
 }
 
@@ -804,8 +852,12 @@ mod tests {
 
     #[test]
     fn exceptions_carry_messages() {
-        let e = BlockApiException("boom".to_string());
+        let e = BlockApiException::client("boom");
         assert_eq!(e.to_string(), "boom");
+        // An internal detail is logged at the boundary and never becomes the message.
+        let e = BlockApiException::internal("ledger failed", "permission denied: /secret");
+        assert_eq!(e.to_string(), "ledger failed");
+        assert_eq!(e.clone().into_client_message(), "ledger failed");
         let e = SignatureException("bad sig".to_string());
         assert_eq!(e.to_string(), "bad sig");
     }

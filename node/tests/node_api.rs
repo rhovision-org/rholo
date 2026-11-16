@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use common::{free_ports, standalone_conf, start, temp_dir, VALIDATOR_PRIV_HEX};
+use common::{temp_dir, VALIDATOR_PRIV_HEX};
 
 async fn poll_blocks(client: &reqwest::Client, url: &str) -> Vec<Value> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
@@ -36,26 +36,14 @@ async fn poll_blocks(client: &reqwest::Client, url: &str) -> Vec<Value> {
 #[tokio::test]
 async fn http_surface_without_genesis() {
     let dir = temp_dir("http-surface");
-    let ports = free_ports(4);
+    // Ports are allocated under the heavyweight lock, so this test cannot be handed a port an
+    // earlier node bound, and the wait reports the node's own error if it stopped.
+    let (mut node, ports) = common::start_standalone(&dir, None).await;
     let http_port = ports[0];
-    let conf = standalone_conf(&dir, &ports, None);
-    let node = start(&conf, ports[2], http_port).await;
     let base = format!("http://127.0.0.1:{http_port}");
     let client = reqwest::Client::new();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    let version = loop {
-        if let Ok(resp) = client.get(format!("{base}/version")).send().await {
-            if resp.status().is_success() {
-                break resp.text().await.unwrap();
-            }
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "HTTP server did not come up"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    };
+    let version = common::wait_for_http(&mut node, &base).await;
     assert!(version.contains("rholo node"), "version = {version}");
     // A served node names the binary it is, not just its version number: `commit # unknown` is what
     // this route answered before the build script existed, and this string is the one a room member
@@ -86,30 +74,16 @@ async fn http_surface_without_genesis() {
 fn genesis_boot_exposes_block_over_http() {
     common::test_runtime().block_on(async {
         let dir = temp_dir("genesis-boot");
-        let ports = free_ports(4);
-        let http_port = ports[0];
-        let mut conf = standalone_conf(&dir, &ports, Some(VALIDATOR_PRIV_HEX));
         // `exploratory_deploy` is admitted on a read-only node or in dev mode
-        // (`block_api_impl.rs:685`); a bonded validator is neither, and the devnet runs dev mode.
-        conf.dev_mode = true;
-        let node = start(&conf, ports[2], http_port).await;
+        // (`block_api_impl.rs:685`); a bonded validator is neither, and `start_standalone` builds a
+        // dev-mode standalone node for the reason the devnet runs one.
+        let (mut node, ports) = common::start_standalone(&dir, Some(VALIDATOR_PRIV_HEX)).await;
+        let http_port = ports[0];
         let base = format!("http://127.0.0.1:{http_port}");
         let client = reqwest::Client::new();
 
         // The HTTP server comes up before genesis is created; poll until `/version` responds.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-        let version = loop {
-            if let Ok(resp) = client.get(format!("{base}/version")).send().await {
-                if resp.status().is_success() {
-                    break resp.text().await.unwrap();
-                }
-            }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "HTTP server did not come up"
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        };
+        let version = common::wait_for_http(&mut node, &base).await;
         assert!(version.contains("rholo node"), "version = {version}");
         assert!(
             !version.contains("commit # unknown"),

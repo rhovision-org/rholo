@@ -205,7 +205,11 @@ async fn two_shard_2pc_commits_all() {
     let coordinator_addr = RevAddress::from_public_key(&coordinator_pub)
         .unwrap()
         .to_base58();
-    let destination = "destRevAddress".to_string();
+    // A real REV address: `rho:txn` refuses a destination it cannot decode (C301), so a literal
+    // placeholder is no longer a legal fixture.
+    let destination = RevAddress::from_public_key(&construct_deploy::default_pub2().unwrap())
+        .unwrap()
+        .to_base58();
 
     let shard_a = Arc::new(build_runtime_manager().await);
     let shard_b = Arc::new(build_runtime_manager().await);
@@ -291,7 +295,11 @@ async fn two_shard_2pc_aborts_all_when_a_leg_fails() {
     let coordinator_addr = RevAddress::from_public_key(&coordinator_pub)
         .unwrap()
         .to_base58();
-    let destination = "destRevAddress".to_string();
+    // A real REV address: `rho:txn` refuses a destination it cannot decode (C301), so a literal
+    // placeholder is no longer a legal fixture.
+    let destination = RevAddress::from_public_key(&construct_deploy::default_pub2().unwrap())
+        .unwrap()
+        .to_base58();
 
     let shard_a = Arc::new(build_runtime_manager().await);
     let shard_b = Arc::new(build_runtime_manager().await);
@@ -368,7 +376,11 @@ async fn re_running_a_committed_2pc_stays_uniform() {
     let coordinator_addr = RevAddress::from_public_key(&coordinator_pub)
         .unwrap()
         .to_base58();
-    let destination = "destRevAddress".to_string();
+    // A real REV address: `rho:txn` refuses a destination it cannot decode (C301), so a literal
+    // placeholder is no longer a legal fixture.
+    let destination = RevAddress::from_public_key(&construct_deploy::default_pub2().unwrap())
+        .unwrap()
+        .to_base58();
 
     let shard_a = Arc::new(build_runtime_manager().await);
     let shard_b = Arc::new(build_runtime_manager().await);
@@ -467,7 +479,11 @@ async fn two_shard_2pc_replay_rederives_the_post_state_hash() {
     let coordinator_addr = RevAddress::from_public_key(&coordinator_pub)
         .unwrap()
         .to_base58();
-    let destination = "destRevAddress".to_string();
+    // A real REV address: `rho:txn` refuses a destination it cannot decode (C301), so a literal
+    // placeholder is no longer a legal fixture.
+    let destination = RevAddress::from_public_key(&construct_deploy::default_pub2().unwrap())
+        .unwrap()
+        .to_base58();
     let txn_id: &[u8] = b"replay-txn";
 
     let shard = build_runtime_manager().await;

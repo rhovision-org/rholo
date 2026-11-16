@@ -9,6 +9,7 @@ mod common;
 
 use std::time::Duration;
 
+use rchain_rholang::util::rev_address::RevAddress;
 use serde_json::{json, Value};
 
 use common::{free_ports, gateway_conf, start, temp_dir, VALIDATOR_PRIV_HEX};
@@ -203,11 +204,17 @@ fn gateway_node_coordinates_a_two_shard_transaction() {
         wait_for_shards_ready(&client, &base).await;
 
         let txn_id = "aabbccdd";
+        // A real REV destination: `rho:txn` refuses a destination it cannot decode (C301).
+        let destination = RevAddress::from_public_key(
+            &rchain_casper::construct_deploy::default_pub2().expect("a fixed public key"),
+        )
+        .expect("a REV address")
+        .to_base58();
         let body = json!({
             "txnId": txn_id,
             "legs": [
-                { "shardId": "/root",       "amount": 30, "to": "gatewayDest" },
-                { "shardId": "/root/child", "amount": 40, "to": "gatewayDest" }
+                { "shardId": "/root",       "amount": 30, "to": destination.clone() },
+                { "shardId": "/root/child", "amount": 40, "to": destination.clone() }
             ]
         });
 

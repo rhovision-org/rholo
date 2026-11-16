@@ -117,6 +117,29 @@ impl Costs {
             format!("{left} x {right} elements diff cost"),
         )
     }
+    /// **A native-store leaf costs its bytes** (C301's contract-layer review). System-process bodies
+    /// run outside the reducer's phlo accounting, so a leaf they write — or decode — is otherwise
+    /// permanent work paid by the validator. The charge is the bytes the leaf (or the reply) holds;
+    /// a floor of one keeps an empty value from being free. B2's HTTP claim registry prices the whole
+    /// encoded table; this is the per-leaf form for the other native maps (registry, vault, PoS
+    /// reads, ERTP, txn, qucalc's minted capability).
+    pub fn native_store_cost(bytes: usize) -> Cost {
+        let bytes = bytes.max(1) as i64;
+        Cost::new(bytes, format!("{bytes}-byte native store access"))
+    }
+
+    /// **The cost of touching the HTTP claim registry** (C301's B2). The table is one trie leaf, so
+    /// every read decodes it whole and every write re-encodes it whole: the encoded size *is* the
+    /// work. The registry's own bounds (256 records, 1 KiB URL, 4 KiB value) cap that size; this
+    /// charge makes the deploy pay for it instead of the validator. A floor of one keeps an
+    /// empty-table read from being free work.
+    pub fn http_record_cost(bytes: i64) -> Cost {
+        Cost::new(
+            bytes.max(1),
+            format!("{bytes}-byte HTTP claim registry access"),
+        )
+    }
+
     /// The cost of a `rho:gov:*` fold, proportional to the square of the member universe (audit F-3).
     ///
     /// These four handlers were charging **nothing at all** — not the storage path (which charges for

@@ -32,14 +32,14 @@ impl AdminWebApi for AdminWebApiImpl {
         self.block_api
             .create_block(false)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn propose_result(&self) -> Result<String, BlockApiException> {
         self.block_api
             .get_propose_result()
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     /// **The way out of a durable halt** (W-N10-01, F-U10-02) — see the trait's doc.
@@ -55,7 +55,7 @@ impl AdminWebApi for AdminWebApiImpl {
                 "autopropose resumed: every member shard's halt record is cleared and its timer is live"
                     .to_string()
             })
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     /// **The resource-fallback resume** (unit C, B37) — see the trait's doc. The state machine takes a
@@ -102,7 +102,7 @@ impl AdminWebApi for AdminWebApiImpl {
             .block_api
             .deploy_pool_stats()
             .await
-            .map_err(super::dto::BlockApiException)?;
+            .map_err(super::dto::BlockApiException::client)?;
         let core =
             super::conversion::to_public_status(&status, &caps, &self.resources.snapshot(), &pool);
         Ok(super::conversion::to_operator_status(

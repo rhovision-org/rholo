@@ -170,7 +170,7 @@ impl WebApiImpl {
     fn save_faucet_ledger(&self, ledger: &FaucetLedger) -> Result<(), BlockApiException> {
         if let Some(path) = &self.faucet_ledger_path {
             Self::write_faucet_ledger(path, ledger)
-                .map_err(|e| BlockApiException(format!("faucet ledger persistence failed: {e}")))?;
+                .map_err(|e| BlockApiException::internal("faucet ledger persistence failed", e))?;
         }
         Ok(())
     }
@@ -187,7 +187,7 @@ impl WebApiImpl {
             .block_api
             .exploratory_deploy(&term, None, false)
             .await
-            .map_err(BlockApiException)?;
+            .map_err(BlockApiException::client)?;
 
         reply
             .data
@@ -198,7 +198,7 @@ impl WebApiImpl {
                 _ => None,
             })
             .ok_or_else(|| {
-                BlockApiException(format!(
+                BlockApiException::client(format!(
                     "faucet: finalized balance query for {address} returned no integer"
                 ))
             })
@@ -249,7 +249,7 @@ struct FaucetLedger {
 }
 
 fn invalid_deploy_id() -> BlockApiException {
-    BlockApiException("Deploy id is not valid base16 format.".to_string())
+    BlockApiException::client("Deploy id is not valid base16 format.".to_string())
 }
 
 /// Public-testnet faucet allocation: 10,000 REV. A drip is reserved before submission and refunded
@@ -274,6 +274,21 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::resources::{ResourceSnapshot, ResourceState};
+
+    /// **The wire message does not carry the internal detail** (C301's E1). The constructor is the
+    /// boundary between an operator-facing cause and a client-facing refusal: a filesystem path or a
+    /// decoder's message in the body is both a disclosure and a contract a client would start to
+    /// depend on.
+    #[test]
+    fn an_internal_failure_keeps_its_detail_out_of_the_response_message() {
+        let e = BlockApiException::internal(
+            "faucet ledger persistence failed",
+            "permission denied: /var/lib/rnode/faucet-ledger.json",
+        );
+        assert_eq!(e.client_text(), "faucet ledger persistence failed");
+        assert!(!e.client_text().contains("permission denied"));
+        assert!(!e.client_text().contains("/var/lib"));
+    }
 
     /// A block API that answers from its fields and records what it was asked — the `StubBlockApi`
     /// pattern `deploy_grpc_service_v1.rs` and `tonic.rs`'s tests use. The methods this file never
@@ -575,9 +590,9 @@ mod tests {
             .await
             .expect_err("a critical node must not attest");
         assert!(
-            err.0.contains("critical") && err.0.contains("not attesting"),
+            err.client_text().contains("critical") && err.client_text().contains("not attesting"),
             "the refusal names the state: {}",
-            err.0
+            err.client_text()
         );
     }
 
@@ -654,7 +669,7 @@ mod tests {
             .expect_err("not base16");
         assert_eq!(
             err,
-            BlockApiException("Deploy id is not valid base16 format.".to_string())
+            BlockApiException::client("Deploy id is not valid base16 format.".to_string())
         );
 
         // Odd-length hex is not base16 either.
@@ -711,7 +726,7 @@ mod tests {
             .expect_err("invalid");
         assert_eq!(
             err,
-            BlockApiException("Invalid REV address: rBdXnotARealAddress".to_string())
+            BlockApiException::client("Invalid REV address: rBdXnotARealAddress".to_string())
         );
     }
 
@@ -736,9 +751,10 @@ mod tests {
             .await
             .expect_err("the deployer's own address is not a target");
         assert!(
-            err.0.contains(&own) && err.0.contains("deployer's own address"),
+            err.client_text().contains(&own)
+                && err.client_text().contains("deployer's own address"),
             "the refusal names the address and what is wrong with it: {}",
-            err.0
+            err.client_text()
         );
 
         let target = faucet_target();
@@ -777,9 +793,10 @@ mod tests {
             .await
             .expect_err("finalized delivery makes the account ineligible");
         assert!(
-            err.0.contains("already funded in finalized state"),
+            err.client_text()
+                .contains("already funded in finalized state"),
             "the refusal is derived from chain state: {}",
-            err.0
+            err.client_text()
         );
         assert_eq!(
             deployed.lock().unwrap().len(),
@@ -836,7 +853,7 @@ mod tests {
             .faucet(&address)
             .await
             .expect_err("pending remains reserved");
-        assert!(blocked.0.contains("still pending"));
+        assert!(blocked.client_text().contains("still pending"));
 
         *status.lock().unwrap() = Ok(DomainExecStatus::ProcessedWithError {
             deploy_error: "preCharge: insufficient funds".to_string(),
@@ -925,9 +942,9 @@ mod tests {
             .await
             .expect_err("the first deploy is still pending");
         assert!(
-            err.0.contains("still pending"),
+            err.client_text().contains("still pending"),
             "pending reservation is named: {}",
-            err.0
+            err.client_text()
         );
     }
 
@@ -941,7 +958,9 @@ mod tests {
             .expect_err("no key");
         assert_eq!(
             err,
-            BlockApiException("faucet requires --dev-mode --deployer-private-key".to_string())
+            BlockApiException::client(
+                "faucet requires --dev-mode --deployer-private-key".to_string()
+            )
         );
     }
 
@@ -1002,9 +1021,11 @@ mod tests {
             .await
             .expect_err("processed is not finalized delivery");
         assert!(
-            waiting.0.contains("processed in block 7 but finality is 6"),
+            waiting
+                .client_text()
+                .contains("processed in block 7 but finality is 6"),
             "the finality boundary is explicit: {}",
-            waiting.0
+            waiting.client_text()
         );
         assert_eq!(
             deployed.lock().unwrap().len(),
@@ -1171,7 +1192,7 @@ impl WebApi for WebApiImpl {
             .block_api
             .deploy_pool_stats()
             .await
-            .map_err(BlockApiException)?;
+            .map_err(BlockApiException::client)?;
         Ok(to_public_status(
             &status,
             &caps,
@@ -1189,7 +1210,7 @@ impl WebApi for WebApiImpl {
         // `Signed<DeployData>` holds a `&dyn SignaturesAlg` (not `Sync`), so keep it in a block
         // that ends before the `.await`.
         let deploy = {
-            let signed = to_signed_deploy(request).map_err(|e| BlockApiException(e.0))?;
+            let signed = to_signed_deploy(request).map_err(|e| BlockApiException::client(e.0))?;
             SignedDeployData {
                 data: signed.data.clone(),
                 deployer: signed.pk.bytes().to_vec(),
@@ -1200,7 +1221,7 @@ impl WebApi for WebApiImpl {
         self.block_api
             .deploy(&deploy)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn pooled_deploys(&self) -> Result<PooledDeploys, BlockApiException> {
@@ -1208,7 +1229,7 @@ impl WebApi for WebApiImpl {
             .block_api
             .pooled_deploys()
             .await
-            .map_err(BlockApiException)?;
+            .map_err(BlockApiException::client)?;
         // Most-recent-first: the pool's key order is the deploy signature bytes, not insertion time.
         pooled.sort_by_key(|d| std::cmp::Reverse(d.data.timestamp));
         let deploys = pooled.iter().map(to_pooled_deploy).collect();
@@ -1254,7 +1275,7 @@ impl WebApi for WebApiImpl {
                 .block_api
                 .get_blocks_by_heights(height, height)
                 .await
-                .map_err(BlockApiException)?
+                .map_err(BlockApiException::client)?
                 .into_iter()
                 .next()
             {
@@ -1263,7 +1284,7 @@ impl WebApi for WebApiImpl {
                         .block_api
                         .get_raw_block(&info.block_hash)
                         .await
-                        .map_err(BlockApiException)?;
+                        .map_err(BlockApiException::client)?;
                     entries.push(super::dto::HistoryChallengeEntry {
                         height,
                         block_hash: Some(info.block_hash),
@@ -1299,7 +1320,8 @@ impl WebApi for WebApiImpl {
         &self,
         request: &super::dto::HistoryRangeRequest,
     ) -> Result<super::dto::HistoryRange, BlockApiException> {
-        super::dto::validate_history_range(request.from, request.to).map_err(BlockApiException)?;
+        super::dto::validate_history_range(request.from, request.to)
+            .map_err(BlockApiException::client)?;
         let mut entries = Vec::new();
         let mut complete = true;
         let mut bytes = 0usize;
@@ -1308,7 +1330,7 @@ impl WebApi for WebApiImpl {
                 .block_api
                 .get_blocks_by_heights(height, height)
                 .await
-                .map_err(BlockApiException)?;
+                .map_err(BlockApiException::client)?;
             if infos.is_empty() {
                 complete = false;
                 entries.push(super::dto::HistoryRangeEntry {
@@ -1323,7 +1345,7 @@ impl WebApi for WebApiImpl {
                     Ok(body) => {
                         bytes += body.encoded.len() + body.sig.len();
                         if bytes > super::dto::MAX_HISTORY_RANGE_BYTES {
-                            return Err(BlockApiException(format!(
+                            return Err(BlockApiException::client(format!(
                                 "a history range carries at most {} bytes; ask for a smaller window",
                                 super::dto::MAX_HISTORY_RANGE_BYTES
                             )));
@@ -1363,22 +1385,27 @@ impl WebApi for WebApiImpl {
             .block_api
             .deploy_status(&id)
             .await
-            .map_err(BlockApiException)?;
-        to_deploy_exec_status(&status)
-            .ok_or_else(|| BlockApiException("Deploy status protobuf message error".to_string()))
+            .map_err(BlockApiException::client)?;
+        to_deploy_exec_status(&status).ok_or_else(|| {
+            BlockApiException::client("Deploy status protobuf message error".to_string())
+        })
     }
 
     async fn faucet(&self, address: &str) -> Result<FaucetResponse, BlockApiException> {
         if !RevAddress::is_valid(address) {
-            return Err(BlockApiException(format!("Invalid REV address: {address}")));
+            return Err(BlockApiException::client(format!(
+                "Invalid REV address: {address}"
+            )));
         }
 
         let sk = self.deployer_key.as_ref().ok_or_else(|| {
-            BlockApiException("faucet requires --dev-mode --deployer-private-key".to_string())
+            BlockApiException::client(
+                "faucet requires --dev-mode --deployer-private-key".to_string(),
+            )
         })?;
-        let own = faucet::deployer_rev_address(sk).map_err(BlockApiException)?;
+        let own = faucet::deployer_rev_address(sk).map_err(BlockApiException::client)?;
         if address == own {
-            return Err(BlockApiException(format!(
+            return Err(BlockApiException::client(format!(
                 "faucet: {address} is the deployer's own address — the drip would move nothing between \
                  two accounts the node already holds, and would still spend the budget"
             )));
@@ -1397,7 +1424,7 @@ impl WebApi for WebApiImpl {
                 .block_api
                 .deploy_status(&deploy_id)
                 .await
-                .map_err(BlockApiException)?
+                .map_err(BlockApiException::client)?
             {
                 CasperDeployExecStatus::ProcessedWithError { deploy_error, .. } => {
                     // **The drip failed, and this call says so** (#247). It used to refund and fall
@@ -1427,17 +1454,22 @@ impl WebApi for WebApiImpl {
                         .unpoison()
                         .contains(address);
                     if recovering {
-                        let signed = SignedDeployData::from_bytes(&pending.signed)
-                            .map_err(|e| BlockApiException(format!("faucet recovery: {e}")))?;
+                        let signed =
+                            SignedDeployData::from_bytes(&pending.signed).map_err(|e| {
+                                BlockApiException::internal(
+                                    "faucet recovery: the stored deploy could not be decoded",
+                                    e,
+                                )
+                            })?;
                         if signed.sig != deploy_id || !signed.verify_signature() {
-                            return Err(BlockApiException(
+                            return Err(BlockApiException::client(
                                 "faucet recovery: invalid signed deploy".to_string(),
                             ));
                         }
                         self.block_api
                             .deploy(&signed)
                             .await
-                            .map_err(BlockApiException)?;
+                            .map_err(BlockApiException::client)?;
                         self.recovering_faucet_drips
                             .lock()
                             .unpoison()
@@ -1452,7 +1484,7 @@ impl WebApi for WebApiImpl {
                             deploy_error: None,
                         });
                     }
-                    return Err(BlockApiException(format!(
+                    return Err(BlockApiException::client(format!(
                         "faucet: previous drip for {address} is still pending ({status})"
                     )));
                 }
@@ -1461,9 +1493,9 @@ impl WebApi for WebApiImpl {
                         .block_api
                         .last_finalized_block()
                         .await
-                        .map_err(BlockApiException)?;
+                        .map_err(BlockApiException::client)?;
                     if finalized.block_info.block_number < block.block_number {
-                        return Err(BlockApiException(format!(
+                        return Err(BlockApiException::client(format!(
                             "faucet: previous drip for {address} is processed in block {} but finality is {}",
                             block.block_number, finalized.block_info.block_number
                         )));
@@ -1472,7 +1504,7 @@ impl WebApi for WebApiImpl {
                     let balance = self.finalized_rev_balance(address).await?;
                     if balance >= faucet::FAUCET_AMOUNT {
                         self.clear_faucet_reservation(address, Some(&deploy_id), false)?;
-                        return Err(BlockApiException(format!(
+                        return Err(BlockApiException::client(format!(
                             "faucet: address {address} is already funded in finalized state ({balance} drops)"
                         )));
                     }
@@ -1490,7 +1522,7 @@ impl WebApi for WebApiImpl {
         // nothing.
         let balance = self.finalized_rev_balance(address).await?;
         if balance >= faucet::FAUCET_AMOUNT {
-            return Err(BlockApiException(format!(
+            return Err(BlockApiException::client(format!(
                 "faucet: address {address} is already funded in finalized state ({balance} drops)"
             )));
         }
@@ -1499,19 +1531,19 @@ impl WebApi for WebApiImpl {
         let vabn = self.block_api.status().await.latest_block_number;
         let signed =
             faucet::sign_faucet_deploy(sk, address, faucet::FAUCET_AMOUNT, &self.shard_id, vabn)
-                .map_err(BlockApiException)?;
+                .map_err(BlockApiException::client)?;
 
         // Reserve atomically across the per-address in-flight gate and total allocation. This closes
         // the concurrent-request window while the chain outcome is still unknown.
         {
             let mut ledger = self.faucet_ledger.lock().unpoison();
             if ledger.pending.contains_key(address) {
-                return Err(BlockApiException(format!(
+                return Err(BlockApiException::client(format!(
                     "faucet: address {address} already has a drip reservation"
                 )));
             }
             if FAUCET_TOTAL_BUDGET.saturating_sub(ledger.spent) < faucet::FAUCET_AMOUNT {
-                return Err(BlockApiException(
+                return Err(BlockApiException::client(
                     "faucet: total budget exhausted".to_string(),
                 ));
             }
@@ -1530,7 +1562,7 @@ impl WebApi for WebApiImpl {
 
         if let Err(err) = self.block_api.deploy(&signed).await {
             self.clear_faucet_reservation(address, Some(&signed.sig), true)?;
-            return Err(BlockApiException(err));
+            return Err(BlockApiException::client(err));
         }
 
         Ok(FaucetResponse {
@@ -1547,12 +1579,12 @@ impl WebApi for WebApiImpl {
         &self,
         request: &DataAtNameRequest,
     ) -> Result<DataAtNameResponse, BlockApiException> {
-        let par = unforg_to_par(&request.name).map_err(BlockApiException)?;
+        let par = unforg_to_par(&request.name).map_err(BlockApiException::client)?;
         let (dbs, length) = self
             .block_api
             .get_listening_name_data_response(request.depth, &par)
             .await
-            .map_err(BlockApiException)?;
+            .map_err(BlockApiException::client)?;
         Ok(to_data_at_name_response(&dbs, length))
     }
 
@@ -1560,12 +1592,12 @@ impl WebApi for WebApiImpl {
         &self,
         request: &DataAtNameByBlockHashRequest,
     ) -> Result<RhoDataResponse, BlockApiException> {
-        let par = rho_expr_to_par(&request.name).map_err(BlockApiException)?;
+        let par = rho_expr_to_par(&request.name).map_err(BlockApiException::client)?;
         let (pars, block) = self
             .block_api
             .get_data_at_par(&par, &request.block_hash, request.use_pre_state_hash)
             .await
-            .map_err(BlockApiException)?;
+            .map_err(BlockApiException::client)?;
         Ok(to_rho_data_response(&pars, &block))
     }
 
@@ -1573,21 +1605,21 @@ impl WebApi for WebApiImpl {
         self.block_api
             .last_finalized_block()
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn get_block(&self, hash: &str) -> Result<BlockInfo, BlockApiException> {
         self.block_api
             .get_block(hash)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn raw_block(&self, hash: &str) -> Result<RawBlock, BlockApiException> {
         self.block_api
             .get_raw_block(hash)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn block_header(
@@ -1598,7 +1630,7 @@ impl WebApi for WebApiImpl {
         self.block_api
             .header_commitment(hash)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn finality_attestation(
@@ -1610,7 +1642,7 @@ impl WebApi for WebApiImpl {
         // given, so a claim this node is not entitled to make must not be created even briefly.
         let snapshot = self.resources.snapshot();
         if snapshot.fallback.stops_production() {
-            return Err(BlockApiException(format!(
+            return Err(BlockApiException::client(format!(
                 "the node is {} ({}); it is not attesting",
                 snapshot.fallback.as_str(),
                 snapshot.fallback_reason
@@ -1619,14 +1651,14 @@ impl WebApi for WebApiImpl {
         self.block_api
             .finality_attestation(nonce)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn current_checkpoint(&self) -> Result<Checkpoint, BlockApiException> {
         self.block_api
             .current_checkpoint()
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn checkpoint_certificate(
@@ -1636,7 +1668,7 @@ impl WebApi for WebApiImpl {
         self.block_api
             .checkpoint_certificate(digest)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn verify_checkpoint_certificate(
@@ -1649,7 +1681,7 @@ impl WebApi for WebApiImpl {
         self.block_api
             .verify_checkpoint_certificate(certificate)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn checkpoint_attestation(&self) -> Result<CheckpointAttestation, BlockApiException> {
@@ -1658,7 +1690,7 @@ impl WebApi for WebApiImpl {
         // block claim), the entitlement rule is not.
         let snapshot = self.resources.snapshot();
         if snapshot.fallback.stops_production() {
-            return Err(BlockApiException(format!(
+            return Err(BlockApiException::client(format!(
                 "the node is {} ({}); it is not attesting",
                 snapshot.fallback.as_str(),
                 snapshot.fallback_reason
@@ -1667,14 +1699,14 @@ impl WebApi for WebApiImpl {
         self.block_api
             .checkpoint_attestation()
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn get_blocks(&self, depth: i32) -> Result<Vec<LightBlockInfo>, BlockApiException> {
         self.block_api
             .get_blocks(depth)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn find_deploy(&self, deploy_id: &str) -> Result<LightBlockInfo, BlockApiException> {
@@ -1682,7 +1714,7 @@ impl WebApi for WebApiImpl {
         self.block_api
             .find_deploy(&id)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn find_deployer(&self, key: &str) -> Result<DeployerInfo, BlockApiException> {
@@ -1694,7 +1726,7 @@ impl WebApi for WebApiImpl {
             Some(h) if h.len() == 32 => h,
             Some(k) if k.len() == 65 => deployer_index_key(&k),
             _ => {
-                return Err(BlockApiException(
+                return Err(BlockApiException::client(
                     "Expected the hex blake2b256 hash of a public key (32 bytes) or a 65-byte \
                      uncompressed secp256k1 public key."
                         .to_string(),
@@ -1704,7 +1736,7 @@ impl WebApi for WebApiImpl {
         self.block_api
             .find_deployer(&hash)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn exploratory_deploy(
@@ -1717,7 +1749,7 @@ impl WebApi for WebApiImpl {
             .block_api
             .exploratory_deploy(term, block_hash, use_pre_state_hash)
             .await
-            .map_err(BlockApiException)?;
+            .map_err(BlockApiException::client)?;
         Ok(to_exploratory_deploy_response(&reply, &block))
     }
 
@@ -1729,27 +1761,29 @@ impl WebApi for WebApiImpl {
         self.block_api
             .get_blocks_by_heights(start_block_number, end_block_number)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn is_finalized(&self, hash: &str) -> Result<bool, BlockApiException> {
         self.block_api
             .is_finalized(hash)
             .await
-            .map_err(BlockApiException)
+            .map_err(BlockApiException::client)
     }
 
     async fn get_transaction(&self, hash: &str) -> Result<TransactionResponse, BlockApiException> {
         if hash.is_empty() {
-            return Err(BlockApiException("Block hash cannot be empty.".to_string()));
+            return Err(BlockApiException::client(
+                "Block hash cannot be empty.".to_string(),
+            ));
         }
-        let blake =
-            Blake2b256Hash::from_hex_either(hash).map_err(|e| BlockApiException(e.to_string()))?;
+        let blake = Blake2b256Hash::from_hex_either(hash)
+            .map_err(|e| BlockApiException::client(e.to_string()))?;
         let data = self
             .transaction_api
             .get_transaction(&blake)
             .await
-            .map_err(BlockApiException)?;
+            .map_err(BlockApiException::client)?;
         Ok(TransactionResponse { data })
     }
 }

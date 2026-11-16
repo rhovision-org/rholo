@@ -111,6 +111,20 @@ pub enum BlockStatus {
     /// accepted window, never the state store, so a root's mere presence is not permission. It is a
     /// [`FailureCause::Divergence`] (this node's view of the accepted history), not an offence.
     UncertifiedPreState,
+    /// **The block's `CloseBlock` system deploy does not match the epoch boundary its pre-state
+    /// parameters define** (C301's C5).
+    ///
+    /// `close_block` applies the epoch transition when the block carries
+    /// `SystemDeployData::CloseBlock`, and the boundary is `block_number % PosParams.epoch_length ==
+    /// 0` from the pre-state. A proposer whose local `epoch_length` differs from the chain's emits
+    /// boundary blocks with and without the close at the same heights; every node accepted both,
+    /// which is a silent fork in the epoch schedule. The rule requires the system-deploy set to
+    /// match the boundary: present at a boundary, absent elsewhere. The parameters are chain state,
+    /// so the verdict is the block's own fault on every node; the severity is
+    /// [`SlashSeverity::HonestMistake`] because the measured cause is an operator's divergent local
+    /// configuration rather than malice. Hard-fork class: a boundary block without the close that
+    /// an earlier binary accepted is refused by this one.
+    InvalidEpochBoundary,
 }
 
 impl BlockStatus {
@@ -166,7 +180,8 @@ impl BlockStatus {
             | BlockStatus::TooManyDeploys
             | BlockStatus::TooManyJustifications
             | BlockStatus::ExceedsBlockPhloLimit
-            | BlockStatus::InvalidVersion => FailureCause::Attributable,
+            | BlockStatus::InvalidVersion
+            | BlockStatus::InvalidEpochBoundary => FailureCause::Attributable,
         }
     }
 
@@ -243,7 +258,8 @@ impl BlockStatus {
             BlockStatus::ContainsExpiredDeploy
             | BlockStatus::ContainsFutureDeploy
             | BlockStatus::TooManyDeploys
-            | BlockStatus::ExceedsBlockPhloLimit => Some(SlashSeverity::HonestMistake),
+            | BlockStatus::ExceedsBlockPhloLimit
+            | BlockStatus::InvalidEpochBoundary => Some(SlashSeverity::HonestMistake),
 
             // **`Attributable`, and yet not an offence** — each reads an input this node owns, so
             // another node can reach the opposite verdict for the same block.
@@ -292,6 +308,7 @@ impl BlockStatus {
             BlockStatus::ExceedsBlockPhloLimit => "exceeds-block-phlo-limit",
             BlockStatus::InvalidVersion => "invalid-version",
             BlockStatus::UncertifiedPreState => "uncertified-pre-state",
+            BlockStatus::InvalidEpochBoundary => "invalid-epoch-boundary",
         }
     }
 }
@@ -347,6 +364,11 @@ impl std::fmt::Display for BlockStatus {
                  post-anchor block, and its justifications are not all the anchor or blocks this \
                  node validated"
             }
+            BlockStatus::InvalidEpochBoundary => {
+                "the block's `CloseBlock` system deploy does not match the epoch boundary its \
+                 pre-state parameters define — the block advances the epoch schedule differently \
+                 from the chain's own `PosParams`"
+            }
         };
         write!(f, "{s}")
     }
@@ -357,7 +379,7 @@ mod tests {
     use super::*;
 
     /// Every status, so a variant added without a message (or with a copy-pasted one) fails here.
-    const ALL: [BlockStatus; 22] = [
+    const ALL: [BlockStatus; 23] = [
         BlockStatus::Valid,
         BlockStatus::InvalidBlockNumber,
         BlockStatus::InvalidRepeatDeploy,
@@ -380,6 +402,7 @@ mod tests {
         BlockStatus::ExceedsBlockPhloLimit,
         BlockStatus::InvalidVersion,
         BlockStatus::UncertifiedPreState,
+        BlockStatus::InvalidEpochBoundary,
     ];
 
     /// `Valid` is the **only** status that is valid: `is_valid` is the one predicate the block
@@ -553,9 +576,12 @@ mod tests {
                 BlockStatus::InvalidDeploySignature,
                 BlockStatus::TooManyDeploys,
                 BlockStatus::ExceedsBlockPhloLimit,
+                // The boundary comes from the chain's `PosParams`, which every node reads from the
+                // same pre-state — not from a receiving node's configuration (C301's C5).
+                BlockStatus::InvalidEpochBoundary,
             ],
-            "an offence is the block's own signed fields, the DAG's structure, or a version-coupled \
-             constant — nothing a receiving node's configuration supplies"
+            "an offence is the block's own signed fields, the DAG's structure, a version-coupled \
+             constant, or the chain's PosParams — nothing a receiving node's configuration supplies"
         );
 
         for status in ALL {

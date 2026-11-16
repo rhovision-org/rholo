@@ -156,6 +156,13 @@ impl PeerRateLimiter {
 }
 
 /// Serve a peer's request for a block (port of `handleBlockRequest`), throttled per-peer.
+///
+/// **`has_block` is the caller's DAG read, not a block-store `contains`** (C301's D1). The store can
+/// hold a body whose block the DAG does not — an orphan left by an interrupted reset or a block that
+/// failed validation — and serving that body hands a peer a block this node itself will not replay.
+/// Its sibling `handle_has_block_request` already answers from the DAG representation, so the caller
+/// computes the same fact once and passes it here; a store that cannot be read is the caller's error
+/// to log (AUDIT C67), not a `false` this function can distinguish from absence.
 pub async fn handle_block_request(
     transport: &dyn TransportLayer,
     conf: &RPConf,
@@ -164,6 +171,7 @@ pub async fn handle_block_request(
     source: LogSource,
     peer: &PeerNode,
     br: &BlockRequest,
+    has_block: bool,
     limiter: &PeerRateLimiter,
 ) {
     let hash = br.hash;
@@ -177,21 +185,6 @@ pub async fn handle_block_request(
         );
         return;
     }
-    // A store that cannot be read skips the answer: an unanswered request is retryable, where a
-    // `false` answer would be a state claim (AUDIT C67).
-    let has_block = match block_is_known(block_store, &hash).await {
-        Ok(known) => known,
-        Err(e) => {
-            log.error(
-                source,
-                &format!(
-                    "Received request for block {} from {peer}. Dropped: the block store could not be read: {e}",
-                    hash.to_hex()
-                ),
-            );
-            return;
-        }
-    };
     if has_block {
         let stored = match block_by_hash(block_store, &hash).await {
             Ok(block) => block,
@@ -1290,6 +1283,10 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                 }
             }
             CasperMessage::BlockRequest(br) => {
+                // **The DAG is the serveable set** (C301's D1): a body in the store whose block this
+                // node never accepted is not served. The read is the same one the `HasBlockRequest`
+                // arm below makes, so a peer that is told "has block" is not then refused the body.
+                let has_block = self.dag.get_representation().await.contains(&br.hash);
                 handle_block_request(
                     self.transport.as_ref(),
                     &self.conf,
@@ -1298,6 +1295,7 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                     self.log_source,
                     peer,
                     br,
+                    has_block,
                     self.block_request_limit.as_ref(),
                 )
                 .await;
@@ -1973,6 +1971,7 @@ mod tests {
             LogSource::new("test"),
             &remote,
             &BlockRequest { hash: h },
+            true,
             &PeerRateLimiter::new(100),
         )
         .await;
@@ -1999,11 +1998,44 @@ mod tests {
             LogSource::new("test"),
             &remote,
             &BlockRequest { hash: hash(1) },
+            false,
             &PeerRateLimiter::new(100),
         )
         .await;
 
         assert!(transport.streams.lock().unwrap().is_empty());
+    }
+
+    /// **A store that holds the body is not enough** (C301's D1). The DAG says this node did not
+    /// accept the block — an orphan from an interrupted reset, or a block it refused — so the body is
+    /// not served. Before the DAG read, `block_store.contains` alone streamed it to any peer that
+    /// asked, which is how a body the node would not replay left the node anyway.
+    #[tokio::test]
+    async fn handle_block_request_does_not_stream_a_body_the_dag_does_not_hold() {
+        let local = peer("src", 40400);
+        let remote = peer("peer", 40400);
+        let transport = Arc::new(MockTransport::default());
+        let h = hash(1);
+        let store = block_store(vec![block(h)]).await;
+        let log = NopLog;
+
+        handle_block_request(
+            transport.as_ref(),
+            &conf(&local),
+            &store,
+            &log,
+            LogSource::new("test"),
+            &remote,
+            &BlockRequest { hash: h },
+            false,
+            &PeerRateLimiter::new(100),
+        )
+        .await;
+
+        assert!(
+            transport.streams.lock().unwrap().is_empty(),
+            "a body the DAG does not hold must not be served"
+        );
     }
 
     #[tokio::test]

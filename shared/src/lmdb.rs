@@ -19,6 +19,46 @@ use crate::store::KeyValueStore;
 use crate::store_manager::{Db, KeyValueStoreManager, LmdbEnvConfig};
 use crate::typed_store::SharedStore;
 
+/// **Whether a store error is the disk being full** (C301's D3).
+///
+/// `txn.commit` surfaces the OS error as text. ENOSPC is distinguishable from every other store
+/// failure, and the distinction matters: the block receiver's ordinary idiom is to log and skip,
+/// which on a full disk leaves a node that logs and falls behind while every later commit fails the
+/// same way. `MDB_MAP_FULL` is deliberately **not** this class — the file has room and the map is
+/// too small, which is a different defect with a different remedy.
+pub fn is_storage_exhausted(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("no space left on device")
+        || error.contains("enospc")
+        || error.contains("disk full")
+        || error.contains("disk quota exceeded")
+}
+
+#[cfg(test)]
+mod storage_exhausted_tests {
+    use super::is_storage_exhausted;
+
+    /// **ENOSPC is its own class** (C301's D3). The strings are the ones the LMDB commit path
+    /// produces on Linux; `MDB_MAP_FULL` is the map, not the disk, and a generic I/O failure is
+    /// neither — both must fall back to the caller's ordinary error handling.
+    #[test]
+    fn a_full_disk_is_distinguished_from_a_full_map_and_a_generic_io_error() {
+        assert!(is_storage_exhausted(
+            "LMDB commit: No space left on device (os error 28)"
+        ));
+        assert!(is_storage_exhausted("ENOSPC: No space left on device"));
+        assert!(is_storage_exhausted("write failed: disk full"));
+        assert!(is_storage_exhausted("disk quota exceeded"));
+
+        assert!(!is_storage_exhausted(
+            "LMDB commit: MDB_MAP_FULL: Environment mapsize limit reached"
+        ));
+        assert!(!is_storage_exhausted(
+            "LMDB commit: Permission denied (os error 13)"
+        ));
+    }
+}
+
 /// An LMDB-backed key-value store (port of `LmdbKeyValueStore`).
 pub struct LmdbKeyValueStore {
     env: Arc<Environment>,

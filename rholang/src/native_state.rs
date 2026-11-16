@@ -300,7 +300,7 @@ pub fn dev_tax_vested(allocation: i64, duration: i64, height: i64) -> Result<i64
     })
 }
 
-/// Leaf key for the HTTP-result oracle table (`url → (value, captured block)`); RCHIP #54.
+/// Leaf key for the HTTP claim registry table (`url → (value, captured block)`); RCHIP #54.
 pub fn http_records_key() -> Blake2b256Hash {
     Blake2b256Hash::create(b"http:records")
 }
@@ -465,7 +465,7 @@ pub fn decode_bonds(bytes: &[u8]) -> Result<BTreeMap<Validator, NonNegI64>, Stri
     Ok(out)
 }
 
-// --- HTTP-result oracle (RCHIP #54) -----------------------------------------
+// --- HTTP claim registry (RCHIP #54) ----------------------------------------
 
 /// A recorded HTTP value: the captured body and the block height at which it was captured.
 pub type HttpRecord = (String, i64);
@@ -1336,7 +1336,35 @@ impl NativeSystemState {
             .put(PREFIX_POS, pos_bonds_key(), encode_bonds(bonds));
     }
 
-    // --- HTTP-result oracle (RCHIP #54) -----------------------------------------------------
+    // --- HTTP claim registry (RCHIP #54) ----------------------------------------------------
+
+    /// **The registry is bounded and charged, not a free write** (C301's B1/B2). The table is one
+    /// trie leaf that every write re-encodes, so its size is the per-write work; these bounds keep
+    /// that work finite and the handler charges the encoded bytes
+    /// ([`crate::accounting::Costs::http_record_cost`]). The contract is a *deploy-supplied claim
+    /// registry*, not a fetch: the value is whatever the first writer asserted, and no network read
+    /// happens on any path.
+    pub const MAX_HTTP_RECORDS: usize = 256;
+    pub const MAX_HTTP_URL_BYTES: usize = 1024;
+    pub const MAX_HTTP_VALUE_BYTES: usize = 4096;
+
+    fn check_http_record_bounds(url: &str, value: &str) -> Result<(), String> {
+        if url.len() > Self::MAX_HTTP_URL_BYTES {
+            return Err(format!(
+                "http record: url is {} bytes; the limit is {}",
+                url.len(),
+                Self::MAX_HTTP_URL_BYTES
+            ));
+        }
+        if value.len() > Self::MAX_HTTP_VALUE_BYTES {
+            return Err(format!(
+                "http record: value is {} bytes; the limit is {}",
+                value.len(),
+                Self::MAX_HTTP_VALUE_BYTES
+            ));
+        }
+        Ok(())
+    }
 
     /// Read the whole HTTP-record table (`url → (value, captured block)`).
     pub async fn http_records(&self) -> Result<BTreeMap<String, HttpRecord>, String> {
@@ -1351,19 +1379,57 @@ impl NativeSystemState {
         Ok(self.http_records().await?.get(url).cloned())
     }
 
+    /// The encoded size of the current table — what a `get`/`check`/`height` decodes, and therefore
+    /// what the handler charges for it.
+    pub async fn http_records_encoded_len(&self) -> Result<usize, String> {
+        Ok(self
+            .store
+            .get(PREFIX_HTTP, &http_records_key())
+            .await?
+            .map(|bytes| bytes.len())
+            .unwrap_or(0))
+    }
+
+    /// The encoded size a `record` would produce — the bytes its charge is computed from. Applies
+    /// the same bounds as [`Self::record_http`], so a charge is never taken for a write the bounds
+    /// would refuse; an existing URL is first-writer-wins and adds nothing.
+    pub async fn http_record_write_len(&self, url: &str, value: &str) -> Result<usize, String> {
+        Self::check_http_record_bounds(url, value)?;
+        let mut records = self.http_records().await?;
+        if !records.contains_key(url) {
+            if records.len() >= Self::MAX_HTTP_RECORDS {
+                return Err(format!(
+                    "http record: the table already holds {} records",
+                    Self::MAX_HTTP_RECORDS
+                ));
+            }
+            records.insert(url.to_string(), (value.to_string(), 0));
+        }
+        Ok(encode_http_records(&records).len())
+    }
+
     /// Capture `value` for `url` — **first writer wins**. Returns `true` if this call recorded the
     /// value, `false` if a record already existed (which is left untouched). Recording is a pure
     /// function of the deploy, so replay is deterministic; later deploys compare against the record
-    /// rather than re-fetching, which is what makes an HTTP value usable under consensus.
+    /// rather than re-fetching, which is what makes a recorded value usable under consensus. The
+    /// bounds are part of the contract: an oversized URL or value, or a table at
+    /// [`Self::MAX_HTTP_RECORDS`], is refused rather than allowed to grow the leaf.
     pub async fn record_http(
         &self,
         url: &str,
         value: &str,
         block_number: i64,
     ) -> Result<bool, String> {
+        Self::check_http_record_bounds(url, value)?;
         let mut records = self.http_records().await?;
         if records.contains_key(url) {
             return Ok(false);
+        }
+        if records.len() >= Self::MAX_HTTP_RECORDS {
+            return Err(format!(
+                "http record: the table already holds {} records",
+                Self::MAX_HTTP_RECORDS
+            ));
         }
         records.insert(url.to_string(), (value.to_string(), block_number));
         self.store.put(
@@ -1542,6 +1608,16 @@ impl NativeSystemState {
         match self.store.get(PREFIX_POS, &pos_params_key()).await? {
             Some(bytes) => decode_params(&bytes),
             None => Ok(PosParams::default()),
+        }
+    }
+
+    /// Read the immutable PoS parameters, or `None` if no record is installed. [`Self::params`] is
+    /// the same read with the permissive default filled in; a caller that must tell "no record"
+    /// from "the permissive record" — the proposer's epoch-trigger check (C301's C5) — uses this.
+    pub async fn params_opt(&self) -> Result<Option<PosParams>, String> {
+        match self.store.get(PREFIX_POS, &pos_params_key()).await? {
+            Some(bytes) => Ok(Some(decode_params(&bytes)?)),
+            None => Ok(None),
         }
     }
 
@@ -6104,6 +6180,60 @@ mod tests {
             .await
             .unwrap());
         assert_eq!(native.http_records().await.unwrap().len(), 2);
+    }
+
+    /// **The registry is bounded and its charge is the encoded size** (C301's B1/B2). One leaf is
+    /// decoded per read and re-encoded per write, so the bounds cap the work and the handler's
+    /// charge (`Costs::http_record_cost`) is exactly the bytes the table occupies.
+    #[tokio::test]
+    async fn http_registry_is_bounded_and_prices_the_encoded_table() {
+        let native = NativeSystemState::new(Arc::new(InMemNativeStore::empty()));
+        assert_eq!(native.http_records_encoded_len().await.unwrap(), 0);
+
+        let url = "https://example.com/price";
+        let projected = native.http_record_write_len(url, "42.5").await.unwrap();
+        assert!(projected > 0, "a write is never free work");
+        assert!(native.record_http(url, "42.5", 7).await.unwrap());
+        assert_eq!(
+            native.http_records_encoded_len().await.unwrap(),
+            projected,
+            "the charge is the bytes the write produced"
+        );
+        // A first-writer-wins loser adds nothing, so its projected size is the current table.
+        assert_eq!(
+            native.http_record_write_len(url, "99.9").await.unwrap(),
+            projected
+        );
+
+        // Bounds: refused before any write.
+        let too_long_url = "x".repeat(NativeSystemState::MAX_HTTP_URL_BYTES + 1);
+        assert!(native.record_http(&too_long_url, "v", 1).await.is_err());
+        let too_long_value = "x".repeat(NativeSystemState::MAX_HTTP_VALUE_BYTES + 1);
+        assert!(native
+            .record_http("https://example.com/big", &too_long_value, 1)
+            .await
+            .is_err());
+        assert!(native
+            .http_record_write_len("https://example.com/big", &too_long_value)
+            .await
+            .is_err());
+
+        // The table cap: fill it, then a new URL is refused; an existing one still answers false.
+        for i in 0..(NativeSystemState::MAX_HTTP_RECORDS - 1) {
+            assert!(native
+                .record_http(&format!("https://example.com/{i}"), "v", 1)
+                .await
+                .unwrap());
+        }
+        assert_eq!(
+            native.http_records().await.unwrap().len(),
+            NativeSystemState::MAX_HTTP_RECORDS
+        );
+        assert!(native
+            .record_http("https://example.com/overflow", "v", 1)
+            .await
+            .is_err());
+        assert!(!native.record_http(url, "later", 2).await.unwrap());
     }
 
     #[tokio::test]
