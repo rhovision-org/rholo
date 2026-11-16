@@ -177,23 +177,23 @@ def read_map(term: str):
 
 
 def liveness() -> dict:
+    # The reply goes to the term's **first `new`-bound name**: exploratory deploy reads that name
+    # and falls back to `@"out"` only when it is empty. `@"out"` accumulates every real deploy's
+    # reply in the block's state, so a read there can return a stale map or an old vote ack.
     return read_map(
-        'new pos(`rho:rchain:pos`), ret in { pos!("getLiveness", [*ret]) | '
-        'for (@m <- ret) { @"out"!(m) } }'
+        'new reply, pos(`rho:rchain:pos`) in { pos!("getLiveness", [*reply]) }'
     )
 
 
 def bonds() -> dict:
     return read_map(
-        'new pos(`rho:rchain:pos`), ret in { pos!("getBonds", [*ret]) | '
-        'for (@m <- ret) { @"out"!(m) } }'
+        'new reply, pos(`rho:rchain:pos`) in { pos!("getBonds", [*reply]) }'
     )
 
 
 def active_validators() -> list[str]:
     value = read_value(
-        'new pos(`rho:rchain:pos`), ret in { pos!("getActiveValidators", [*ret]) | '
-        'for (@m <- ret) { @"out"!(m) } }'
+        'new reply, pos(`rho:rchain:pos`) in { pos!("getActiveValidators", [*reply]) }'
     )
     return value if isinstance(value, list) else []
 
@@ -201,9 +201,8 @@ def active_validators() -> list[str]:
 def vote_state(target_hex: str):
     """`getVotes` answers Nil when no window is open, else (opened_at, remaining, ballots)."""
     value = read_value(
-        'new pos(`rho:rchain:pos`), ret in { '
-        f'pos!("getVotes", ["{target_hex}".hexToBytes(), *ret]) | '
-        'for (@r <- ret) { @"out"!(r) } }'
+        'new reply, pos(`rho:rchain:pos`) in { '
+        f'pos!("getVotes", ["{target_hex}".hexToBytes(), *reply]) }}'
     )
     if isinstance(value, tuple) and len(value) == 3:
         return {"opened_at": value[0], "remaining": value[1], "ballots": value[2]}
@@ -313,17 +312,15 @@ def vote_term(target_hex: str) -> str:
 
 def rev_address(pubkey_hex: str):
     return read_value(
-        'new ra(`rho:rev:address`), ret in { '
-        f'ra!("fromPublicKey", "{pubkey_hex}".hexToBytes(), *ret) | '
-        'for (@a <- ret) { @"out"!(a) } }'
+        'new reply, ra(`rho:rev:address`) in { '
+        f'ra!("fromPublicKey", "{pubkey_hex}".hexToBytes(), *reply) }}'
     )
 
 
 def rev_balance(address: str) -> int:
     value = read_value(
-        'new vault(`rho:rchain:revVault`), ret in { '
-        f'vault!("getBalance", "{address}", *ret) | '
-        'for (@b <- ret) { @"out"!(b) } }'
+        'new reply, vault(`rho:rchain:revVault`) in { '
+        f'vault!("getBalance", "{address}", *reply) }}'
     )
     return value if isinstance(value, int) else 0
 
