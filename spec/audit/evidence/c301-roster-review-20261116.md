@@ -94,9 +94,9 @@ For each of the **31** URNs in `rholang/src/system_processes.rs` (the thirty led
 
 **Consensus-visible.** Findings 1–5 change what a deploy costs and which inputs are refused; they
 are hard-fork class, like the B2 and C5 changes in the same branch. No deployment is part of this
-change. The committed `jail-vote` drill (`c301-phase3-20261116/`) was run after the B2/C5 changes;
-the charging and validation additions above followed it, so the next release record must carry them
-and the drill should be re-run on the release candidate.
+change. The `jail-vote` drill was re-run after these additions on the review head (`ca0902bf5`):
+`c301-review-20261116/` — PASS, `jailed`, bond untouched, vote slash, bonds 700/100/100, jail
+record `[0, 10]`. The release record must still carry the charges and the new refusals.
 
 ## The ledger itself
 

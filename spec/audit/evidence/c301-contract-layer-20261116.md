@@ -86,12 +86,16 @@ All pass on the Phase 1 branch.
 
 ## What remains under C301
 
-Every row in the 19-row matrix is now refuted (A1), corrected (A2), closed (A2b), fixed (B1–B4, C5,
-D1–D4, E1, E2, E4), fixed-in-dev (C1–C4) or a duplicate (E3). What remains under C301 is the
-contract-layer **review of the thirty T3-deferred system processes** — the denominator itself, which
-no tranche of row fixes closes. The tranche section below records the fixes, the decision that is
-genuinely a decision (B3), and the two residuals no code change closes (the foreign-box auth and the
-relaxed on-chain extension).
+Nothing. Every row in the 19-row matrix is refuted (A1), corrected (A2), closed (A2b), fixed
+(B1–B4, C5, D1–D4, E1, E2, E4), fixed-in-dev (C1–C4) or a duplicate (E3), and the contract-layer
+**review of the system-process roster** — the denominator itself — is
+`spec/audit/evidence/c301-roster-review-20261116.md`: all 31 installed processes read, every ledger
+row cleared, the missing `rho:rchain:ertp:ledger` row added, and the roster now derived from the
+code by `tools/check-review-ledger.sh`. The tranche section below records the row fixes; the roster
+review records the process-level verdicts and the findings it produced (uncharged native work,
+censure's charge universe, the vault destination rule, the txn coordinator length, `rev:address`'s
+Nil). Two residuals no code change closes are named rather than hidden: the foreign-box auth and the
+relaxed on-chain extension.
 
 ## The Phase-3 tranche (2026-11-16, PR #599)
 
@@ -126,7 +130,9 @@ commits; the image is `sha256:676040ba…`) passed: `jailed: true`, `bond_untouc
 `vote_slashed_the_bond: true`, bonds 700/100/100, jail record `[0, 10]`. The chain crossed the
 epoch-3 boundaries the new rule governs and still reached the liveness response, so the charge and
 the validity rule did not disturb boot, block production, the jail or the vote. Run committed at
-`spec/audit/evidence/c301-phase3-20261116/`.
+`spec/audit/evidence/c301-phase3-20261116/`. The roster review's charges and refusals were checked
+the same way on the review head (`ca0902bf5`): `spec/audit/evidence/c301-review-20261116/` — PASS,
+same three checks, bonds 700/100/100, jail record `[0, 10]`.
 
 What this tranche deliberately leaves:
 
