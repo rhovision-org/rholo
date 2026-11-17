@@ -103,6 +103,9 @@ ARM_CONFIG = {
     # Voting disabled: the arm is about the jail clock, not the ballot. The window must be 0 when
     # the severity is `none` (the genesis validator refuses a half-configured chain).
     "restart-expiry": ArmConfig("100,100,100,100", 2, 2, 6, 0, "none"),
+    # Liveness disabled: the cold join is the subject, and an outage long enough to wipe and
+    # re-sync must not also jail the validator under test.
+    "cold-rejoin": ArmConfig("100,100,100,100", 0, 0, 0, 0, "none"),
 }
 
 
@@ -1037,11 +1040,66 @@ def run_restart_expiry_arm(keys: list[str], args, config: ArmConfig) -> tuple[di
     return checks, observations, []
 
 
+def run_cold_rejoin_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, dict, list[str]]:
+    """Wipe a validator's store and require it to join the running chain and speak again.
+
+    `devnet.sh reset` is the cold join: the container and its data volume are discarded, and the
+    node starts with an empty store against a bootstrap that already serves a certificate. The
+    measured failure this arm is for is the one at `33d735041`: the joiner accepted the certificate
+    and then could not validate the first post-anchor block. The arm asserts the observable
+    consequence — the node serves, signs a block above the reset height, and that block finalises.
+    """
+    checks: dict[str, bool] = {}
+    observations: dict = {}
+    target = keys[3]
+    observations["baseline"] = snapshot()
+
+    # The certificate needs a non-empty finalized fringe to have a merge base to sign.
+    wait_until(
+        lambda: True if int(health(HTTP_BASE).get("finalizedHeight") or 0) >= 20 else None,
+        args.timeout,
+        args.poll,
+        "the chain reaches a certifiable anchor",
+    )
+    reset_height = latest_height()
+    observations["reset_height"] = reset_height
+
+    run(["tools/devnet.sh", "reset", "3"])
+    wait_until(
+        lambda: http_json(HTTP_BASE + 3 * 1000, "/api/status") or None,
+        args.timeout,
+        args.poll,
+        "the wiped validator serves again",
+    )
+    checks["rejoined_and_serves"] = True
+
+    block = wait_until(
+        lambda: find_block(target, reset_height + 1),
+        args.timeout,
+        args.poll,
+        "the cold-joined validator signs a block",
+    )
+    observations["rejoined_block"] = block
+    signed_height = int(block.get("blockNumber", -1))
+    checks["signed_a_block_after_the_join"] = signed_height > reset_height
+
+    wait_until(
+        lambda: True if int(health(HTTP_BASE).get("finalizedHeight") or 0) >= signed_height else None,
+        args.timeout,
+        args.poll,
+        "the joined validator's block reaches finality",
+    )
+    checks["joined_block_finalized"] = True
+    checks["liveness_record_absent_after_join"] = target_record(liveness(), target) is None
+    return checks, observations, []
+
+
 ARMS = {
     "jail-vote": run_jail_vote_arm,
     "exact-threshold": run_exact_threshold_arm,
     "stall": run_stall_arm,
     "restart-expiry": run_restart_expiry_arm,
+    "cold-rejoin": run_cold_rejoin_arm,
 }
 
 
