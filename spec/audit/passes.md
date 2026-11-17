@@ -13419,14 +13419,16 @@ thirds with no slash and the bond intact; 800/900 strict, slash, cleanup) and `s
 (`finalizedHeight` and the last-finalised anchor frozen, liveness counters identical, no jail). The
 record is `spec/audit/evidence/c344-capstone-20261117.md`.
 
-**The restart arm was not runnable on this build; the restart/release behaviour is proven at the
-rule level.** The live restart attempt hit a build-level limitation: an in-place restart of a
-validator's DAG was refused (no stored certificate naming the accepted fringe, and a non-bootstrap
-collector cannot assemble one), and a cold rejoin stalled before it became ready to propose. That is
-an observation in the capstone record, not a C344 finding. The jail and the release are the rule's
-own state machine: a jailed validator does not propose; a returning validator's message is included by
-an unjailed proposer; and `releaseIfPresent` clears the jail at expiry. Law 89's theorems and their
-named Rust witnesses (`a_jailed_validator_returns_after_the_term`,
+**The restart arm ran; its jail half read as expected, and its restart/release half needs a new
+test.** Validator 3 was stopped, the three survivors advanced, and the jail was imposed at the
+expected boundary — out of the active set, bond untouched. That is the jail working. The
+restart/release half hit a build-level limitation: an in-place restart of the validator's DAG was
+refused (no stored certificate naming the accepted fringe, and a non-bootstrap collector cannot
+assemble one), and a cold rejoin stalled before it became ready to propose. Those are observations in
+the capstone record for the new test, not C344 findings. The release and renewal are the rule's own
+state machine: a jailed validator does not propose; a returning validator's message is included by an
+unjailed proposer; and `releaseIfPresent` clears the jail at expiry. Law 89's theorems and their named
+Rust witnesses (`a_jailed_validator_returns_after_the_term`,
 `a_still_absent_validator_is_renewed`) are the acceptance for that clause, and the owner closed the
 row on that basis.
 

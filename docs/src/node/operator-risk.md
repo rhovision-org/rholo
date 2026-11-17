@@ -116,7 +116,7 @@ genesis decision for each network. If a network wants to price absence, the stag
 | 0 | current: behavioural slashing; absence paid; no inactivity leak | only invalid/equivocation | shipped |
 | 1 | arm the existing income rule after measuring the participation lag | no | a network/genesis decision; measure first |
 | 2 | an inactivity leak / reward decay (new state) | no | not built; Lean-first and maintainer decision |
-| 3 | liveness slashing — **now the opt-in jail + stake vote** (RCHIP #55, Law 89) | only through a >2/3 active-stake vote | implemented, **default off**; jail first (bond untouched), the vote is the only bond path; the local capstone passes jail, vote/threshold and stall; the restart/release clause is Law 89's state machine and its named witnesses, and the live restart/rejoin step was not runnable on this build |
+| 3 | liveness slashing — **now the opt-in jail + stake vote** (RCHIP #55, Law 89) | only through a >2/3 active-stake vote | implemented, **default off**; jail first (bond untouched), the vote is the only bond path; the local capstone passes jail, vote/threshold and stall; the restart/release clause is Law 89's state machine and its named witnesses, and the arm's jail half read as expected and its restart/release half needs a new test |
 | 4 | mainnet arming | as above | **not authorised**; waits on the restart evidence and #428 |
 
 **Policy decision.** For the inactivity leak, no automatic step burns a bond. RCHIP #55 adds a *bond-preserving jail* and a *vote-gated slash*; the two

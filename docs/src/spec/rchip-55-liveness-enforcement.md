@@ -113,9 +113,9 @@ restart/expiry clause is the rule's state machine: a jailed validator does not p
 send a funded deploy that an unjailed validator proposes; and `releaseIfPresent` clears the jail at
 expiry, with renewal while silent. Law 89 and its named unit witnesses
 (`a_jailed_validator_returns_after_the_term`, `a_still_absent_validator_is_renewed`) are the
-acceptance for that clause. The live restart/rejoin step itself could not be performed on this
-build; that limitation is recorded in `spec/audit/evidence/c344-capstone-20261117.md`, which is the
-capstone record.
+acceptance for that clause. The arm ran and its jail half read as expected; its restart/release half needs a new test (the
+local build refused an in-place restart and a cold rejoin stalled), recorded in
+`spec/audit/evidence/c344-capstone-20261117.md`.
 
 ## 8. Known residuals
 
