@@ -24,6 +24,15 @@ cd quantum-os
 bash scripts/localnet/qos-devnet.sh up --no-ai
 ```
 
+**Build provenance:** QuantumOS's committed `bin/rnode` is a historical
+disposable development binary. #601 GitHub CI reported
+`bc80abbba42661f0252c04f931e6a4ac58bb6737`, **not** current Rholo `dev`.
+For an isolated run on a freshly built pinned Rholo revision, set
+`RNODE=/absolute/path/to/rnode` when launching the harness and record both
+the binary's SHA-256 and its full reported source commit. This operates on the
+harness's **separate** transient store only. It is never an installed public
+validator qualification or a safe way to reopen a production store.
+
 The harness builds the WASM package when missing, performs `pnpm install --frozen-lockfile`, builds the signaling server and browser, starts the bundled **local** Rholo node (no `--fresh`/data deletion), starts Signaling on port 4444, starts Vite HTTPS at 5173, and joins a deterministic facilitator agent to a fresh room. A freshly generated browser URL with the room capability is printed **once**.
 
 The browser entry point is `https://127.0.0.1:5173/quantum-os/`. Follow the printed URL with `#room=…`; the harness does not retain that secret. In the UI set `/signal wss://127.0.0.1:5173/signal` if the browser is not using that local proxy already. Two independent browser contexts should enter the **same** capability room and exchange an ordinary chat message; the Signaling service at port 4444 is proxied as `/signal` by Vite.
