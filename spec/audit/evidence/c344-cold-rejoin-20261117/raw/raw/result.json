@@ -1,0 +1,23 @@
+{
+  "arm": "cold-rejoin",
+  "arm_config": {
+    "absence_threshold": 0,
+    "jail_after": 0,
+    "jail_epochs": 0,
+    "severity": "none",
+    "stakes": "100,100,100,100",
+    "vote_window": 0
+  },
+  "checks": {
+    "arm_completed": false
+  },
+  "epoch_length": 3,
+  "execution_proven": false,
+  "inconclusive": [],
+  "observations": {
+    "error": "the cold-joined validator signs a block: no qualifying answer in 1200s; last=None"
+  },
+  "source_sha": "29f2292183ad3cb47e5db851c46556e90c16c2c8",
+  "tool": "liveness-enforcement-drill.py",
+  "verdict_hint": "FAIL"
+}
