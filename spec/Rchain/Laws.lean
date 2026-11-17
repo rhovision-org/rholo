@@ -861,15 +861,22 @@ def lawsA : List Law := [
       occurrence **and** no recorded COMM is left unconsumed — holds exactly when the recomputation and \
       the recorded trace have the same COMM occurrences",
     status := .provedModel,
+    formal := `Rchain.law11_statement,
+    mutant := `Rchain.law11_mutant,
+    falsifier := `Rchain.law11_falsifier,
     declarations := [`Rchain.Comm, `Rchain.produceRefs, `Rchain.commId, `Rchain.Trace, `Rchain.CommRef,
       `Rchain.refOf, `Rchain.refsOf, `Rchain.occurrences, `Rchain.removeOne, `Rchain.Replays,
       `Rchain.forwardHolds, `Rchain.reverseHolds, `Rchain.removeOne_eq_some_iff,
       `Rchain.replays_iff_same_occurrences, `Rchain.a_replay_agrees_with_its_record,
       `Rchain.the_forward_half_alone_admits_a_diverging_trace,
-      `Rchain.the_reverse_half_alone_admits_a_phantom_recomputation],
+      `Rchain.the_reverse_half_alone_admits_a_phantom_recomputation,
+      `Rchain.law11_statement, `Rchain.law11_mutant, `Rchain.law11_falsifier, `Rchain.law11
+      ],
     axioms := [],
     rust := ["rspace/src/replay_rspace.rs", "rspace/src/space_matcher.rs"],
-    witness := [`Rchain.the_forward_half_alone_admits_a_diverging_trace, `Rchain.the_reverse_half_alone_admits_a_phantom_recomputation, `Rchain.a_replay_agrees_with_its_record],
+    witness := [`Rchain.the_forward_half_alone_admits_a_diverging_trace, `Rchain.the_reverse_half_alone_admits_a_phantom_recomputation, `Rchain.a_replay_agrees_with_its_record,
+      `Rchain.law11_falsifier
+      ],
     falsifiable := some "the equivalence is refutable from both sides, and each side has a witness in \
       the tree: `the_forward_half_alone_admits_a_diverging_trace` (one recomputed COMM, two recorded — \
       the forward half passes, the check fails, which is what the RCHAIN-3505 guard lets through on a \
@@ -4922,7 +4929,9 @@ def lawsC : List Law := [
       any of the `blocks_st`, validated or incoming stages is seen, not only the capped queue. \
       An outstanding pipeline fault is a fail-closed `Blocked` phase: the reported phase, deploy \
       admission and the proposal gate all refuse until the fault settles, and the shard phase cell \
-      keeps its single writer",
+      keeps its single writer. The deploy route is the cell's own admission answer conjoined with \
+      the three latches the Rust route checks (pipeline fault, proposal isolation, orphan body); \
+      `Starting` admits work, and the proposer's wait is a separate `PhaseDecision`",
     status := .provedModel,
     formal := `Rchain.Disposition.law88a_statement,
     mutant := `Rchain.Disposition.law88a_mutant,
@@ -4959,7 +4968,9 @@ def lawsC : List Law := [
       `Rchain.Disposition.law88a_mutant,
       `Rchain.Disposition.law88a_falsifier,
       `Rchain.Disposition.law88a_statement,
-      `Rchain.Disposition.law88a],
+      `Rchain.Disposition.law88a,
+      `Rchain.Disposition.cellAdmitsWork, `Rchain.Disposition.targetAdmits, `Rchain.Disposition.routeAdmits, `Rchain.Disposition.a_starting_cell_admits_work, `Rchain.Disposition.an_unknown_target_skips_the_cell_check, `Rchain.Disposition.the_deploy_route_is_the_cell_and_the_latch, `Rchain.Disposition.an_isolated_cell_is_refused, `Rchain.Disposition.an_orphan_body_refuses_admission
+      ],
     axioms := [],
     rust := ["casper/src/block_disposition.rs", "casper/src/engine/node_launch.rs",
       "node/src/runtime/node_runtime.rs", "casper/src/dag.rs", "shared/src/typed_store.rs"],
@@ -4983,7 +4994,9 @@ def lawsC : List Law := [
       `Rchain.Disposition.an_outstanding_fault_blocks_admission,
       `Rchain.Disposition.an_outstanding_fault_refuses_the_proposal_gate,
       `Rchain.Disposition.a_raw_phase_admits_work_during_an_outstanding_fault,
-      `Rchain.Disposition.law88a_falsifier],
+      `Rchain.Disposition.law88a_falsifier,
+      `Rchain.Disposition.a_starting_cell_admits_work, `Rchain.Disposition.an_unknown_target_skips_the_cell_check, `Rchain.Disposition.the_deploy_route_is_the_cell_and_the_latch, `Rchain.Disposition.an_isolated_cell_is_refused, `Rchain.Disposition.an_orphan_body_refuses_admission
+      ],
     falsifiable := "`skipAudit` flips the phase without adopting: \
       `startup_without_audit_leaves_an_orphan` exhibits the stored body 7 with no DAG entry and no \
       row, which is the live incident's shape. Deleting a row without a DAG record \
@@ -5006,8 +5019,10 @@ def lawsC : List Law := [
       gate refuses outside the running phase and one height beyond `MAX_PROPOSAL_FINALITY_LAG`, \
       which is what bounds a private chain when no peer accepts it. The gate is **total in the \
       anchor**: a view with no finalised block measures from genesis, so `no anchor` is not `no \
-      bound`. The phase is per-shard: a shard's proposal gate reads only its own cell, and health \
-      readiness is **every** shard running",
+      bound`. The phase is per-shard: a shard's proposal gate reads only its own cell. Readiness is \
+      the Rust registry's: the primary cell defaults to `Starting` when absent, a member is running \
+      only when its own cell is present and `Running`, and an empty member list is governed by the \
+      primary rather than vacuously true. `Starting` is a 120-second wait, not an immediate refusal",
     status := .provedModel,
     formal := `Rchain.Disposition.law88b_statement,
     mutant := `Rchain.Disposition.law88b_mutant,
@@ -5040,7 +5055,9 @@ def lawsC : List Law := [
       `Rchain.Disposition.law88b_mutant,
       `Rchain.Disposition.law88b_falsifier,
       `Rchain.Disposition.law88b_statement,
-      `Rchain.Disposition.law88b],
+      `Rchain.Disposition.law88b,
+      `Rchain.Disposition.primaryPhase, `Rchain.Disposition.memberRunning, `Rchain.Disposition.primary_phase_defaults_to_starting, `Rchain.Disposition.an_empty_member_list_is_governed_by_the_primary, `Rchain.Disposition.an_empty_member_list_with_a_running_primary_is_ready, `Rchain.Disposition.an_empty_member_list_with_a_starting_primary_is_not_ready, `Rchain.Disposition.an_absent_member_is_not_running, `Rchain.Disposition.an_unknown_shard_is_not_gated_by_another_shards_cell, `Rchain.Disposition.readyIgnoringPrimary, `Rchain.Disposition.a_readiness_that_ignores_the_primary_admits_an_empty_registry, `Rchain.Disposition.absentMemberRunning, `Rchain.Disposition.an_absent_member_treated_as_running_is_not_ready, `Rchain.Disposition.PhaseDecision, `Rchain.Disposition.phaseDecisionWait, `Rchain.Disposition.proposeAdmission, `Rchain.Disposition.a_starting_proposer_waits_then_refuses, `Rchain.Disposition.a_running_proposer_is_admitted, `Rchain.Disposition.a_syncing_proposer_is_refused, `Rchain.Disposition.the_propose_decision_is_total, `Rchain.PhaseDiagnosis.PhaseObservation, `Rchain.PhaseDiagnosis.Diagnosis, `Rchain.PhaseDiagnosis.phaseDiagnosisTable, `Rchain.PhaseDiagnosis.diagnose, `Rchain.PhaseDiagnosis.the_incident_is_proposal_isolation, `Rchain.PhaseDiagnosis.a_processor_fault_is_blocked, `Rchain.PhaseDiagnosis.a_syncing_host_is_recovery, `Rchain.PhaseDiagnosis.a_healthy_snapshot_is_healthy, `Rchain.PhaseDiagnosis.an_unknown_shape_is_unmodelled
+      ],
     axioms := [],
     rust := ["casper/src/blocks/proposer/proposer.rs",
       "node/src/instances/proposer_instance.rs", "casper/src/engine/node_phase.rs",
@@ -5062,7 +5079,9 @@ def lawsC : List Law := [
       `Rchain.Disposition.a_syncing_shard_is_refused_whatever_the_others_do,
       `Rchain.Disposition.ready_iff_every_shard_running,
       `Rchain.Disposition.a_readiness_that_accepts_any_shard_admits_a_syncing_node,
-      `Rchain.Disposition.law88b_falsifier],
+      `Rchain.Disposition.law88b_falsifier,
+      `Rchain.Disposition.primary_phase_defaults_to_starting, `Rchain.Disposition.an_empty_member_list_is_governed_by_the_primary, `Rchain.Disposition.an_empty_member_list_with_a_running_primary_is_ready, `Rchain.Disposition.an_empty_member_list_with_a_starting_primary_is_not_ready, `Rchain.Disposition.an_absent_member_is_not_running, `Rchain.Disposition.an_unknown_shard_is_not_gated_by_another_shards_cell, `Rchain.Disposition.a_readiness_that_ignores_the_primary_admits_an_empty_registry, `Rchain.Disposition.an_absent_member_treated_as_running_is_not_ready, `Rchain.Disposition.a_starting_proposer_waits_then_refuses, `Rchain.Disposition.a_running_proposer_is_admitted, `Rchain.Disposition.a_syncing_proposer_is_refused, `Rchain.Disposition.the_propose_decision_is_total, `Rchain.PhaseDiagnosis.the_incident_is_proposal_isolation, `Rchain.PhaseDiagnosis.a_processor_fault_is_blocked, `Rchain.PhaseDiagnosis.a_syncing_host_is_recovery, `Rchain.PhaseDiagnosis.a_healthy_snapshot_is_healthy, `Rchain.PhaseDiagnosis.an_unknown_shape_is_unmodelled
+      ],
     falsifiable := "`legacyGate` admits a syncing node \
       (`a_gate_without_the_phase_admits_a_syncing_node`) and `unboundedGate` admits a tip beyond \
       the bound (`a_gate_without_the_bound_admits_a_private_chain`). A gate that reads the wrong \
@@ -5532,9 +5551,10 @@ def lawsC : List Law := [
       stays keyed on it. A block this node *built* has no peer view to differ from — its play and \
       replay are two executions of this node's own state — so the same failure is a local fault and \
       is never `Divergence`. The decision table is `Rchain.provenanceCause` over \
-      `ProvenanceOrigin` and `ProvenanceRefusal`; the \
-      Rust's `ValidationOrigin` and `ValidateError::SelfReplayFailed` are that table's \
-      implementation. The 2026-11-08 incident (#564) is the negative case: a self-built block's \
+      `ProvenanceOrigin` and `ProvenanceRefusal`; it is the Rust's 2×3: `matched` is no refusal, \
+      `postStateMismatch` is `InvalidState` for either origin, and only a failed replay is \
+      origin-sensitive. The Rust's `ValidationOrigin` and `ValidateError::SelfReplayFailed` are \
+      that table's implementation. The 2026-11-08 incident (#564) is the negative case: a self-built block's \
       `ReplayCostMismatch` was collapsed into `InvalidStateHash` → `Divergence`, so the proposer's \
       C270 arm neither counted, surfaced nor bounded it and rebuilt the identical block until \
       finality froze.",
@@ -5552,7 +5572,9 @@ def lawsC : List Law := [
       `Rchain.law92_mutant,
       `Rchain.law92_falsifier,
       `Rchain.law92_statement,
-      `Rchain.law92],
+      `Rchain.law92,
+      `Rchain.a_post_state_mismatch_is_invalid_state, `Rchain.a_matched_replay_has_no_refusal, `Rchain.the_two_origins_agree_about_a_post_state_mismatch
+      ],
     axioms := [],
     rust := ["casper/src/interpreter_util.rs", "casper/src/multi_parent_casper.rs",
       "casper/src/blocks/proposer/proposer.rs"],
@@ -5561,7 +5583,9 @@ def lawsC : List Law := [
       `Rchain.a_self_replay_failure_is_not_divergence,
       `Rchain.the_two_origins_disagree_about_the_same_failure,
       `Rchain.a_self_replay_failure_is_a_local_fault,
-      `Rchain.law92_falsifier],
+      `Rchain.law92_falsifier,
+      `Rchain.a_post_state_mismatch_is_invalid_state, `Rchain.a_matched_replay_has_no_refusal
+      ],
     falsifiable := "**Delete the origin arm and map every `ReplayVerdict::Failed` to \
       `InvalidStateHash`** — `a_self_replay_failure_is_not_divergence` cannot be proved (`decide` \
       fails on the resulting equality), and the Rust witness reddens because the self-built case \
@@ -5619,9 +5643,12 @@ def lawsC : List Law := [
       terminal:** once the catch-up walk passes the finalised anchor it rewound to, \
       `resumeAfterCatchup` returns the node to healthy. The concrete arms are the model's \
       implementation: `attestOnly` carries no user deploy, `changeInput` holds the refused set out, \
-      `triggerAdmitted` reads the latch, `transitionStep` records before it is observable, \
-      `canReset` names a finalised anchor and refuses a second attempt, and `resumeAdmitted` waits \
-      for catch-up and a finalised anchor.",
+      `latchAfter` makes the latch a transition state read by all four Rust propose sources \
+      (`autoproposeTimer`, `attestOnNewBlocks`, `notDueRetry`, `explicitPropose`), \
+      `resetResumeIsDue` is the Rust's `self_replay_resume_is_due` (the `Rewound` marker, a frontier \
+      strictly past its height, the record's reset/halt stage, its one attempt and the same anchor), \
+      `resetIsRecurrence` is the Rust's `reset_is_recurrence` against a finalised anchor, and \
+      `wellFormedTrace` makes the durable write precede each observable transition.",
     status := .provedModel,
     formal := `Rchain.law94_statement,
     mutant := `Rchain.law94_mutant,
@@ -5645,7 +5672,19 @@ def lawsC : List Law := [
       `Rchain.resume_requires_a_finalised_anchor,
       `Rchain.RecoveryStepMutant, `Rchain.nextStateMutant,
       `Rchain.law94_mutant, `Rchain.law94_falsifier,
-      `Rchain.law94_statement, `Rchain.law94],
+      `Rchain.law94_statement, `Rchain.law94,
+      `Rchain.LatchState, `Rchain.latchAfter, `Rchain.a_halt_latches, `Rchain.a_resume_clears_the_latch, `Rchain.a_non_resume_step_does_not_clear_the_latched_state, `Rchain.TriggerPath, `Rchain.admitted, `Rchain.rustTriggerSources, `Rchain.the_four_triggers_are_the_rust_sources, `Rchain.every_trigger_reads_the_latch, `Rchain.explicitProposeSkipsLatch, `Rchain.the_latch_skipping_path_admits, `Rchain.ResumePhase, `Rchain.ResetMarker, `Rchain.SelfReplayStage, `Rchain.SelfReplayRecord, `Rchain.ResumeState, `Rchain.resetResumeIsDue, `Rchain.resume_requires_a_rewound_marker, `Rchain.resume_requires_a_record, `Rchain.resume_requires_the_reset_attempt, `Rchain.resume_requires_the_same_anchor, `Rchain.a_resume_below_the_anchor_is_refused, `Rchain.a_marker_from_another_anchors_reset_does_not_resume, `Rchain.ResetAttemptRecord, `Rchain.resetIsRecurrence, `Rchain.resetAnchorFinalised, `Rchain.a_second_reset_at_the_same_anchor_is_refused, `Rchain.a_reset_at_a_different_anchor_is_not_a_recurrence, `Rchain.a_recurrence_names_the_attempted_anchor, `Rchain.raiseReset, `Rchain.raiseReset_records_the_anchor, `Rchain.TraceItem, `Rchain.wellFormedTrace, `Rchain.noAnchorTrace, `Rchain.resetTrace, `Rchain.badTrace, `Rchain.a_well_formed_trace_has_no_step_before_a_write, `Rchain.the_no_anchor_trace_records_before_the_halt, `Rchain.the_reset_trace_records_before_each_transition, `Rchain.the_bad_trace_is_not_well_formed, `Rchain.BoundedRecovery, `Rchain.law94_recovery_layer, `Rchain.law94_recovery_layer_proof,
+      `Rchain.Acceptance.BoundaryShape, `Rchain.Acceptance.AcceptanceRecord,
+      `Rchain.Acceptance.acceptanceValid, `Rchain.Acceptance.acceptanceTable,
+      `Rchain.Acceptance.exactly_one_boundary_shape,
+      `Rchain.Acceptance.a_mixed_version_rollout_is_refused,
+      `Rchain.Acceptance.a_missing_independent_review_is_refused,
+      `Rchain.Acceptance.a_new_genesis_with_a_sweep_is_refused,
+      `Rchain.Acceptance.a_retained_history_without_a_complete_sweep_is_refused,
+      `Rchain.Acceptance.a_reconstructed_trace_without_owner_acceptance_is_refused,
+      `Rchain.Acceptance.a_reconstructed_trace_without_reviewer_acceptance_is_refused,
+      `Rchain.Acceptance.a_reconstructed_trace_with_both_acceptances_is_accepted
+      ],
     axioms := [],
     rust := ["casper/src/blocks/proposer/proposer.rs", "casper/src/api/block_api.rs",
       "casper/src/engine/reset.rs", "casper/src/engine/catchup.rs",
@@ -5668,7 +5707,9 @@ def lawsC : List Law := [
       `Rchain.at_most_one_reset_per_anchor,
       `Rchain.resume_requires_catch_up,
       `Rchain.resume_requires_a_finalised_anchor,
-      `Rchain.law94_falsifier],
+      `Rchain.law94_falsifier,
+      `Rchain.a_halt_latches, `Rchain.a_resume_clears_the_latch, `Rchain.a_non_resume_step_does_not_clear_the_latched_state, `Rchain.the_four_triggers_are_the_rust_sources, `Rchain.every_trigger_reads_the_latch, `Rchain.the_latch_skipping_path_admits, `Rchain.resume_requires_catch_up, `Rchain.resume_requires_a_rewound_marker, `Rchain.resume_requires_a_record, `Rchain.resume_requires_the_reset_attempt, `Rchain.resume_requires_the_same_anchor, `Rchain.the_reset_anchor_is_finalised, `Rchain.at_most_one_reset_per_anchor, `Rchain.a_second_reset_at_the_same_anchor_is_refused, `Rchain.a_recurrence_names_the_attempted_anchor, `Rchain.the_no_anchor_trace_records_before_the_halt, `Rchain.the_reset_trace_records_before_each_transition, `Rchain.the_bad_trace_is_not_well_formed, `Rchain.law94_recovery_layer_proof
+      ],
     falsifiable := "**Add a transition from `refused` to `refused`** (the incident's retry). Then \
       `no_unchanged_retry` cannot be proved (`decide` fails on the equality) and the proposer witness \
       reddens, because the second build is the refused block again rather than an attestation. The \
@@ -5678,12 +5719,17 @@ def lawsC : List Law := [
       refusal exist to prevent. The resume half is falsified by admitting `resumeAfterCatchup` from \
       `refused` (`resume_requires_a_reset` fails to decide) and in Rust by resuming below the anchor \
       or at another anchor (`a_self_replay_reset_below_its_anchor_does_not_resume`, \
-      `a_marker_from_another_anchors_reset_does_not_clear_the_self_replay_fault`).",
+      `a_marker_from_another_anchors_reset_does_not_clear_the_self_replay_fault`). The state-derived \
+      rung adds the mutants the prose named: a latch-skipping path \
+      (`the_latch_skipping_path_admits`), a resumed marker that is not `Rewound`, a record with no \
+      attempt or another anchor, a second reset at the same anchor, and `badTrace` \
+      (`the_bad_trace_is_not_well_formed`).",
     note := "**What this law does not claim.** It does not model the replay's cause (RC-B, open), the \
       cost/state ordering (law 93), or the storage-level crash bracket of the record (laws \
-      72/73/76); `Transition`/`transitionStep` state the record-before-observable-transition rule \
-      abstractly. It says that the fault state has an exit, that the exit is not a no-op, and that a \
-      completed reset returns the node to healthy. The one-reset-per-finalised-anchor bound is \
+      72/73/76); `wellFormedTrace` makes the record-before-observable-transition rule a property of \
+      the trace, while the storage-level crash window remains the Rust's (laws 72/73/76). It says \
+      that the fault state has an exit, that the exit is not a no-op, and that a completed reset \
+      returns the node to healthy. The one-reset-per-finalised-anchor bound is \
       operating policy rather than a consensus invariant; `at_most_one_reset_per_anchor` states it \
       and the Rust witness refuses a second reset at the same anchor; the operator's explicit resume \
       remains the fallback when no anchor was named, the reset was disabled, or the anchor has \
@@ -5695,17 +5741,26 @@ def lawsC : List Law := [
       `build_replay_data` files each recorded COMM under its consume/produce refs in the order it \
       walks that log (`rspace/src/replay_rspace.rs:129-167`). A chronological build makes the \
       candidate list a consume sees the play's own sequence; the newest-first builder is the \
-      defect's shape. The law fixes the order; the cost consequence is clause b.",
+      defect's shape. The law fixes the order; the cost consequence is clause b. The rung is \
+      `FilesPlayOrder` over the witness, with the newest-first build as its mutant and \
+      `law95a_falsifier` as the refusal.",
     status := .provedModel,
+    formal := `Rchain.ReplayOrder.law95a_statement,
+    mutant := `Rchain.ReplayOrder.law95a_mutant,
+    falsifier := `Rchain.ReplayOrder.law95a_falsifier,
     declarations := [`Rchain.ReplayOrder.Event, `Rchain.ReplayOrder.ReplayData,
       `Rchain.ReplayOrder.build, `Rchain.ReplayOrder.buildNewestFirst,
       `Rchain.ReplayOrder.the_chronological_build_files_the_play_order,
-      `Rchain.ReplayOrder.the_newest_first_build_files_the_later_comm_first],
+      `Rchain.ReplayOrder.the_newest_first_build_files_the_later_comm_first,
+      `Rchain.ReplayOrder.FilesPlayOrder, `Rchain.ReplayOrder.law95a_statement, `Rchain.ReplayOrder.law95a_mutant, `Rchain.ReplayOrder.law95a_falsifier, `Rchain.ReplayOrder.law95a
+      ],
     axioms := [],
     rust := ["rspace/src/replay_rspace.rs", "rspace/src/rspace.rs"],
     rustWitness := ["casper/tests/replay_trace_order.rs:pending_peeks_replay_with_exact_cost_and_state"],
     witness := [`Rchain.ReplayOrder.the_chronological_build_files_the_play_order,
-      `Rchain.ReplayOrder.the_newest_first_build_files_the_later_comm_first],
+      `Rchain.ReplayOrder.the_newest_first_build_files_the_later_comm_first,
+      `Rchain.ReplayOrder.law95a_falsifier
+      ],
     falsifiable := "Delete `.rev()` from `build_replay_data` — that is exactly the newest-first \
       builder — and the chronological theorem is false of the code: the witness list is \
       `[later, earlier]` and the Rust witness returns `ReplayCostMismatch` again. The model's two \
@@ -5722,19 +5777,29 @@ def lawsC : List Law := [
     statement := "**The inverted order changes the binding and the cost.** On a two-request witness \
       sharing one persistent consume's datum, the chronological list offers the earlier COMM (cost \
       5) and the later request is suppressed; the newest-first list offers the later COMM (cost 3) \
-      and the earlier request is suppressed. The record is the same; the order is not.",
+      and the earlier request is suppressed. The record is the same; the order is not. The \
+      continuation-bearing witness (`the_continuation_is_charged`) puts the whole charge in the \
+      continuation, which is the quantity the incident suppressed; the exact 5576/5302 and \
+      1860/2606/4844 costs remain the Rust test's, not the model's.",
     status := .provedModel,
+    formal := `Rchain.ReplayOrder.law95b_statement,
+    mutant := `Rchain.ReplayOrder.law95b_mutant,
+    falsifier := `Rchain.ReplayOrder.law95b_falsifier,
     declarations := [`Rchain.ReplayOrder.Store, `Rchain.ReplayOrder.run,
       `Rchain.ReplayOrder.the_two_builds_differ_on_the_witness,
       `Rchain.ReplayOrder.the_inversion_changes_the_cost,
       `Rchain.ReplayOrder.a_persistent_datum_survives_a_fire,
-      `Rchain.ReplayOrder.a_non_persistent_datum_is_consumed],
+      `Rchain.ReplayOrder.a_non_persistent_datum_is_consumed,
+      `Rchain.ReplayOrder.earlierCont, `Rchain.ReplayOrder.laterCont, `Rchain.ReplayOrder.witnessLogCont, `Rchain.ReplayOrder.the_continuation_is_charged, `Rchain.ReplayOrder.law95b_statement, `Rchain.ReplayOrder.law95b_mutant, `Rchain.ReplayOrder.law95b_falsifier, `Rchain.ReplayOrder.law95b
+      ],
     axioms := [],
     rust := ["rspace/src/replay_rspace.rs"],
     rustWitness := ["casper/tests/replay_trace_order.rs:pending_peeks_replay_with_exact_cost_and_state"],
     witness := [`Rchain.ReplayOrder.the_inversion_changes_the_cost,
       `Rchain.ReplayOrder.the_two_builds_differ_on_the_witness,
-      `Rchain.ReplayOrder.a_persistent_datum_survives_a_fire],
+      `Rchain.ReplayOrder.a_persistent_datum_survives_a_fire,
+      `Rchain.ReplayOrder.the_continuation_is_charged, `Rchain.ReplayOrder.a_non_persistent_datum_is_consumed, `Rchain.ReplayOrder.law95b_falsifier
+      ],
     falsifiable := "Make the build the unreversed walk: `run` then charges the later COMM first, \
       the first conjunct of the cost theorem decides to 3 instead of 5, and the Rust witness reddens \
       with the cost mismatch. The persistence control is falsified by making the datum persistent \
