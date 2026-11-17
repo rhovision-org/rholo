@@ -101,6 +101,33 @@ class EvidenceLocalityTests(unittest.TestCase):
         )
         self.assertTrue(any("off-host positive" in p for p in problems), problems)
 
+    def test_a_read_only_live_host_record_passes(self):
+        problems = self.check(
+            "Read-only B/C/D snapshot; no deploy, restart or key use.\n"
+            "**Evidence locality.** `live-host` — hosts B/C/D.\n"
+        )
+        self.assertEqual(problems, [])
+
+    def test_a_live_host_record_with_a_mutation_fails(self):
+        directory = self.record(
+            "Read-only.\n**Evidence locality.** `live-host` — hosts B/C/D.\n"
+        )
+        (directory / "run.json").write_text('{"method": "POST", "route": "/api/v1/deploy"}')
+        self.assertTrue(any("mutation" in p for p in locality.check(directory)))
+
+    def test_a_live_host_record_must_say_read_only(self):
+        problems = self.check("**Evidence locality.** `live-host` — hosts B/C/D.\n")
+        self.assertTrue(any("read-only" in p for p in problems), problems)
+
+    def test_an_external_record_requires_independence_and_a_digest(self):
+        problems = self.check("**Evidence locality.** `external` — verdict.\n")
+        self.assertTrue(any("independent" in p for p in problems), problems)
+        good = self.check(
+            "Independent category-A verdict; digest sha256; https://example.invalid/v.\n"
+            "**Evidence locality.** `external` — verdict.\n"
+        )
+        self.assertEqual(good, [])
+
     def test_an_empty_evidence_directory_is_not_vacuous(self):
         # The main() vacuity rule is exercised against a real temporary directory.
         directory = Path(tempfile.mkdtemp())

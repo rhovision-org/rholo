@@ -35,6 +35,7 @@ class EvidencePackTests(unittest.TestCase):
             "source_sha": None,
             "binary_sha256": None,
             "run_url": "https://github.com/rhovision-org/rholo/actions/runs/41237664538/attempts/1",
+            "reference_url": None,
             "locality": "local-devnet",
             "redact": [],
             "move": False,
@@ -119,6 +120,18 @@ class EvidencePackTests(unittest.TestCase):
     def test_a_non_upstream_url_is_refused(self):
         with self.assertRaises(SystemExit):
             pack.cmd_pack(self.args(run_url="https://github.com/other/repo/actions/runs/1"))
+
+    def test_precondition_and_live_host_reference_are_recorded(self):
+        self.packed(verdict="PRECONDITION", locality="live-host",
+                    reference_url="https://example.invalid/c343-report")
+        manifest = json.loads((self.record / "manifest.json").read_text())
+        self.assertEqual(manifest["verdict"], "PRECONDITION")
+        self.assertEqual(manifest["locality"], "live-host")
+        self.assertEqual(manifest["reference"]["url"], "https://example.invalid/c343-report")
+
+    def test_a_non_https_reference_is_refused(self):
+        with self.assertRaises(SystemExit):
+            pack.cmd_pack(self.args(reference_url="http://example.invalid/report"))
 
     def test_redactions_are_omitted_and_recorded(self):
         self.packed(redact=["*.log"])
