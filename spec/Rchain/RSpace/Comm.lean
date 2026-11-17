@@ -334,4 +334,27 @@ theorem a_replay_agrees_with_its_record (recomputed recorded : List Comm) :
       ∀ a, occurrences (refsOf recomputed) a = occurrences (refsOf recorded) a :=
   replays_iff_same_occurrences _ _
 
+/-- **Law 11's statement**: the port's replay relation is exactly occurrence agreement. -/
+def law11_statement : Prop :=
+  ∀ recomputed recorded : List CommRef,
+    Replays recomputed recorded ↔
+      ∀ a, occurrences recomputed a = occurrences recorded a
+
+/-- **Law 11's mutant**: the forward half alone is treated as the whole check. This is the
+    RCHAIN-3505 workaround's shape (`check_replay_data_with_fix`), which drops the reverse half for
+    a failed deploy. -/
+def law11_mutant : Prop :=
+  ∀ recomputed recorded : List CommRef,
+    forwardHolds recomputed recorded → Replays recomputed recorded
+
+/-- **The falsifier, fired**: the forward-half-only rule admits a trace the replay refuses. -/
+theorem law11_falsifier : ¬ law11_mutant := by
+  intro h
+  have hf : forwardHolds [sampleRef 0] [sampleRef 0, sampleRef 1] :=
+    (the_forward_half_alone_admits_a_diverging_trace).1
+  have hr : Replays [sampleRef 0] [sampleRef 0, sampleRef 1] := h _ _ hf
+  exact (the_forward_half_alone_admits_a_diverging_trace).2 hr
+
+theorem law11 : law11_statement := replays_iff_same_occurrences
+
 end Rchain
