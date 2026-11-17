@@ -328,8 +328,11 @@ where
     // is looked up under. Deriving it later, or from `dag_repr.latest_fringe()` separately, is the one
     // way play and replay could disagree about which fringe was meant. A validator with no message in
     // the fringe is simply absent from the map, which the rule reads as silence.
+    // The map is authors **and deploy signers** (C344: a jailed validator cannot author, but it can
+    // sign a funded deploy an unjailed proposer includes — that is the release signal). It is derived
+    // from the same `prev_fringe` the state hash is looked up under, so play and replay agree.
     let participation: BTreeMap<Validator, BlockHeight> =
-        liveness::latest_heights(prev_fringe.iter().map(|m| (m.sender, m.height)));
+        participation_from_fringe(block_store, prev_fringe.iter()).await?;
     // **The state at the previous fringe, read from the blocks that finalised it** (Law 66, C270).
     //
     // The record store used to hold one derived value per fringe key, joined with a `min` tie-break when
@@ -717,6 +720,7 @@ where
 /// un-indexable.
 pub async fn participation_for_block(
     dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
     block: &BlockMessage,
 ) -> Result<BTreeMap<Validator, BlockHeight>, String> {
     let dag_repr = dag.get_representation().await;
@@ -736,9 +740,78 @@ pub async fn participation_for_block(
     // An empty parent set has no fringe, and no participation: the genesis shape, and the arm
     // `validate_block_checkpoint` handles separately.
     let fringe = message_map::latest_fringe(msg_map, &parents);
-    Ok(liveness::latest_heights(
-        fringe.iter().map(|m| (m.sender, m.height)),
-    ))
+    participation_from_fringe(block_store, fringe.iter()).await
+}
+
+/// A deploy's signer, when it is a validator key: the `deployer` field is a 65-byte public key, and
+/// any other length is an account rather than a validator.
+pub fn validator_from_deployer(bytes: &[u8]) -> Option<Validator> {
+    <[u8; 65]>::try_from(bytes).ok().map(Validator::new)
+}
+
+/// **The validators whose keys signed a deploy this block included.** The body is hash-covered, so
+/// every node derives the same set.
+pub fn deploy_signers(block: &BlockMessage) -> impl Iterator<Item = Validator> + '_ {
+    block
+        .state
+        .deploys
+        .iter()
+        .filter_map(|deploy| validator_from_deployer(&deploy.deploy.deployer))
+}
+
+/// **The participation map's rule**: a validator is present at the greatest height at which it either
+/// authored a fringe block or signed a deploy included in one. The second arm is the release signal:
+/// a jailed validator is outside the drawn active set and the proposer refuses it, so it cannot
+/// author; it can still sign a funded deploy that an unjailed proposer includes. Reading only authors
+/// made the release clause unreachable and every jail permanent.
+pub fn participation_map(
+    authors: impl IntoIterator<Item = (Validator, BlockHeight)>,
+    deployers: impl IntoIterator<Item = (Validator, BlockHeight)>,
+) -> BTreeMap<Validator, BlockHeight> {
+    let mut participation = BTreeMap::new();
+    for (validator, height) in authors.into_iter().chain(deployers) {
+        participation
+            .entry(validator)
+            .and_modify(|current| {
+                if height > *current {
+                    *current = height;
+                }
+            })
+            .or_insert(height);
+    }
+    participation
+}
+
+/// **The boundary's participation map**, derived from the finalised fringe and the bodies of its
+/// blocks. It is the presence the advancing boundary's absence rule reads, and it must be derived
+/// identically by the proposer, the validator and the replay (`participation_for_block`).
+pub async fn participation_from_fringe<'a>(
+    block_store: &BlockStore,
+    fringe: impl Iterator<Item = &'a Message<BlockHash, Validator>>,
+) -> Result<BTreeMap<Validator, BlockHeight>, String> {
+    let mut presence: Vec<(Validator, BlockHeight)> = Vec::new();
+    for member in fringe {
+        // A missing body is a block this node cannot read: the whole map would then differ from the
+        // one the proposer derived, so it is an error, not a silently smaller map.
+        let block = block_store
+            .get(&[member.id])
+            .await?
+            .into_iter()
+            .next()
+            .flatten()
+            .ok_or_else(|| {
+                format!(
+                    "the fringe block {} has no body, so the absence rule's participation map cannot \
+                     be derived",
+                    member.id.to_hex()
+                )
+            })?;
+        for signer in deploy_signers(&block) {
+            presence.push((signer, member.height));
+        }
+        presence.push((member.sender, member.height));
+    }
+    Ok(participation_map(presence, std::iter::empty()))
 }
 
 /// Compute the pre-state for a new block from the DAG's latest messages (port of
@@ -2851,5 +2924,54 @@ mod mark_failed_tests {
             !diverged.slashable,
             "a node whose state differs is not evidence"
         );
+    }
+
+    fn validator(byte: u8) -> crate::multi_parent_casper::Validator {
+        crate::multi_parent_casper::Validator::new([byte; 65])
+    }
+
+    fn height(n: i64) -> crate::multi_parent_casper::BlockHeight {
+        crate::multi_parent_casper::BlockHeight::try_from(n).expect("height")
+    }
+
+    /// **A deploy signed by a validator key is a presence at the including block's height.** A
+    /// deployer that is not 65 bytes is an account, not a validator, and never enters the map. This
+    /// is the release signal: a jailed validator cannot author a block, but it can sign a funded
+    /// deploy an unjailed proposer includes.
+    #[test]
+    fn a_deploy_signer_is_presence_at_the_including_height() {
+        assert_eq!(
+            crate::multi_parent_casper::validator_from_deployer(&[7u8; 65]),
+            Some(validator(7))
+        );
+        assert_eq!(
+            crate::multi_parent_casper::validator_from_deployer(&[7u8; 20]),
+            None
+        );
+        let map = crate::multi_parent_casper::participation_map(
+            [(validator(1), height(10))],
+            [(validator(4), height(10))],
+        );
+        assert_eq!(
+            map.get(&validator(1)),
+            Some(&height(10)),
+            "an author is present"
+        );
+        assert_eq!(
+            map.get(&validator(4)),
+            Some(&height(10)),
+            "a deployed validator is present even when it could not author"
+        );
+    }
+
+    /// The map keeps the greatest height per validator, so a later, shorter presence cannot lower it.
+    #[test]
+    fn presence_keeps_the_greatest_height() {
+        let map = crate::multi_parent_casper::participation_map(
+            [(validator(1), height(12))],
+            [(validator(1), height(9)), (validator(4), height(7))],
+        );
+        assert_eq!(map.get(&validator(1)), Some(&height(12)));
+        assert_eq!(map.get(&validator(4)), Some(&height(7)));
     }
 }

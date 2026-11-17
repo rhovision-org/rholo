@@ -18,11 +18,11 @@ devnet. Each arm is one behaviour:
     is imposed. The surface is `/health.finalizedHeight`, **not** `/api/v1/pos`: that endpoint's
     `epoch` is derived from DAG height, which the surviving proposer may keep extending up to the
     proposer's finality bound.
-  * `restart-expiry` — jail validator 3 and assert the jail is imposed without touching the bond.
-    The release/renewal half is **not scored**: a jailed validator is out of `pos:active`, the
-    proposer refuses it, and participation is derived from finalised-fringe block senders only, so
-    the presence the release branch reads cannot be produced. The arm records that as INCONCLUSIVE
-    rather than waiting for an oracle the rule cannot satisfy.
+  * `restart-expiry` — jail validator 3 and assert the jail is imposed without touching the bond;
+    then prove it is alive the way a jailed validator can — a deploy **it signs** (staged into the
+    bootstrap, since its own container is stopped) is included by an unjailed proposer, and the
+    boundary's participation derivation (fringe authors *and* deploy signers) releases the jail at
+    the next expiry. Stop sending and the jail renews. The bond is untouched throughout.
 
 **Every native-state read is pinned, and the merged view is a block's pre-state.** An exploratory
 deploy with no block hash anchors at `exploration_anchor` — the **last finalised block**
@@ -387,25 +387,30 @@ def submit_signed(
     validator: int = 0,
     phlo_limit: int = VOTE_PHLO_LIMIT,
     phlo_price: int = 1,
+    container: str | None = None,
+    key_path: str = "/var/lib/rnode/validator.hex",
 ) -> dict:
-    """Deploy `term` signed by `validator`'s own key, in that validator's container.
+    """Deploy `term` signed by `validator`'s key.
 
     The signer *is* the deployer id, so a ballot from validator 1 must be signed by validator 1's
     key; the CLI can reach the network from any validator container, so no key leaves its volume.
-    The validity floor is left to the CLI, which resolves `-1` against **the signer's own** height;
-    passing the bootstrap's height here made the deploy future-dated on a lagging signer.
+    `container`/`key_path` exist for the one case where the signer cannot reach its own container —
+    a jailed validator is stopped (that is how absence is produced), so the drill stages a copy of
+    its key in the bootstrap and signs there. The validity floor is left to the CLI, which resolves
+    `-1` against the *submitting* node's height.
     """
     with tempfile.NamedTemporaryFile("w", suffix=".rho", delete=False) as handle:
         handle.write(term)
         host_path = handle.name
-    container = "c344-term.rho"
-    docker(["cp", host_path, f"{node_container(validator)}:/tmp/{container}"])
+    box = container or node_container(validator)
+    scratch = "c344-term.rho"
+    docker(["cp", host_path, f"{box}:/tmp/{scratch}"])
     deployed = docker([
-        "exec", node_container(validator), "rnode", "deploy",
+        "exec", box, "rnode", "deploy",
         "--phlo-limit", str(phlo_limit), "--phlo-price", str(phlo_price),
-        "--private-key-path", "/var/lib/rnode/validator.hex",
+        "--private-key-path", key_path,
         "--shard-id", "/root",
-        f"/tmp/{container}",
+        f"/tmp/{scratch}",
     ])
     match = re.search(r"DeployId is:\s*([0-9a-f]+)", deployed.stdout)
     if not match:
@@ -955,6 +960,16 @@ def run_restart_expiry_arm(keys: list[str], args, config: ArmConfig) -> tuple[di
     observations["baseline"] = baseline
     baseline_stake = target_record(baseline["bonds"], target)
 
+    # **The key stays in the devnet, but the jailed validator cannot reach its own container** — it is
+    # stopped, which is how absence is produced. Stage a copy of its key in the bootstrap so the
+    # deploy that proves it is alive can be signed there. Throwaway devnet keys only.
+    staged_key = "/tmp/c344-validator-3.hex"
+    docker([
+        "cp",
+        f"{node_container(3)}:/var/lib/rnode/validator.hex",
+        f"{node_container(0)}:{staged_key}",
+    ])
+
     run(["tools/devnet.sh", "stop", "3"])
     first = wait_for_jail(target, args)
     observations["first_jail"] = first
@@ -963,21 +978,62 @@ def run_restart_expiry_arm(keys: list[str], args, config: ArmConfig) -> tuple[di
     checks["first_jail_imposed"] = int(first[1]) > 0
     checks["bond_untouched_by_first_jail"] = target_record(jailed["bonds"], target) == baseline_stake
 
-    # **The release/renewal half has no live signal in this build, so the arm does not wait for one.**
-    # A jailed validator is filtered out of `pos:active`, the proposer reads that draw and refuses it,
-    # and the liveness rule's participation map is derived from finalised-fringe **block senders**
-    # only; no deploy signer enters it. The jailed validator therefore cannot appear in the map the
-    # release branch reads, and every jail renews. Waiting for "a block the target signs" (or for a
-    # release) only burns the timeout. The clause is recorded as unproven, not scored — the earlier
-    # versions of this arm measured an oracle the rule cannot satisfy.
-    observations["release_signal"] = (
-        "none: a jailed validator is out of pos:active and participation is derived from fringe "
-        "block senders; deploy signers are not read"
+    # **The release signal is a deploy the jailed validator's key signs**, included by an unjailed
+    # proposer and read by the boundary's participation derivation (authors *and* deploy signers).
+    # The key is funded from the devnet faucet: harness funding only.
+    observations["release_funding"] = fund_validator(target)
+    deploy = submit_signed(
+        "new x in { x!(0) }",
+        validator=3,
+        phlo_limit=100_000,
+        container=node_container(0),
+        key_path=staged_key,
     )
-    return checks, observations, [
-        "release/renewal is unproven: the presence the release branch reads cannot be produced by a "
-        "jailed validator in this build"
-    ]
+    committed = commit_deploy(deploy, args, "the returning validator's deploy")
+    observations["release_deploy"] = committed
+    checks["release_deploy_landed"] = committed["status"] == "Processed"
+
+    # The expiry boundary that releases the jail is at most `jail_epochs` advancing boundaries after
+    # imposition; with the deploy in the finalised fringe during the term, `is_absent` is false.
+    wait_until(
+        lambda: True if target_record(liveness(), target) is None else None,
+        args.timeout,
+        args.poll,
+        "the jailed validator is released after a deploy it signed",
+    )
+    released = snapshot()
+    observations["after_release"] = released
+    checks["released_after_term"] = target_record(liveness(), target) is None
+    checks["target_reentered_active"] = any(
+        target in key or key in target for key in released["active"]
+    )
+    checks["bond_untouched_by_release"] = target_record(released["bonds"], target) == baseline_stake
+
+    # **Renewal: released, then silent again.** Still stopped, it is jailed by sustained absence;
+    # with no deploy in the fringe the jail renews at expiry rather than releasing. Read the state,
+    # not a log string: after the full term plus one boundary the record must still name the target.
+    second = wait_for_jail(target, args)
+    observations["second_jail"] = second
+    checks["second_jail_imposed"] = int(second[1]) > 0
+    imposed_at = int(health(HTTP_BASE).get("finalizedHeight") or 0)
+    renewed_after = imposed_at + (config.jail_epochs + 1) * EPOCH_LENGTH
+    wait_until(
+        lambda: True
+        if int(health(HTTP_BASE).get("finalizedHeight") or 0) >= renewed_after
+        else None,
+        args.timeout,
+        args.poll,
+        "the jail's term runs past its expiry boundary",
+    )
+    renewed = snapshot()
+    observations["after_renewal"] = renewed
+    records = renewed["liveness"]
+    checks["jail_renewed_when_still_absent"] = target_is_jailed(records, target)
+    checks["bond_untouched_by_renewal"] = target_record(renewed["bonds"], target) == baseline_stake
+    checks["target_not_drawn_while_jailed"] = not any(
+        target in key or key in target for key in renewed["active"]
+    )
+    return checks, observations, []
 
 
 ARMS = {

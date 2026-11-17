@@ -189,6 +189,7 @@ fn reporting_casper(
     store_manager: &LmdbDirStoreManager,
     shard_id: &str,
     dag: Arc<dyn BlockDagStorage>,
+    block_store: BlockStore,
 ) -> Result<impl ReportingCasper, String> {
     let store_manager = store_manager.clone();
     let mergeable_tag_name = SortedProc::new(
@@ -207,11 +208,15 @@ fn reporting_casper(
         // same function the validator uses).
         move |block: BlockMessage| {
             let dag = dag.clone();
+            let block_store = block_store.clone();
             async move {
                 let fringe_state_hash = fringe_state_of(&*dag, &block.block_hash).await?;
-                let participation =
-                    rchain_casper::multi_parent_casper::participation_for_block(&*dag, &block)
-                        .await?;
+                let participation = rchain_casper::multi_parent_casper::participation_for_block(
+                    &*dag,
+                    &block_store,
+                    &block,
+                )
+                .await?;
                 Ok((fringe_state_hash, participation))
             }
         },
@@ -3152,6 +3157,7 @@ pub async fn setup_shard(
             &store_manager,
             &shard_id,
             block_dag_storage.clone(),
+            block_store.clone(),
         )?),
         report_store,
         validator_opt.clone(),

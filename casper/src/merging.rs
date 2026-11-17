@@ -1329,6 +1329,7 @@ impl BlockIndex {
                     regenerate_sidecars(
                         runtime,
                         dag,
+                        block_store,
                         &block,
                         &sender,
                         pre_state_hash,
@@ -1342,6 +1343,7 @@ impl BlockIndex {
                 regenerate_sidecars(
                     runtime,
                     dag,
+                    block_store,
                     &block,
                     &sender,
                     pre_state_hash,
@@ -1368,6 +1370,7 @@ impl BlockIndex {
                 let (channels, record) = regenerate_sidecars(
                     runtime,
                     dag,
+                    block_store,
                     &block,
                     &sender,
                     pre_state_hash,
@@ -1463,6 +1466,7 @@ impl BlockIndex {
 async fn regenerate_sidecars(
     runtime: &RuntimeManager,
     dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
     block: &BlockMessage,
     sender: &[u8],
     pre_state_hash: Blake2b256Hash,
@@ -1508,7 +1512,8 @@ async fn regenerate_sidecars(
     // only a fallback replay consumes. It is the *same* derivation the merge that validated this block
     // performed (`participation_for_block`), and it has to be: the post-state comparison below refuses
     // a replay that computes anything else.
-    let participation = crate::multi_parent_casper::participation_for_block(dag, block).await?;
+    let participation =
+        crate::multi_parent_casper::participation_for_block(dag, block_store, block).await?;
     let forked = runtime.fork_replay_runtime(pre_state_hash).await?;
     let rand = BlockRandomSeed::random_generator_from_block(block).map_err(|e| e.to_string())?;
     let with_cost_accounting = !block.justifications.is_empty();
