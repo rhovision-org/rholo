@@ -27,7 +27,8 @@ use std::time::Duration;
 use rchain_block_storage::checkpoint_store::{Adoption, CheckpointStore, Recorded};
 use rchain_casper::api::block_api::BlockApi;
 use rchain_casper::checkpoint::{
-    check_bond_set_unchanged, checkpoint_digest, verify_genesis_rooted_certificate,
+    check_bond_set_unchanged, checkpoint_digest, checkpoint_run_root,
+    verify_genesis_rooted_certificate,
 };
 use rchain_casper::engine::checkpoint_source::CheckpointSource;
 use rchain_casper::protocol::comm_util::CommUtil;
@@ -36,7 +37,6 @@ use rchain_comm::peer_node::PeerNode;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::casper::protocol::checkpoint::{CheckpointAttestation, CheckpointCertificate};
-use rchain_shared::base16;
 use rchain_shared::log::{Log, LogSource};
 
 use crate::web::node_list::NODE_LIST_HTTP_PORT_OFFSET;
@@ -253,8 +253,7 @@ impl CheckpointCollector {
         // active set is a drawn subset that excludes the jailed and honours the active cap, so a
         // jail would look like a bond-set transition and no certificate could ever be certified.
         let trusted = self.runtime.genesis_pos().bonds.clone();
-        self.refuse_if_bonds_drifted(&checkpoint.anchor_post_state, &trusted)
-            .await?;
+        self.refuse_if_bonds_drifted(&checkpoint, &trusted).await?;
 
         let mut attestations = Vec::new();
         if let Ok(own) = self.block_api.checkpoint_attestation().await {
@@ -327,26 +326,27 @@ impl CheckpointCollector {
         );
     }
 
-    /// The certificate requires signatures carried by the bond set the verifier trusts. A node that
-    /// cannot read the anchor state (a joiner mid-sync) certifies nothing this tick.
+    /// The certificate requires signatures carried by the bond set the verifier trusts. The pool is
+    /// read at the certificate's **run root** — the signed merged fringe state (C405) — not at the
+    /// anchor block's post-state. A node that cannot read that state (a joiner mid-sync) certifies
+    /// nothing this tick.
     async fn refuse_if_bonds_drifted(
         &self,
-        anchor_post_state: &str,
+        checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
         trusted: &std::collections::BTreeMap<
             rchain_models::validator::Validator,
             rchain_shared::refined::NonNegI64,
         >,
     ) -> Result<(), String> {
-        let bytes = base16::decode(anchor_post_state)
-            .ok_or_else(|| "anchor post-state is not hex".to_string())?;
-        let state = StateHash::try_from(bytes.as_slice())
-            .map_err(|e| format!("anchor post-state is not a state root: {e}"))?;
-        let at_anchor = self
+        let root = checkpoint_run_root(checkpoint).map_err(|e| e.to_string())?;
+        let state = StateHash::try_from(root.as_bytes().as_slice())
+            .map_err(|e| format!("the checkpoint's fringe state is not a state root: {e}"))?;
+        let at_fringe = self
             .runtime
             .compute_bonded_pool(&state)
             .await
-            .map_err(|e| format!("the anchor state's bonded pool is unavailable: {e}"))?;
-        check_bond_set_unchanged(trusted, &at_anchor).map_err(|e| e.to_string())
+            .map_err(|e| format!("the fringe state's bonded pool is unavailable: {e}"))?;
+        check_bond_set_unchanged(trusted, &at_fringe).map_err(|e| e.to_string())
     }
 
     /// Fetch each connected peer's attestation for its own current checkpoint. A peer that is

@@ -35,8 +35,13 @@ use rchain_shared::refined::NonNegI64;
 
 use crate::validator_identity::checkpoint_attestation_prehash;
 
-/// Domain tag of the checkpoint digest (distinct from the finality attestation's tag).
+/// Domain tag of the v1 checkpoint digest (a statement with no signed fringe state).
 pub const CHECKPOINT_TAG: &[u8] = b"rchain-checkpoint-v1";
+
+/// Domain tag of the v2 checkpoint digest: the statement carries the signed merged fringe state.
+/// A v1 and a v2 statement never share a digest, so old and new attestations cannot combine; the
+/// verifier refuses a v1 statement over a multi-member fringe (C405).
+pub const CHECKPOINT_V2_TAG: &[u8] = b"rchain-checkpoint-v2";
 
 /// Why a checkpoint or a certificate was refused. Every arm names the fact; none is a generic
 /// "invalid".
@@ -207,12 +212,44 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
         ));
     }
 
+    // **The run root is the merged fringe state, and it is signed from v2.** A v1 statement has no
+    // signed merge; it is accepted only for a **singleton** fringe, where the merge is the member's
+    // post-state and the anchor post-state is the right root. A multi-member v1 statement has no
+    // signed root a joiner could hydrate, so it is refused rather than guessed (C405).
+    let fringe_state = match &checkpoint.fringe_state {
+        Some(hex) => Some(decode_32(hex, "fringeState")?),
+        None => {
+            if fringe.len() != 1 {
+                return Err(CheckpointError::Malformed(
+                    "a v1 certificate without a signed fringe state is accepted only for a \
+                     single-member fringe; a multi-member fringe has no signed merge root"
+                        .to_string(),
+                ));
+            }
+            None
+        }
+    };
+
     let mut buf = Vec::with_capacity(64 + fringe.len() * 32);
-    lp(&mut buf, CHECKPOINT_TAG);
+    lp(
+        &mut buf,
+        if fringe_state.is_some() {
+            CHECKPOINT_V2_TAG
+        } else {
+            CHECKPOINT_TAG
+        },
+    );
     lp(&mut buf, checkpoint.shard_id.as_bytes());
     buf.extend_from_slice(&anchor);
     buf.extend_from_slice(&checkpoint.anchor_height.to_be_bytes());
     buf.extend_from_slice(&post);
+    if let Some(root) = fringe_state {
+        lp(
+            &mut buf,
+            rchain_models::casper::protocol::checkpoint::FRINGE_STATE_TAG,
+        );
+        buf.extend_from_slice(&root);
+    }
     buf.extend_from_slice(&parent);
     buf.extend_from_slice(&checkpoint.epoch.to_be_bytes());
     buf.extend_from_slice(&(fringe.len() as u32).to_be_bytes());
@@ -255,6 +292,18 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
         }
     }
     Ok(Blake2b256Hash::create(&buf))
+}
+
+/// **The state a checkpoint anchors** — the signed merged fringe state (v2), or the member's
+/// post-state for a v1 singleton (where the merge *is* that post-state). For a v1 multi-member
+/// statement `checkpoint_digest` has already refused, so there is no unnamed merge here.
+pub fn checkpoint_run_root(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, CheckpointError> {
+    let hex = checkpoint
+        .fringe_state
+        .as_deref()
+        .unwrap_or(&checkpoint.anchor_post_state);
+    let bytes = decode_32(hex, "fringeState")?;
+    Ok(Blake2b256Hash::from_byte_array(&bytes))
 }
 
 /// **The shape and self-consistency of the headers the metadata commitment covers.**
@@ -602,6 +651,8 @@ mod tests {
             anchor: hash(1),
             anchor_height: 42,
             anchor_post_state: hash(2),
+            // A singleton fringe: the v1 shape, where the merge is the member's post-state.
+            fringe_state: None,
             fringe_hashes: vec![hash(1)],
             parent_digest: None,
             epoch: 4,
@@ -675,11 +726,13 @@ mod tests {
             },
             |c: &mut Checkpoint| c.anchor_height = 43,
             |c: &mut Checkpoint| c.anchor_post_state = hash(9),
+            |c: &mut Checkpoint| c.fringe_state = Some(hash(9)),
             |c: &mut Checkpoint| c.epoch = 5,
             |c: &mut Checkpoint| c.parent_digest = Some(hash(7)),
             |c: &mut Checkpoint| c.metadata_root = Some(hash(7)),
             |c: &mut Checkpoint| c.history_root = Some(hash(7)),
             |c: &mut Checkpoint| {
+                c.fringe_state = Some(hash(3));
                 c.fringe_hashes = vec![hash(1), hash(9)];
             },
         ] {
@@ -696,6 +749,7 @@ mod tests {
     #[test]
     fn the_fringe_order_does_not_change_the_digest_and_a_duplicate_is_refused() {
         let mut a = checkpoint();
+        a.fringe_state = Some(hash(3));
         a.fringe_hashes = vec![hash(1), hash(2)];
         let mut b = a.clone();
         b.fringe_hashes.reverse();
@@ -708,6 +762,54 @@ mod tests {
             checkpoint_digest(&b),
             Err(CheckpointError::Malformed(_))
         ));
+    }
+
+    /// **The digest binds the signed fringe state** (Law 104d): two statements that differ only in
+    /// the merged fringe state have different digests, so a signature over one is not a signature
+    /// over the other. The run root cannot be swapped under an attestation (C405).
+    #[test]
+    fn the_digest_binds_the_fringe_state() {
+        let mut a = checkpoint();
+        a.fringe_state = Some(hash(3));
+        let mut b = a.clone();
+        b.fringe_state = Some(hash(9));
+        assert_ne!(
+            checkpoint_digest(&a).expect("v2 digest"),
+            checkpoint_digest(&b).expect("v2 digest"),
+            "a changed fringe state must change the digest"
+        );
+    }
+
+    /// **A v1 certificate is accepted only for a singleton fringe.** A multi-member fringe's merge
+    /// is not any member's post-state, and a v1 statement has no signed merge root; the digest
+    /// function refuses it rather than letting a joiner hydrate the anchor's post-state and fail on
+    /// the first post-anchor block.
+    #[test]
+    fn a_v1_certificate_over_a_multi_member_fringe_is_refused() {
+        let mut c = checkpoint();
+        c.fringe_hashes = vec![hash(1), hash(2)];
+        assert!(
+            matches!(checkpoint_digest(&c), Err(CheckpointError::Malformed(_))),
+            "a v1 multi-member statement must be refused"
+        );
+    }
+
+    /// **The run root is the signed fringe state (v2), or the member's post-state (v1 singleton).**
+    #[test]
+    fn the_run_root_is_the_signed_fringe_state() {
+        let mut c = checkpoint();
+        c.fringe_state = Some(hash(3));
+        assert_eq!(
+            checkpoint_run_root(&c).expect("v2 root"),
+            Blake2b256Hash::from_byte_array(&[3u8; 32]),
+            "the v2 run root is the signed fringe merge"
+        );
+        let legacy = checkpoint();
+        assert_eq!(
+            checkpoint_run_root(&legacy).expect("v1 root"),
+            Blake2b256Hash::from_byte_array(&[2u8; 32]),
+            "a v1 singleton's root is the member's post-state"
+        );
     }
 
     #[test]

@@ -275,16 +275,11 @@ impl AcceptedWindow {
 /// retryable internal fault, not an acceptance and not a verdict about the block.
 pub type SharedAcceptedWindow = Arc<tokio::sync::RwLock<Option<AcceptedWindow>>>;
 
+/// **The checkpoint's run root: the signed merged fringe state (v2), or the member's post-state for
+/// a v1 singleton.** It is not the anchor block's post-state in general: a multi-member fringe's
+/// merge is the state the first post-anchor block builds on (Laws 104/108, C405).
 fn checkpoint_root(verified: &VerifiedCheckpoint) -> Result<Blake2b256Hash, String> {
-    let bytes = base16::decode(&verified.checkpoint.anchor_post_state)
-        .ok_or_else(|| "the checkpoint anchor post-state is not base16".to_string())?;
-    if bytes.len() != 32 {
-        return Err(format!(
-            "the checkpoint anchor post-state is {} bytes, not 32",
-            bytes.len()
-        ));
-    }
-    Ok(Blake2b256Hash::from_byte_array(&bytes))
+    crate::checkpoint::checkpoint_run_root(&verified.checkpoint).map_err(|e| e.to_string())
 }
 
 fn checkpoint_anchor_hash(verified: &VerifiedCheckpoint) -> Result<BlockHash, String> {
@@ -343,6 +338,7 @@ mod tests {
                 anchor: base16::encode(&[1u8; 32]),
                 anchor_height: 9,
                 anchor_post_state: base16::encode(&[post_byte; 32]),
+                fringe_state: None,
                 fringe_hashes: vec![base16::encode(&[1u8; 32])],
                 parent_digest: None,
                 epoch: 0,
@@ -370,6 +366,25 @@ mod tests {
             state.root(),
             Blake2b256Hash::from_byte_array(&[0xAB; 32]),
             "the root is the certificate's anchor post-state"
+        );
+    }
+
+    /// **The checkpoint's run root is the certified fringe state**, not the anchor block's
+    /// post-state: the multi-member merge is the state the first post-anchor block builds on (C405).
+    #[test]
+    fn a_checkpoint_root_is_the_certified_fringe_state() {
+        let mut v = verified(0xAB);
+        v.checkpoint.fringe_state = Some(base16::encode(&[0xCD; 32]));
+        let state = AcceptedState::from_certificate(v, BTreeSet::new()).expect("anchor");
+        assert_eq!(
+            state.root(),
+            Blake2b256Hash::from_byte_array(&[0xCD; 32]),
+            "the root is the signed fringe merge"
+        );
+        assert_ne!(
+            state.root(),
+            Blake2b256Hash::from_byte_array(&[0xAB; 32]),
+            "the anchor block's post-state is not the merge"
         );
     }
 

@@ -790,8 +790,10 @@ pub async fn apply<
                         ),
                     );
                     // **The stored certificate is the anchor** (Law 108): its checkpoint root is the
-                    // root this node runs from. The approved fringe's state is the finality fringe's
-                    // merged state, not the execution root, so it is not substituted here.
+                    // root this node runs from. Since C405 that root is the signed **merged state of
+                    // the finalized fringe** — the same state the first post-anchor block builds on —
+                    // so the approved fringe's state and the certificate's root now agree by
+                    // construction rather than being two different claims.
                     let window = rebuild_window_from_dag(dag.as_ref(), &verified).await?;
                     accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
                         verified.clone(),
@@ -1878,6 +1880,7 @@ mod tests {
             anchor: anchor.block_hash.to_hex(),
             anchor_height: 1,
             anchor_post_state: rchain_shared::base16::encode(anchor.post_state_hash.as_bytes()),
+            fringe_state: None,
             fringe_hashes: vec![anchor.block_hash.to_hex()],
             parent_digest: None,
             epoch: 0,
@@ -1941,6 +1944,7 @@ mod tests {
             anchor: anchor.to_hex(),
             anchor_height: 1,
             anchor_post_state: rchain_shared::base16::encode(child.post_state_hash.as_bytes()),
+            fringe_state: None,
             fringe_hashes: vec![anchor.to_hex()],
             parent_digest: None,
             epoch: 0,

@@ -26,6 +26,11 @@ pub const METADATA_ROOT_TAG: &[u8] = b"rchain-checkpoint-metadata-root-v1";
 /// Domain tag of the optional history-root slot in the statement digest.
 pub const HISTORY_ROOT_TAG: &[u8] = b"rchain-checkpoint-history-root-v1";
 
+/// Domain tag of the **signed fringe state** slot in a v2 statement digest. The slot is mandatory in
+/// v2 (the statement's run root); the tag keeps it distinguishable from the anchor post-state, which
+/// is not the merge when the finalized fringe has more than one member (C405).
+pub const FRINGE_STATE_TAG: &[u8] = b"rchain-checkpoint-fringe-state-v1";
+
 /// Domain tag of one header's canonical projection.
 pub const HEADER_COMMITMENT_TAG: &[u8] = b"rchain-header-v1";
 
@@ -161,7 +166,14 @@ pub struct Checkpoint {
     /// The anchor's block number.
     pub anchor_height: i64,
     /// The anchor's **post-state** root (not the ordinary fringe root, which is a member's claim).
+    /// Identity/audit only since v2; the run root is [`Self::fringe_state`].
     pub anchor_post_state: String,
+    /// **The merged state of the finalized fringe** — the state the first post-anchor block builds
+    /// on, and the checkpoint's run root (Laws 104/108, C405). It is not any member's post-state when
+    /// the fringe has more than one member. `None` is a v1 legacy statement: accepted only when the
+    /// fringe has a single member, where the merge is that member's post-state.
+    #[serde(default)]
+    pub fringe_state: Option<String>,
     /// The finalized fringe, sorted and unique. The anchor is one of its members.
     pub fringe_hashes: Vec<String>,
     /// The previous checkpoint's digest; `None` for a genesis-rooted checkpoint.

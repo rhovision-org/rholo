@@ -4606,7 +4606,10 @@ def lawsC : List Law := [
       set), verified (block content hashes, trie pages by Law 70, ancestry membership and the \
       *derived* `fringe`), or residual (the bootstrap's choice of finalised root, the fringe's state \
       hashes — the root and each per-block `fringe_state_hash` — liveness, and wire \
-      signatures/finality proofs). Two joiners that verify the same block map and hold the same trie \
+      signatures/finality proofs). **The checkpoint's fringe state is a signed residual, not an \
+      assumed one:** the quorum signs the merged fringe root (Laws 104/108), so a checkpoint joiner \
+      hydrates a root the quorum attested; the ordinary fringe reply's member claim remains residual \
+      (C339, C405). Two joiners that verify the same block map and hold the same trie \
       read the same value at the claimed root and answer the same block lookup; the residual is an \
       exact, checked enumeration",
     status := .provedModel,
@@ -4693,11 +4696,14 @@ def lawsC : List Law := [
       `post_state_hash`; and a member's claim is the state at the fringe **it** finalises — one \
       fringe earlier than the set it belongs to. The served root is therefore always some member's \
       claim, but it need not equal either state the block carries, which is why the singleton pin was \
-      false and removed. The joiner cannot recompute the merge, so the root is assumed (C339)",
+      false and removed. **A checkpoint certificate is different:** it signs the merged fringe state \
+      itself (Law 104's `fringeState`, Law 108's root), so the joiner hydrates the merge the quorum \
+      signed rather than a member's claim; the singleton case is the member's post-state (C405)",
     status := .provedModel,
     declarations := [`Rchain.FringeClaim, `Rchain.ClaimsTheStateAtItsFringe, `Rchain.servedRoot,
       `Rchain.the_served_root_is_a_members_claim,
-      `Rchain.the_served_root_is_the_state_at_the_members_fringe],
+      `Rchain.the_served_root_is_the_state_at_the_members_fringe,
+      `Rchain.singletonState, `Rchain.a_singleton_fringe_state_is_the_member_post_state],
     axioms := [],
     rust := ["casper/src/engine/node_running.rs", "casper/src/multi_parent_casper.rs",
       "casper/src/engine/node_syncing.rs"],
@@ -4716,8 +4722,11 @@ def lawsC : List Law := [
       member of the latest fringe and serves its membership claim anyway; the anchor and fresh-shard \
       branches serve `post_state_hash` instead. The law proves the served value is always a member's \
       claim (never an invented root) and that the claim is the state at that member's fringe; it does \
-      **not** supply `stateAt` (the merge), which is why C339 stays open. Recomputing the merge on the \
-      join path, or carrying a proof for the root, is the closing option; a pin is not." },
+      **not** supply `stateAt` (the merge), which is why C339 stays open for callers of the ordinary \
+      fringe reply. **The checkpoint path no longer relies on those replies (C405):** the certificate \
+      signs the merged fringe state, so the run root is a quorum claim rather than a member's assumed \
+      claim; the residual remains only for the ordinary/recovery replies. The singleton merge is the \
+      member's post-state, which is the legacy certificate rule." },
 
   { number := 86, clause := "a", layer := "Admission",
     statement := "**Admission is a bounded queue, and the decision reads only the pool's bounds.** A \
@@ -6197,10 +6206,10 @@ def lawsC : List Law := [
     statement := "**A checkpoint certificate is attributable.** A certificate is quorate when its \
       signers hold strictly more than two thirds of the bonded stake; two quorate certificates for \
       one parent therefore share a signer, so two conflicting checkpoints require an equivocator. The \
-      digest binds the anchor, the anchor's post-state, the fringe, the shard, the parent and the \
-      metadata commitment, so a signature over one checkpoint is not a signature over another. An \
-      absent parent is not an explicit zero parent, and a negative epoch is not a well-shaped \
-      statement.",
+      digest binds the anchor, the anchor's post-state, the fringe, **the fringe's merged state**, the \
+      shard, the parent and the metadata commitment, so a signature over one checkpoint is not a \
+      signature over another. An absent parent is not an explicit zero parent, and a negative epoch is \
+      not a well-shaped statement.",
     status := .provedModel,
     formal := `Rchain.Sync.Checkpoint.law104_statement,
     mutant := `Rchain.Sync.Checkpoint.law104_threshold_mutant,
@@ -6208,6 +6217,7 @@ def lawsC : List Law := [
     declarations := [`Rchain.Sync.Checkpoint.two_quorums_intersect,
       `Rchain.Sync.Checkpoint.a_conflicting_checkpoint_requires_an_equivocator,
       `Rchain.Sync.Checkpoint.the_digest_binds_the_anchor_and_parent,
+      `Rchain.Sync.Checkpoint.the_digest_binds_the_fringe_state,
       `Rchain.Sync.Checkpoint.the_absence_of_a_parent_is_not_the_zero_parent,
       `Rchain.Sync.Checkpoint.a_negative_epoch_is_not_well_shaped,
       `Rchain.Sync.Checkpoint.law104_statement,
@@ -6221,10 +6231,13 @@ def lawsC : List Law := [
       "casper/src/checkpoint.rs:a_certificate_at_exactly_two_thirds_is_refused",
       "casper/src/checkpoint.rs:two_conflicting_checkpoints_share_a_signer_under_a_split",
       "casper/src/checkpoint.rs:an_explicit_zero_parent_is_malformed",
-      "casper/src/checkpoint.rs:an_epoch_below_zero_is_malformed"],
+      "casper/src/checkpoint.rs:an_epoch_below_zero_is_malformed",
+      "casper/src/checkpoint.rs:the_digest_binds_the_fringe_state",
+      "casper/src/checkpoint.rs:a_v1_certificate_over_a_multi_member_fringe_is_refused"],
     corpus := some "checkpoint",
     witness := [`Rchain.Sync.Checkpoint.two_quorums_intersect,
       `Rchain.Sync.Checkpoint.the_digest_binds_the_anchor_and_parent,
+      `Rchain.Sync.Checkpoint.the_digest_binds_the_fringe_state,
       `Rchain.Sync.Checkpoint.the_absence_of_a_parent_is_not_the_zero_parent],
     falsifiable := "Make the threshold `>=` and a certificate at exactly two thirds is admitted — \
       `law104_threshold_mutant` is that rule, and `law104_falsifier` shows `{0, 1}` of three signers \
@@ -6367,32 +6380,47 @@ def lawsC : List Law := [
   { number := 108, layer := "Sync",
     statement := "**A running node is anchored.** The node runs from either the operator's pinned \
       genesis or a verified quorum checkpoint; its current root is the anchor's root, and a failed \
-      sync is not running. A genesis anchor names the pinned genesis, not a bootstrap's unverified \
-      claim, and an accepted state cannot carry a root its anchor does not name.",
+      sync is not running. **For a checkpoint the anchor's root is the merged state of the finalized \
+      fringe** — the state the first post-anchor block builds on — not the anchor block's own \
+      post-state: finality is multi-parent, and the member's post-state is not the merge. A genesis \
+      anchor names the pinned genesis, not a bootstrap's unverified claim, and an accepted state \
+      cannot carry a root its anchor does not name.",
     status := .provedModel,
     declarations := [`Rchain.Sync.Anchor.running_is_anchored,
       `Rchain.Sync.Anchor.a_refused_sync_is_not_running,
       `Rchain.Sync.Anchor.a_genesis_anchor_is_the_pinned_genesis,
+      `Rchain.Sync.Anchor.a_checkpoint_anchors_the_fringe_state,
+      `Rchain.Sync.Anchor.a_checkpoint_root_is_not_a_blocks_post_state,
       `Rchain.Sync.Anchor.a_foreign_root_is_not_accepted],
     axioms := [],
     rust := ["casper/src/engine/anchor.rs", "casper/src/engine/node_launch.rs"],
     rustWitness := [
       "casper/src/engine/anchor.rs:an_accepted_state_carries_its_anchors_root",
+      "casper/src/engine/anchor.rs:a_checkpoint_root_is_the_certified_fringe_state",
       "casper/src/engine/anchor.rs:a_genesis_anchor_must_match_the_pin"],
     witness := [`Rchain.Sync.Anchor.running_is_anchored,
+      `Rchain.Sync.Anchor.a_checkpoint_anchors_the_fringe_state,
+      `Rchain.Sync.Anchor.a_checkpoint_root_is_not_a_blocks_post_state,
       `Rchain.Sync.Anchor.a_foreign_root_is_not_accepted],
     falsifiable := "Give `Accepted` a public constructor that omits the root equality and \
       `a_foreign_root_is_not_accepted` fails; let the failed-sync transition reach `running` and \
-      `a_refused_sync_is_not_running` fails. In Rust, the anchor tests redden if the accepted state \
-      derives a root other than the certificate's checkpoint root, or if the genesis anchor accepts a \
-      block other than the pin.",
+      `a_refused_sync_is_not_running` fails; identify the checkpoint root with the anchor block's \
+      post-state and `a_checkpoint_root_is_not_a_blocks_post_state` fails. In Rust, the anchor tests \
+      redden if the accepted state derives a root other than the certificate's **fringe state**, or if \
+      the genesis anchor accepts a block other than the pin.",
     note := "**The anchor union is the design.** A node's trust anchor is either the operator's \
       genesis (the manifest/descriptors and the genesis block's post-state) or a quorum checkpoint \
       certificate; there is no third source. The prior sync path could leave `CURRENT_ROOT` at genesis \
       after accepting a checkpoint because the running state's root came from a DAG/tip heuristic; the \
-      `AcceptedState` type and this law remove that state rather than patch it. **What this law does \
-      not claim:** the certificate is quorate (Law 14a) or honest (Law 83/85); it is the shape of the \
-      running state. The genesis-only case is the anchor's genesis branch: no certificate is \
+      `AcceptedState` type and this law remove that state rather than patch it. **The 2026-11-17 \
+      correction (C405):** the checkpoint's root is the **merged state of the finalized fringe** \
+      (Law 104's `fringeState`), not the anchor block's own post-state. A multi-member fringe's merge \
+      is not any member's post-state, so a joiner anchored on the member's post-state could not \
+      validate the first post-anchor block; the certificate now signs the merge, the joiner hydrates \
+      it, and the singleton case (where the merge is the member's post-state) is the legacy \
+      compatibility rule. **What this law does not claim:** the certificate is quorate (Law 14a) or \
+      honest (Law 83/85); it is the shape of the running state. The genesis-only case is the anchor's \
+      genesis branch: no certificate is \
       requested, because a network with no finalized fringe has no quorum to ask. A cold bonded \
       validator still needs the remaining validators to form a quorum (N≥4 under the strict rule); \
       that liveness boundary is recorded, not claimed." },
@@ -6401,12 +6429,16 @@ def lawsC : List Law := [
     statement := "**A post-anchor block validates only against certified roots.** The checkpoint \
       statement commits to a validation window — the recent pre/post/fringe state roots a PoS close \
       may read — and a block whose pre-state is outside the checkpoint root plus that window is \
-      refused. The joiner hydrates exactly the committed window and never widens it to make a block \
-      validate; under collision-freedom the commitment binds the window.",
+      refused. **The checkpoint root is the merged state of the finalized fringe, so the first \
+      post-fringe block's pre-state is the certified root itself**, not a fresh root the joiner would \
+      have to guess or widen the window for. The joiner hydrates exactly the committed window and \
+      never widens it to make a block validate; under collision-freedom the commitment binds the \
+      window.",
     status := .provedModel,
     declarations := [`Rchain.Sync.Window.a_validated_block_reads_only_certified_roots,
       `Rchain.Sync.Window.an_uncertified_root_is_refused,
       `Rchain.Sync.Window.the_history_root_binds_the_window,
+      `Rchain.Sync.Window.the_first_post_fringe_block_builds_on_the_certified_root,
       `Rchain.Sync.Window.a_shortened_window_refuses,
       `Rchain.Sync.Window.a_window_root_validates],
     axioms := [],
@@ -6414,8 +6446,10 @@ def lawsC : List Law := [
       "node/src/runtime/audit.rs"],
     rustWitness := [
       "casper/src/checkpoint.rs:a_validation_window_is_bound_and_verifies",
-      "casper/src/engine/node_syncing.rs:a_certified_metadata_history_carries_the_quorums_claim_on_each_block"],
+      "casper/src/engine/node_syncing.rs:a_certified_metadata_history_carries_the_quorums_claim_on_each_block",
+      "casper/src/engine/node_syncing.rs:the_sync_root_is_the_certified_fringe_state"],
     witness := [`Rchain.Sync.Window.a_validated_block_reads_only_certified_roots,
+      `Rchain.Sync.Window.the_first_post_fringe_block_builds_on_the_certified_root,
       `Rchain.Sync.Window.a_shortened_window_refuses],
     falsifiable := "Admit any root into `validates` and `an_uncertified_root_is_refused` fails; drop \
       a member from the window and `a_shortened_window_refuses` fails. In Rust, the window test \
@@ -6426,8 +6460,11 @@ def lawsC : List Law := [
       in `models/src/casper/protocol/checkpoint.rs`, chosen from the measured PoS close depth (the \
       1,465-height failure needed block 1,465's pre-state for a close five heights above it); a future \
       builder that reads deeper must change the constant and the commitment together — the joiner \
-      refuses rather than widening. **What this law does not claim:** the state roots are a quorum \
-      claim (Law 85's residual); the audit (Law 106) is the counterweight. The window's commitment is \
+      refuses rather than widening. **The checkpoint member is the signed fringe merge (C405):** the \
+      first post-fringe block's pre-state is that root, so it needs no window guess; the window is \
+      for the historical roots a PoS close reads. **What this law does not claim:** the state roots \
+      are a quorum claim (Law 85's residual); the audit (Law 106) is the counterweight. The window's \
+      commitment is \
       an extension of the statement, appended after `metadataRoot` only when present, so a legacy \
       certificate keeps its v1 digest and is accepted only by the audit, with `windowCommitted: \
       false`." },

@@ -1103,6 +1103,7 @@ mod tests {
                 anchor: base16::encode(&[1u8; 32]),
                 anchor_height: 9,
                 anchor_post_state: base16::encode(&[2u8; 32]),
+                fringe_state: None,
                 fringe_hashes: vec![base16::encode(&[1u8; 32])],
                 parent_digest: None,
                 epoch: 0,

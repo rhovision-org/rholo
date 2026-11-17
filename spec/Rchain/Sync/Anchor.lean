@@ -6,7 +6,10 @@ import Mathlib.Logic.Function.Basic
 **The change this law covers.** A certified sync accepts a state under a quorum checkpoint
 certificate, or a genesis-only network accepts the operator's pinned genesis
 (`casper/src/engine/anchor.rs`, `casper/src/engine/node_launch.rs`). The node then runs from that
-state.
+state. **The checkpoint's root is the merged state of its finalized fringe** — the state a
+post-anchor block builds on — not the anchor block's own post-state: finality is multi-parent, and
+the 2026-11-17 join failed because the certificate named the member's post-state and the joiner never
+hydrated the merge.
 
 **What this law says.** The running phase carries an **accepted state**: an anchor (the pinned
 genesis or a verified checkpoint) and the root the node runs from, with the root equal to the
@@ -27,10 +30,14 @@ namespace Rchain
 namespace Sync
 namespace Anchor
 
-/-- The trust anchor: the operator's pinned genesis, or a certified checkpoint. -/
+/-- The trust anchor: the operator's pinned genesis, or a certified checkpoint carrying the
+    **merged state of its finalized fringe**. The second root is the fringe merge a post-anchor
+    block actually builds on, not the anchor block's own post-state: finality is multi-parent, and
+    the merged fringe state is not any member's post-state (Law 85). The certificate's anchor block
+    and its post-state remain identity/audit fields; they are not the run root (2026-11-17). -/
 inductive TrustAnchor where
   | genesis (pin root : Nat)
-  | checkpoint (certificate root : Nat)
+  | checkpoint (certificate fringeState : Nat)
   deriving DecidableEq
 
 /-- The anchor's state root. -/
@@ -63,6 +70,20 @@ inductive Phase where
 /-- **Law 108a — a running node's current root is its anchor's root.** -/
 theorem running_is_anchored (state : Accepted) : state.root = state.anchor.root :=
   state.root_eq
+
+/-- **Law 108d — a checkpoint anchors the certified fringe state.** The checkpoint branch's root is
+    the merged state of the finalized fringe the certificate signs, which is the pre-state the first
+    post-anchor block builds on. -/
+theorem a_checkpoint_anchors_the_fringe_state (certificate fringeState : Nat) :
+    (TrustAnchor.checkpoint certificate fringeState).root = fringeState := rfl
+
+/-- **Non-vacuity of 108d: the anchor block's own post-state is not the run root.** The old model
+    identified the run root with the anchor post-state; that is a different number from the fringe
+    merge whenever the fringe has more than one member, and the live join failed on exactly it. -/
+theorem a_checkpoint_root_is_not_a_blocks_post_state (certificate fringeState post : Nat)
+    (h : post ≠ fringeState) :
+    (TrustAnchor.checkpoint certificate fringeState).root ≠ post := by
+  simpa [TrustAnchor.root] using h.symm
 
 /-- **Law 108b — a refused sync is not running.** -/
 theorem a_refused_sync_is_not_running (reason : Nat) (state : Accepted) :

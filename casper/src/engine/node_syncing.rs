@@ -825,12 +825,12 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     )
     .await?;
     let (entries, fringe_state_root, window) =
-        certified_metadata_entries(&walk, &verified.checkpoint, checkpoint_root)?;
+        certified_metadata_entries(&walk, &verified.checkpoint)?;
 
-    // **The hydrated set is the certified set.** The checkpoint's post-state, the max fringe
-    // member's `fringe_state_hash`, the approved fringe's state, and exactly the validation-window
-    // roots the statement commits to. The joiner does not guess a window or widen it; a root it
-    // cannot hydrate is a failed sync.
+    // **The hydrated set is the certified set.** The checkpoint's **signed fringe state** (the run
+    // root — see C405), the anchor header's own `fringe_state_hash`, the anchored reply's
+    // post-state, and exactly the validation-window roots the statement commits to. The joiner does
+    // not guess a window or widen it; a root it cannot hydrate is a failed sync.
     let mut required_roots = BTreeSet::from([checkpoint_root, fringe_state_root]);
     required_roots.insert(Blake2b256Hash::from_byte_array(
         fringe.state_hash.as_bytes(),
@@ -838,10 +838,9 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     required_roots.extend(window.iter().copied());
     crate::engine::sync_metrics::census().add_state_roots(required_roots.len() as u64);
 
-    // The anchored fringe's own root is the checkpoint root (`node_running` answers an anchored
-    // request with the anchor's post-state), so this walk hydrates it; any other root is a second
-    // walk. `request_tuple_space` is the first because its exit state is the one the C271 guard
-    // below reads.
+    // The anchored reply serves the **anchor's post-state** (Law 85); the certificate's signed
+    // fringe state — the run root — is hydrated in the second walk. `request_tuple_space` is first
+    // because its exit state is the one the C271 guard below reads.
     // **The fan-out read is bounded**: the walk must not freeze on a connections cell a writer is
     // holding. The bootstrap is still asked by the requester; the connected set is only the hedge.
     let page_peers = match tokio::time::timeout(Duration::from_secs(2), comm_util.connected_peers())
@@ -1109,18 +1108,12 @@ async fn certified_checkpoint(
 }
 
 /// Decode the checkpoint's state root.
+/// The checkpoint's run root: the signed merged fringe state (v2), or a v1 singleton's member
+/// post-state. It is the state the first post-anchor block builds on (C405).
 fn checkpoint_state_root(
     checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
 ) -> Result<Blake2b256Hash, String> {
-    let bytes = rchain_shared::base16::decode(&checkpoint.anchor_post_state)
-        .ok_or_else(|| "the checkpoint's anchor post-state is not base16".to_string())?;
-    if bytes.len() != 32 {
-        return Err(format!(
-            "the checkpoint's anchor post-state is {} bytes, not 32",
-            bytes.len()
-        ));
-    }
-    Ok(Blake2b256Hash::from_byte_array(&bytes))
+    crate::checkpoint::checkpoint_run_root(checkpoint).map_err(|e| e.to_string())
 }
 
 fn decode_hash(hex: &str, what: &str) -> Result<BlockHash, String> {
@@ -1184,7 +1177,6 @@ pub(super) fn tie_certificate_to_fringe(
 pub(super) fn certified_metadata_entries(
     walk: &super::lfs_metadata_requester::MetadataWalk,
     checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
-    checkpoint_root: Blake2b256Hash,
 ) -> Result<
     (
         Vec<(BlockHash, BlockMetadata)>,
@@ -1209,11 +1201,21 @@ pub(super) fn certified_metadata_entries(
             checkpoint.anchor_height, anchor_header.block_num
         ));
     }
-    if Blake2b256Hash::from_byte_array(anchor_header.post_state_hash.as_bytes()) != checkpoint_root
-    {
+    // **The anchor's identity check is against the certificate's anchor post-state**, not the run
+    // root: since v2 the run root is the signed merged fringe state, which no single header carries
+    // (C405). The anchor post-state remains the certificate's statement about the anchor block.
+    let anchor_post = rchain_shared::base16::decode(&checkpoint.anchor_post_state)
+        .ok_or_else(|| "the certificate's anchor post-state is not base16".to_string())?;
+    if anchor_post.len() != 32 {
+        return Err(format!(
+            "the certificate's anchor post-state is {} bytes, not 32",
+            anchor_post.len()
+        ));
+    }
+    if anchor_header.post_state_hash.as_bytes() != anchor_post.as_slice() {
         return Err(format!(
             "the certificate names post-state {}, but the anchor header's post-state is {}",
-            checkpoint_root.to_hex(),
+            rchain_shared::base16::encode(&anchor_post),
             rchain_shared::base16::encode(anchor_header.post_state_hash.as_bytes())
         ));
     }
@@ -2699,12 +2701,26 @@ mod tests {
         )
     }
 
+    /// **The sync root is the certificate's signed fringe state**, not the anchor block's
+    /// post-state: the joiner must hydrate the merge the first post-anchor block builds on (C405).
+    #[test]
+    fn the_sync_root_is_the_certified_fringe_state() {
+        let mut c = statement(BlockHash::new([1u8; 32]), vec![BlockHash::new([1u8; 32])]);
+        c.fringe_state = Some(rchain_shared::base16::encode(&[0x77u8; 32]));
+        assert_eq!(
+            checkpoint_state_root(&c).expect("the run root"),
+            Blake2b256Hash::from_byte_array(&[0x77u8; 32]),
+            "the sync hydrates the signed fringe merge"
+        );
+    }
+
     fn statement(anchor: BlockHash, fringe: Vec<BlockHash>) -> Checkpoint {
         Checkpoint {
             shard_id: "root".to_string(),
             anchor: base16::encode(anchor.as_bytes()),
             anchor_height: 1,
             anchor_post_state: base16::encode(anchor.as_bytes()),
+            fringe_state: Some(base16::encode(&[0xEE; 32])),
             fringe_hashes: fringe
                 .iter()
                 .map(|h| base16::encode(h.as_bytes()))
@@ -2860,6 +2876,7 @@ mod tests {
             anchor: base16::encode(anchor.as_bytes()),
             anchor_height: 2,
             anchor_post_state: base16::encode(post.as_bytes()),
+            fringe_state: Some(base16::encode(post.as_bytes())),
             fringe_hashes: fringe
                 .iter()
                 .map(|h| base16::encode(h.as_bytes()))
@@ -2895,12 +2912,8 @@ mod tests {
             )
             .to_hex(),
         );
-        let (entries, fringe_root, _window) = certified_metadata_entries(
-            &walk,
-            &checkpoint,
-            Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
-        )
-        .expect("a certified header set publishes");
+        let (entries, fringe_root, _window) = certified_metadata_entries(&walk, &checkpoint)
+            .expect("a certified header set publishes");
         assert_eq!(entries.len(), 3);
         assert!(
             entries
@@ -2932,12 +2945,8 @@ mod tests {
             grandchild.post_state_hash,
             vec![grandchild.block_hash],
         );
-        let err = certified_metadata_entries(
-            &walk,
-            &checkpoint,
-            Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
-        )
-        .expect_err("a legacy statement has no metadata commitment");
+        let err = certified_metadata_entries(&walk, &checkpoint)
+            .expect_err("a legacy statement has no metadata commitment");
         assert!(err.contains("does not commit"), "got {err}");
     }
 
@@ -2964,12 +2973,8 @@ mod tests {
             .get_mut(&child.block_hash)
             .expect("the child header is in the walk");
         tampered.pre_state_hash = StateHash::new([0x9A; 32]);
-        let err = certified_metadata_entries(
-            &walk,
-            &checkpoint,
-            Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
-        )
-        .expect_err("the headers are not the set the certificate committed to");
+        let err = certified_metadata_entries(&walk, &checkpoint)
+            .expect_err("the headers are not the set the certificate committed to");
         assert!(err.contains("commits"), "got {err}");
     }
 
@@ -2983,6 +2988,7 @@ mod tests {
             anchor: base16::encode(child.block_hash.as_bytes()),
             anchor_height: 1,
             anchor_post_state: base16::encode(child.post_state_hash.as_bytes()),
+            fringe_state: Some(base16::encode(&[0xCD; 32])),
             fringe_hashes: vec![
                 base16::encode(child.block_hash.as_bytes()),
                 base16::encode(grandchild.block_hash.as_bytes()),
@@ -2993,12 +2999,8 @@ mod tests {
             metadata_root: None,
             history_root: None,
         };
-        let err = certified_metadata_entries(
-            &walk,
-            &checkpoint,
-            Blake2b256Hash::from_byte_array(child.post_state_hash.as_bytes()),
-        )
-        .expect_err("the anchor rule is max (height, hash)");
+        let err = certified_metadata_entries(&walk, &checkpoint)
+            .expect_err("the anchor rule is max (height, hash)");
         assert!(err.contains("max (height, hash)"), "{err}");
     }
 
@@ -3011,6 +3013,7 @@ mod tests {
             anchor: base16::encode(child.block_hash.as_bytes()),
             anchor_height: 1,
             anchor_post_state: base16::encode(&[0xAB; 32]),
+            fringe_state: None,
             fringe_hashes: vec![base16::encode(child.block_hash.as_bytes())],
             parent_digest: None,
             epoch: 0,
@@ -3018,12 +3021,8 @@ mod tests {
             metadata_root: None,
             history_root: None,
         };
-        let err = certified_metadata_entries(
-            &walk,
-            &checkpoint,
-            Blake2b256Hash::from_byte_array(&[0xAB; 32]),
-        )
-        .expect_err("the header's post-state must be the certificate's");
+        let err = certified_metadata_entries(&walk, &checkpoint)
+            .expect_err("the header's post-state must be the certificate's");
         assert!(err.contains("post-state"), "{err}");
     }
 
