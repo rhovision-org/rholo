@@ -327,7 +327,7 @@ impl CheckpointCollector {
     }
 
     /// The certificate requires signatures carried by the bond set the verifier trusts. The pool is
-    /// read at the certificate's **run root** — the signed merged fringe state (C405) — not at the
+    /// read at the certificate's **run root** — the signed merged fringe state — not at the
     /// anchor block's post-state. A node that cannot read that state (a joiner mid-sync) certifies
     /// nothing this tick.
     async fn refuse_if_bonds_drifted(

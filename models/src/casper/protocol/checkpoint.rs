@@ -28,7 +28,7 @@ pub const HISTORY_ROOT_TAG: &[u8] = b"rchain-checkpoint-history-root-v1";
 
 /// Domain tag of the **signed fringe state** slot in a v2 statement digest. The slot is mandatory in
 /// v2 (the statement's run root); the tag keeps it distinguishable from the anchor post-state, which
-/// is not the merge when the finalized fringe has more than one member (C405).
+/// is not the merge when the finalized fringe has more than one member.
 pub const FRINGE_STATE_TAG: &[u8] = b"rchain-checkpoint-fringe-state-v1";
 
 /// Domain tag of one header's canonical projection.
@@ -40,7 +40,7 @@ pub const HEADER_COMMITMENT_TAG: &[u8] = b"rchain-header-v1";
 /// joiner must hold. That depth is the finality lag (at most `LIVENESS_WINDOW` heights, 5) plus one
 /// more finality step, so the window is defined over **heights**, not a header count: with several
 /// bonded validators per height, eight headers cover barely two heights and left the merge's
-/// finalised layer without a state (C405). The producer commits to the window (`historyRoot`), the
+/// finalised layer without a state. The producer commits to the window (`historyRoot`), the
 /// joiner hydrates exactly it, and a validator needing a root outside it is refused rather than
 /// widening the window.
 pub const VALIDATION_WINDOW_HEIGHTS: i64 = 14;
@@ -181,7 +181,7 @@ pub struct Checkpoint {
     /// Identity/audit only since v2; the run root is [`Self::fringe_state`].
     pub anchor_post_state: String,
     /// **The merged state of the finalized fringe** — the state the first post-anchor block builds
-    /// on, and the checkpoint's run root (Laws 104/108, C405). It is not any member's post-state when
+    /// on, and the checkpoint's run root (Laws 104/108). It is not any member's post-state when
     /// the fringe has more than one member. `None` is a v1 legacy statement: accepted only when the
     /// fringe has a single member, where the merge is that member's post-state.
     #[serde(default)]

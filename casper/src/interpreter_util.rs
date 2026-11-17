@@ -1026,7 +1026,7 @@ pub async fn validate_block_checkpoint<F, Fut>(
     // restart zeroed counters the shard's own history had moved. Threaded, not registered — see
     // [`ShardHealth`] for why.
     health: &ShardHealth,
-    // **The accepted window, when this node runs from a checkpoint certificate** (C405). Its signed
+    // **The accepted window, when this node runs from a checkpoint certificate**. Its signed
     // merge base is what replay starts from when the parent set finalised the anchor's fringe; a
     // full node passes `None` and derives the base from the parent records.
     accepted_window: Option<&crate::engine::anchor::SharedAcceptedWindow>,

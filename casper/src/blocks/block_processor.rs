@@ -556,7 +556,7 @@ pub async fn apply<F, Fut>(
     // **The runtime's admissible pre-state roots** (review R2). A received block is replayed only
     // from the accepted root or a root this node derived by accepting a validated post-anchor
     // block (a state it holds); a certified window root is a *read* permission, not a replay base
-    // (C406). A block that fails the gate is refused as an uncertified pre-state — a verdict, not
+    //. A block that fails the gate is refused as an uncertified pre-state — a verdict, not
     // an internal fault. `None` (before boot installs the window) is a retryable internal fault,
     // never an acceptance.
     accepted_window: crate::engine::anchor::SharedAcceptedWindow,
@@ -807,7 +807,7 @@ pub async fn apply<F, Fut>(
 /// the window, or a `ValidationFailed` with the failed metadata when the pre-state is not admissible.
 /// A multi-parent block's pre-state is a fresh merge, not a parent root; it is admissible when every
 /// justification is the anchor or a block this node validated (C402), or when every justification is
-/// **committed history at or below the anchor's height** (C405): a post-anchor block routinely
+/// **committed history at or below the anchor's height**: a post-anchor block routinely
 /// justifies a sibling at the anchor's height and a validator's stale block below it, and neither is
 /// a state the merge reads — the merge starts from the certificate's signed fringe state, and a
 /// below-fringe justification contributes nothing to it. The store is still not permission: replay
@@ -847,7 +847,7 @@ fn pre_replay_refusal(
     }
 }
 
-/// **Every justification is committed history at or below the anchor's height** (C405). The height
+/// **Every justification is committed history at or below the anchor's height**. The height
 /// comes from the DAG's records; an unknown justification is never committed. An empty set is not an
 /// exemption (the genesis shape is not a received post-anchor block).
 async fn justifications_are_committed(
@@ -1394,7 +1394,7 @@ mod tests {
         );
     }
 
-    /// **C405 — committed history justifies a merged pre-state records cannot explain.** A
+    /// **committed history justifies a merged pre-state records cannot explain.** A
     /// post-anchor block routinely justifies a sibling at the anchor's height and a validator's stale
     /// block below it; neither is a block this node validated, and neither state is read by the
     /// merge (it starts from the certificate's signed fringe state). The caller establishes the

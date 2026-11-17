@@ -4609,7 +4609,7 @@ def lawsC : List Law := [
       signatures/finality proofs). **The checkpoint's fringe state is a signed residual, not an \
       assumed one:** the quorum signs the merged fringe root (Laws 104/108), so a checkpoint joiner \
       hydrates a root the quorum attested; the ordinary fringe reply's member claim remains residual \
-      (C339, C405). Two joiners that verify the same block map and hold the same trie \
+      (C339). Two joiners that verify the same block map and hold the same trie \
       read the same value at the claimed root and answer the same block lookup; the residual is an \
       exact, checked enumeration",
     status := .provedModel,
@@ -4700,7 +4700,7 @@ def lawsC : List Law := [
       itself (Law 104's `fringeState`, Law 108's root) — the anchor's own claim about the fringe it \
       finalised — so the joiner hydrates a quorum-signed root rather than a peer's reply, and the \
       signed value is re-checked against the anchor header's committed `fringe_state_hash`; the \
-      legacy case with no signed root uses the member's post-state (C405)",
+      legacy case with no signed root uses the member's post-state",
     status := .provedModel,
     declarations := [`Rchain.FringeClaim, `Rchain.ClaimsTheStateAtItsFringe, `Rchain.servedRoot,
       `Rchain.the_served_root_is_a_members_claim,
@@ -4725,7 +4725,7 @@ def lawsC : List Law := [
       branches serve `post_state_hash` instead. The law proves the served value is always a member's \
       claim (never an invented root) and that the claim is the state at that member's fringe; it does \
       **not** supply `stateAt` (the merge), which is why C339 stays open for callers of the ordinary \
-      fringe reply. **The checkpoint path no longer relies on those replies (C405):** the certificate \
+      fringe reply. **The checkpoint path no longer relies on those replies:** the certificate \
       signs the anchor's fringe state and the joiner checks the signed value against the anchor \
       header's committed fringe root, so the run root is a quorum-signed, header-checked claim rather \
       than a peer's reply; the residual remains only for the ordinary/recovery replies. The legacy \
@@ -6418,7 +6418,7 @@ def lawsC : List Law := [
       certificate; there is no third source. The prior sync path could leave `CURRENT_ROOT` at genesis \
       after accepting a checkpoint because the running state's root came from a DAG/tip heuristic; the \
       `AcceptedState` type and this law remove that state rather than patch it. **The 2026-11-17 \
-      correction (C405, twice measured):** the checkpoint's root is **the state at the fringe the \
+      correction (twice measured):** the checkpoint's root is **the state at the fringe the \
       anchor finalised** (Law 104's `fringeState`), which is the base a post-anchor block's merge \
       starts from. The first cut signed the merged state of the finalised fringe and the live cold \
       rejoin showed why that is one layer too high: a block above the anchor does not merge from the \
@@ -6470,10 +6470,10 @@ def lawsC : List Law := [
       `VALIDATION_WINDOW_HEIGHTS` is 14 in `models/src/casper/protocol/checkpoint.rs`: the merge depth \
       is the finality lag (at most `LIVENESS_WINDOW` = 5 heights) plus one finality step, and an \
       earlier header-count window (`8` headers) covered barely two heights at four validators — the \
-      2026-11-17 cold rejoin then needed a block five heights down and had no state for it (C405). A \
+      2026-11-17 cold rejoin then needed a block five heights down and had no state for it. A \
       future builder that reads deeper must change the constant and the commitment together — the \
       joiner refuses rather than widening. **The checkpoint root is the anchor's fringe state \
-      (C405):** a post-anchor block's merge starts from it, so the joiner needs the merge's scope \
+     :** a post-anchor block's merge starts from it, so the joiner needs the merge's scope \
       states, which are headers within the height-bound window. **What this law does not claim:** the \
       state roots are a quorum claim (Law 85's residual); the audit (Law 106) is the counterweight. \
       The window's commitment is \

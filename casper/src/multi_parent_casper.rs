@@ -270,7 +270,7 @@ pub async fn final_scope_rejections(
 /// Compute the merged pre-state for a set of parent blocks (port of `getPreStateForParents`).
 ///
 /// `trusted` is the checkpoint's signed merge base, present only when replay runs on a node whose
-/// accepted state is a checkpoint certificate (C405). See [`merges_from_the_certified_fringe`].
+/// accepted state is a checkpoint certificate. See [`merges_from_the_certified_fringe`].
 pub async fn get_pre_state_for_parents<F, Fut>(
     dag: &dyn BlockDagStorage,
     block_store: &BlockStore,
@@ -354,7 +354,7 @@ where
     // enough to carry no bonds leaf, and the chain stalled at height 20 with `propose failed … active-bonds
     // leaf not found in state`. A block's own `fringe_state_hash` is the state **at** the set it finalises,
     // which is what the retired record held (that same block wrote it) and what the merge must start from.
-    // **The certified merge base** (C405). The first blocks after a checkpoint anchor finalise the
+    // **The certified merge base**. The first blocks after a checkpoint anchor finalise the
     // very fringe the anchor itself finalised, so their merge base is the state the certificate
     // signs. The parent records cannot supply it on a joiner: a sibling received by gossip and never
     // validated carries a zero fringe state (no merge ran here), and a sibling whose body has not
@@ -1733,7 +1733,7 @@ async fn validation_bounds_for_block(
                 else {
                     // **A checkpoint joiner has every committed header and no historical body.**
                     // The bounds are immutable params, so a body it cannot read adds nothing to the
-                    // config values the walk already trusts (C405); requiring the body here refused
+                    // config values the walk already trusts; requiring the body here refused
                     // every post-anchor block before its merge could even start.
                     continue;
                 };

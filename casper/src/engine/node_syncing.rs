@@ -826,7 +826,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     .await?;
     let (entries, fringe_state_root, window) =
         certified_metadata_entries(&walk, &verified.checkpoint)?;
-    // **The signed merge base is the anchor header's own fringe state** (C405). The statement
+    // **The signed merge base is the anchor header's own fringe state**. The statement
     // signs the state a post-anchor block's merge starts from; the anchor header commits that same
     // value under `metadataRoot`, so the joiner can check that the quorum signed the base the header
     // claims. A v1 statement carries no merge base (its root is the anchor post-state); a v2
@@ -841,7 +841,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     }
 
     // **The hydrated set is the certified set.** The checkpoint's **signed fringe state** (the run
-    // root — see C405), the anchor header's own `fringe_state_hash`, the anchored reply's
+    // root), the anchor header's own `fringe_state_hash`, the anchored reply's
     // post-state, and exactly the validation-window roots the statement commits to. The joiner does
     // not guess a window or widen it; a root it cannot hydrate is a failed sync.
     let mut required_roots = BTreeSet::from([checkpoint_root, fringe_state_root]);
@@ -1122,7 +1122,7 @@ async fn certified_checkpoint(
 
 /// Decode the checkpoint's state root.
 /// The checkpoint's run root: the signed merged fringe state (v2), or a v1 singleton's member
-/// post-state. It is the state the first post-anchor block builds on (C405).
+/// post-state. It is the state the first post-anchor block builds on.
 fn checkpoint_state_root(
     checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
 ) -> Result<Blake2b256Hash, String> {
@@ -1216,7 +1216,7 @@ pub(super) fn certified_metadata_entries(
     }
     // **The anchor's identity check is against the certificate's anchor post-state**, not the run
     // root: since v2 the run root is the signed merged fringe state, which no single header carries
-    // (C405). The anchor post-state remains the certificate's statement about the anchor block.
+    //. The anchor post-state remains the certificate's statement about the anchor block.
     let anchor_post = rchain_shared::base16::decode(&checkpoint.anchor_post_state)
         .ok_or_else(|| "the certificate's anchor post-state is not base16".to_string())?;
     if anchor_post.len() != 32 {
@@ -2715,7 +2715,7 @@ mod tests {
     }
 
     /// **The sync root is the certificate's signed fringe state**, not the anchor block's
-    /// post-state: the joiner must hydrate the merge the first post-anchor block builds on (C405).
+    /// post-state: the joiner must hydrate the merge the first post-anchor block builds on.
     #[test]
     fn the_sync_root_is_the_certified_fringe_state() {
         let mut c = statement(BlockHash::new([1u8; 32]), vec![BlockHash::new([1u8; 32])]);

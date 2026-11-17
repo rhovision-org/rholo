@@ -42,7 +42,7 @@ pub const CHECKPOINT_TAG: &[u8] = b"rchain-checkpoint-v1";
 /// Domain tag of the v2 checkpoint digest: the statement carries the **merge base** — the state at
 /// the fringe the anchor finalised (`fringeState`, checked against the anchor header's committed
 /// fringe root at join). A v1 and a v2 statement never share a digest, so old and new attestations
-/// cannot combine; the verifier refuses a v1 statement over a multi-member fringe (C405).
+/// cannot combine; the verifier refuses a v1 statement over a multi-member fringe.
 pub const CHECKPOINT_V2_TAG: &[u8] = b"rchain-checkpoint-v2";
 
 /// Why a checkpoint or a certificate was refused. Every arm names the fact; none is a generic
@@ -217,7 +217,7 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
     // **The run root is the merge base — the state at the fringe the anchor finalised — and it is
     // signed from v2.** A v1 statement has no signed base; it is accepted only for a **singleton**
     // fringe, where the anchor's post-state is the legacy rule. A multi-member v1 statement has no
-    // signed root a joiner could hydrate, so it is refused rather than guessed (C405).
+    // signed root a joiner could hydrate, so it is refused rather than guessed.
     let fringe_state = match &checkpoint.fringe_state {
         Some(hex) => Some(decode_32(hex, "fringeState")?),
         None => {
@@ -769,7 +769,7 @@ mod tests {
 
     /// **The digest binds the signed fringe state** (Law 104d): two statements that differ only in
     /// the merged fringe state have different digests, so a signature over one is not a signature
-    /// over the other. The run root cannot be swapped under an attestation (C405).
+    /// over the other. The run root cannot be swapped under an attestation.
     #[test]
     fn the_digest_binds_the_fringe_state() {
         let mut a = checkpoint();

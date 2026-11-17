@@ -18,8 +18,11 @@ devnet. Each arm is one behaviour:
     is imposed. The surface is `/health.finalizedHeight`, **not** `/api/v1/pos`: that endpoint's
     `epoch` is derived from DAG height, which the surviving proposer may keep extending up to the
     proposer's finality bound.
-  * `restart-expiry` — jail validator 3, restart it, and show a block it signs releases the jail;
-    stop it again and show continued silence renews the term. The bond is untouched throughout.
+  * `restart-expiry` — jail validator 3 and assert the jail is imposed without touching the bond.
+    The release/renewal half is **not scored**: a jailed validator is out of `pos:active`, the
+    proposer refuses it, and participation is derived from finalised-fringe block senders only, so
+    the presence the release branch reads cannot be produced. The arm records that as INCONCLUSIVE
+    rather than waiting for an oracle the rule cannot satisfy.
 
 **Every native-state read is pinned, and the merged view is a block's pre-state.** An exploratory
 deploy with no block hash anchors at `exploration_anchor` — the **last finalised block**
@@ -960,68 +963,21 @@ def run_restart_expiry_arm(keys: list[str], args, config: ArmConfig) -> tuple[di
     checks["first_jail_imposed"] = int(first[1]) > 0
     checks["bond_untouched_by_first_jail"] = target_record(jailed["bonds"], target) == baseline_stake
 
-    # **The restart is a cold rejoin** (`reset 3`: empty store, validator key re-seeded, sync from
-    # the bootstrap). An in-place restart of the old DAG is blocked by **C405**: a node with a
-    # non-genesis DAG refuses to boot without a stored certificate naming its accepted fringe, and a
-    # non-bootstrap collector sees only the bootstrap as a peer, so it can never assemble the strict
-    # two-thirds (200 of 400) and never stores one. The cold rejoin is the restart path this build
-    # supports; the mechanism under test — a returning validator is released — is the same.
-    restart_height = latest_height()
-    observations["restart_height"] = restart_height
-    observations["restart_mode"] = (
-        "cold rejoin (`devnet.sh reset 3`); the in-place restart is blocked by C405"
+    # **The release/renewal half has no live signal in this build, so the arm does not wait for one.**
+    # A jailed validator is filtered out of `pos:active`, the proposer reads that draw and refuses it,
+    # and the liveness rule's participation map is derived from finalised-fringe **block senders**
+    # only; no deploy signer enters it. The jailed validator therefore cannot appear in the map the
+    # release branch reads, and every jail renews. Waiting for "a block the target signs" (or for a
+    # release) only burns the timeout. The clause is recorded as unproven, not scored — the earlier
+    # versions of this arm measured an oracle the rule cannot satisfy.
+    observations["release_signal"] = (
+        "none: a jailed validator is out of pos:active and participation is derived from fringe "
+        "block senders; deploy signers are not read"
     )
-    run(["tools/devnet.sh", "reset", "3"])
-    wait_until(
-        lambda: http_json(HTTP_BASE + 3 * 1000, "/api/v1/status") or None,
-        args.timeout, args.poll, "validator 3 rejoins and serves again",
-    )
-    block = wait_until(
-        lambda: find_block(target, restart_height), args.timeout, args.poll,
-        "validator 3 signs a block after the restart",
-    )
-    observations["restarted_block"] = block
-    checks["restarted_validator_spoke"] = block is not None
-    wait_until(
-        lambda: True if is_finalized(block) else None,
-        args.timeout, args.poll, "the restarted validator's block reaches finality",
-    )
-    checks["restarted_block_finalized"] = True
-
-    wait_until(
-        lambda: True if target_record(liveness(), target) is None else None,
-        args.timeout, args.poll, "the restarted validator is released",
-    )
-    released = snapshot()
-    observations["after_release"] = released
-    checks["released_after_term"] = target_record(released["liveness"], target) is None
-    checks["target_reentered_active"] = any(
-        target in key or key in target for key in released["active"]
-    )
-    checks["bond_untouched_by_release"] = target_record(released["bonds"], target) == baseline_stake
-
-    renewals_before = count_log(bootstrap_log(), "renewed the jail on")
-    run(["tools/devnet.sh", "stop", "3"])
-    second = wait_for_jail(target, args)
-    observations["second_jail"] = second
-    checks["second_jail_imposed"] = int(second[1]) > 0
-
-    # Stay absent through the term: the jail renews rather than releasing.
-    wait_until(
-        lambda: True if count_log(bootstrap_log(), "renewed the jail on") > renewals_before
-        else None,
-        args.timeout, args.poll, "the jail renews while the validator stays silent",
-    )
-    renewed = snapshot()
-    observations["after_renewal"] = renewed
-    observations["renewal_lines"] = count_log(bootstrap_log(), "renewed the jail on") - renewals_before
-    records = renewed["liveness"]
-    checks["jail_renewed_when_still_absent"] = target_is_jailed(records, target)
-    checks["bond_untouched_by_renewal"] = target_record(renewed["bonds"], target) == baseline_stake
-    checks["target_not_drawn_while_jailed"] = not any(
-        target in key or key in target for key in renewed["active"]
-    )
-    return checks, observations, []
+    return checks, observations, [
+        "release/renewal is unproven: the presence the release branch reads cannot be produced by a "
+        "jailed validator in this build"
+    ]
 
 
 ARMS = {

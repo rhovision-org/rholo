@@ -1287,7 +1287,7 @@ impl BlockApi for BlockApiImpl {
         // unable to attest until the backfill reached the anchor. The fallback keeps the old
         // behaviour for a node whose metadata predates this path.
         let anchor_post_state = self.anchor_post_state(&anchor_hash).await?;
-        // **The run root is the merge base of the blocks that build on the anchor** (C405): the state
+        // **The run root is the merge base of the blocks that build on the anchor**: the state
         // at the fringe the anchor's *own* merge finalised, read from the anchor's `fringe_state_hash`.
         // A post-anchor block's merge starts from `prev_fringe_state` — the state at the fringe its
         // parents finalised — not from the anchor's post-state and not from the merged state of the

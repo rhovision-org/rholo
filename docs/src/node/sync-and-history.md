@@ -39,7 +39,7 @@ the finalized fringe, the shard, the epoch, and two optional commitments:
   heights, not headers, because the merge's width is the bonded set.
 - **`fringeState`** — the **merge base**: the state at the fringe the anchor itself finalised, read
   from the anchor's `fringe_state_hash`. A post-anchor block's merge starts from it, so the joiner
-  hydrates this root and the anchor's post-state is an audit field, not the running root (C405). The
+  hydrates this root and the anchor's post-state is an audit field, not the running root. The
   joiner checks the signed value against the anchor header's committed fringe root.
 
 Validators sign the statement digest with a domain tag of its own

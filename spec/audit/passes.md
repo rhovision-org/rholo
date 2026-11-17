@@ -13437,3 +13437,52 @@ row on that basis.
 rule and the fixtures pin its consequences in the shapes exercised, while the option search remains
 Law 17a's; no public-testnet or mainnet behaviour; boundary-CloseBlock validity (C301 C5) and mainnet
 arming (#428) remain out; no public-validator operation.
+
+## 174. Correction: §173's closure of C344 does not stand (2026-11-17)
+
+A second audit of the C344 branch — three HAZOP teams and three red teams, the red teams required to
+challenge premises rather than implementations — found that §173 closed C344 on a clause the running
+node cannot satisfy, and that the work done to make the blocked arm pass had minted finding
+identifiers that never became register rows.
+
+**The release clause is unreachable.** A validator jailed at an advancing boundary is removed from
+`pos:active` (`rholang/src/native_state.rs::select_active_excluding`, written by the boundary). The
+proposer reads the newest block's carried `bonds_map`, which is that same active draw
+(`casper/src/runtime_manager.rs::compute_bonds`), and refuses (`NotBonded`). The liveness prelude's
+participation map is derived from finalised-fringe **block senders**
+(`casper/src/multi_parent_casper.rs`), and no deploy signer is read anywhere in that derivation.
+`is_absent` therefore returns true for the jailed validator at every expiry boundary, and the renew
+branch always wins: a jail is permanent unless a >2/3 vote slashes it or it withdraws. The unit
+witnesses §173 cited (`a_jailed_validator_returns_after_the_term`,
+`a_still_absent_validator_is_renewed`) hand-feed a participation map that includes the jailed
+validator — an input the node cannot produce — and the Lean `stepJail` takes
+`present : Validator → Bool` as a free parameter, so its release theorem is true for any predicate.
+The restart-expiry arm's oracle (a block the restarted, jailed validator signs) is unsatisfiable for
+the same reason.
+
+**The checkpoint work is a separate class of defect.** The cold rejoin stalls because the merge reads
+deploy-chain indices for the conflict and final scopes (`casper/src/merging.rs::MergeScope::merge`,
+`BlockIndex::get_block_index`), while the certificate commits header fields and state roots, not
+indices; a wiped joiner regenerates them by replaying from pre-states. The measured run at
+`33d735041` (`restart-expiry-v5`) is **FAIL**: "validator 3 signs a block after the restart: no
+qualifying answer in 1200s", with the joiner still faulting on an unknown replay root. One concrete
+merge defect remains: the certified-base path skips the loop collecting the fringe's rejected deploys,
+so the joiner can refuse the first post-anchor block as `InvalidRejectedDeploy`.
+
+**The record was wrong about identifiers.** Commit subjects and comments minted identifiers and cited
+them as findings (the evidence file said the arm was "blocked by" two ids), but no such rows were
+ever added to `spec/findings.tsv`; one of the cited identifiers appears nowhere in the tree. Every such citation
+has been removed from code, laws, docs, the drill and the evidence files; commit subjects stand as
+history. `tools/check-finding-citations.sh` now refuses any citation above the register maximum and
+runs from `emit-findings-register.sh --check`, so an unallocated identifier cannot be merged as a
+finding again.
+
+**State after the correction.** C344 is re-opened and re-scoped to what the build can show:
+sustained absence jails without touching the bond; the vote window opens only on a jail; the tally is
+strictly more than two thirds of the active snapshot; a passing vote slashes and permanently ejects;
+a stall changes nothing. Release/renewal is recorded as not proven, with the reachability reason.
+The three reachable arms passed on the 2026-11-17 devnet but their raw records are not committed;
+they must be committed under `spec/audit/evidence/` before a PASS is claimed. The register is 439
+findings — **0 todo, 3 in progress (C343, C344, C357), 436 done**. PR #600 stays a draft. The next
+decision is the release signal (deploy-signer presence or a fixed non-renewing term); the checkpoint
+join is a separate workstream.
