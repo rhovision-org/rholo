@@ -1054,12 +1054,14 @@ def run_cold_rejoin_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict,
     target = keys[3]
     observations["baseline"] = snapshot()
 
-    # The certificate needs a non-empty finalized fringe to have a merge base to sign.
+    # **Let the chain mature before the wipe.** The certificate needs a non-empty finalized fringe
+    # to have a merge base to sign; resetting at the first certifiable anchor leaves the joiner a
+    # long catch-up, which measures the instrument's patience as much as the join.
     wait_until(
-        lambda: True if int(health(HTTP_BASE).get("finalizedHeight") or 0) >= 20 else None,
+        lambda: True if int(health(HTTP_BASE).get("finalizedHeight") or 0) >= 80 else None,
         args.timeout,
         args.poll,
-        "the chain reaches a certifiable anchor",
+        "the chain reaches a mature certifiable anchor",
     )
     reset_height = latest_height()
     observations["reset_height"] = reset_height
