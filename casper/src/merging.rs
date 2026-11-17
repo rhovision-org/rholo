@@ -1957,16 +1957,37 @@ impl MergeScope {
                                     .is_some_and(|message| message.seen.contains(*child))
                         })
                     })
+                    // **A child that finalised nothing is not a prune frontier.** A refused block is
+                    // inserted with `BlockMetadata::from_block`'s default empty fringe; treating it
+                    // as the lowest fringe makes `between(final_fringe, ∅)` the *whole* ancestry, so
+                    // the merge indexes history (on a checkpoint joiner, history whose pre-states it
+                    // never hydrated — the measured `unknown root`). The frontier is the lowest
+                    // *non-empty* child fringe.
+                    .filter(|child| {
+                        dag_data
+                            .get(*child)
+                            .is_some_and(|message| !message.fringe.is_empty())
+                    })
                     .copied()
                     .collect();
                 causal_children.insert(*member, in_past);
             }
         }
-        let prune_fringe: BTreeSet<BlockHash> =
+        let derived_prune: BTreeSet<BlockHash> =
             message_map::prune_fringe(dag_data, final_fringe, &causal_children)
                 .iter()
                 .map(|m| m.id)
                 .collect();
+        // **No child fringe means nothing newer is finalised to prune at.** Passing the empty set
+        // to `from_fringes` means "widen to the closure" (the C400 guard's request); a *derived*
+        // empty set means the opposite — there is no finalised layer beyond the final fringe, so the
+        // final scope is empty. `between(f, f)` is that empty scope; genesis remains the base only
+        // through `from_fringes`' own rule.
+        let prune_fringe = if derived_prune.is_empty() {
+            final_fringe.clone()
+        } else {
+            derived_prune
+        };
         MergeScope::from_fringes(merge_fringe, final_fringe, &prune_fringe, dag_data)
     }
 
@@ -2645,6 +2666,67 @@ mod tests {
             "the closure must include the older finalised writer, not only the trimmed layer"
         );
         assert!(scope.conflict_scope.contains(&c.id));
+    }
+
+    /// **A child that finalised nothing is not a prune frontier.** A refused block is inserted with
+    /// an empty fringe; treating it as the lowest fringe made `between(final_fringe, ∅)` the whole
+    /// ancestry, and a checkpoint joiner then indexed a height-2 block whose pre-state it never
+    /// hydrated (`unknown root`, measured 2026-11-17). The derived-empty prune frontier is the final
+    /// fringe itself, so the final scope is empty rather than the closure.
+    #[test]
+    fn a_child_that_finalised_nothing_does_not_widen_the_final_scope_to_the_closure() {
+        let h = msg(1, &[], &[1]); // an older finalised block
+        let f = msg(2, &[1], &[1, 2]); // the final fringe
+        let c = msg(3, &[], &[1, 2, 3]); // a child of f that finalised nothing (e.g. refused)
+        let dag = BTreeMap::from([(h.id, h.clone()), (f.id, f.clone()), (c.id, c.clone())]);
+        let child_map = BTreeMap::from([(f.id, BTreeSet::from([c.id]))]);
+
+        let (scope, base) = MergeScope::from_dag(
+            &[c.id].into_iter().collect(), // merge fringe
+            &[f.id].into_iter().collect(), // final fringe
+            &child_map,
+            &dag,
+        )
+        .expect("a well-formed dag");
+
+        assert!(
+            scope.final_scope.is_empty(),
+            "no derived child frontier means no finalised layer beyond the final fringe, not the closure"
+        );
+        assert_eq!(
+            base, None,
+            "a non-empty final fringe must not use genesis as its base"
+        );
+        assert_eq!(
+            scope.conflict_scope,
+            [c.id].into_iter().collect::<BTreeSet<_>>(),
+            "the child is still what the merge reconciles"
+        );
+    }
+
+    /// A child that *did* finalise something is still the prune frontier, and bounds the scope.
+    #[test]
+    fn a_finalising_child_still_bounds_the_final_scope() {
+        let h = msg(1, &[], &[1]);
+        let f = msg(2, &[1], &[1, 2]);
+        let mut c = msg(3, &[], &[1, 2, 3]); // finalised {h}
+        c.fringe = [h.id].into_iter().collect();
+        let dag = BTreeMap::from([(h.id, h.clone()), (f.id, f.clone()), (c.id, c.clone())]);
+        let child_map = BTreeMap::from([(f.id, BTreeSet::from([c.id]))]);
+
+        let (scope, _) = MergeScope::from_dag(
+            &[c.id].into_iter().collect(),
+            &[f.id].into_iter().collect(),
+            &child_map,
+            &dag,
+        )
+        .expect("a well-formed dag");
+
+        assert_eq!(
+            scope.final_scope,
+            [f.id].into_iter().collect::<BTreeSet<_>>(),
+            "between(f, h) is the trimmed layer {{f}}"
+        );
     }
 
     /// A merge fringe that has *seen* a block the final fringe has not: that block is the conflict
