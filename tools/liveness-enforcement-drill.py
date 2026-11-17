@@ -541,34 +541,6 @@ def fund_validator(pubkey_hex: str) -> dict:
     return {"address": address, "balance": rev_balance(address), "drip": drip}
 
 
-def verified_checkpoint(port: int = HTTP_BASE):
-    """The served certificate **if this node's verifier accepts it as quorate**, else `None`.
-
-    A 200 from `/api/v1/checkpoint` is not enough: the route serves the *current* checkpoint with
-    however many attestations it has, and on an active chain that is usually short of the strict
-    two-thirds. The restart arm needs one the boot will accept.
-    """
-    try:
-        certificate = http_json(port, "/api/v1/checkpoint")
-    except urllib.error.HTTPError as exc:
-        if exc.code == 400:
-            return None
-        raise
-    try:
-        verified = http_json(
-            port, "/api/v1/checkpoint/verify", method="POST", body=certificate
-        )
-    except urllib.error.HTTPError as exc:
-        if exc.code == 400:
-            return None
-        raise
-    return {"certificate": certificate, "verified": verified}
-
-
-def wait_for_checkpoint(args, label: str) -> dict:
-    return wait_until(lambda: verified_checkpoint() or None, args.timeout, args.poll, label)
-
-
 def wait_for_jail(target: str, args):
     def jailed_record():
         records = liveness()
@@ -988,19 +960,21 @@ def run_restart_expiry_arm(keys: list[str], args, config: ArmConfig) -> tuple[di
     checks["first_jail_imposed"] = int(first[1]) > 0
     checks["bond_untouched_by_first_jail"] = target_record(jailed["bonds"], target) == baseline_stake
 
-    # **A restarted node refuses a non-genesis DAG without a verified checkpoint certificate**
-    # (`casper/src/engine/node_launch.rs:887-894`), and the certificate is quorate only once the
-    # surviving validators' attestations are collected. Wait for it before restarting; without this
-    # the arm tests the startup guard, not the jail release.
-    observations["checkpoint_at_restart"] = wait_for_checkpoint(
-        args, "the bootstrap serves a quorate checkpoint certificate"
-    )
+    # **The restart is a cold rejoin** (`reset 3`: empty store, validator key re-seeded, sync from
+    # the bootstrap). An in-place restart of the old DAG is blocked by **C405**: a node with a
+    # non-genesis DAG refuses to boot without a stored certificate naming its accepted fringe, and a
+    # non-bootstrap collector sees only the bootstrap as a peer, so it can never assemble the strict
+    # two-thirds (200 of 400) and never stores one. The cold rejoin is the restart path this build
+    # supports; the mechanism under test — a returning validator is released — is the same.
     restart_height = latest_height()
     observations["restart_height"] = restart_height
-    run(["tools/devnet.sh", "start", "3"])
+    observations["restart_mode"] = (
+        "cold rejoin (`devnet.sh reset 3`); the in-place restart is blocked by C405"
+    )
+    run(["tools/devnet.sh", "reset", "3"])
     wait_until(
         lambda: http_json(HTTP_BASE + 3 * 1000, "/api/v1/status") or None,
-        args.timeout, args.poll, "validator 3 serves again",
+        args.timeout, args.poll, "validator 3 rejoins and serves again",
     )
     block = wait_until(
         lambda: find_block(target, restart_height), args.timeout, args.poll,
