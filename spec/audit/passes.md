@@ -406,6 +406,29 @@ hash is over the serialized sorted `Par`, and removing one oneof arm changes no 
 A chain that ever carried either cannot be replayed, so such a chain requires a fresh genesis;
 otherwise no new genesis is *caused* by this removal.
 
+**Correction, 2026-11-17 — checkpoint v3 and the merge fork rule are category-A candidates.** PR
+#600 changes two consensus-visible rules and they are recorded here as a dated lockstep decision
+rather than edits to the pinned §6 rows.
+
+1. **Checkpoint v3 (Law 117).** The signed statement adds `fringeHeadersRoot` over the finalised
+   fringe members' headers, and the joiner verifies it (an absent root is the legitimate v2
+   statement). A v2 statement cannot supply a member's own fringe to a cold joiner whose ancestor
+   walk excludes same-height siblings; the join input set (Law 114) is the v3 set. This is a
+   sync-protocol wire change: a v2 node and a v3 node must not be mixed across a cold join. The
+   honest path is unchanged; a chain that accepted a v2 statement has no stored v3 commitment, so a
+   joiner to it needs either the v2 path or a fresh certificate.
+2. **The merge fork rule (Law 115).** A conflict-scope block that has not seen the whole final fringe
+   is a fork and is rejected with its dependency closure (`with_dependencies`, `sdk/src/dag/merging.rs`),
+   instead of the C400 widening that read the finalised closure. This changes block acceptance: a
+   block that the widened scope merged is rejected by the trimmed scope. All validators must upgrade
+   in lockstep; a chain that accepted such a block cannot be replayed by the trimmed rule, so an
+   existing-chain continuation requires an accepted-history compatibility decision or a coordinated
+   new genesis. No complete historical-chain sweep is claimed.
+
+The evidence is PR #600, Laws 114/115/117, `casper/tests/checkpoint_join.rs`, and the live
+`spec/audit/evidence/c344-closeout-20261117/` record. These are A-candidates for review, not an
+independent safety attestation; the §6 table above is unchanged.
+
 ## 7. Verification
 
 - `cargo check --workspace` — clean.

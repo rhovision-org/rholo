@@ -452,8 +452,18 @@ def rejected_in_dag(deploy_id: str, depth: int = 50) -> list:
     found = []
     for block in recent_blocks(depth):
         ids = [str(item).lower() for item in block.get("rejectedDeploys", [])]
-        if any(wanted == item or wanted in item or item in wanted for item in ids):
-            found.append({"block": block.get("blockHash"), "height": block.get("blockNumber")})
+        # **Exact equality, not substring.** A finalised boundary's system close chain has the id
+        # `blockHash ++ 02`; a user deploy whose id is a prefix of that hash is not the system deploy.
+        # The C344 witness `system_deploy_ids_are_not_final_scope_rejections` pins the Rust side of
+        # this; the old substring match read the system id as a merge loss of the ballot.
+        if any(wanted == item for item in ids):
+            entry = {"block": block.get("blockHash"), "height": block.get("blockNumber")}
+            # A sibling that never enters the finalised chain may reject the deploy legitimately.
+            # Only a *finalised* rejection is a merge loss of the ballot.
+            entry["finalized"] = is_finalized(
+                {"blockHash": block.get("blockHash"), "blockNumber": block.get("blockNumber")}
+            )
+            found.append(entry)
     return found
 
 
@@ -725,17 +735,21 @@ def run_jail_vote_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, d
     active_target = keys[1]
     active_vote = submit_signed(vote_term(active_target), validator=0)
     propose()
+    refusal = None
     try:
         commit_deploy(active_vote, args, "a vote against an active validator")
-        observations["active_target_vote"] = {"target": active_target, "refusal": None}
-        checks["active_target_vote_refused"] = False
     except RuntimeError as exc:
-        message = str(exc)
-        observations["active_target_vote"] = {"target": active_target, "refusal": message}
-        checks["active_target_vote_refused"] = any(
-            needle in message
-            for needle in ("not jailed", "no vote window is open", "only an active validator")
-        )
+        refusal = str(exc)
+    # The decisive observable is the window: a vote against an active validator opens none, so the
+    # ballot cannot exist and the tally cannot reach it. The system process may deliver its refusal
+    # in the op's reply rather than as a deploy error, so the deploy status alone is not the oracle.
+    active_window = vote_state(active_target)
+    observations["active_target_vote"] = {
+        "target": active_target,
+        "refusal": refusal,
+        "window": active_window,
+    }
+    checks["active_target_vote_refused"] = active_window is None
     checks["active_target_vote_left_the_bond"] = (
         target_record(snapshot()["bonds"], active_target) is not None
     )
@@ -759,7 +773,11 @@ def run_jail_vote_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, d
     vote = vote_once(target, 0, config, args)
     observations["vote"] = vote
     checks["vote_deploy_committed"] = vote.get("outcome") == "committed"
-    checks["vote_deploy_not_rejected"] = not vote.get("rejected_in")
+    # A sibling that never finalised may legitimately reject the deploy; only a finalised rejection
+    # is a merge loss of the ballot.
+    checks["vote_deploy_not_rejected"] = not any(
+        r.get("finalized") for r in vote.get("rejected_in", [])
+    )
     if vote.get("outcome") != "committed":
         return checks, observations, [f"ballot not cast: {vote.get('outcome')}"]
     consumed = bool(vote.get("consumed_in_own_block"))
@@ -770,10 +788,15 @@ def run_jail_vote_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, d
         vote.get("own_block_ballots", []), 0
     )
 
-    wait_until(
-        lambda: True if target_record(bonds(), target) is None else None,
-        args.timeout, args.poll, "passing vote slashes the bond",
-    )
+    try:
+        wait_until(
+            lambda: True if target_record(bonds(), target) is None else None,
+            args.timeout, args.poll, "passing vote slashes the bond",
+        )
+    except TimeoutError as exc:
+        checks["vote_slashed_the_bond"] = False
+        observations["slash_error"] = str(exc)
+        return checks, observations, [str(exc)]
     after = snapshot()
     observations["after_slash"] = after
     checks["vote_slashed_the_bond"] = target_record(after["bonds"], target) is None
