@@ -253,14 +253,14 @@ theorem the_latch_skipping_path_admits :
 /-! ## The resume is `self_replay_resume_is_due` -/
 
 /-- The reset marker's phase, as the Rust enum carries it. -/
-inductive ResetPhase where
+inductive ResumePhase where
   | pending
   | rewound
 deriving DecidableEq, Repr
 
 /-- The reset marker: the phase, the anchor and the height the reset rewound to. -/
 structure ResetMarker where
-  phase : ResetPhase
+  phase : ResumePhase
   anchor : Nat
   height : Nat
 deriving DecidableEq, Repr
@@ -376,9 +376,6 @@ structure Reset where
   attempted : Bool
   attemptedAnchor : Option Nat
 deriving DecidableEq, Repr
-
-/-- The state-derived alias the recovery layer speaks in. -/
-abbrev ResetState := Reset
 
 /-- The anchor is finalised when its height is at or below the node's finality. -/
 def resetAnchorFinalised (r : Reset) : Bool :=
