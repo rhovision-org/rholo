@@ -116,14 +116,14 @@ genesis decision for each network. If a network wants to price absence, the stag
 | 0 | current: behavioural slashing; absence paid; no inactivity leak | only invalid/equivocation | shipped |
 | 1 | arm the existing income rule after measuring the participation lag | no | a network/genesis decision; measure first |
 | 2 | an inactivity leak / reward decay (new state) | no | not built; Lean-first and maintainer decision |
-| 3 | liveness slashing — **now the opt-in jail + stake vote** (RCHIP #55, Law 89) | only through a >2/3 active-stake vote | implemented, **default off**; jail first (bond untouched), the vote is the only bond path; the local four-validator capstone is the acceptance artefact and is pending |
-| 4 | mainnet arming | as above | **not authorised**; waits on the capstone artefact and #428 |
+| 3 | liveness slashing — **now the opt-in jail + stake vote** (RCHIP #55, Law 89) | only through a >2/3 active-stake vote | implemented, **default off**; jail first (bond untouched), the vote is the only bond path; the local capstone passes jail, vote/threshold and stall, and its restart/expiry arm is blocked by C405 (in-place restart) and C406 (cold rejoin) |
+| 4 | mainnet arming | as above | **not authorised**; waits on the restart evidence and #428 |
 
 **Policy decision.** For the inactivity leak, no automatic step burns a bond. RCHIP #55 adds a *bond-preserving jail* and a *vote-gated slash*; the two
 are not a leak. The recommendation for a default network is still **do not arm**; a network that arms
 accepts that a >2/3 active-stake vote can eject a validator, and that a partitioned minority can be
-jailed on the side that still finalises. Mainnet arming waits on the local four-validator capstone
-and on #428.
+jailed on the side that still finalises. Mainnet arming waits on the restart/expiry evidence (C405,
+C406) and on #428.
 
 ## 8. Terms and reporting
 
