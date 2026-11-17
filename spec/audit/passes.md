@@ -13517,3 +13517,48 @@ they must be committed under `spec/audit/evidence/` before a PASS is claimed. Th
 findings — **0 todo, 3 in progress (C343, C344, C357), 436 done**. PR #600 stays a draft. The next
 decision is the release signal (deploy-signer presence or a fixed non-renewing term); the checkpoint
 join is a separate workstream.
+
+## 175. C343/C357 close-out readiness: the formal rung, the aggregate backlog, the fail-closed phase and the current-build gates (2026-11-17)
+
+**Found.** The last two rows were not closeable from the tree even though their summaries read as
+if they were. C343's Law 88a/88b and C357's Law 92/94 were `proved-model`, but none of the four
+rows carried the `formal`/`mutant`/`falsifier` rung; Law 88b's model was a single `Phase` while its
+own Rust witnesses were per-shard; the aggregate ingest backlog F-U19-11 names was absent from
+`/health`; the pipeline-fault latch made `ready:false` but `/health` still reported the cell's
+`running` phase; and Law 94's row claimed the latch, the no-user-deploy rebuild, the durable record
+and the one-reset bound that its five-state model did not prove. C357's evidence cited Law 95's
+replay-order witness while its laws column named only 11, 92 and 94.
+
+**What landed.** Law 88a now models the scan marker (audited before marked), the aggregate backlog
+(`blocks_st`, validated and incoming stages) and the fail-closed phase (an outstanding durable
+fault reports `Blocked`, refuses admission and the proposal gate, and returns the cell's phase when
+settled). Law 88b models the shard-indexed phase and the readiness conjunction. Law 94 models the
+attestation-only payload, the refused-set exclusion, every trigger's latch read, the
+record-before-transition bracket, the finalised-anchor/one-attempt reset and the catch-up-gated
+resume. The four rows carry `formal`/`mutant`/`falsifier`; `formalMissingCeiling` falls to 146;
+C357's laws column is `11,92,94,95a,95b`.
+
+**Why believed.** Every applied mutant turned its named witness red: the origin-ignoring
+provenance table, the skipped legacy adoption, the dropped aggregate fields, the always-true
+finality bound, the disabled phase check, the any-shard readiness, the disabled latch, the
+normal-mode recovery build, the always-resume predicate, the always-false reset recurrence and
+the newest-first replay build. The current-build isolation drill passed at lag 32 with the reason
+on both surfaces, a flat tip, a refused explicit propose and a re-halt after resume; the three
+self-replay recovery arms passed; the natural-trigger drill passed with the pre-#570 control still
+refusing. The records are under `spec/audit/evidence/c343-current-build-20261117/`,
+`c357-current-build-20261117/` and `c357-natural-trigger-20261117/`, and the matrix with every
+failure tell is `spec/audit/closeout-phase-space-20261117.md`.
+
+**What it does not claim.** The C343 devnet is single-shard, so the per-shard cells remain
+unit-witnessed; the pipeline-fault phase is not injected by the devnet, so that cell is the
+`node_phase` unit plus the existing deploy/propose gates; the live B/C/D snapshots and the block-6
+journal lines remain owed, and those hosts may still run a pre-fix build. The C357 local runs are
+`local-devnet` with `execution_proven: false`; the section-6 lockstep acceptance, the independent
+category-A sign-off and the incident's original trace bytes remain external. The aggregate
+backlog surface is advisory and gates nothing. No consensus rule changed.
+
+**State.** 439 findings — **0 todo, 2 in progress (C343, C357), 437 done**. Both rows stay in
+progress; the close-out-readiness PR is #602 (the next available number; #601 is not a pull
+request). The two-node lesson is recorded in the matrix: an integration test is admitted only
+after its Lean theorem, unit witness and failure tell exist, and a fixture that cannot reach its
+precondition reports `PRECONDITION`, never `PASS` or `FAIL`.
