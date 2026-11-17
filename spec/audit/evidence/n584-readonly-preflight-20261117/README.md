@@ -4,8 +4,15 @@ Result: **NO-GO / G1 NOT SATISFIED**. Direct read-only observations of four acti
 
 ## Pinned candidate
 
-- Source: `70b8ea255f92f06dac59050eab014078dec67712`
-- Expected executable SHA-256: `c414f979414a038f08cb0a39008f6abc591b92aaa382da64e6315d77af77d6b0`
+- Historical candidate: **PR #598 merge commit** `70b8ea255f92f06dac59050eab014078dec67712` (merged into `dev` 2026-11-16T17:21:09Z). This is not the installed public-testnet version.
+- Historical #598 candidate expected executable SHA-256 (not reusable for a new release): `c414f979414a038f08cb0a39008f6abc591b92aaa382da64e6315d77af77d6b0`
+
+## Baseline, deployed state and next gate
+
+- At the 2026-11-17T18:26Z capture, `dev` was `6d490f9a945504861662dc6f1afd303cabaf2843`, following #599, #600 and two CI commits; #598 was four commits behind this baseline.
+- PR #602 subsequently merged into `dev` as `d06b48ab04af94dc8ab8225ac08598af3c6e086b`, introducing current-build C343/C357 gates and the failure-tell matrix. This is a committed source baseline, **not** a deployed release.
+- All four observed public service instances self-reported the older 2026-10-29 #491 live pin `0a1e02362a7c34e474e068ffd47469c8d4be707a`. Protected executable/store reads failed with `PermissionError`; no independent executable or deployed-commit attestation exists.
+- Required sequence: **#602 merged → select explicit post-#602 release commit → freeze build artifact and regenerate executable SHA-256 → privileged host-local installed-pin/store/identity evidence (#572) → independent preflight review and agreed UTC window → #584 G1–G6 live acceptance**. Do not reuse the historical #598 executable hash. **NO-GO remains; #584 stays open.**
 
 ## Method
 
@@ -13,7 +20,7 @@ Each alias was queried twice over its SSH host, using host-local `systemctl is-a
 
 ## Limits / blocker
 
-The user-level SSH session cannot read protected store-format or process executable on any of the four instances when PermissionError is recorded. A source-version string is a self-report, **not** an installed-process hash. Four services on two hosts do not prove four distinct bonded identities. The separate read-only endpoint status check returned HTTP **404** for `/api/v1/finality-observation` on all four services, while `/api/last-finalized-block` returned HTTP **200**. HTTP 200 and acceptsDeploys do **not** prove finality or settlement. The approved post-#592 binary has not been proven installed; no GO and no execution.
+The user-level SSH session cannot read protected store-format or process executable on any of the four instances when PermissionError is recorded. A source-version string is a self-report, **not** an installed-process hash. Four services on two hosts do not prove four distinct bonded identities. The separate read-only endpoint status check returned HTTP **404** for `/api/v1/finality-observation` on all four services, while `/api/last-finalized-block` returned HTTP **200**. HTTP 200 and acceptsDeploys do **not** prove finality or settlement. The historical #598 candidate binary has not been proven installed; no GO and no execution.
 
 ## Reproduction and integrity
 
