@@ -790,10 +790,10 @@ pub async fn apply<
                         ),
                     );
                     // **The stored certificate is the anchor** (Law 108): its checkpoint root is the
-                    // root this node runs from. Since C405 that root is the signed **merged state of
-                    // the finalized fringe** — the same state the first post-anchor block builds on —
-                    // so the approved fringe's state and the certificate's root now agree by
-                    // construction rather than being two different claims.
+                    // root this node runs from. Since the merge-base correction, that root is the **merge base** — the
+                    // state at the fringe the anchor itself finalised, which is where a post-anchor
+                    // block's merge starts — so the approved fringe's state and the certificate's
+                    // root agree by construction rather than being two different claims.
                     let window = rebuild_window_from_dag(dag.as_ref(), &verified).await?;
                     accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
                         verified.clone(),
@@ -1582,6 +1582,27 @@ async fn rebuild_window_from_dag(
     crate::checkpoint::verify_metadata_root(&verified.checkpoint, closure.iter()).map_err(|e| {
         format!("the stored certificate's metadata commitment does not verify: {e}")
     })?;
+    // **The signed merge base is the anchor header's own fringe state** — the same check the
+    // sync path makes. A v2 statement whose `fringeState` is not the anchor's committed
+    // `fringe_state_hash` names a base its anchor does not, and this node will not run from it.
+    if verified.checkpoint.fringe_state.is_some() {
+        let anchor_header = closure
+            .iter()
+            .find(|header| header.block_hash == anchor)
+            .ok_or_else(|| {
+                "the stored certificate's committed header set does not hold its anchor".to_string()
+            })?;
+        let signed = crate::checkpoint::checkpoint_run_root(&verified.checkpoint)
+            .map_err(|e| format!("the stored certificate's fringeState is malformed: {e}"))?;
+        if signed.as_bytes() != anchor_header.fringe_state_hash.as_bytes() {
+            return Err(format!(
+                "the stored certificate's signed fringe state {} is not the anchor header's \
+                 committed fringe state {}",
+                signed.to_hex(),
+                rchain_shared::base16::encode(anchor_header.fringe_state_hash.as_bytes())
+            ));
+        }
+    }
     crate::checkpoint::verify_validation_window(&verified.checkpoint, closure.iter()).map_err(
         |e| format!("the stored certificate's validation-window commitment does not verify: {e}"),
     )?;
