@@ -972,6 +972,23 @@ fn wire_block_processing_observed(
 ) -> BlockProcessingHandles {
     let (incoming_blocks_tx, incoming_blocks_rx) =
         mpsc::channel(rchain_casper::engine::node_running::MAX_PENDING_BLOCKS);
+    // The incoming mpsc stage's depth (F-U19-11's aggregate backlog). A weak sender so the
+    // sampler does not keep the channel open after the runtime drops its handle.
+    {
+        let incoming = incoming_blocks_tx.downgrade();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                tick.tick().await;
+                let Some(incoming) = incoming.upgrade() else {
+                    break;
+                };
+                let depth = rchain_casper::engine::node_running::MAX_PENDING_BLOCKS
+                    .saturating_sub(incoming.capacity());
+                rchain_casper::blocks::block_receiver::observe_incoming_queue(depth);
+            }
+        });
+    }
     let (validated_blocks_tx, validated_blocks_rx) = mpsc::channel(MAX_VALIDATED_BLOCKS);
     // Refused-but-inserted blocks release waiting children through a separate stream: they are
     // DAG entries with a verdict, not validation successes, so they must not fire the taps.
@@ -986,12 +1003,20 @@ fn wire_block_processing_observed(
         });
     let queue_observer = |stage: &str| {
         queue_metrics.as_ref().map(|(metrics, index)| {
-            metrics.queue_observer(
+            let observed = metrics.queue_observer(
                 rchain_shared::metrics::Source::base()
                     .sub("block_pipeline")
                     .sub(&format!("shard_{index}"))
                     .sub(stage),
-            )
+            );
+            if stage == "validated" {
+                Arc::new(move |depth, alive| {
+                    rchain_casper::blocks::block_receiver::observe_validated_queue(depth);
+                    observed(depth, alive);
+                }) as block_receiver::QueueObserver
+            } else {
+                observed
+            }
         })
     };
     let mut validated_blocks_rx = validated_blocks_rx;

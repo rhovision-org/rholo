@@ -62,6 +62,17 @@ impl NodePhase {
     pub fn admits_work(&self) -> bool {
         !matches!(self, NodePhase::Syncing | NodePhase::Blocked(_))
     }
+
+    /// **The fail-closed phase.** An outstanding durable pipeline fault is reported as `Blocked`
+    /// whatever the launch cell says; a settled fault returns the cell's phase. The cell keeps its
+    /// single writer; this is a derived surface, not a second writer.
+    pub fn effective(&self, outstanding: u64) -> NodePhase {
+        if outstanding > 0 {
+            NodePhase::Blocked(format!("pipeline fault outstanding: {outstanding}"))
+        } else {
+            self.clone()
+        }
+    }
 }
 
 /// **One shard's phase cell.** Clone-shared (the `ShardHealth`/`ProposeHealth` pattern): every gate
@@ -181,6 +192,14 @@ mod tests {
         cell.set_phase(NodePhase::Blocked("terminal sync".to_string()));
         assert!(!cell.admits_work());
         assert_eq!(cell.phase().label(), "blocked");
+    }
+
+    #[test]
+    fn an_outstanding_pipeline_fault_reports_blocked() {
+        let running = NodePhase::Running;
+        assert_eq!(running.effective(1).label(), "blocked");
+        assert_eq!(running.effective(0), NodePhase::Running);
+        assert_eq!(NodePhase::Syncing.effective(2).label(), "blocked");
     }
 
     #[tokio::test]

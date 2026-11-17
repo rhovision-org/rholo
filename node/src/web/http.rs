@@ -777,17 +777,28 @@ async fn api_health(State(state): State<HttpState>) -> Response {
     let pipeline_faults = rchain_casper::blocks::block_processor::pipeline_faults();
     let pipeline_faults_outstanding =
         rchain_casper::blocks::block_processor::pipeline_faults_outstanding();
+    // **The aggregate backlog** (F-U19-11): the validated and incoming mpsc stages, not only the
+    // capped `blocks_st` queue. Advisory like `pending`/`sampledPeak`; nothing gates on it.
+    let (validated_queue, incoming_queue) = rchain_casper::blocks::block_receiver::queue_sample();
     let proposal_isolated = rchain_casper::blocks::proposer::proposer::proposal_isolated();
     // **Confirmed, not sampled**: `orphan_bodies` is zero until the periodic audit has seen the
     // same store/DAG gap for three consecutive samples, so an in-flight block does not flap this.
     let orphan_bodies = rchain_casper::block_disposition::orphan_bodies();
-    let primary_phase = state.shards.primary_phase();
+    let primary_phase = state
+        .shards
+        .primary_phase()
+        .effective(pipeline_faults_outstanding);
     let all_running = state.shards.all_running();
     let shard_phases: BTreeMap<String, &'static str> = state
         .shards
         .phases
         .iter()
-        .map(|(id, cell)| (id.to_string(), cell.phase().label()))
+        .map(|(id, cell)| {
+            (
+                id.to_string(),
+                cell.phase().effective(pipeline_faults_outstanding).label(),
+            )
+        })
         .collect();
     let blocked =
         !all_running || pipeline_faults_outstanding > 0 || proposal_isolated || orphan_bodies > 0;
@@ -877,6 +888,8 @@ async fn api_health(State(state): State<HttpState>) -> Response {
                     "capacity": rchain_casper::engine::node_running::MAX_PENDING_BLOCKS,
                     "pending": rchain_casper::blocks::block_receiver::pending_sample().0,
                     "sampledPeak": rchain_casper::blocks::block_receiver::pending_sample().1,
+                    "validatedQueue": validated_queue,
+                    "incomingQueue": incoming_queue,
                 },
                 "finalityStalled": state.peer_liveness.finality_stall_sustained(),
                 "finalityStallEpisodes": state.peer_liveness.stall_episodes(),
@@ -4371,10 +4384,13 @@ mod tests {
         assert!(json["readyReasons"].as_array().unwrap().is_empty());
         assert!(json["finalizedHeight"].is_null());
         assert!(json["finalizedLag"].is_null());
-        // The cap is on `BlockReceiverState.blocks_st`; this is that queue, not the mpsc stage one.
+        // The cap is on `BlockReceiverState.blocks_st`; `pending`/`sampledPeak` are that queue,
+        // and `validatedQueue`/`incomingQueue` are the two mpsc stages of the aggregate backlog.
         assert_eq!(json["blockPipeline"]["capacity"], 1024);
         assert!(json["blockPipeline"]["pending"].is_number());
         assert!(json["blockPipeline"]["sampledPeak"].is_number());
+        assert!(json["blockPipeline"]["validatedQueue"].is_number());
+        assert!(json["blockPipeline"]["incomingQueue"].is_number());
         assert_eq!(json["finalizedHeightError"], "finalized block unavailable");
         // `height` is one past the observed height; the observed height is its own field.
         assert_eq!(json["height"], 4);
