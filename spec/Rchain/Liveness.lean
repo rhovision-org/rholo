@@ -17,15 +17,17 @@ What stays with Rust and its tests: the store codecs, the epoch boundary's parti
 (derived from the receiver's finalised fringe), delegation fan-out on a slash, the withdrawal
 escrow, and the exact `is_super_majority` (this module uses the same strict `3·for > 2·total`).
 
-**The release/renewal clause is conditional on a presence signal, and the node's signal refutes it.**
-`releaseIfPresent` takes `present` as a parameter, so the earlier theorems are true for any predicate.
-`presentFromSenders` is the derivation the node actually runs (finalised-fringe senders), and
-`gatedSenders` is the proposer gate (a jailed validator is outside the drawn active set and cannot
-author a message). Under those two facts `a_jailed_validator_is_never_present`,
-`block_presence_cannot_release_a_jailed_validator` and `block_presence_renews_a_jailed_validator`
-state the reachable outcome: **renew, never release**. A release needs a signal a jailed validator can
-produce — a deploy it signs and an unjailed proposer includes — or a fixed non-renewing term; the
-algebra does not supply one.
+**The release/renewal clause is claimed, and the node's presence signal supplies both arms.**
+`releaseIfPresent` takes `present` as a parameter. The node's derivation is
+`presentFromAuthorsAndDeployers`: a validator is present at a boundary when it **authored a
+finalised-fringe block or signed a deploy included in one** (`participation_map` and
+`participation_from_fringe`, `casper/src/multi_parent_casper.rs`). The authoring arm is gated — a
+jailed validator is outside the drawn active set and the proposer refuses it (`gatedSenders`) — but
+the deploy-signer arm is not: a jailed key can sign a funded deploy that an unjailed proposer
+includes. So a jailed validator is released when its key signed such a deploy and renewed when it
+stayed silent. `presentFromSenders` is the **retired authors-only model**, kept as the mutant:
+under it every jail is permanent, which the 2026-11-17 build measured before the deploy-signer arm
+was added.
 -/
 
 namespace Rchain
@@ -241,48 +243,107 @@ theorem release_clears_the_window_and_ballots (present : Validator → Bool) (s 
         s.ballots.filter (fun ballot => ballot.1.1 != v) := by
   simp [releaseIfPresent, hterm, hpresent]
 
-/-- **The node's presence derivation.** A validator is present at a boundary iff it authored a
-    message in the finalised fringe. This is the whole of the reachable rule: the boundary's
-    participation map is `latest_heights(prev_fringe senders)` in
-    `casper/src/multi_parent_casper.rs`, and nothing else is read — no deploy signer enters it. -/
-def presentFromSenders (senders : Validator → Bool) (v : Validator) : Bool := senders v
+/-- **The node's presence derivation (2026-11-17 correction).** A validator is present at a
+    boundary iff it authored a finalised-fringe block **or** signed a deploy included in one.
+    `participation_map` (`casper/src/multi_parent_casper.rs`) unions the authors and the deploy
+    signers at the member's height; `deploy_signers` reads the block body's deploy `deployer`
+    keys. The body is hash-covered, so every node derives the same set. -/
+def presentFromAuthorsAndDeployers (authors deployers : Validator → Bool) (v : Validator) : Bool :=
+  authors v || deployers v
 
-/-- **The proposer gate, as the model needs it.** A jailed validator is removed from the drawn
-    active set, and the proposer refuses a sender whose stake is zero in the newest block's bond
-    cache; so a jailed validator is never among the finalised fringe's senders. The Rust facts are
-    `rholang/src/native_state.rs::select_active_excluding` (the draw excludes the jailed) and
-    `casper/src/blocks/proposer/proposer.rs::is_active_validator` (the proposer refuses an
-    undrawn sender). -/
+/-- **The proposer gate.** A jailed validator is removed from the drawn active set, and the proposer
+    refuses a sender whose stake is zero in the newest block's bond cache; so a jailed validator is
+    never among the finalised fringe's **authors**. The Rust facts are
+    `rholang/src/native_state.rs::select_active_excluding` and
+    `casper/src/blocks/proposer/proposer.rs::is_active_validator`. The gate does **not** apply to
+    deploy signatures: a jailed key can sign a funded deploy. -/
 def gatedSenders (s : State) (senders : Validator → Bool) : Prop :=
   ∀ v, jailTerm s v > 0 → senders v = false
 
-/-- **Under the node's derivation a jailed validator is never present.** The free-parameter reading
-    of `releaseIfPresent` proves a conditional; this theorem supplies the antecedent's negation for
-    every reachable boundary, which is what makes the release clause dead code in this build. -/
+/-- **The retired model, kept as the mutant.** Presence read only block authors. Under it a jailed
+    validator is never present and release is unreachable; the node no longer runs this. -/
+def presentFromSenders (senders : Validator → Bool) (v : Validator) : Bool := senders v
+
+/-- **A deploy signature can present a jailed validator.** The authoring gate holds — the validator
+    cannot author — and its key signed a deploy, so the corrected predicate is true. This is the
+    reachable arm the correction adds. -/
+theorem a_deploy_signer_can_present_a_jailed_validator (s : State)
+    (authors deployers : Validator → Bool) (v : Validator)
+    (hauth : gatedSenders s authors) (hjailed : jailTerm s v > 0) (hdeploy : deployers v = true) :
+    presentFromAuthorsAndDeployers authors deployers v = true := by
+  simp [presentFromAuthorsAndDeployers, hauth v hjailed, hdeploy]
+
+/-- **Under the retired model a jailed validator is never present.** This is the mutant's
+    property, not the node's: the authors-only derivation plus the authoring gate gives `false`, so
+    release cannot fire. -/
 theorem a_jailed_validator_is_never_present (s : State) (senders : Validator → Bool)
     (hgate : gatedSenders s senders) (v : Validator) (hjailed : jailTerm s v > 0) :
     presentFromSenders senders v = false :=
   hgate v hjailed
 
-/-- **Block-authored presence cannot release a jailed validator.** The release branch needs
-    `present v = true`; the derivation and the gate give `false`, so `releaseIfPresent` is the
-    identity on the state. C344's release/renewal clause is therefore not proven by the algebra —
-    it is refuted as unreachable until the presence signal changes (deploy signers, or a fixed
-    non-renewing term). -/
+/-- **Under the retired model block presence cannot release a jailed validator.** The mutation this
+    correction removes: the same reachable state (a deploy signed by the jailed key) is present
+    under `presentFromAuthorsAndDeployers` and absent under `presentFromSenders`. -/
 theorem block_presence_cannot_release_a_jailed_validator (s : State) (senders : Validator → Bool)
     (hgate : gatedSenders s senders) (v : Validator) (hjailed : jailTerm s v > 0) :
     releaseIfPresent (presentFromSenders senders) s v = s := by
   have hp : presentFromSenders senders v = false := hgate v hjailed
   simp [releaseIfPresent, hp]
 
-/-- **Block-authored presence renews a jailed validator.** At the expiry boundary the term is
-    renewed to the full sentence, which is the reachable arm of the rule in this build. -/
+/-- **Under the retired model silence renews a jailed validator.** Kept as the mutant's other arm:
+    with no deploy-signer presence, every expiry renews, so every jail is permanent. -/
 theorem block_presence_renews_a_jailed_validator (s : State) (senders : Validator → Bool)
     (hgate : gatedSenders s senders) (J : Nat) (v : Validator) (hterm : jailTerm s v ≤ 1)
     (hjailed : jailTerm s v > 0) :
     jailTerm (renewIfAbsent (presentFromSenders senders) J s v) v = J :=
   a_still_absent_validator_is_renewed (presentFromSenders senders) J s v hterm
     (hgate v hjailed)
+
+/-- **Law 89's corrected statement.** Presence is the author **or** a deploy signer. A jailed
+    validator at the end of its term is released when present and renewed when absent; the
+    authoring gate is the only gate and never makes deploy-signer presence false. -/
+def law89_statement : Prop :=
+  ∀ (s : State) (authors deployers : Validator → Bool) (v : Validator) (J : Nat),
+    gatedSenders s authors →
+    jailTerm s v > 0 → jailTerm s v ≤ 1 →
+    (presentFromAuthorsAndDeployers authors deployers v = true →
+      v ∉ (releaseIfPresent (presentFromAuthorsAndDeployers authors deployers) s v).jailed.map
+        (fun entry => entry.1)) ∧
+    (presentFromAuthorsAndDeployers authors deployers v = false →
+      jailTerm (renewIfAbsent (presentFromAuthorsAndDeployers authors deployers) J s v) v = J)
+
+theorem law89 : law89_statement := by
+  intro s authors deployers v J _ _ hterm
+  constructor
+  · intro hp
+    exact a_returning_validator_is_released (presentFromAuthorsAndDeployers authors deployers) s v
+      hterm hp
+  · intro hp
+    exact a_still_absent_validator_is_renewed (presentFromAuthorsAndDeployers authors deployers) J s
+      v hterm hp
+
+/-- **The mutant proposition**: authors-only presence leaves a deploy-presented jail in place. -/
+def law89_mutant : Prop :=
+  ∃ (s : State) (deployers : Validator → Bool) (v : Validator),
+    jailTerm s v = 1 ∧ deployers v = true ∧
+      releaseIfPresent (presentFromSenders (fun _ => false)) s v = s ∧
+      releaseIfPresent (presentFromAuthorsAndDeployers (fun _ => false) deployers) s v ≠ s
+
+/-- **The falsifier, fired.** A jailed validator with one boundary left whose key signed a deploy:
+    the retired model leaves it jailed, the corrected model releases it. -/
+theorem law89_falsifier : law89_mutant := by
+  let s : State :=
+    { pool := [], active := [], absent := [], jailed := [(1, 1)], banned := [],
+      windows := [], ballots := [], anchor := 0 }
+  let deployers : Validator → Bool := fun v => v == 1
+  refine ⟨s, deployers, 1, by decide, by decide, ?_, ?_⟩
+  · simp [releaseIfPresent, presentFromSenders, jailTerm, lookup]
+  · intro h
+    have h' : (releaseIfPresent (presentFromAuthorsAndDeployers (fun _ => false) deployers) s 1).jailed
+        = [] := by
+      simp [releaseIfPresent, presentFromAuthorsAndDeployers, deployers, jailTerm, lookup]
+    rw [h] at h'
+    simp [s] at h'
 
 /-- **A banished validator cannot rebond.** The Rust `bond` refuses a banished key before its own
     checks (`native_state.rs:1874-1878`), which is the half that makes a passing vote's ejection

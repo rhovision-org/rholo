@@ -11624,6 +11624,14 @@ reproductions, and both held:
    refusal was the guard reading a fringe state instead of a block post-state; it now reads the newest
    validated block's post-state.
 
+   **Correction (2026-11-17).** The two-node matrix was testing a *local* config claim over the
+   checkpoint handshake, and it duplicated the guard's own unit coverage; it moved to
+   `casper/tests/committed_bounds.rs::restore_guard_checks_the_developer_allocation_before_running`
+   (with the config→claim wiring in `casper/tests/determinism.rs`). The node suite is now
+   `node/tests/checkpoint_restore.rs` and tests the mainnet gate instead: restore the certified
+   state, validate the first post-anchor block, and, for a bonded joiner, propose a block the
+   bootstrap finalises. The old file name is not a current path.
+
 Two accounting corrections came with it: the total is a *wallets-plus-allocation* subtotal and excludes
 the bond-funded staking vault, and the allocation **increases the total by 2.2003102759%** while
 **diluting existing holders by 2.1529389392%** — the first draft gave one figure for both. The review also asked for

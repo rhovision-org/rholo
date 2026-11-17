@@ -371,6 +371,30 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             return Ok(());
         }
 
+        // **A pinned certificate is one source of truth.** The launch fetched the certificate and
+        // requested the fringe anchored at its anchor; the responder answers that request with the
+        // anchor alone (`node_running.rs`). Every later broadcast is a *newer* history, and pairing
+        // it with the pinned statement is the cold-join failure measured on the C344 build:
+        // `tie_certificate_to_fringe` refuses it (correctly), and the retry reuses the same
+        // certificate, so every attempt fails the same way. Ignore a fringe that is not the
+        // certified anchor; the anchored request's own retry is what re-supplies the target.
+        if let Some(certificate) = self.prefetched_certificate.as_ref() {
+            if let Ok(anchor) = decode_hash(&certificate.checkpoint.anchor, "certificate anchor") {
+                let is_anchored_target = fringe.hashes.len() == 1 && fringe.hashes[0] == anchor;
+                if !is_anchored_target {
+                    self.log.info(
+                        self.log_source,
+                        &format!(
+                            "Ignoring a fringe from {sender} that is not the certified anchor {}: \
+                             a pinned certificate and a later broadcast are two different histories.",
+                            anchor.to_hex()
+                        ),
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
         // **Every bootstrap answer reaches the slot, not only the first** (AUDIT C181, #125). The
         // old code kept the fringe only when it was about to start a request, so a later — and
         // necessarily *newer* — answer was dropped in silence, which is precisely the thing a retry
@@ -492,6 +516,7 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             let block_requests = self.block_requests.clone();
             let replay = self.replay.clone();
             let prefetched_certificate = self.prefetched_certificate.clone();
+            let trim_state = self.trim_state;
             tokio::spawn(async move {
                 let source = LogSource::new("casper.engine.NodeSyncing");
                 let mut importer = importer;
@@ -541,6 +566,9 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                         prefetched_certificate.as_ref(),
                         replay.as_ref(),
                         &approved_store,
+                        latest_fringe.as_ref(),
+                        fringe_arrived.as_ref(),
+                        trim_state,
                     )
                     .await;
                     let outcome = match outcome {
@@ -663,6 +691,67 @@ fn notify_when_restored(outcome: &Result<(), String>, finished: &tokio::sync::No
     }
 }
 
+/// **Re-pin the sync target to the certificate's anchor.**
+///
+/// When the launch could not fetch a certificate, it falls back to the ordinary fringe request.
+/// That answer — and every later broadcast — is the bootstrap's *latest* fringe, while a retry's
+/// freshly fetched certificate names the fringe at its own anchor. Under autopropose the two reads
+/// happen at different times, so `tie_certificate_to_fringe` refuses the pair (correctly), and the
+/// retry can repeat the mismatch indefinitely. Ask for the anchor's own fringe and wait for that
+/// answer, so the statement and the served history are the same history by construction.
+async fn wait_for_anchored_target(
+    anchor: BlockHash,
+    latest_fringe: &tokio::sync::Mutex<Option<FinalizedFringe>>,
+    fringe_arrived: &tokio::sync::Notify,
+    comm_util: &CommUtil,
+    trim_state: bool,
+    log: &dyn Log,
+) -> Result<FinalizedFringe, String> {
+    if let Some(fringe) = latest_fringe.lock().await.clone() {
+        if fringe.hashes.len() == 1 && fringe.hashes[0] == anchor {
+            return Ok(fringe);
+        }
+    }
+    let source = LogSource::new("casper.engine.NodeSyncing");
+    const ATTEMPTS: u32 = 3;
+    for attempt in 1..=ATTEMPTS {
+        comm_util
+            .request_finalized_fringe(trim_state, true, Some(anchor))
+            .await
+            .map_err(|e| {
+                format!(
+                    "the anchored fringe request for {} failed: {e}",
+                    anchor.to_hex()
+                )
+            })?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let notified = fringe_arrived.notified();
+            if let Some(fringe) = latest_fringe.lock().await.clone() {
+                if fringe.hashes.len() == 1 && fringe.hashes[0] == anchor {
+                    return Ok(fringe);
+                }
+            }
+            tokio::select! {
+                _ = notified => {}
+                _ = tokio::time::sleep_until(deadline) => break,
+            }
+        }
+        log.warn(
+            source,
+            &format!(
+                "the bootstrap did not answer the anchored fringe request for {} \
+                 (attempt {attempt} of {ATTEMPTS})",
+                anchor.to_hex()
+            ),
+        );
+    }
+    Err(format!(
+        "the bootstrap did not serve the fringe anchored at the certificate's anchor {}",
+        anchor.to_hex()
+    ))
+}
+
 /// Download the approved (last finalized) state — blocks + tuple space in parallel — and populate the
 /// DAG (port of `requestApprovedState`). Free function so it can be spawned off the dispatch loop.
 #[allow(clippy::too_many_arguments)]
@@ -686,6 +775,12 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     >,
     replay: Option<&RecoveryReplay>,
     approved_store: &ApprovedStore,
+    // **One source of truth**: the retry loop's target slot and wake-up, so an attempt whose
+    // certificate was fetched after the ordinary fringe request can re-pin to the certificate's
+    // anchor instead of pairing a moving target with a fixed statement.
+    latest_fringe: &tokio::sync::Mutex<Option<FinalizedFringe>>,
+    fringe_arrived: &tokio::sync::Notify,
+    trim_state: bool,
 ) -> Result<crate::engine::anchor::AcceptedState, String> {
     let source = LogSource::new("casper.engine.NodeSyncing");
     let replay =
@@ -797,13 +892,45 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     // active set excludes the jailed and honours the active cap; weighing a certificate under it
     // would refuse every jail and every capped epoch.
     let trusted_bonds = replay.runtime.genesis_pos().bonds.clone();
+    // **Fetch the certificate before choosing the target.** `prefetched_certificate` is the
+    // launch's statement; when the launch could not fetch one (the bootstrap was not certifiable
+    // yet), this attempt fetches its own. The target is then the fringe *anchored at that
+    // statement's anchor*, never the ordinary answer the retry loop happens to hold.
+    let fetched_certificate =
+        match (prefetched_certificate, replay.checkpoint_source.as_deref()) {
+            (None, Some(source)) => Some(source.fetch_certificate().await.map_err(|e| {
+                format!("the bootstrap's checkpoint certificate was not fetched: {e}")
+            })?),
+            _ => None,
+        };
+    let certificate = prefetched_certificate.or(fetched_certificate.as_ref());
+    let anchored = match certificate {
+        Some(certificate) => {
+            let anchor = decode_hash(&certificate.checkpoint.anchor, "certificate anchor")?;
+            if fringe.hashes.len() == 1 && fringe.hashes[0] == anchor {
+                fringe.clone()
+            } else {
+                wait_for_anchored_target(
+                    anchor,
+                    latest_fringe,
+                    fringe_arrived,
+                    comm_util.as_ref(),
+                    trim_state,
+                    log.as_ref(),
+                )
+                .await?
+            }
+        }
+        None => fringe.clone(),
+    };
+    let fringe = &anchored;
     let verified = certified_checkpoint(
         replay.checkpoint_source.as_deref(),
         &trusted_bonds,
         &replay.shard_id,
         fringe,
         replay.checkpoint_store.as_ref(),
-        prefetched_certificate,
+        certificate,
     )
     .await?;
     let checkpoint_root = checkpoint_state_root(&verified.checkpoint)?;
@@ -1681,6 +1808,31 @@ mod tests {
         BlockHash::new(bytes)
     }
 
+    /// A certificate whose only meaningful field is the anchor: the fringe-target test never
+    /// verifies the signature (that is `certified_checkpoint`'s job), it only needs the statement
+    /// the launch would have pinned.
+    fn certificate_for(
+        anchor: BlockHash,
+    ) -> rchain_models::casper::protocol::checkpoint::CheckpointCertificate {
+        use rchain_models::casper::protocol::checkpoint::{Checkpoint, CheckpointCertificate};
+        CheckpointCertificate {
+            checkpoint: Checkpoint {
+                shard_id: "root".to_string(),
+                anchor: anchor.to_hex(),
+                anchor_height: 5,
+                anchor_post_state: hash(0).to_hex(),
+                fringe_state: Some(hash(0).to_hex()),
+                fringe_hashes: vec![anchor.to_hex()],
+                parent_digest: None,
+                epoch: 0,
+                metadata_root: None,
+                history_root: None,
+                fringe_headers_root: None,
+            },
+            attestations: Vec::new(),
+        }
+    }
+
     fn chain_block(block_num: i64, justification: Option<BlockHash>) -> BlockMessage {
         let justifications: Vec<BlockHash> = justification.into_iter().collect();
         BlockMessage {
@@ -2089,6 +2241,67 @@ mod tests {
             .expect("an outsider's update must be ignored");
         assert_eq!(*engine.latest_fringe.lock().await, Some(fringe));
         assert!(!log.contains("Received finalized fringe from bootstrap node"));
+    }
+
+    /// **A pinned certificate does not follow a later broadcast.** The launch fetched the
+    /// certificate and requested the fringe anchored at its anchor; that anchored answer is the
+    /// only target the pinned statement can be tied to. A newer broadcast is a different history,
+    /// and adopting it makes `tie_certificate_to_fringe` refuse every retry (the measured cold-join
+    /// failure). The anchored answer must start the sync; every later broadcast must not replace it.
+    #[tokio::test]
+    async fn a_pinned_certificate_does_not_follow_a_later_broadcast_fringe() {
+        let log = Arc::new(RecordingLog::default());
+        let (mut engine, bootstrap, _approved) = failing_engine(&log).await;
+        let anchor = hash(5);
+        engine.set_checkpoint_certificate(certificate_for(anchor));
+        let signal = engine.initial_fringe_received_handle();
+
+        let newer = FinalizedFringe {
+            hashes: vec![hash(9)],
+            state_hash: StateHash::new([9u8; 32]),
+            ancestry: Vec::new(),
+        };
+        engine
+            .handle(&bootstrap, &CasperMessage::FinalizedFringe(newer.clone()))
+            .await
+            .expect("a broadcast is ignored without error");
+        assert!(
+            engine.latest_fringe.lock().await.is_none(),
+            "a broadcast replaced the pinned certificate's target"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), signal.notified())
+                .await
+                .is_err(),
+            "a broadcast consumed the one-shot trigger"
+        );
+
+        let anchored = FinalizedFringe {
+            hashes: vec![anchor],
+            state_hash: StateHash::new([5u8; 32]),
+            ancestry: Vec::new(),
+        };
+        engine
+            .handle(
+                &bootstrap,
+                &CasperMessage::FinalizedFringe(anchored.clone()),
+            )
+            .await
+            .expect("the anchored answer is admitted");
+        assert_eq!(*engine.latest_fringe.lock().await, Some(anchored.clone()));
+        tokio::time::timeout(Duration::from_secs(1), signal.notified())
+            .await
+            .expect("the anchored answer starts the sync");
+
+        engine
+            .handle(&bootstrap, &CasperMessage::FinalizedFringe(newer))
+            .await
+            .expect("a later broadcast is ignored without error");
+        assert_eq!(
+            *engine.latest_fringe.lock().await,
+            Some(anchored),
+            "a later broadcast replaced the pinned certificate's target"
+        );
     }
 
     /// A hostname/IP or advertised-port change does not change the TLS-authenticated node key.

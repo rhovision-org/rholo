@@ -1,4 +1,5 @@
 import Mathlib.Logic.Function.Basic
+import Mathlib.Data.Finset.Basic
 
 /-!
 # Law 108 — a running node is anchored
@@ -101,6 +102,72 @@ theorem a_foreign_root_is_not_accepted (anchor : TrustAnchor) (root : Nat)
     (h : root ≠ anchor.root) : ¬ ∃ s : Accepted, s.anchor = anchor ∧ s.root = root := by
   rintro ⟨s, rfl, hs⟩
   exact h (hs.symm.trans s.root_eq)
+
+/-- **The anchor header's committed projection**: the fringe it names and the fringe-state root it
+    commits. The checkpoint statement's signed `fringeState` must be this root, and its signed
+    `fringe_hashes` this fringe: that is the equality `current_checkpoint` constructs
+    (`casper/src/api/block_api_impl.rs:1298-1312`) and the joiner re-checks against the walked
+    header (`casper/src/engine/node_syncing.rs:858-865`). -/
+structure HeaderProjection where
+  fringe : Finset Nat
+  fringeStateHash : Nat
+  deriving DecidableEq
+
+/-- The signed attestation fields of a checkpoint statement. -/
+structure Attested where
+  fringe : Finset Nat
+  fringeState : Nat
+  deriving DecidableEq
+
+/-- **The attestation check.** The signed root is the header's committed fringe state and the signed
+    fringe is the header's fringe. Both equalities are checked before acceptance. -/
+def attests (header : HeaderProjection) (statement : Attested) : Prop :=
+  statement.fringeState = header.fringeStateHash ∧ statement.fringe = header.fringe
+
+/-- **The signed root is the anchor header's fringe state.** This is the value the boot re-check
+    reads; it is not the anchor block's post-state (Law 108d). -/
+theorem the_signed_root_is_the_anchors_fringe_state (header : HeaderProjection)
+    (statement : Attested) (h : attests header statement) :
+    statement.fringeState = header.fringeStateHash :=
+  h.1
+
+/-- **The signed fringe is the anchor header's fringe.** The statement cannot name a different set
+    of members than the header it is a statement about. -/
+theorem the_signed_fringe_is_the_anchors_fringe (header : HeaderProjection)
+    (statement : Attested) (h : attests header statement) :
+    statement.fringe = header.fringe :=
+  h.2
+
+/-- **A signed root that is not the header's fringe state is refused.** The check is an equality,
+    so a statement carrying a different root cannot satisfy it. -/
+theorem a_signed_root_that_is_not_the_fringes_state_is_refused (header : HeaderProjection)
+    (statement : Attested) (h : statement.fringeState ≠ header.fringeStateHash) :
+    ¬ attests header statement := by
+  intro hattests
+  exact h hattests.1
+
+/-- **Law 117's statement.** An attested statement's signed root and fringe are exactly the header's
+    committed root and fringe. -/
+def law117_statement : Prop :=
+  ∀ (header : HeaderProjection) (statement : Attested),
+    attests header statement →
+      statement.fringeState = header.fringeStateHash ∧ statement.fringe = header.fringe
+
+theorem law117 : law117_statement := by
+  intro header statement h
+  exact h
+
+/-- **The mutant proposition**: a statement whose signed root differs from the header's committed
+    fringe state nevertheless attests. The check forbids it. -/
+def law117_mutant : Prop :=
+  ∃ (header : HeaderProjection) (statement : Attested),
+    statement.fringeState ≠ header.fringeStateHash ∧ attests header statement
+
+/-- **The falsifier, fired.** The mutant is unsatisfiable: the attestation's first conjunct is the
+    equality the mutant negates. -/
+theorem law117_falsifier : ¬ law117_mutant := by
+  rintro ⟨header, statement, hne, hattests⟩
+  exact hne hattests.1
 
 end Anchor
 end Sync

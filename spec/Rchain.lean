@@ -55,6 +55,8 @@ import Rchain.Sync.Audit
 import Rchain.Sync.Availability
 import Rchain.Sync.Anchor
 import Rchain.Sync.Window
+import Rchain.Sync.Admission
+import Rchain.Sync.JoinInputs
 import Rchain.Sync.Service
 import Rchain.Sync.Settlement
 import Rchain.Sync.Claim
