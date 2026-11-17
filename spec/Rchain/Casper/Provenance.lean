@@ -82,4 +82,35 @@ output the Rust can actually reach. -/
 theorem a_self_replay_failure_is_a_local_fault :
     provenanceCause .selfBuilt .replayMismatch = .localFault := rfl
 
+/-- **The wrong table**: origin ignored, every replay mismatch read as divergence. This is the
+    classification the incident's `handle_errors` collapsed to. -/
+def provenanceCauseIgnoringOrigin : ProvenanceOrigin → ProvenanceRefusal → ProvenanceCause
+  | _, .replayMismatch => .divergence
+  | _, _ => .attributable
+
+/-- **Law 92's mutant**: the origin-ignoring table maps a self-built replay mismatch to
+    divergence — the defect shape the law forbids. -/
+def law92_mutant : Prop :=
+  provenanceCauseIgnoringOrigin .selfBuilt .replayMismatch = .divergence
+
+/-- **The falsifier, fired**: the mutant really does make the self-built case a divergence. -/
+theorem law92_falsifier : law92_mutant := rfl
+
+/-- **Law 92's statement.** Provenance decides the cause: an inbound replay mismatch stays
+    `divergence`, a self-built one is a `localFault`, the two origins disagree about the same
+    failure, and the origin-ignoring mutant is exhibited. -/
+def law92_statement : Prop :=
+  provenanceCause .peer .replayMismatch = .divergence ∧
+  provenanceCause .selfBuilt .replayMismatch ≠ .divergence ∧
+  provenanceCause .peer .replayMismatch ≠ provenanceCause .selfBuilt .replayMismatch ∧
+  provenanceCause .selfBuilt .replayMismatch = .localFault ∧
+  law92_mutant
+
+theorem law92 : law92_statement :=
+  ⟨an_inbound_replay_failure_is_divergence,
+   a_self_replay_failure_is_not_divergence,
+   the_two_origins_disagree_about_the_same_failure,
+   a_self_replay_failure_is_a_local_fault,
+   law92_falsifier⟩
+
 end Rchain

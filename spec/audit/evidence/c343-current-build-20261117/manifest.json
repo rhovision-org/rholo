@@ -1,0 +1,58 @@
+{
+  "arms": [],
+  "binary_sha256": "sha256:4a656971436902a3e0de863017623c5888dbdc7bb2651e005f46e314e36f28a5",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 230852,
+      "kind": "log",
+      "path": "raw/raw/bootstrap.log",
+      "sha256": "4d231ea324c5fae2cecc18dbc58af45c9dc7227ac2f3eec43dbe00b743543786"
+    },
+    {
+      "bytes": 1056,
+      "kind": "json",
+      "path": "raw/raw/health-after-resume.json",
+      "sha256": "8af1e266da2e2d82f2a490c735f0ff1c8d87254abb0b4503697c4809e4399026"
+    },
+    {
+      "bytes": 962,
+      "kind": "json",
+      "path": "raw/raw/health-before-stop.json",
+      "sha256": "5cbfd92087c30c83b8dd1baa01ceadf4fe82dc53fd21e0132d715f392977b5ab"
+    },
+    {
+      "bytes": 1056,
+      "kind": "json",
+      "path": "raw/raw/health-halted.json",
+      "sha256": "63c605d1740c30ed49bb9fdad07783d7b67940f000457e65801f8ac58b464595"
+    },
+    {
+      "bytes": 3730,
+      "kind": "json",
+      "path": "raw/raw/operator-status-halted.json",
+      "sha256": "ba387fd82466b4d5fce973d52dd5c57e8a29dad581b775a6faf0bb0bc38e287f"
+    },
+    {
+      "bytes": 4553,
+      "kind": "json",
+      "path": "raw/raw/result.json",
+      "sha256": "06a2f3bca5645adfde11c8723011179ea727c089ecc6fb62a2001024310a4158"
+    }
+  ],
+  "gate_id": "C343",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-17T19:00:32+00:00",
+    "tool": "evidence-pack",
+    "version": 1
+  },
+  "redactions": [],
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "89cac44d4c7b665d88d3eefed964818d35cdd016",
+  "verdict": "PASS"
+}

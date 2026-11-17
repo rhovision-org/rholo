@@ -4915,10 +4915,18 @@ def lawsC : List Law := [
     statement := "**A stored body is accounted for or visible.** A body in the block store is \
       either a DAG block (its metadata is the durable verdict) or carries an unsettled \
       `Pending`/`Faulted` row; the start-up audit adopts every unaccounted body before the phase \
-      becomes `Running`, so that transition cannot skip a stored body. The law says **visible**, \
-      not **settled**: a body whose justifications are not in the DAG stays `Pending` and visible, \
-      and the bounded start-up drain does not wait for it",
+      becomes `Running`, so that transition cannot skip a stored body, and the scan writes its \
+      durable marker only after the walk. The law says **visible**, not **settled**: a body whose \
+      justifications are not in the DAG stays `Pending` and visible, and the bounded start-up \
+      drain does not wait for it. Visibility is the **aggregate** ingest backlog: a body held in \
+      any of the `blocks_st`, validated or incoming stages is seen, not only the capped queue. \
+      An outstanding pipeline fault is a fail-closed `Blocked` phase: the reported phase, deploy \
+      admission and the proposal gate all refuse until the fault settles, and the shard phase cell \
+      keeps its single writer",
     status := .provedModel,
+    formal := `Rchain.Disposition.law88a_statement,
+    mutant := `Rchain.Disposition.law88a_mutant,
+    falsifier := `Rchain.Disposition.law88a_falsifier,
     declarations := [`Rchain.Disposition.State,
       `Rchain.Disposition.Disposition, `Rchain.Disposition.audit,
       `Rchain.Disposition.adoptBody, `Rchain.Disposition.startup,
@@ -4927,7 +4935,31 @@ def lawsC : List Law := [
       `Rchain.Disposition.audit_does_not_change_dag,
       `Rchain.Disposition.startup_clean,
       `Rchain.Disposition.startup_without_audit_leaves_an_orphan,
-      `Rchain.Disposition.a_dropped_row_is_an_orphan],
+      `Rchain.Disposition.a_dropped_row_is_an_orphan,
+      `Rchain.Disposition.scan,
+      `Rchain.Disposition.the_scan_audits_before_marking,
+      `Rchain.Disposition.a_scanned_state_holds_no_orphan,
+      `Rchain.Disposition.markedWithoutAudit,
+      `Rchain.Disposition.a_marker_without_the_audit_leaves_an_orphan,
+      `Rchain.Disposition.Stage,
+      `Rchain.Disposition.aggregate,
+      `Rchain.Disposition.blocksStOnlySurface,
+      `Rchain.Disposition.the_aggregate_surface_sees_every_held_body,
+      `Rchain.Disposition.a_body_held_in_a_validated_queue_is_invisible_to_a_blocks_st_only_surface,
+      `Rchain.Disposition.effectivePhase,
+      `Rchain.Disposition.admitsWork,
+      `Rchain.Disposition.rawPhaseOnly,
+      `Rchain.Disposition.admitsWorkRaw,
+      `Rchain.Disposition.proposalGate,
+      `Rchain.Disposition.an_outstanding_fault_reports_blocked,
+      `Rchain.Disposition.a_settled_fault_returns_the_cell_phase,
+      `Rchain.Disposition.an_outstanding_fault_blocks_admission,
+      `Rchain.Disposition.an_outstanding_fault_refuses_the_proposal_gate,
+      `Rchain.Disposition.a_raw_phase_admits_work_during_an_outstanding_fault,
+      `Rchain.Disposition.law88a_mutant,
+      `Rchain.Disposition.law88a_falsifier,
+      `Rchain.Disposition.law88a_statement,
+      `Rchain.Disposition.law88a],
     axioms := [],
     rust := ["casper/src/block_disposition.rs", "casper/src/engine/node_launch.rs",
       "node/src/runtime/node_runtime.rs", "casper/src/dag.rs", "shared/src/typed_store.rs"],
@@ -4940,12 +4972,27 @@ def lawsC : List Law := [
       `Rchain.Disposition.audit_does_not_change_dag,
       `Rchain.Disposition.startup_clean,
       `Rchain.Disposition.startup_without_audit_leaves_an_orphan,
-      `Rchain.Disposition.a_dropped_row_is_an_orphan],
+      `Rchain.Disposition.a_dropped_row_is_an_orphan,
+      `Rchain.Disposition.the_scan_audits_before_marking,
+      `Rchain.Disposition.a_scanned_state_holds_no_orphan,
+      `Rchain.Disposition.a_marker_without_the_audit_leaves_an_orphan,
+      `Rchain.Disposition.the_aggregate_surface_sees_every_held_body,
+      `Rchain.Disposition.a_body_held_in_a_validated_queue_is_invisible_to_a_blocks_st_only_surface,
+      `Rchain.Disposition.an_outstanding_fault_reports_blocked,
+      `Rchain.Disposition.a_settled_fault_returns_the_cell_phase,
+      `Rchain.Disposition.an_outstanding_fault_blocks_admission,
+      `Rchain.Disposition.an_outstanding_fault_refuses_the_proposal_gate,
+      `Rchain.Disposition.a_raw_phase_admits_work_during_an_outstanding_fault,
+      `Rchain.Disposition.law88a_falsifier],
     falsifiable := "`skipAudit` flips the phase without adopting: \
       `startup_without_audit_leaves_an_orphan` exhibits the stored body 7 with no DAG entry and no \
       row, which is the live incident's shape. Deleting a row without a DAG record \
       (`a_dropped_row_is_an_orphan`) is the other defect shape; an audit that removed rows instead \
-      of adding them fails `audit_covers`.",
+      of adding them fails `audit_covers`. The marker without the walk \
+      (`a_marker_without_the_audit_leaves_an_orphan`), the blocks-st-only surface \
+      (`a_body_held_in_a_validated_queue_is_invisible_to_a_blocks_st_only_surface`) and the raw \
+      phase that admits during a fault (`a_raw_phase_admits_work_during_an_outstanding_fault`) are \
+      the three added defect shapes.",
     note := "Node-local durable ingestion, not consensus state, so `proved-model` rather than a \
       corpus-tied row: there is no wire or derived value to tie. This row promotes C343's \
       `candidate:block-disposition-and-isolation`. The model assumes readable bodies; the Rust scan \
@@ -4959,8 +5006,12 @@ def lawsC : List Law := [
       gate refuses outside the running phase and one height beyond `MAX_PROPOSAL_FINALITY_LAG`, \
       which is what bounds a private chain when no peer accepts it. The gate is **total in the \
       anchor**: a view with no finalised block measures from genesis, so `no anchor` is not `no \
-      bound`",
+      bound`. The phase is per-shard: a shard's proposal gate reads only its own cell, and health \
+      readiness is **every** shard running",
     status := .provedModel,
+    formal := `Rchain.Disposition.law88b_statement,
+    mutant := `Rchain.Disposition.law88b_mutant,
+    falsifier := `Rchain.Disposition.law88b_falsifier,
     declarations := [`Rchain.Disposition.Phase,
       `Rchain.Disposition.MAX_PROPOSAL_FINALITY_LAG,
       `Rchain.Disposition.withinProposalFinalityBound,
@@ -4977,7 +5028,19 @@ def lawsC : List Law := [
       `Rchain.Disposition.skipWithoutAnchor,
       `Rchain.Disposition.a_gate_that_skips_the_bound_without_an_anchor_admits_a_private_chain,
       `Rchain.Disposition.a_view_without_a_finalized_block_is_still_bounded,
-      `Rchain.Disposition.the_anchor_is_passed_through],
+      `Rchain.Disposition.the_anchor_is_passed_through,
+      `Rchain.Disposition.ShardPhases,
+      `Rchain.Disposition.ready,
+      `Rchain.Disposition.shardGate,
+      `Rchain.Disposition.a_shard_is_gated_only_by_its_own_cell,
+      `Rchain.Disposition.a_syncing_shard_is_refused_whatever_the_others_do,
+      `Rchain.Disposition.ready_iff_every_shard_running,
+      `Rchain.Disposition.anyShardRunning,
+      `Rchain.Disposition.a_readiness_that_accepts_any_shard_admits_a_syncing_node,
+      `Rchain.Disposition.law88b_mutant,
+      `Rchain.Disposition.law88b_falsifier,
+      `Rchain.Disposition.law88b_statement,
+      `Rchain.Disposition.law88b],
     axioms := [],
     rust := ["casper/src/blocks/proposer/proposer.rs",
       "node/src/instances/proposer_instance.rs", "casper/src/engine/node_phase.rs",
@@ -4994,7 +5057,12 @@ def lawsC : List Law := [
       `Rchain.Disposition.a_gate_without_the_phase_admits_a_syncing_node,
       `Rchain.Disposition.a_gate_without_the_bound_admits_a_private_chain,
       `Rchain.Disposition.a_gate_that_skips_the_bound_without_an_anchor_admits_a_private_chain,
-      `Rchain.Disposition.a_view_without_a_finalized_block_is_still_bounded],
+      `Rchain.Disposition.a_view_without_a_finalized_block_is_still_bounded,
+      `Rchain.Disposition.a_shard_is_gated_only_by_its_own_cell,
+      `Rchain.Disposition.a_syncing_shard_is_refused_whatever_the_others_do,
+      `Rchain.Disposition.ready_iff_every_shard_running,
+      `Rchain.Disposition.a_readiness_that_accepts_any_shard_admits_a_syncing_node,
+      `Rchain.Disposition.law88b_falsifier],
     falsifiable := "`legacyGate` admits a syncing node \
       (`a_gate_without_the_phase_admits_a_syncing_node`) and `unboundedGate` admits a tip beyond \
       the bound (`a_gate_without_the_bound_admits_a_private_chain`). A gate that reads the wrong \
@@ -5003,7 +5071,8 @@ def lawsC : List Law := [
       `a_gate_that_skips_the_bound_without_an_anchor_admits_a_private_chain` exhibits; \
       `a_view_without_a_finalized_block_is_still_bounded` is total, and \
       `a_view_without_a_finalized_block_still_trips_the_bound` pins that the Rust now answers it \
-      the same way.",
+      the same way. The any-shard readiness is the third added defect shape \
+      (`a_readiness_that_accepts_any_shard_admits_a_syncing_node`).",
     note := "The bound is policy (`32`), not a measured optimum, and the Rust split is: the phase \
       gate in `proposer_instance`, the height gate in `proposer.rs`. This row promotes C343's \
       `candidate:block-disposition-and-isolation`. **The anchor is total since C351**: the gate was \
@@ -5470,19 +5539,29 @@ def lawsC : List Law := [
       C270 arm neither counted, surfaced nor bounded it and rebuilt the identical block until \
       finality froze.",
     status := .provedModel,
+    formal := `Rchain.law92_statement,
+    mutant := `Rchain.law92_mutant,
+    falsifier := `Rchain.law92_falsifier,
     declarations := [`Rchain.ProvenanceOrigin, `Rchain.ProvenanceRefusal, `Rchain.ProvenanceCause,
       `Rchain.provenanceCause,
       `Rchain.an_inbound_replay_failure_is_divergence,
       `Rchain.a_self_replay_failure_is_not_divergence,
       `Rchain.the_two_origins_disagree_about_the_same_failure,
-      `Rchain.a_self_replay_failure_is_a_local_fault],
+      `Rchain.a_self_replay_failure_is_a_local_fault,
+      `Rchain.provenanceCauseIgnoringOrigin,
+      `Rchain.law92_mutant,
+      `Rchain.law92_falsifier,
+      `Rchain.law92_statement,
+      `Rchain.law92],
     axioms := [],
     rust := ["casper/src/interpreter_util.rs", "casper/src/multi_parent_casper.rs",
       "casper/src/blocks/proposer/proposer.rs"],
     rustWitness := ["casper/src/multi_parent_casper.rs:a_self_built_replay_failure_is_classified_as_a_local_fault"],
     witness := [`Rchain.an_inbound_replay_failure_is_divergence,
       `Rchain.a_self_replay_failure_is_not_divergence,
-      `Rchain.the_two_origins_disagree_about_the_same_failure],
+      `Rchain.the_two_origins_disagree_about_the_same_failure,
+      `Rchain.a_self_replay_failure_is_a_local_fault,
+      `Rchain.law92_falsifier],
     falsifiable := "**Delete the origin arm and map every `ReplayVerdict::Failed` to \
       `InvalidStateHash`** — `a_self_replay_failure_is_not_divergence` cannot be proved (`decide` \
       fails on the resulting equality), and the Rust witness reddens because the self-built case \
@@ -5538,15 +5617,35 @@ def lawsC : List Law := [
       therefore reaches a safe state in one transition, and the incident's 45-hour loop — the same \
       deterministic block rebuilt and refused — has no representation to write. **The reset is not \
       terminal:** once the catch-up walk passes the finalised anchor it rewound to, \
-      `resumeAfterCatchup` returns the node to healthy. The Rust's `ProposalMode::AttestOnly`, the \
-      self-replay latch, the finalised-anchor reset and the automatic post-catch-up resume are the \
-      model's implementation.",
+      `resumeAfterCatchup` returns the node to healthy. The concrete arms are the model's \
+      implementation: `attestOnly` carries no user deploy, `changeInput` holds the refused set out, \
+      `triggerAdmitted` reads the latch, `transitionStep` records before it is observable, \
+      `canReset` names a finalised anchor and refuses a second attempt, and `resumeAdmitted` waits \
+      for catch-up and a finalised anchor.",
     status := .provedModel,
+    formal := `Rchain.law94_statement,
+    mutant := `Rchain.law94_mutant,
+    falsifier := `Rchain.law94_falsifier,
     declarations := [`Rchain.RecoveryState, `Rchain.RecoveryStep, `Rchain.nextState,
       `Rchain.RecoverySafe, `Rchain.no_unchanged_retry, `Rchain.every_fault_reaches_safe,
       `Rchain.a_caught_up_reset_resumes, `Rchain.resume_requires_a_reset,
       `Rchain.resetAdmitted, `Rchain.a_non_finalised_anchor_is_refused,
-      `Rchain.a_finalised_anchor_is_admitted],
+      `Rchain.a_finalised_anchor_is_admitted,
+      `Rchain.Deploy, `Rchain.Input, `Rchain.attestOnly,
+      `Rchain.the_attest_only_rebuild_has_no_user_deploy,
+      `Rchain.changeInput, `Rchain.the_refused_deploy_is_not_in_the_rebuild,
+      `Rchain.AttemptKey, `Rchain.keyOf, `Rchain.a_retry_of_the_same_key_is_not_a_new_attempt,
+      `Rchain.Trigger, `Rchain.triggerAdmitted, `Rchain.a_halted_proposer_admits_no_trigger,
+      `Rchain.triggerSkipsLatch, `Rchain.a_trigger_that_skips_the_latch_admits_a_block,
+      `Rchain.Transition, `Rchain.transitionStep, `Rchain.an_observable_halt_has_a_durable_record,
+      `Rchain.a_record_after_the_transition_is_not_a_bracket,
+      `Rchain.Reset, `Rchain.canReset, `Rchain.the_reset_anchor_is_finalised,
+      `Rchain.at_most_one_reset_per_anchor,
+      `Rchain.resumeAdmitted, `Rchain.resume_requires_catch_up,
+      `Rchain.resume_requires_a_finalised_anchor,
+      `Rchain.RecoveryStepMutant, `Rchain.nextStateMutant,
+      `Rchain.law94_mutant, `Rchain.law94_falsifier,
+      `Rchain.law94_statement, `Rchain.law94],
     axioms := [],
     rust := ["casper/src/blocks/proposer/proposer.rs", "casper/src/api/block_api.rs",
       "casper/src/engine/reset.rs", "casper/src/engine/catchup.rs",
@@ -5557,7 +5656,19 @@ def lawsC : List Law := [
       "casper/tests/reset.rs:a_caught_up_self_replay_reset_resumes_without_an_operator_post",
       "casper/tests/reset.rs:a_self_replay_reset_below_its_anchor_does_not_resume"],
     witness := [`Rchain.no_unchanged_retry, `Rchain.every_fault_reaches_safe,
-      `Rchain.a_caught_up_reset_resumes, `Rchain.a_non_finalised_anchor_is_refused],
+      `Rchain.a_caught_up_reset_resumes, `Rchain.a_non_finalised_anchor_is_refused,
+      `Rchain.the_attest_only_rebuild_has_no_user_deploy,
+      `Rchain.the_refused_deploy_is_not_in_the_rebuild,
+      `Rchain.a_retry_of_the_same_key_is_not_a_new_attempt,
+      `Rchain.a_halted_proposer_admits_no_trigger,
+      `Rchain.a_trigger_that_skips_the_latch_admits_a_block,
+      `Rchain.an_observable_halt_has_a_durable_record,
+      `Rchain.a_record_after_the_transition_is_not_a_bracket,
+      `Rchain.the_reset_anchor_is_finalised,
+      `Rchain.at_most_one_reset_per_anchor,
+      `Rchain.resume_requires_catch_up,
+      `Rchain.resume_requires_a_finalised_anchor,
+      `Rchain.law94_falsifier],
     falsifiable := "**Add a transition from `refused` to `refused`** (the incident's retry). Then \
       `no_unchanged_retry` cannot be proved (`decide` fails on the equality) and the proposer witness \
       reddens, because the second build is the refused block again rather than an attestation. The \
@@ -5569,12 +5680,14 @@ def lawsC : List Law := [
       or at another anchor (`a_self_replay_reset_below_its_anchor_does_not_resume`, \
       `a_marker_from_another_anchors_reset_does_not_clear_the_self_replay_fault`).",
     note := "**What this law does not claim.** It does not model the replay's cause (RC-B, open), the \
-      cost/state ordering (law 93), or the reset's durable bracket (laws 72/73/76). It says only that \
-      the fault state has an exit, that the exit is not a no-op, and that a completed reset returns \
-      the node to healthy. The one-reset-per-finalised-anchor bound is operating policy rather than a \
-      consensus invariant, but the Rust witness refuses a second reset at the same anchor; the \
-      operator's explicit resume remains the fallback when no anchor was named, the reset was \
-      disabled, or the anchor has already had its attempt." },
+      cost/state ordering (law 93), or the storage-level crash bracket of the record (laws \
+      72/73/76); `Transition`/`transitionStep` state the record-before-observable-transition rule \
+      abstractly. It says that the fault state has an exit, that the exit is not a no-op, and that a \
+      completed reset returns the node to healthy. The one-reset-per-finalised-anchor bound is \
+      operating policy rather than a consensus invariant; `at_most_one_reset_per_anchor` states it \
+      and the Rust witness refuses a second reset at the same anchor; the operator's explicit resume \
+      remains the fallback when no anchor was named, the reset was disabled, or the anchor has \
+      already had its attempt." },
 
   { number := 95, clause := "a", layer := "RSpace",
     statement := "**The replay record is built in the play's execution order.** RSpace prepends \

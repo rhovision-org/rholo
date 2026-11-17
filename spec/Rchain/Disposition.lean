@@ -69,6 +69,11 @@ structure State where
   dag : List BlockHash
   ledger : List Row
   phase : Phase := .starting
+  /-- The durable `legacy-body-scan` marker: true once the start-up scan has walked the store.
+      The Rust gates the walk on it; a marked state that was not scanned is the defect shape. -/
+  scanMarker : Bool := false
+  /-- Pipeline faults this process still owes a verdict for. Zero clears the fail-closed gate. -/
+  outstanding : Nat := 0
   deriving Repr
 
 namespace State
@@ -253,6 +258,77 @@ theorem a_dropped_row_is_an_orphan :
   · simp [State.Disposed, State.hasRow]
   · simp [dropRow, State.Orphan, State.Disposed, State.inDag, State.stored, State.hasRow]
 
+/-! ## 88a — the scan marker and the aggregate backlog surface -/
+
+/-- **The start-up scan.** Audit every stored body, then write the durable marker. The Rust sets
+    `legacy-body-scan` only after the walk; this is that order. -/
+def scan (s : State) : State := { (audit s) with scanMarker := true }
+
+/-- **The scan audits before it marks.** -/
+theorem the_scan_audits_before_marking (s : State) :
+    (scan s).Clean ∧ (scan s).scanMarker = true := by
+  refine ⟨?_, rfl⟩
+  simpa [scan, State.Clean, audit_bodies] using audit_covers s
+
+/-- A marked scan leaves no orphan. -/
+theorem a_scanned_state_holds_no_orphan (s : State) :
+    (scan s).scanMarker = true → (scan s).Clean :=
+  fun _ => (the_scan_audits_before_marking s).1
+
+/-- **The defect shape**: write the marker without the walk. -/
+def markedWithoutAudit (s : State) : State := { s with scanMarker := true }
+
+theorem a_marker_without_the_audit_leaves_an_orphan :
+    (markedWithoutAudit orphanState).Orphan 7 := by
+  simp [markedWithoutAudit, orphanState, State.Orphan, State.Disposed, State.inDag,
+    State.stored, State.hasRow]
+
+/-- The ingest stages whose held bodies the health surface must aggregate. `blocksSt` is the
+    queue the 1024 cap is on; `validated` and `incoming` are the mpsc stages. -/
+inductive Stage where
+  | blocksSt
+  | validated
+  | incoming
+deriving DecidableEq, Repr
+
+/-- The aggregate backlog: every stage's held bodies, not only the capped queue. -/
+def aggregate (held : Stage → Nat) : Nat :=
+  held .blocksSt + held .validated + held .incoming
+
+/-- The surface before F-U19-11: `blockPipeline.pending` reports the `blocks_st` queue only. -/
+def blocksStOnlySurface (held : Stage → Nat) : Nat := held .blocksSt
+
+theorem aggregate_ge_blocksSt (held : Stage → Nat) : held .blocksSt ≤ aggregate held := by
+  unfold aggregate
+  exact Nat.le_trans (Nat.le_add_right _ _) (Nat.le_add_right _ _)
+
+theorem aggregate_ge_validated (held : Stage → Nat) : held .validated ≤ aggregate held := by
+  unfold aggregate
+  exact Nat.le_trans (Nat.le_add_left _ _) (Nat.le_add_right _ _)
+
+theorem aggregate_ge_incoming (held : Stage → Nat) : held .incoming ≤ aggregate held := by
+  unfold aggregate
+  exact Nat.le_add_left _ _
+
+/-- **A body held in any stage is visible on the aggregate surface.** -/
+theorem the_aggregate_surface_sees_every_held_body (held : Stage → Nat)
+    (h : ∃ st, held st > 0) : aggregate held > 0 := by
+  rcases h with ⟨st, hst⟩
+  have hle : held st ≤ aggregate held := by
+    cases st
+    · exact aggregate_ge_blocksSt held
+    · exact aggregate_ge_validated held
+    · exact aggregate_ge_incoming held
+  exact Nat.lt_of_lt_of_le hst hle
+
+/-- **The defect shape F-U19-11 names**: a body held in the validated queue is invisible to a
+    `blocks_st`-only surface. -/
+theorem a_body_held_in_a_validated_queue_is_invisible_to_a_blocks_st_only_surface :
+    ∃ held : Stage → Nat, held .validated > 0 ∧ blocksStOnlySurface held = 0 := by
+  refine ⟨fun st => if st = .validated then 1 else 0, ?_, ?_⟩
+  · simp
+  · simp [blocksStOnlySurface]
+
 /-! ## 88b — the proposal gate -/
 
 /-- The bound the Rust proposer uses (`casper/src/blocks/proposer/proposer.rs`). Policy, not a
@@ -365,6 +441,183 @@ theorem a_view_without_a_finalized_block_is_still_bounded :
 theorem the_anchor_is_passed_through (f tip : Nat) :
     totalGate .running tip (some f) = gate .running tip f := by
   simp [totalGate, finalizedFloor]
+
+/-! ## 88b — the shard-indexed phase and readiness
+
+`NodePhaseCell` is one clone-shared cell per shard (`casper/src/engine/node_phase.rs`); the
+proposer reads its own cell and `/health` requires every shard. The model below makes both
+quantifiers explicit. The `shards` list is the node's shard set; it is a list rather than a
+`Finset` so this module keeps its core-only imports. -/
+
+structure ShardPhases (Shard : Type) where
+  phase : Shard → Phase
+  shards : List Shard
+
+/-- Readiness is **every** shard running. -/
+def ready {Shard : Type} [DecidableEq Shard] (ps : ShardPhases Shard) : Bool :=
+  ps.shards.all (fun s => decide (ps.phase s = .running))
+
+/-- A shard's proposal gate reads only its own cell. -/
+def shardGate {Shard : Type} (ps : ShardPhases Shard) (s : Shard) (tip : Nat)
+    (anchor : Option Nat) : GateResult :=
+  totalGate (ps.phase s) tip anchor
+
+theorem a_shard_is_gated_only_by_its_own_cell {Shard : Type} (ps : ShardPhases Shard) (s : Shard)
+    (tip : Nat) (anchor : Option Nat) :
+    shardGate ps s tip anchor = totalGate (ps.phase s) tip anchor := rfl
+
+/-- **A syncing shard is refused whatever the other shards do.** -/
+theorem a_syncing_shard_is_refused_whatever_the_others_do {Shard : Type} (ps : ShardPhases Shard)
+    (s : Shard) (tip : Nat) (anchor : Option Nat) (h : ps.phase s ≠ .running) :
+    shardGate ps s tip anchor = .refuse .notRunning := by
+  simp [shardGate, totalGate, gate, h]
+
+theorem ready_iff_every_shard_running {Shard : Type} [DecidableEq Shard]
+    (ps : ShardPhases Shard) :
+    ready ps = true ↔ ∀ s ∈ ps.shards, ps.phase s = .running := by
+  simp [ready, List.all_eq_true, decide_eq_true_eq]
+
+/-- **The defect shape**: readiness accepts if any shard runs. -/
+def anyShardRunning {Shard : Type} [DecidableEq Shard] (ps : ShardPhases Shard) : Bool :=
+  ps.shards.any (fun s => decide (ps.phase s = .running))
+
+/-- **A readiness that accepts any shard admits a syncing node.** The witness: one running shard,
+    one syncing shard. -/
+theorem a_readiness_that_accepts_any_shard_admits_a_syncing_node :
+    ∃ ps : ShardPhases Bool, anyShardRunning ps = true ∧ ready ps = false := by
+  refine ⟨{ phase := fun b => if b then .running else .syncing, shards := [true, false] }, ?_, ?_⟩
+  · decide
+  · decide
+
+/-! ## 88a — the fail-closed Blocked phase
+
+An outstanding pipeline fault is a durable obligation (`block_processor::pipeline_faults_outstanding`).
+The phase cell keeps its single writer; the reported phase and the proposer gate are **derived**
+from the obligation, so a running cell cannot serve work while the fault is outstanding. -/
+
+def effectivePhase (s : State) : Phase :=
+  if s.outstanding > 0 then .blocked else s.phase
+
+/-- The deploy/admission answer (`NodePhase::admits_work` plus the fault latch). -/
+def admitsWork (s : State) : Bool :=
+  match effectivePhase s with
+  | .syncing | .blocked => false
+  | _ => true
+
+/-- The defect shape: report and admit on the cell, ignoring the durable fault. -/
+def rawPhaseOnly (s : State) : Phase := s.phase
+
+def admitsWorkRaw (s : State) : Bool :=
+  match rawPhaseOnly s with
+  | .syncing | .blocked => false
+  | _ => true
+
+/-- The proposer gate reads the effective phase. -/
+def proposalGate (s : State) (tip : Nat) (anchor : Option Nat) : GateResult :=
+  totalGate (effectivePhase s) tip anchor
+
+theorem an_outstanding_fault_reports_blocked (s : State) (h : s.outstanding > 0) :
+    effectivePhase s = .blocked := by
+  simp [effectivePhase, h]
+
+theorem a_settled_fault_returns_the_cell_phase (s : State) (h : s.outstanding = 0) :
+    effectivePhase s = s.phase := by
+  simp [effectivePhase, h]
+
+theorem an_outstanding_fault_blocks_admission (s : State) (h : s.outstanding > 0) :
+    admitsWork s = false := by
+  simp [admitsWork, effectivePhase, h]
+
+theorem an_outstanding_fault_refuses_the_proposal_gate (s : State) (tip : Nat)
+    (anchor : Option Nat) (h : s.outstanding > 0) :
+    proposalGate s tip anchor = .refuse .notRunning := by
+  simp [proposalGate, totalGate, gate, effectivePhase, h]
+
+theorem a_raw_phase_admits_work_during_an_outstanding_fault :
+    ∃ s : State, s.outstanding > 0 ∧ s.phase = .running ∧ admitsWorkRaw s = true := by
+  refine ⟨{ bodies := [], dag := [], ledger := [], phase := .running, outstanding := 1 }, ?_, rfl, ?_⟩
+  · simp
+  · simp [admitsWorkRaw, rawPhaseOnly]
+
+/-- **Law 88a's mutant**: the marker without the scan, the blocks-st-only surface, and the raw
+    phase that admits during a fault. -/
+def law88a_mutant : Prop :=
+  (∃ s : State, (markedWithoutAudit s).Orphan 7) ∧
+  (∃ held : Stage → Nat, held .validated > 0 ∧ blocksStOnlySurface held = 0) ∧
+  (∃ s : State, s.outstanding > 0 ∧ s.phase = .running ∧ admitsWorkRaw s = true)
+
+theorem law88a_falsifier : law88a_mutant :=
+  ⟨⟨orphanState, a_marker_without_the_audit_leaves_an_orphan⟩,
+   a_body_held_in_a_validated_queue_is_invisible_to_a_blocks_st_only_surface,
+   a_raw_phase_admits_work_during_an_outstanding_fault⟩
+
+/-- **Law 88a's statement.** The audit covers every stored body before Running; the scan marks
+    only after the audit; the aggregate surface sees every held body; and an outstanding fault
+    reports Blocked, refuses admission and the proposal gate, and returns the cell's phase when
+    settled. -/
+def law88a_statement : Prop :=
+  (∀ s : State, (audit s).Clean) ∧
+  (∀ s : State, (startup s).Clean) ∧
+  (∀ s : State, (scan s).Clean) ∧
+  (∀ held : Stage → Nat, (∃ st, held st > 0) → aggregate held > 0) ∧
+  (∀ s : State, s.outstanding > 0 → effectivePhase s = .blocked) ∧
+  (∀ s : State, s.outstanding > 0 → admitsWork s = false) ∧
+  (∀ (s : State) (tip : Nat) (anchor : Option Nat), s.outstanding > 0 →
+    proposalGate s tip anchor = .refuse .notRunning) ∧
+  (∀ s : State, s.outstanding = 0 → effectivePhase s = s.phase) ∧
+  law88a_mutant
+
+theorem law88a : law88a_statement := by
+  refine ⟨audit_covers, startup_clean, ?_, ?_, ?_, ?_, ?_, ?_, law88a_falsifier⟩
+  · intro s
+    exact (the_scan_audits_before_marking s).1
+  · intro held h
+    exact the_aggregate_surface_sees_every_held_body held h
+  · intro s h
+    exact an_outstanding_fault_reports_blocked s h
+  · intro s h
+    exact an_outstanding_fault_blocks_admission s h
+  · intro s tip anchor h
+    exact an_outstanding_fault_refuses_the_proposal_gate s tip anchor h
+  · intro s h
+    exact a_settled_fault_returns_the_cell_phase s h
+
+/-- **Law 88b's mutant**: the legacy phase-less gate, the unbounded gate, and a readiness that
+    accepts any shard. -/
+def law88b_mutant : Prop :=
+  (legacyGate .syncing 5 5 = .allow) ∧
+  (unboundedGate .running (MAX_PROPOSAL_FINALITY_LAG + 1) 0 = .allow) ∧
+  (∃ ps : ShardPhases Bool, anyShardRunning ps = true ∧ ready ps = false)
+
+theorem law88b_falsifier : law88b_mutant :=
+  ⟨a_gate_without_the_phase_admits_a_syncing_node,
+   a_gate_without_the_bound_admits_a_private_chain,
+   a_readiness_that_accepts_any_shard_admits_a_syncing_node⟩
+
+/-- **Law 88b's statement.** The gate admits only in Running and within the bound; every shard is
+    gated by its own cell; readiness is every shard running. -/
+def law88b_statement : Prop :=
+  (∀ (phase : Phase) (tip finalized : Nat), gate phase tip finalized = .allow →
+    phase = .running ∧ withinProposalFinalityBound tip finalized = true) ∧
+  (∀ (phase : Phase) (tip finalized : Nat), phase ≠ .running →
+    gate phase tip finalized = .refuse .notRunning) ∧
+  (∀ (Shard : Type) [DecidableEq Shard] (ps : ShardPhases Shard) (s : Shard) (tip : Nat)
+      (anchor : Option Nat), ps.phase s ≠ .running →
+    shardGate ps s tip anchor = .refuse .notRunning) ∧
+  (∀ (Shard : Type) [DecidableEq Shard] (ps : ShardPhases Shard),
+    ready ps = true ↔ ∀ s ∈ ps.shards, ps.phase s = .running) ∧
+  law88b_mutant
+
+theorem law88b : law88b_statement := by
+  refine ⟨?_, ?_, ?_, ?_, law88b_falsifier⟩
+  · intro phase tip finalized h
+    exact gate_admits_only_in_running_and_within_bound phase tip finalized h
+  · intro phase tip finalized h
+    exact gate_refuses_outside_running phase tip finalized h
+  · intro Shard _ ps s tip anchor h
+    exact a_syncing_shard_is_refused_whatever_the_others_do ps s tip anchor h
+  · intro Shard _ ps
+    exact ready_iff_every_shard_running ps
 
 /-! ## 88c — an overflow refusal is a deferral, not an orphan
 

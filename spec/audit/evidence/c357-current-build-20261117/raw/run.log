@@ -1,0 +1,9 @@
+self-replay drill: 89cac44d4c7b665d88d3eefed964818d35cdd016 at 2026-11-17T18:48:19Z
+== arm 1: attestation recovery (--self-replay-injection deploy:1)
+arm 1 PASS: recovered by attestation, finality advanced
+== arm 2: reset, catch-up and automatic resume (--self-replay-injection all:2)
+arm 2 PASS: reset, catch-up and automatic resume, finality advanced
+== arm 3: halt with the reset disabled (--self-replay-injection all:2 --no-self-replay-reset)
+arm 3 PASS: halted, frozen, resumed by the operator route, finality advanced
+PASS: all three arms
+evidence: target/self-replay-drill (pack it with tools/evidence-pack.py after review)

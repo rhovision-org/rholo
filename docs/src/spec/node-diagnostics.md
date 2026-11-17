@@ -76,8 +76,8 @@ shard's reading must say which.
 | `ok` | readiness | bool | A | P | ≤1 s | equals `ready`; carried for older clients |
 | `ready` | readiness | bool | A | P | ≤1 s | the conjunction of the four gates below; false always names a reason |
 | `readyReasons` | readiness | string[] | A | P | ≤1 s | closed vocabulary; empty iff `ready` |
-| `phase` / `nodePhase` | readiness | string | G | S | ≤1 s | the primary shard's `NodePhase` label |
-| `shardPhases` | readiness | map | G | S | ≤1 s | one entry per member shard; an absent shard is not claimed running |
+| `phase` / `nodePhase` | readiness | string | G | S | ≤1 s | the primary shard's **effective** `NodePhase` label: `blocked` while a durable pipeline fault is outstanding, even if the launch cell says `running` |
+| `shardPhases` | readiness | map | G | S | ≤1 s | one entry per member shard, each its effective phase; an absent shard is not claimed running |
 | `pipelineFaults` | ingestion | integer | C | P | at read | monotone since process start; evidence, never a gate |
 | `pipelineFaultsOutstanding` | ingestion | integer | L | P | at read | current obligation; **zero iff no block owes a verdict**; seeded from the durable ledger at boot, unreadable ledger fails closed |
 | `lastPipelineFault` | ingestion | string? | G | P | at read | the last fault's block and stage; null until one fires |
@@ -102,7 +102,7 @@ not include finality. The client contract is [Finality is not admission](../node
 | `degraded` | resource | string | G | H | ≤5 s | advisory word from the fallback machine; never a 503 |
 | `acceptsDeploys` | resource | bool | G | P | ≤1 s | pool capacity only (Law 86a) |
 | `pool` | resource | object | G | P | ≤1 s | depth and bounds, so `acceptsDeploys = false` is explainable |
-| `blockPipeline` | ingestion | object | G | S | ≤5 s | `{capacity, pending, sampledPeak}` for the **block-receiver `blocks_st` queue** — the one the 1024 cap is on. `pending` is the last 5 s sample; `sampledPeak` is the process high-water mark. Advisory: no readiness term. The validated/incoming **mpsc** stage queues are separate and stay on `/metrics` |
+| `blockPipeline` | ingestion | object | G | S | ≤5 s | `{capacity, pending, sampledPeak, validatedQueue, incomingQueue}`: the **aggregate** ingest backlog. `pending`/`sampledPeak` sample the block-receiver `blocks_st` queue (the one the 1024 cap is on); `validatedQueue`/`incomingQueue` sample the two mpsc stages. Advisory: no readiness term |
 
 ### 4.2 Operator additions and the seam
 

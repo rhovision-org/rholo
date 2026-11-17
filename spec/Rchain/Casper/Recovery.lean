@@ -1,4 +1,5 @@
 import Rchain.Casper.Validate
+import Mathlib.Data.Finset.Basic
 
 /-!
 # Law 94 — a local fault has a bounded exit
@@ -100,5 +101,190 @@ theorem a_non_finalised_anchor_is_refused : ¬ resetAdmitted false := by
 
 /-- **A finalised anchor is admitted.** -/
 theorem a_finalised_anchor_is_admitted : resetAdmitted true := rfl
+
+/-! ## The recovery ladder's concrete arms
+
+The five-state ladder above says the fault has an exit. The row also claims the **content** of
+the exit: the attestation-only rebuild carries no user deploy, the refused set is held out, the
+latch is read by every trigger, the durable record precedes the observable transition, the reset
+anchor is finalised and attempted once, and the resume waits for catch-up. Those claims are
+modelled here, without replacing the ladder or its theorem names. -/
+
+/-- A deploy identity. The model needs only equality. -/
+abbrev Deploy := Nat
+
+/-- The proposal input the refused build is rebuilt from. -/
+structure Input where
+  deploys : Finset Deploy
+  preState : Nat
+  code : Nat
+deriving DecidableEq
+
+/-- The attestation-only rebuild: the same pre-state and code, no user deploy. -/
+def attestOnly (i : Input) : Input := { i with deploys := ∅ }
+
+theorem the_attest_only_rebuild_has_no_user_deploy (i : Input) :
+    (attestOnly i).deploys = ∅ := rfl
+
+/-- The change-input step holds the refused set out of the rebuild. -/
+def changeInput (i : Input) (refused : Finset Deploy) : Input :=
+  { i with deploys := i.deploys \ refused }
+
+theorem the_refused_deploy_is_not_in_the_rebuild (i : Input) (refused : Finset Deploy) :
+    ∀ d ∈ refused, d ∉ (changeInput i refused).deploys := by
+  intro d hd
+  simp [changeInput, hd]
+
+/-- The tracker's key: two attempts with the same pre-state, deploy set and code are the same
+    attempt, not a new one. -/
+structure AttemptKey where
+  preState : Nat
+  deploys : Finset Deploy
+  code : Nat
+deriving DecidableEq
+
+def keyOf (i : Input) : AttemptKey :=
+  { preState := i.preState, deploys := i.deploys, code := i.code }
+
+theorem a_retry_of_the_same_key_is_not_a_new_attempt (i j : Input) (h : keyOf i = keyOf j) :
+    i = j := by
+  cases i with
+  | mk di pi ci =>
+    cases j with
+    | mk dj pj cj =>
+      simp [keyOf] at h
+      obtain ⟨hp, hd, hc⟩ := h
+      subst hp; subst hd; subst hc; rfl
+
+/-- The proposal triggers that must read the latch. -/
+inductive Trigger where
+  | autopropose
+  | adminPropose
+  | deployPropose
+  | boundary
+deriving DecidableEq, Repr
+
+/-- The latch: a halted proposer admits no trigger. -/
+def triggerAdmitted (halted : Bool) (_t : Trigger) : Bool := !halted
+
+theorem a_halted_proposer_admits_no_trigger (t : Trigger) :
+    triggerAdmitted true t = false := rfl
+
+/-- The defect shape: a trigger that does not read the latch. -/
+def triggerSkipsLatch (_halted : Bool) (_t : Trigger) : Bool := true
+
+theorem a_trigger_that_skips_the_latch_admits_a_block (t : Trigger) :
+    triggerSkipsLatch true t = true := rfl
+
+/-- A transition is observable only after its durable record. -/
+structure Transition where
+  recorded : Bool
+  next : RecoveryState
+deriving DecidableEq, Repr
+
+def transitionStep (t : Transition) : Option RecoveryState :=
+  if t.recorded then some t.next else none
+
+theorem an_observable_halt_has_a_durable_record (t : Transition)
+    (h : transitionStep t = some .halted) : t.recorded = true := by
+  unfold transitionStep at h
+  split at h
+  · assumption
+  · simp at h
+
+theorem a_record_after_the_transition_is_not_a_bracket :
+    transitionStep { recorded := false, next := .halted } = none := rfl
+
+/-- A reset names one anchor, its finality, and the anchors already attempted. -/
+structure Reset where
+  anchor : Nat
+  finalised : Bool
+  attempted : Finset Nat
+deriving DecidableEq
+
+def canReset (r : Reset) : Bool :=
+  r.finalised && !(decide (r.anchor ∈ r.attempted))
+
+theorem the_reset_anchor_is_finalised (r : Reset) (h : canReset r = true) :
+    resetAdmitted r.finalised := by
+  unfold resetAdmitted
+  unfold canReset at h
+  by_cases hf : r.finalised = true
+  · exact hf
+  · simp [hf] at h
+
+theorem at_most_one_reset_per_anchor (r : Reset) (h : r.anchor ∈ r.attempted) :
+    canReset r = false := by
+  simp [canReset, h]
+
+/-- The resume is admitted only after catch-up and only against a finalised anchor. -/
+def resumeAdmitted (caughtUp anchorFinalised : Bool) : Bool :=
+  caughtUp && anchorFinalised
+
+theorem resume_requires_catch_up (a : Bool) : resumeAdmitted false a = false := rfl
+
+theorem resume_requires_a_finalised_anchor (c : Bool) : resumeAdmitted c false = false := by
+  cases c <;> rfl
+
+/-- **Law 94's mutant**: the incident's unchanged retry, represented as a step. -/
+inductive RecoveryStepMutant where
+  | retrySameInput
+  | other
+deriving DecidableEq, Repr
+
+def nextStateMutant : RecoveryState → RecoveryStepMutant → RecoveryState
+  | .refused, .retrySameInput => .refused
+  | _, _ => .halted
+
+def law94_mutant : Prop :=
+  nextStateMutant .refused .retrySameInput = .refused
+
+theorem law94_falsifier : law94_mutant := rfl
+
+/-- **Law 94's statement.** The refused state has no unchanged retry; every fault reaches a safe
+    state; the attestation-only rebuild has no user deploy; the refused set is held out; the
+    tracker key is the attempt identity; the latch is read by every trigger; the durable record
+    precedes an observable halt; the reset anchor is finalised and attempted once; and the resume
+    waits for catch-up and a finalised anchor. -/
+def law94_statement : Prop :=
+  (∀ (s : RecoveryState) (step : RecoveryStep), s = .refused →
+    nextState s step ≠ .refused) ∧
+  (∀ step : RecoveryStep, RecoverySafe (nextState .refused step)) ∧
+  (∀ i : Input, (attestOnly i).deploys = ∅) ∧
+  (∀ (i : Input) (refused : Finset Deploy) (d : Deploy),
+    d ∈ refused → d ∉ (changeInput i refused).deploys) ∧
+  (∀ (i j : Input), keyOf i = keyOf j → i = j) ∧
+  (∀ t : Trigger, triggerAdmitted true t = false) ∧
+  (∀ t : Transition, transitionStep t = some .halted → t.recorded = true) ∧
+  (∀ r : Reset, canReset r = true → resetAdmitted r.finalised) ∧
+  (∀ r : Reset, r.anchor ∈ r.attempted → canReset r = false) ∧
+  (∀ a : Bool, resumeAdmitted false a = false) ∧
+  (∀ c : Bool, resumeAdmitted c false = false) ∧
+  law94_mutant
+
+theorem law94 : law94_statement := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, law94_falsifier⟩
+  · intro s step h
+    exact no_unchanged_retry s step h
+  · intro step
+    exact every_fault_reaches_safe step
+  · intro i
+    exact the_attest_only_rebuild_has_no_user_deploy i
+  · intro i refused d hd
+    exact the_refused_deploy_is_not_in_the_rebuild i refused d hd
+  · intro i j h
+    exact a_retry_of_the_same_key_is_not_a_new_attempt i j h
+  · intro t
+    exact a_halted_proposer_admits_no_trigger t
+  · intro t h
+    exact an_observable_halt_has_a_durable_record t h
+  · intro r h
+    exact the_reset_anchor_is_finalised r h
+  · intro r h
+    exact at_most_one_reset_per_anchor r h
+  · intro a
+    exact resume_requires_catch_up a
+  · intro c
+    exact resume_requires_a_finalised_anchor c
 
 end Rchain

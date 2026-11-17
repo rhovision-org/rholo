@@ -61,6 +61,29 @@ pub fn pending_sample() -> (usize, usize) {
     )
 }
 
+/// **The aggregate backlog's other two stages** (F-U19-11). `blocks_st` is `pending_sample`;
+/// the validated mpsc queue and the incoming mpsc queue are these. Advisory like `pending_sample`.
+static VALIDATED_QUEUE: AtomicUsize = AtomicUsize::new(0);
+static INCOMING_QUEUE: AtomicUsize = AtomicUsize::new(0);
+
+/// Record the validated mpsc queue's depth. Called from the stage observer.
+pub fn observe_validated_queue(depth: usize) {
+    VALIDATED_QUEUE.store(depth, Ordering::Relaxed);
+}
+
+/// Record the incoming mpsc queue's depth. Called from the receiver's 5 s sampler.
+pub fn observe_incoming_queue(depth: usize) {
+    INCOMING_QUEUE.store(depth, Ordering::Relaxed);
+}
+
+/// `(validated, incoming)` — the last samples of the two mpsc stages.
+pub fn queue_sample() -> (usize, usize) {
+    (
+        VALIDATED_QUEUE.load(Ordering::Relaxed),
+        INCOMING_QUEUE.load(Ordering::Relaxed),
+    )
+}
+
 /// Block-receive status (port of `RecvStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecvStatus {
@@ -986,6 +1009,18 @@ pub fn apply_with_queue_observer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **F-U19-11's aggregate backlog** — the two mpsc stage samples are recorded and read
+    /// together. Global statics; this test owns both values and restores them.
+    #[test]
+    fn the_queue_sample_reports_every_stage() {
+        observe_validated_queue(3);
+        observe_incoming_queue(5);
+        assert_eq!(queue_sample(), (3, 5));
+        observe_validated_queue(0);
+        observe_incoming_queue(0);
+        assert_eq!(queue_sample(), (0, 0));
+    }
 
     /// **Law 100c** — the receiver's shard gate. The same signed block is of interest to its own
     /// shard and not to a sibling shard. The positive control is the point: without it, a false

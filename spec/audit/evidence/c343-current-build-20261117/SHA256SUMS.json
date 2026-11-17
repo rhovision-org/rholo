@@ -1,0 +1,8 @@
+{
+  "raw/raw/bootstrap.log": "4d231ea324c5fae2cecc18dbc58af45c9dc7227ac2f3eec43dbe00b743543786",
+  "raw/raw/health-after-resume.json": "8af1e266da2e2d82f2a490c735f0ff1c8d87254abb0b4503697c4809e4399026",
+  "raw/raw/health-before-stop.json": "5cbfd92087c30c83b8dd1baa01ceadf4fe82dc53fd21e0132d715f392977b5ab",
+  "raw/raw/health-halted.json": "63c605d1740c30ed49bb9fdad07783d7b67940f000457e65801f8ac58b464595",
+  "raw/raw/operator-status-halted.json": "ba387fd82466b4d5fce973d52dd5c57e8a29dad581b775a6faf0bb0bc38e287f",
+  "raw/raw/result.json": "06a2f3bca5645adfde11c8723011179ea727c089ecc6fb62a2001024310a4158"
+}
