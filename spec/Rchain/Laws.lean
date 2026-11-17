@@ -5099,122 +5099,176 @@ def lawsC : List Law := [
   { number := 89, layer := "PoS",
     statement := "**Liveness enforcement is jail first; only a vote reaches the bond.** A validator \
       absent across advancing epoch boundaries is removed from the active set for `J` boundaries and \
-      paid nothing, while its bond and its delegators' principal are untouched. A stake-weighted vote \
-      of strictly more than two thirds of the active stake, opened only against an already-jailed \
+      paid nothing, while its bond and its delegators' principal are untouched. A stake-weighted \
+      vote of strictly more than two thirds of the active stake, opened only against an already-jailed \
       validator, may slash it at the configured tier and permanently eject it; a passing vote closes \
-      the target's window and clears its ballots, and a banished validator cannot rebond. **The \
-      release clause is claimed, and presence has two arms:** a validator is present at a boundary \
-      when it authored a finalised-fringe block **or signed a deploy included in one**. The authoring \
-      arm is gated (a jailed validator is outside the drawn active set), but the deploy-signer arm is \
-      not, so a jailed key that signs a funded deploy is present and its jail is released at the end \
-      of its term; silence renews. The authors-only derivation is the mutant (`presentFromSenders`), \
-      under which every jail is permanent. A stalled boundary or an off-boundary block changes \
-      nothing",
+      the target's window and clears its ballots, and a banished validator cannot rebond. **Presence \
+      is derived, not fed:** a validator is present at a boundary when it authored a finalised-fringe \
+      block **or signed a deploy included in one**, at the member's height; `participationMap` takes \
+      the maximum height per validator. The boundary's quorum tip is the greatest presence height \
+      whose active supporting stake is strictly more than two thirds of the active total; absence is \
+      no entry or strictly more than the threshold behind the tip. A stalled boundary \
+      (`tip <= anchor`), an off-boundary block, or a zero tip changes nothing. A jailed validator \
+      leaves `active`, so the vote denominator excludes it (the exact-threshold arm's denominator is \
+      900, not 1000); release re-enters it. The jail and expiry paths never write `pool` or \
+      `withdrawals`; only the tally and the slash do, and only for a target whose vote passed. The \
+      authors-only presence is the mutant (`presentFromSenders`), under which every jail is \
+      permanent.",
     status := .provedModel,
     formal := `Rchain.Liveness.law89_statement,
     mutant := `Rchain.Liveness.law89_mutant,
     falsifier := `Rchain.Liveness.law89_falsifier,
-    declarations := [`Rchain.Liveness.State, `Rchain.Liveness.stepJail,
-      `Rchain.Liveness.boundaryStep, `Rchain.Liveness.jail_never_touches_the_bond,
-      `Rchain.Liveness.the_stall_rule_changes_nothing,
-      `Rchain.Liveness.no_boundary_no_action,
-      `Rchain.Liveness.one_lapse_is_not_sustained,
-      `Rchain.Liveness.stallStep,
-      `Rchain.Liveness.a_stall_that_counts_jails_an_innocent,
-      `Rchain.Liveness.passes, `Rchain.Liveness.voteSlash,
-      `Rchain.Liveness.vote_admits_only_above_threshold,
-      `Rchain.Liveness.a_passing_vote_slashes_and_ejects,
-      `Rchain.Liveness.a_simple_majority_is_not_enough,
-      `Rchain.Liveness.openWindow,
-      `Rchain.Liveness.a_vote_without_jail_is_not_opened,
-      `Rchain.Liveness.burnStep,
-      `Rchain.Liveness.jail_that_burns_the_bond_reaches_a_stake,
-      `Rchain.Liveness.releaseIfPresent,
-      `Rchain.Liveness.a_returning_validator_is_released,
-      `Rchain.Liveness.release_clears_the_window_and_ballots,
+    declarations := [`Rchain.Liveness.State,
+      `Rchain.Liveness.Params,
+      `Rchain.Liveness.stakeOf,
+      `Rchain.Liveness.jailed,
+      `Rchain.Liveness.totalStake,
+      `Rchain.Liveness.forStake,
+      `Rchain.Liveness.passes,
+      `Rchain.Liveness.setNat,
+      `Rchain.Liveness.heights,
+      `Rchain.Liveness.participationMap,
+      `Rchain.Liveness.presentFromAuthorsAndDeployers,
+      `Rchain.Liveness.present,
       `Rchain.Liveness.presentFromSenders,
       `Rchain.Liveness.gatedSenders,
-      `Rchain.Liveness.presentFromAuthorsAndDeployers,
+      `Rchain.Liveness.isAbsent,
+      `Rchain.Liveness.atOrAbove,
+      `Rchain.Liveness.support,
+      `Rchain.Liveness.isQuorumHeightBool,
+      `Rchain.Liveness.isQuorumHeight,
+      `Rchain.Liveness.candidateHeights,
+      `Rchain.Liveness.quorumTip,
+      `Rchain.Liveness.heights_mem,
+      `Rchain.Liveness.participationMap_some,
+      `Rchain.Liveness.participationMap_mem,
+      `Rchain.Liveness.presence_is_the_max_participation_height,
+      `Rchain.Liveness.present_of_mem,
       `Rchain.Liveness.a_deploy_signer_can_present_a_jailed_validator,
       `Rchain.Liveness.a_jailed_validator_is_never_present,
-      `Rchain.Liveness.block_presence_cannot_release_a_jailed_validator,
-      `Rchain.Liveness.block_presence_renews_a_jailed_validator,
-      `Rchain.Liveness.law89_statement,
-      `Rchain.Liveness.law89,
-      `Rchain.Liveness.law89_mutant,
-      `Rchain.Liveness.law89_falsifier,
-      `Rchain.Liveness.renewIfAbsent,
+      `Rchain.Liveness.absence_is_missing_or_behind_the_threshold,
+      `Rchain.Liveness.presence_is_not_absent,
+      `Rchain.Liveness.exactly_the_threshold_is_present,
+      `Rchain.Liveness.quorum_tip_is_the_greatest_height,
+      `Rchain.Liveness.advances,
+      `Rchain.Liveness.countedAbsent,
+      `Rchain.Liveness.newlyJailed,
+      `Rchain.Liveness.jailNew,
+      `Rchain.Liveness.releaseTarget,
+      `Rchain.Liveness.renewTarget,
+      `Rchain.Liveness.expireTarget,
+      `Rchain.Liveness.expireAll,
+      `Rchain.Liveness.closeWindow,
+      `Rchain.Liveness.decrementWindow,
+      `Rchain.Liveness.ageWindow,
+      `Rchain.Liveness.ageAll,
+      `Rchain.Liveness.slashTarget,
+      `Rchain.Liveness.passing,
+      `Rchain.Liveness.tally,
+      `Rchain.Liveness.step,
+      `Rchain.Liveness.castVote,
+      `Rchain.Liveness.openWindow,
+      `Rchain.Liveness.the_stall_rule_changes_nothing,
+      `Rchain.Liveness.a_stall_freezes_the_jail_clock,
+      `Rchain.Liveness.jail_never_touches_the_bond,
+      `Rchain.Liveness.a_jailed_validator_leaves_the_active_set,
+      `Rchain.Liveness.a_released_validator_reenters,
+      `Rchain.Liveness.release_clears_the_window_and_ballots,
+      `Rchain.Liveness.a_returning_validator_is_released,
       `Rchain.Liveness.a_still_absent_validator_is_renewed,
-      `Rchain.Liveness.a_passing_vote_closes_the_window_and_clears_ballots,
+      `Rchain.Liveness.exactly_two_thirds_does_not_pass,
+      `Rchain.Liveness.a_strict_supermajority_passes,
+      `Rchain.Liveness.a_passing_vote_slashes_and_ejects,
+      `Rchain.Liveness.a_vote_without_a_window_is_not_recorded,
+      `Rchain.Liveness.a_vote_without_jail_is_not_opened,
+      `Rchain.Liveness.a_boundary_at_the_threshold_jails,
+      `Rchain.Liveness.one_lapse_is_not_sustained,
       `Rchain.Liveness.rebond,
       `Rchain.Liveness.unguardedRebond,
       `Rchain.Liveness.a_banished_validator_cannot_rebond,
-      `Rchain.Liveness.an_unguarded_rebond_reaches_a_banished_validator],
+      `Rchain.Liveness.an_unguarded_rebond_reaches_a_banished_validator,
+      `Rchain.Liveness.lapseState,
+      `Rchain.Liveness.lapseParams,
+      `Rchain.Liveness.law89_statement,
+      `Rchain.Liveness.law89,
+      `Rchain.Liveness.law89_mutant,
+      `Rchain.Liveness.law89_falsifier],
     axioms := [],
     rust := ["rholang/src/native_state.rs", "rholang/src/pos_liveness.rs",
       "rholang/src/system_processes.rs", "casper/src/genesis/mod.rs",
-      "block-storage/src/dag/liveness.rs"],
+      "block-storage/src/dag/liveness.rs", "casper/src/multi_parent_casper.rs"],
     rustWitness := ["rholang/src/native_state.rs:a_sustained_absence_jails_without_touching_the_bond",
       "rholang/src/native_state.rs:one_boundary_omission_does_not_jail",
       "rholang/src/native_state.rs:a_stall_freezes_the_jail_clock",
       "rholang/src/native_state.rs:a_vote_below_two_thirds_does_not_slash",
       "rholang/src/native_state.rs:a_passing_vote_slashes_and_permanently_ejects",
+      "rholang/src/native_state.rs:a_vote_cannot_open_against_an_active_validator",
       "rholang/src/native_state.rs:a_jailed_validator_returns_after_the_term",
       "rholang/src/native_state.rs:a_released_jail_leaves_no_window_or_ballot",
       "rholang/src/native_state.rs:a_still_absent_validator_is_renewed",
+      "rholang/src/native_state.rs:a_passing_vote_removes_a_staged_withdrawal",
       "rholang/src/native_state.rs:a_banished_validator_cannot_rebond",
       "rholang/src/native_state.rs:a_delegation_cannot_buy_slash_voting_power_mid_epoch",
       "rholang/src/native_state.rs:two_of_three_active_votes_cannot_cross_strict_threshold_via_delegation",
+      "casper/src/multi_parent_casper.rs:a_deploy_signer_is_presence_at_the_including_height",
+      "casper/src/multi_parent_casper.rs:presence_keeps_the_greatest_height",
       "rholang/src/system_processes.rs:pos_vote_slash_is_authorised_by_the_deployer_id"],
-    witness := [`Rchain.Liveness.jail_never_touches_the_bond,
-      `Rchain.Liveness.the_stall_rule_changes_nothing,
-      `Rchain.Liveness.no_boundary_no_action,
-      `Rchain.Liveness.one_lapse_is_not_sustained,
-      `Rchain.Liveness.a_stall_that_counts_jails_an_innocent,
-      `Rchain.Liveness.vote_admits_only_above_threshold,
-      `Rchain.Liveness.a_passing_vote_slashes_and_ejects,
-      `Rchain.Liveness.a_passing_vote_closes_the_window_and_clears_ballots,
-      `Rchain.Liveness.a_simple_majority_is_not_enough,
-      `Rchain.Liveness.a_vote_without_jail_is_not_opened,
-      `Rchain.Liveness.jail_that_burns_the_bond_reaches_a_stake,
-      `Rchain.Liveness.a_returning_validator_is_released,
-      `Rchain.Liveness.release_clears_the_window_and_ballots,
-      `Rchain.Liveness.a_jailed_validator_is_never_present,
-      `Rchain.Liveness.block_presence_cannot_release_a_jailed_validator,
-      `Rchain.Liveness.block_presence_renews_a_jailed_validator,
+    witness := [`Rchain.Liveness.presence_is_the_max_participation_height,
       `Rchain.Liveness.a_deploy_signer_can_present_a_jailed_validator,
-      `Rchain.Liveness.law89,
-      `Rchain.Liveness.law89_falsifier,
+      `Rchain.Liveness.a_jailed_validator_is_never_present,
+      `Rchain.Liveness.absence_is_missing_or_behind_the_threshold,
+      `Rchain.Liveness.exactly_the_threshold_is_present,
+      `Rchain.Liveness.quorum_tip_is_the_greatest_height,
+      `Rchain.Liveness.the_stall_rule_changes_nothing,
+      `Rchain.Liveness.a_stall_freezes_the_jail_clock,
+      `Rchain.Liveness.one_lapse_is_not_sustained,
+      `Rchain.Liveness.a_boundary_at_the_threshold_jails,
+      `Rchain.Liveness.jail_never_touches_the_bond,
+      `Rchain.Liveness.a_jailed_validator_leaves_the_active_set,
+      `Rchain.Liveness.a_released_validator_reenters,
+      `Rchain.Liveness.release_clears_the_window_and_ballots,
+      `Rchain.Liveness.a_returning_validator_is_released,
       `Rchain.Liveness.a_still_absent_validator_is_renewed,
+      `Rchain.Liveness.exactly_two_thirds_does_not_pass,
+      `Rchain.Liveness.a_strict_supermajority_passes,
+      `Rchain.Liveness.a_passing_vote_slashes_and_ejects,
+      `Rchain.Liveness.a_vote_without_a_window_is_not_recorded,
+      `Rchain.Liveness.a_vote_without_jail_is_not_opened,
       `Rchain.Liveness.a_banished_validator_cannot_rebond,
-      `Rchain.Liveness.an_unguarded_rebond_reaches_a_banished_validator],
-    falsifiable := "`stallStep` counts absence without checking finality progress and jails a \
-      validator during a stall (`a_stall_that_counts_jails_an_innocent`); `burnStep` jails by \
-      removing the pool entry and `jail_that_burns_the_bond_reaches_a_stake` exhibits the bond that \
-      moved, while `stepJail` leaves `pool` unchanged; a simple-majority gate admits two of three \
-      (`a_simple_majority_is_not_enough`); a vote against an active validator is not opened \
-      (`a_vote_without_jail_is_not_opened`). **The retired authors-only presence** leaves a \
-      deploy-presented jail in place (`law89_mutant`/`law89_falsifier`), while the code's \
-      `presentFromAuthorsAndDeployers` releases it \
+      `Rchain.Liveness.an_unguarded_rebond_reaches_a_banished_validator,
+      `Rchain.Liveness.law89,
+      `Rchain.Liveness.law89_falsifier],
+    falsifiable := "`one_lapse_is_not_sustained` shows one absent boundary does not jail with \
+      `jailAfter = 2`; `a_boundary_at_the_threshold_jails` shows the sustained count does. \
+      `exactly_two_thirds_does_not_pass` shows 600 of 900 is not a strict supermajority and \
+      `a_strict_supermajority_passes` shows the crossing; `a_vote_without_a_window_is_not_recorded` \
+      and `a_vote_without_jail_is_not_opened` are the refusal of a vote against an active validator; \
+      `a_stall_freezes_the_jail_clock` and `the_stall_rule_changes_nothing` are the stall and \
+      off-boundary no-ops; `a_passing_vote_slashes_and_ejects` is the bond/eject/clear arm. \
+      **The retired authors-only presence** leaves a deploy-presented jail in place \
+      (`law89_mutant`/`law89_falsifier`), while `presentFromAuthorsAndDeployers` releases it \
       (`a_deploy_signer_can_present_a_jailed_validator`).",
-    note := "RCHIP #55. The model separates the two steps: `stepJail` never writes `pool`, and \
-      `voteSlash` writes it only when `passes` (strict `3 * for > 2 * total`, the same rule as \
-      `is_super_majority`), and both sides of that inequality read the **active-set snapshot**, not \
-      the mutable pool, so a mid-epoch delegation cannot buy voting power. The Rust side supplies the expiry/renewal arithmetic, the participation \
-      map (from the receiver's finalised fringe), the vote-window tally, the delegation fan-out on a \
-      slash, and the withdrawal escrow; those are outside the model. **The 2026-11-17 audit found \
-      the presence signal one-armed and the model now records the correction:** the boundary's \
-      participation map read only finalised-fringe block senders, and a jailed validator is filtered \
-      out of the drawn active set and refused by the proposer \
+    note := "RCHIP #55. The model derives presence from the participation map: `participationMap` is \
+      the maximum height per validator over fringe authors and included deploy signers \
+      (`casper/src/multi_parent_casper.rs:770-818`); the boundary's `quorumTip` is the greatest \
+      height whose active supporting stake is strictly more than two thirds \
+      (`rholang/src/pos_liveness.rs:221-246`); absence is no entry or `tip - height > threshold`, so \
+      exactly the threshold behind is present. `step` runs the tally against the active snapshot \
+      first, then counts absence and jails, then expires (renew while absent, release while present), \
+      then ages windows. A newly jailed validator is removed from `active`, which is the vote \
+      denominator; release re-enters it. `jailNew` and the expiry paths never write `pool` or \
+      `withdrawals`; only `tally`/`slashTarget` do, and only for a passing target. **The 2026-11-17 \
+      audit found the presence signal one-armed and the model now records the correction:** the \
+      boundary's participation map read only finalised-fringe block senders, and a jailed validator \
+      is filtered out of the drawn active set and refused by the proposer \
       (`select_active_excluding`, `is_active_validator`), so every jail was permanent. The code now \
       unions **deploy signers** with the authors (`participation_map`/`participation_from_fringe`, \
       `deploy_signers`), which is the signal a jailed key can still produce: it signs a funded \
       deploy an unjailed proposer includes. `presentFromAuthorsAndDeployers` is that rule; \
-      `presentFromSenders` is the retired authors-only model, kept as the mutant. The release and \
-      renewal Rust witnesses now derive the map the running node derives rather than injecting one. \
-      This is **not** an inactivity leak: no automatic step touches a bond. Default off; a network \
-      arms it at genesis. The boundary-skip hole (no validity rule requires a `CloseBlock` at a \
-      boundary) is a separate residual." },
+      `presentFromSenders` is the retired authors-only model, kept as the mutant. The slash's \
+      distribution to delegators is Law 57's subject. This is **not** an inactivity leak: no \
+      automatic step touches a bond. Default off; a network arms it at genesis. The boundary-skip \
+      hole (no validity rule requires a `CloseBlock` at a boundary) is a separate residual." },
 
   { number := 90, clause := "a", layer := "Node",
     statement := "**A served hostlist entry is earned.** A peer appears in `GET /api/v1/nodes` only \
@@ -6482,69 +6536,76 @@ def lawsC : List Law := [
       that liveness boundary is recorded, not claimed." },
 
   { number := 109, layer := "Sync",
-    statement := "**A post-anchor block validates only against certified roots.** The checkpoint \
-      statement commits to a validation window — a height-bounded set of pre/post/fringe state roots \
-      that a post-anchor block's merge reads — and a block whose pre-state is outside the checkpoint \
-      root, the roots this node derived, or the justifications' merge is refused. **The checkpoint \
-      root is the state at the fringe the anchor finalised; the first post-fringe block's merge starts \
-      from it and its declared pre-state is the merge it derives** (a fresh state, not the root \
-      itself), which replay recomputes and checks. The window is bounded in heights rather than in \
-      headers because the merge reads the deploy chains of every block between that fringe and the \
-      prune fringe, at every bonded width. The joiner hydrates exactly the committed window and never \
-      widens it to make a block validate; under collision-freedom the commitment binds the window. \
-      **Committed history is the anchor's closure, not every block at or below its height**: a \
-      same-height sibling the anchor has not seen is a live message the merge must read, and the \
-      joiner admits it for validation; a block is refused as committed history only when it is the \
-      anchor or in the anchor's seen set (`Rchain.MergeScope.IsCommittedHistory`).",
+    statement := "**Committed history is the anchor's seen closure, and the refusal set subtracts \
+      the anchor.** The node builds a message's seen set as the union of its justifications' seen sets \
+      plus its own id (`block-storage/src/dag/message_state.rs:281-285`), so the anchor is in its own \
+      seen set by construction. The pre-replay predicate is therefore the anchor's seen set minus the \
+      anchor itself: a same-height sibling the anchor has not seen is a live message, not committed \
+      history; the anchor is the accepted base and is never refused. On a height-descending DAG the \
+      Rust predicate's three arms — not the anchor, at or below the anchor's height, in the anchor's \
+      seen set — are exactly that refusal set.",
     status := .provedModel,
-    declarations := [`Rchain.Sync.Window.a_validated_block_reads_only_certified_roots,
+    formal := `Rchain.MergeScope.law109_statement,
+    mutant := `Rchain.MergeScope.law109_mutant,
+    falsifier := `Rchain.MergeScope.law109_falsifier,
+    declarations := [`Rchain.MergeScope.buildsSeen,
+      `Rchain.MergeScope.wellFormedSeen,
+      `Rchain.MergeScope.self_mem_seen,
+      `Rchain.MergeScope.seenDescends,
+      `Rchain.MergeScope.committedHistory,
+      `Rchain.MergeScope.IsCommittedHistory,
+      `Rchain.MergeScope.replayRefusedHistory,
+      `Rchain.MergeScope.IsReplayRefused,
+      `Rchain.MergeScope.IsCommittedHistoryArms,
+      `Rchain.MergeScope.the_rust_arms_are_the_refusal_set,
+      `Rchain.MergeScope.a_sibling_is_not_committed_history,
+      `Rchain.MergeScope.the_anchor_is_committed_history_but_not_replay_refused,
+      `Rchain.MergeScope.replay_refusal_is_committed_history_without_the_anchor,
+      `Rchain.MergeScope.law109_statement,
+      `Rchain.MergeScope.law109,
+      `Rchain.MergeScope.law109_mutant,
+      `Rchain.MergeScope.law109_falsifier,
+      `Rchain.Sync.Window.a_validated_block_reads_only_certified_roots,
       `Rchain.Sync.Window.an_uncertified_root_is_refused,
       `Rchain.Sync.Window.the_history_root_binds_the_window,
       `Rchain.Sync.Window.the_first_post_fringe_block_builds_on_the_certified_root,
       `Rchain.Sync.Window.a_shortened_window_refuses,
-      `Rchain.Sync.Window.a_window_root_validates,
-      `Rchain.MergeScope.committedHistory,
-      `Rchain.MergeScope.IsCommittedHistory,
-      `Rchain.MergeScope.a_sibling_is_not_committed_history],
+      `Rchain.Sync.Window.a_window_root_validates],
     axioms := [],
     rust := ["casper/src/checkpoint.rs", "casper/src/engine/node_syncing.rs",
-      "node/src/runtime/audit.rs"],
+      "node/src/runtime/audit.rs", "block-storage/src/dag/message_state.rs"],
     rustWitness := [
       "casper/src/checkpoint.rs:a_validation_window_is_bound_and_verifies",
       "casper/src/engine/node_syncing.rs:a_certified_metadata_history_carries_the_quorums_claim_on_each_block",
       "casper/src/engine/node_syncing.rs:the_sync_root_is_the_certified_fringe_state"],
-    witness := [`Rchain.Sync.Window.a_validated_block_reads_only_certified_roots,
+    witness := [`Rchain.MergeScope.self_mem_seen,
+      `Rchain.MergeScope.the_rust_arms_are_the_refusal_set,
+      `Rchain.MergeScope.a_sibling_is_not_committed_history,
+      `Rchain.MergeScope.the_anchor_is_committed_history_but_not_replay_refused,
+      `Rchain.MergeScope.replay_refusal_is_committed_history_without_the_anchor,
+      `Rchain.MergeScope.law109,
+      `Rchain.MergeScope.law109_falsifier,
+      `Rchain.Sync.Window.a_validated_block_reads_only_certified_roots,
       `Rchain.Sync.Window.the_first_post_fringe_block_builds_on_the_certified_root,
-      `Rchain.Sync.Window.a_shortened_window_refuses,
-      `Rchain.MergeScope.a_sibling_is_not_committed_history],
-    falsifiable := "Admit any root into `validates` and `an_uncertified_root_is_refused` fails; drop \
-      a member from the window and `a_shortened_window_refuses` fails. In Rust, the window test \
-      reddens if the digest does not bind `historyRoot`, if a shortened window derives the same \
-      commitment, or if a changed header field does not change the window root; the certified-metadata \
-      test reddens if the joiner accepts a committed window it cannot derive from the walked headers.",
-    note := "**The window's shape is a protocol constant, not a theorem.** \
-      `VALIDATION_WINDOW_HEIGHTS` is 14 in `models/src/casper/protocol/checkpoint.rs`: the merge depth \
-      is the finality lag (at most `LIVENESS_WINDOW` = 5 heights) plus one finality step, and an \
-      earlier header-count window (`8` headers) covered barely two heights at four validators — the \
-      2026-11-17 cold rejoin then needed a block five heights down and had no state for it. A \
-      future builder that reads deeper must change the constant and the commitment together — the \
-      joiner refuses rather than widening. **The at-or-below-anchor refusal is a closure rule, not a \
-      height rule:** a post-certificate sibling at the anchor's height is not committed history — it \
-      is a latest message the next block's merge must read — and refusing it by height alone makes \
-      every post-anchor block's pre-state disagree (`InvalidPreStateHash`, the 2026-11-17 cold-join \
-      run). `Rchain.MergeScope.IsCommittedHistory` is the predicate. **The checkpoint root is the anchor's fringe state:** a \
-      post-anchor block's merge starts from it, and the window commits the *states* of the merge's \
-      scope — the pre/post/fringe roots of the headers within the height bound. **The window does \
-      not commit the scope's deploy-chain indices:** the merge loads a `BlockIndex` per scope block, \
-      and a joiner regenerates each by replaying that block from its committed pre-state (the \
-      backfill supplies the hash-verified bodies). So this law bounds the *states* the merge reads, \
-      not all of its inputs; the indices are a replay product, stated in Law 102. **What this law \
-      does not claim:** the \
-      state roots are a quorum claim (Law 85's residual); the audit (Law 106) is the counterweight. \
-      The window's commitment is \
-      an extension of the statement, appended after `metadataRoot` only when present, so a legacy \
-      certificate keeps its v1 digest and is accepted only by the audit, with `windowCommitted: \
-      false`." },
+      `Rchain.Sync.Window.a_shortened_window_refuses],
+    falsifiable := "Refuse the anchor by its own seen set (the old model) and \
+      `law109_falsifier` proves the anchor is in it by construction; key the refusal on height alone \
+      and `a_sibling_is_not_committed_history` exhibits the live sibling it would refuse. In Rust the \
+      window test reddens if the digest does not bind `historyRoot`, if a shortened window derives \
+      the same commitment, or if a changed header field does not change the window root.",
+    note := "**Decision (2026-11-17): the model was wrong, not the Rust.** The old model assumed \
+      `anchor ∉ seenOf anchor` as a free hypothesis. The node inserts the message's own id into its \
+      seen set (`new_seen.insert(id)`, `block-storage/src/dag/message_state.rs:281-285`), so the \
+      hypothesis is false of every held anchor. The corrected model derives self-membership \
+      (`self_mem_seen`) from the construction rule and defines the refusal set as the seen set minus \
+      the anchor. The Rust's explicit anchor guard is exactly that subtraction. **The window's shape \
+      is a protocol constant, not a theorem:** `VALIDATION_WINDOW_HEIGHTS` is 14; the merge depth is \
+      the finality lag plus one finality step, and a future builder that reads deeper must change \
+      the constant and the commitment together. **The at-or-below-anchor refusal is a closure rule:** \
+      a post-certificate sibling at the anchor's height is a latest message the next block's merge \
+      reads. The window commits the states of the merge's scope; the deploy-chain indices are a \
+      replay product (Law 102). The state roots are the quorum claim Law 85 owns; the audit (Law 106) \
+      is the counterweight." },
 
   { number := 110, layer := "Sync",
     statement := "**A served history range is accounted before it leaves.** A history range is \
@@ -6718,69 +6779,90 @@ def lawsC : List Law := [
 
   { number := 114, layer := "Sync",
     statement := "**The certificate statement determines the join input set, and an incomplete \
-      joiner is not representable.** The bodies a joiner must hold to validate the first \
-      post-anchor block are the replay layer — the anchor, the certificate's finalised fringe and \
-      the anchor header's own fringe — plus every replay-layer member's own fringe; the roots are \
-      the pre-, post- and fringe-state roots those headers commit. The set is a function of what \
-      the statement commits, not of the chain's arbitrary ancestry. Checkpoint v3 commits the \
-      fringe members' headers under `fringeHeadersRoot`, which is how the members' fringes are \
-      obtained. Acceptance contains the required bodies and roots: a joiner with a missing item has \
-      no accepted state. The v2 statement, which names the fringe but not the members' headers, \
-      omits a required body — the measured 2026-11-17 cold-join failure.",
+      joiner is not representable.** The bodies a joiner must hold are the expanded replay layer — \
+      the anchor, the certificate's finalised fringe, the anchor header's own fringe, and every \
+      replay-layer member's own fringe — plus every walk header strictly above \
+      `anchor_height - DEPLOY_LIFESPAN`, the deploy-duplication window the first post-anchor block's \
+      `repeat_deploy` scan reads. The roots are the pre-, post- and fringe-state roots of the \
+      expanded replay layer only; the deploy-window bodies are fetched, not hydrated. The set is a \
+      function of what the statement commits, not of the chain's arbitrary ancestry. Checkpoint v3 \
+      commits the fringe members' headers under `fringeHeadersRoot`, which is how the members' \
+      fringes are obtained. Acceptance contains the required bodies and roots. A certificate pinned \
+      before its broadcast has exactly one sync target, its anchor; a later broadcast that is not \
+      `[anchor]` is ignored.",
     status := .provedModel,
     formal := `Rchain.Sync.JoinInputs.law114_statement,
     mutant := `Rchain.Sync.JoinInputs.law114_mutant,
     falsifier := `Rchain.Sync.JoinInputs.law114_falsifier,
     declarations := [`Rchain.Sync.JoinInputs.Statement,
       `Rchain.Sync.JoinInputs.replayLayer,
+      `Rchain.Sync.JoinInputs.expandedReplayLayer,
+      `Rchain.Sync.JoinInputs.deployWindowBodies,
       `Rchain.Sync.JoinInputs.requiredBodies,
       `Rchain.Sync.JoinInputs.requiredRoots,
       `Rchain.Sync.JoinInputs.v2RequiredBodies,
       `Rchain.Sync.JoinInputs.Accepted,
       `Rchain.Sync.JoinInputs.an_incomplete_joiner_is_not_representable,
       `Rchain.Sync.JoinInputs.an_unheld_root_is_not_representable,
+      `Rchain.Sync.JoinInputs.a_missing_deploy_window_body_is_not_representable,
       `Rchain.Sync.JoinInputs.the_statement_determines_the_join_inputs,
+      `Rchain.Sync.JoinInputs.law114_deploy_window_mutant,
+      `Rchain.Sync.JoinInputs.law114_deploy_window_falsifier,
+      `Rchain.Sync.JoinInputs.the_deploy_window_is_closed_under_parents,
+      `Rchain.Sync.JoinInputs.Target,
+      `Rchain.Sync.JoinInputs.pin,
+      `Rchain.Sync.JoinInputs.onFringeBroadcast,
+      `Rchain.Sync.JoinInputs.a_pinned_certificate_targets_exactly_its_anchor,
       `Rchain.Sync.JoinInputs.law114_statement,
       `Rchain.Sync.JoinInputs.law114,
       `Rchain.Sync.JoinInputs.law114_mutant,
       `Rchain.Sync.JoinInputs.law114_falsifier],
     axioms := [],
     rust := ["casper/src/engine/node_syncing.rs", "casper/src/checkpoint.rs",
-      "models/src/casper/protocol/checkpoint.rs"],
+      "models/src/casper/protocol/checkpoint.rs", "casper/src/validate.rs"],
     rustWitness := [
       "casper/tests/checkpoint_join.rs:a_wiped_joiner_validates_the_first_post_anchor_block_from_the_certificate_and_join_bodies",
-      "casper/src/checkpoint.rs:a_v3_statement_commits_the_fringe_headers_and_never_aliases_v2"],
+      "casper/src/checkpoint.rs:a_v3_statement_commits_the_fringe_headers_and_never_aliases_v2",
+      "casper/src/engine/node_syncing.rs:the_join_input_set_is_the_anchor_its_fringe_and_the_deploy_window",
+      "casper/src/engine/node_syncing.rs:a_pinned_certificate_does_not_follow_a_later_broadcast_fringe"],
     witness := [`Rchain.Sync.JoinInputs.an_incomplete_joiner_is_not_representable,
       `Rchain.Sync.JoinInputs.an_unheld_root_is_not_representable,
+      `Rchain.Sync.JoinInputs.a_missing_deploy_window_body_is_not_representable,
       `Rchain.Sync.JoinInputs.the_statement_determines_the_join_inputs,
-      `Rchain.Sync.JoinInputs.law114_falsifier],
+      `Rchain.Sync.JoinInputs.the_deploy_window_is_closed_under_parents,
+      `Rchain.Sync.JoinInputs.a_pinned_certificate_targets_exactly_its_anchor,
+      `Rchain.Sync.JoinInputs.law114_falsifier,
+      `Rchain.Sync.JoinInputs.law114_deploy_window_falsifier],
     falsifiable := "Drop the members' fringes from the required set (the v2 statement) and \
-      `law114_falsifier` exhibits a body the v3 statement requires and v2 does not; the join test \
-      then fails to validate the first post-anchor block. Drop the `holds` field from `Accepted` \
-      and `an_incomplete_joiner_is_not_representable` has no content.",
-    note := "**Decision (2026-11-17): the original law was under-specified, not the Rust.** The \
-      Rust `join_input_set` (`casper/src/engine/node_syncing.rs`) assembles the replay layer — the \
-      anchor, the certificate's fringe and the anchor header's fringe — expands **every replay-layer \
-      member's** own fringe, fetches every body with a hash check, and adds the pre/post/fringe \
-      roots of every replay-layer header to the hydration set before the sync can report ready. The \
-      law is strengthened to that set; the extra replay-layer expansion is what a boundary re-index \
-      of the anchor's fringe members needs. The v3 `fringeHeadersRoot` is what makes the members' \
-      own fringes available to a joiner whose ancestor walk excludes same-height siblings; the v2 \
-      statement leaves that body underivable, which is the measured cold-join `unknown root`. \
-      `checkpoint_join` validates the first post-anchor block from exactly this set. **Boundary:** \
-      the Rust also fetches every walk header above `anchor_height - DEPLOY_LIFESPAN` for the \
-      deploy-duplication check; that set is outside this law (it is not a replay-layer root) and is \
-      covered by the integration test. **Not claimed:** the bodies' authenticity (hash-addressed \
-      roots, Laws 104/109) or the quorum's honesty (Law 85's residual)." },
+      `law114_falsifier` exhibits a body the v3 statement requires and v2 does not; drop the deploy \
+      window and `law114_deploy_window_falsifier` exhibits the body the first post-anchor block's \
+      `repeat_deploy` scan reads; follow a later broadcast instead of the pinned anchor and \
+      `a_pinned_certificate_targets_exactly_its_anchor` keeps the target at the anchor. The join test \
+      then fails to validate the first post-anchor block.",
+    note := "**Decisions (2026-11-17): the law was under-specified, not the Rust.** The Rust \
+      `join_input_set` (`casper/src/engine/node_syncing.rs:1534-1599`) assembles the replay layer, \
+      expands every replay-layer member's own fringe, collects the pre/post/fringe roots of the \
+      expanded layer, and then adds every walk header above `anchor_height - DEPLOY_LIFESPAN` for the \
+      deploy-duplication check. The law now models all of it: the bodies are the expanded replay \
+      layer plus the deploy window; the roots are the expanded replay layer only. The deploy window \
+      is parent-closed above the floor, which is exactly the `repeat_deploy` scan's stopping rule \
+      (`casper/src/validate.rs:525-572`). The v3 `fringeHeadersRoot` is what makes the members' own \
+      fringes available to a joiner whose ancestor walk excludes same-height siblings; the v2 \
+      statement leaves that body underivable, which is the measured cold-join `unknown root`. The \
+      pinned-target rule is the handshake: a certificate fixes the sync target to its anchor and a \
+      later broadcast is ignored. `checkpoint_join` validates the first post-anchor block from \
+      exactly this set. The bodies' authenticity is Laws 104/109; the quorum is Law 85's." },
 
   { number := 115, layer := "Casper",
     statement := "**The fork rule is deterministic and dependency-closed.** A conflict-scope block \
       that has not seen the whole final fringe is a fork; its chains are rejected, together with \
       every chain that depends on one. The fork set is a function of the DAG and the two fringes — \
-      no hydrated state, no arrival order — and the dependency closure is the unique least set \
-      containing the forks and closed under the dependency map. A conflict-scope block that does \
-      descend from the final fringe is not a fork, and the closure-keyed alternative misclassifies \
-      it.",
+      no hydrated state, no arrival order. The dependency closure is the least set containing the \
+      forks and closed under the dependency map, and it is computed by the level-synchronous loop, \
+      not assumed: the iteration reaches a fixed point inside a finite universe and the fixed point \
+      satisfies the least-closure spec. Two closures of the same roots are equal, so a producer and \
+      a joiner reject the same set. A conflict-scope block that does descend from the final fringe \
+      is not a fork, and the closure-keyed alternative misclassifies it.",
     status := .provedModel,
     formal := `Rchain.MergeScope.law115_statement,
     mutant := `Rchain.MergeScope.law115_mutant,
@@ -6789,6 +6871,22 @@ def lawsC : List Law := [
       `Rchain.MergeScope.fork_blocks_are_a_function_of_the_dag,
       `Rchain.MergeScope.a_fork_block_is_a_non_descendant_conflict_block,
       `Rchain.MergeScope.DependencyClosure,
+      `Rchain.MergeScope.depStep,
+      `Rchain.MergeScope.closeN,
+      `Rchain.MergeScope.close,
+      `Rchain.MergeScope.depStep_subset,
+      `Rchain.MergeScope.depStep_mono,
+      `Rchain.MergeScope.depStep_subset_U,
+      `Rchain.MergeScope.depStep_subset_c,
+      `Rchain.MergeScope.closeN_mono,
+      `Rchain.MergeScope.closeN_contains,
+      `Rchain.MergeScope.closeN_subset_U,
+      `Rchain.MergeScope.closeN_least,
+      `Rchain.MergeScope.closeN_succ_eq,
+      `Rchain.MergeScope.closeN_fixed,
+      `Rchain.MergeScope.closeN_eq_of_fixed,
+      `Rchain.MergeScope.close_is_fixed,
+      `Rchain.MergeScope.close_spec,
       `Rchain.MergeScope.rejection_is_closed_under_dependency,
       `Rchain.MergeScope.a_fork_block_is_rejected,
       `Rchain.MergeScope.the_dependency_closure_is_unique,
@@ -6804,42 +6902,63 @@ def lawsC : List Law := [
       "casper/src/merging.rs:a_non_descendant_conflict_block_is_a_fork_and_the_final_scope_stays_trimmed",
       "sdk/src/dag/merging.rs:with_dependencies_collects_transitive_closure"],
     witness := [`Rchain.MergeScope.fork_blocks_are_a_function_of_the_dag,
+      `Rchain.MergeScope.close_is_fixed,
+      `Rchain.MergeScope.close_spec,
       `Rchain.MergeScope.rejection_is_closed_under_dependency,
+      `Rchain.MergeScope.a_fork_block_is_rejected,
       `Rchain.MergeScope.the_dependency_closure_is_unique,
       `Rchain.MergeScope.law115_falsifier],
     falsifiable := "Key the fork set on the anchor's committed closure instead of descent and \
       `law115_falsifier` exhibits a conflict-scope block that descends from the final fringe yet is \
-      rejected; the merge then drops a legitimate participant.",
+      rejected; the merge then drops a legitimate participant. Make the loop stop before the fixed \
+      point and `close_is_fixed` fails; drop an edge from the closure and \
+      `close_spec`'s `closed` field fails.",
     note := "The Rust `MergeScope.fork_blocks` (`casper/src/merging.rs:2054-2062`) is the conflict \
       scope minus the blocks that see the whole final fringe. `merge` collects those blocks' deploy \
       chains and applies `with_dependencies` (`sdk/src/dag/merging.rs:31-50`) to remove them and \
       their dependents from `to_merge` and add them to `rejected` (`casper/src/merging.rs:2236-2240`). \
-      The closure spec's `least` field is the substitution property: two closures of the same roots \
-      are equal, so fold order cannot choose a different rejection set. The C400 widening read the \
-      finalised closure instead and made a checkpoint joiner index historical pre-states; the \
-      qualified Law 113 records the native-write consequence. **Not claimed:** deploy-chain \
-      identity beyond the abstract dependency map, or the honest-quorum hypothesis." },
+      The Lean model is the loop itself: `depStep` is one level, `close` is `|U|` levels, and \
+      `close_is_fixed` proves the iteration stops inside the finite universe; `close_spec` proves the \
+      result contains the roots, is closed, and is least, so `the_dependency_closure_is_unique` \
+      follows. The C400 widening read the finalised closure instead and made a checkpoint joiner \
+      index historical pre-states; the qualified Law 113 records the native-write consequence. The \
+      dependency map is the block/chain edge relation the Rust passes; the honest-quorum hypothesis \
+      is Law 85's." },
 
   { number := 116, layer := "Sync",
-    statement := "**A post-certificate sibling is admitted, and an unheld root is refused, never \
-      faulted.** A same-height sibling the anchor has not seen is not committed history, so the \
-      pre-replay gate does not refuse it on a height rule. Its pre-state may be certified and not \
-      held; that case is a pre-state refusal, not an internal `unknown root`. A block whose \
-      pre-state is not permitted is still admitted when every justification is committed history \
-      (`justifications_committed`). An admission verdict is a replay or a refusal; no path faults.",
+    statement := "**The pre-replay gate admits exactly two arms and never faults with a window \
+      installed.** A block is admitted to replay iff it is not committed history and either its \
+      pre-state is the anchor root or a **derived** root (a root whose state this node holds), or its \
+      justification set is nonempty and every justification is the anchor or a validated block; or \
+      every justification is committed — nonempty, held by the DAG, and at or below the anchor \
+      height. A same-height sibling the anchor has not seen is not committed history; a pre-state \
+      that is certified but not derived is refused as an uncertified pre-state, not faulted. The only \
+      retryable fault is the missing window; an installed window answers replay, \
+      `refusedCommittedHistory` or `refusedUncertifiedPreState`.",
     status := .provedModel,
     formal := `Rchain.Sync.Admission.law116_statement,
     mutant := `Rchain.Sync.Admission.law116_mutant,
     falsifier := `Rchain.Sync.Admission.law116_falsifier,
-    declarations := [`Rchain.Sync.Admission.View,
+    declarations := [`Rchain.Sync.Admission.Window,
       `Rchain.Sync.Admission.Verdict,
+      `Rchain.Sync.Admission.permits_replay_root,
+      `Rchain.Sync.Admission.permits,
+      `Rchain.Sync.Admission.permits_justifications,
+      `Rchain.Sync.Admission.permits_block,
+      `Rchain.Sync.Admission.justificationsCommitted,
       `Rchain.Sync.Admission.isCommittedHistory,
       `Rchain.Sync.Admission.admission,
       `Rchain.Sync.Admission.admissionFaulting,
       `Rchain.Sync.Admission.no_admission_path_faults,
+      `Rchain.Sync.Admission.a_missing_window_is_a_retryable_fault,
+      `Rchain.Sync.Admission.admission_replays_iff,
+      `Rchain.Sync.Admission.committed_history_is_refused,
       `Rchain.Sync.Admission.a_held_sibling_is_replayable,
       `Rchain.Sync.Admission.a_certified_unheld_root_is_refused_not_faulted,
       `Rchain.Sync.Admission.an_uncertified_root_is_refused,
+      `Rchain.Sync.Admission.merged_pre_state_over_validated_justifications_is_replayed,
+      `Rchain.Sync.Admission.all_justifications_committed_is_replayed,
+      `Rchain.Sync.Admission.permits_is_the_root_or_certified,
       `Rchain.Sync.Admission.law116_statement,
       `Rchain.Sync.Admission.law116,
       `Rchain.Sync.Admission.law116_mutant,
@@ -6848,46 +6967,75 @@ def lawsC : List Law := [
     axioms := [],
     rust := ["casper/src/blocks/block_processor.rs", "casper/src/engine/anchor.rs"],
     rustWitness := [
-      "casper/src/engine/anchor.rs:a_certified_root_that_is_not_the_anchor_is_not_a_replay_base"],
+      "casper/src/engine/anchor.rs:a_certified_root_that_is_not_the_anchor_is_not_a_replay_base",
+      "casper/src/engine/anchor.rs:a_checkpoint_anchor_admits_its_committed_fringe_as_justifications",
+      "casper/src/blocks/block_processor.rs:the_pre_replay_gate_refuses_an_uncertified_historical_pre_state",
+      "casper/src/blocks/block_processor.rs:the_pre_replay_gate_admits_a_merged_pre_state_over_validated_justifications",
+      "casper/src/blocks/block_processor.rs:the_pre_replay_gate_honours_committed_justifications"],
     witness := [`Rchain.Sync.Admission.no_admission_path_faults,
+      `Rchain.Sync.Admission.admission_replays_iff,
+      `Rchain.Sync.Admission.committed_history_is_refused,
+      `Rchain.Sync.Admission.a_held_sibling_is_replayable,
       `Rchain.Sync.Admission.a_certified_unheld_root_is_refused_not_faulted,
+      `Rchain.Sync.Admission.merged_pre_state_over_validated_justifications_is_replayed,
+      `Rchain.Sync.Admission.all_justifications_committed_is_replayed,
       `Rchain.MergeScope.a_sibling_is_not_committed_history,
       `Rchain.Sync.Admission.law116_falsifier],
     falsifiable := "Restore the height-keyed pre-replay gate and the sibling is refused as \
       committed history (`a_sibling_is_not_committed_history` is the refutation); return the unheld \
       certified root to the fault branch (`law116_mutant`) and `law116_falsifier` exhibits the \
-      internal `unknown root`.",
-    note := "**Decision (2026-11-17): the law was too coarse, not the Rust.** The Rust split is \
-      `is_committed_history` (`casper/src/blocks/block_processor.rs:886-896`), which is false for \
-      the anchor and for every block above it, and `permits_block` \
-      (`casper/src/engine/anchor.rs:269`), which composes the held-root and justification checks. \
-      `pre_replay_refusal` refuses a committed-history block before replay; it admits when \
-      `permits_block` is true **or** every justification is committed (`justifications_committed`); \
-      otherwise it refuses as `UncertifiedPreState`, not `Internal`. The law now models both arms; \
-      `held` stands for the `permits_block` arm and `justificationsCommitted` for the separate one. \
-      The measured failure was the opposite: a height-keyed gate refused the sibling and the \
-      pipeline recorded `unknown root`. **Not claimed:** that the sibling validates; the state is \
-      still a quorum claim (Law 85's residual). The anchor/closure boundary — the anchor is \
-      committed history but not a pre-replay refusal — is \
-      `Rchain.MergeScope.replay_refusal_is_committed_history_without_the_anchor`, cited by Law \
-      109." },
+      internal `unknown root`; drop the `justificationsCommitted` arm and \
+      `all_justifications_committed_is_replayed` fails.",
+    note := "**Decision (2026-11-17): the law was too coarse, not the Rust.** The Rust splits the \
+      gate into `is_committed_history` (`casper/src/blocks/block_processor.rs:886-906`), which is \
+      false for the anchor and for every block above it, and `permits_block` \
+      (`casper/src/engine/anchor.rs:269`), which composes `permits_replay_root` and \
+      `permits_justifications`. `pre_replay_refusal` refuses a committed-history block before replay; \
+      it admits when `permits_block` is true **or** every justification is committed \
+      (`block_processor.rs:862-880`); otherwise it refuses as `UncertifiedPreState`, not `Internal`. \
+      The law now models the three predicates separately: `derived` is the replay base, `certified` \
+      is named but not held, and the justifications arm is a height rule. The measured failure was \
+      the opposite: a height-keyed gate refused the sibling and the pipeline recorded `unknown \
+      root`. The state roots are the quorum claim Law 85 owns." },
 
   { number := 117, layer := "Sync",
-    statement := "**A signed checkpoint statement is honest about its anchor header.** The signed \
-      `fringeState` is the anchor header's committed `fringe_state_hash`, and the signed \
-      `fringe_hashes` are the anchor's fringe. A statement whose signed root is not the header's \
-      committed fringe state is refused before acceptance; the run root is not the anchor block's \
-      post-state.",
+    statement := "**A signed checkpoint statement is honest about every field the joiner \
+      verifies.** The statement signs the shard, the anchor, its height and post-state, the \
+      finalised fringe and its state, the metadata root, the validation-window root and the \
+      fringe-headers root. The joiner re-derives each from the material it fetched and refuses a \
+      differing field: the anchor is the max `(height, hash)` member of the certificate's fringe \
+      that the walk holds; its post-state equals the walked anchor header's; a present fringe state \
+      equals the anchor header's committed fringe state; `metadataRoot` and `historyRoot` are \
+      required and equal the commitments of the walked ancestors and window; a present \
+      `fringeHeadersRoot` equals the commitment of the held fringe headers, and an absent one is \
+      the legitimate v2 statement. A produced statement has a merge base: a nonempty finalised \
+      fringe and a non-zero fringe state. The run root is the signed fringe state, not the anchor \
+      block's post-state.",
     status := .provedModel,
     formal := `Rchain.Sync.Anchor.law117_statement,
     mutant := `Rchain.Sync.Anchor.law117_mutant,
     falsifier := `Rchain.Sync.Anchor.law117_falsifier,
-    declarations := [`Rchain.Sync.Anchor.HeaderProjection,
-      `Rchain.Sync.Anchor.Attested,
-      `Rchain.Sync.Anchor.attests,
-      `Rchain.Sync.Anchor.the_signed_root_is_the_anchors_fringe_state,
-      `Rchain.Sync.Anchor.the_signed_fringe_is_the_anchors_fringe,
-      `Rchain.Sync.Anchor.a_signed_root_that_is_not_the_fringes_state_is_refused,
+    declarations := [`Rchain.Sync.Anchor.Header,
+      `Rchain.Sync.Anchor.Statement,
+      `Rchain.Sync.Anchor.Projection,
+      `Rchain.Sync.Anchor.isMaxOf,
+      `Rchain.Sync.Anchor.Verifies,
+      `Rchain.Sync.Anchor.wellFormed,
+      `Rchain.Sync.Anchor.the_anchor_is_the_max_held_fringe_member,
+      `Rchain.Sync.Anchor.the_anchor_post_state_is_the_headers,
+      `Rchain.Sync.Anchor.the_signed_fringe_state_is_the_headers,
+      `Rchain.Sync.Anchor.the_metadata_root_is_the_ancestors_commitment,
+      `Rchain.Sync.Anchor.the_history_root_is_the_windows_commitment,
+      `Rchain.Sync.Anchor.the_fringe_headers_root_is_the_members_commitment,
+      `Rchain.Sync.Anchor.a_differing_metadata_root_is_refused,
+      `Rchain.Sync.Anchor.a_differing_history_root_is_refused,
+      `Rchain.Sync.Anchor.a_missing_metadata_root_is_refused,
+      `Rchain.Sync.Anchor.a_missing_history_root_is_refused,
+      `Rchain.Sync.Anchor.a_differing_fringe_state_is_refused,
+      `Rchain.Sync.Anchor.a_differing_fringe_headers_root_is_refused,
+      `Rchain.Sync.Anchor.an_absent_fringe_headers_root_does_not_refuse,
+      `Rchain.Sync.Anchor.an_anchor_without_a_finalised_fringe_is_not_well_formed,
+      `Rchain.Sync.Anchor.an_anchor_with_a_zero_fringe_state_is_not_well_formed,
       `Rchain.Sync.Anchor.law117_statement,
       `Rchain.Sync.Anchor.law117,
       `Rchain.Sync.Anchor.law117_mutant,
@@ -6897,23 +7045,38 @@ def lawsC : List Law := [
       "casper/src/engine/node_syncing.rs"],
     rustWitness := [
       "casper/src/engine/anchor.rs:a_checkpoint_root_is_the_certified_fringe_state",
-      "casper/src/checkpoint.rs:a_v3_statement_commits_the_fringe_headers_and_never_aliases_v2"],
-    witness := [`Rchain.Sync.Anchor.the_signed_root_is_the_anchors_fringe_state,
-      `Rchain.Sync.Anchor.the_signed_fringe_is_the_anchors_fringe,
+      "casper/src/checkpoint.rs:a_v3_statement_commits_the_fringe_headers_and_never_aliases_v2",
+      "casper/src/checkpoint.rs:a_validation_window_is_bound_and_verifies",
+      "casper/src/checkpoint.rs:a_metadata_commitment_is_bound_and_verifies",
+      "casper/src/checkpoint.rs:the_fringe_claim_is_committed_per_header"],
+    witness := [`Rchain.Sync.Anchor.the_anchor_is_the_max_held_fringe_member,
+      `Rchain.Sync.Anchor.the_anchor_post_state_is_the_headers,
+      `Rchain.Sync.Anchor.the_signed_fringe_state_is_the_headers,
+      `Rchain.Sync.Anchor.the_metadata_root_is_the_ancestors_commitment,
+      `Rchain.Sync.Anchor.the_history_root_is_the_windows_commitment,
+      `Rchain.Sync.Anchor.the_fringe_headers_root_is_the_members_commitment,
+      `Rchain.Sync.Anchor.a_differing_metadata_root_is_refused,
+      `Rchain.Sync.Anchor.a_differing_history_root_is_refused,
+      `Rchain.Sync.Anchor.a_differing_fringe_headers_root_is_refused,
+      `Rchain.Sync.Anchor.law117,
       `Rchain.Sync.Anchor.law117_falsifier],
-    falsifiable := "Sign the anchor post-state instead of the anchor header's fringe state (the \
-      pre-c405 shape) and the joiner's re-check refuses it; `law117_mutant` is the statement that \
-      differs from its header, and `law117_falsifier` proves no such statement attests.",
-    note := "`current_checkpoint` (`casper/src/api/block_api_impl.rs:1298-1312`) reads the anchor \
-      metadata's `fringe_state_hash` as the signed root and the latest fringe as the signed \
-      `fringe_hashes`; the joiner re-checks the signed root against the walked anchor header's \
-      committed `fringe_state_hash` (`casper/src/engine/node_syncing.rs:858-865`). The v3 \
-      `fringeHeadersRoot` extends the same honesty to the fringe members' headers. The pre-c405 \
-      shape signed the member's post-state, which is not the fringe merge when the fringe has more \
-      than one member (Law 108d). **Boundary:** the model covers the `fringeState`/`fringe_hashes` \
-      equality; `metadataRoot`, `historyRoot` and `fringeHeadersRoot` are checked in the same \
-      statement and are not modelled here. **Not claimed:** that a quorum cannot sign a wrong root; \
-      that is Law 85's residual, and the audit is the counterweight." },
+    falsifiable := "Sign a metadata root, history root or fringe-headers root that does not equal \
+      the fetched material's commitment and the corresponding refusal theorem fires; sign the anchor \
+      post-state instead of the fringe state (the pre-c405 shape) and the joiner's re-check refuses \
+      it. `law117_mutant` is the statement whose signed metadata root differs from its projection, \
+      and `law117_falsifier` proves no such statement verifies.",
+    note := "`current_checkpoint` (`casper/src/api/block_api_impl.rs:1277-1357`) signs the anchor, \
+      its height and post-state, the anchor header's fringe state, the finalised fringe, the \
+      metadata root over the anchor's ancestor closure, the validation-window root and the v3 \
+      fringe-headers root. The joiner re-checks every field: `verify_metadata_root` and \
+      `verify_validation_window` require the roots; `verify_fringe_headers` accepts an absent root \
+      (the v2 statement) and otherwise requires every fringe member's header and the matching \
+      commitment. The anchor's post-state is identity/audit, not the run root; the run root is the \
+      signed fringe state (Law 108d). A produced statement requires a nonempty fringe and a non-zero \
+      fringe state — `current_checkpoint`'s 400 is this precondition, and the restore test's \
+      readiness poll waits it out. The certificate's quorum is Law 104's; the quorum's honesty is \
+      Law 85's." },
+
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

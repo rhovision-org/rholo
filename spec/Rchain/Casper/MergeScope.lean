@@ -24,6 +24,15 @@ This module states the replacement rule that the Rust must implement:
 
 The tuple-space consequence — a rejected slice is not applied — is Law 113
 (`Rchain.FinalizedMerge`). This module supplies the block-set half that was previously prose.
+
+## The seen set is constructed, and it contains the message itself
+
+`block-storage/src/dag/message_state.rs:281-285` builds a new message's seen set as
+`⋃ justifications.seen ∪ {id}`: the message inserts its own id. The refusal predicate's anchor guard
+is therefore the subtraction `seen \ {anchor}`, not a property that the anchor is absent from its own
+seen set. The construction is modelled here (`buildsSeen`, `wellFormedSeen`) and
+`self_mem_seen` is a theorem, so the anchor boundary follows from the rule rather than from a
+hypothesis about arbitrary messages.
 -/
 
 namespace Rchain
@@ -40,6 +49,30 @@ def seenOf (dag : Dag) (id : Nat) : Finset Nat :=
   match dag id with
   | some m => m.seen.toFinset
   | none => ∅
+
+/-! ### The construction rule: `seen = ⋃ justifications.seen ∪ {id}` -/
+
+/-- The node's `new_seen` rule (`block-storage/src/dag/message_state.rs:281-285`). -/
+def buildsSeen (dag : Dag) (id : Nat) (m : Message) : Prop :=
+  m.seen.toFinset = insert id (m.parents.toFinset.biUnion (fun p => seenOf dag p))
+
+/-- A DAG whose every held message obeys the construction rule. -/
+def wellFormedSeen (dag : Dag) : Prop :=
+  ∀ id m, dag id = some m → buildsSeen dag id m
+
+/-- **A held message sees itself.** This is the rule's other half, and the reason the refusal set is
+    `seenOf anchor \ {anchor}`: the anchor is in its own seen set by construction. -/
+theorem self_mem_seen (dag : Dag) (id : Nat) (m : Message)
+    (h : dag id = some m) (hw : wellFormedSeen dag) : id ∈ seenOf dag id := by
+  have hb := hw id m h
+  simp only [seenOf, h, buildsSeen] at hb ⊢
+  rw [hb]
+  exact Finset.mem_insert_self id _
+
+/-- **The height invariant the message state inherits from its justifications.** The node validates
+    that a block's height is above its parents'; a seen block therefore sits at or below the seer. -/
+def seenDescends (dag : Dag) (heightOf : Nat → Nat) : Prop :=
+  ∀ id m x, dag id = some m → x ∈ seenOf dag id → heightOf x ≤ heightOf id
 
 /-- `between upper lower = upper.seen \ lower.seen`, the port's scope construction. -/
 def between (dag : Dag) (upper lower : Finset Nat) : Finset Nat :=
@@ -112,14 +145,16 @@ theorem widening_reads_the_closure :
       (1 : Nat) ∉ finalScope fixtureDag {3} {2} := by
   decide
 
-/-- **The committed history of an anchor**: the anchor itself and every block the anchor has seen.
-This is the closure a checkpoint certificate anchors; it is *not* every block at or below the
-anchor's height. -/
-def committedHistory (dag : Dag) (anchor : Nat) : Finset Nat :=
-  insert anchor (seenOf dag anchor)
+/-! ### Law 109's committed history and the pre-replay refusal set -/
 
-/-- **The admission predicate.** A block is committed history for a checkpoint joiner iff it is the
-anchor or in the anchor's seen closure. -/
+/-- **The committed history of an anchor**: the anchor's seen set. By `buildsSeen` it already
+    contains the anchor itself. This is the closure a checkpoint certificate anchors; it is *not*
+    every block at or below the anchor's height. -/
+def committedHistory (dag : Dag) (anchor : Nat) : Finset Nat :=
+  seenOf dag anchor
+
+/-- Membership in the anchor's seen closure. The anchor itself is committed history (it is the
+    accepted base); the Rust predicate excludes it separately. -/
 def IsCommittedHistory (dag : Dag) (anchor id : Nat) : Prop :=
   id ∈ committedHistory dag anchor
 
@@ -129,38 +164,107 @@ The Rust `is_committed_at_or_below_anchor` keyed on height alone, which refused 
 siblings and made every height-81 block fail `InvalidPreStateHash`. -/
 theorem a_sibling_is_not_committed_history
     (dag : Dag) (anchor sibling : Nat)
-    (hsib : sibling ∉ seenOf dag anchor) (hne : sibling ≠ anchor) :
+    (hsib : sibling ∉ seenOf dag anchor) :
     ¬ IsCommittedHistory dag anchor sibling := by
-  intro h
-  unfold IsCommittedHistory committedHistory at h
-  rcases Finset.mem_insert.mp h with hsame | hseen
-  · exact hne hsame
-  · exact hsib hseen
+  simpa [IsCommittedHistory, committedHistory] using hsib
 
-/-- **The pre-replay refusal set.** The Rust `is_committed_history`
-    (`casper/src/blocks/block_processor.rs:886-896`) returns **false for the anchor itself**: the
-    anchor is the accepted base, handled by the separate anchor check, not a block a joiner refuses
-    as history. This is the anchor's seen set — `committedHistory` without the anchor. -/
-def replayRefusedHistory (dag : Dag) (anchor : Nat) : Finset Nat := seenOf dag anchor
+/-- **The pre-replay refusal set.** `is_committed_history`
+    (`casper/src/blocks/block_processor.rs:886-906`) returns **false for the anchor itself**: the
+    anchor is the accepted base, handled by the separate anchor check. By `buildsSeen` the anchor is
+    in its own seen set, so the refusal set is the seen set minus the anchor. -/
+def replayRefusedHistory (dag : Dag) (anchor : Nat) : Finset Nat :=
+  committedHistory dag anchor \ {anchor}
 
-/-- **The anchor boundary is deliberate.** The anchor is committed history (the certificate's
-    closure includes it) but not in the pre-replay refusal set (the node runs from its state).
-    The `hself` hypothesis is the DAG's own property: a message's seen set does not contain itself
-    (`block-storage/src/dag/message_state.rs`), which the free model must state. -/
+/-- Membership in the refusal set. -/
+def IsReplayRefused (dag : Dag) (anchor id : Nat) : Prop :=
+  id ∈ replayRefusedHistory dag anchor
+
+/-- **The anchor is committed history but not refused.** The self-membership is the node's
+    construction rule (`self_mem_seen`), not an assumption about arbitrary messages. -/
 theorem the_anchor_is_committed_history_but_not_replay_refused
-    (dag : Dag) (anchor : Nat) (hself : anchor ∉ seenOf dag anchor) :
-    IsCommittedHistory dag anchor anchor ∧ anchor ∉ replayRefusedHistory dag anchor := by
+    (dag : Dag) (anchor : Nat) (m : Message)
+    (h : dag anchor = some m) (hw : wellFormedSeen dag) :
+    IsCommittedHistory dag anchor anchor ∧ ¬ IsReplayRefused dag anchor anchor := by
+  have hself := self_mem_seen dag anchor m h hw
   constructor
-  · simp [IsCommittedHistory, committedHistory]
-  · simpa [replayRefusedHistory] using hself
+  · simpa [IsCommittedHistory, committedHistory] using hself
+  · simp [IsReplayRefused, replayRefusedHistory, hself]
 
-/-- **The refusal set is the committed history without the anchor.** This is the shape the Rust
-    predicate has; the closure the certificate commits is the larger set. -/
+/-- **The refusal set is the committed history without the anchor**, definitionally: the seen set
+    contains the anchor, and the predicate's anchor guard subtracts it. -/
 theorem replay_refusal_is_committed_history_without_the_anchor
-    (dag : Dag) (anchor : Nat) (hself : anchor ∉ seenOf dag anchor) :
-    replayRefusedHistory dag anchor = committedHistory dag anchor \ {anchor} := by
-  ext id
-  by_cases hid : id = anchor <;> simp [replayRefusedHistory, committedHistory, hself, hid]
+    (dag : Dag) (anchor : Nat) :
+    replayRefusedHistory dag anchor = committedHistory dag anchor \ {anchor} := rfl
+
+/-- The Rust `is_committed_history`'s three arms: not the anchor, at or below the anchor's height,
+    and in the anchor's seen set (`casper/src/blocks/block_processor.rs:886-906`). -/
+def IsCommittedHistoryArms (dag : Dag) (heightOf : Nat → Nat) (anchor id : Nat) : Prop :=
+  id ≠ anchor ∧ heightOf id ≤ heightOf anchor ∧ id ∈ seenOf dag anchor
+
+/-- **The Rust arms are exactly the refusal set.** On a DAG whose seen sets descend in height, the
+    height arm removes nothing from the seen set; the anchor arm is the subtraction. -/
+theorem the_rust_arms_are_the_refusal_set
+    (dag : Dag) (heightOf : Nat → Nat) (anchor : Nat)
+    (hd : seenDescends dag heightOf) :
+    ∀ id, IsCommittedHistoryArms dag heightOf anchor id ↔ IsReplayRefused dag anchor id := by
+  intro id
+  constructor
+  · rintro ⟨hne, _, hmem⟩
+    exact Finset.mem_sdiff.mpr ⟨hmem, by simpa using hne⟩
+  · intro h
+    have hmem : id ∈ seenOf dag anchor := (Finset.mem_sdiff.mp h).1
+    have hne : id ≠ anchor := by
+      have hnot : id ∉ ({anchor} : Finset Nat) := (Finset.mem_sdiff.mp h).2
+      simpa using hnot
+    have hex : ∃ m, dag anchor = some m := by
+      by_contra hnone
+      have hempty : seenOf dag anchor = ∅ := by
+        unfold seenOf
+        split
+        · rename_i m hm
+          exact absurd ⟨m, hm⟩ hnone
+        · rfl
+      rw [hempty] at hmem
+      simp at hmem
+    obtain ⟨m, hm⟩ := hex
+    exact ⟨hne, hd anchor m id hm hmem, hmem⟩
+
+/-! ### Law 109's row -/
+
+/-- **The mutant proposition**: a well-formed DAG whose anchor is in the pre-replay refusal set.
+    The old model refused the anchor because its seen set contains itself; the corrected refusal set
+    subtracts it. -/
+def law109_mutant : Prop :=
+  ∃ (dag : Dag) (anchor : Nat) (m : Message),
+    dag anchor = some m ∧ wellFormedSeen dag ∧ anchor ∈ replayRefusedHistory dag anchor
+
+/-- **The falsifier, fired.** A held anchor sees itself, so it is committed history; the refusal
+    set subtracts it, and the mutant's membership is impossible. -/
+theorem law109_falsifier : ¬ law109_mutant := by
+  rintro ⟨dag, anchor, m, hm, hw, href⟩
+  have hself := self_mem_seen dag anchor m hm hw
+  simp [replayRefusedHistory, committedHistory, hself] at href
+
+/-- **Law 109's statement.** The anchor is committed history by construction and is never refused;
+    the refusal set is that history without the anchor; and the Rust predicate's three arms are
+    exactly the refusal set on a height-descending DAG. -/
+def law109_statement : Prop :=
+  (∀ (dag : Dag) (anchor : Nat) (m : Message), dag anchor = some m → wellFormedSeen dag →
+    anchor ∈ committedHistory dag anchor ∧ ¬ IsReplayRefused dag anchor anchor) ∧
+  (∀ (dag : Dag) (anchor : Nat),
+    replayRefusedHistory dag anchor = committedHistory dag anchor \ {anchor}) ∧
+  (∀ (dag : Dag) (heightOf : Nat → Nat) (anchor : Nat), seenDescends dag heightOf →
+    ∀ id, IsCommittedHistoryArms dag heightOf anchor id ↔ IsReplayRefused dag anchor id) ∧
+  ¬ law109_mutant
+
+theorem law109 : law109_statement := by
+  refine ⟨?_, ?_, ?_, law109_falsifier⟩
+  · intro dag anchor m hm hw
+    exact the_anchor_is_committed_history_but_not_replay_refused dag anchor m hm hw
+  · intro dag anchor
+    exact replay_refusal_is_committed_history_without_the_anchor dag anchor
+  · intro dag heightOf anchor hd id
+    exact the_rust_arms_are_the_refusal_set dag heightOf anchor hd id
 
 /-- **The scope is a function of the DAG.** Two nodes that hold the same message map derive the same
 scope, regardless of which states they have hydrated; a node that lacks a pre-state must refuse,
@@ -196,13 +300,165 @@ theorem a_fork_block_is_a_non_descendant_conflict_block
     id ∈ conflictScope dag mergeFringe finalFringe ∧ ¬ descends dag finalFringe id := by
   simpa [forkBlocks] using h
 
-/-- **The dependency-closure spec.** The Rust `with_dependencies` computes the least set containing
-    the fork chains and closed under the dependency map (`sdk/src/dag/merging.rs:31-50`). This
-    structure states that least-closure property; the merge reads only the two projections below. -/
+/-! ### Law 115 — the least closure `with_dependencies` computes -/
+
+/-- The least-closure property: contains the roots, closed under the dependency map, and least
+    among the closed supersets. -/
 structure DependencyClosure (dep : Nat → Finset Nat) (roots closure : Finset Nat) : Prop where
   contains_roots : roots ⊆ closure
   closed : ∀ x ∈ closure, dep x ⊆ closure
   least : ∀ c, roots ⊆ c → (∀ x ∈ c, dep x ⊆ c) → closure ⊆ c
+
+/-- One level of the Rust loop: the set plus every dependency of its members. -/
+def depStep (dep : Nat → Finset Nat) (S : Finset Nat) : Finset Nat :=
+  S ∪ S.biUnion dep
+
+/-- `n` rounds of the level-synchronous loop (`sdk/src/dag/merging.rs:31-50`). -/
+def closeN (dep : Nat → Finset Nat) : Nat → Finset Nat → Finset Nat
+  | 0, S => S
+  | n + 1, S => closeN dep n (depStep dep S)
+
+/-- The closure inside a finite universe `U`. `|U|` rounds suffice: every non-final round adds at
+    least one element of `U`, and `U` is finite. -/
+def close (U : Finset Nat) (dep : Nat → Finset Nat) (S : Finset Nat) : Finset Nat :=
+  closeN dep U.card S
+
+theorem depStep_subset (dep : Nat → Finset Nat) (S : Finset Nat) : S ⊆ depStep dep S := by
+  intro x hx
+  exact Finset.mem_union.mpr (Or.inl hx)
+
+theorem depStep_mono (dep : Nat → Finset Nat) {S T : Finset Nat} (h : S ⊆ T) :
+    depStep dep S ⊆ depStep dep T := by
+  intro x hx
+  rcases Finset.mem_union.mp hx with hx | hx
+  · exact Finset.mem_union.mpr (Or.inl (h hx))
+  · rcases Finset.mem_biUnion.mp hx with ⟨a, ha, hxa⟩
+    exact Finset.mem_union.mpr (Or.inr (Finset.mem_biUnion.mpr ⟨a, h ha, hxa⟩))
+
+theorem depStep_subset_U (dep : Nat → Finset Nat) (U : Finset Nat)
+    (hdep : ∀ x, dep x ⊆ U) {S : Finset Nat} (hS : S ⊆ U) : depStep dep S ⊆ U := by
+  intro x hx
+  rcases Finset.mem_union.mp hx with hx | hx
+  · exact hS hx
+  · rcases Finset.mem_biUnion.mp hx with ⟨a, _, hxa⟩
+    exact hdep a hxa
+
+theorem depStep_subset_c (dep : Nat → Finset Nat) {S c : Finset Nat}
+    (hS : S ⊆ c) (hc : ∀ x ∈ c, dep x ⊆ c) : depStep dep S ⊆ c := by
+  intro x hx
+  rcases Finset.mem_union.mp hx with hx | hx
+  · exact hS hx
+  · rcases Finset.mem_biUnion.mp hx with ⟨a, ha, hxa⟩
+    exact hc a (hS ha) hxa
+
+theorem closeN_mono (dep : Nat → Finset Nat) (n : Nat) {S T : Finset Nat} (h : S ⊆ T) :
+    closeN dep n S ⊆ closeN dep n T := by
+  induction n generalizing S T with
+  | zero => exact h
+  | succ _n ih => exact ih (depStep_mono dep h)
+
+theorem closeN_contains (dep : Nat → Finset Nat) (S : Finset Nat) :
+    ∀ n, S ⊆ closeN dep n S
+  | 0 => by simp [closeN]
+  | n + 1 => (depStep_subset dep S).trans (closeN_contains dep (depStep dep S) n)
+
+theorem closeN_subset_U (dep : Nat → Finset Nat) (U : Finset Nat)
+    (hdep : ∀ x, dep x ⊆ U) :
+    ∀ n (S : Finset Nat), S ⊆ U → closeN dep n S ⊆ U
+  | 0, _S, hS => hS
+  | n + 1, S, hS =>
+      closeN_subset_U dep U hdep n (depStep dep S) (depStep_subset_U dep U hdep hS)
+
+theorem closeN_least (dep : Nat → Finset Nat) {S c : Finset Nat}
+    (hS : S ⊆ c) (hc : ∀ x ∈ c, dep x ⊆ c) :
+    ∀ n, closeN dep n S ⊆ c
+  | 0 => hS
+  | n + 1 => closeN_least dep (depStep_subset_c dep hS hc) hc n
+
+theorem closeN_succ_eq (dep : Nat → Finset Nat) (n : Nat) (S : Finset Nat) :
+    closeN dep (n + 1) S = depStep dep (closeN dep n S) := by
+  induction n generalizing S with
+  | zero => rfl
+  | succ n ih => simpa [closeN] using ih (depStep dep S)
+
+theorem closeN_fixed (dep : Nat → Finset Nat) {R : Finset Nat}
+    (h : depStep dep R = R) :
+    ∀ n, closeN dep n R = R
+  | 0 => rfl
+  | n + 1 => by rw [closeN_succ_eq, closeN_fixed dep h n, h]
+
+theorem closeN_eq_of_fixed (dep : Nat → Finset Nat) (S : Finset Nat) (k : Nat)
+    (hfix : depStep dep (closeN dep k S) = closeN dep k S) :
+    ∀ m, closeN dep (k + m) S = closeN dep k S := by
+  intro m
+  induction m with
+  | zero => simp
+  | succ m ih =>
+      rw [Nat.add_succ, closeN_succ_eq, ih, hfix]
+
+/-- **The iteration reaches a fixed point inside `U`.** If it did not, each of the `|U|` rounds
+    would add at least one element of `U`, and the final set would have more than `|U|` members. -/
+theorem close_is_fixed (U : Finset Nat) (dep : Nat → Finset Nat) (S : Finset Nat)
+    (hS : S ⊆ U) (hdep : ∀ x, dep x ⊆ U) :
+    depStep dep (close U dep S) = close U dep S := by
+  by_contra hne
+  change depStep dep (closeN dep U.card S) ≠ closeN dep U.card S at hne
+  have hnotfixed : ∀ k ≤ U.card, closeN dep k S ≠ closeN dep (k + 1) S := by
+    intro k hk hfix
+    have hfix' : depStep dep (closeN dep k S) = closeN dep k S := by
+      rw [← closeN_succ_eq]
+      exact hfix.symm
+    have hfinal : closeN dep U.card S = closeN dep k S := by
+      rw [← Nat.add_sub_of_le hk]
+      exact closeN_eq_of_fixed dep S k hfix' (U.card - k)
+    rw [hfinal] at hne
+    exact hne hfix'
+  have hstrict : ∀ k < U.card, (closeN dep k S).card < (closeN dep (k + 1) S).card := by
+    intro k hk
+    have hne_k : closeN dep k S ≠ closeN dep (k + 1) S := hnotfixed k (Nat.le_of_lt hk)
+    have hsub_k : closeN dep k S ⊆ closeN dep (k + 1) S := by
+      show closeN dep k S ⊆ closeN dep k (depStep dep S)
+      exact closeN_mono dep k (depStep_subset dep S)
+    exact Finset.card_lt_card (Finset.ssubset_iff_subset_ne.mpr ⟨hsub_k, hne_k⟩)
+  have hcard : ∀ k ≤ U.card, S.card + k ≤ (closeN dep k S).card := by
+    intro k hk
+    induction k with
+    | zero => exact le_rfl
+    | succ k ih =>
+        have hk' : k < U.card := Nat.lt_of_succ_le hk
+        have hstep := hstrict k hk'
+        have ih' := ih (Nat.le_of_lt hk')
+        omega
+  have hleU : (closeN dep U.card S).card ≤ U.card :=
+    Finset.card_le_card (closeN_subset_U dep U hdep U.card S hS)
+  have hcardU := hcard U.card le_rfl
+  by_cases hS0 : S.card = 0
+  · have hReq : (closeN dep U.card S).card = U.card := by omega
+    have hReqU : closeN dep U.card S = U :=
+      Finset.eq_of_subset_of_card_le (closeN_subset_U dep U hdep U.card S hS) (by omega)
+    have hfixR : depStep dep (closeN dep U.card S) = closeN dep U.card S := by
+      rw [hReqU]
+      exact Finset.Subset.antisymm
+        (depStep_subset_U dep U hdep (by intro x hx; exact hx))
+        (depStep_subset dep U)
+    exact hne hfixR
+  · omega
+
+/-- **The Rust loop computes the least closure.** -/
+theorem close_spec (U : Finset Nat) (dep : Nat → Finset Nat) (roots : Finset Nat)
+    (hU : roots ⊆ U) (hdep : ∀ x, dep x ⊆ U) :
+    DependencyClosure dep roots (close U dep roots) := by
+  refine ⟨?_, ?_, ?_⟩
+  · exact closeN_contains dep roots U.card
+  · intro x hx
+    have hfix := close_is_fixed U dep roots hU hdep
+    have hsub : dep x ⊆ depStep dep (close U dep roots) := by
+      intro y hy
+      exact Finset.mem_union.mpr (Or.inr (Finset.mem_biUnion.mpr ⟨x, hx, hy⟩))
+    rw [hfix] at hsub
+    exact hsub
+  · intro c hc hclosed
+    exact closeN_least dep hc hclosed U.card
 
 /-- **Rejection is closed under dependency.** A chain in the forced set brings every chain it
     depends on with it: the merge cannot keep a dependent of a rejected fork. -/
@@ -254,13 +510,14 @@ theorem a_descendant_is_not_a_fork_but_the_closure_rule_calls_it_one :
   simp [conflictScope, between, seenOf, forkFixtureDag, descends, forkBlocks, closureKeyedFork,
     committedHistory]
 
-/-- **Law 115's statement.** The fork set is a function of the DAG; its chains are rejected with
-    their dependency closure; and the closure is unique. -/
+/-- **Law 115's statement.** The fork set is a function of the DAG; the Rust loop computes the
+    least dependency closure of the fork chains; and that closure is unique. -/
 def law115_statement : Prop :=
   (∀ (dag dag' : Dag), dag = dag' → ∀ mergeFringe finalFringe : Finset Nat,
     forkBlocks dag mergeFringe finalFringe = forkBlocks dag' mergeFringe finalFringe) ∧
-  (∀ (dep : Nat → Finset Nat) (forks closure : Finset Nat),
-    DependencyClosure dep forks closure → forks ⊆ closure) ∧
+  (∀ (U : Finset Nat) (dep : Nat → Finset Nat) (forks : Finset Nat),
+    forks ⊆ U → (∀ x, dep x ⊆ U) →
+      DependencyClosure dep forks (close U dep forks)) ∧
   (∀ (dep : Nat → Finset Nat) (roots c₁ c₂ : Finset Nat),
     DependencyClosure dep roots c₁ → DependencyClosure dep roots c₂ → c₁ = c₂)
 
@@ -268,8 +525,8 @@ theorem law115 : law115_statement := by
   refine ⟨?_, ?_, ?_⟩
   · intro dag dag' h mergeFringe finalFringe
     exact fork_blocks_are_a_function_of_the_dag h mergeFringe finalFringe
-  · intro dep forks closure h
-    exact a_fork_block_is_rejected dep forks closure h
+  · intro U dep forks hU hdep
+    exact close_spec U dep forks hU hdep
   · intro dep roots c₁ c₂ h₁ h₂
     exact the_dependency_closure_is_unique dep roots c₁ c₂ h₁ h₂
 
