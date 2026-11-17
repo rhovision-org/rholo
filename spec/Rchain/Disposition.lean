@@ -581,7 +581,7 @@ The proposer waits up to 120 s for `Starting` to decide (`wait_until_decided`); 
 `admits_work` admits `Starting` because the deploy can be pooled. The model separates the two. -/
 
 inductive PhaseDecision where
-  | admit
+  | allow
   | wait
   | refuse
 deriving DecidableEq, Repr
@@ -591,7 +591,7 @@ def phaseDecisionWait : Nat := 120
 def proposeAdmission (p : Phase) (waited budget : Nat) : PhaseDecision :=
   match p with
   | .starting => if waited < budget then .wait else .refuse
-  | .running => .admit
+  | .running => .allow
   | .syncing | .blocked => .refuse
 
 theorem a_starting_proposer_waits_then_refuses (waited budget : Nat) :
@@ -605,13 +605,13 @@ theorem a_starting_proposer_waits_then_refuses (waited budget : Nat) :
     simp [proposeAdmission, hnot]
 
 theorem a_running_proposer_is_admitted (waited budget : Nat) :
-    proposeAdmission .running waited budget = .admit := rfl
+    proposeAdmission .running waited budget = .allow := rfl
 
 theorem a_syncing_proposer_is_refused (waited budget : Nat) :
     proposeAdmission .syncing waited budget = .refuse := rfl
 
 theorem the_propose_decision_is_total (p : Phase) (waited budget : Nat) :
-    proposeAdmission p waited budget = .admit ∨
+    proposeAdmission p waited budget = .allow ∨
       proposeAdmission p waited budget = .wait ∨
       proposeAdmission p waited budget = .refuse := by
   cases p with
