@@ -1378,9 +1378,20 @@ impl BlockApi for BlockApiImpl {
             }
             return Ok(certificate);
         }
-        // No quorum has been assembled for the *current* statement yet. Serve the statement with
-        // this node's own attestation when it has an identity: a caller then sees a partial
-        // certificate rather than a bare claim, and a joiner refuses it by its own quorum rule.
+        // No quorum has been assembled for the *current* statement yet. **Serve the last
+        // certificate this node adopted, if it has one** (C404): a joiner on an active chain cannot
+        // hit the exact current anchor — finality moves faster than the collector's attestation
+        // round — so a current-only route hands it a partial statement it must refuse, and a node
+        // restarted during a jail can never boot. The head is quorate, verified and a valid anchor
+        // one or more finality steps behind; the joiner syncs forward from it. This is what the
+        // collector's contract says the route is for (`node_runtime.rs`: "stores the first quorate
+        // certificate, which GET /api/v1/checkpoint then serves to joiners").
+        if let Some(head) = self.checkpoint_store.latest().await? {
+            return Ok(head);
+        }
+        // With no adopted certificate at all, serve the statement with this node's own attestation
+        // when it has an identity: a caller then sees a partial certificate rather than a bare
+        // claim, and a joiner refuses it by its own quorum rule.
         let attestations = match self.checkpoint_attestation().await {
             Ok(attestation) => vec![attestation],
             Err(_) => Vec::new(),

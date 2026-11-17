@@ -39,7 +39,11 @@ the finalized fringe, the shard, the epoch, and two optional commitments:
 Validators sign the statement digest with a domain tag of its own
 (`rchain-checkpoint-attestation-v1`) and serve it at `/api/v1/checkpoint-attestation`. A node
 assembles a certificate when the signatures reach the finality rule and serves it at
-`/api/v1/checkpoint`.
+`/api/v1/checkpoint`. On an actively producing chain the *current* statement usually has fewer
+attestations than the rule needs — finality moves faster than a collection round — so when the
+current statement has no quorate certificate the route serves the **last certificate the node
+adopted**, a verified quorate anchor one or more finality steps behind (C404). A joiner verifies it
+and syncs forward; it never sees a partial statement it must refuse.
 
 The two commitments are **optional on the wire**, and the digest encodes their presence
 unambiguously: a statement with neither keeps the v1 digest byte-for-byte; a statement with at least
