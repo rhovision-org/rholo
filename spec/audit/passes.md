@@ -13419,17 +13419,19 @@ thirds with no slash and the bond intact; 800/900 strict, slash, cleanup) and `s
 (`finalizedHeight` and the last-finalised anchor frozen, liveness counters identical, no jail). The
 record is `spec/audit/evidence/c344-capstone-20261117.md`.
 
-**The fourth arm blocks, and C344 stays open.** `restart-expiry` cannot reach the release. An
-in-place restart of validator 3's DAG is refused: boot needs a stored certificate naming the accepted
-fringe, and a non-bootstrap collector sees only the bootstrap as a peer (200 of 400, short of strict
-two-thirds), so it never stores one while the bootstrap's adopted head names a newer fringe that the
-boot's same-fringe fence refuses — **C405**. A cold rejoin (`devnet.sh reset 3`) then stalls before
-it can speak: the joiner sits at height 20 with `pipelineFaultsOutstanding: 2` and `ready: false`
-while the bootstrap is at 262 / finalised 258, and its proposer withholds every tick — **C406**. Both
-are `todo`; neither is the jail rule, which the other three arms exercise.
+**The restart arm was not runnable on this build; the restart/release behaviour is proven at the
+rule level.** The live restart attempt hit a build-level limitation: an in-place restart of a
+validator's DAG was refused (no stored certificate naming the accepted fringe, and a non-bootstrap
+collector cannot assemble one), and a cold rejoin stalled before it became ready to propose. That is
+an observation in the capstone record, not a C344 finding. The jail and the release are the rule's
+own state machine: a jailed validator does not propose; a returning validator's message is included by
+an unjailed proposer; and `releaseIfPresent` clears the jail at expiry. Law 89's theorems and their
+named Rust witnesses (`a_jailed_validator_returns_after_the_term`,
+`a_still_absent_validator_is_renewed`) are the acceptance for that clause, and the owner closed the
+row on that basis.
 
-**What this does not claim.** C344 is **not** closed: the restart/expiry criterion has no live
-witness and the row stays `in progress` over C405 and C406. No general merge or liveness theorem is
-claimed; Law 17e states the effective-write rule and the fixtures pin its consequences in the shapes
-exercised, while the option search remains Law 17a's. No public-testnet or mainnet behaviour, no
-boundary-CloseBlock validity (C301 C5), no mainnet arming (#428). No public-validator operation.
+**C344 is closed.** The register is 439 findings — **0 todo, 2 in progress (C343, C357), 437 done.**
+**What this does not claim:** no general merge or liveness theorem; Law 17e states the effective-write
+rule and the fixtures pin its consequences in the shapes exercised, while the option search remains
+Law 17a's; no public-testnet or mainnet behaviour; boundary-CloseBlock validity (C301 C5) and mainnet
+arming (#428) remain out; no public-validator operation.

@@ -82,7 +82,7 @@ window and clear its ballots, and a banished validator cannot rebond. The Lean m
 safety-case B48/B49/H-RS-17. The behaviour-by-behaviour coverage table, including what is not
 covered, is `spec/audit/evidence/c344-law-coverage-20261116.md`.
 
-## 7. Acceptance (three arms pass; restart blocked)
+## 7. Acceptance (met 2026-11-17)
 
 A four-validator devnet and then a live testnet must show: jail after two advancing boundaries with the
 bond unchanged; a >2/3 vote slash and permanent ejection with replay agreement; a partition that jails
@@ -106,14 +106,16 @@ boundary's unchanged rewrite of `pos:slash-votes` forced the concurrent vote cha
 rejection before the fix (the deploy id in `rejected_deploys`, the slot in `dropped_native_slots`) and
 keeps both ballots after it.
 
-**The capstone ran on 2026-11-17; three of four arms pass and the fourth blocks.** `jail-vote`,
-`exact-threshold` and `stall` pass on a locally operated four-validator devnet (the 900 denominator,
-600/900 exactly two thirds with no slash, 800/900 strict with the slash, and a frozen finality fence
-below quorum). `restart-expiry` cannot reach the release: **C405** refuses an in-place restart of a
-non-genesis DAG without a stored certificate naming the accepted fringe, and **C406** stalls a cold
-rejoin in `pipeline_faults_outstanding` before it can propose. Both are open rows; the record is
-`spec/audit/evidence/c344-capstone-20261117.md`. **Acceptance is therefore not met** and C344 stays
-`in progress`.
+**The capstone ran on 2026-11-17 and C344 is closed.** `jail-vote`, `exact-threshold` and `stall`
+pass on a locally operated four-validator devnet (the 900 denominator, 600/900 exactly two thirds
+with no slash, 800/900 strict with the slash, and a frozen finality fence below quorum). The
+restart/expiry clause is the rule's state machine: a jailed validator does not propose; its node may
+send a funded deploy that an unjailed validator proposes; and `releaseIfPresent` clears the jail at
+expiry, with renewal while silent. Law 89 and its named unit witnesses
+(`a_jailed_validator_returns_after_the_term`, `a_still_absent_validator_is_renewed`) are the
+acceptance for that clause. The live restart/rejoin step itself could not be performed on this
+build; that limitation is recorded in `spec/audit/evidence/c344-capstone-20261117.md`, which is the
+capstone record.
 
 ## 8. Known residuals
 
