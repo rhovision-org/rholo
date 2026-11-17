@@ -154,6 +154,9 @@ pub struct AcceptedWindow {
     anchor_root: Blake2b256Hash,
     /// The anchor block: a valid justification even before it is in `validated`.
     anchor_block: BlockHash,
+    /// The anchor's height. A checkpoint joiner's accepted state begins here: blocks at or below it
+    /// are committed history it holds no state for and must not re-validate (C406).
+    anchor_height: i64,
     /// The certificate's validation window (Law 109).
     certified: BTreeSet<Blake2b256Hash>,
     /// Roots this node derived by accepting a validated post-anchor block.
@@ -169,13 +172,19 @@ impl AcceptedWindow {
     /// certificate's committed fringe. The fringe members are the justifications a first
     /// post-checkpoint block may name, so a joiner does not refuse its first multi-parent round.
     pub fn from_accepted(state: &AcceptedState) -> Self {
-        let (anchor_block, validated) = match state.anchor() {
-            TrustAnchor::Genesis(pin) => (pin.block, BTreeSet::new()),
-            TrustAnchor::Checkpoint { block, fringe, .. } => (*block, fringe.clone()),
+        let (anchor_block, anchor_height, validated) = match state.anchor() {
+            TrustAnchor::Genesis(pin) => (pin.block, 0, BTreeSet::new()),
+            TrustAnchor::Checkpoint {
+                block,
+                verified,
+                fringe,
+                ..
+            } => (*block, verified.checkpoint.anchor_height, fringe.clone()),
         };
         AcceptedWindow {
             anchor_root: state.root(),
             anchor_block,
+            anchor_height,
             certified: state.window().clone(),
             derived: BTreeSet::new(),
             validated,
@@ -242,6 +251,23 @@ impl AcceptedWindow {
     /// The block this window is anchored to.
     pub fn anchor_block(&self) -> BlockHash {
         self.anchor_block
+    }
+
+    /// The anchor's height.
+    pub fn anchor_height(&self) -> i64 {
+        self.anchor_height
+    }
+
+    /// **The accepted state begins at the anchor.** A block at or below the anchor height that is
+    /// not the anchor itself is committed history this node holds no pre-state for (a sibling at the
+    /// anchor's height, or an ancestor): re-validating it reaches a certified-but-unheld root. It is
+    /// refused as an uncertified pre-state, not faulted as an internal error (C406).
+    pub fn is_committed_at_or_below_anchor(
+        &self,
+        block_number: i64,
+        block_hash: BlockHash,
+    ) -> bool {
+        block_number <= self.anchor_height && block_hash != self.anchor_block
     }
 }
 
@@ -438,6 +464,36 @@ mod tests {
         assert!(
             window.permits_block(StateHash::new([0xAB; 32]), &[]),
             "the anchor root is held"
+        );
+    }
+
+    /// **C406 — the accepted state begins at the anchor.** A checkpoint joiner must not re-validate a
+    /// block at or below the anchor height: a sibling of the anchor at the same height has a
+    /// committed-but-unheld pre-state, and replaying it is what faulted the pipeline and kept the
+    /// rejoined validator from proposing. The anchor itself is the exception; blocks above are the
+    /// catch-up.
+    #[test]
+    fn a_checkpoint_window_refuses_a_block_at_or_below_the_anchor() {
+        let state =
+            AcceptedState::from_certificate(verified(0xAB), BTreeSet::new()).expect("anchor");
+        let window = AcceptedWindow::from_accepted(&state);
+        let anchor_block = BlockHash::new([1u8; 32]);
+        assert_eq!(window.anchor_height(), 9, "the fixture's checkpoint height");
+        assert!(
+            window.is_committed_at_or_below_anchor(9, BlockHash::new([9u8; 32])),
+            "a sibling at the anchor's height is committed history"
+        );
+        assert!(
+            window.is_committed_at_or_below_anchor(8, BlockHash::new([8u8; 32])),
+            "an ancestor below the anchor is committed history"
+        );
+        assert!(
+            !window.is_committed_at_or_below_anchor(9, anchor_block),
+            "the anchor itself is not re-validated"
+        );
+        assert!(
+            !window.is_committed_at_or_below_anchor(10, anchor_block),
+            "a post-anchor block is the catch-up, not committed history"
         );
     }
 

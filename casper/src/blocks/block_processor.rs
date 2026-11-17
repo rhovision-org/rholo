@@ -813,6 +813,18 @@ fn pre_replay_refusal(
         None => Some(Err(ValidateError::Internal(
             "the accepted validation window is not installed yet".to_string(),
         ))),
+        Some(window)
+            if window.is_committed_at_or_below_anchor(
+                i64::from(block.block_number),
+                block.block_hash,
+            ) =>
+        {
+            let status = BlockStatus::UncertifiedPreState;
+            Some(Err(ValidateError::ValidationFailed(
+                crate::multi_parent_casper::mark_failed(&BlockMetadata::from_block(block), status),
+                status,
+            )))
+        }
         Some(window) if !window.permits_block(block.pre_state_hash, &block.justifications) => {
             let status = BlockStatus::UncertifiedPreState;
             Some(Err(ValidateError::ValidationFailed(
