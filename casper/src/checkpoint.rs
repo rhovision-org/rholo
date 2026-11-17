@@ -45,6 +45,11 @@ pub const CHECKPOINT_TAG: &[u8] = b"rchain-checkpoint-v1";
 /// cannot combine; the verifier refuses a v1 statement over a multi-member fringe.
 pub const CHECKPOINT_V2_TAG: &[u8] = b"rchain-checkpoint-v2";
 
+/// Domain tag of the v3 checkpoint digest: the statement additionally commits the **finalized
+/// fringe members' headers** (`fringeHeadersRoot`), so a joiner can verify the derived
+/// `fringe`/`fringe_state` of same-height siblings that the anchor's ancestor walk excludes.
+pub const CHECKPOINT_V3_TAG: &[u8] = b"rchain-checkpoint-v3";
+
 /// Why a checkpoint or a certificate was refused. Every arm names the fact; none is a generic
 /// "invalid".
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -232,13 +237,21 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
         }
     };
 
+    // **The v3 tag is unambiguous even when the v2 fields are present.** A statement carrying the
+    // fringe-headers commitment must never share a digest with a v2 statement, or a signer could
+    // be shown one shape and sign the other.
+    let fringe_headers_root = checkpoint
+        .fringe_headers_root
+        .as_ref()
+        .map(|root| decode_32(root, "fringeHeadersRoot"))
+        .transpose()?;
     let mut buf = Vec::with_capacity(64 + fringe.len() * 32);
     lp(
         &mut buf,
-        if fringe_state.is_some() {
-            CHECKPOINT_V2_TAG
-        } else {
-            CHECKPOINT_TAG
+        match (fringe_headers_root.is_some(), fringe_state.is_some()) {
+            (true, _) => CHECKPOINT_V3_TAG,
+            (false, true) => CHECKPOINT_V2_TAG,
+            (false, false) => CHECKPOINT_TAG,
         },
     );
     lp(&mut buf, checkpoint.shard_id.as_bytes());
@@ -275,7 +288,9 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
         .as_ref()
         .map(|root| decode_32(root, "historyRoot"))
         .transpose()?;
-    let presence = u8::from(metadata_root.is_some()) | (u8::from(history_root.is_some()) << 1);
+    let presence = u8::from(metadata_root.is_some())
+        | (u8::from(history_root.is_some()) << 1)
+        | (u8::from(fringe_headers_root.is_some()) << 2);
     if presence != 0 {
         buf.push(presence);
         if let Some(root) = metadata_root {
@@ -289,6 +304,13 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
             lp(
                 &mut buf,
                 rchain_models::casper::protocol::checkpoint::HISTORY_ROOT_TAG,
+            );
+            buf.extend_from_slice(&root);
+        }
+        if let Some(root) = fringe_headers_root {
+            lp(
+                &mut buf,
+                rchain_models::casper::protocol::checkpoint::FRINGE_HEADERS_ROOT_TAG,
             );
             buf.extend_from_slice(&root);
         }
@@ -478,6 +500,45 @@ pub fn verify_metadata_root<'a>(
     Ok(())
 }
 
+/// **Verify a v3 certificate's fringe-headers commitment against the headers fetched for it.**
+///
+/// The certificate names the finalized fringe by hash; the v3 statement also commits each member's
+/// header, because a body does not carry the derived `fringe`/`fringe_state` fields and the anchor's
+/// ancestor walk excludes same-height siblings. Every named member must have been fetched, and the
+/// root over them must be the signed one. A v2 statement (`None`) is not refused here; the sync
+/// decides whether it can join without the commitment.
+pub fn verify_fringe_headers(
+    checkpoint: &Checkpoint,
+    headers: &std::collections::BTreeMap<BlockHash, BlockHeader>,
+) -> Result<(), CheckpointError> {
+    let Some(claimed) = checkpoint.fringe_headers_root.as_ref() else {
+        return Ok(());
+    };
+    let claimed_bytes = decode_32(claimed, "fringeHeadersRoot")?;
+    let mut members = std::collections::BTreeSet::new();
+    for hex in &checkpoint.fringe_hashes {
+        members.insert(
+            BlockHash::try_from_hex(hex)
+                .map_err(|e| CheckpointError::Malformed(format!("fringe hash: {e}")))?,
+        );
+    }
+    if let Some(missing) = members.iter().find(|hash| !headers.contains_key(*hash)) {
+        return Err(CheckpointError::Malformed(format!(
+            "the v3 certificate's fringe member {} has no fetched header",
+            missing.to_hex()
+        )));
+    }
+    let derived =
+        rchain_models::casper::protocol::checkpoint::fringe_headers_root(headers.values());
+    if derived.as_bytes() != &claimed_bytes {
+        return Err(CheckpointError::Malformed(format!(
+            "the fringe-headers commitment {claimed} does not match the fetched headers {}",
+            derived.to_hex()
+        )));
+    }
+    Ok(())
+}
+
 /// A verified certificate: the statement, its digest, and the stake that signed it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedCheckpoint {
@@ -661,6 +722,7 @@ mod tests {
             epoch: 4,
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         }
     }
 
@@ -1197,6 +1259,42 @@ mod tests {
                 .collect()
         };
         assert!(!senders(&cert_a).is_disjoint(&senders(&cert_b)));
+    }
+
+    /// **A v3 statement commits the fringe members' headers and never aliases v2.** The tag changes
+    /// with the shape; the fetched headers verify the root; a tampered or missing member is refused.
+    #[test]
+    fn a_v3_statement_commits_the_fringe_headers_and_never_aliases_v2() {
+        use rchain_models::casper::protocol::checkpoint::fringe_headers_root;
+
+        let mut statement = checkpoint();
+        statement.fringe_state = Some(hash(9)); // the v2 shape
+        let v2 = checkpoint_digest(&statement).expect("v2 digest");
+
+        let member = BlockHash::new([1u8; 32]);
+        let headers = BTreeMap::from([(member, header(42, 1))]);
+        statement.fringe_headers_root = Some(fringe_headers_root(headers.values()).to_hex());
+
+        let v3 = checkpoint_digest(&statement).expect("v3 digest");
+        assert_ne!(
+            v2, v3,
+            "a v3 statement must never share a digest with a v2 one"
+        );
+        verify_fringe_headers(&statement, &headers).expect("the committed headers verify");
+
+        let mut tampered = headers.clone();
+        tampered
+            .get_mut(&member)
+            .expect("the member is present")
+            .post_state_hash = rchain_models::block::state_hash::StateHash::new([7u8; 32]);
+        assert!(
+            verify_fringe_headers(&statement, &tampered).is_err(),
+            "a changed header is not the committed one"
+        );
+        assert!(
+            verify_fringe_headers(&statement, &BTreeMap::new()).is_err(),
+            "a named member with no fetched header is a refusal"
+        );
     }
 
     /// **The metadata commitment is a set commitment over the walked headers.** Genesis is

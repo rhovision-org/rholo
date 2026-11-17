@@ -23,7 +23,7 @@ use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{
-    BlockFringe, BlockMessage, BlockMetadataMessage, CasperMessage, FinalizedFringe,
+    BlockFringe, BlockHeader, BlockMessage, BlockMetadataMessage, CasperMessage, FinalizedFringe,
     StoreItemsMessage,
 };
 use rchain_rspace::state::RSpaceImporter;
@@ -824,7 +824,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         log.as_ref(),
     )
     .await?;
-    let (entries, fringe_state_root, window) =
+    let (mut entries, fringe_state_root, window) =
         certified_metadata_entries(&walk, &verified.checkpoint)?;
     // **The signed merge base is the anchor header's own fringe state**. The statement
     // signs the state a post-anchor block's merge starts from; the anchor header commits that same
@@ -840,13 +840,48 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         ));
     }
 
+    // **The v3 fringe members' headers.** The ancestor walk excludes same-height siblings; the
+    // certificate commits their headers, and a post-anchor block that justifies one cannot have its
+    // pre-state recomputed without them. Every named member must be fetched, and the root over them
+    // must be the signed one. A v2 certificate carries `None`; the join-input set then refuses a
+    // member it cannot obtain, rather than joining a history it cannot extend.
+    let fringe_hashes: BTreeSet<BlockHash> = verified
+        .checkpoint
+        .fringe_hashes
+        .iter()
+        .map(|hex| decode_hash(hex, "certificate fringe hash"))
+        .collect::<Result<_, _>>()?;
+    let fringe_headers: BTreeMap<BlockHash, BlockHeader> =
+        if verified.checkpoint.fringe_headers_root.is_some() {
+            let fetched = super::lfs_metadata_requester::request_headers(
+                &fringe_hashes,
+                metadata_rx,
+                transport.as_ref(),
+                &conf,
+                comm_util.as_ref(),
+                log.as_ref(),
+            )
+            .await?;
+            crate::checkpoint::verify_fringe_headers(&verified.checkpoint, &fetched)
+                .map_err(|e| e.to_string())?;
+            fetched
+        } else {
+            BTreeMap::new()
+        };
+    for header in fringe_headers.values() {
+        if !walk.headers.contains_key(&header.block_hash) {
+            entries.push(metadata_entry_from_header(header));
+        }
+    }
+    entries.sort_by_key(|(hash, meta)| (i64::from(meta.block_num), *hash));
+
     // **The merge inputs the certificate does not carry.** Validation of the first post-anchor block
     // reads the anchor's body, the bodies of the fringe the anchor finalised, and (for a boundary
     // re-index) those members' own finalised fringe. A joiner that accepts the certificate without
     // them reaches "ready" and then cannot validate anything: the state is representable today and
     // this set removes it. The bodies are hash-checked by `fetch_block_body`; the roots come from
     // their committed headers.
-    let (join_bodies, join_roots) = join_input_set(&walk, &verified.checkpoint)?;
+    let (join_bodies, join_roots) = join_input_set(&walk, &verified.checkpoint, &fringe_headers)?;
 
     // **The hydrated set is the certified set.** The checkpoint's **signed fringe state** (the run
     // root), the anchor header's own `fringe_state_hash`, the anchored reply's
@@ -1216,6 +1251,35 @@ pub(super) fn tie_certificate_to_fringe(
 /// and post-state against the certificate, the fringe's max `(height, hash)` rule, and the walk's
 /// own shape. `validated` means "accepted into this node's DAG under the certificate", not "this
 /// node executed it".
+/// **The DAG record a certified header publishes.** `validated: true` is the certificate's
+/// statement about the header, not this node's execution of it; a body may be absent.
+pub(super) fn metadata_entry_from_header(header: &BlockHeader) -> (BlockHash, BlockMetadata) {
+    (
+        header.block_hash,
+        BlockMetadata {
+            block_hash: header.block_hash,
+            block_num: header.block_num,
+            sender: header.sender,
+            seq_num: header.seq_num,
+            justifications: header.justifications.clone(),
+            bonds_map: header.bonds_map.clone(),
+            validated: true,
+            validation_failed: false,
+            slashable: false,
+            failure_cause: None,
+            slash_severity: rchain_models::block_metadata::SlashSeverity::Unspecified,
+            restore_attempts: 0,
+            fringe: header.fringe.clone(),
+            fringe_state_hash: header.fringe_state_hash,
+            pre_state_hash: header.pre_state_hash,
+            post_state_hash: header.post_state_hash,
+            sig: header.sig.clone(),
+            sig_algorithm: header.sig_algorithm.clone(),
+            member_of_fringe: None,
+        },
+    )
+}
+
 pub(super) fn certified_metadata_entries(
     walk: &super::lfs_metadata_requester::MetadataWalk,
     checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
@@ -1321,30 +1385,7 @@ pub(super) fn certified_metadata_entries(
 
     let mut entries = Vec::with_capacity(walk.headers.len());
     for header in walk.headers.values() {
-        entries.push((
-            header.block_hash,
-            BlockMetadata {
-                block_hash: header.block_hash,
-                block_num: header.block_num,
-                sender: header.sender,
-                seq_num: header.seq_num,
-                justifications: header.justifications.clone(),
-                bonds_map: header.bonds_map.clone(),
-                validated: true,
-                validation_failed: false,
-                slashable: false,
-                failure_cause: None,
-                slash_severity: rchain_models::block_metadata::SlashSeverity::Unspecified,
-                restore_attempts: 0,
-                fringe: header.fringe.clone(),
-                fringe_state_hash: header.fringe_state_hash,
-                pre_state_hash: header.pre_state_hash,
-                post_state_hash: header.post_state_hash,
-                sig: header.sig.clone(),
-                sig_algorithm: header.sig_algorithm.clone(),
-                member_of_fringe: None,
-            },
-        ));
+        entries.push(metadata_entry_from_header(header));
     }
     // Parents before children for the insert; the DAG refuses a block whose justifications are
     // absent, and the walk's own shape check has already guaranteed the order exists.
@@ -1359,29 +1400,37 @@ pub(super) fn certified_metadata_entries(
 /// **The bodies a checkpoint joiner must hold before it can validate the first post-anchor block.**
 ///
 /// The certificate commits headers and state roots, not the blocks the merge reads. The set is the
-/// anchor, the fringe the anchor itself finalised, and each of those members' own finalised fringe
-/// (the participation an index regeneration at a boundary derives). Every member is an ancestor of
-/// the anchor, so the metadata walk holds its header and its three state roots are committed.
+/// anchor, the certificate's finalized fringe (including same-height siblings the ancestor walk
+/// excludes), the fringe the anchor itself finalised, and each of those members' own finalised
+/// fringe (the participation an index regeneration at a boundary derives). The headers come from
+/// the walk or from the v3 fringe-headers commitment; a member obtainable from neither is a refusal.
 pub(super) fn join_input_set(
     walk: &super::lfs_metadata_requester::MetadataWalk,
     checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
+    fringe_headers: &BTreeMap<BlockHash, BlockHeader>,
 ) -> Result<(BTreeSet<BlockHash>, BTreeSet<Blake2b256Hash>), String> {
     let anchor = decode_hash(&checkpoint.anchor, "certificate anchor")?;
-    let anchor_header = walk.headers.get(&anchor).ok_or_else(|| {
+    let header_for = |hash: &BlockHash| fringe_headers.get(hash).or_else(|| walk.headers.get(hash));
+    let anchor_header = header_for(&anchor).ok_or_else(|| {
         format!(
             "the metadata walk does not hold the certificate's anchor {}",
             anchor.to_hex()
         )
     })?;
+    // **The certificate's fringe, not only the anchor's own.** A post-anchor block routinely
+    // justifies a same-height sibling; the merge reads that sibling's deploy chain, so its body and
+    // state roots are join inputs too.
     let mut replay_layer: BTreeSet<BlockHash> = BTreeSet::from([anchor]);
+    for hex in &checkpoint.fringe_hashes {
+        replay_layer.insert(decode_hash(hex, "certificate fringe hash")?);
+    }
     replay_layer.extend(anchor_header.fringe.iter().copied());
-    let finalised: Vec<BlockHash> = anchor_header.fringe.iter().copied().collect();
+    let finalised: Vec<BlockHash> = replay_layer.iter().copied().collect();
     for member in finalised {
-        let header = walk.headers.get(&member).ok_or_else(|| {
+        let header = header_for(&member).ok_or_else(|| {
             format!(
-                "the anchor {} finalised the fringe member {}, which the metadata walk does not \
-                 hold",
-                anchor.to_hex(),
+                "the certificate's fringe member {} is in neither the metadata walk nor the v3 \
+                 fringe-headers commitment",
                 member.to_hex()
             )
         })?;
@@ -1391,9 +1440,10 @@ pub(super) fn join_input_set(
     // the merge replay an index from the block's own pre-state without replaying its ancestry.
     let mut roots = BTreeSet::new();
     for hash in &replay_layer {
-        let header = walk.headers.get(hash).ok_or_else(|| {
+        let header = header_for(hash).ok_or_else(|| {
             format!(
-                "join input block {} is not in the metadata walk",
+                "join input block {} is in neither the metadata walk nor the v3 fringe-headers \
+                 commitment",
                 hash.to_hex()
             )
         })?;
@@ -2836,6 +2886,7 @@ mod tests {
             epoch: 0,
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         }
     }
 
@@ -2992,6 +3043,7 @@ mod tests {
             epoch: 0,
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         }
     }
 
@@ -3105,6 +3157,7 @@ mod tests {
             shard_id: "root".to_string(),
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         };
         let err = certified_metadata_entries(&walk, &checkpoint)
             .expect_err("the anchor rule is max (height, hash)");
@@ -3127,6 +3180,7 @@ mod tests {
             shard_id: "root".to_string(),
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         };
         let err = certified_metadata_entries(&walk, &checkpoint)
             .expect_err("the header's post-state must be the certificate's");
@@ -3231,8 +3285,9 @@ mod tests {
             epoch: 20,
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         };
-        let (bodies, roots) = join_input_set(&walk, &checkpoint).unwrap();
+        let (bodies, roots) = join_input_set(&walk, &checkpoint, &BTreeMap::new()).unwrap();
         assert_eq!(
             bodies,
             BTreeSet::from([hash(58), hash(59), hash(60)]),

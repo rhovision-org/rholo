@@ -356,6 +356,7 @@ fn a_wiped_joiner_validates_the_first_post_anchor_block_from_the_certificate_and
                         epoch: anchor_height / 3,
                         metadata_root: None,
                         history_root: None,
+                        fringe_headers_root: None,
                     };
                     let verified = VerifiedCheckpoint {
                         checkpoint,

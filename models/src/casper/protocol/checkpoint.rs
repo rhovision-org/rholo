@@ -26,6 +26,9 @@ pub const METADATA_ROOT_TAG: &[u8] = b"rchain-checkpoint-metadata-root-v1";
 /// Domain tag of the optional history-root slot in the statement digest.
 pub const HISTORY_ROOT_TAG: &[u8] = b"rchain-checkpoint-history-root-v1";
 
+/// Domain tag of the finalized-fringe headers commitment (v3).
+pub const FRINGE_HEADERS_ROOT_TAG: &[u8] = b"rchain-checkpoint-fringe-headers-v1";
+
 /// Domain tag of the **signed fringe state** slot in a v2 statement digest. The slot is mandatory in
 /// v2 (the statement's run root); the tag keeps it distinguishable from the anchor post-state, which
 /// is not the merge when the finalized fringe has more than one member.
@@ -167,6 +170,28 @@ pub fn validation_window_root<'a>(
     Blake2b256Hash::create(&out)
 }
 
+/// **The commitment over the finalized fringe's own headers** (v3). The certificate's
+/// `fringe_hashes` names the set; this binds each member's *derived* fields (`fringe`,
+/// `fringe_state_hash`) and state roots, which a block body does not carry and the anchor's
+/// ancestor walk excludes for same-height siblings. Without it a joiner cannot recompute the
+/// pre-state of a block that justifies a sibling, which is the measured cold-join failure of
+/// 2026-11-17.
+pub fn fringe_headers_root<'a>(
+    headers: impl IntoIterator<Item = &'a BlockHeader>,
+) -> Blake2b256Hash {
+    let mut entries: Vec<&BlockHeader> = headers.into_iter().collect();
+    entries.sort_by_key(|header| header.block_hash);
+    entries.dedup_by_key(|header| header.block_hash);
+    let mut out = Vec::new();
+    lp(&mut out, FRINGE_HEADERS_ROOT_TAG);
+    out.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+    for header in entries {
+        out.extend_from_slice(header.block_hash.as_bytes());
+        lp(&mut out, &header_commitment_bytes(header));
+    }
+    Blake2b256Hash::create(&out)
+}
+
 /// The checkpoint statement, as signed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -203,6 +228,13 @@ pub struct Checkpoint {
     /// `None` is a legacy statement; only the audit accepts it, and it reports the absence.
     #[serde(default)]
     pub history_root: Option<String>,
+    /// **The commitment to the finalized fringe members' headers** ([`fringe_headers_root`], v3).
+    /// A joiner fetches those headers by the signed `fringe_hashes` and verifies them against this
+    /// root before it accepts their derived `fringe`/`fringe_state` fields. `None` is a v2
+    /// statement: a joiner then has no way to build a pre-state for a block that justifies a
+    /// same-height sibling, which is the measured cold-join failure.
+    #[serde(default)]
+    pub fringe_headers_root: Option<String>,
 }
 
 /// One validator's signature over a checkpoint digest.

@@ -3667,6 +3667,7 @@ mod tests {
                 epoch: 0,
                 metadata_root: None,
                 history_root: None,
+                fringe_headers_root: None,
             })
         }
 
@@ -4960,6 +4961,7 @@ mod tests {
             epoch: 0,
             metadata_root: Some("66".repeat(32)),
             history_root: Some("77".repeat(32)),
+            fringe_headers_root: None,
         };
         let certificate = rchain_models::casper::protocol::checkpoint::CheckpointCertificate {
             checkpoint,

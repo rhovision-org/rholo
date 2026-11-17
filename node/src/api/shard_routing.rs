@@ -536,6 +536,7 @@ mod tests {
                 epoch: 0,
                 metadata_root: None,
                 history_root: None,
+                fringe_headers_root: None,
             })
         }
 

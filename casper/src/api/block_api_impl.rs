@@ -1314,6 +1314,22 @@ impl BlockApi for BlockApiImpl {
         // window.** The anchor's ancestor closure is the set the joiner will walk; a validator that
         // cannot read every ancestor's metadata refuses to attest rather than sign a partial root.
         let (metadata_root, history_root) = self.anchor_commitments(&anchor_hash).await?;
+        // **The fringe members' own headers** (v3). The ancestor walk excludes same-height siblings,
+        // so their derived `fringe`/`fringe_state` is not otherwise available to a joiner — and a
+        // post-anchor block that justifies one cannot be validated without it. Refuse to sign a
+        // statement that names a member whose header this node cannot read.
+        let mut fringe_headers = Vec::with_capacity(fringe.len());
+        for member in &fringe {
+            let meta = self.dag.lookup(&member.id).await?.ok_or_else(|| {
+                format!(
+                    "the fringe member {} has no metadata, so its header cannot be committed",
+                    member.id.to_hex()
+                )
+            })?;
+            fringe_headers.push(meta.to_header(false));
+        }
+        let fringe_headers_root =
+            rchain_models::casper::protocol::checkpoint::fringe_headers_root(&fringe_headers);
         let epoch_length = self.runtime.genesis_pos().params.epoch_length.max(1);
         let anchor_height = i64::from(anchor.height);
         Ok(Checkpoint {
@@ -1336,6 +1352,7 @@ impl BlockApi for BlockApiImpl {
             epoch: anchor_height / epoch_length,
             metadata_root: Some(metadata_root.to_hex()),
             history_root: Some(history_root.to_hex()),
+            fringe_headers_root: Some(fringe_headers_root.to_hex()),
         })
     }
 

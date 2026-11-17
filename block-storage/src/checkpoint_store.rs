@@ -376,6 +376,7 @@ mod tests {
                 epoch: 1,
                 metadata_root: None,
                 history_root: None,
+                fringe_headers_root: None,
             },
             attestations: vec![CheckpointAttestation {
                 checkpoint_digest: "ef".repeat(32),

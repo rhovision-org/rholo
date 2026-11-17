@@ -1967,6 +1967,7 @@ mod tests {
             epoch: 0,
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         };
         let verified = crate::checkpoint::VerifiedCheckpoint {
             checkpoint,
@@ -2031,6 +2032,7 @@ mod tests {
             epoch: 0,
             metadata_root: Some(model::metadata_root(headers.iter()).to_hex()),
             history_root: Some(model::validation_window_root(headers.iter()).to_hex()),
+            fringe_headers_root: None,
         };
         let verified = crate::checkpoint::VerifiedCheckpoint {
             checkpoint,

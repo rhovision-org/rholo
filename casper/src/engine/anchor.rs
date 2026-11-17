@@ -380,6 +380,7 @@ mod tests {
                 epoch: 0,
                 metadata_root: None,
                 history_root: None,
+                fringe_headers_root: None,
             },
             digest: Blake2b256Hash::from_byte_array(&[7u8; 32]),
             supporting_stake: 3,

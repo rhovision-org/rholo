@@ -101,6 +101,90 @@ pub async fn request_metadata(
     hash_walk(anchor, metadata_rx, transport, conf, comm_util, log).await
 }
 
+/// **Fetch named headers only.** The closure walk follows justifications from the anchor, so it
+/// never reaches a same-height sibling; a v3 certificate commits those siblings' headers, and this
+/// asks for exactly the signed hashes. No justification is followed, nothing outside `hashes` is
+/// admitted, and an incomplete answer is a refusal (the caller is verifying a signed commitment).
+pub async fn request_headers(
+    hashes: &BTreeSet<BlockHash>,
+    metadata_rx: &mut tokio::sync::mpsc::Receiver<BlockMetadataMessage>,
+    transport: &dyn TransportLayer,
+    conf: &RPConf,
+    comm_util: &CommUtil,
+    log: &dyn Log,
+) -> Result<BTreeMap<BlockHash, BlockHeader>, String> {
+    let source = LogSource::new("casper.engine.LfsMetadataRequester");
+    let mut headers: BTreeMap<BlockHash, BlockHeader> = BTreeMap::new();
+    let mut outstanding: BTreeSet<BlockHash> = hashes.clone();
+    let mut idle_rounds: u32 = 0;
+    while !outstanding.is_empty() {
+        let batch: Vec<BlockHash> = outstanding.iter().copied().take(METADATA_BATCH).collect();
+        ask_peers(
+            transport,
+            conf,
+            comm_util,
+            &BlockMetadataRequest::hashes(batch.clone()),
+            log,
+        )
+        .await;
+        let deadline = tokio::time::Instant::now() + METADATA_ROUND_TIMEOUT;
+        let before = headers.len();
+        while !outstanding.is_empty() {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let Ok(Some(answer)) = tokio::time::timeout(remaining, metadata_rx.recv()).await else {
+                break;
+            };
+            for header in answer.headers {
+                if !hashes.contains(&header.block_hash) {
+                    continue;
+                }
+                if let Some(known) = headers.get(&header.block_hash) {
+                    if known != &header {
+                        return Err(format!(
+                            "two peers sent different headers for block {}: a header cannot be \
+                             content-verified, so a disagreement about one is not resolvable here",
+                            header.block_hash.to_hex()
+                        ));
+                    }
+                } else {
+                    headers.insert(header.block_hash, header);
+                }
+                // Answers may arrive in any order; drop every hash that is now held.
+                outstanding.retain(|hash| !headers.contains_key(hash));
+            }
+        }
+        if headers.len() == before {
+            idle_rounds += 1;
+            if idle_rounds >= METADATA_MAX_IDLE_ROUNDS {
+                let mut missing: Vec<String> =
+                    outstanding.iter().take(8).map(|h| h.to_hex()).collect();
+                if outstanding.len() > missing.len() {
+                    missing.push(format!("… {} more", outstanding.len() - missing.len()));
+                }
+                return Err(format!(
+                    "the fringe-header fetch learned nothing for {idle_rounds} rounds; {} hash(es) \
+                     are still outstanding: {}",
+                    outstanding.len(),
+                    missing.join(", ")
+                ));
+            }
+            log.warn(
+                source,
+                &format!(
+                    "fringe-header fetch: no answer this round; re-asking {} hash(es)",
+                    outstanding.len()
+                ),
+            );
+        } else {
+            idle_rounds = 0;
+        }
+    }
+    Ok(headers)
+}
+
 /// The original hash-frontier walk: one batch of named hashes per round.
 async fn hash_walk(
     anchor: BlockHash,
