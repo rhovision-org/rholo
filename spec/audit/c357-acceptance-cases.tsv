@@ -1,0 +1,8 @@
+case	expected
+valid-new-genesis	true
+valid-retained-sweep	true
+reconstructed-with-both-acceptances	true
+mixed-version	false
+missing-reviewer	false
+both-shapes	false
+missing-digest	false

@@ -1,0 +1,3 @@
+shape	requirements
+coordinated-new-genesis	campaignDigest,releaseSelected,lockstep,noMixedVersion,noSweep,reviewerIndependent,verdictAccepted,incidentTrace
+retained-history-sweep	campaignDigest,releaseSelected,lockstep,noMixedVersion,sweepPresent,sweepComplete,reviewerIndependent,verdictAccepted,incidentTrace

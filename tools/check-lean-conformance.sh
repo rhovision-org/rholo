@@ -79,7 +79,7 @@ if command -v lake >/dev/null 2>&1; then
     fail "lake build Rchain.Laws — see /tmp/lean-build.log (a 124 there is the 1200 s bound above, not a proof error)"
     tail -n 120 /tmp/lean-build.log || true
   fi
-  if (cd "$SPEC" && timeout 1800 bash -c 'lake build && lake build rchain-corpus && lake build rchain-laws') >>/tmp/lean-build.log 2>&1; then
+  if (cd "$SPEC" && timeout 1800 bash -c 'lake build && lake build rchain-corpus && lake build rchain-laws && lake build rchain-tables') >>/tmp/lean-build.log 2>&1; then
     ok "lake build (spec/, library + executables + the law-register checks)"
   else
     fail "lake build (spec/) — see /tmp/lean-build.log (a 124 there is the 1800 s bound above, not a proof error)"
@@ -426,6 +426,17 @@ if [[ -x "$ROOT/tools/emit-lean-laws.sh" ]]; then
       fi
       rm -f "$counts_log"
     fi
+  fi
+fi
+
+# --- 5d. the C343/C357 contract tables are what the Lean says ----------------------------------
+# `lake exe rchain-tables` writes the diagnosis and acceptance tables; the collector and the
+# checker read the committed copies. Re-emit and diff, same discipline as the law register.
+if [[ -x "$ROOT/tools/emit-lean-tables.sh" ]]; then
+  if "$ROOT/tools/emit-lean-tables.sh" --check >/tmp/lean-tables.log 2>&1; then
+    ok "contract tables emitted from the Lean"
+  else
+    fail "contract table emission failed — see /tmp/lean-tables.log"
   fi
 fi
 

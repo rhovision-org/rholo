@@ -1,0 +1,6 @@
+case	expected
+incident	proposal-isolation
+processor-fault	processor-fault-blocked
+syncing	syncing-recovery
+healthy	healthy
+unmodelled	unmodelled
