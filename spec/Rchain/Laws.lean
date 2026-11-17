@@ -5101,9 +5101,13 @@ def lawsC : List Law := [
       absent across advancing epoch boundaries is removed from the active set for `J` boundaries and \
       paid nothing, while its bond and its delegators' principal are untouched. A stake-weighted vote \
       of strictly more than two thirds of the active stake, opened only against an already-jailed \
-      validator, may slash it at the configured tier and permanently eject it; a passing vote and a \
-      release each close the target's window and clear its ballots, and a banished validator cannot \
-      rebond. A stalled boundary or an off-boundary block changes nothing",
+      validator, may slash it at the configured tier and permanently eject it; a passing vote closes \
+      the target's window and clears its ballots, and a banished validator cannot rebond. **The \
+      release clause is not claimed:** it is conditional on a presence signal, and under the node's \
+      derivation — finalised-fringe block senders, with a jailed validator outside the drawn active \
+      set — the jailed validator is never present, so the reachable outcome is renewal (see \
+      `block_presence_cannot_release_a_jailed_validator`). A stalled boundary or an off-boundary \
+      block changes nothing",
     status := .provedModel,
     declarations := [`Rchain.Liveness.State, `Rchain.Liveness.stepJail,
       `Rchain.Liveness.boundaryStep, `Rchain.Liveness.jail_never_touches_the_bond,
@@ -5123,6 +5127,11 @@ def lawsC : List Law := [
       `Rchain.Liveness.releaseIfPresent,
       `Rchain.Liveness.a_returning_validator_is_released,
       `Rchain.Liveness.release_clears_the_window_and_ballots,
+      `Rchain.Liveness.presentFromSenders,
+      `Rchain.Liveness.gatedSenders,
+      `Rchain.Liveness.a_jailed_validator_is_never_present,
+      `Rchain.Liveness.block_presence_cannot_release_a_jailed_validator,
+      `Rchain.Liveness.block_presence_renews_a_jailed_validator,
       `Rchain.Liveness.renewIfAbsent,
       `Rchain.Liveness.a_still_absent_validator_is_renewed,
       `Rchain.Liveness.a_passing_vote_closes_the_window_and_clears_ballots,
@@ -5159,6 +5168,9 @@ def lawsC : List Law := [
       `Rchain.Liveness.jail_that_burns_the_bond_reaches_a_stake,
       `Rchain.Liveness.a_returning_validator_is_released,
       `Rchain.Liveness.release_clears_the_window_and_ballots,
+      `Rchain.Liveness.a_jailed_validator_is_never_present,
+      `Rchain.Liveness.block_presence_cannot_release_a_jailed_validator,
+      `Rchain.Liveness.block_presence_renews_a_jailed_validator,
       `Rchain.Liveness.a_still_absent_validator_is_renewed,
       `Rchain.Liveness.a_banished_validator_cannot_rebond,
       `Rchain.Liveness.an_unguarded_rebond_reaches_a_banished_validator],
@@ -5173,9 +5185,18 @@ def lawsC : List Law := [
       `is_super_majority`), and both sides of that inequality read the **active-set snapshot**, not \
       the mutable pool, so a mid-epoch delegation cannot buy voting power. The Rust side supplies the expiry/renewal arithmetic, the participation \
       map (from the receiver's finalised fringe), the vote-window tally, the delegation fan-out on a \
-      slash, and the withdrawal escrow; those are outside the model. This is **not** an inactivity \
-      leak: no automatic step touches a bond. Default off; a network arms it at genesis. The boundary- \
-      skip hole (no validity rule requires a `CloseBlock` at a boundary) is a separate residual." },
+      slash, and the withdrawal escrow; those are outside the model. **The release/renewal clause is \
+      conditional, and the node's presence signal refutes it (2026-11-17 audit):** a jailed validator \
+      is filtered out of the drawn active set and the proposer refuses it \
+      (`select_active_excluding`, `is_active_validator`), while the boundary's participation map is \
+      derived from finalised-fringe block senders and reads no deploy signer. So `presentFromSenders` \
+      is false for every jailed validator: `block_presence_cannot_release_a_jailed_validator` and \
+      `block_presence_renews_a_jailed_validator` are the reachable outcomes. The named Rust witnesses \
+      for release and renewal inject a participation map that includes the jailed validator; they \
+      witness the algebra, not reachability, and C344 is re-opened and re-scoped to the surface the \
+      build can show. This is **not** an inactivity leak: no automatic step touches a bond. Default \
+      off; a network arms it at genesis. The boundary-skip hole (no validity rule requires a \
+      `CloseBlock` at a boundary) is a separate residual." },
 
   { number := 90, clause := "a", layer := "Node",
     statement := "**A served hostlist entry is earned.** A peer appears in `GET /api/v1/nodes` only \
@@ -6152,8 +6173,12 @@ def lawsC : List Law := [
       produced. On a linked chain replay has a result, and that result implies the chain was linked; \
       a block whose pre-state is not the previous post-state is refused rather than filled from a \
       downloaded state. This is why the audit's replay hydrates only the genesis post-state instead \
-      of walking the whole trie for every historical block root. The **sync** path does not replay \
-      at all: it accepts a certified checkpoint (Laws 104/105) and leaves this replay to the audit.",
+      of walking the whole trie for every historical block root. **The sync path never replays to \
+      establish trust**: it accepts a certified checkpoint (Laws 104/105) and leaves replay-from-\
+      genesis to the audit. It does replay **one bounded segment** — a checkpoint joiner regenerates \
+      the deploy-chain indices of the finalised layer behind the anchor, from pre-states the \
+      certificate or the walked headers commit, and refuses a post-state mismatch. That replay is a \
+      merge input, not an acceptance path.",
     status := .provedModel,
     declarations := [`Rchain.Sync.ReplayState.linked_iff_replay_has_a_result,
       `Rchain.Sync.ReplayState.replay_reconstructs_every_produced_state,
@@ -6175,7 +6200,12 @@ def lawsC : List Law := [
       before replay. `a_block_whose_pre_state_is_not_the_previous_post_is_refused` is the no-fallback \
       half: the recovery replay never substitutes a downloaded root for a state it could not derive. \
       The sync path's staging of the same replay is gone; Law 105 states the separation and \
-      `node/src/runtime/audit.rs` is where the replay now runs." },
+      `node/src/runtime/audit.rs` is where the trust-establishing replay now runs. **The bounded \
+      segment the join does replay (2026-11-17 audit):** `MergeScope::merge` loads a `BlockIndex` — \
+      body plus mergeable/native sidecars — for every block in the conflict and final scopes, and a \
+      wiped joiner has none of them; `regenerate_sidecars` replays each such block from its own \
+      pre-state. The certificate commits state roots and headers, not indices, so this replay is \
+      the model's truth and the reason the earlier 'does not replay at all' sentence was false." },
 
   { number := 103, layer := "Sync",
     statement := "**Concurrent serving preserves answer identity and bounds the pool.** The answer \
@@ -6472,9 +6502,14 @@ def lawsC : List Law := [
       earlier header-count window (`8` headers) covered barely two heights at four validators — the \
       2026-11-17 cold rejoin then needed a block five heights down and had no state for it. A \
       future builder that reads deeper must change the constant and the commitment together — the \
-      joiner refuses rather than widening. **The checkpoint root is the anchor's fringe state \
-     :** a post-anchor block's merge starts from it, so the joiner needs the merge's scope \
-      states, which are headers within the height-bound window. **What this law does not claim:** the \
+      joiner refuses rather than widening. **The checkpoint root is the anchor's fringe state:** a \
+      post-anchor block's merge starts from it, and the window commits the *states* of the merge's \
+      scope — the pre/post/fringe roots of the headers within the height bound. **The window does \
+      not commit the scope's deploy-chain indices:** the merge loads a `BlockIndex` per scope block, \
+      and a joiner regenerates each by replaying that block from its committed pre-state (the \
+      backfill supplies the hash-verified bodies). So this law bounds the *states* the merge reads, \
+      not all of its inputs; the indices are a replay product, stated in Law 102. **What this law \
+      does not claim:** the \
       state roots are a quorum claim (Law 85's residual); the audit (Law 106) is the counterweight. \
       The window's commitment is \
       an extension of the statement, appended after `metadataRoot` only when present, so a legacy \

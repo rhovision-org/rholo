@@ -1,8 +1,11 @@
 # What a joining node trusts
 
 A node with no state does **not** restore a prefix by replaying it. It moves from a trust anchor to
-the tip over authenticated data, and it runs from the state that anchor names. "Trustless" is a word
-that hides which inputs are checked; this page states the model precisely. The machine forms are
+the tip over authenticated data, and it runs from the state that anchor names. The join does replay
+a bounded segment — the finalised layer's deploy-chain indices, regenerated from committed
+pre-states, because the merge consumes indices as well as roots — and that replay is a merge input,
+never an acceptance path. "Trustless" is a word that hides which inputs are checked; this page
+states the model precisely. The machine forms are
 Laws 104, 105, 108 and 109 (`spec/Rchain/Sync/`); Law 83's content-transfer theorem remains, and
 the finality residual it enumerated is **closed on the checkpoint path** by Laws 105 and 108.
 

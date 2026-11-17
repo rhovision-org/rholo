@@ -16,6 +16,16 @@ only function that does, and only when `passes`. The defect variants are the fal
 What stays with Rust and its tests: the store codecs, the epoch boundary's participation map
 (derived from the receiver's finalised fringe), delegation fan-out on a slash, the withdrawal
 escrow, and the exact `is_super_majority` (this module uses the same strict `3·for > 2·total`).
+
+**The release/renewal clause is conditional on a presence signal, and the node's signal refutes it.**
+`releaseIfPresent` takes `present` as a parameter, so the earlier theorems are true for any predicate.
+`presentFromSenders` is the derivation the node actually runs (finalised-fringe senders), and
+`gatedSenders` is the proposer gate (a jailed validator is outside the drawn active set and cannot
+author a message). Under those two facts `a_jailed_validator_is_never_present`,
+`block_presence_cannot_release_a_jailed_validator` and `block_presence_renews_a_jailed_validator`
+state the reachable outcome: **renew, never release**. A release needs a signal a jailed validator can
+produce — a deploy it signs and an unjailed proposer includes — or a fixed non-renewing term; the
+algebra does not supply one.
 -/
 
 namespace Rchain
@@ -230,6 +240,49 @@ theorem release_clears_the_window_and_ballots (present : Validator → Bool) (s 
       (releaseIfPresent present s v).ballots =
         s.ballots.filter (fun ballot => ballot.1.1 != v) := by
   simp [releaseIfPresent, hterm, hpresent]
+
+/-- **The node's presence derivation.** A validator is present at a boundary iff it authored a
+    message in the finalised fringe. This is the whole of the reachable rule: the boundary's
+    participation map is `latest_heights(prev_fringe senders)` in
+    `casper/src/multi_parent_casper.rs`, and nothing else is read — no deploy signer enters it. -/
+def presentFromSenders (senders : Validator → Bool) (v : Validator) : Bool := senders v
+
+/-- **The proposer gate, as the model needs it.** A jailed validator is removed from the drawn
+    active set, and the proposer refuses a sender whose stake is zero in the newest block's bond
+    cache; so a jailed validator is never among the finalised fringe's senders. The Rust facts are
+    `rholang/src/native_state.rs::select_active_excluding` (the draw excludes the jailed) and
+    `casper/src/blocks/proposer/proposer.rs::is_active_validator` (the proposer refuses an
+    undrawn sender). -/
+def gatedSenders (s : State) (senders : Validator → Bool) : Prop :=
+  ∀ v, jailTerm s v > 0 → senders v = false
+
+/-- **Under the node's derivation a jailed validator is never present.** The free-parameter reading
+    of `releaseIfPresent` proves a conditional; this theorem supplies the antecedent's negation for
+    every reachable boundary, which is what makes the release clause dead code in this build. -/
+theorem a_jailed_validator_is_never_present (s : State) (senders : Validator → Bool)
+    (hgate : gatedSenders s senders) (v : Validator) (hjailed : jailTerm s v > 0) :
+    presentFromSenders senders v = false :=
+  hgate v hjailed
+
+/-- **Block-authored presence cannot release a jailed validator.** The release branch needs
+    `present v = true`; the derivation and the gate give `false`, so `releaseIfPresent` is the
+    identity on the state. C344's release/renewal clause is therefore not proven by the algebra —
+    it is refuted as unreachable until the presence signal changes (deploy signers, or a fixed
+    non-renewing term). -/
+theorem block_presence_cannot_release_a_jailed_validator (s : State) (senders : Validator → Bool)
+    (hgate : gatedSenders s senders) (v : Validator) (hjailed : jailTerm s v > 0) :
+    releaseIfPresent (presentFromSenders senders) s v = s := by
+  have hp : presentFromSenders senders v = false := hgate v hjailed
+  simp [releaseIfPresent, hp]
+
+/-- **Block-authored presence renews a jailed validator.** At the expiry boundary the term is
+    renewed to the full sentence, which is the reachable arm of the rule in this build. -/
+theorem block_presence_renews_a_jailed_validator (s : State) (senders : Validator → Bool)
+    (hgate : gatedSenders s senders) (J : Nat) (v : Validator) (hterm : jailTerm s v ≤ 1)
+    (hjailed : jailTerm s v > 0) :
+    jailTerm (renewIfAbsent (presentFromSenders senders) J s v) v = J :=
+  a_still_absent_validator_is_renewed (presentFromSenders senders) J s v hterm
+    (hgate v hjailed)
 
 /-- **A banished validator cannot rebond.** The Rust `bond` refuses a banished key before its own
     checks (`native_state.rs:1874-1878`), which is the half that makes a passing vote's ejection
