@@ -541,21 +541,32 @@ def fund_validator(pubkey_hex: str) -> dict:
     return {"address": address, "balance": rev_balance(address), "drip": drip}
 
 
-def checkpoint_certificate(port: int = HTTP_BASE):
-    """The node's served checkpoint certificate, or `None` while it serves none (HTTP 400)."""
+def verified_checkpoint(port: int = HTTP_BASE):
+    """The served certificate **if this node's verifier accepts it as quorate**, else `None`.
+
+    A 200 from `/api/v1/checkpoint` is not enough: the route serves the *current* checkpoint with
+    however many attestations it has, and on an active chain that is usually short of the strict
+    two-thirds. The restart arm needs one the boot will accept.
+    """
     try:
-        return http_json(port, "/api/v1/checkpoint")
+        certificate = http_json(port, "/api/v1/checkpoint")
     except urllib.error.HTTPError as exc:
         if exc.code == 400:
             return None
         raise
+    try:
+        verified = http_json(
+            port, "/api/v1/checkpoint/verify", method="POST", body=certificate
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code == 400:
+            return None
+        raise
+    return {"certificate": certificate, "verified": verified}
 
 
 def wait_for_checkpoint(args, label: str) -> dict:
-    certificate = wait_until(
-        lambda: checkpoint_certificate() or None, args.timeout, args.poll, label
-    )
-    return certificate
+    return wait_until(lambda: verified_checkpoint() or None, args.timeout, args.poll, label)
 
 
 def wait_for_jail(target: str, args):
