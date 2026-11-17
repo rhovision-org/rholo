@@ -21,7 +21,7 @@ use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
 use rchain_models::casper::protocol::checkpoint::{
-    Checkpoint, CheckpointAttestation, CheckpointCertificate, VALIDATION_WINDOW_BLOCKS,
+    Checkpoint, CheckpointAttestation, CheckpointCertificate, VALIDATION_WINDOW_HEIGHTS,
 };
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, CheckpointStatus, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
@@ -84,7 +84,7 @@ async fn genesis_anchor_status(
         anchor: genesis.to_hex(),
         anchor_height: 0,
         age_blocks: None,
-        validation_window_blocks: VALIDATION_WINDOW_BLOCKS as i64,
+        validation_window_heights: VALIDATION_WINDOW_HEIGHTS,
         validation_window_committed: false,
         metadata_committed: false,
     })
@@ -672,7 +672,7 @@ impl BlockApi for BlockApiImpl {
                 anchor: certificate.checkpoint.anchor.clone(),
                 anchor_height: certificate.checkpoint.anchor_height,
                 age_blocks: Some(tip.saturating_sub(certificate.checkpoint.anchor_height)),
-                validation_window_blocks: VALIDATION_WINDOW_BLOCKS as i64,
+                validation_window_heights: VALIDATION_WINDOW_HEIGHTS,
                 validation_window_committed: certificate.checkpoint.history_root.is_some(),
                 metadata_committed: certificate.checkpoint.metadata_root.is_some(),
             }),

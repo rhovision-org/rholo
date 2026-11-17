@@ -33,8 +33,14 @@ the finalized fringe, the shard, the epoch, and two optional commitments:
   The fringe fields are committed precisely because they are consensus-relevant and a body does not
   carry them; an audit reads them from `/api/v1/block/{hash}/header` before checking the root.
 - **`historyRoot`** — a commitment over the **validation window**: the pre-state, post-state and
-  fringe-state roots of the most recent `VALIDATION_WINDOW_BLOCKS = 8` headers. These are the only
-  historical roots a post-anchor block (the PoS close) may read.
+  fringe-state roots of every header within `VALIDATION_WINDOW_HEIGHTS = 14` heights of the anchor.
+  These are the historical roots a post-anchor block's merge reads (it merges from the state at the
+  fringe its parents finalised, so the scope reaches a few heights down); the window is bounded in
+  heights, not headers, because the merge's width is the bonded set.
+- **`fringeState`** — the **merge base**: the state at the fringe the anchor itself finalised, read
+  from the anchor's `fringe_state_hash`. A post-anchor block's merge starts from it, so the joiner
+  hydrates this root and the anchor's post-state is an audit field, not the running root (C405). The
+  joiner checks the signed value against the anchor header's committed fringe root.
 
 Validators sign the statement digest with a domain tag of its own
 (`rchain-checkpoint-attestation-v1`) and serve it at `/api/v1/checkpoint-attestation`. A node
@@ -66,10 +72,13 @@ For a checkpoint anchor, a joiner:
    statement's `metadataRoot`. Headers are not content-verifiable on their own (`hash_block` covers
    the deploy payloads), so the certificate's commitment, not the responding peer, is what makes the
    set acceptable;
-4. hydrates the checkpoint's **post-state** — what the node runs from — and **exactly** the
-   certified validation window. It never widens the window to make a block validate;
+4. hydrates the statement's **`fringeState`** — the merge base the node runs from, which must equal
+   the anchor header's committed fringe root — and **exactly** the certified validation window. It
+   never widens the window to make a block validate;
 5. fetches and content-verifies the **genesis body** (the one body this path downloads), then
-   publishes the header history.
+   publishes the header history. Bodies of the committed headers are fetched on demand by the
+   merge's index regeneration (each is hash-verified before it is used, and every state it replays
+   from is a root the certificate or the walked headers commit).
 
 The running state carries the accepted anchor and its root: `CURRENT_ROOT` is the anchor's root by
 construction, not a value recovered from a DAG tip. The accepted state is the only way into the
@@ -112,7 +121,7 @@ certificate is re-verified at boot before the node runs.
 | Certificate missing, malformed, or below quorum | Refused; stay Syncing and retry |
 | `metadataRoot` or `historyRoot` missing or mismatched | Refused; never widened or guessed |
 | Window root cannot be hydrated | Refused before Running |
-| A post-anchor block's pre-state is not the anchor root, a certified window root, or a root this node derived | Refused before replay as `UncertifiedPreState` |
+| A post-anchor block's pre-state is not the anchor root, a root this node derived, nor a merge over justifications that are the anchor, validated blocks, or committed history at or below the anchor | Refused before replay as `UncertifiedPreState` |
 | Boot cannot rebuild the stored certificate's window | Refuses to run, naming the missing commitment or header |
 | Genesis target does not match the pin | Refused **before** hydration, the DAG/approved/history writes or `CURRENT_ROOT` publication; the body may remain in the block store (content verification is not acceptance) |
 | Populated DAG above genesis with no verified stored certificate | **Boot refuses to run**, naming the missing trust anchor |

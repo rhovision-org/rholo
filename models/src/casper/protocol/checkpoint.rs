@@ -34,12 +34,16 @@ pub const FRINGE_STATE_TAG: &[u8] = b"rchain-checkpoint-fringe-state-v1";
 /// Domain tag of one header's canonical projection.
 pub const HEADER_COMMITMENT_TAG: &[u8] = b"rchain-header-v1";
 
-/// **How many recent headers' state roots a post-anchor block may read.** A post-anchor block runs
-/// the PoS close for the block finalized a few heights behind it; the state roots it needs are the
-/// last `VALIDATION_WINDOW_BLOCKS` headers' pre/post/fringe roots. The window is a protocol constant:
-/// the producer commits to it (`historyRoot`), the joiner hydrates exactly it, and a validator needing
-/// a root outside it is refused rather than widening the window.
-pub const VALIDATION_WINDOW_BLOCKS: usize = 8;
+/// **How far below the anchor a post-anchor block's merge can reach, in heights.** A block's merge
+/// starts from the state at the fringe its parents finalised and reads the deploy chains of every
+/// block between that fringe and the prune fringe; those blocks' pre-states are the state roots the
+/// joiner must hold. That depth is the finality lag (at most `LIVENESS_WINDOW` heights, 5) plus one
+/// more finality step, so the window is defined over **heights**, not a header count: with several
+/// bonded validators per height, eight headers cover barely two heights and left the merge's
+/// finalised layer without a state (C405). The producer commits to the window (`historyRoot`), the
+/// joiner hydrates exactly it, and a validator needing a root outside it is refused rather than
+/// widening the window.
+pub const VALIDATION_WINDOW_HEIGHTS: i64 = 14;
 
 /// Domain tag of the validation-window commitment.
 pub const VALIDATION_WINDOW_TAG: &[u8] = b"rchain-validation-window-v1";
@@ -116,17 +120,25 @@ pub fn metadata_root<'a>(headers: impl IntoIterator<Item = &'a BlockHeader>) -> 
     Blake2b256Hash::create(&out)
 }
 
-/// **The distinct state roots of the last [`VALIDATION_WINDOW_BLOCKS`] headers**, ordered by height
-/// and then by block hash, with each header contributing its pre-state, post-state and fringe-state
-/// roots (zero roots are the absence marker and are skipped). The selection is deterministic from the
-/// walked header set, so the producer and the joiner derive the same window.
+/// **The distinct state roots of every header within [`VALIDATION_WINDOW_HEIGHTS`] of the newest**,
+/// with each header contributing its pre-state, post-state and fringe-state roots (zero roots are the
+/// absence marker and are skipped). The selection is deterministic from the walked header set — the
+/// newest height is the anchor's, and everything within the depth is included at every width — so the
+/// producer and the joiner derive the same window.
 pub fn validation_window_roots<'a>(
     headers: impl IntoIterator<Item = &'a BlockHeader>,
 ) -> std::collections::BTreeSet<[u8; 32]> {
     let mut ordered: Vec<&BlockHeader> = headers.into_iter().collect();
     ordered.sort_by_key(|header| (i64::from(header.block_num), header.block_hash));
+    let Some(newest) = ordered.last() else {
+        return std::collections::BTreeSet::new();
+    };
+    let floor = i64::from(newest.block_num).saturating_sub(VALIDATION_WINDOW_HEIGHTS);
     let mut roots = std::collections::BTreeSet::new();
-    for header in ordered.iter().rev().take(VALIDATION_WINDOW_BLOCKS) {
+    for header in ordered
+        .iter()
+        .filter(|header| i64::from(header.block_num) > floor)
+    {
         for root in [
             header.pre_state_hash,
             header.post_state_hash,

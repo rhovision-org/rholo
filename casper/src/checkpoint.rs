@@ -6,9 +6,10 @@
 //! bonded stake (Law 14's exact integer rule, `is_super_majority`).
 //!
 //! The digest is the statement. It binds the shard, the finalized anchor block, the anchor's
-//! **post-state** (the checkpoint root — not the ordinary fringe root, which is a member's claim),
-//! the previous checkpoint's digest, the epoch and the finalized fringe. A signature over one
-//! checkpoint is therefore not a signature over another, and a certificate cannot cross shards.
+//! **post-state** (an audit field), the **merge base — the state at the fringe the anchor itself
+//! finalised** (`fringeState`, the root a post-anchor block's merge starts from), the previous
+//! checkpoint's digest, the epoch and the finalized fringe. A signature over one checkpoint is
+//! therefore not a signature over another, and a certificate cannot cross shards.
 //!
 //! **An absent parent is encoded as 32 zero bytes, and an explicit zero parent is refused.** The
 //! sentinel is deliberate: without it `parent_digest: None` and `Some("00…00")` would be two
@@ -38,9 +39,10 @@ use crate::validator_identity::checkpoint_attestation_prehash;
 /// Domain tag of the v1 checkpoint digest (a statement with no signed fringe state).
 pub const CHECKPOINT_TAG: &[u8] = b"rchain-checkpoint-v1";
 
-/// Domain tag of the v2 checkpoint digest: the statement carries the signed merged fringe state.
-/// A v1 and a v2 statement never share a digest, so old and new attestations cannot combine; the
-/// verifier refuses a v1 statement over a multi-member fringe (C405).
+/// Domain tag of the v2 checkpoint digest: the statement carries the **merge base** — the state at
+/// the fringe the anchor finalised (`fringeState`, checked against the anchor header's committed
+/// fringe root at join). A v1 and a v2 statement never share a digest, so old and new attestations
+/// cannot combine; the verifier refuses a v1 statement over a multi-member fringe (C405).
 pub const CHECKPOINT_V2_TAG: &[u8] = b"rchain-checkpoint-v2";
 
 /// Why a checkpoint or a certificate was refused. Every arm names the fact; none is a generic
@@ -212,9 +214,9 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
         ));
     }
 
-    // **The run root is the merged fringe state, and it is signed from v2.** A v1 statement has no
-    // signed merge; it is accepted only for a **singleton** fringe, where the merge is the member's
-    // post-state and the anchor post-state is the right root. A multi-member v1 statement has no
+    // **The run root is the merge base — the state at the fringe the anchor finalised — and it is
+    // signed from v2.** A v1 statement has no signed base; it is accepted only for a **singleton**
+    // fringe, where the anchor's post-state is the legacy rule. A multi-member v1 statement has no
     // signed root a joiner could hydrate, so it is refused rather than guessed (C405).
     let fringe_state = match &checkpoint.fringe_state {
         Some(hex) => Some(decode_32(hex, "fringeState")?),
@@ -294,9 +296,10 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
     Ok(Blake2b256Hash::create(&buf))
 }
 
-/// **The state a checkpoint anchors** — the signed merged fringe state (v2), or the member's
-/// post-state for a v1 singleton (where the merge *is* that post-state). For a v1 multi-member
-/// statement `checkpoint_digest` has already refused, so there is no unnamed merge here.
+/// **The state a checkpoint anchors** — the signed **merge base** (v2): the state at the fringe the
+/// anchor itself finalised, which is the root a post-anchor block's merge starts from. A v1
+/// statement falls back to the anchor post-state, the legacy singleton rule; for a v1 multi-member
+/// statement `checkpoint_digest` has already refused, so there is no unnamed root here.
 pub fn checkpoint_run_root(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, CheckpointError> {
     let hex = checkpoint
         .fringe_state

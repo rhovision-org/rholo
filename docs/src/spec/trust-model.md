@@ -29,8 +29,9 @@ whose anchor state's **pool** has drifted is refused; an active-set difference i
 | Genesis | Exactly one height-zero block, content hash, and the configured genesis pin when present |
 | Certificate | Statement shape; every signer is a bonded key; signatures verify over the domain-tagged digest; the signers hold strictly more than two thirds of the bonded stake; the bond set has not drifted |
 | `metadataRoot` | The walked ancestor header set recomputes to the committed root; each header's **fringe membership and fringe state root** are part of the projection, and the set's shape is checked (one parentless genesis, older fringe members, non-zero non-genesis fringe roots); a missing or mismatched root is refused |
-| `historyRoot` | The last `VALIDATION_WINDOW_BLOCKS = 8` headers' pre/post/fringe roots recompute to the committed root; the joiner hydrates exactly that set and never widens it |
-| Checkpoint post-state | The anchor's post-state is the root the node runs from; an accepted state cannot carry a root its anchor does not name |
+| `historyRoot` | Every header within `VALIDATION_WINDOW_HEIGHTS = 14` heights of the anchor contributes its pre/post/fringe roots; the set recomputes to the committed root, the joiner hydrates exactly that set and never widens it |
+| Signed fringe state | The statement's `fringeState` equals the anchor header's committed `fringe_state_hash`: the merge base a post-anchor block's merge starts from; a v2 statement that names a different root is refused (C405) |
+| Checkpoint post-state | The anchor's post-state is an audit field; the node **runs from the signed fringe state**, and an accepted state cannot carry a root its anchor does not name |
 | Genesis body | The one body this path downloads: re-hashed, and its fields checked against the walked genesis header (empty fringe, fringe state = pre-state) |
 | Ancestry shape | The walked closure is contiguous and each header's justifications are present |
 | Post-anchor block | Its pre-state must be the anchor root, a certified window root, or a root this node derived from a validated post-anchor block; the state store's contents are not permission |

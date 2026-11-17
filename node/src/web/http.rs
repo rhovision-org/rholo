@@ -2037,7 +2037,7 @@ pub const OPENAPI_JSON: &str = r##"{
             "anchor": { "type": "string" },
             "anchorHeight": { "type": "integer", "format": "int64" },
             "ageBlocks": { "type": "integer", "format": "int64", "nullable": true, "description": "Latest observed block minus the anchor; a height difference, not a wall clock" },
-            "validationWindowBlocks": { "type": "integer", "format": "int64", "description": "The recent headers whose state roots a post-anchor block may read (8)" },
+            "validationWindowHeights": { "type": "integer", "format": "int64", "description": "How many heights below the anchor a post-anchor block may read state roots for (14)" },
             "validationWindowCommitted": { "type": "boolean", "description": "Whether the statement commits to the validation window (historyRoot, Law 109)" },
             "metadataCommitted": { "type": "boolean", "description": "Whether the statement commits to the ancestor metadata (metadataRoot)" }
           } },
@@ -2084,7 +2084,7 @@ pub const OPENAPI_JSON: &str = r##"{
             "anchor": { "type": "string" },
             "anchorHeight": { "type": "integer", "format": "int64" },
             "ageBlocks": { "type": "integer", "format": "int64", "nullable": true, "description": "Latest observed block minus the anchor; a height difference, not a wall clock" },
-            "validationWindowBlocks": { "type": "integer", "format": "int64", "description": "The recent headers whose state roots a post-anchor block may read (8)" },
+            "validationWindowHeights": { "type": "integer", "format": "int64", "description": "How many heights below the anchor a post-anchor block may read state roots for (14)" },
             "validationWindowCommitted": { "type": "boolean", "description": "Whether the statement commits to the validation window (historyRoot, Law 109)" },
             "metadataCommitted": { "type": "boolean", "description": "Whether the statement commits to the ancestor metadata (metadataRoot)" }
           } },
