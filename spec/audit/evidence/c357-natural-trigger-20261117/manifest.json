@@ -1,0 +1,271 @@
+{
+  "arms": [
+    {
+      "control": "green",
+      "result": "PASS"
+    },
+    {
+      "control": "red",
+      "result": "PASS"
+    }
+  ],
+  "binary_sha256": "sha256:4a656971436902a3e0de863017623c5888dbdc7bb2651e005f46e314e36f28a5",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 408,
+      "kind": "json",
+      "path": "raw/campaign.json",
+      "sha256": "d2ac4a25629d00e69d4e2b93e25714a44ac3546ee987762e6be1e93ff617c4fb"
+    },
+    {
+      "bytes": 3185,
+      "kind": "json",
+      "path": "raw/green/block-bootstrap.json",
+      "sha256": "1b69a15a11497c8cfbb2d779af53e172bbe9045561472bee57371dc6d30bbc49"
+    },
+    {
+      "bytes": 3185,
+      "kind": "json",
+      "path": "raw/green/block-peer.json",
+      "sha256": "1b69a15a11497c8cfbb2d779af53e172bbe9045561472bee57371dc6d30bbc49"
+    },
+    {
+      "bytes": 204313,
+      "kind": "log",
+      "path": "raw/green/deploy-probe-0.log",
+      "sha256": "4aa35796b9c7a651440b3f7e2f6b89f494e41d7da404dfff81c35260d028990e"
+    },
+    {
+      "bytes": 203888,
+      "kind": "log",
+      "path": "raw/green/deploy-probe-1.log",
+      "sha256": "57f202cbb78378301c8a907d1beff48222e1ccdb1d0d1497a4eece6fdabfc912"
+    },
+    {
+      "bytes": 203490,
+      "kind": "log",
+      "path": "raw/green/deploy-probe-2.log",
+      "sha256": "e13ed20fe70b5efe0113724ebd8c6b5e2fc279c545ac079df22d3923d7e6abb6"
+    },
+    {
+      "bytes": 204454,
+      "kind": "log",
+      "path": "raw/green/deploy-probe-3.log",
+      "sha256": "fc74e6f21131f8626b8bc4af259927cda25d2c6073463d31508b0e0a15e383be"
+    },
+    {
+      "bytes": 203892,
+      "kind": "log",
+      "path": "raw/green/deploy-registry.log",
+      "sha256": "a948b418dd2ca3ed8708d738a796a53a41a4da36139fa9a3f6ace67a19f65f36"
+    },
+    {
+      "bytes": 38329,
+      "kind": "log",
+      "path": "raw/green/devnet-bootstrap.log",
+      "sha256": "1b45a761c7efa152b31f6232110a56ac96fd00d97fac44e8bdd55a7192a5202e"
+    },
+    {
+      "bytes": 29420,
+      "kind": "log",
+      "path": "raw/green/devnet-validator-1.log",
+      "sha256": "a7d29c582bd9a61a6069c35388629612c6f809c5c015eb8c1c030e87b03acfe0"
+    },
+    {
+      "bytes": 778,
+      "kind": "json",
+      "path": "raw/green/health-bootstrap.json",
+      "sha256": "74001e622575ab51fc0aaf43d02a3f0790adae7eb32ac0dee0967a65476d9eaf"
+    },
+    {
+      "bytes": 778,
+      "kind": "json",
+      "path": "raw/green/health-peer.json",
+      "sha256": "fccdc657ae85ab9e9fb97d7a476640dcf8eb606623cf449c8b69307730b4890c"
+    },
+    {
+      "bytes": 65,
+      "kind": "txt",
+      "path": "raw/green/inclusion-block.txt",
+      "sha256": "a6ddc3f654af98f66a05e90af1731130709961d63d1638d72aac3646ee41b43b"
+    },
+    {
+      "bytes": 205206,
+      "kind": "log",
+      "path": "raw/green/propose-probes.log",
+      "sha256": "8de47b7f4d03dd24f02f74255e83e2ab634bb8a7ca984c02cd5ee208b04ae645"
+    },
+    {
+      "bytes": 204477,
+      "kind": "log",
+      "path": "raw/green/propose-registry.log",
+      "sha256": "6bd51aa494b0ebe6f2c32b133902d005ddee9c52a780e8b218e1642e3b4386ed"
+    },
+    {
+      "bytes": 143,
+      "kind": "txt",
+      "path": "raw/green/registry-deploy-id.txt",
+      "sha256": "c60e893fedbd0c7d880c24f1b53ceb86a21a1f3df4d5142273055ea6bba23485"
+    },
+    {
+      "bytes": 5,
+      "kind": "text",
+      "path": "raw/green/result",
+      "sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431"
+    },
+    {
+      "bytes": 940,
+      "kind": "json",
+      "path": "raw/green/status-bootstrap.json",
+      "sha256": "daa2d4e55aa96a9ef766bb1c43d5717ccb05e5a17faf188ddb08746f0caa7db3"
+    },
+    {
+      "bytes": 940,
+      "kind": "json",
+      "path": "raw/green/status-peer.json",
+      "sha256": "0bbdf40408fee86a2bdf247434f79a9194c5d1a4b884a24819b84defb22a9409"
+    },
+    {
+      "bytes": 1152,
+      "kind": "log",
+      "path": "raw/green/up.log",
+      "sha256": "6ffab4eb4282d76297f2413178520e714aa7edd36657f92a3efd423be9685b2e"
+    },
+    {
+      "bytes": 72,
+      "kind": "txt",
+      "path": "raw/green-image.txt",
+      "sha256": "8d0b24a365221193b7c7f150429f85ebc3974c389265925616ab3976b76c97b7"
+    },
+    {
+      "bytes": 206742,
+      "kind": "log",
+      "path": "raw/red/deploy-probe-0.log",
+      "sha256": "a0f3959fcb555c46f8b1b7756d77cff2e3b785e33747761592c91d7942ec441d"
+    },
+    {
+      "bytes": 204665,
+      "kind": "log",
+      "path": "raw/red/deploy-probe-1.log",
+      "sha256": "e1b837c0fc2cd340f8055764626cf922415f31a6fb5caa33e6914b01fed96fe2"
+    },
+    {
+      "bytes": 204689,
+      "kind": "log",
+      "path": "raw/red/deploy-probe-2.log",
+      "sha256": "5af4655ff0f62302c2f43a284e5e7e91e9cb8b432940351d77fb04e4fcf59b9b"
+    },
+    {
+      "bytes": 204715,
+      "kind": "log",
+      "path": "raw/red/deploy-probe-3.log",
+      "sha256": "9a46410505e312d4be124c5341d1b575fc236a23cca62b3791d7d3b70d1d9f47"
+    },
+    {
+      "bytes": 204314,
+      "kind": "log",
+      "path": "raw/red/deploy-registry.log",
+      "sha256": "356185d187e3e3f0365dd891e62351258443dfd36d11a8ff9cc06c9d4bbb29dc"
+    },
+    {
+      "bytes": 29575,
+      "kind": "log",
+      "path": "raw/red/devnet-bootstrap.log",
+      "sha256": "d7f235350a39f8464b7500a39ecc3bac51c74472add178fe43ab8a3b4372f621"
+    },
+    {
+      "bytes": 19407,
+      "kind": "log",
+      "path": "raw/red/devnet-validator-1.log",
+      "sha256": "cea9c1a4b18c3444743cb2432435a48c941c30fce15a0946e31ba1f4acdeac7c"
+    },
+    {
+      "bytes": 744,
+      "kind": "json",
+      "path": "raw/red/health-bootstrap.json",
+      "sha256": "e685f6f6159c5a23dc31aba4fce0a2a22a05a15a2571bceb4d149d7b0151c139"
+    },
+    {
+      "bytes": 742,
+      "kind": "json",
+      "path": "raw/red/health-peer.json",
+      "sha256": "2e84fcd543b7166d03e617f0adf868555f41cc6cde00d901342c706a19a819f2"
+    },
+    {
+      "bytes": 205649,
+      "kind": "log",
+      "path": "raw/red/propose-probes.log",
+      "sha256": "a471d22c1fda72580c1f64c1e41d13bbcd32aafb1bcbf227b06d6d17e38e80c0"
+    },
+    {
+      "bytes": 203602,
+      "kind": "log",
+      "path": "raw/red/propose-registry.log",
+      "sha256": "05169c0ad6124485859ba0cf147bcfc349dc100342507620aee2e1f664c9949d"
+    },
+    {
+      "bytes": 141,
+      "kind": "txt",
+      "path": "raw/red/registry-deploy-id.txt",
+      "sha256": "b3c06f7207ab350210c3c176c4da86fc3fd771a587c20985e3a7e2f2622ccbd3"
+    },
+    {
+      "bytes": 5,
+      "kind": "text",
+      "path": "raw/red/result",
+      "sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431"
+    },
+    {
+      "bytes": 454,
+      "kind": "json",
+      "path": "raw/red/status-bootstrap.json",
+      "sha256": "c3bb1d443ef7cd92786b429cfce8ddb3b13eb5b8b35f25fc06f8c0919bd46bd1"
+    },
+    {
+      "bytes": 452,
+      "kind": "json",
+      "path": "raw/red/status-peer.json",
+      "sha256": "58eeb098338e4812ccb3f3e255d99e1a9f6870938cdfff127796584aaf32574d"
+    },
+    {
+      "bytes": 1152,
+      "kind": "log",
+      "path": "raw/red/up.log",
+      "sha256": "3b95d7e2b7dfd028c6da59847463a60aff26d621bebc7a553668e05b9036c2ba"
+    },
+    {
+      "bytes": 72,
+      "kind": "txt",
+      "path": "raw/red-image.txt",
+      "sha256": "481ea501fcee4934f5928044e3e2b7abff2778bc01db79d9ef98f399116ec531"
+    },
+    {
+      "bytes": 837,
+      "kind": "log",
+      "path": "raw/run.log",
+      "sha256": "95e84b7a96ccf008b8dd9ccadd85fc3ac0d5f6a5aa96d769d26c6aa7997c1441"
+    },
+    {
+      "bytes": 41,
+      "kind": "txt",
+      "path": "raw/source-sha.txt",
+      "sha256": "1326874edd96b0fcc5a7f12774aa0eea92e4498e536a18ea91db03ee375ff447"
+    }
+  ],
+  "gate_id": "C357-natural-trigger",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-17T19:02:49+00:00",
+    "tool": "evidence-pack",
+    "version": 1
+  },
+  "redactions": [],
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "89cac44d4c7b665d88d3eefed964818d35cdd016",
+  "verdict": "PASS"
+}

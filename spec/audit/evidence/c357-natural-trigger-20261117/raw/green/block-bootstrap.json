@@ -1,0 +1,53 @@
+{
+  "blockInfo": {
+    "version": 1,
+    "shardId": "/root",
+    "blockHash": "efe796b44acb422b2bb4444148b2b3ee0ac1e9835d458d69908db4a539f436fe",
+    "blockNumber": 5,
+    "sender": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4",
+    "seqNum": 5,
+    "preStateHash": "e73c7faec7ef628b07f824d9e56a97ed3ecb6eb83510683f65680e6bf91dd2a1",
+    "postStateHash": "b12e28acde13ef72029bb63739d44f14f03848847530c54adf6dcb02fb4a6e3b",
+    "justifications": [
+      "82a3e3031c2eb17286589248a7142d40fe0be1ec106b557288531b782db4f7cb",
+      "a9f9a8e6a90997335094f8a634d56139f50a711555df67b85aeb5f49c240a10b"
+    ],
+    "bonds": [
+      {
+        "validator": "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc",
+        "stake": 100
+      },
+      {
+        "validator": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4",
+        "stake": 100
+      }
+    ],
+    "sigAlgorithm": "secp256k1",
+    "sig": "30450221008db7c4754c6cf17dcf48d9ed0c4db67797a9988e65e6819f90aa802faa186987022055ea32db691ff718d75d935d1c0b800a919b392e7e9bc6a1cea4d0632b0f06a8",
+    "blockSize": "1639",
+    "deployCount": 1,
+    "rejectedDeploys": [
+      "3044022041f3aed2c8a8650e89b9ccce4297d996551216c4402bd182b8fb5b6c452ba4ba022000ecba40eecb5dcef2ac444a28eeb257d5da7654146cbbd70c39a377edb8d5d5",
+      "3044022063d4f27713be9372059dfa26a6a17f35c4ab94011d0f6f8948322db8715cdff402206a37463ff9e9a4c0bd1eea2d412f203cd824b82421cf5d849608ae29f29b691c",
+      "3045022100942a556bfa3a98fc671c132b164d13a38c6b1e3bf050557726688b14b98ef2a702201f1da19c249327091d2d5ffd6082d26b2cd672a0d188b7b1d73cb2ab230f2ab1",
+      "3045022100f4f2029e34d5ef34d108b707c5b7ffc07d5f2984233b6bdcf9fdf819d35da9aa02201978d4d5c39934aa240ecf1e7311df110f54626f04eafe45a83b92cbb6ace0b6",
+      "7db34c84bd35ebf5338fd06a53c32a3f5074cd162d94bd8b4b2f78c45bbdfade02"
+    ],
+    "timestamp": 1794942024849
+  },
+  "deploys": [
+    {
+      "deployer": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4",
+      "term": "new state in {\n  state!({}) |\n  contract @\"replay-order:registry\"(@action, @address, @payload, @resultName) = {\n    match action {\n      \"publish\" => {\n        for (@store <- state) {\n          state!(store.set(address, payload)) | @resultName!(\"OK\")\n        }\n      }\n      \"get\" => {\n        for (@store <<- state) {\n          match store.get(address) {\n            Nil => { @resultName!(\"MISS\") }\n            value => { @resultName!(value) }\n          }\n        }\n      }\n    }\n  }\n}\n",
+      "timestamp": 1794942024728,
+      "sig": "3045022100930a42e4a7dddf8f9833002df8dda0c568b346662a366c190a198a50a4b8c925022007eabf54c8667924761395dcbafe19f1b143adf8d446558b5845032b7b566e73",
+      "sigAlgorithm": "secp256k1",
+      "phloPrice": 1,
+      "phloLimit": 1000000,
+      "validAfterBlockNumber": 5,
+      "cost": 1861,
+      "errored": false,
+      "systemDeployError": ""
+    }
+  ]
+}

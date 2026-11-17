@@ -55,6 +55,22 @@ the live B/C/D snapshot is where the real phases are read.
 | replay order and cost | Law 95a/95b chronological theorems | `pending_peeks_replay_with_exact_cost_and_state` | strict replay at 1860/2606/4844 and the declared post-state | the newest-first build; `ReplayCostMismatch` | integration + local-devnet |
 | the lockstep boundary | — | — | selected release, every validator in lockstep (or a coordinated new genesis), independent category-A verdict | mixed-version rollout or an unsigned record | external |
 
+## Current-build runs — 2026-11-17
+
+All runs use source `89cac44d4c7b665d88d3eefed964818d35cdd016` and image digest
+`sha256:4a656971436902a3e0de863017623c5888dbdc7bb2651e005f46e314e36f28a5` (`rnode:local`).
+
+| gate | bundle | verdict |
+|---|---|---|
+| C343 isolation | `spec/audit/evidence/c343-current-build-20261117/README.md` | **PASS** — halt at lag 32 with the reason on `/health` and the operator route, flat tip, propose adds no block, resume clears and the next propose re-halts; the snapshot carries `blockPipeline.{validatedQueue,incomingQueue}` |
+| C357 self-replay | `spec/audit/evidence/c357-current-build-20261117/README.md` | **PASS** — attestation recovery, reset/catch-up/automatic resume, and halt/operator resume; finality advanced in every arm |
+| C357 natural trigger | `spec/audit/evidence/c357-natural-trigger-20261117/README.md` | **PASS** — the green two-node natural-trigger block is replayed at matching accounting/state and finalised; the red pre-#570 control refuses with `ReplayCostMismatch` |
+
+The **fail-closed pipeline-fault phase is not injected by the devnet** (`--self-replay-injection`
+reaches a terminal self-replay record, not `record_block_fault`). That cell is the `node_phase`
+unit test plus the existing deploy-route and proposer gates; the real fault is observed on B/C/D by
+the live gate. The C343 devnet is single-shard, so the per-shard cells remain unit-witnessed.
+
 ## Witness audit — 2026-11-17
 
 Each row applied a local mutant (not committed), ran the named test, and required it to fail. A
