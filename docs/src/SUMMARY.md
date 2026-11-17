@@ -66,6 +66,7 @@
 # Part IV — Building applications
 
 - [Building applications: local devnet and public testnet](developer/building-apps.md)
+- [QuantumOS on Rholo: operator integration](developer/quantum-os.md)
 - [Tokens in Rholang: ERTP](developer/ertp.md)
 - [Talking to a node from another implementation](developer/ocapn.md)
 - [Porting an app from rnode](developer/porting-a-client.md)
