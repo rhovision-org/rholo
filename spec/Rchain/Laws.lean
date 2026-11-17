@@ -6719,22 +6719,26 @@ def lawsC : List Law := [
   { number := 114, layer := "Sync",
     statement := "**The certificate statement determines the join input set, and an incomplete \
       joiner is not representable.** The bodies a joiner must hold to validate the first \
-      post-anchor block are the anchor, the certificate's finalised fringe, the anchor header's own \
-      fringe and each fringe member's own fringe — a function of what the statement commits, not of \
-      the chain's arbitrary ancestry. Checkpoint v3 commits the fringe members' headers under \
-      `fringeHeadersRoot`, which is how the members' fringes are obtained. Acceptance contains the \
-      required set: a joiner with a missing body has no accepted state. The v2 statement, which \
-      names the fringe but not the members' headers, omits a required body — the measured \
-      2026-11-17 cold-join failure.",
+      post-anchor block are the replay layer — the anchor, the certificate's finalised fringe and \
+      the anchor header's own fringe — plus every replay-layer member's own fringe; the roots are \
+      the pre-, post- and fringe-state roots those headers commit. The set is a function of what \
+      the statement commits, not of the chain's arbitrary ancestry. Checkpoint v3 commits the \
+      fringe members' headers under `fringeHeadersRoot`, which is how the members' fringes are \
+      obtained. Acceptance contains the required bodies and roots: a joiner with a missing item has \
+      no accepted state. The v2 statement, which names the fringe but not the members' headers, \
+      omits a required body — the measured 2026-11-17 cold-join failure.",
     status := .provedModel,
     formal := `Rchain.Sync.JoinInputs.law114_statement,
     mutant := `Rchain.Sync.JoinInputs.law114_mutant,
     falsifier := `Rchain.Sync.JoinInputs.law114_falsifier,
     declarations := [`Rchain.Sync.JoinInputs.Statement,
+      `Rchain.Sync.JoinInputs.replayLayer,
       `Rchain.Sync.JoinInputs.requiredBodies,
+      `Rchain.Sync.JoinInputs.requiredRoots,
       `Rchain.Sync.JoinInputs.v2RequiredBodies,
       `Rchain.Sync.JoinInputs.Accepted,
       `Rchain.Sync.JoinInputs.an_incomplete_joiner_is_not_representable,
+      `Rchain.Sync.JoinInputs.an_unheld_root_is_not_representable,
       `Rchain.Sync.JoinInputs.the_statement_determines_the_join_inputs,
       `Rchain.Sync.JoinInputs.law114_statement,
       `Rchain.Sync.JoinInputs.law114,
@@ -6747,20 +6751,27 @@ def lawsC : List Law := [
       "casper/tests/checkpoint_join.rs:a_wiped_joiner_validates_the_first_post_anchor_block_from_the_certificate_and_join_bodies",
       "casper/src/checkpoint.rs:a_v3_statement_commits_the_fringe_headers_and_never_aliases_v2"],
     witness := [`Rchain.Sync.JoinInputs.an_incomplete_joiner_is_not_representable,
+      `Rchain.Sync.JoinInputs.an_unheld_root_is_not_representable,
       `Rchain.Sync.JoinInputs.the_statement_determines_the_join_inputs,
       `Rchain.Sync.JoinInputs.law114_falsifier],
     falsifiable := "Drop the members' fringes from the required set (the v2 statement) and \
       `law114_falsifier` exhibits a body the v3 statement requires and v2 does not; the join test \
       then fails to validate the first post-anchor block. Drop the `holds` field from `Accepted` \
       and `an_incomplete_joiner_is_not_representable` has no content.",
-    note := "The Rust `join_input_set` (`casper/src/engine/node_syncing.rs`) assembles the anchor, \
-      the certificate's fringe, the anchor header's fringe and each member's fringe, fetches every \
-      body with a hash check, and adds the bodies' roots to the hydration set before the sync can \
-      report ready. The v3 `fringeHeadersRoot` is what makes the members' own fringes available to \
-      a joiner whose ancestor walk excludes same-height siblings; the v2 statement leaves that body \
-      underivable, which is the measured cold-join `unknown root`. `checkpoint_join` validates the \
-      first post-anchor block from exactly this set. **Not claimed:** the bodies' authenticity \
-      (hash-addressed roots, Laws 104/109) or the quorum's honesty (Law 85's residual)." },
+    note := "**Decision (2026-11-17): the original law was under-specified, not the Rust.** The \
+      Rust `join_input_set` (`casper/src/engine/node_syncing.rs`) assembles the replay layer — the \
+      anchor, the certificate's fringe and the anchor header's fringe — expands **every replay-layer \
+      member's** own fringe, fetches every body with a hash check, and adds the pre/post/fringe \
+      roots of every replay-layer header to the hydration set before the sync can report ready. The \
+      law is strengthened to that set; the extra replay-layer expansion is what a boundary re-index \
+      of the anchor's fringe members needs. The v3 `fringeHeadersRoot` is what makes the members' \
+      own fringes available to a joiner whose ancestor walk excludes same-height siblings; the v2 \
+      statement leaves that body underivable, which is the measured cold-join `unknown root`. \
+      `checkpoint_join` validates the first post-anchor block from exactly this set. **Boundary:** \
+      the Rust also fetches every walk header above `anchor_height - DEPLOY_LIFESPAN` for the \
+      deploy-duplication check; that set is outside this law (it is not a replay-layer root) and is \
+      covered by the integration test. **Not claimed:** the bodies' authenticity (hash-addressed \
+      roots, Laws 104/109) or the quorum's honesty (Law 85's residual)." },
 
   { number := 115, layer := "Casper",
     statement := "**The fork rule is deterministic and dependency-closed.** A conflict-scope block \
@@ -6813,8 +6824,9 @@ def lawsC : List Law := [
     statement := "**A post-certificate sibling is admitted, and an unheld root is refused, never \
       faulted.** A same-height sibling the anchor has not seen is not committed history, so the \
       pre-replay gate does not refuse it on a height rule. Its pre-state may be certified and not \
-      held; that case is a pre-state refusal, not an internal `unknown root`. An admission verdict \
-      is a replay or a refusal; no path faults.",
+      held; that case is a pre-state refusal, not an internal `unknown root`. A block whose \
+      pre-state is not permitted is still admitted when every justification is committed history \
+      (`justifications_committed`). An admission verdict is a replay or a refusal; no path faults.",
     status := .provedModel,
     formal := `Rchain.Sync.Admission.law116_statement,
     mutant := `Rchain.Sync.Admission.law116_mutant,
@@ -6845,16 +6857,20 @@ def lawsC : List Law := [
       committed history (`a_sibling_is_not_committed_history` is the refutation); return the unheld \
       certified root to the fault branch (`law116_mutant`) and `law116_falsifier` exhibits the \
       internal `unknown root`.",
-    note := "The Rust split is `is_committed_history` (`casper/src/blocks/block_processor.rs:886-896`), \
-      which is false for the anchor and for every block above it, and \
-      `AcceptedWindow::permits_replay_root` (`casper/src/engine/anchor.rs:269`), which is true only \
-      for roots the node holds. `pre_replay_refusal` refuses a committed-history block before \
-      replay; a certified-but-unheld root is `UncertifiedPreState`, not `Internal`. The measured \
-      failure was the opposite: a height-keyed gate refused the sibling and the pipeline recorded \
-      `unknown root`. **Not claimed:** that the sibling validates; the state is still a quorum \
-      claim (Law 85's residual). The anchor/closure boundary — the anchor is committed history but \
-      not a pre-replay refusal — is `Rchain.MergeScope.replay_refusal_is_committed_history_without_the_anchor`, \
-      cited by Law 109." },
+    note := "**Decision (2026-11-17): the law was too coarse, not the Rust.** The Rust split is \
+      `is_committed_history` (`casper/src/blocks/block_processor.rs:886-896`), which is false for \
+      the anchor and for every block above it, and `permits_block` \
+      (`casper/src/engine/anchor.rs:269`), which composes the held-root and justification checks. \
+      `pre_replay_refusal` refuses a committed-history block before replay; it admits when \
+      `permits_block` is true **or** every justification is committed (`justifications_committed`); \
+      otherwise it refuses as `UncertifiedPreState`, not `Internal`. The law now models both arms; \
+      `held` stands for the `permits_block` arm and `justificationsCommitted` for the separate one. \
+      The measured failure was the opposite: a height-keyed gate refused the sibling and the \
+      pipeline recorded `unknown root`. **Not claimed:** that the sibling validates; the state is \
+      still a quorum claim (Law 85's residual). The anchor/closure boundary — the anchor is \
+      committed history but not a pre-replay refusal — is \
+      `Rchain.MergeScope.replay_refusal_is_committed_history_without_the_anchor`, cited by Law \
+      109." },
 
   { number := 117, layer := "Sync",
     statement := "**A signed checkpoint statement is honest about its anchor header.** The signed \
@@ -6894,8 +6910,10 @@ def lawsC : List Law := [
       committed `fringe_state_hash` (`casper/src/engine/node_syncing.rs:858-865`). The v3 \
       `fringeHeadersRoot` extends the same honesty to the fringe members' headers. The pre-c405 \
       shape signed the member's post-state, which is not the fringe merge when the fringe has more \
-      than one member (Law 108d). **Not claimed:** that a quorum cannot sign a wrong root; that is \
-      Law 85's residual, and the audit is the counterweight." },
+      than one member (Law 108d). **Boundary:** the model covers the `fringeState`/`fringe_hashes` \
+      equality; `metadataRoot`, `historyRoot` and `fringeHeadersRoot` are checked in the same \
+      statement and are not modelled here. **Not claimed:** that a quorum cannot sign a wrong root; \
+      that is Law 85's residual, and the audit is the counterweight." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

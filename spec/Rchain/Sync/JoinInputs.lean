@@ -37,28 +37,50 @@ structure Statement where
   fringe : Finset Nat
   memberFringe : Nat → Finset Nat
 
-/-- The bodies `join_input_set` fetches: the anchor, the certificate's fringe, the anchor header's
-    own fringe, and each fringe member's own fringe. -/
+/-- The replay layer: the anchor, the certificate's fringe, and the anchor header's own fringe.
+    This is the Rust `replay_layer` before the member expansion. -/
+def replayLayer (s : Statement) : Finset Nat :=
+  insert s.anchor (s.fringe ∪ s.anchorFringe)
+
+/-- The bodies `join_input_set` fetches: the replay layer plus **every replay-layer member's own
+    fringe**. The Rust loop expands `finalised = replay_layer`, not only the certificate's fringe,
+    so the anchor and the anchor's fringe members are expanded too. -/
 def requiredBodies (s : Statement) : Finset Nat :=
-  insert s.anchor (s.fringe ∪ s.anchorFringe ∪ s.fringe.biUnion s.memberFringe)
+  replayLayer s ∪ (replayLayer s).biUnion s.memberFringe
+
+/-- The roots the Rust adds for every replay-layer header: pre-state, post-state and fringe state,
+    skipping the zero placeholder. The model takes the per-header root set as a parameter. -/
+def requiredRoots (s : Statement) (rootsOf : Nat → Finset Nat) : Finset Nat :=
+  (requiredBodies s).biUnion rootsOf
 
 /-- The v2 statement's required set: it names the fringe but does not commit the members' headers,
     so it cannot derive their own fringes. This is the mutant. -/
 def v2RequiredBodies (s : Statement) : Finset Nat :=
-  insert s.anchor (s.fringe ∪ s.anchorFringe)
+  replayLayer s
 
-/-- An accepted join holds every required body. The Rust `join_input_set` assembles the set and the
-    sync refuses a missing body before it reports ready. -/
-structure Accepted (s : Statement) (held : Finset Nat) : Prop where
-  holds : requiredBodies s ⊆ held
+/-- An accepted join holds every required body **and every required root**. The Rust
+    `join_input_set` returns both sets and the sync refuses a missing item before it reports ready. -/
+structure Accepted (s : Statement) (rootsOf : Nat → Finset Nat) (heldBodies heldRoots : Finset Nat)
+    : Prop where
+  holdsBodies : requiredBodies s ⊆ heldBodies
+  holdsRoots : requiredRoots s rootsOf ⊆ heldRoots
 
-/-- **An incomplete joiner is not representable.** Acceptance contains the required set, so a
-    missing body is a contradiction, not a reachable ready state. -/
-theorem an_incomplete_joiner_is_not_representable (s : Statement) (held : Finset Nat)
-    (missing : Nat) (hm : missing ∈ requiredBodies s) (hnot : missing ∉ held) :
-    ¬ Accepted s held := by
+/-- **An incomplete joiner is not representable.** Acceptance contains the required body and root
+    sets, so a missing item is a contradiction, not a reachable ready state. -/
+theorem an_incomplete_joiner_is_not_representable (s : Statement)
+    (rootsOf : Nat → Finset Nat) (heldBodies heldRoots : Finset Nat)
+    (missing : Nat) (hm : missing ∈ requiredBodies s) (hnot : missing ∉ heldBodies) :
+    ¬ Accepted s rootsOf heldBodies heldRoots := by
   intro h
-  exact hnot (h.holds hm)
+  exact hnot (h.holdsBodies hm)
+
+/-- **An unheld root is not representable either.** -/
+theorem an_unheld_root_is_not_representable (s : Statement) (rootsOf : Nat → Finset Nat)
+    (heldBodies heldRoots : Finset Nat) (missing : Nat)
+    (hm : missing ∈ requiredRoots s rootsOf) (hnot : missing ∉ heldRoots) :
+    ¬ Accepted s rootsOf heldBodies heldRoots := by
+  intro h
+  exact hnot (h.holdsRoots hm)
 
 /-- **The statement determines the inputs.** Two statements with the same anchor, fringe and
     committed member fringes require the same bodies: the input set is a function of what the
@@ -69,7 +91,7 @@ theorem the_statement_determines_the_join_inputs (s t : Statement)
     (hMembers : ∀ m, s.memberFringe m = t.memberFringe m) :
     requiredBodies s = requiredBodies t := by
   have hfun : s.memberFringe = t.memberFringe := funext hMembers
-  simp [requiredBodies, hAnchor, hFringe, hAnchorFringe, hfun]
+  simp [requiredBodies, replayLayer, hAnchor, hFringe, hAnchorFringe, hfun]
 
 /-- **The v2 mutant**: a member's own fringe is required by the v3 statement and absent from the
     v2 one. The 2026-11-17 cold join failed on exactly this input (a same-height sibling's
@@ -81,18 +103,27 @@ def law114_mutant : Prop :=
     requires `3`, the v2 set does not. -/
 theorem law114_falsifier : law114_mutant := by
   refine ⟨⟨1, ∅, {2}, fun m => if m = 2 then {3} else ∅⟩, 3, ?_, ?_⟩ <;>
-    simp [requiredBodies, v2RequiredBodies]
+    simp [requiredBodies, replayLayer, v2RequiredBodies]
 
-/-- **Law 114's statement.** Acceptance contains the required set, and the v2 statement omits a
-    member's fringe. -/
+/-- **Law 114's statement.** Acceptance contains the required body and root sets; the v2 statement
+    omits a member's fringe. -/
 def law114_statement : Prop :=
-  (∀ (s : Statement) (held : Finset Nat) (missing : Nat),
-    missing ∈ requiredBodies s → missing ∉ held → ¬ Accepted s held) ∧ law114_mutant
+  (∀ (s : Statement) (rootsOf : Nat → Finset Nat) (heldBodies heldRoots : Finset Nat)
+      (missing : Nat),
+    missing ∈ requiredBodies s → missing ∉ heldBodies →
+      ¬ Accepted s rootsOf heldBodies heldRoots) ∧
+  (∀ (s : Statement) (rootsOf : Nat → Finset Nat) (heldBodies heldRoots : Finset Nat)
+      (missing : Nat),
+    missing ∈ requiredRoots s rootsOf → missing ∉ heldRoots →
+      ¬ Accepted s rootsOf heldBodies heldRoots) ∧
+  law114_mutant
 
 theorem law114 : law114_statement := by
-  refine ⟨?_, law114_falsifier⟩
-  intro s held missing hm hnot
-  exact an_incomplete_joiner_is_not_representable s held missing hm hnot
+  refine ⟨?_, ?_, law114_falsifier⟩
+  · intro s rootsOf heldBodies heldRoots missing hm hnot
+    exact an_incomplete_joiner_is_not_representable s rootsOf heldBodies heldRoots missing hm hnot
+  · intro s rootsOf heldBodies heldRoots missing hm hnot
+    exact an_unheld_root_is_not_representable s rootsOf heldBodies heldRoots missing hm hnot
 
 end JoinInputs
 end Sync
