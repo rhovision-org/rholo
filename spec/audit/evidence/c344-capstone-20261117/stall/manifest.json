@@ -1,0 +1,34 @@
+{
+  "arms": [],
+  "binary_sha256": "ffaf1e068b6af5a284f793fda680a12854be84913ae7b5412e705da84b557e5e",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 69991,
+      "kind": "log",
+      "path": "raw/raw/bootstrap.log",
+      "sha256": "d56c6734611c21a729ae6df0bb8a6029e5135d1978c4570ae1230e4437ecb7fe"
+    },
+    {
+      "bytes": 8158,
+      "kind": "json",
+      "path": "raw/raw/result.json",
+      "sha256": "4f237ec6b223104680b7c37193a152f211593bf4aaad0e8aafa80df0315d2ed3"
+    }
+  ],
+  "gate_id": "C344",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-17T12:41:58+00:00",
+    "tool": "evidence-pack",
+    "version": 1
+  },
+  "redactions": [],
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "06405f21c5c2e8c15cf00aa70f34f6acaba6faaf",
+  "verdict": "PASS"
+}
