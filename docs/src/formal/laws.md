@@ -19,7 +19,7 @@ disagree, the register is right.
 > - **`formal` / `mutant` / `falsifier`** — where a row has been retrofitted, `formal` names the law's
 >   proposition as a Lean `Prop`, `mutant` the rule being weakened, and `falsifier` the theorem that
 >   breaks the mutant. Five rows carry it today (104, 72b, 63b, 74b, 113); the register is the authority and
->   <!-- counts:formal-missing -->150<!-- counts:end --> proved rows are still prose-only.
+>   <!-- counts:formal-missing -->146<!-- counts:end --> proved rows are still prose-only.
 >
 > The machine-readable register is [`spec/laws.tsv`](../../../spec/laws.tsv); the rendered tables, with every
 > law's status and falsifier, are [`spec/LAWS.md`](../../../spec/LAWS.md). Both are emitted from
