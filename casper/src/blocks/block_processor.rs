@@ -614,7 +614,14 @@ pub async fn apply<F, Fut>(
             let justifications_committed =
                 justifications_are_committed(dag.as_ref(), window.as_ref(), &block.justifications)
                     .await;
-            let refusal = pre_replay_refusal(window.as_ref(), &block, justifications_committed);
+            let committed_history =
+                is_committed_history(dag.as_ref(), window.as_ref(), &block).await;
+            let refusal = pre_replay_refusal(
+                window.as_ref(),
+                &block,
+                justifications_committed,
+                committed_history,
+            );
             handles.push(tokio::spawn(async move {
                 if let Some(refusal) = refusal {
                     return refusal;
@@ -807,26 +814,28 @@ pub async fn apply<F, Fut>(
 /// the window, or a `ValidationFailed` with the failed metadata when the pre-state is not admissible.
 /// A multi-parent block's pre-state is a fresh merge, not a parent root; it is admissible when every
 /// justification is the anchor or a block this node validated (C402), or when every justification is
-/// **committed history at or below the anchor's height**: a post-anchor block routinely
-/// justifies a sibling at the anchor's height and a validator's stale block below it, and neither is
-/// a state the merge reads — the merge starts from the certificate's signed fringe state, and a
-/// below-fringe justification contributes nothing to it. The store is still not permission: replay
-/// recomputes that pre-state from the same justifications.
+/// **committed history**: a post-anchor block routinely justifies a same-height sibling and a
+/// validator's stale block below it, and neither is a state the merge reads — the merge starts from
+/// the certificate's signed fringe state. **Committed history is the anchor's seen closure, not every
+/// block at or below its height** (`Rchain.MergeScope.IsCommittedHistory`); a post-certificate
+/// sibling at the anchor's height is a latest message, and refusing it by height alone made every
+/// post-anchor block disagree about the pre-state (2026-11-17 cold join). The store is still not
+/// permission: replay recomputes that pre-state from the same justifications.
 fn pre_replay_refusal(
     window: Option<&crate::engine::anchor::AcceptedWindow>,
     block: &BlockMessage,
     justifications_committed: bool,
+    // **Committed history is the anchor's closure, not every block at or below its height**
+    // (`Rchain.MergeScope.IsCommittedHistory`). A post-certificate sibling at the anchor's height is
+    // a latest message the next block's merge must read; refusing it by height alone made every
+    // post-anchor block disagree about the pre-state (the 2026-11-17 cold-join run).
+    committed_history: bool,
 ) -> Option<Result<BlockMetadata, ValidateError>> {
     match window {
         None => Some(Err(ValidateError::Internal(
             "the accepted validation window is not installed yet".to_string(),
         ))),
-        Some(window)
-            if window.is_committed_at_or_below_anchor(
-                i64::from(block.block_number),
-                block.block_hash,
-            ) =>
-        {
+        Some(_window) if committed_history => {
             let status = BlockStatus::UncertifiedPreState;
             Some(Err(ValidateError::ValidationFailed(
                 crate::multi_parent_casper::mark_failed(&BlockMetadata::from_block(block), status),
@@ -868,6 +877,32 @@ async fn justifications_are_committed(
         }
     }
     true
+}
+
+/// **Is this block in the anchor's seen closure?** The predicate is `Rchain.MergeScope.IsCommittedHistory`:
+/// committed history is the anchor's closure, not every block at or below its height. The anchor
+/// itself is left to the other gate arms, as before. A DAG that does not hold the anchor's message is
+/// not evidence of history; the block is admitted and the later gates decide.
+async fn is_committed_history(
+    dag: &dyn BlockDagStorage,
+    window: Option<&crate::engine::anchor::AcceptedWindow>,
+    block: &BlockMessage,
+) -> bool {
+    let Some(window) = window else {
+        return false;
+    };
+    if block.block_hash == window.anchor_block() {
+        return false;
+    }
+    if i64::from(block.block_number) > window.anchor_height() {
+        return false;
+    }
+    let representation = dag.get_representation().await;
+    representation
+        .dag_message_state
+        .msg_map
+        .get(&window.anchor_block())
+        .is_some_and(|anchor| anchor.seen.contains(&block.block_hash))
 }
 
 #[cfg(test)]
@@ -1288,7 +1323,7 @@ mod tests {
         child.block_number = BlockHeight::try_from(10).expect("height");
         child.block_hash = BlockHash::new([0xcd; 32]);
         child.pre_state_hash = StateHash::new([9u8; 32]);
-        match pre_replay_refusal(Some(&window), &child, false) {
+        match pre_replay_refusal(Some(&window), &child, false, false) {
             Some(Err(ValidateError::ValidationFailed(meta, status))) => {
                 assert_eq!(status, BlockStatus::UncertifiedPreState);
                 assert!(
@@ -1306,13 +1341,13 @@ mod tests {
 
         child.pre_state_hash = genesis.post_state_hash;
         assert!(
-            pre_replay_refusal(Some(&window), &child, false).is_none(),
+            pre_replay_refusal(Some(&window), &child, false, false).is_none(),
             "the anchor root is an admissible pre-state"
         );
 
         assert!(
             matches!(
-                pre_replay_refusal(None, &child, false),
+                pre_replay_refusal(None, &child, false, false),
                 Some(Err(ValidateError::Internal(_)))
             ),
             "an uninstalled window is a retryable fault, not an acceptance"
@@ -1363,7 +1398,7 @@ mod tests {
             "the fixture must exercise the gap: the merged pre-state is not a recorded root"
         );
         assert!(
-            pre_replay_refusal(Some(&window), &child, false).is_none(),
+            pre_replay_refusal(Some(&window), &child, false, false).is_none(),
             "a multi-parent block with validated justifications must be admitted to replay"
         );
 
@@ -1371,7 +1406,7 @@ mod tests {
         unknown.justifications = vec![BlockHash::new([0x99; 32])];
         assert!(
             matches!(
-                pre_replay_refusal(Some(&window), &unknown, false),
+                pre_replay_refusal(Some(&window), &unknown, false, false),
                 Some(Err(ValidateError::ValidationFailed(
                     _,
                     BlockStatus::UncertifiedPreState
@@ -1384,7 +1419,7 @@ mod tests {
         orphan.justifications.clear();
         assert!(
             matches!(
-                pre_replay_refusal(Some(&window), &orphan, false),
+                pre_replay_refusal(Some(&window), &orphan, false, false),
                 Some(Err(ValidateError::ValidationFailed(
                     _,
                     BlockStatus::UncertifiedPreState
@@ -1420,7 +1455,7 @@ mod tests {
 
         assert!(
             matches!(
-                pre_replay_refusal(Some(&window), &child, false),
+                pre_replay_refusal(Some(&window), &child, false, false),
                 Some(Err(ValidateError::ValidationFailed(
                     _,
                     BlockStatus::UncertifiedPreState
@@ -1429,7 +1464,7 @@ mod tests {
             "an uncommitted justification set is still refused"
         );
         assert!(
-            pre_replay_refusal(Some(&window), &child, true).is_none(),
+            pre_replay_refusal(Some(&window), &child, true, false).is_none(),
             "the caller's committed-history verdict admits the merged pre-state to replay"
         );
     }

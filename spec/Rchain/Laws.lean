@@ -6473,14 +6473,21 @@ def lawsC : List Law := [
       itself), which replay recomputes and checks. The window is bounded in heights rather than in \
       headers because the merge reads the deploy chains of every block between that fringe and the \
       prune fringe, at every bonded width. The joiner hydrates exactly the committed window and never \
-      widens it to make a block validate; under collision-freedom the commitment binds the window.",
+      widens it to make a block validate; under collision-freedom the commitment binds the window. \
+      **Committed history is the anchor's closure, not every block at or below its height**: a \
+      same-height sibling the anchor has not seen is a live message the merge must read, and the \
+      joiner admits it for validation; a block is refused as committed history only when it is the \
+      anchor or in the anchor's seen set (`Rchain.MergeScope.IsCommittedHistory`).",
     status := .provedModel,
     declarations := [`Rchain.Sync.Window.a_validated_block_reads_only_certified_roots,
       `Rchain.Sync.Window.an_uncertified_root_is_refused,
       `Rchain.Sync.Window.the_history_root_binds_the_window,
       `Rchain.Sync.Window.the_first_post_fringe_block_builds_on_the_certified_root,
       `Rchain.Sync.Window.a_shortened_window_refuses,
-      `Rchain.Sync.Window.a_window_root_validates],
+      `Rchain.Sync.Window.a_window_root_validates,
+      `Rchain.MergeScope.committedHistory,
+      `Rchain.MergeScope.IsCommittedHistory,
+      `Rchain.MergeScope.a_sibling_is_not_committed_history],
     axioms := [],
     rust := ["casper/src/checkpoint.rs", "casper/src/engine/node_syncing.rs",
       "node/src/runtime/audit.rs"],
@@ -6490,7 +6497,8 @@ def lawsC : List Law := [
       "casper/src/engine/node_syncing.rs:the_sync_root_is_the_certified_fringe_state"],
     witness := [`Rchain.Sync.Window.a_validated_block_reads_only_certified_roots,
       `Rchain.Sync.Window.the_first_post_fringe_block_builds_on_the_certified_root,
-      `Rchain.Sync.Window.a_shortened_window_refuses],
+      `Rchain.Sync.Window.a_shortened_window_refuses,
+      `Rchain.MergeScope.a_sibling_is_not_committed_history],
     falsifiable := "Admit any root into `validates` and `an_uncertified_root_is_refused` fails; drop \
       a member from the window and `a_shortened_window_refuses` fails. In Rust, the window test \
       reddens if the digest does not bind `historyRoot`, if a shortened window derives the same \
@@ -6502,7 +6510,11 @@ def lawsC : List Law := [
       earlier header-count window (`8` headers) covered barely two heights at four validators — the \
       2026-11-17 cold rejoin then needed a block five heights down and had no state for it. A \
       future builder that reads deeper must change the constant and the commitment together — the \
-      joiner refuses rather than widening. **The checkpoint root is the anchor's fringe state:** a \
+      joiner refuses rather than widening. **The at-or-below-anchor refusal is a closure rule, not a \
+      height rule:** a post-certificate sibling at the anchor's height is not committed history — it \
+      is a latest message the next block's merge must read — and refusing it by height alone makes \
+      every post-anchor block's pre-state disagree (`InvalidPreStateHash`, the 2026-11-17 cold-join \
+      run). `Rchain.MergeScope.IsCommittedHistory` is the predicate. **The checkpoint root is the anchor's fringe state:** a \
       post-anchor block's merge starts from it, and the window commits the *states* of the merge's \
       scope — the pre/post/fringe roots of the headers within the height bound. **The window does \
       not commit the scope's deploy-chain indices:** the merge loads a `BlockIndex` per scope block, \
@@ -6619,13 +6631,12 @@ def lawsC : List Law := [
       reading, that a finalised write is never removed, is false, and \
       `merging_a_tuple_space_rmw_block_duplicates_its_produce` witnesses a kept chain consuming a base \
       datum. **Native absolute writes are not covered**, and the unqualified law is refuted there: a \
-      stale conflict-scope block's whole-slot `Put` can overwrite a finalised boundary value, because \
-      the conflict relation sees finalised chains only down to `prune_fringe` and \
-      `NativeRelations::fold` never compares against the base (§170, the stale-fork trace). **The \
-      guard is landed**: the merge widens the final scope to the whole finalised closure when the \
-      conflict scope contains a block that does not descend from the final fringe, so the stale \
-      writer is compared and rejected; the genesis fallback is keyed on the final fringe. The two \
-      `casper/src/merging.rs` tests pin both.",
+      stale conflict-scope block's whole-slot `Put` can overwrite a finalised boundary value. **The \
+      guard is bounded** (`Rchain.MergeScope`): the final scope is the trimmed finalised layer \
+      `between(final_fringe, prune_fringe)`; a conflict-scope block that does not descend from the \
+      final fringe is a **fork**, and its chains are rejected rather than merged against a replayed \
+      history. The whole finalised closure is never read, and the scope is a function of the DAG, not \
+      of which states the local node holds. The genesis fallback is keyed on the final fringe.",
     status := .provedModel,
     formal := `Rchain.FinalizedMerge.law113_statement,
     mutant := `Rchain.FinalizedMerge.law113_mutant,
@@ -6633,7 +6644,13 @@ def lawsC : List Law := [
     declarations := [`Rchain.FinalizedMerge.State, `Rchain.FinalizedMerge.Change,
       `Rchain.FinalizedMerge.applyKept, `Rchain.FinalizedMerge.law113_statement,
       `Rchain.FinalizedMerge.law113, `Rchain.FinalizedMerge.law113_mutant,
-      `Rchain.FinalizedMerge.law113_falsifier],
+      `Rchain.FinalizedMerge.law113_falsifier,
+      `Rchain.MergeScope.finalScope, `Rchain.MergeScope.KeptRule,
+      `Rchain.MergeScope.kept_chains_descend,
+      `Rchain.MergeScope.a_non_descendant_is_not_kept,
+      `Rchain.MergeScope.final_scope_is_the_trimmed_layer,
+      `Rchain.MergeScope.widening_reads_the_closure,
+      `Rchain.MergeScope.scope_is_a_function_of_the_dag],
     axioms := [],
     rust := ["casper/src/merging.rs", "casper/src/multi_parent_casper.rs",
       "rspace/src/merger/state_change.rs", "rspace/src/merger/state_change_merger.rs"],
@@ -6643,9 +6660,14 @@ def lawsC : List Law := [
       "casper/tests/merge_determinism.rs:system_deploy_ids_are_not_final_scope_rejections",
       "casper/tests/n420_boundary_merge.rs:a_final_scope_system_deploy_chain_is_not_rejected",
       "casper/src/merging.rs:a_non_empty_final_fringe_never_falls_back_to_genesis",
-      "casper/src/merging.rs:a_non_descendant_conflict_block_widens_the_final_scope_to_the_closure"],
+      "casper/src/merging.rs:a_non_descendant_conflict_block_is_a_fork_and_the_final_scope_stays_trimmed"],
     witness := [`Rchain.FinalizedMerge.law113_falsifier,
-      `Rchain.FinalizedMerge.the_same_fixture_survives_under_the_law],
+      `Rchain.FinalizedMerge.the_same_fixture_survives_under_the_law,
+      `Rchain.MergeScope.final_scope_is_the_trimmed_layer,
+      `Rchain.MergeScope.kept_chains_descend,
+      `Rchain.MergeScope.a_non_descendant_is_not_kept,
+      `Rchain.MergeScope.widening_reads_the_closure,
+      `Rchain.MergeScope.scope_is_a_function_of_the_dag],
     falsifiable := "`law113_mutant` applies the **rejected** half of the scope as well; \
       `law113_falsifier` exhibits a rejected chain's removal dropping a datum the kept slice preserved. \
       The code applies `to_merge` alone, so the mutation is `compute_merged_state(&conflict_set)`. \
@@ -6655,22 +6677,26 @@ def lawsC : List Law := [
     note := "**The scope, and what is now enforced.** The tuple-space half is proved: the applied slice \
       is the kept conflict scope (`merging.rs:2049-2071`, `:2122-2129`), the base is its input not an \
       output, and `net_datum_change` cancels a produce-and-consume inside the batch. **The native \
-      half is now guarded** (C400): when the conflict scope contains a block that does not descend \
-      from the final fringe, `from_fringes` widens the final scope to the whole finalised closure, so \
-      `native.conflicting` sees the older writer and the stale chain is rejected; the genesis fallback \
-      keys on `final_fringe.is_empty()` (`merging.rs:1916-1922`). Both are pinned by the two \
-      `casper/src/merging.rs` tests. **The C344 repair (Phase 1) adds the system-chain rule:** a \
+      half is bounded by the scope rule** (C400's successor, `Rchain.MergeScope`): the final scope is \
+      the trimmed finalised layer `between(final_fringe, prune_fringe)`; a conflict-scope block that \
+      does not descend from the final fringe is a fork, and its chains are rejected before the search. \
+      The finalised closure is never indexed. This is the rule the 2026-11-17 cold-rejoin run forced: \
+      the C400 widening read the whole certified closure, and a checkpoint joiner could not hydrate \
+      its historical pre-states (`unknown root`). The fork set and the scope are functions of the DAG \
+      (`seen`), so every producer and joiner derives the same scope; a node that lacks a pre-state \
+      refuses rather than deriving a different one. The genesis fallback keys on \
+      `final_fringe.is_empty()` (`merging.rs:1916-1922`). **The C344 repair (Phase 1) adds the system-chain rule:** a \
       finaliser's `rejected_deploys` can name a close chain by its 33-byte `blockHash ++ 02` id, and \
       the merge's rejection test reads a chain's first id — so a system id would reject a \
       consensus-mandated close chain and drop its native writes (the `pos:liveness-anchor` slot is \
       the measured case). `final_scope_rejections` does not propagate a system id, and `merge` \
       refuses to reject a system-deploy chain; the two tests above pin the derivation and the merge \
-      decision. **What the Lean model does not cover:** native slots themselves (the guard is a code \
-      rule, not a theorem about `NativeStoreAction`), and the honest-quorum hypothesis (less than one \
-      third Byzantine) needed to lift the local merge invariant to \"every honest node's finalised \
-      write survives\". The Rust tie is the six tests above: base surviving, consume, the two \
-      system-chain guards, the genesis fallback, and the closure widening. The rejected-slice arm is \
-      pinned by the Lean model, not yet by a Rust test." },
+      decision. **What the Lean model does not cover:** native slots themselves (the relation is a \
+      code rule over `NativeStoreAction`, not a theorem about it), and the honest-quorum hypothesis \
+      (less than one third Byzantine) needed to lift the local merge invariant to \"every honest \
+      node's finalised write survives\". The Rust tie is the six tests above: base surviving, \
+      consume, the two system-chain guards, the genesis fallback, and the fork rejection. The \
+      rejected-slice arm is pinned by the Lean model, not yet by a Rust test." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

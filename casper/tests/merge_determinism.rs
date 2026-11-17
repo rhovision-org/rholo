@@ -590,6 +590,7 @@ async fn the_same_validated_blocks_merge_identically_in_both_arrival_orders() {
         store.put(&[(b.block_hash, b.clone())]).await.expect("put");
     }
     let scope = MergeScope {
+        fork_blocks: BTreeSet::new(),
         final_scope: BTreeSet::from([x.block_hash]),
         conflict_scope: BTreeSet::from([y.block_hash, z.block_hash]),
         ancestry: BTreeMap::new(),

@@ -278,6 +278,11 @@ pub struct MergeReport {
     pub conflict_chains: usize,
     pub kept_chains: usize,
     pub rejected_chains: usize,
+    /// **Chains rejected because their block is a fork** — a conflict-scope block that has not seen
+    /// the whole final fringe. They are a subset of `rejected_chains` and the dependency closure is
+    /// counted with them. This field is the reason I1 does not call them unexplained: the rule is
+    /// structural, not a conflict with a kept chain (`Rchain.MergeScope.KeptRule`).
+    pub fork_rejected_chains: usize,
     /// **The final scope's rejections — the ledger's missing row** (C260). A chain of a *finalised*
     /// block whose derived rejection set names its first deploy. This records a historical
     /// rejection decision, which is expected when finalizing deliberately conflicting branches.
@@ -435,6 +440,13 @@ impl MergeReport {
                 "; **{} chain(s) of the final scope rejected**: recorded final-scope rejection \
                  decisions retained in the merge base (C260)",
                 self.final_scope_rejected_chains
+            ));
+        }
+        if self.fork_rejected_chains > 0 {
+            line.push_str(&format!(
+                "; {} chain(s) rejected as forks: their block did not see the whole final fringe \
+                 (`Rchain.MergeScope.KeptRule`)",
+                self.fork_rejected_chains
             ));
         }
         // The deploy ids, not only the chain count (M5-04): the incident's question was *which*
@@ -1918,6 +1930,11 @@ impl NativeRelations<'_> {
 pub struct MergeScope {
     pub final_scope: BTreeSet<BlockHash>,
     pub conflict_scope: BTreeSet<BlockHash>,
+    /// **Conflict-scope blocks that have not seen the whole final fringe.** They are forks: the merge
+    /// rejects every one of their chains (and the dependency closure) instead of widening the final
+    /// scope to the whole finalised closure. The bounded rule is `Rchain.MergeScope.KeptRule`; the
+    /// widening it replaces read historical pre-states a checkpoint joiner never hydrates.
+    pub fork_blocks: BTreeSet<BlockHash>,
     /// For each block of either scope, the blocks of either scope it has *seen* (its in-scope
     /// ancestors, itself excluded). Not in the Scala: native writes are absolute values rather than
     /// event logs, so whether two blocks writing one native key are a conflict or a dependency is a
@@ -2026,23 +2043,24 @@ impl MergeScope {
             None
         };
 
-        // **Law 113's native-write guard.** The final scope normally trims to the newest finalised
-        // layer (`prune_fringe`); that is safe only because every conflict-scope block is assumed to
-        // descend from the final fringe, so it has already seen the older finalised writers. A block
-        // that does not descend breaks that premise and can carry a stale *absolute* native write over
-        // a newer finalised value (C400). When one is present, widen the final scope to the whole
-        // finalised closure so the conflict relation sees those writers and rejects the stale one.
-        let non_descendant = c_scope_ids.iter().any(|id| {
-            dag_data
-                .get(id)
-                .is_some_and(|m| !final_fringe.is_subset(m.seen.as_ref()))
-        });
-        let empty = BTreeSet::new();
-        let f_scope_ids = message_map::between(
-            dag_data,
-            final_fringe,
-            if non_descendant { &empty } else { prune_fringe },
-        );
+        // **Law 113's native-write guard, bounded.** A conflict-scope block that has not seen the
+        // whole final fringe is a fork: it may carry a stale absolute native write over a newer
+        // finalised value (C400). The guard used to widen the final scope to the whole finalised
+        // closure so the conflict relation could see the older writer. That read is unbounded, and a
+        // checkpoint joiner cannot hydrate the closure's pre-states (measured 2026-11-17:
+        // `unknown root` on a height-23 block). The rule is now structural: the fork's chains are
+        // rejected in `merge` (and so are their dependents), and the final scope stays the trimmed
+        // layer. See `Rchain.MergeScope.KeptRule`.
+        let fork_blocks: BTreeSet<BlockHash> = c_scope_ids
+            .iter()
+            .copied()
+            .filter(|id| {
+                dag_data
+                    .get(id)
+                    .is_some_and(|m| !final_fringe.is_subset(m.seen.as_ref()))
+            })
+            .collect();
+        let f_scope_ids = message_map::between(dag_data, final_fringe, prune_fringe);
         let conflict_scope: BTreeSet<BlockHash> = c_scope_ids
             .difference(&base_msg.into_iter().collect())
             .copied()
@@ -2068,6 +2086,7 @@ impl MergeScope {
             MergeScope {
                 final_scope: f_scope_ids,
                 conflict_scope,
+                fork_blocks,
                 ancestry,
             },
             base_msg,
@@ -2102,6 +2121,14 @@ impl MergeScope {
             }
             v
         };
+        // **A fork's chains are rejected, not merged.** The fork blocks are conflict-scope blocks
+        // already indexed above, so classifying them here adds no read; the dependency closure is
+        // applied to the search's answer below.
+        let fork_chains: BTreeSet<Arc<DeployChainIndex>> = conflict_indices
+            .iter()
+            .filter(|b| merge_scope.fork_blocks.contains(&b.block_hash))
+            .flat_map(|b| b.deploy_chains.iter().cloned())
+            .collect();
 
         // **No block-level native index any more** (#280). The relation reads each chain's own slots
         // (`DeployChainIndex::native_effects`), so there is nothing here to key by host: a chain that
@@ -2172,7 +2199,7 @@ impl MergeScope {
             |a, b| DeployChainIndex::depends(a, b) || native.depends(a, b),
         );
 
-        let ((to_merge, rejected), search) = resolve_conflict_set_with_census(
+        let ((mut to_merge, mut rejected), search) = resolve_conflict_set_with_census(
             &conflict_set,
             &accepted_finally,
             &rejected_finally,
@@ -2203,6 +2230,14 @@ impl MergeScope {
         })?;
         // #117's instrument: what this merge handed the search. See `search_census`.
         search_census::record(&search);
+        // **The fork rule, applied to the answer.** Every chain of a non-descendant conflict block is
+        // rejected, and so is every chain that depends on one. The search cannot keep them, whatever
+        // its cost minimisation chose; this is a structural decision, not a conflict to resolve.
+        if !fork_chains.is_empty() {
+            let forced = rchain_sdk::dag::merging::with_dependencies(&fork_chains, &dependency_map);
+            to_merge = to_merge.difference(&forced).cloned().collect();
+            rejected = rejected.union(&forced).cloned().collect();
+        }
         // **`reject_whole_blocks` used to run here**, closing resolution over whole native-writing
         // blocks. It is deleted rather than narrowed (#280): the relation is on the chain, so a chain
         // is rejected for a slot it wrote or not at all, and "reject every chain of a block because of
@@ -2264,6 +2299,7 @@ impl MergeScope {
             conflict_chains: conflict_set.len(),
             kept_chains: to_merge.len(),
             rejected_chains: rejected.len(),
+            fork_rejected_chains: fork_chains.len(),
             // The other scope's ledger (C260): chains of *finalised* blocks whose derived rejection set
             // names them. Computed in the loop over `final_indices` above, and until this field existed
             // the set was handed to `resolve_conflict_set_with_census` and reported by nothing.
@@ -2293,6 +2329,10 @@ impl MergeScope {
             rejections_without_a_conflict: rejected
                 .iter()
                 .filter(|c| conflict_set.contains(*c))
+                // **A fork rejection has a structural reason** (`Rchain.MergeScope.KeptRule`), not a
+                // conflict with a kept chain; I1 asks for an explanation, and the block's descent is
+                // it. Its dependents still get a reason through the dependency arm below.
+                .filter(|c| !fork_chains.contains(*c))
                 .filter(|c| {
                     !rejection_has_a_reason(
                         *c,
@@ -2641,13 +2681,14 @@ mod tests {
         );
     }
 
-    /// **Law 113's native-write guard (C400).** A conflict-scope block that does not descend from the
-    /// final fringe breaks the prune premise: it may not have seen an older finalised writer, whose
-    /// absolute native write it could overwrite. The final scope is widened to the whole finalised
-    /// closure so the conflict relation can see that writer. Without the guard the final scope is only
-    /// the trimmed layer `{f}` and `h` is invisible.
+    /// **Law 113's native-write guard is bounded (`Rchain.MergeScope.KeptRule`).** A conflict-scope
+    /// block that does not descend from the final fringe is a **fork**: the final scope stays the
+    /// trimmed layer `{f}` and the fork is named so `merge` rejects its chains. The old rule widened
+    /// the final scope to the whole finalised closure so the conflict relation could see `h`; that
+    /// read is unbounded, and a checkpoint joiner could not hydrate the closure's pre-states
+    /// (`unknown root`, cold-rejoin 2026-11-17). The closure is never a scope.
     #[test]
-    fn a_non_descendant_conflict_block_widens_the_final_scope_to_the_closure() {
+    fn a_non_descendant_conflict_block_is_a_fork_and_the_final_scope_stays_trimmed() {
         let h = msg(1, &[], &[1]); // older finalised writer
         let f = msg(2, &[1], &[1, 2]); // the final fringe
         let c = msg(3, &[], &[3]); // a fork that does not see the final fringe
@@ -2661,9 +2702,19 @@ mod tests {
         )
         .expect("a well-formed dag");
 
+        assert_eq!(
+            scope.final_scope,
+            [f.id].into_iter().collect::<BTreeSet<_>>(),
+            "the final scope is the trimmed layer"
+        );
         assert!(
-            scope.final_scope.contains(&h.id),
-            "the closure must include the older finalised writer, not only the trimmed layer"
+            !scope.final_scope.contains(&h.id),
+            "the closure is never read: a joiner cannot hydrate it"
+        );
+        assert_eq!(
+            scope.fork_blocks,
+            [c.id].into_iter().collect::<BTreeSet<_>>(),
+            "the non-descendant is named as a fork, so its chains are rejected"
         );
         assert!(scope.conflict_scope.contains(&c.id));
     }
@@ -3437,6 +3488,7 @@ mod native_merge_tests {
             deploy_chains: vec![Arc::new(earlier), Arc::new(later)],
         };
         let scope = MergeScope {
+            fork_blocks: BTreeSet::new(),
             final_scope: BTreeSet::new(),
             conflict_scope: BTreeSet::from([host]),
             ancestry: BTreeMap::new(),
@@ -3621,6 +3673,7 @@ mod native_merge_tests {
             }
         };
         let scope = MergeScope {
+            fork_blocks: BTreeSet::new(),
             final_scope: BTreeSet::new(),
             conflict_scope: BTreeSet::from([host, sibling_host]),
             ancestry: BTreeMap::new(),
@@ -3715,6 +3768,7 @@ mod native_merge_tests {
 
         // The branch is the conflict scope; nothing has finalised.
         let scope = MergeScope {
+            fork_blocks: BTreeSet::new(),
             final_scope: BTreeSet::new(),
             conflict_scope: BTreeSet::from([child]),
             ancestry: BTreeMap::new(),
@@ -3820,6 +3874,7 @@ mod native_merge_tests {
                 }
             };
             let scope = MergeScope {
+                fork_blocks: BTreeSet::new(),
                 final_scope: BTreeSet::new(),
                 conflict_scope: BTreeSet::from(hosts),
                 ancestry: BTreeMap::new(),
@@ -4343,6 +4398,7 @@ mod boundary_merge_tests {
         };
         MergeScope::merge(
             &MergeScope {
+                fork_blocks: BTreeSet::new(),
                 final_scope,
                 conflict_scope,
                 ancestry,
@@ -4465,6 +4521,7 @@ mod boundary_merge_tests {
         blocks: Vec<BlockIndex>,
     ) -> Result<MergeOutcome, String> {
         let scope = MergeScope {
+            fork_blocks: BTreeSet::new(),
             final_scope: BTreeSet::new(),
             conflict_scope: blocks.iter().map(|b| b.block_hash).collect(),
             ancestry: BTreeMap::new(),
@@ -4535,6 +4592,7 @@ mod boundary_merge_tests {
         ancestry: BTreeMap<BlockHash, BTreeSet<BlockHash>>,
     ) -> Result<(Blake2b256Hash, BTreeSet<Vec<u8>>), String> {
         let scope = MergeScope {
+            fork_blocks: BTreeSet::new(),
             final_scope: BTreeSet::new(),
             conflict_scope: blocks.iter().map(|b| b.block_hash).collect(),
             ancestry,
@@ -5302,6 +5360,7 @@ mod boundary_merge_tests {
         blocks: Vec<BlockIndex>,
     ) -> Result<(Blake2b256Hash, BTreeSet<Vec<u8>>), String> {
         let scope = MergeScope {
+            fork_blocks: BTreeSet::new(),
             final_scope: BTreeSet::new(),
             conflict_scope: blocks.iter().map(|b| b.block_hash).collect(),
             ancestry: BTreeMap::new(),

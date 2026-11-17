@@ -184,6 +184,7 @@ async fn merge_single_block(
         async move { found.ok_or_else(|| format!("no index for {h:?}")) }
     };
     let scope = MergeScope {
+        fork_blocks: BTreeSet::new(),
         final_scope: BTreeSet::new(),
         conflict_scope: BTreeSet::from([block.hash]),
         ancestry: BTreeMap::new(),
@@ -252,6 +253,7 @@ async fn a_boundary_round_merge_keeps_the_base_states_user_write() {
         async move { found.ok_or_else(|| format!("no index for {h:?}")) }
     };
     let scope = MergeScope {
+        fork_blocks: BTreeSet::new(),
         final_scope: BTreeSet::new(),
         conflict_scope: blocks.iter().map(|b| b.hash).collect(),
         ancestry: BTreeMap::new(),
@@ -438,6 +440,7 @@ async fn a_final_scope_system_deploy_chain_is_not_rejected() {
         async move { found.ok_or_else(|| format!("no index for {h:?}")) }
     };
     let scope = MergeScope {
+        fork_blocks: BTreeSet::new(),
         final_scope: BTreeSet::from([block.hash]),
         conflict_scope: BTreeSet::new(),
         ancestry: BTreeMap::new(),
@@ -578,6 +581,7 @@ async fn merging_a_tuple_space_rmw_block_duplicates_its_produce() {
         async move { found.ok_or_else(|| format!("no index for {h:?}")) }
     };
     let scope = MergeScope {
+        fork_blocks: BTreeSet::new(),
         final_scope: BTreeSet::new(),
         conflict_scope: BTreeSet::from([rw.hash]),
         ancestry: BTreeMap::new(),
@@ -881,6 +885,7 @@ async fn sibling_hot_cell_merges_keep_one_value_and_name_a_rejection() {
         async move { found.ok_or_else(|| format!("no index for {h:?}")) }
     };
     let scope = MergeScope {
+        fork_blocks: BTreeSet::new(),
         final_scope: BTreeSet::new(),
         conflict_scope: [left.hash, right.hash].into_iter().collect(),
         ancestry: BTreeMap::new(),

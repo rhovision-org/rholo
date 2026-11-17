@@ -427,6 +427,7 @@ async fn a_merge_reproduces_a_branchs_post_state_including_its_native_writes() {
     // Merge the single branch over the genesis: nothing has finalised, so the branch is the whole
     // conflict scope and the base is the genesis.
     let scope = MergeScope {
+        fork_blocks: BTreeSet::new(),
         final_scope: BTreeSet::new(),
         conflict_scope: BTreeSet::from([block.block_hash]),
         ancestry: BTreeMap::new(),
@@ -635,6 +636,7 @@ async fn a_slashed_validator_is_absent_from_the_bonds_at_a_merged_root() {
     // is still here, the branch's own index is what the merge cannot read and the two-branch assertion
     // below would be measuring that instead.
     let alone = MergeScope {
+        fork_blocks: BTreeSet::new(),
         final_scope: BTreeSet::new(),
         conflict_scope: BTreeSet::from([a.block_hash]),
         ancestry: BTreeMap::new(),
@@ -675,6 +677,7 @@ async fn a_slashed_validator_is_absent_from_the_bonds_at_a_merged_root() {
     // The `ancestry` map is empty here on purpose — this is now the bare-pair case, and it fails if
     // the merge ever goes back to treating two concurrent charges as competing snapshots.
     let scope = MergeScope {
+        fork_blocks: BTreeSet::new(),
         final_scope: BTreeSet::new(),
         conflict_scope: BTreeSet::from([a.block_hash, b.block_hash]),
         ancestry: BTreeMap::new(),

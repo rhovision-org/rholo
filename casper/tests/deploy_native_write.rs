@@ -447,6 +447,7 @@ async fn a_merged_block_reproduces_its_own_post_state() {
         }
     };
     let scope = MergeScope {
+        fork_blocks: BTreeSet::new(),
         final_scope: BTreeSet::new(),
         conflict_scope: BTreeSet::from([BlockHash::new(*post_state.as_bytes())]),
         ancestry: BTreeMap::new(),
