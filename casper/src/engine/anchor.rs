@@ -215,11 +215,28 @@ impl AcceptedWindow {
                 .all(|h| *h == self.anchor_block || self.validated.contains(h))
     }
 
-    /// The pre-replay gate's rule: a known accepted root, **or** an anchored justification set.
+    /// **The replay base must be a root whose state this node holds.** The anchor root and the
+    /// roots this node derived by accepting validated post-anchor blocks are held (the anchor's
+    /// state was downloaded, a derived root came from a replay). A **certified** window root is
+    /// *named* by the certificate but its state is not downloaded by a checkpoint joiner: the
+    /// certificate commits roots, not states. Using a certified root as a replay base therefore
+    /// reaches the store's "unknown root" — which is a fact about this node's accepted history, not
+    /// an internal fault, so it must be refused before replay.
+    ///
+    /// The case that found this: a block at the anchor's own height, a sibling of the anchor, has
+    /// the anchor's **pre-state** as its pre-state. That root is certified (it is the anchor
+    /// header's pre-state) but not held; the block was admitted, the replay failed "unknown root",
+    /// and the fault latched readiness so the rejoined validator never proposed (C406).
+    pub fn permits_replay_root(&self, pre_state: StateHash) -> bool {
+        let root = Blake2b256Hash::from_byte_array(pre_state.as_bytes());
+        root == self.anchor_root || self.derived.contains(&root)
+    }
+
+    /// The pre-replay gate's rule: a **held** accepted root, **or** an anchored justification set.
     /// The second arm does not make the state store permission — replay still recomputes the
     /// pre-state from the justifications and refuses a mismatch with `InvalidPreStateHash`.
     pub fn permits_block(&self, pre_state: StateHash, justifications: &[BlockHash]) -> bool {
-        self.permits(pre_state) || self.permits_justifications(justifications)
+        self.permits_replay_root(pre_state) || self.permits_justifications(justifications)
     }
 
     /// The block this window is anchored to.
@@ -391,6 +408,36 @@ mod tests {
         assert!(
             window.permits(meta.post_state_hash),
             "a root derived by a validated post-anchor block"
+        );
+    }
+
+    /// **C406 — a certified root is not a replay base.** The certificate names its validation
+    /// window's roots; a checkpoint joiner holds only the anchor state (and what it derived). A
+    /// sibling of the anchor has the anchor's *pre-state* as its pre-state — certified, but not
+    /// held — and must be refused before replay as an uncertified pre-state verdict, not faulted as
+    /// an internal "unknown root" that latches readiness for ever.
+    #[test]
+    fn a_certified_root_that_is_not_the_anchor_is_not_a_replay_base() {
+        let certified = Blake2b256Hash::from_byte_array(&[0xCC; 32]);
+        let state = AcceptedState::from_certificate(verified(0xAB), BTreeSet::from([certified]))
+            .expect("anchor");
+        let window = AcceptedWindow::from_accepted(&state);
+
+        assert!(
+            window.permits(StateHash::new([0xCC; 32])),
+            "the read rule still admits a certified window root"
+        );
+        assert!(
+            !window.permits_replay_root(StateHash::new([0xCC; 32])),
+            "a certified root is not a state this node holds"
+        );
+        assert!(
+            !window.permits_block(StateHash::new([0xCC; 32]), &[BlockHash::new([9u8; 32])]),
+            "an anchor sibling is refused before replay"
+        );
+        assert!(
+            window.permits_block(StateHash::new([0xAB; 32]), &[]),
+            "the anchor root is held"
         );
     }
 

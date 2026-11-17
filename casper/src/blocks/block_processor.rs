@@ -553,10 +553,12 @@ pub async fn apply<F, Fut>(
     block_index: F,
     log: Arc<dyn Log>,
     health: ShardHealth,
-    // **The runtime's admissible pre-state roots** (review R2). A received block whose pre-state is
-    // not the accepted root, a certified window root or a root this node derived by accepting a
-    // validated post-anchor block is refused before replay. `None` (before boot installs it) is a
-    // retryable internal fault, never an acceptance.
+    // **The runtime's admissible pre-state roots** (review R2). A received block is replayed only
+    // from the accepted root or a root this node derived by accepting a validated post-anchor
+    // block (a state it holds); a certified window root is a *read* permission, not a replay base
+    // (C406). A block that fails the gate is refused as an uncertified pre-state — a verdict, not
+    // an internal fault. `None` (before boot installs the window) is a retryable internal fault,
+    // never an acceptance.
     accepted_window: crate::engine::anchor::SharedAcceptedWindow,
 ) where
     F: Fn(BlockHash) -> Fut + Clone + Send + Sync + 'static,
