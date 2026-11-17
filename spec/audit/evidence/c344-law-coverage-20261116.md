@@ -1,5 +1,9 @@
 # C344 (RCHIP #55) — law↔code↔test coverage
 
+**Update, 2026-11-17.** The capstone has since run: `jail-vote`, `exact-threshold` and `stall` pass;
+`restart-expiry` is blocked by C405 and C406. See `spec/audit/evidence/c344-capstone-20261117.md`.
+This table remains the behaviour-by-behaviour coverage it was written as.
+
 **Purpose.** Before the four-arm capstone runs, answer the owner's question: is every behaviour the
 arms assert covered by a Lean law that matches the Rust, with a named Rust witness — and what is not?
 This record is the answer of 2026-11-16, after the `exact-threshold` arm's lost second ballot was
