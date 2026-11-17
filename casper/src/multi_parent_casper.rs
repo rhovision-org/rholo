@@ -379,10 +379,11 @@ where
     };
     let mut claims: Vec<(i64, BlockHash, Blake2b256Hash)> = Vec::new();
     let mut prev_fringe_rejected_deploys: BTreeSet<Vec<u8>> = BTreeSet::new();
-    for m in parents
-        .iter()
-        .filter(|m| m.fringe == prev_fringe_hashes && certified_base.is_none())
-    {
+    // **The finalisers are read even under a certified base.** The certificate signs the base
+    // *state*, not the finalisers' rejected-deploy sets; skipping this loop made the joiner derive
+    // an empty set and refuse the first post-anchor block `InvalidRejectedDeploy`. The bodies are
+    // fetched with the checkpoint (the sync's join-input set), so the loop can always read them.
+    for m in parents.iter().filter(|m| m.fringe == prev_fringe_hashes) {
         let meta = dag.lookup(&m.id).await?.ok_or_else(|| {
             format!(
                 "missing fringe block {} in the metadata store: the fringe {:?} names a block this node \
@@ -1782,6 +1783,21 @@ where
 /// The two bounds are immutable PoS parameters in this release. A validated parent's post-state
 /// therefore supplies the same values as the merged pre-state, without performing an unbounded
 /// merge before applying the parent-count guard. Legacy records alone retain the old config rule.
+/// The merge base a checkpoint certificate signs, when this node runs from one. Read once per
+/// validation so play and replay see the same base.
+async fn certified_base_from(
+    accepted_window: Option<&crate::engine::anchor::SharedAcceptedWindow>,
+) -> Option<Blake2b256Hash> {
+    match accepted_window {
+        Some(window) => window
+            .read()
+            .await
+            .as_ref()
+            .and_then(|w| w.merge_base().map(|base| base.base)),
+        None => None,
+    }
+}
+
 async fn validation_bounds_for_block(
     dag: &dyn BlockDagStorage,
     block_store: &BlockStore,
@@ -1789,11 +1805,28 @@ async fn validation_bounds_for_block(
     block: &BlockMessage,
     legacy_min_phlo_price: i64,
     legacy_max_number_of_parents: i32,
+    // **The state a checkpoint joiner holds.** Its parent bodies are absent by design (the
+    // certificate commits headers and roots), so the parent walk below yields nothing and the
+    // oldest-accepted fallback would read genesis, whose state the certified sync never hydrates.
+    // The signed merge base is a validated, hydrated state: read the immutable params there.
+    certified_base: Option<Blake2b256Hash>,
 ) -> Result<(i64, i64), String> {
     let legacy = (
         legacy_min_phlo_price,
         i64::from(legacy_max_number_of_parents),
     );
+    // **The signed base is the joiner's committed state.** Reading genesis here is what made every
+    // post-anchor block fail with `PoS params leaf not found in committed state`: the certified sync
+    // hydrates the certificate's roots, not the genesis post-state. The base is signed by the quorum,
+    // re-checked against the anchor header at join, and hydrated before readiness. It is also the
+    // state in force when the block is proposed, so it is read before any parent's.
+    if let Some(base) = certified_base {
+        let state = rchain_models::block::state_hash::StateHash::from_slice(base.as_bytes());
+        return Ok(runtime
+            .committed_validation_bounds(&state)
+            .await?
+            .unwrap_or(legacy));
+    }
     for parent_hash in &block.justifications {
         if let Some(parent_meta) = dag.lookup(parent_hash).await? {
             if parent_meta.validated && !parent_meta.validation_failed {
@@ -1890,6 +1923,7 @@ where
             block,
             min_phlo_price,
             max_number_of_parents,
+            certified_base_from(accepted_window).await,
         ),
     )
     .await

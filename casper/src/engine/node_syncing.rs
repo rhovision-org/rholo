@@ -840,6 +840,14 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         ));
     }
 
+    // **The merge inputs the certificate does not carry.** Validation of the first post-anchor block
+    // reads the anchor's body, the bodies of the fringe the anchor finalised, and (for a boundary
+    // re-index) those members' own finalised fringe. A joiner that accepts the certificate without
+    // them reaches "ready" and then cannot validate anything: the state is representable today and
+    // this set removes it. The bodies are hash-checked by `fetch_block_body`; the roots come from
+    // their committed headers.
+    let (join_bodies, join_roots) = join_input_set(&walk, &verified.checkpoint)?;
+
     // **The hydrated set is the certified set.** The checkpoint's **signed fringe state** (the run
     // root), the anchor header's own `fringe_state_hash`, the anchored reply's
     // post-state, and exactly the validation-window roots the statement commits to. The joiner does
@@ -849,6 +857,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         fringe.state_hash.as_bytes(),
     ));
     required_roots.extend(window.iter().copied());
+    required_roots.extend(join_roots);
     crate::engine::sync_metrics::census().add_state_roots(required_roots.len() as u64);
 
     // The anchored reply serves the **anchor's post-state** (Law 85); the certificate's signed
@@ -923,9 +932,29 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         .map_err(|e| e.to_string())?;
     }
 
-    // **The genesis is the one body this path fetches** — the plan's exception. It anchors the
-    // operator's genesis pin and is the only block whose body this node will need before a
-    // backfill; fetching it here also *content-verifies* it, which no header can be.
+    // **The join bodies are fetched before readiness.** Every one is content-checked against the
+    // hash it was requested by, so a peer cannot substitute a different block. A fetch failure is a
+    // failed sync: the node retries and never publishes an accepted state it cannot validate from.
+    for hash in &join_bodies {
+        fetch_block_body(
+            &block_store,
+            *hash,
+            incoming_blocks_rx,
+            comm_util.as_ref(),
+            log.as_ref(),
+        )
+        .await?;
+    }
+    log.info(
+        source,
+        &format!(
+            "fetch {} checkpoint join body/bodies (anchor, its finalised fringe, and their fringes)",
+            join_bodies.len()
+        ),
+    );
+
+    // **The genesis is also fetched** — the plan's exception. It anchors the
+    // operator's genesis pin; fetching it here also *content-verifies* it, which no header can be.
     let genesis = walk
         .headers
         .values()
@@ -1325,6 +1354,71 @@ pub(super) fn certified_metadata_entries(
         Blake2b256Hash::from_byte_array(anchor_header.fringe_state_hash.as_bytes()),
         window,
     ))
+}
+
+/// **The bodies a checkpoint joiner must hold before it can validate the first post-anchor block.**
+///
+/// The certificate commits headers and state roots, not the blocks the merge reads. The set is the
+/// anchor, the fringe the anchor itself finalised, and each of those members' own finalised fringe
+/// (the participation an index regeneration at a boundary derives). Every member is an ancestor of
+/// the anchor, so the metadata walk holds its header and its three state roots are committed.
+pub(super) fn join_input_set(
+    walk: &super::lfs_metadata_requester::MetadataWalk,
+    checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
+) -> Result<(BTreeSet<BlockHash>, BTreeSet<Blake2b256Hash>), String> {
+    let anchor = decode_hash(&checkpoint.anchor, "certificate anchor")?;
+    let anchor_header = walk.headers.get(&anchor).ok_or_else(|| {
+        format!(
+            "the metadata walk does not hold the certificate's anchor {}",
+            anchor.to_hex()
+        )
+    })?;
+    let mut replay_layer: BTreeSet<BlockHash> = BTreeSet::from([anchor]);
+    replay_layer.extend(anchor_header.fringe.iter().copied());
+    let finalised: Vec<BlockHash> = anchor_header.fringe.iter().copied().collect();
+    for member in finalised {
+        let header = walk.headers.get(&member).ok_or_else(|| {
+            format!(
+                "the anchor {} finalised the fringe member {}, which the metadata walk does not \
+                 hold",
+                anchor.to_hex(),
+                member.to_hex()
+            )
+        })?;
+        replay_layer.extend(header.fringe.iter().copied());
+    }
+    // **Every replay-layer body's roots are committed in its header.** Hydrating them is what lets
+    // the merge replay an index from the block's own pre-state without replaying its ancestry.
+    let mut roots = BTreeSet::new();
+    for hash in &replay_layer {
+        let header = walk.headers.get(hash).ok_or_else(|| {
+            format!(
+                "join input block {} is not in the metadata walk",
+                hash.to_hex()
+            )
+        })?;
+        for root in [
+            header.pre_state_hash,
+            header.post_state_hash,
+            header.fringe_state_hash,
+        ] {
+            if root != rchain_models::block::state_hash::StateHash::new([0u8; 32]) {
+                roots.insert(Blake2b256Hash::from_byte_array(root.as_bytes()));
+            }
+        }
+    }
+    // **The deploy-duplication check reads bodies, not roots.** `repeat_deploy` walks every block
+    // body within `DEPLOY_LIFESPAN` heights of the parents; a joiner without them fails the first
+    // post-anchor block in its block summary. The bodies are hash-checked on fetch; their states are
+    // not replayed and are not hydrated.
+    let mut bodies = replay_layer;
+    let floor = checkpoint.anchor_height - crate::multi_parent_casper::DEPLOY_LIFESPAN;
+    for header in walk.headers.values() {
+        if i64::from(header.block_num) > floor {
+            bodies.insert(header.block_hash);
+        }
+    }
+    Ok((bodies, roots))
 }
 
 /// **Fetch and content-verify the genesis body.** The one body the certified path downloads: the
@@ -3085,6 +3179,73 @@ mod tests {
         assert!(
             checked_genesis_anchor(None, &genesis).is_ok(),
             "an absent pin accepts the content-verified genesis"
+        );
+    }
+
+    /// **The join input set is declared, not discovered at validation time.** The set is the anchor,
+    /// the fringe the anchor finalised, those members' own fringes, and the bodies the deploy
+    /// duplicate check reads (`DEPLOY_LIFESPAN` heights). The roots hydrated are only the replay
+    /// layer's; a deploy-window body is not replayed.
+    #[test]
+    fn the_join_input_set_is_the_anchor_its_fringe_and_the_deploy_window() {
+        fn root(byte: u8, kind: u8) -> StateHash {
+            let mut bytes = [0u8; 32];
+            bytes[0] = byte;
+            bytes[1] = kind;
+            StateHash::new(bytes)
+        }
+        fn header(block_num: i64, fringe: &[u8]) -> BlockHeader {
+            let byte = block_num as u8;
+            BlockHeader {
+                block_hash: hash(byte),
+                block_num: BlockHeight::try_from(block_num).unwrap(),
+                sender: Validator::new([0u8; 65]),
+                seq_num: block_num.try_into().unwrap(),
+                justifications: BTreeSet::new(),
+                bonds_map: BTreeMap::new(),
+                fringe: fringe.iter().map(|b| hash(*b)).collect(),
+                fringe_state_hash: root(byte, 2),
+                pre_state_hash: root(byte, 0),
+                post_state_hash: root(byte, 1),
+                body_available: false,
+                sig: vec![],
+                sig_algorithm: "secp256k1".to_string(),
+            }
+        }
+        let walk = crate::engine::lfs_metadata_requester::MetadataWalk {
+            headers: BTreeMap::from([
+                (hash(3), header(3, &[])),
+                (hash(58), header(58, &[])),
+                (hash(59), header(59, &[58])),
+                (hash(60), header(60, &[59])),
+            ]),
+        };
+        let checkpoint = rchain_models::casper::protocol::checkpoint::Checkpoint {
+            shard_id: "/root".to_string(),
+            anchor: rchain_shared::base16::encode(hash(60).as_bytes()),
+            anchor_height: 60,
+            anchor_post_state: rchain_shared::base16::encode(&[2u8; 32]),
+            fringe_state: Some(rchain_shared::base16::encode(&[63u8; 32])),
+            fringe_hashes: vec![rchain_shared::base16::encode(hash(60).as_bytes())],
+            parent_digest: None,
+            epoch: 20,
+            metadata_root: None,
+            history_root: None,
+        };
+        let (bodies, roots) = join_input_set(&walk, &checkpoint).unwrap();
+        assert_eq!(
+            bodies,
+            BTreeSet::from([hash(58), hash(59), hash(60)]),
+            "the anchor, the fringe it finalised, and that member's fringe"
+        );
+        assert!(
+            !bodies.contains(&hash(3)),
+            "a body below the deploy window is not a join input"
+        );
+        assert_eq!(
+            roots.len(),
+            9,
+            "only the three replay-layer blocks contribute the three roots each"
         );
     }
 }
