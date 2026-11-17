@@ -122,3 +122,49 @@ release owner's selected source/artifact/binary, and an independent reviewer's p
 
 C343 and C357 remain `in progress`. Their `owes` cells name only the external artefacts above;
 the local/code-side blockers are closed by this PR.
+
+## Readiness tightening — 2026-11-17 (red-team pass)
+
+The formal rung was tightened before the external artefacts arrive:
+
+- **Law 88b readiness** is the Rust registry, not `List.all`: the primary cell defaults to
+  `Starting` when absent, a member is running only when its own cell is present and `Running`, and
+  an empty member list is governed by the primary. `Starting` is a 120 s `PhaseDecision`, not an
+  immediate refusal.
+- **Law 94** now derives the latch (`latchAfter`), the resume (`resetResumeIsDue`, matching
+  `self_replay_resume_is_due`), the reset (`resetIsRecurrence`) and the record order
+  (`wellFormedTrace`) from state. The four Rust propose sources are the trigger list.
+- **Laws 11, 95a, 95b** carry `formal`/`mutant`/`falsifier`; Law 95 adds a continuation-bearing
+  witness. Law 92 is the Rust 3×2 table. `formalMissingCeiling` is 143.
+- **The external contracts are Lean tables**, emitted by `rchain-tables`:
+  `spec/audit/phase-diagnosis.tsv` (C343) and `spec/audit/c357-acceptance.tsv` (C357), with their
+  witness cases. The Python tools read them; they do not hardcode the priority or requirement list.
+
+**C343-LIVE runbook.** The operator fills a local plan (aliases, endpoint digests, journal paths,
+auth env-var names; no secrets in the plan) and runs:
+
+```sh
+python3 tools/c343-live.py collect --plan /secure/c343-plan.json --out target/c343-live
+python3 tools/c343-live.py verify --run-dir target/c343-live --purpose incident \
+  --report target/c343-live/report.json
+```
+
+`collect` is GET-only on `/health` and `/api/v1/status/operator`; it never deploys, proposes,
+resumes, restarts or signs. `verify` reports per-cell `PASS`/`FAIL`/`PRECONDITION`; a pre-fix host
+that lacks a field is `PRECONDITION`, a contradictory observation is `FAIL`, and `unmodelled` is
+never a pass. The incident purpose accepts a named diagnosis; the current-build purpose also
+requires the selected pins and all cells `PASS`.
+
+**C357-ACCEPT runbook.** The release owner selects the candidate and the boundary shape; the
+validators activate in lockstep (or on a coordinated new genesis); the independent reviewer
+publishes a category-A verdict. The record is checked with:
+
+```sh
+python3 tools/c357-acceptance.py check --record spec/audit/c357-acceptance.json \
+  --assert-closeable --report target/c357-acceptance-report.json
+```
+
+The checker reads `spec/audit/c357-acceptance.tsv`, derives mixed-version and lockstep from the
+activation records, refuses a self-authored or unpinned review, and accepts a reconstructed trace
+only with the owner's decision URL and the reviewer's `reconstruction_accepted`. The original bytes
+are a residual; `--require-original-trace` is the hard branch.

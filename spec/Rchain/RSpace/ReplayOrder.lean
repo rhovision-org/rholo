@@ -184,5 +184,66 @@ theorem a_non_persistent_datum_is_consumed :
     (witnessStore.fire later).data 2 = 0 := by
   decide
 
+/-! ## The continuation witness and the formal rung
+
+The cost witnesses above charge `cost` and leave `continuation = 0`. The incident's suppression is
+the continuation's work, so the rung adds a second witness whose entire charge is the continuation;
+the order inversion still changes it. -/
+
+def earlierCont : RecordedComm := { earlier with cost := 0, continuation := 5 }
+def laterCont : RecordedComm := { later with cost := 0, continuation := 3 }
+def witnessLogCont : List Event := [Event.comm laterCont, Event.comm earlierCont]
+
+/-- **The continuation is charged**: the same two requests, with every charge in `continuation`,
+still cost `5` chronologically and `3` newest-first. -/
+theorem the_continuation_is_charged :
+    (run witnessStore (build witnessLogCont) [0, 0]).1 = 5 ∧
+      (run witnessStore (buildNewestFirst witnessLogCont) [0, 0]).1 = 3 := by
+  decide
+
+/-- The order predicate on the witness: the filed list is the play order. -/
+def FilesPlayOrder (d : ReplayData) : Prop := d 0 = [earlier, later]
+
+def law95a_statement : Prop :=
+  FilesPlayOrder (build witnessLog) ∧ ¬ FilesPlayOrder (buildNewestFirst witnessLog)
+
+def law95a_mutant : Prop :=
+  FilesPlayOrder (buildNewestFirst witnessLog)
+
+theorem law95a_falsifier : ¬ law95a_mutant := by
+  intro h
+  unfold law95a_mutant FilesPlayOrder at h
+  have h2 : (buildNewestFirst witnessLog) 0 = [later, earlier] :=
+    the_newest_first_build_files_the_later_comm_first
+  rw [h2] at h
+  exact absurd h (by decide)
+
+theorem law95a : law95a_statement :=
+  ⟨the_chronological_build_files_the_play_order, law95a_falsifier⟩
+
+def law95b_statement : Prop :=
+  (run witnessStore (build witnessLog) [0, 0]).1 = 5 ∧
+  (run witnessStore (buildNewestFirst witnessLog) [0, 0]).1 = 3 ∧
+  (run witnessStore (build witnessLogCont) [0, 0]).1 = 5 ∧
+  (run witnessStore (buildNewestFirst witnessLogCont) [0, 0]).1 = 3
+
+def law95b_mutant : Prop :=
+  (run witnessStore (buildNewestFirst witnessLog) [0, 0]).1 =
+    (run witnessStore (build witnessLog) [0, 0]).1
+
+theorem law95b_falsifier : ¬ law95b_mutant := by
+  intro h
+  unfold law95b_mutant at h
+  have hc := the_inversion_changes_the_cost
+  rw [hc.1, hc.2] at h
+  exact absurd h (by decide)
+
+theorem law95b : law95b_statement := by
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · exact the_inversion_changes_the_cost.1
+  · exact the_inversion_changes_the_cost.2
+  · exact the_continuation_is_charged.1
+  · exact the_continuation_is_charged.2
+
 end ReplayOrder
 end Rchain

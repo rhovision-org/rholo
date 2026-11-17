@@ -110,9 +110,27 @@ def main() -> int:
     for name in sorted(documented - declared):
         problems.append(f"{name}: in the standard's table but not declared in PUBLIC_HEALTH_KEYS")
 
-    for name in rust_keys(contract, "OPERATOR_GATE_KEYS"):
+    gates = rust_keys(contract, "OPERATOR_GATE_KEYS")
+    for name in gates:
         if name not in page:
             problems.append(f"{name}: an operator gate the page never names")
+
+    # **The operator surface's exact key set** (C343-LIVE's snapshot reads it). The route's Rust test
+    # compares the serialized fixture against this constant; here the constant must stay sorted and
+    # carry every gate plus the five fields the live verifier reads.
+    operator_status = rust_keys(contract, "OPERATOR_STATUS_KEYS")
+    if operator_status != sorted(operator_status):
+        problems.append("OPERATOR_STATUS_KEYS: not sorted")
+    if len(set(operator_status)) != len(operator_status):
+        problems.append("OPERATOR_STATUS_KEYS: has duplicates")
+    for name in gates:
+        if name not in operator_status:
+            problems.append(f"{name}: an operator gate absent from OPERATOR_STATUS_KEYS")
+    for name in ("syncPhase", "sync", "resetMarker", "finalityStalled", "shards"):
+        if name not in operator_status:
+            problems.append(f"{name}: a C343-LIVE field absent from OPERATOR_STATUS_KEYS")
+        if name not in page:
+            problems.append(f"{name}: a C343-LIVE field the page never names")
 
     for name in rust_keys(contract, "UNAVAILABLE_HEALTH_KEYS"):
         if name not in page:

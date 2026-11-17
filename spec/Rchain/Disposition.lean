@@ -74,6 +74,10 @@ structure State where
   scanMarker : Bool := false
   /-- Pipeline faults this process still owes a verdict for. Zero clears the fail-closed gate. -/
   outstanding : Nat := 0
+  /-- The proposer's isolation latch (`proposal_isolated()`); the deploy route refuses while set. -/
+  proposalIsolated : Bool := false
+  /-- The durable orphan-body count (`orphan_bodies()`); the deploy route refuses while positive. -/
+  orphans : Nat := 0
   deriving Repr
 
 namespace State
@@ -450,44 +454,174 @@ quantifiers explicit. The `shards` list is the node's shard set; it is a list ra
 `Finset` so this module keeps its core-only imports. -/
 
 structure ShardPhases (Shard : Type) where
-  phase : Shard → Phase
-  shards : List Shard
+  /-- The shard whose cell governs an empty member list (the HTTP fixture's primary). -/
+  primary : Shard
+  /-- The member shards `/health` requires to be running. -/
+  members : List Shard
+  /-- The cell per shard; an absent cell is not running, exactly as `phases.get` is `None`. -/
+  phase : Shard → Option Phase
 
-/-- Readiness is **every** shard running. -/
+/-- The primary's phase, or `Starting` when no cell exists — the Rust `primary_phase` default. -/
+def primaryPhase {Shard : Type} (ps : ShardPhases Shard) : Phase :=
+  (ps.phase ps.primary).getD .starting
+
+/-- A member is running only when its own cell is present **and** `Running`. -/
+def memberRunning {Shard : Type} (ps : ShardPhases Shard) (s : Shard) : Bool :=
+  decide (ps.phase s = some .running)
+
+/-- Readiness is the primary running **and** every member present and running. An empty member
+    list is governed by the primary, not vacuously true. -/
 def ready {Shard : Type} [DecidableEq Shard] (ps : ShardPhases Shard) : Bool :=
-  ps.shards.all (fun s => decide (ps.phase s = .running))
+  decide (primaryPhase ps = .running) && ps.members.all (memberRunning ps)
 
-/-- A shard's proposal gate reads only its own cell. -/
+/-- A shard's proposal gate reads only its own cell; an absent cell is `Starting`, so it refuses. -/
 def shardGate {Shard : Type} (ps : ShardPhases Shard) (s : Shard) (tip : Nat)
     (anchor : Option Nat) : GateResult :=
-  totalGate (ps.phase s) tip anchor
+  totalGate ((ps.phase s).getD .starting) tip anchor
+
+theorem primary_phase_defaults_to_starting {Shard : Type} (ps : ShardPhases Shard)
+    (h : ps.phase ps.primary = none) : primaryPhase ps = .starting := by
+  simp [primaryPhase, h]
+
+theorem an_empty_member_list_is_governed_by_the_primary {Shard : Type} [DecidableEq Shard]
+    (ps : ShardPhases Shard) (h : ps.members = []) :
+    ready ps = decide (primaryPhase ps = .running) := by
+  simp [ready, h]
+
+theorem an_empty_member_list_with_a_running_primary_is_ready :
+    ∃ ps : ShardPhases Bool, ps.members = [] ∧ ready ps = true := by
+  refine ⟨{ primary := true, members := [], phase := fun _ => some .running }, rfl, ?_⟩
+  simp [ready, primaryPhase]
+
+theorem an_empty_member_list_with_a_starting_primary_is_not_ready :
+    ∃ ps : ShardPhases Bool, ps.members = [] ∧ ready ps = false := by
+  refine ⟨{ primary := true, members := [], phase := fun _ => none }, rfl, ?_⟩
+  simp [ready, primaryPhase]
+
+theorem an_absent_member_is_not_running {Shard : Type} [DecidableEq Shard]
+    (ps : ShardPhases Shard) (s : Shard) (hm : s ∈ ps.members) (hp : ps.phase s = none) :
+    ready ps = false := by
+  have h : memberRunning ps s = false := by
+    simp [memberRunning, hp]
+  have hnot : ¬ (ps.members.all (memberRunning ps) = true) := by
+    intro ht
+    have hs := (List.all_eq_true.mp ht) s hm
+    rw [h] at hs
+    simp at hs
+  have hall : ps.members.all (memberRunning ps) = false := by
+    cases hb : ps.members.all (memberRunning ps)
+    · rfl
+    · exact absurd hb hnot
+  simp [ready, hall]
 
 theorem a_shard_is_gated_only_by_its_own_cell {Shard : Type} (ps : ShardPhases Shard) (s : Shard)
     (tip : Nat) (anchor : Option Nat) :
-    shardGate ps s tip anchor = totalGate (ps.phase s) tip anchor := rfl
+    shardGate ps s tip anchor = totalGate ((ps.phase s).getD .starting) tip anchor := rfl
 
-/-- **A syncing shard is refused whatever the other shards do.** -/
+/-- **A shard outside `Running` is refused whatever the other shards do.** -/
 theorem a_syncing_shard_is_refused_whatever_the_others_do {Shard : Type} (ps : ShardPhases Shard)
-    (s : Shard) (tip : Nat) (anchor : Option Nat) (h : ps.phase s ≠ .running) :
+    (s : Shard) (p : Phase) (hp : ps.phase s = some p) (h : p ≠ .running)
+    (tip : Nat) (anchor : Option Nat) :
     shardGate ps s tip anchor = .refuse .notRunning := by
-  simp [shardGate, totalGate, gate, h]
+  simp [shardGate, hp, totalGate, gate, h]
+
+/-- An absent shard cell is not another shard's cell: it is `Starting`, so the gate refuses. -/
+theorem an_unknown_shard_is_not_gated_by_another_shards_cell {Shard : Type}
+    (ps : ShardPhases Shard) (s : Shard) (tip : Nat) (anchor : Option Nat)
+    (hp : ps.phase s = none) :
+    shardGate ps s tip anchor = .refuse .notRunning := by
+  simp [shardGate, hp, totalGate, gate]
 
 theorem ready_iff_every_shard_running {Shard : Type} [DecidableEq Shard]
     (ps : ShardPhases Shard) :
-    ready ps = true ↔ ∀ s ∈ ps.shards, ps.phase s = .running := by
-  simp [ready, List.all_eq_true, decide_eq_true_eq]
+    ready ps = true ↔
+      primaryPhase ps = .running ∧ ∀ s ∈ ps.members, ps.phase s = some .running := by
+  simp [ready, memberRunning, List.all_eq_true, decide_eq_true_eq]
 
-/-- **The defect shape**: readiness accepts if any shard runs. -/
-def anyShardRunning {Shard : Type} [DecidableEq Shard] (ps : ShardPhases Shard) : Bool :=
-  ps.shards.any (fun s => decide (ps.phase s = .running))
+/-- **The defect shape**: readiness accepts if any member runs, ignoring the primary. -/
+def anyShardRunning {Shard : Type} (ps : ShardPhases Shard) : Bool :=
+  ps.members.any (memberRunning ps)
 
-/-- **A readiness that accepts any shard admits a syncing node.** The witness: one running shard,
-    one syncing shard. -/
+/-- **A readiness that accepts any shard admits a syncing node.** The witness: a running primary,
+    one running member, one syncing member. -/
 theorem a_readiness_that_accepts_any_shard_admits_a_syncing_node :
     ∃ ps : ShardPhases Bool, anyShardRunning ps = true ∧ ready ps = false := by
-  refine ⟨{ phase := fun b => if b then .running else .syncing, shards := [true, false] }, ?_, ?_⟩
-  · decide
-  · decide
+  refine ⟨{ primary := true, members := [true, false],
+            phase := fun b => if b then some .running else some .syncing }, ?_, ?_⟩
+  · simp [anyShardRunning, memberRunning]
+  · simp [ready, primaryPhase, memberRunning]
+
+/-- **The defect shape the empty-list case names**: readiness that drops the primary check. -/
+def readyIgnoringPrimary {Shard : Type} (ps : ShardPhases Shard) : Bool :=
+  ps.members.all (memberRunning ps)
+
+theorem a_readiness_that_ignores_the_primary_admits_an_empty_registry :
+    ∃ ps : ShardPhases Bool, ps.members = [] ∧ readyIgnoringPrimary ps = true ∧ ready ps = false := by
+  refine ⟨{ primary := true, members := [], phase := fun _ => none }, rfl, ?_, ?_⟩
+  · simp [readyIgnoringPrimary]
+  · simp [ready, primaryPhase]
+
+/-- **The other defect shape**: an absent member treated as running. -/
+def absentMemberRunning {Shard : Type} (ps : ShardPhases Shard) (s : Shard) : Bool :=
+  match ps.phase s with
+  | none => true
+  | some .running => true
+  | _ => false
+
+theorem an_absent_member_treated_as_running_is_not_ready :
+    ∃ ps : ShardPhases Bool, ps.phase true = none ∧ absentMemberRunning ps true = true ∧
+      ready ps = false := by
+  refine ⟨{ primary := true, members := [true], phase := fun _ => none }, rfl, ?_, ?_⟩
+  · rfl
+  · simp [ready, primaryPhase, memberRunning]
+
+/-! ### `.starting` is a wait, not an immediate refusal
+
+The proposer waits up to 120 s for `Starting` to decide (`wait_until_decided`); the deploy route's
+`admits_work` admits `Starting` because the deploy can be pooled. The model separates the two. -/
+
+inductive PhaseDecision where
+  | allow
+  | wait
+  | refuse
+deriving DecidableEq, Repr
+
+def phaseDecisionWait : Nat := 120
+
+def proposeAdmission (p : Phase) (waited budget : Nat) : PhaseDecision :=
+  match p with
+  | .starting => if waited < budget then .wait else .refuse
+  | .running => .allow
+  | .syncing | .blocked => .refuse
+
+theorem a_starting_proposer_waits_then_refuses (waited budget : Nat) :
+    (waited < budget → proposeAdmission .starting waited budget = .wait) ∧
+      (budget ≤ waited → proposeAdmission .starting waited budget = .refuse) := by
+  constructor
+  · intro h
+    simp [proposeAdmission, h]
+  · intro h
+    have hnot : ¬ waited < budget := Nat.not_lt.mpr h
+    simp [proposeAdmission, hnot]
+
+theorem a_running_proposer_is_admitted (waited budget : Nat) :
+    proposeAdmission .running waited budget = .allow := rfl
+
+theorem a_syncing_proposer_is_refused (waited budget : Nat) :
+    proposeAdmission .syncing waited budget = .refuse := rfl
+
+theorem the_propose_decision_is_total (p : Phase) (waited budget : Nat) :
+    proposeAdmission p waited budget = .allow ∨
+      proposeAdmission p waited budget = .wait ∨
+      proposeAdmission p waited budget = .refuse := by
+  cases p with
+  | starting =>
+      by_cases h : waited < budget
+      · simp [proposeAdmission, h]
+      · simp [proposeAdmission, h]
+  | running => simp [proposeAdmission]
+  | syncing => simp [proposeAdmission]
+  | blocked => simp [proposeAdmission]
 
 /-! ## 88a — the fail-closed Blocked phase
 
@@ -498,11 +632,50 @@ from the obligation, so a running cell cannot serve work while the fault is outs
 def effectivePhase (s : State) : Phase :=
   if s.outstanding > 0 then .blocked else s.phase
 
-/-- The deploy/admission answer (`NodePhase::admits_work` plus the fault latch). -/
-def admitsWork (s : State) : Bool :=
-  match effectivePhase s with
+/-- The cell's own admission answer: `NodePhase::admits_work` refuses `Syncing` and `Blocked`,
+    and admits `Starting` and `Running` (a pooled deploy can be included later). -/
+def cellAdmitsWork : Phase → Bool
   | .syncing | .blocked => false
-  | _ => true
+  | .starting | .running => true
+
+/-- The route's target-shard lookup: `None` skips the cell check, exactly as `if let Some(phase)`
+in `api_deploy` does. -/
+def targetAdmits (target : Option Phase) : Bool :=
+  match target with
+  | none => true
+  | some p => cellAdmitsWork p
+
+/-- **The deploy route's conjunction** (`node/src/web/http.rs`): the target shard's cell admits,
+the pipeline-fault latch is settled, the proposer is not isolated, and no orphan body is held. -/
+def routeAdmits (target : Option Phase) (outstanding : Nat) (isolated : Bool)
+    (orphans : Nat) : Bool :=
+  targetAdmits target && outstanding == 0 && !isolated && orphans == 0
+
+/-- The node's admission answer for its own cell. -/
+def admitsWork (s : State) : Bool :=
+  routeAdmits (some s.phase) s.outstanding s.proposalIsolated s.orphans
+
+theorem a_starting_cell_admits_work : cellAdmitsWork .starting = true := rfl
+
+theorem an_unknown_target_skips_the_cell_check : targetAdmits none = true := rfl
+
+theorem the_deploy_route_is_the_cell_and_the_latch (s : State) :
+    admitsWork s =
+      (targetAdmits (some s.phase) && s.outstanding == 0 && !s.proposalIsolated
+        && s.orphans == 0) := rfl
+
+theorem an_isolated_cell_is_refused (s : State) (h : s.proposalIsolated = true) :
+    admitsWork s = false := by
+  have hb : (!s.proposalIsolated) = false := by
+    simp [h]
+  simp [admitsWork, routeAdmits, hb]
+
+theorem an_orphan_body_refuses_admission (s : State) (h : s.orphans > 0) :
+    admitsWork s = false := by
+  have hne : s.orphans ≠ 0 := Nat.ne_of_gt h
+  have hb : (s.orphans == 0) = false := by
+    simp [hne]
+  simp [admitsWork, routeAdmits, hb]
 
 /-- The defect shape: report and admit on the cell, ignoring the durable fault. -/
 def rawPhaseOnly (s : State) : Phase := s.phase
@@ -526,7 +699,10 @@ theorem a_settled_fault_returns_the_cell_phase (s : State) (h : s.outstanding = 
 
 theorem an_outstanding_fault_blocks_admission (s : State) (h : s.outstanding > 0) :
     admitsWork s = false := by
-  simp [admitsWork, effectivePhase, h]
+  have hne : s.outstanding ≠ 0 := Nat.ne_of_gt h
+  have hb : (s.outstanding == 0) = false := by
+    simp [hne]
+  simp [admitsWork, routeAdmits, hb]
 
 theorem an_outstanding_fault_refuses_the_proposal_gate (s : State) (tip : Nat)
     (anchor : Option Nat) (h : s.outstanding > 0) :
@@ -552,9 +728,10 @@ theorem law88a_falsifier : law88a_mutant :=
    a_raw_phase_admits_work_during_an_outstanding_fault⟩
 
 /-- **Law 88a's statement.** The audit covers every stored body before Running; the scan marks
-    only after the audit; the aggregate surface sees every held body; and an outstanding fault
-    reports Blocked, refuses admission and the proposal gate, and returns the cell's phase when
-    settled. -/
+    only after the audit; the aggregate surface sees every held body; an outstanding fault reports
+    Blocked and refuses admission and the proposal gate, returning the cell's phase when settled;
+    and the deploy route is the cell's admission answer conjoined with the three latches the Rust
+    route checks. -/
 def law88a_statement : Prop :=
   (∀ s : State, (audit s).Clean) ∧
   (∀ s : State, (startup s).Clean) ∧
@@ -565,10 +742,18 @@ def law88a_statement : Prop :=
   (∀ (s : State) (tip : Nat) (anchor : Option Nat), s.outstanding > 0 →
     proposalGate s tip anchor = .refuse .notRunning) ∧
   (∀ s : State, s.outstanding = 0 → effectivePhase s = s.phase) ∧
+  cellAdmitsWork .starting = true ∧
+  (∀ s : State, admitsWork s =
+    (targetAdmits (some s.phase) && s.outstanding == 0 && !s.proposalIsolated
+      && s.orphans == 0)) ∧
+  targetAdmits none = true ∧
+  (∀ s : State, s.proposalIsolated = true → admitsWork s = false) ∧
+  (∀ s : State, s.orphans > 0 → admitsWork s = false) ∧
   law88a_mutant
 
 theorem law88a : law88a_statement := by
-  refine ⟨audit_covers, startup_clean, ?_, ?_, ?_, ?_, ?_, ?_, law88a_falsifier⟩
+  refine ⟨audit_covers, startup_clean, ?_, ?_, ?_, ?_, ?_, ?_, a_starting_cell_admits_work, ?_,
+    an_unknown_target_skips_the_cell_check, ?_, ?_, law88a_falsifier⟩
   · intro s
     exact (the_scan_audits_before_marking s).1
   · intro held h
@@ -581,31 +766,44 @@ theorem law88a : law88a_statement := by
     exact an_outstanding_fault_refuses_the_proposal_gate s tip anchor h
   · intro s h
     exact a_settled_fault_returns_the_cell_phase s h
+  · intro s
+    exact the_deploy_route_is_the_cell_and_the_latch s
+  · intro s h
+    exact an_isolated_cell_is_refused s h
+  · intro s h
+    exact an_orphan_body_refuses_admission s h
 
-/-- **Law 88b's mutant**: the legacy phase-less gate, the unbounded gate, and a readiness that
-    accepts any shard. -/
+/-- **Law 88b's mutant**: the legacy phase-less gate, the unbounded gate, a readiness that accepts
+    any shard, a readiness that ignores the primary, and an absent member treated as running. -/
 def law88b_mutant : Prop :=
   (legacyGate .syncing 5 5 = .allow) ∧
   (unboundedGate .running (MAX_PROPOSAL_FINALITY_LAG + 1) 0 = .allow) ∧
-  (∃ ps : ShardPhases Bool, anyShardRunning ps = true ∧ ready ps = false)
+  (∃ ps : ShardPhases Bool, anyShardRunning ps = true ∧ ready ps = false) ∧
+  (∃ ps : ShardPhases Bool, ps.members = [] ∧ readyIgnoringPrimary ps = true ∧ ready ps = false) ∧
+  (∃ ps : ShardPhases Bool, ps.phase true = none ∧ absentMemberRunning ps true = true ∧
+    ready ps = false)
 
 theorem law88b_falsifier : law88b_mutant :=
   ⟨a_gate_without_the_phase_admits_a_syncing_node,
    a_gate_without_the_bound_admits_a_private_chain,
-   a_readiness_that_accepts_any_shard_admits_a_syncing_node⟩
+   a_readiness_that_accepts_any_shard_admits_a_syncing_node,
+   a_readiness_that_ignores_the_primary_admits_an_empty_registry,
+   an_absent_member_treated_as_running_is_not_ready⟩
 
 /-- **Law 88b's statement.** The gate admits only in Running and within the bound; every shard is
-    gated by its own cell; readiness is every shard running. -/
+    gated by its own cell; readiness is the primary running and every present member running, so an
+    empty member list is governed by the primary rather than vacuously true. -/
 def law88b_statement : Prop :=
   (∀ (phase : Phase) (tip finalized : Nat), gate phase tip finalized = .allow →
     phase = .running ∧ withinProposalFinalityBound tip finalized = true) ∧
   (∀ (phase : Phase) (tip finalized : Nat), phase ≠ .running →
     gate phase tip finalized = .refuse .notRunning) ∧
-  (∀ (Shard : Type) [DecidableEq Shard] (ps : ShardPhases Shard) (s : Shard) (tip : Nat)
-      (anchor : Option Nat), ps.phase s ≠ .running →
+  (∀ (Shard : Type) [DecidableEq Shard] (ps : ShardPhases Shard) (s : Shard) (p : Phase)
+      (tip : Nat) (anchor : Option Nat), ps.phase s = some p → p ≠ .running →
     shardGate ps s tip anchor = .refuse .notRunning) ∧
   (∀ (Shard : Type) [DecidableEq Shard] (ps : ShardPhases Shard),
-    ready ps = true ↔ ∀ s ∈ ps.shards, ps.phase s = .running) ∧
+    ready ps = true ↔
+      primaryPhase ps = .running ∧ ∀ s ∈ ps.members, ps.phase s = some .running) ∧
   law88b_mutant
 
 theorem law88b : law88b_statement := by
@@ -614,8 +812,8 @@ theorem law88b : law88b_statement := by
     exact gate_admits_only_in_running_and_within_bound phase tip finalized h
   · intro phase tip finalized h
     exact gate_refuses_outside_running phase tip finalized h
-  · intro Shard _ ps s tip anchor h
-    exact a_syncing_shard_is_refused_whatever_the_others_do ps s tip anchor h
+  · intro Shard _ ps s p tip anchor hp h
+    exact a_syncing_shard_is_refused_whatever_the_others_do ps s p hp h tip anchor
   · intro Shard _ ps
     exact ready_iff_every_shard_running ps
 

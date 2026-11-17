@@ -13562,3 +13562,50 @@ progress; the close-out-readiness PR is #602 (the next available number; #601 is
 request). The two-node lesson is recorded in the matrix: an integration test is admitted only
 after its Lean theorem, unit witness and failure tell exist, and a fixture that cannot reach its
 precondition reports `PRECONDITION`, never `PASS` or `FAIL`.
+
+## 176. C343/C357 readiness tightening: the red team, the state-derived rungs and the external contracts (2026-11-17)
+
+**Found.** The red-team pass over the formal rung found the C343/C357 cells weaker than the
+close-out matrix implied. Law 88b's `ready` was `List.all`, vacuously true for an empty shard list,
+while the Rust `all_running` is fail-closed on the primary cell; Law 94's latch, resume, reset and
+record cells were `rfl`/`simp` over free Bools (`triggerAdmitted` ignored its `Trigger`;
+`resumeAdmitted` was `caughtUp && anchorFinalised`; `canReset` read free fields; `transitionStep`
+was `if recorded`); laws 11, 95a and 95b had no `formal`/`mutant`/`falsifier` although C357's laws
+column named them; Law 92's table was 2×2 against the Rust's 3×2 `refusal_for`; Law 95's witness
+set `continuation = 0`; and the two external contracts (C343's phase discriminator, C357's
+section-6 boundary) existed only as prose. The tooling map found no C343 live collector/verifier, no
+C357 acceptance schema, no `live-host`/`external` locality, and no machine `PRECONDITION`.
+
+**What landed.** Law 94's latch is a transition state (`latchAfter`) read by the four Rust propose
+sources; the resume is `resetResumeIsDue` (the Rust `self_replay_resume_is_due`: `Rewound`, frontier
+strictly past the height, the record's stage, one attempt and the same anchor); the reset is
+`resetIsRecurrence` against a finalised anchor; and `wellFormedTrace` makes the durable write
+precede each observable transition. Law 88b models the Rust registry (primary default `Starting`,
+member present and `Running`, empty members governed by the primary) and `Starting` as a 120 s
+`PhaseDecision`; Law 88a splits `cellAdmitsWork` from the deploy route's three latches. Laws 11,
+95a and 95b carry the rung; Law 95 gains a continuation-bearing witness. Law 92 is the Rust 3×2
+table (`matched`, `postStateMismatch`, failed replay). The C343 phase diagnosis and the C357
+boundary acceptance are Lean modules (`PhaseDiagnosis`, `Acceptance`), emitted by `rchain-tables` to
+`spec/audit/*.tsv`; the Python tools read those tables. `formalMissingCeiling` falls 146 → 143.
+
+**Why believed.** Every applied mutant has a falsifier in the tree: the latch-skipping path, the
+non-`Rewound` marker, the record with no attempt or another anchor, the second reset at the same
+anchor, `badTrace`, the empty-registry readiness, the absent member treated as running, the
+any-shard readiness, the 3×2 post-state arm, and the newest-first continuation witness.
+`tools/c343-live.py self-test` covers the five named diagnoses, the unmodelled fallback, the
+processor-row mutant and the ready/reasons contradiction; `tools/c357-acceptance.py self-test`
+covers both valid shapes, the reconstructed trace with both acceptances, mixed-version, missing
+reviewer, both shapes, missing digest, the two reconstructed-trace refusals,
+`--require-original-trace`, and a table that loses a core requirement. The operator-status key set
+is checked against the serialized fixture; the readiness test adds the empty-members
+primary-`Starting` and primary-`Running` cases.
+
+**What it does not claim.** The C343 collector has not run on B/C/D: there is no live access yet,
+and the old hosts may still run a pre-fix build, so the live snapshot is the incident's diagnosis,
+not a current-build gate. C357 has no section-6 release, lockstep campaign or independent category-A
+verdict; the owner's decision is a reconstructed trace plus the reviewer's explicit acceptance, with
+the original bytes a residual. The acceptance model checks a record's claims, not that a campaign
+ran. The register stays 439 findings with C343 and C357 `in progress`.
+
+**State.** 439 findings — **0 todo, 2 in progress (C343, C357), 437 done**. The readiness PR is not
+a close-out: each row's close-out PR is separate and waits on its external artefacts.

@@ -103,7 +103,7 @@ def run_url(explicit) -> tuple[str | None, str | None]:
     return f"{server}/{UPSTREAM}/actions/runs/{run_id}{suffix}", None
 
 
-VERDICTS = ("PASS", "FAIL", "INCONCLUSIVE", "ABORTED")
+VERDICTS = ("PASS", "FAIL", "INCONCLUSIVE", "ABORTED", "PRECONDITION")
 
 
 def verdict_from(value) -> str | None:
@@ -175,6 +175,7 @@ README_TEMPLATE = """# {slug}
 | source | `{source_sha}` |
 | binary | `{binary_sha256}` |
 | run | {run_url} |
+| reference | {reference_url} |
 | packaged | `{packaged_at}` |
 | verdict | **{verdict}** |
 
@@ -219,6 +220,9 @@ def cmd_pack(args) -> int:
         fail(url_error)
     if url and not RUN_URL.match(url):
         fail(f"run URL is not an {UPSTREAM} actions run: {url}")
+    reference = getattr(args, "reference_url", None)
+    if reference and not reference.startswith("https://"):
+        fail("the reference URL must be https")
 
     if args.verdict and not verdict_from(args.verdict):
         fail(f"verdict {args.verdict!r} is not one of {', '.join(VERDICTS)}")
@@ -258,6 +262,7 @@ def cmd_pack(args) -> int:
         "source_sha": source_sha,
         "binary_sha256": binary_sha256,
         "run": {"url": url, "attempt": (RUN_URL.match(url).group(3) if url else None)},
+        "reference": {"url": reference} if reference else None,
         "locality": args.locality,
         "files": files,
         "redactions": args.redact,
@@ -271,7 +276,7 @@ def cmd_pack(args) -> int:
     )
     locality_line = (
         f"**Evidence locality.** `{args.locality}`" if args.locality else
-        "**Evidence locality.** <fill: local-devnet | loopback-diagnostic | off-host-claim | public-live>"
+        "**Evidence locality.** <fill: local-devnet | loopback-diagnostic | off-host-claim | public-live | live-host | external>"
     )
     (record / "README.md").write_text(
         README_TEMPLATE.format(
@@ -281,6 +286,7 @@ def cmd_pack(args) -> int:
             source_sha=source_sha,
             binary_sha256=binary_sha256,
             run_url=url or "<fill: the actions run URL>",
+            reference_url=reference or "<fill: the external verdict/collection URL>",
             packaged_at=packaged_at,
             verdict=verdict,
         )
@@ -350,8 +356,10 @@ def main() -> int:
     pack.add_argument("--source-sha")
     pack.add_argument("--binary-sha256")
     pack.add_argument("--run-url")
+    pack.add_argument("--reference-url")
     pack.add_argument("--locality",
-                      choices=["local-devnet", "loopback-diagnostic", "off-host-claim", "public-live"])
+                      choices=["local-devnet", "loopback-diagnostic", "off-host-claim",
+                               "public-live", "live-host", "external"])
     pack.add_argument("--redact", action="append", default=[])
     pack.add_argument("--move", action="store_true")
     pack.set_defaults(func=cmd_pack)

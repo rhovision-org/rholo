@@ -40,27 +40,33 @@ inductive ProvenanceOrigin where
   | selfBuilt
 deriving DecidableEq, Repr
 
-/-- What the replay comparison found. `other` is a pre-replay refusal or a matching replay; only the
-replay-mismatch case is origin-sensitive. -/
+/-- What the replay comparison found. `matched` is the no-refusal arm; `postStateMismatch` is the
+declared-state disagreement the Rust maps to `InvalidState` for either origin; only `replayMismatch`
+is origin-sensitive. -/
 inductive ProvenanceRefusal where
+  | matched
+  | postStateMismatch
   | replayMismatch
-  | other
 deriving DecidableEq, Repr
 
-/-- The causes a refusal may be assigned. Mirrors `FailureCause`, with `localFault` for the case the
-Rust enum does not carry: a self-built block's own play/replay disagreement. -/
+/-- The causes a refusal may be assigned. Mirrors `ValidationRefusal`'s three outcomes, with
+`localFault` for the case the Rust enum does not carry as its own variant: a self-built block's own
+play/replay disagreement. -/
 inductive ProvenanceCause where
   | attributable
   | divergence
   | localFault
+  | invalidState
 deriving DecidableEq, Repr
 
-/-- **The decision table.** Provenance decides the meaning of a replay mismatch; every other refusal
-is unaffected. -/
+/-- **The decision table**, the same 2×3 shape as the Rust's `refusal_for`: `Matched` is no refusal,
+`PostStateMismatch` is `InvalidState` for either origin, and a failed replay is `Divergence` for a
+peer but a `localFault` for the node's own block. -/
 def provenanceCause : ProvenanceOrigin → ProvenanceRefusal → ProvenanceCause
+  | _, .matched => .attributable
+  | _, .postStateMismatch => .invalidState
   | .peer, .replayMismatch => .divergence
   | .selfBuilt, .replayMismatch => .localFault
-  | _, _ => .attributable
 
 /-- The inbound half is unchanged by this law, and that is load-bearing: C173's restoring rule is
 keyed on `Divergence`, so a peer's replay disagreement must keep that cause. -/
@@ -82,6 +88,21 @@ output the Rust can actually reach. -/
 theorem a_self_replay_failure_is_a_local_fault :
     provenanceCause .selfBuilt .replayMismatch = .localFault := rfl
 
+/-- **A post-state mismatch is `InvalidState` for either origin.** The Rust's `refusal_for` maps
+    `PostStateMismatch` to `Refusal::InvalidState` before it reads the origin. -/
+theorem a_post_state_mismatch_is_invalid_state (o : ProvenanceOrigin) :
+    provenanceCause o .postStateMismatch = .invalidState := by
+  cases o <;> rfl
+
+/-- **A matching replay has no refusal.** `Matched` is the arm the origin does not touch. -/
+theorem a_matched_replay_has_no_refusal (o : ProvenanceOrigin) :
+    provenanceCause o .matched = .attributable := by
+  cases o <;> rfl
+
+/-- The origins agree about a post-state mismatch — the table is not origin-sensitive there. -/
+theorem the_two_origins_agree_about_a_post_state_mismatch :
+    provenanceCause .peer .postStateMismatch = provenanceCause .selfBuilt .postStateMismatch := rfl
+
 /-- **The wrong table**: origin ignored, every replay mismatch read as divergence. This is the
     classification the incident's `handle_errors` collapsed to. -/
 def provenanceCauseIgnoringOrigin : ProvenanceOrigin → ProvenanceRefusal → ProvenanceCause
@@ -98,12 +119,15 @@ theorem law92_falsifier : law92_mutant := rfl
 
 /-- **Law 92's statement.** Provenance decides the cause: an inbound replay mismatch stays
     `divergence`, a self-built one is a `localFault`, the two origins disagree about the same
-    failure, and the origin-ignoring mutant is exhibited. -/
+    failure, a post-state mismatch is `invalidState` for either origin, a matched replay is no
+    refusal, and the origin-ignoring mutant is exhibited. -/
 def law92_statement : Prop :=
   provenanceCause .peer .replayMismatch = .divergence ∧
   provenanceCause .selfBuilt .replayMismatch ≠ .divergence ∧
   provenanceCause .peer .replayMismatch ≠ provenanceCause .selfBuilt .replayMismatch ∧
   provenanceCause .selfBuilt .replayMismatch = .localFault ∧
+  (∀ o : ProvenanceOrigin, provenanceCause o .postStateMismatch = .invalidState) ∧
+  (∀ o : ProvenanceOrigin, provenanceCause o .matched = .attributable) ∧
   law92_mutant
 
 theorem law92 : law92_statement :=
@@ -111,6 +135,8 @@ theorem law92 : law92_statement :=
    a_self_replay_failure_is_not_divergence,
    the_two_origins_disagree_about_the_same_failure,
    a_self_replay_failure_is_a_local_fault,
+   a_post_state_mismatch_is_invalid_state,
+   a_matched_replay_has_no_refusal,
    law92_falsifier⟩
 
 end Rchain

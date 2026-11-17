@@ -45,9 +45,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "spec/audit/evidence"
 
-RUN_ARTEFACTS = ("acceptance.json", "run.json", "result.json")
-RUN_PREFIXES = ("journal", "observations", "progress-samples")
-LABELS = ("off-host-claim", "loopback-diagnostic", "local-devnet", "public-live", "not-a-run")
+RUN_ARTEFACTS = ("acceptance.json", "collector.json", "plan.public.json", "report.json",
+                 "run.json", "result.json")
+RUN_PREFIXES = ("journal", "observations", "progress-samples", "snapshots")
+LABELS = ("off-host-claim", "loopback-diagnostic", "local-devnet", "public-live", "live-host",
+          "external", "not-a-run")
+MUTATION_VERBS = ("POST ", "PUT ", "PATCH ", "DELETE ", "/deploy", "/propose", "/resume")
 ADVERTISED = [
     re.compile(r"rnode://[0-9a-zA-Z]+@(\[[^\]]+\]|[^\s?:/\"',}]+)"),
     re.compile(r"--(?:host|bootstrap-host)[=\s]+[\"']?(\[[^\]]+\]|[^\s\"',}]+)"),
@@ -122,9 +125,14 @@ def check(directory: Path) -> list[str]:
     if not readme_path.is_file():
         return [f"{directory.name}: a run record without README.md cannot be dispositioned"]
     readme = readme_path.read_text(errors="replace")
-    if not mentions_m3(readme):
-        return []  # not an M3 claim; the check does not reach it
     labels = LABEL_RE.findall(readme)
+    if not labels:
+        if mentions_m3(readme):
+            problems.append(
+                f"{directory.name}: mentions M3/off-host but declares 0 localities "
+                f"(one of {', '.join(LABELS)} is required)"
+            )
+        return problems  # not a labelled locality claim; the check does not reach it
     if len(labels) != 1:
         problems.append(
             f"{directory.name}: mentions M3/off-host but declares {len(labels)} localities "
@@ -157,6 +165,36 @@ def check(directory: Path) -> list[str]:
     elif label == "local-devnet":
         if "off-host positive" in readme:
             problems.append(f"{directory.name}: a local-devnet record claims an off-host positive")
+    elif label == "live-host":
+        if "read-only" not in readme.lower():
+            problems.append(
+                f"{directory.name}: a live-host record must say it is read-only")
+        for claim in loopbacks:
+            problems.append(f"{directory.name}: a live-host record carries a loopback {claim}")
+        for name in ("run.json", "plan.public.json", "snapshots.jsonl", "report.json",
+                     "collector.json"):
+            path = directory / name
+            if not path.is_file():
+                continue
+            text = path.read_text(errors="replace")
+            for verb in MUTATION_VERBS:
+                if verb in text:
+                    problems.append(
+                        f"{directory.name}: a live-host record carries the mutation {verb!r}")
+    elif label == "external":
+        lowered = readme.lower()
+        if "independent" not in lowered:
+            problems.append(
+                f"{directory.name}: an external record must name the independent review")
+        if "digest" not in lowered and "sha-256" not in lowered:
+            problems.append(
+                f"{directory.name}: an external record must carry a digest/SHA-256")
+        if "https://" not in readme:
+            problems.append(
+                f"{directory.name}: an external record must cite an https artefact")
+        if "local-devnet" in readme:
+            problems.append(
+                f"{directory.name}: an external record claims a local-devnet locality")
     return problems
 
 

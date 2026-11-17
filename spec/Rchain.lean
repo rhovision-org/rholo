@@ -73,6 +73,8 @@ import Rchain.Casper.Stranding
 import Rchain.Casper.Provenance
 import Rchain.Casper.ReplayEvidence
 import Rchain.Casper.Recovery
+import Rchain.Casper.PhaseDiagnosis
+import Rchain.Casper.Acceptance
 import Rchain.Durability
 import Rchain.Requests
 import Rchain.Checkpoint

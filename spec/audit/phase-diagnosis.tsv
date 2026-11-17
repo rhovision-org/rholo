@@ -1,0 +1,5 @@
+priority	diagnosis	conditions
+1	processor-fault-blocked	fault-outstanding,phase-blocked
+2	proposal-isolation	proposal-halted,no-fault-outstanding
+3	syncing-recovery	any-syncing
+4	healthy	ready,ready-reasons-empty,all-shards-running,no-fault-outstanding,no-proposal-halted,no-syncing,not-finality-stalled

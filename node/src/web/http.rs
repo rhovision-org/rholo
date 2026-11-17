@@ -4795,6 +4795,59 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["ready"], true, "every shard is running");
+
+        // **An empty member list is governed by the primary cell, not vacuously ready.** This is
+        // the Rust arm the Lean `ready` model now mirrors: `all_running` checks `primary_phase`
+        // (default `Starting`) before the members, so a registry with no cells is false.
+        let mut empty = state();
+        empty.shards = Arc::new(ShardRegistry {
+            primary: primary.clone(),
+            members: Vec::new(),
+            phases: BTreeMap::new(),
+        });
+        let reply = router(empty)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json["ready"], false,
+            "an empty registry with a Starting primary is not ready"
+        );
+
+        let mut running = state();
+        let primary_running = NodePhaseCell::new();
+        primary_running.set_phase(NodePhase::Running);
+        running.shards = Arc::new(ShardRegistry {
+            primary: primary.clone(),
+            members: Vec::new(),
+            phases: BTreeMap::from([(primary.clone(), primary_running)]),
+        });
+        let reply = router(running)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(reply.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json["ready"], true,
+            "an empty registry with a Running primary is ready"
+        );
     }
 
     /// **A full pool is a 429 with a retry; a malformed deploy stays a 400** (Law 86a).
@@ -6165,6 +6218,27 @@ mod tests {
             .await
             .expect("a response");
         assert_eq!(served.status(), StatusCode::OK, "the admin listener does");
+    }
+
+    /// **The operator serialized key set is the contract.** The C343-LIVE collector reads this
+    /// surface; a field added, renamed or dropped on either half of the flattened DTO fails here
+    /// rather than drifting in the collector (`node/src/diagnostics/health_contract.rs`).
+    #[test]
+    fn the_operator_status_key_set_is_the_contract() {
+        let value = serde_json::to_value(test_operator_status()).expect("serialize");
+        let mut served: Vec<&str> = value
+            .as_object()
+            .expect("an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        served.sort_unstable();
+        let mut declared = crate::diagnostics::health_contract::OPERATOR_STATUS_KEYS.to_vec();
+        declared.sort_unstable();
+        assert_eq!(
+            served, declared,
+            "/api/v1/status/operator no longer matches the declared diagnostic contract"
+        );
     }
 
     /// **The resource-fallback resume is an admin actuator** (unit C, B37): mounted on the privileged

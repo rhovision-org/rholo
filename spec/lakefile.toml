@@ -7,7 +7,7 @@ version = "0.1.0"
 # conformance verdict) nor `Rchain/LawsMain.lean` (the register's own checks, which only run when the
 # module is elaborated). `tools/check-lean-conformance.sh` always built all three; a maintainer following
 # `README.md` did not. Building is not running, so this changes nothing about the emitted artefacts.
-defaultTargets = ["Rchain", "Rchain.Corpus", "Rchain.LawsMain"]
+defaultTargets = ["Rchain", "Rchain.Corpus", "Rchain.LawsMain", "Rchain.TablesMain"]
 
 [[require]]
 name = "mathlib"
@@ -40,3 +40,11 @@ root = "Rchain.Corpus"
 [[lean_exe]]
 name = "rchain-laws"
 root = "Rchain.LawsMain"
+
+# The C343/C357 contract tables: `lake exe rchain-tables --out-dir spec/audit`. The collector and
+# the acceptance checker read the emitted TSVs; this is the one writer, so the Python cannot drift
+# into a second oracle. It imports `Rchain` for the definitions and is an exe root for the same
+# reason `rchain-laws` is: a root is excluded from `Rchain.lean`'s import set.
+[[lean_exe]]
+name = "rchain-tables"
+root = "Rchain.TablesMain"

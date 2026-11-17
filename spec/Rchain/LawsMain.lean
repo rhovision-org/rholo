@@ -94,7 +94,7 @@ new (2026-11-16), so the register is retrofitted as rows are revisited rather th
 ceiling may only fall; a new or materially edited law must set `formal` and `falsifier`, and check 10
 requires both to resolve. Publishing the number keeps the remaining work visible instead of letting a
 ratchet at an unstated baseline look finished. -/
-def formalMissingCeiling : Nat := 146
+def formalMissingCeiling : Nat := 143
 
 /-- **The declarations the register names whose proofs rest on the *compiler* — empty as of 2026-09-25,
 and checked in both directions by check 6b.**
