@@ -547,7 +547,7 @@ pub async fn apply<
                     Ok(certificate) => {
                         match crate::checkpoint::verify_genesis_rooted_certificate(
                             &certificate,
-                            &runtime_manager.genesis_pos().active_bonds(),
+                            &runtime_manager.genesis_pos().bonds,
                         ) {
                             Ok(verified) if verified.checkpoint.shard_id == spec.shard_id.to_string() => {
                                 match BlockHash::try_from_hex(&verified.checkpoint.anchor) {
@@ -748,7 +748,7 @@ pub async fn apply<
         if let Some(certificate) = checkpoint_store.latest().await? {
             let verified = crate::checkpoint::verify_genesis_rooted_certificate(
                 &certificate,
-                &runtime_manager.genesis_pos().active_bonds(),
+                &runtime_manager.genesis_pos().bonds,
             )
             .map_err(|e| {
                 format!(

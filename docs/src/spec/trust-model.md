@@ -13,11 +13,14 @@ A joiner has exactly one of two anchors:
 - the operator's **pinned genesis** — height zero, the pinned block hash and post-state, with the
   genesis state pages hydrated; or
 - a **verified checkpoint certificate** — a statement signed by strictly more than two thirds of
-  the genesis active bonds, carrying the anchor, its post-state, the fringe, the epoch and the
+  the genesis **bonded pool**, carrying the anchor, its post-state, the fringe, the epoch and the
   optional `metadataRoot` and `historyRoot` commitments.
 
-The bond set that verifies the certificate is the genesis active bonds. A certificate whose anchor
-state's bonds have drifted from that set is refused. A node with neither anchor does not run.
+The bond set that verifies the certificate is the genesis bonded pool (`pos:bonds` at genesis), not
+the epoch's active draw (`pos:active`): the draw is a subset that excludes the jailed and honours the
+active cap, so treating it as the anchor made a jail look like a partition change. A certificate
+whose anchor state's **pool** has drifted is refused; an active-set difference is not a drift
+(C403). A node with neither anchor does not run.
 
 ## What the joiner checks
 

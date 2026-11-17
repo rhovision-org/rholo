@@ -793,7 +793,10 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     // node cannot attribute. `verified` is the statement plus the stake that signed it, checked
     // against the genesis active bonds before a single block or page is requested; a source that
     // cannot produce one fails the attempt with the reason, and no fallback to the old path exists.
-    let trusted_bonds = replay.runtime.genesis_pos().active_bonds();
+    // **The genesis bonded pool is the trust anchor, not the genesis active draw** (C403). The
+    // active set excludes the jailed and honours the active cap; weighing a certificate under it
+    // would refuse every jail and every capped epoch.
+    let trusted_bonds = replay.runtime.genesis_pos().bonds.clone();
     let verified = certified_checkpoint(
         replay.checkpoint_source.as_deref(),
         &trusted_bonds,
@@ -943,14 +946,15 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         .map_err(|e| format!("the certified history's genesis header is refused: {e}"))?;
 
     // **The bond drift check is the last gate.** The signatures were weighed against the genesis
-    // active bonds; if the anchor state's active bonds differ, those signatures were cast under a
-    // different partition and counting them here would weigh the wrong stake. This runs after the
-    // state walk because the bond set is read from the state the certificate names.
+    // **bonded pool**; if the anchor state's pool differs, those signatures were cast under a
+    // different partition and counting them here would weigh the wrong stake. The epoch's active
+    // draw is a subset of this map and is not a partition change (C403). This runs after the state
+    // walk because the bond set is read from the state the certificate names.
     let anchor_bonds = replay
         .runtime
-        .compute_bonds(&StateHash::from_slice(checkpoint_root.as_bytes()))
+        .compute_bonded_pool(&StateHash::from_slice(checkpoint_root.as_bytes()))
         .await
-        .map_err(|e| format!("the checkpoint state's bonds are unavailable: {e}"))?;
+        .map_err(|e| format!("the checkpoint state's bonded pool is unavailable: {e}"))?;
     check_bond_set_unchanged(&trusted_bonds, &anchor_bonds).map_err(|e| e.to_string())?;
 
     mark_recovery_pending(approved_store, fringe).await?;

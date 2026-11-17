@@ -348,7 +348,7 @@ pub async fn run(
 
     let verified = rchain_casper::checkpoint::verify_genesis_rooted_certificate(
         &certificate,
-        &parts.runtime_manager.genesis_pos().active_bonds(),
+        &parts.runtime_manager.genesis_pos().bonds,
     )
     .map_err(|e| format!("the checkpoint certificate was refused: {e}"))?;
 

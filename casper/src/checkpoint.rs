@@ -70,10 +70,11 @@ pub enum CheckpointError {
     /// **The certificate has no validation-window commitment.** The sync path requires one; a legacy
     /// statement is accepted only by the audit, which reports the absence.
     MissingValidationWindow,
-    /// The anchor state's active bonds differ from the bond set the verifier trusts. Weighing the
+    /// The anchor state's **bonded pool** differs from the pool the verifier trusts. Weighing the
     /// signatures against the old set would count the wrong stake, so the certificate is refused.
     /// A bond-set transition needs the checkpoint chain (each certificate verified against its
-    /// parent's state); until that rule exists this node refuses rather than guessing.
+    /// parent's state); until that rule exists this node refuses rather than guessing. The epoch's
+    /// active draw is a subset of the pool and is **not** a transition (C403).
     BondSetDrifted { genesis: usize, anchor: usize },
 }
 
@@ -119,9 +120,9 @@ impl std::fmt::Display for CheckpointError {
             ),
             CheckpointError::BondSetDrifted { genesis, anchor } => write!(
                 f,
-                "the anchor state's active bond set ({anchor} validator(s)) differs from the \
+                "the anchor state's bonded pool ({anchor} validator(s)) differs from the \
                  genesis trust anchor's ({genesis}); a certificate signed over one partition \
-                 cannot be weighed under the other"
+                 cannot be weighed under the other (an active-set draw is not a partition)"
             ),
         }
     }
@@ -562,8 +563,9 @@ fn named_parent(certificate: &CheckpointCertificate) -> Option<Blake2b256Hash> {
 }
 
 /// **Refuse a certificate whose anchor state is not governed by the trusted bond set.** The
-/// certificate is weighed against `trusted`; if the anchor post-state's active bonds differ from it,
-/// those signatures were cast under a different partition and cannot be counted here.
+/// certificate is weighed against `trusted`, which is the genesis **bonded pool**; if the anchor
+/// post-state's pool differs, those signatures were cast under a different partition and cannot be
+/// counted here. The epoch's active draw is a subset of the pool and is not such a difference.
 pub fn check_bond_set_unchanged(
     trusted: &BTreeMap<Validator, NonNegI64>,
     at_anchor: &BTreeMap<Validator, NonNegI64>,

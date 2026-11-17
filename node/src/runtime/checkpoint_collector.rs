@@ -249,7 +249,10 @@ impl CheckpointCollector {
             return Ok(None);
         }
 
-        let trusted = self.runtime.genesis_pos().active_bonds();
+        // **The trust anchor is the genesis bonded pool, not the genesis active draw** (C403): the
+        // active set is a drawn subset that excludes the jailed and honours the active cap, so a
+        // jail would look like a bond-set transition and no certificate could ever be certified.
+        let trusted = self.runtime.genesis_pos().bonds.clone();
         self.refuse_if_bonds_drifted(&checkpoint.anchor_post_state, &trusted)
             .await?;
 
@@ -340,9 +343,9 @@ impl CheckpointCollector {
             .map_err(|e| format!("anchor post-state is not a state root: {e}"))?;
         let at_anchor = self
             .runtime
-            .compute_bonds(&state)
+            .compute_bonded_pool(&state)
             .await
-            .map_err(|e| format!("the anchor state's bonds are unavailable: {e}"))?;
+            .map_err(|e| format!("the anchor state's bonded pool is unavailable: {e}"))?;
         check_bond_set_unchanged(trusted, &at_anchor).map_err(|e| e.to_string())
     }
 

@@ -13,7 +13,9 @@ A node runs from exactly one of two anchors:
 - the operator's **pinned genesis** — height zero, the pinned block hash and post-state, with the
   genesis state pages hydrated; a genesis-only network never asks for a certificate; or
 - a **verified quorum checkpoint certificate** — the statement plus signatures reaching the finality
-  rule, strictly more than two thirds of the bonded stake (`3s > 2t`) over the genesis active bonds.
+  rule, strictly more than two thirds of the bonded stake (`3s > 2t`) over the genesis **bonded
+  pool**. The pool, not the epoch's drawn active set, is the trust anchor: a jail or a capped draw
+  changes the active set and not the pool, so neither is a bond-set transition.
 
 There is no third anchor and no "best available root". A node that cannot name its anchor does not
 run.
@@ -52,7 +54,8 @@ certificate (neither present) is accepted by the audit, which still checks the s
 For a checkpoint anchor, a joiner:
 
 1. fetches the certificate and verifies every signature against the bond set it trusts — this build
-   trusts the genesis active bonds and refuses a certificate whose anchor state's bonds have drifted;
+   trusts the genesis **bonded pool** and refuses a certificate whose anchor state's pool has
+   drifted (an active-set draw is not a drift; C403);
 2. asks for the fringe **anchored at the certified anchor**, so the signed statement and the served
    history are the same history;
 3. walks the anchor's ancestor **headers** to genesis and checks the walked set against the
