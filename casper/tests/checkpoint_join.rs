@@ -473,6 +473,70 @@ fn a_wiped_joiner_validates_the_first_post_anchor_block_from_the_certificate_and
                         (producer_meta.fringe, producer_meta.fringe_state_hash),
                         "the joiner derives the producer's fringe and fringe state"
                     );
+
+                    // **The deploy-window arm.** The first post-anchor block's `repeat_deploy`
+                    // scan walks every parent body above `anchor_height - DEPLOY_LIFESPAN`. A
+                    // joiner that fetches only the replay layer cannot validate the block. Remove
+                    // one window body and require the failure; the positive above supplies it.
+                    let omitted = *heights
+                        .get(&(deploy_floor + 1))
+                        .unwrap()
+                        .iter()
+                        .next()
+                        .unwrap();
+                    let deficient_store = blocks().await;
+                    for hash in &join_bodies {
+                        if *hash == omitted {
+                            continue;
+                        }
+                        let body = source_store
+                            .get(&[*hash])
+                            .await
+                            .unwrap()
+                            .into_iter()
+                            .flatten()
+                            .next()
+                            .unwrap();
+                        deficient_store.put(&[(*hash, body)]).await.unwrap();
+                    }
+                    let deficient_index = |hash| {
+                        let restored = &restored;
+                        let store = &deficient_store;
+                        let runtime = &joiner_runtime;
+                        async move {
+                            let meta = restored.lookup(&hash).await?.unwrap();
+                            BlockIndex::get_block_index(
+                                runtime,
+                                restored,
+                                store,
+                                hash,
+                                Blake2b256Hash::from_byte_array(meta.fringe_state_hash.as_bytes()),
+                            )
+                            .await
+                        }
+                    };
+                    let deficient = validate_with_window(
+                        &restored,
+                        &deficient_store,
+                        &joiner_runtime,
+                        &first_post_anchor,
+                        "/root",
+                        0,
+                        0,
+                        &deficient_index,
+                        &log,
+                        &health,
+                        Some(&shared),
+                    )
+                    .await;
+                    assert!(
+                        deficient
+                            .as_ref()
+                            .map(|meta| meta.validation_failed)
+                            .unwrap_or(true),
+                        "a joiner missing a deploy-window body must not validate the first \
+                         post-anchor block"
+                    );
                 })
         })
         .unwrap()

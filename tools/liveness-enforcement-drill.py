@@ -719,6 +719,27 @@ def run_jail_vote_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, d
     observations["baseline"] = baseline
     baseline_stake = target_record(baseline["bonds"], target)
 
+    # **A vote against an active validator is refused.** No vote window is open against a
+    # non-jailed target, so the rule refuses the deploy; it is not a lost ballot. This is the live
+    # counterpart of Law 89's `a_vote_without_a_window_is_not_recorded`.
+    active_target = keys[1]
+    active_vote = submit_signed(vote_term(active_target), validator=0)
+    propose()
+    try:
+        commit_deploy(active_vote, args, "a vote against an active validator")
+        observations["active_target_vote"] = {"target": active_target, "refusal": None}
+        checks["active_target_vote_refused"] = False
+    except RuntimeError as exc:
+        message = str(exc)
+        observations["active_target_vote"] = {"target": active_target, "refusal": message}
+        checks["active_target_vote_refused"] = any(
+            needle in message
+            for needle in ("not jailed", "no vote window is open", "only an active validator")
+        )
+    checks["active_target_vote_left_the_bond"] = (
+        target_record(snapshot()["bonds"], active_target) is not None
+    )
+
     run(["tools/devnet.sh", "stop", "3"])
     record = wait_for_jail(target, args)
     observations["jail_record"] = record
@@ -949,6 +970,13 @@ def run_stall_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict, dict,
         before["finalized_anchor"].get("hash") == after["finalized_anchor"].get("hash")
     )
     checks["liveness_counters_frozen_below_quorum"] = before["liveness"] == after["liveness"]
+    # The surviving proposer keeps extending the canonical DAG; those are off-boundary blocks (no
+    # finality advance), and they must write no liveness leaf. This makes the no-op explicit rather
+    # than implied by the frozen counters.
+    checks["off_boundary_dag_advanced_without_a_liveness_write"] = (
+        int(after["anchor"].get("number", 0)) > int(before["anchor"].get("number", 0))
+        and before["liveness"] == after["liveness"]
+    )
     checks["no_jail_below_quorum"] = not any(
         len(record) > 1 and int(record[1]) > 0 for record in after["liveness"].values()
     )
@@ -1074,6 +1102,29 @@ def run_cold_rejoin_arm(keys: list[str], args, config: ArmConfig) -> tuple[dict,
         "the wiped validator serves again",
     )
     checks["rejoined_and_serves"] = True
+
+    # **The join contract before the proposal.** The survivors keep proposing, so a joiner that is
+    # still catching up will never author a block the bootstrap can finalise. Wait until it reports
+    # Running and its head is within a small lag of the bootstrap's, then require it to speak. This
+    # is the criterion the earlier arm lacked: it required a signed block while the target was a
+    # moving head 180 blocks ahead of the joiner.
+    def joined_and_caught_up():
+        status = http_json(HTTP_BASE + 3 * 1000, "/api/status")
+        if not status or str(status.get("syncPhase", "")).lower() != "running":
+            return None
+        latest = int(status.get("latestBlockNumber") or 0)
+        if latest + 5 >= latest_height():
+            return status
+        return None
+
+    status = wait_until(
+        joined_and_caught_up,
+        args.timeout,
+        args.poll,
+        "the cold-joined validator reports running within five blocks of the head",
+    )
+    observations["joined_status"] = status
+    checks["join_contract_running_and_caught_up"] = status is not None
 
     block = wait_until(
         lambda: find_block(target, reset_height + 1),

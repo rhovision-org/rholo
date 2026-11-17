@@ -4,7 +4,7 @@
 //! recipient, changed wallet balances, missing descriptors). That matrix tests a *local config
 //! claim*, not a network gate, and it lives at unit level —
 //! `casper/tests/committed_bounds.rs::restore_guard_checks_the_developer_allocation_before_running`
-//! and the config→claim wiring in `casper/tests/determinism.rs`. Testing it through a full two-node
+//! and the config→claim wiring in `node/tests/genesis_dev_tax.rs`. Testing it through a full two-node
 //! checkpoint sync coupled a local guard to the handshake and made CI red for a reason that was not
 //! the restore path.
 //!
