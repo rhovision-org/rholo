@@ -100,6 +100,69 @@ pub const OPERATOR_GATE_KEYS: &[&str] = &[
     "proposalHalted",
 ];
 
+/// **The exact key set of `GET /api/v1/status/operator`.** The response is `PublicStatus` flattened
+/// beside the operator half, so this is the union a C343-LIVE snapshot reads. The route's own test
+/// serializes the fixture and compares the sorted keys here; a field added, renamed or dropped on
+/// either half fails that test rather than drifting in the collector. Sorted.
+pub const OPERATOR_STATUS_KEYS: &[&str] = &[
+    "acceptsDeploys",
+    "address",
+    "adminHttp",
+    "audit",
+    "autopropose",
+    "autoproposeHalt",
+    "autoproposeTapSuppressed",
+    "autoproposeTimerHaltEpisodes",
+    "autoproposeTimerHalted",
+    "checkpoint",
+    "checkpointAge",
+    "consecutiveSelfValidationFailures",
+    "degraded",
+    "devMode",
+    "finalityCountersDurable",
+    "finalityStall",
+    "finalityStallEpisodes",
+    "finalityStalled",
+    "historyAvailability",
+    "lastPipelineFault",
+    "latestBlockNumber",
+    "manualPropose",
+    "minPhloPrice",
+    "networkId",
+    "nodes",
+    "nonQuietMergeReports",
+    "orphanBodies",
+    "orphanDetections",
+    "peers",
+    "pipelineFaults",
+    "pipelineFaultsOutstanding",
+    "poisonRecoveries",
+    "poisonRecoveriesScope",
+    "pool",
+    "poolQuarantined",
+    "proposalHaltReason",
+    "proposalHalted",
+    "proposeOnDeploy",
+    "proposer",
+    "resetMarker",
+    "resources",
+    "selfValidationRefusal",
+    "shardId",
+    "shards",
+    "staleSnapshotSelfEquivocations",
+    "sync",
+    "syncPhase",
+    "tasksExited",
+    "tasksExitedScope",
+    "tasksPanicked",
+    "tasksPanickedScope",
+    "undeliveredSends",
+    "undeliveredSendsScope",
+    "unrestorableBlock",
+    "unrestorableRecords",
+    "version",
+];
+
 /// **Why the node is not ready — a closed vocabulary.** The order is the order in the readiness
 /// conjunction, so a reader can map the list back to the route's expression. An empty list beside
 /// `ready = true` is the only successful reading; an empty list beside `ready = false` is a defect
@@ -150,6 +213,39 @@ mod tests {
             sorted, OPERATOR_GATE_KEYS,
             "keep the contract sorted and deduplicated"
         );
+    }
+
+    #[test]
+    fn the_operator_status_contract_is_sorted_and_unique() {
+        let mut sorted = OPERATOR_STATUS_KEYS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted, OPERATOR_STATUS_KEYS,
+            "keep the operator-status contract sorted and deduplicated"
+        );
+    }
+
+    #[test]
+    fn the_operator_status_contract_covers_the_gates_and_the_c343_fields() {
+        for key in OPERATOR_GATE_KEYS {
+            assert!(
+                OPERATOR_STATUS_KEYS.contains(key),
+                "{key} is an operator gate but not an operator-status field"
+            );
+        }
+        for key in [
+            "syncPhase",
+            "sync",
+            "resetMarker",
+            "finalityStalled",
+            "shards",
+        ] {
+            assert!(
+                OPERATOR_STATUS_KEYS.contains(&key),
+                "{key} is a C343-LIVE field but not an operator-status field"
+            );
+        }
     }
 
     #[test]

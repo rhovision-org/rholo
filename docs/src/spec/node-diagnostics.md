@@ -124,6 +124,13 @@ It is **not** a superset of `/health`. The two surfaces overlap in three groups,
 `shards` (every member's), beside the operator-only `consecutiveSelfValidationFailures` it explains
 (#485).
 
+**The exact key set** is `OPERATOR_STATUS_KEYS` in
+`node/src/diagnostics/health_contract.rs`; the route's test serializes the fixture and compares the
+sorted keys, so a field renamed on either half of the flattened DTO fails the build. The C343-LIVE
+snapshot reads five fields beyond the seven gates: `syncPhase` (this shard's sync state), `sync`
+(the LFS sync task's own state), `resetMarker` (the durable reset), `finalityStalled`, and `shards`
+(every member's health). `OPERATOR_GATE_KEYS` is a subset of the set.
+
 **The operator object is the detailed one** (#564). On `/api/v1/status/operator` — and only there —
 the refusal object also carries `initialCost` and `replayCost` (the `ReplayCostMismatch` pair, null
 for every other code), `deployIds` (base16, capped at 16; `deployCount` is the true count),
