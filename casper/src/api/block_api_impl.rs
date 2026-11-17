@@ -1287,45 +1287,29 @@ impl BlockApi for BlockApiImpl {
         // unable to attest until the backfill reached the anchor. The fallback keeps the old
         // behaviour for a node whose metadata predates this path.
         let anchor_post_state = self.anchor_post_state(&anchor_hash).await?;
-        // **The run root is the state at the finalized fringe** (C405), read from a block whose own
-        // `fringe` field is this fringe — a *finaliser*. A member's `fringe_state_hash` is the state
-        // at the fringe it finalises, one fringe earlier; the finaliser's is the state at this set,
-        // which is the base the first post-fringe block's conflict merge starts from. The max
-        // `(height, hash)` finaliser is a function of the DAG, so every validator signs the same
-        // root. Before any block has finalised this fringe there is nothing to sign: the checkpoint
-        // waits for its first post-fringe block rather than inventing a merge.
-        let fringe_hashes: std::collections::BTreeSet<rchain_models::block_hash::BlockHash> =
-            fringe.iter().map(|m| m.id).collect();
-        let mut finaliser: Option<(
-            i64,
-            rchain_models::block_hash::BlockHash,
-            rchain_models::block::state_hash::StateHash,
-        )> = None;
-        for message in dag
-            .dag_message_state
-            .latest_msgs
-            .values()
-            .filter(|m| m.fringe == fringe_hashes)
+        // **The run root is the merge base of the blocks that build on the anchor** (C405): the state
+        // at the fringe the anchor's *own* merge finalised, read from the anchor's `fringe_state_hash`.
+        // A post-anchor block's merge starts from `prev_fringe_state` — the state at the fringe its
+        // parents finalised — not from the anchor's post-state and not from the merged state of the
+        // finalized fringe. The anchor is the newest finalized block, so the first blocks after it
+        // carry the anchor's fringe, and that fringe's state is this value. It is a function of the
+        // anchor block alone, so every validator signs the same root, and the anchor's header commits
+        // it (the joiner re-checks the signed value against the header it walked).
+        let anchor_meta = self
+            .dag
+            .lookup(&anchor_hash)
+            .await?
+            .ok_or_else(|| format!("the anchor {} has no metadata", anchor_hash.to_hex()))?;
+        if anchor_meta.fringe.is_empty()
+            || anchor_meta.fringe_state_hash
+                == rchain_models::block::state_hash::StateHash::new([0u8; 32])
         {
-            let meta = self
-                .dag
-                .lookup(&message.id)
-                .await?
-                .ok_or_else(|| format!("finaliser {} has no metadata", message.id.to_hex()))?;
-            let candidate = (
-                i64::from(meta.block_num),
-                message.id,
-                meta.fringe_state_hash,
-            );
-            if finaliser.map_or(true, |(h, id, _)| (candidate.0, candidate.1) > (h, id)) {
-                finaliser = Some(candidate);
-            }
+            return Err(format!(
+                "the anchor {} has finalised no fringe, so there is no merge base to sign",
+                anchor_hash.to_hex()
+            ));
         }
-        let fringe_state = finaliser.map(|(_, _, state)| state).ok_or_else(|| {
-            "no block has finalised this fringe yet; the checkpoint waits for its \
-                             first post-fringe block"
-                .to_string()
-        })?;
+        let fringe_state = anchor_meta.fringe_state_hash;
         // **The statement commits to the headers it is a statement about and to the validation
         // window.** The anchor's ancestor closure is the set the joiner will walk; a validator that
         // cannot read every ancestor's metadata refuses to attest rather than sign a partial root.

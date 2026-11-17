@@ -1026,6 +1026,10 @@ pub async fn validate_block_checkpoint<F, Fut>(
     // restart zeroed counters the shard's own history had moved. Threaded, not registered — see
     // [`ShardHealth`] for why.
     health: &ShardHealth,
+    // **The accepted window, when this node runs from a checkpoint certificate** (C405). Its signed
+    // merge base is what replay starts from when the parent set finalised the anchor's fringe; a
+    // full node passes `None` and derives the base from the parent records.
+    accepted_window: Option<&crate::engine::anchor::SharedAcceptedWindow>,
 ) -> Result<(BlockMetadata, Result<ReplayVerdict, BlockStatus>), String>
 where
     F: Fn(BlockHash) -> Fut,
@@ -1041,11 +1045,26 @@ where
         }
     }
     let parents_set: BTreeSet<BlockHash> = parents.iter().copied().collect();
+    let trusted_base = match accepted_window {
+        Some(window) => window
+            .read()
+            .await
+            .as_ref()
+            .and_then(|w| w.merge_base().cloned()),
+        None => None,
+    };
 
     let source = LogSource::new("casper.interpreter.validate");
     let pre_state = if !parents_set.is_empty() {
-        let pre_state =
-            get_pre_state_for_parents(dag, block_store, runtime, &parents_set, block_index).await?;
+        let pre_state = get_pre_state_for_parents(
+            dag,
+            block_store,
+            runtime,
+            &parents_set,
+            block_index,
+            trusted_base.as_ref(),
+        )
+        .await?;
         // **What the merge's conflict search was handed, from the running node (#117).** The search's
         // cost is a deterministic function of the conflict map, and the map's real shape — how wide a
         // scope gets, how dense its conflicts are — had never been observed, so the defect was argued

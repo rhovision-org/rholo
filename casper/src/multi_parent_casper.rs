@@ -268,12 +268,16 @@ pub async fn final_scope_rejections(
 }
 
 /// Compute the merged pre-state for a set of parent blocks (port of `getPreStateForParents`).
+///
+/// `trusted` is the checkpoint's signed merge base, present only when replay runs on a node whose
+/// accepted state is a checkpoint certificate (C405). See [`merges_from_the_certified_fringe`].
 pub async fn get_pre_state_for_parents<F, Fut>(
     dag: &dyn BlockDagStorage,
     block_store: &BlockStore,
     runtime: &RuntimeManager,
     parent_hashes: &BTreeSet<BlockHash>,
     block_index: &F,
+    trusted: Option<&crate::engine::anchor::TrustedMergeBase>,
 ) -> Result<ParentsMergedState, String>
 where
     F: Fn(BlockHash) -> Fut,
@@ -350,9 +354,32 @@ where
     // enough to carry no bonds leaf, and the chain stalled at height 20 with `propose failed … active-bonds
     // leaf not found in state`. A block's own `fringe_state_hash` is the state **at** the set it finalises,
     // which is what the retired record held (that same block wrote it) and what the merge must start from.
+    // **The certified merge base** (C405). The first blocks after a checkpoint anchor finalise the
+    // very fringe the anchor itself finalised, so their merge base is the state the certificate
+    // signs. The parent records cannot supply it on a joiner: a sibling received by gossip and never
+    // validated carries a zero fringe state (no merge ran here), and a sibling whose body has not
+    // arrived cannot be read at all. The certificate's root is quorum-signed and is re-checked
+    // against the anchor header at join, so it is the answer — used **only** when the anchor's
+    // metadata names the same fringe, so a parent set that finalised some other fringe still derives
+    // its base from the records.
+    let certified_base = match trusted {
+        Some(t) => {
+            let anchor_meta = dag.lookup(&t.anchor).await?.ok_or_else(|| {
+                format!(
+                    "the checkpoint anchor {} has no metadata",
+                    t.anchor.to_hex()
+                )
+            })?;
+            (anchor_meta.fringe == prev_fringe_hashes).then_some(t.base)
+        }
+        None => None,
+    };
     let mut claims: Vec<(i64, BlockHash, Blake2b256Hash)> = Vec::new();
     let mut prev_fringe_rejected_deploys: BTreeSet<Vec<u8>> = BTreeSet::new();
-    for m in parents.iter().filter(|m| m.fringe == prev_fringe_hashes) {
+    for m in parents
+        .iter()
+        .filter(|m| m.fringe == prev_fringe_hashes && certified_base.is_none())
+    {
         let meta = dag.lookup(&m.id).await?.ok_or_else(|| {
             format!(
                 "missing fringe block {} in the metadata store: the fringe {:?} names a block this node \
@@ -403,20 +430,23 @@ where
                 .join("; "),
         );
     }
-    let prev_fringe_state = match claims.into_iter().max_by_key(|(h, id, _)| (*h, *id)) {
-        Some((_, _, state)) => state,
-        // **A parent set always has a finaliser**: `latest_fringe` returns the max-fringe parent's own
-        // `fringe`, so that parent is itself in the set this loop filters for. An empty set therefore
-        // means the message map and the metadata store disagree about the parents — not that the fringe
-        // is empty, which is a case with a finaliser like any other (a parent that finalised nothing has
-        // `fringe = ∅`, and is its own finaliser).
-        None => {
-            return Err(format!(
-                "no parent finalises the previous fringe {:?}: the parent set {:?} and the message map \
-                 disagree",
-                prev_fringe_hashes, parent_hashes
-            ))
-        }
+    let prev_fringe_state = match certified_base {
+        Some(base) => base,
+        None => match claims.into_iter().max_by_key(|(h, id, _)| (*h, *id)) {
+            Some((_, _, state)) => state,
+            // **A parent set always has a finaliser**: `latest_fringe` returns the max-fringe parent's own
+            // `fringe`, so that parent is itself in the set this loop filters for. An empty set therefore
+            // means the message map and the metadata store disagree about the parents — not that the fringe
+            // is empty, which is a case with a finaliser like any other (a parent that finalised nothing has
+            // `fringe = ∅`, and is its own finaliser).
+            None => {
+                return Err(format!(
+                    "no parent finalises the previous fringe {:?}: the parent set {:?} and the message map \
+                     disagree",
+                    prev_fringe_hashes, parent_hashes
+                ))
+            }
+        },
     };
     // Captured here rather than at the struct literal, because `prev_fringe_hashes` is moved into
     // `new_fringe` below (#139). These two are what a state disagreement is reported with: the fringe
@@ -748,7 +778,9 @@ where
         dag_repr.dag_message_state.parents_for_new_block()
     };
     let parent_hashes: BTreeSet<BlockHash> = parents.into_iter().map(|m| m.id).collect();
-    get_pre_state_for_parents(dag, block_store, runtime, &parent_hashes, block_index).await
+    // Proposing is the full-node path: this node holds every state its parents name, so no
+    // certificate base is needed (and a checkpoint joiner proposes only after it has caught up).
+    get_pre_state_for_parents(dag, block_store, runtime, &parent_hashes, block_index, None).await
 }
 
 /// How many times one record may be re-validated before the node gives up on it.
@@ -935,6 +967,7 @@ where
             log,
             health,
             ValidationOrigin::Peer,
+            accepted_window,
         )
         .await;
         // **A fault is not a verdict** (C253's E3/E5). `Internal` says *this node* could not run the
@@ -1461,6 +1494,7 @@ async fn restore_divergent_justifications<F, Fut>(
             log,
             health,
             ValidationOrigin::Peer,
+            accepted_window,
         )
         .await;
         let (record, restored) = match revalidated_record(&stored, outcome) {
@@ -1667,6 +1701,7 @@ where
         log,
         health,
         origin,
+        accepted_window,
     )
     .await
 }
@@ -1689,15 +1724,19 @@ async fn validation_bounds_for_block(
     for parent_hash in &block.justifications {
         if let Some(parent_meta) = dag.lookup(parent_hash).await? {
             if parent_meta.validated && !parent_meta.validation_failed {
-                let parent = block_store
+                let Some(parent) = block_store
                     .get(&[*parent_hash])
                     .await?
                     .into_iter()
                     .next()
                     .flatten()
-                    .ok_or_else(|| {
-                        format!("validated parent {parent_hash:?} is absent from the block store")
-                    })?;
+                else {
+                    // **A checkpoint joiner has every committed header and no historical body.**
+                    // The bounds are immutable params, so a body it cannot read adds nothing to the
+                    // config values the walk already trusts (C405); requiring the body here refused
+                    // every post-anchor block before its merge could even start.
+                    continue;
+                };
                 return Ok(runtime
                     .committed_validation_bounds(&parent.post_state_hash)
                     .await?
@@ -1756,6 +1795,7 @@ async fn validate_checks<F, Fut>(
     log: &Arc<dyn Log>,
     health: &ShardHealth,
     origin: ValidationOrigin,
+    accepted_window: Option<&crate::engine::anchor::SharedAcceptedWindow>,
 ) -> Result<BlockMetadata, ValidateError>
 where
     F: Fn(BlockHash) -> Fut,
@@ -1805,6 +1845,7 @@ where
         block_index,
         log,
         health,
+        accepted_window,
     )
     .await
     .map_err(|e| ValidateError::Internal(format!("validateBlockCheckpoint failed: {e}")))?;

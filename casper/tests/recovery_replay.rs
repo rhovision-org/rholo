@@ -230,6 +230,7 @@ fn independent_recovery_replays_epoch_boundaries_and_refuses_forged_claims() {
                             &runtime,
                             &BTreeSet::from([tip]),
                             &index,
+                            None,
                         )
                         .await
                         .unwrap();
@@ -408,6 +409,7 @@ fn independent_recovery_replays_epoch_boundaries_and_refuses_forged_claims() {
                             &runtime,
                             &BTreeSet::from([tip]),
                             &source_index,
+                            None,
                         )
                         .await
                         .unwrap();

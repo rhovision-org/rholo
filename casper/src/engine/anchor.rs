@@ -157,6 +157,10 @@ pub struct AcceptedWindow {
     /// The anchor's height. A checkpoint joiner's accepted state begins here: blocks at or below it
     /// are committed history it holds no state for and must not re-validate (C406).
     anchor_height: i64,
+    /// **The merge base the certificate signs** (C405). A post-anchor block's merge starts from the
+    /// state at the fringe its parents finalised; the checkpoint signs that state (the anchor's own
+    /// `fringe_state_hash`), and a witness test asserts the signed root is the anchor header's claim.
+    merge_base: Option<TrustedMergeBase>,
     /// The certificate's validation window (Law 109).
     certified: BTreeSet<Blake2b256Hash>,
     /// Roots this node derived by accepting a validated post-anchor block.
@@ -167,24 +171,50 @@ pub struct AcceptedWindow {
     validated: BTreeSet<BlockHash>,
 }
 
+/// **The state a checkpoint signs as the merge base** (C405).
+///
+/// The merge of a block's parents starts from `prev_fringe_state`: the state at the fringe its
+/// parents finalised. A joiner has that root signed by the quorum (the certificate's `fringeState`,
+/// which must equal the anchor header's committed `fringe_state_hash`), so replay can use it instead
+/// of the fringe-state claim of a sibling the joiner received but never validated — whose metadata
+/// carries no derived fringe root at all. `anchor` names the block whose metadata decides which
+/// fringe the root belongs to: the substitution applies exactly when the parent set's own fringe is
+/// the anchor's.
+#[derive(Clone, Debug)]
+pub struct TrustedMergeBase {
+    /// The anchor block: its metadata names the fringe whose state is `base`.
+    pub anchor: BlockHash,
+    /// The state at the fringe the anchor finalised (the certificate's signed `fringeState`).
+    pub base: Blake2b256Hash,
+}
+
 impl AcceptedWindow {
     /// The window an accepted state starts with: the anchor root, the certified set and the
     /// certificate's committed fringe. The fringe members are the justifications a first
     /// post-checkpoint block may name, so a joiner does not refuse its first multi-parent round.
     pub fn from_accepted(state: &AcceptedState) -> Self {
-        let (anchor_block, anchor_height, validated) = match state.anchor() {
-            TrustAnchor::Genesis(pin) => (pin.block, 0, BTreeSet::new()),
+        let (anchor_block, anchor_height, validated, merge_base) = match state.anchor() {
+            TrustAnchor::Genesis(pin) => (pin.block, 0, BTreeSet::new(), None),
             TrustAnchor::Checkpoint {
                 block,
                 verified,
                 fringe,
                 ..
-            } => (*block, verified.checkpoint.anchor_height, fringe.clone()),
+            } => (
+                *block,
+                verified.checkpoint.anchor_height,
+                fringe.clone(),
+                Some(TrustedMergeBase {
+                    anchor: *block,
+                    base: state.root(),
+                }),
+            ),
         };
         AcceptedWindow {
             anchor_root: state.root(),
             anchor_block,
             anchor_height,
+            merge_base,
             certified: state.window().clone(),
             derived: BTreeSet::new(),
             validated,
@@ -256,6 +286,12 @@ impl AcceptedWindow {
     /// The anchor's height.
     pub fn anchor_height(&self) -> i64 {
         self.anchor_height
+    }
+
+    /// **The signed merge base** (C405): none for a genesis anchor, the certificate's signed
+    /// `fringeState` and its anchor for a checkpoint.
+    pub fn merge_base(&self) -> Option<&TrustedMergeBase> {
+        self.merge_base.as_ref()
     }
 
     /// **The accepted state begins at the anchor.** A block at or below the anchor height that is

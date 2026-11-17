@@ -695,8 +695,9 @@ async fn the_same_validated_blocks_merge_identically_in_both_arrival_orders() {
 /// it, and review of #299 read the construction as "ordinary multi-proposer behaviour". This takes the
 /// same pair of siblings and asks the **production derivation** what each of them would write.
 ///
-/// There is nothing for them to differ on. `get_pre_state_for_parents(dag, block_store, runtime,
-/// parent_hashes, block_index)` has **no argument for the block being built**: a proposer takes its
+/// There is nothing for them to differ on. `get_pre_state_for_parents` has **no argument for the
+/// block being built** (its last parameter is the checkpoint's signed merge base, and a proposer
+/// passes `None`): a proposer takes its
 /// `rejected_deploys` from that call's `fringe_rejected_deploys` — the **fringe** merge's rejections
 /// (`blocks/proposer/block_creator.rs:90`) — and its `fringe` and `fringe_state` from the same call. Two
 /// siblings share `parent_hashes`, so all three are one value per parent set.
@@ -828,10 +829,10 @@ async fn two_honest_siblings_contribute_one_value_to_the_fringe_they_share() {
     };
 
     let parents = BTreeSet::from([x.block_hash]);
-    let pre_y = get_pre_state_for_parents(&*proposer, &store, &rm, &parents, &lookup)
+    let pre_y = get_pre_state_for_parents(&*proposer, &store, &rm, &parents, &lookup, None)
         .await
         .expect("the derivation a proposer of y runs");
-    let pre_z = get_pre_state_for_parents(&*proposer, &store, &rm, &parents, &lookup)
+    let pre_z = get_pre_state_for_parents(&*proposer, &store, &rm, &parents, &lookup, None)
         .await
         .expect("the derivation a proposer of z runs");
 
@@ -925,7 +926,7 @@ async fn two_honest_siblings_contribute_one_value_to_the_fringe_they_share() {
         x.clone(),
     )
     .await;
-    let pre_moved = get_pre_state_for_parents(&*moved, &store, &rm, &parents, &lookup)
+    let pre_moved = get_pre_state_for_parents(&*moved, &store, &rm, &parents, &lookup, None)
         .await
         .expect("the derivation over the changed DAG");
     assert_ne!(
@@ -997,7 +998,7 @@ async fn an_empty_previous_fringe_is_the_genesis_claim() {
 
     // The first block after genesis: its parent is the genesis, whose finalised set is empty.
     let parents = BTreeSet::from([g.block_hash]);
-    let pre = get_pre_state_for_parents(&*dag, &store, &rm, &parents, &lookup)
+    let pre = get_pre_state_for_parents(&*dag, &store, &rm, &parents, &lookup, None)
         .await
         .expect("a block whose parent has finalised nothing yet still has a base");
 

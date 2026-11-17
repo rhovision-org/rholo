@@ -826,6 +826,19 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     .await?;
     let (entries, fringe_state_root, window) =
         certified_metadata_entries(&walk, &verified.checkpoint)?;
+    // **The signed merge base is the anchor header's own fringe state** (C405). The statement
+    // signs the state a post-anchor block's merge starts from; the anchor header commits that same
+    // value under `metadataRoot`, so the joiner can check that the quorum signed the base the header
+    // claims. A v1 statement carries no merge base (its root is the anchor post-state); a v2
+    // statement must match exactly.
+    if verified.checkpoint.fringe_state.is_some() && checkpoint_root != fringe_state_root {
+        return Err(format!(
+            "the certificate's signed fringe state {} is not the anchor header's committed fringe \
+             state {} — the statement names a merge base its anchor does not",
+            checkpoint_root.to_hex(),
+            fringe_state_root.to_hex()
+        ));
+    }
 
     // **The hydrated set is the certified set.** The checkpoint's **signed fringe state** (the run
     // root — see C405), the anchor header's own `fringe_state_hash`, the anchored reply's
