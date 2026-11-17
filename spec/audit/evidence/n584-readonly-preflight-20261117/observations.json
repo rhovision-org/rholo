@@ -1,0 +1,306 @@
+{
+  "candidate_binary_sha256": "c414f979414a038f08cb0a39008f6abc591b92aaa382da64e6315d77af77d6b0",
+  "candidate_source": "70b8ea255f92f06dac59050eab014078dec67712",
+  "claim_limits": "Not G1-G6; not a four-host attestation; no signing, transfer, restart, upgrade or state mutation",
+  "record_type": "n584_readonly_preinstall_observation",
+  "records": [
+    {
+      "accepts_deploys_is_not_settlement": true,
+      "alias": "A",
+      "api": {
+        "/api/last-finalized-block": {
+          "byte_count": 1806,
+          "http_status": 200,
+          "sha256": "69be1b92a4b23068fe9aa4a4782680c891fc0c92c51b125f271887b55f2c394b"
+        },
+        "/api/status": {
+          "byte_count": 459,
+          "http_status": 200,
+          "sha256": "b3415e3a4edf592425d85eaf3f0590827cfda7450cda4340661ddd0f99720063"
+        },
+        "/api/v1/finality-observation": {
+          "error": "HTTPError"
+        },
+        "/health": {
+          "byte_count": 187,
+          "http_status": 200,
+          "sha256": "65c586d32c2c6ed329251ac91efc036600e3d1945d4cfc6abf5ce73e9a47697b"
+        }
+      },
+      "captured_utc": "2026-11-17T18:26:06+00:00",
+      "last_finalized_summary": {},
+      "network_id": "testnet-133b1d307b175012",
+      "private_raw_sha256": "fb8de58be367fea986c7c0bb8ed822ef76d6863a0f12203fbe7ca0f62a30c915",
+      "reported_node_version": "rholo node 0.1.0 (0a1e02362a7c34e474e068ffd47469c8d4be707a)",
+      "restart_count": "0",
+      "running_process_hash_error": "PermissionError",
+      "running_process_sha256": null,
+      "sample": 1,
+      "service_active": "active",
+      "shard_id": "/testnet",
+      "store_format_read": null,
+      "store_format_read_error": "PermissionError"
+    },
+    {
+      "accepts_deploys_is_not_settlement": true,
+      "alias": "D",
+      "api": {
+        "/api/last-finalized-block": {
+          "byte_count": 1806,
+          "http_status": 200,
+          "sha256": "69be1b92a4b23068fe9aa4a4782680c891fc0c92c51b125f271887b55f2c394b"
+        },
+        "/api/status": {
+          "byte_count": 459,
+          "http_status": 200,
+          "sha256": "415dab1cd2c672d199d1705f3a9017aef5c714f09b547a273897e1196612e559"
+        },
+        "/api/v1/finality-observation": {
+          "error": "HTTPError"
+        },
+        "/health": {
+          "byte_count": 187,
+          "http_status": 200,
+          "sha256": "33b9309fa94831c8aeb8596238c65bcc03e26ab5eeba960ac8a58e8af427a783"
+        }
+      },
+      "captured_utc": "2026-11-17T18:26:14+00:00",
+      "last_finalized_summary": {},
+      "network_id": "testnet-133b1d307b175012",
+      "private_raw_sha256": "fc332fe2ad72a8aabeb1ab618f524ac6aa61988e606661f3746945fcbd05a15f",
+      "reported_node_version": "rholo node 0.1.0 (0a1e02362a7c34e474e068ffd47469c8d4be707a)",
+      "restart_count": "0",
+      "running_process_hash_error": "PermissionError",
+      "running_process_sha256": null,
+      "sample": 1,
+      "service_active": "active",
+      "shard_id": "/testnet",
+      "store_format_read": null,
+      "store_format_read_error": "PermissionError"
+    },
+    {
+      "accepts_deploys_is_not_settlement": true,
+      "alias": "B",
+      "api": {
+        "/api/last-finalized-block": {
+          "byte_count": 1806,
+          "http_status": 200,
+          "sha256": "69be1b92a4b23068fe9aa4a4782680c891fc0c92c51b125f271887b55f2c394b"
+        },
+        "/api/status": {
+          "byte_count": 459,
+          "http_status": 200,
+          "sha256": "9492ab2b7fdc72c4a01b96992504b10c083ad234156b62fa630d9ec24be43590"
+        },
+        "/api/v1/finality-observation": {
+          "error": "HTTPError"
+        },
+        "/health": {
+          "byte_count": 188,
+          "http_status": 200,
+          "sha256": "f533123e4c120436de9fb517300b27ad960985d805e531cc9b291759153e751e"
+        }
+      },
+      "captured_utc": "2026-11-17T18:26:23+00:00",
+      "last_finalized_summary": {},
+      "network_id": "testnet-133b1d307b175012",
+      "private_raw_sha256": "41aae3d5518a1690e8a68eae22e02ce4480090b98bbf4e7d6ef4095d287094d8",
+      "reported_node_version": "rholo node 0.1.0 (0a1e02362a7c34e474e068ffd47469c8d4be707a)",
+      "restart_count": "0",
+      "running_process_hash_error": "PermissionError",
+      "running_process_sha256": null,
+      "sample": 1,
+      "service_active": "active",
+      "shard_id": "/testnet",
+      "store_format_read": null,
+      "store_format_read_error": "PermissionError"
+    },
+    {
+      "accepts_deploys_is_not_settlement": true,
+      "alias": "C",
+      "api": {
+        "/api/last-finalized-block": {
+          "byte_count": 1806,
+          "http_status": 200,
+          "sha256": "69be1b92a4b23068fe9aa4a4782680c891fc0c92c51b125f271887b55f2c394b"
+        },
+        "/api/status": {
+          "byte_count": 459,
+          "http_status": 200,
+          "sha256": "1fdac99f2cf44c141496b1a0da463efa7d054245bf0474b828c57b75843612d6"
+        },
+        "/api/v1/finality-observation": {
+          "error": "HTTPError"
+        },
+        "/health": {
+          "byte_count": 187,
+          "http_status": 200,
+          "sha256": "b889a7aaa58c4f5e5c2ecbc3cbed752b7894ba6042b793d63e14885c7c18e308"
+        }
+      },
+      "captured_utc": "2026-11-17T18:26:30+00:00",
+      "last_finalized_summary": {},
+      "network_id": "testnet-133b1d307b175012",
+      "private_raw_sha256": "3b79561d3a6c7ff73e0e603c117fd387bc70dd2ffff002b5291f620f3cc4762a",
+      "reported_node_version": "rholo node 0.1.0 (0a1e02362a7c34e474e068ffd47469c8d4be707a)",
+      "restart_count": "0",
+      "running_process_hash_error": "PermissionError",
+      "running_process_sha256": null,
+      "sample": 1,
+      "service_active": "active",
+      "shard_id": "/testnet",
+      "store_format_read": null,
+      "store_format_read_error": "PermissionError"
+    },
+    {
+      "accepts_deploys_is_not_settlement": true,
+      "alias": "A",
+      "api": {
+        "/api/last-finalized-block": {
+          "byte_count": 1806,
+          "http_status": 200,
+          "sha256": "69be1b92a4b23068fe9aa4a4782680c891fc0c92c51b125f271887b55f2c394b"
+        },
+        "/api/status": {
+          "byte_count": 459,
+          "http_status": 200,
+          "sha256": "b3415e3a4edf592425d85eaf3f0590827cfda7450cda4340661ddd0f99720063"
+        },
+        "/api/v1/finality-observation": {
+          "error": "HTTPError"
+        },
+        "/health": {
+          "byte_count": 187,
+          "http_status": 200,
+          "sha256": "65c586d32c2c6ed329251ac91efc036600e3d1945d4cfc6abf5ce73e9a47697b"
+        }
+      },
+      "captured_utc": "2026-11-17T18:26:47+00:00",
+      "last_finalized_summary": {},
+      "network_id": "testnet-133b1d307b175012",
+      "private_raw_sha256": "99c6ed2bf0970dc554430569761fd3e0dcfec716215bedce3f4a5222ff635c62",
+      "reported_node_version": "rholo node 0.1.0 (0a1e02362a7c34e474e068ffd47469c8d4be707a)",
+      "restart_count": "0",
+      "running_process_hash_error": "PermissionError",
+      "running_process_sha256": null,
+      "sample": 2,
+      "service_active": "active",
+      "shard_id": "/testnet",
+      "store_format_read": null,
+      "store_format_read_error": "PermissionError"
+    },
+    {
+      "accepts_deploys_is_not_settlement": true,
+      "alias": "D",
+      "api": {
+        "/api/last-finalized-block": {
+          "byte_count": 1806,
+          "http_status": 200,
+          "sha256": "69be1b92a4b23068fe9aa4a4782680c891fc0c92c51b125f271887b55f2c394b"
+        },
+        "/api/status": {
+          "byte_count": 459,
+          "http_status": 200,
+          "sha256": "415dab1cd2c672d199d1705f3a9017aef5c714f09b547a273897e1196612e559"
+        },
+        "/api/v1/finality-observation": {
+          "error": "HTTPError"
+        },
+        "/health": {
+          "byte_count": 187,
+          "http_status": 200,
+          "sha256": "33b9309fa94831c8aeb8596238c65bcc03e26ab5eeba960ac8a58e8af427a783"
+        }
+      },
+      "captured_utc": "2026-11-17T18:26:55+00:00",
+      "last_finalized_summary": {},
+      "network_id": "testnet-133b1d307b175012",
+      "private_raw_sha256": "e52d2b7c1513983ee0a43636c11b683301b55616e60ad394c1b2679d7513655b",
+      "reported_node_version": "rholo node 0.1.0 (0a1e02362a7c34e474e068ffd47469c8d4be707a)",
+      "restart_count": "0",
+      "running_process_hash_error": "PermissionError",
+      "running_process_sha256": null,
+      "sample": 2,
+      "service_active": "active",
+      "shard_id": "/testnet",
+      "store_format_read": null,
+      "store_format_read_error": "PermissionError"
+    },
+    {
+      "accepts_deploys_is_not_settlement": true,
+      "alias": "B",
+      "api": {
+        "/api/last-finalized-block": {
+          "byte_count": 1806,
+          "http_status": 200,
+          "sha256": "69be1b92a4b23068fe9aa4a4782680c891fc0c92c51b125f271887b55f2c394b"
+        },
+        "/api/status": {
+          "byte_count": 459,
+          "http_status": 200,
+          "sha256": "9492ab2b7fdc72c4a01b96992504b10c083ad234156b62fa630d9ec24be43590"
+        },
+        "/api/v1/finality-observation": {
+          "error": "HTTPError"
+        },
+        "/health": {
+          "byte_count": 188,
+          "http_status": 200,
+          "sha256": "f533123e4c120436de9fb517300b27ad960985d805e531cc9b291759153e751e"
+        }
+      },
+      "captured_utc": "2026-11-17T18:27:02+00:00",
+      "last_finalized_summary": {},
+      "network_id": "testnet-133b1d307b175012",
+      "private_raw_sha256": "92a99d1f21815f0176c64cc133024d494d9cc8b9fc935f91e6bddd672ea11d44",
+      "reported_node_version": "rholo node 0.1.0 (0a1e02362a7c34e474e068ffd47469c8d4be707a)",
+      "restart_count": "0",
+      "running_process_hash_error": "PermissionError",
+      "running_process_sha256": null,
+      "sample": 2,
+      "service_active": "active",
+      "shard_id": "/testnet",
+      "store_format_read": null,
+      "store_format_read_error": "PermissionError"
+    },
+    {
+      "accepts_deploys_is_not_settlement": true,
+      "alias": "C",
+      "api": {
+        "/api/last-finalized-block": {
+          "byte_count": 1806,
+          "http_status": 200,
+          "sha256": "69be1b92a4b23068fe9aa4a4782680c891fc0c92c51b125f271887b55f2c394b"
+        },
+        "/api/status": {
+          "byte_count": 459,
+          "http_status": 200,
+          "sha256": "1fdac99f2cf44c141496b1a0da463efa7d054245bf0474b828c57b75843612d6"
+        },
+        "/api/v1/finality-observation": {
+          "error": "HTTPError"
+        },
+        "/health": {
+          "byte_count": 187,
+          "http_status": 200,
+          "sha256": "b889a7aaa58c4f5e5c2ecbc3cbed752b7894ba6042b793d63e14885c7c18e308"
+        }
+      },
+      "captured_utc": "2026-11-17T18:27:10+00:00",
+      "last_finalized_summary": {},
+      "network_id": "testnet-133b1d307b175012",
+      "private_raw_sha256": "9ff14cd455f2e8e855ee1961f5fb3ad9571d250eac1b70261210653d3ebaf3ae",
+      "reported_node_version": "rholo node 0.1.0 (0a1e02362a7c34e474e068ffd47469c8d4be707a)",
+      "restart_count": "0",
+      "running_process_hash_error": "PermissionError",
+      "running_process_sha256": null,
+      "sample": 2,
+      "service_active": "active",
+      "shard_id": "/testnet",
+      "store_format_read": null,
+      "store_format_read_error": "PermissionError"
+    }
+  ],
+  "run_id": "20261117T182557Z",
+  "scope": "Actual four public-testnet service instances across two SSH hosts; no local tests"
+}
