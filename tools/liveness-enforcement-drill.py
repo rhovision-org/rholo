@@ -964,11 +964,12 @@ def run_restart_expiry_arm(keys: list[str], args, config: ArmConfig) -> tuple[di
     # stopped, which is how absence is produced. Stage a copy of its key in the bootstrap so the
     # deploy that proves it is alive can be signed there. Throwaway devnet keys only.
     staged_key = "/tmp/c344-validator-3.hex"
-    docker([
-        "cp",
-        f"{node_container(3)}:/var/lib/rnode/validator.hex",
-        f"{node_container(0)}:{staged_key}",
-    ])
+    # `docker cp` cannot copy between containers; stage through the host, then remove the host copy.
+    with tempfile.NamedTemporaryFile(suffix=".hex", delete=False) as handle:
+        host_key = handle.name
+    docker(["cp", f"{node_container(3)}:/var/lib/rnode/validator.hex", host_key])
+    docker(["cp", host_key, f"{node_container(0)}:{staged_key}"])
+    os.unlink(host_key)
 
     run(["tools/devnet.sh", "stop", "3"])
     first = wait_for_jail(target, args)
