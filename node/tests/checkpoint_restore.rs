@@ -1,14 +1,21 @@
-//! **The developer allocation over default LFS restore.**
+//! **The LFS checkpoint restore gate.**
 //!
-//! Aria's matrix: matching inputs, a different recipient, changed wallet balances, and missing
-//! descriptors — for a genesis-only bootstrap and a later finalized snapshot. The rule this pins is
-//! *enforce when present, trust when absent*: a joiner that derived its own allocation must match
-//! the imported genesis; a joiner with no local claim takes the bootstrap's allocation. A local
-//! `None` is "no claim", not "a claim of no allocation" — the normal public-testnet bootstrap.
+//! This suite used to carry a local developer-allocation matrix (matching recipient, a different
+//! recipient, changed wallet balances, missing descriptors). That matrix tests a *local config
+//! claim*, not a network gate, and it lives at unit level —
+//! `casper/tests/committed_bounds.rs::restore_guard_checks_the_developer_allocation_before_running`
+//! and the config→claim wiring in `node/tests/genesis_dev_tax.rs`. Testing it through a full two-node
+//! checkpoint sync coupled a local guard to the handshake and made CI red for a reason that was not
+//! the restore path.
+//!
+//! What is tested here is the mainnet gate: a cold joiner with only the bootstrap's checkpoint
+//! source restores the committed state, validates the first post-anchor block, and — when bonded —
+//! proposes a block the bootstrap finalises. The developer allocation is genesis native state (a
+//! vesting account, not a vault), so it is asserted only as part of the restored state.
 //!
 //! These are two real in-process nodes over the protocol transport, not an in-process replay: the
-//! joiner enters `NodeSyncing`, pulls the fringe and state roots, `populate_dag`/`insert_genesis`,
-//! and then passes the restore-completion guard before Running.
+//! joiner enters `NodeSyncing`, pulls the certificate and state roots, populates the DAG, and passes
+//! the restore-completion guard before Running.
 
 mod common;
 
@@ -27,18 +34,6 @@ use rchain_rholang::native_state::DevVesting;
 use rchain_rholang::util::rev_address::RevAddress;
 use rchain_shared::refined::Port;
 
-#[derive(Clone, Copy)]
-enum Phase {
-    GenesisOnly,
-    Snapshot,
-}
-
-#[derive(Clone, Copy)]
-enum Expected {
-    Restored,
-    Refused,
-}
-
 fn wallets(total_drops: &str) -> String {
     format!("{DEPLOYER_REV_ADDR},{total_drops}\n")
 }
@@ -49,8 +44,9 @@ fn address(byte: u8) -> String {
         .to_base58()
 }
 
-/// A bootstrap that creates a production genesis with a non-empty allocation. The wallet total is
-/// above the 1B-REV crossover, so the percentage arm (not just the floor) is the amount.
+/// A bootstrap that creates a production genesis with a non-empty allocation, and produces blocks
+/// when `autopropose` is on. The wallet total is above the 1B-REV crossover, so the percentage arm
+/// (not just the floor) is the amount.
 fn bootstrap_conf(
     dir: &Path,
     ports: &[u16],
@@ -76,6 +72,18 @@ fn bootstrap_conf(
     conf
 }
 
+/// The normal joining configuration: no local allocation claim (an absent claim is not a claim of
+/// no allocation), the bootstrap's bond set as the trust anchor, and optionally the second
+/// validator key.
+fn joiner_spec(bonded: bool) -> JoinerSpec {
+    JoinerSpec {
+        recipient: None,
+        wallets_rows: None,
+        bonds: true,
+        bonded,
+    }
+}
+
 async fn wait_for_genesis(client: &reqwest::Client, base: &str) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
@@ -91,6 +99,42 @@ async fn wait_for_genesis(client: &reqwest::Client, base: &str) {
             "the bootstrap never produced a genesis block: {base}"
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// **The certifiable checkpoint is the readiness gate**, not a finalized height. A chain can have
+/// finalized a block and still have no finalized fringe to certify (the bootstrap's
+/// `/api/v1/checkpoint` answers 400); starting the joiner there spends its sync attempts on a
+/// bootstrap that cannot answer. Poll the route a joiner actually uses.
+async fn wait_for_certifiable_checkpoint(
+    client: &reqwest::Client,
+    base: &str,
+) -> serde_json::Value {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    let mut last;
+    loop {
+        match client.get(format!("{base}/api/v1/checkpoint")).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                match resp.json::<serde_json::Value>().await {
+                    Ok(body) if status.is_success() => {
+                        let anchor = body["checkpoint"]["anchorHeight"].as_i64().unwrap_or(-1);
+                        if anchor > 0 {
+                            return body;
+                        }
+                        last = format!("HTTP {status}, no anchor height: {body}");
+                    }
+                    Ok(body) => last = format!("HTTP {status}: {body}"),
+                    Err(error) => last = format!("HTTP {status}, invalid JSON: {error}"),
+                }
+            }
+            Err(error) => last = format!("request failed: {error}"),
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the bootstrap never published a certifiable checkpoint: {base}; last read: {last}"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
@@ -281,16 +325,53 @@ async fn latest_post_state_hash(client: &reqwest::Client, base: &str) -> String 
         .to_string()
 }
 
+/// **The join contract.** `syncPhase` is Running, the node runs from a checkpoint, and its
+/// `latestBlockNumber` is strictly above the anchor it restored: the first post-anchor block was
+/// validated. A height advance alone is not the claim; the anchor is.
+async fn wait_for_join_contract(
+    client: &reqwest::Client,
+    admin_base: &str,
+    joiner: &common::TestNode,
+    timeout: Duration,
+) -> serde_json::Value {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Ok(resp) = client
+            .get(format!("{admin_base}/api/v1/status/operator"))
+            .send()
+            .await
+        {
+            if let Ok(status) = resp.json::<serde_json::Value>().await {
+                let phase = status["syncPhase"].as_str().unwrap_or("");
+                let kind = status["checkpoint"]["kind"].as_str().unwrap_or("");
+                let anchor = status["checkpoint"]["anchorHeight"].as_i64().unwrap_or(-1);
+                let latest = status["latestBlockNumber"].as_i64().unwrap_or(-1);
+                if phase == "running" && kind == "checkpoint" && anchor > 0 && latest > anchor {
+                    return status;
+                }
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            let messages = joiner.log.messages();
+            panic!(
+                "the joiner never validated the first post-anchor block; log tail: {:?}",
+                messages.into_iter().rev().take(32).collect::<Vec<_>>()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 fn compare_leaves(joiner: Option<DevVesting>, bootstrap: Option<DevVesting>) {
     let joiner = joiner.expect("the restored joiner carries an allocation");
     let bootstrap = bootstrap.expect("the bootstrap genesis carries an allocation");
     assert_eq!(
         joiner.address, bootstrap.address,
-        "the joiner must install the bootstrap's recipient"
+        "the joiner must restore the bootstrap's recipient"
     );
     assert_eq!(
         joiner.allocation, bootstrap.allocation,
-        "the joiner must install the bootstrap's amount"
+        "the joiner must restore the bootstrap's amount"
     );
     assert!(
         joiner.unreleased <= joiner.allocation,
@@ -298,260 +379,11 @@ fn compare_leaves(joiner: Option<DevVesting>, bootstrap: Option<DevVesting>) {
     );
 }
 
-async fn run_case(phase: Phase, spec: JoinerSpec, expected: Expected) {
-    let boot_dir = temp_dir("lfs-boot");
-    // Acquire both nodes' ports in one allocation. A pair needs twelve
-    // disjoint endpoints; independent ephemeral allocations may reuse a
-    // released port before either node binds it (especially under a debugger).
-    let pair_ports = free_ports(12);
-    let boot_ports = pair_ports[..6].to_vec();
-    let join_ports = pair_ports[6..].to_vec();
-    let recipient = address(2);
-    let snapshot = matches!(phase, Phase::Snapshot);
-    let boot_conf = bootstrap_conf(
-        &boot_dir,
-        &boot_ports,
-        &recipient,
-        "1000000000000000000",
-        snapshot,
-    );
-
-    // The bootstrap's identity is persisted by `node_environment::create`; `build` re-reads it, so
-    // the joiner can be pointed at it before either node is started.
-    let boot_id = node_environment::create(&boot_conf).expect("bootstrap identity");
-    let boot_peer = PeerNode::from(
-        boot_id,
-        "127.0.0.1".to_string(),
-        Port::new(boot_ports[3]),
-        Port::new(boot_ports[5]),
-    );
-
-    let join_dir = temp_dir("lfs-join");
-    let mut join_conf = joiner_conf(&join_dir, &join_ports, &boot_peer);
-    // **The harness assigns ports dynamically**, so the bootstrap's client API is named explicitly
-    // rather than derived from the protocol port's published +3 layout.
-    join_conf.casper.checkpoint_source = Some(format!("http://127.0.0.1:{}", boot_ports[0]));
-    spec.apply(&mut join_conf, &join_dir);
-
-    let boot_base = format!("http://127.0.0.1:{}", boot_ports[0]);
-    let client = reqwest::Client::new();
-    let ready_client = client.clone();
-    let ready_base = boot_base.clone();
-    let ready_dir = boot_dir.clone();
-    let ready_ports = boot_ports.clone();
-    let (boot_node, join_node) = start_pair_after(
-        (&boot_conf, boot_ports[4], boot_ports[0]),
-        move || async move {
-            wait_for_genesis(&ready_client, &ready_base).await;
-            if snapshot {
-                deploy_for_snapshot(&ready_dir, &ready_ports, &ready_client, &ready_base).await;
-            }
-        },
-        (&join_conf, join_ports[5], join_ports[0]),
-    )
-    .await;
-
-    match expected {
-        Expected::Restored => {
-            let join_base = format!("http://127.0.0.1:{}", join_ports[0]);
-            let join_admin = format!("http://127.0.0.1:{}", join_ports[1]);
-            // A snapshot joiner restores at least the finalized fringe the bootstrap published before
-            // it dialled; a genesis-only joiner restores to height 0.
-            let target = if snapshot { 1 } else { 0 };
-            wait_for_blocks(&client, &join_base, &join_node).await;
-            wait_for_height(&join_base, target, Duration::from_secs(120)).await;
-            wait_for_sync_cleared(&join_admin, Duration::from_secs(120)).await;
-            // The API serves before the launch phase finishes; "restored" and "the guard passed"
-            // are not the same claim. The Running line is the latter.
-            wait_for_running(&join_node).await;
-
-            let join_root = latest_post_state_hash(&client, &join_base).await;
-            let boot_root = latest_post_state_hash(&client, &boot_base).await;
-            compare_leaves(
-                join_node.dev_vesting_at_hex(&join_root).await,
-                boot_node.dev_vesting_at_hex(&boot_root).await,
-            );
-            assert_eq!(
-                join_node
-                    .params_at_hex(&join_root)
-                    .await
-                    .dev_tax_vesting_blocks,
-                boot_node
-                    .params_at_hex(&boot_root)
-                    .await
-                    .dev_tax_vesting_blocks,
-                "the joiner must carry the bootstrap's vesting term"
-            );
-
-            if snapshot {
-                // Autopropose continues on the bootstrap; the restored joiner validates the next
-                // finalized block.
-                wait_for_height(&join_base, target + 1, Duration::from_secs(60)).await;
-            }
-
-            join_node.request_stop();
-            boot_node.request_stop();
-            let _ = tokio::time::timeout(Duration::from_secs(30), join_node.handle).await;
-            let _ = tokio::time::timeout(Duration::from_secs(30), boot_node.handle).await;
-        }
-        Expected::Refused => {
-            // The launch task's error is logged rather than returned through `serve`; the node's
-            // own recording log is the per-case surface.
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-            loop {
-                if let Some(line) = join_node
-                    .log
-                    .messages()
-                    .into_iter()
-                    .find(|line| line.contains("refusing to enter Running"))
-                {
-                    assert!(
-                        line.contains("local developer allocation")
-                            || line.contains("restored genesis allocation")
-                            || line.contains("restored allocation"),
-                        "the refusal must be the restore guard's: {line}"
-                    );
-                    break;
-                }
-                assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "the joiner never reported a refusal; log tail: {:?}",
-                    join_node
-                        .log
-                        .messages()
-                        .into_iter()
-                        .rev()
-                        .take(12)
-                        .collect::<Vec<_>>()
-                );
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            join_node.shutdown();
-            boot_node.request_stop();
-            let _ = tokio::time::timeout(Duration::from_secs(30), boot_node.handle).await;
-        }
-    }
-}
-
-fn matching_spec() -> JoinerSpec {
-    JoinerSpec {
-        recipient: Some(address(2)),
-        wallets_rows: Some(wallets("1000000000000000000")),
-        bonds: true,
-        bonded: false,
-    }
-}
-
+/// A checkpoint-restoring joiner that validates the first post-anchor block.
 #[test]
-fn genesis_only_restore_with_matching_inputs_preserves_the_allocation() {
-    test_runtime().block_on(run_case(
-        Phase::GenesisOnly,
-        matching_spec(),
-        Expected::Restored,
-    ));
-}
-
-#[test]
-fn genesis_only_restore_refuses_a_different_recipient() {
-    test_runtime().block_on(run_case(
-        Phase::GenesisOnly,
-        JoinerSpec {
-            recipient: Some(address(3)),
-            ..matching_spec()
-        },
-        Expected::Refused,
-    ));
-}
-
-#[test]
-fn genesis_only_restore_refuses_changed_wallet_balances() {
-    test_runtime().block_on(run_case(
-        Phase::GenesisOnly,
-        JoinerSpec {
-            // The same recipient, but 2e18 drops is twice the bootstrap's total and therefore a
-            // different percentage arm (400M REV against 200M).
-            wallets_rows: Some(wallets("2000000000000000000")),
-            ..matching_spec()
-        },
-        Expected::Refused,
-    ));
-}
-
-#[test]
-fn genesis_only_restore_with_missing_descriptors_trusts_the_bootstrap() {
-    test_runtime().block_on(run_case(
-        Phase::GenesisOnly,
-        JoinerSpec {
-            recipient: None,
-            wallets_rows: None,
-            bonds: false,
-            bonded: false,
-        },
-        Expected::Restored,
-    ));
-}
-
-#[test]
-fn snapshot_restore_with_matching_inputs_preserves_the_allocation() {
-    test_runtime().block_on(run_case(
-        Phase::Snapshot,
-        matching_spec(),
-        Expected::Restored,
-    ));
-}
-
-#[test]
-fn snapshot_restore_refuses_a_different_recipient() {
-    test_runtime().block_on(run_case(
-        Phase::Snapshot,
-        JoinerSpec {
-            recipient: Some(address(3)),
-            ..matching_spec()
-        },
-        Expected::Refused,
-    ));
-}
-
-#[test]
-fn snapshot_restore_refuses_changed_wallet_balances() {
-    test_runtime().block_on(run_case(
-        Phase::Snapshot,
-        JoinerSpec {
-            wallets_rows: Some(wallets("2000000000000000000")),
-            ..matching_spec()
-        },
-        Expected::Refused,
-    ));
-}
-
-#[test]
-fn snapshot_restore_with_missing_descriptors_trusts_the_bootstrap() {
-    test_runtime().block_on(run_case(
-        Phase::Snapshot,
-        JoinerSpec {
-            recipient: None,
-            wallets_rows: None,
-            // **The network's bond set is the trust anchor; only the local allocation claim is
-            // absent.** A joiner with no bonds cannot verify the checkpoint certificate, so the
-            // missing-descriptor case keeps the bonds and withholds the dev-tax/wallet claim — the
-            // guard's "trust when absent" rule is about the allocation, not the trust anchor.
-            bonds: true,
-            bonded: false,
-        },
-        Expected::Restored,
-    ));
-}
-
-/// **A restored bonded joiner validates the chain and can propose on it.** The accepting matrix
-/// above shows the joiner adopts the allocation; this shows the restored state is usable for the
-/// node's actual job, not merely readable. Both validators are bonded at genesis, so the joiner's
-/// proposal is one the bootstrap can accept.
-#[test]
-fn a_restored_bonded_joiner_validates_and_proposes() {
+fn a_checkpoint_joiner_restores_the_certified_state() {
     test_runtime().block_on(async {
-        let boot_dir = temp_dir("lfs-bonded-boot");
-        // Keep bootstrap/joiner endpoint sets disjoint even if the kernel
-        // would otherwise recycle ports between separate allocations.
+        let boot_dir = temp_dir("lfs-restore-boot");
         let pair_ports = free_ports(12);
         let boot_ports = pair_ports[..6].to_vec();
         let join_ports = pair_ports[6..].to_vec();
@@ -561,7 +393,78 @@ fn a_restored_bonded_joiner_validates_and_proposes() {
             &boot_ports,
             &recipient,
             "1000000000000000000",
-            false,
+            true,
+        );
+
+        let boot_id = node_environment::create(&boot_conf).expect("bootstrap identity");
+        let boot_peer = PeerNode::from(
+            boot_id,
+            "127.0.0.1".to_string(),
+            Port::new(boot_ports[3]),
+            Port::new(boot_ports[5]),
+        );
+
+        let join_dir = temp_dir("lfs-restore-join");
+        let mut join_conf = joiner_conf(&join_dir, &join_ports, &boot_peer);
+        join_conf.casper.checkpoint_source = Some(format!("http://127.0.0.1:{}", boot_ports[0]));
+        joiner_spec(false).apply(&mut join_conf, &join_dir);
+
+        let boot_base = format!("http://127.0.0.1:{}", boot_ports[0]);
+        let client = reqwest::Client::new();
+        let ready_client = client.clone();
+        let ready_base = boot_base.clone();
+        let ready_dir = boot_dir.clone();
+        let ready_ports = boot_ports.clone();
+        let (boot_node, join_node) = start_pair_after(
+            (&boot_conf, boot_ports[4], boot_ports[0]),
+            move || async move {
+                wait_for_genesis(&ready_client, &ready_base).await;
+                deploy_for_snapshot(&ready_dir, &ready_ports, &ready_client, &ready_base).await;
+                wait_for_certifiable_checkpoint(&ready_client, &ready_base).await;
+            },
+            (&join_conf, join_ports[5], join_ports[0]),
+        )
+        .await;
+
+        let join_base = format!("http://127.0.0.1:{}", join_ports[0]);
+        let join_admin = format!("http://127.0.0.1:{}", join_ports[1]);
+        wait_for_blocks(&client, &join_base, &join_node).await;
+        wait_for_sync_cleared(&join_admin, Duration::from_secs(120)).await;
+        wait_for_running(&join_node).await;
+        wait_for_join_contract(&client, &join_admin, &join_node, Duration::from_secs(120)).await;
+
+        let join_root = latest_post_state_hash(&client, &join_base).await;
+        let boot_root = latest_post_state_hash(&client, &boot_base).await;
+        compare_leaves(
+            join_node.dev_vesting_at_hex(&join_root).await,
+            boot_node.dev_vesting_at_hex(&boot_root).await,
+        );
+
+        join_node.request_stop();
+        boot_node.request_stop();
+        let _ = tokio::time::timeout(Duration::from_secs(30), join_node.handle).await;
+        let _ = tokio::time::timeout(Duration::from_secs(30), boot_node.handle).await;
+    });
+}
+
+/// **A restored bonded joiner validates the chain and can propose on it.** The accepting test
+/// above shows the joiner restores the committed state; this shows the restored state is usable for
+/// the node's actual job, not merely readable. Both validators are bonded at genesis, so the
+/// joiner's proposal is one the bootstrap can accept.
+#[test]
+fn a_checkpoint_restored_bonded_joiner_proposes_and_the_bootstrap_finalises_it() {
+    test_runtime().block_on(async {
+        let boot_dir = temp_dir("lfs-bonded-boot");
+        let pair_ports = free_ports(12);
+        let boot_ports = pair_ports[..6].to_vec();
+        let join_ports = pair_ports[6..].to_vec();
+        let recipient = address(2);
+        let boot_conf = bootstrap_conf(
+            &boot_dir,
+            &boot_ports,
+            &recipient,
+            "1000000000000000000",
+            true,
         );
         // The genesis bond set must include the joiner from the start; adding it after genesis
         // would not match the committed set.
@@ -583,24 +486,22 @@ fn a_restored_bonded_joiner_validates_and_proposes() {
 
         let join_dir = temp_dir("lfs-bonded-join");
         let mut join_conf = joiner_conf(&join_dir, &join_ports, &boot_peer);
-        // **The harness assigns ports dynamically**, so the bootstrap's client API is named explicitly
-        // rather than derived from the protocol port's published +3 layout.
         join_conf.casper.checkpoint_source = Some(format!("http://127.0.0.1:{}", boot_ports[0]));
-        JoinerSpec {
-            recipient: Some(recipient.clone()),
-            wallets_rows: Some(wallets("1000000000000000000")),
-            bonds: true,
-            bonded: true,
-        }
-        .apply(&mut join_conf, &join_dir);
+        joiner_spec(true).apply(&mut join_conf, &join_dir);
 
         let boot_base = format!("http://127.0.0.1:{}", boot_ports[0]);
         let client = reqwest::Client::new();
         let ready_client = client.clone();
         let ready_base = boot_base.clone();
+        let ready_dir = boot_dir.clone();
+        let ready_ports = boot_ports.clone();
         let (boot_node, join_node) = start_pair_after(
             (&boot_conf, boot_ports[4], boot_ports[0]),
-            move || async move { wait_for_genesis(&ready_client, &ready_base).await },
+            move || async move {
+                wait_for_genesis(&ready_client, &ready_base).await;
+                deploy_for_snapshot(&ready_dir, &ready_ports, &ready_client, &ready_base).await;
+                wait_for_certifiable_checkpoint(&ready_client, &ready_base).await;
+            },
             (&join_conf, join_ports[5], join_ports[0]),
         )
         .await;
@@ -610,6 +511,7 @@ fn a_restored_bonded_joiner_validates_and_proposes() {
         wait_for_blocks(&client, &join_base, &join_node).await;
         wait_for_sync_cleared(&join_admin, Duration::from_secs(120)).await;
         wait_for_running(&join_node).await;
+        wait_for_join_contract(&client, &join_admin, &join_node, Duration::from_secs(120)).await;
 
         let before = latest_height(&client, &join_base).await;
         let response = client

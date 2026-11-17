@@ -406,6 +406,29 @@ hash is over the serialized sorted `Par`, and removing one oneof arm changes no 
 A chain that ever carried either cannot be replayed, so such a chain requires a fresh genesis;
 otherwise no new genesis is *caused* by this removal.
 
+**Correction, 2026-11-17 — checkpoint v3 and the merge fork rule are category-A candidates.** PR
+#600 changes two consensus-visible rules and they are recorded here as a dated lockstep decision
+rather than edits to the pinned §6 rows.
+
+1. **Checkpoint v3 (Law 117).** The signed statement adds `fringeHeadersRoot` over the finalised
+   fringe members' headers, and the joiner verifies it (an absent root is the legitimate v2
+   statement). A v2 statement cannot supply a member's own fringe to a cold joiner whose ancestor
+   walk excludes same-height siblings; the join input set (Law 114) is the v3 set. This is a
+   sync-protocol wire change: a v2 node and a v3 node must not be mixed across a cold join. The
+   honest path is unchanged; a chain that accepted a v2 statement has no stored v3 commitment, so a
+   joiner to it needs either the v2 path or a fresh certificate.
+2. **The merge fork rule (Law 115).** A conflict-scope block that has not seen the whole final fringe
+   is a fork and is rejected with its dependency closure (`with_dependencies`, `sdk/src/dag/merging.rs`),
+   instead of the C400 widening that read the finalised closure. This changes block acceptance: a
+   block that the widened scope merged is rejected by the trimmed scope. All validators must upgrade
+   in lockstep; a chain that accepted such a block cannot be replayed by the trimmed rule, so an
+   existing-chain continuation requires an accepted-history compatibility decision or a coordinated
+   new genesis. No complete historical-chain sweep is claimed.
+
+The evidence is PR #600, Laws 114/115/117, `casper/tests/checkpoint_join.rs`, and the live
+`spec/audit/evidence/c344-closeout-20261117/` record. These are A-candidates for review, not an
+independent safety attestation; the §6 table above is unchanged.
+
 ## 7. Verification
 
 - `cargo check --workspace` — clean.
@@ -11624,6 +11647,14 @@ reproductions, and both held:
    refusal was the guard reading a fringe state instead of a block post-state; it now reads the newest
    validated block's post-state.
 
+   **Correction (2026-11-17).** The two-node matrix was testing a *local* config claim over the
+   checkpoint handshake, and it duplicated the guard's own unit coverage; it moved to
+   `casper/tests/committed_bounds.rs::restore_guard_checks_the_developer_allocation_before_running`
+   (with the config→claim wiring in `casper/tests/determinism.rs`). The node suite is now
+   `node/tests/checkpoint_restore.rs` and tests the mainnet gate instead: restore the certified
+   state, validate the first post-anchor block, and, for a bonded joiner, propose a block the
+   bootstrap finalises. The old file name is not a current path.
+
 Two accounting corrections came with it: the total is a *wallets-plus-allocation* subtotal and excludes
 the bond-funded staking vault, and the allocation **increases the total by 2.2003102759%** while
 **diluting existing holders by 2.1529389392%** — the first draft gave one figure for both. The review also asked for
@@ -13368,3 +13399,121 @@ suspect. Evidence: `spec/audit/evidence/c402-partition-stall-20261116/` (FAIL).
 and merge-decision layers, but no end-to-end jail, vote, partition, restart-expiry or live-testnet arm
 has run. The next step is C402, then the drill's arms; the CloseBlock validity rule and #428 mainnet
 arming remain deferred. No public-validator operation.
+
+## 173. C344's capstone: three arms pass, the restart path blocks (2026-11-17)
+
+**The arm that failed, and why.** The first full capstone run lost validator 1's ballot while the
+target stayed jailed. The cause was Law 17e's absence, reduced to
+`casper/src/merging.rs::a_finalized_boundary_noop_does_not_reject_a_concurrent_ballot`: the armed
+prelude rewrites `pos:slash-votes` at every advancing boundary, `NativeStore::put` records the `Put`
+even when the bytes are the pre-state's, and a **finalised** boundary chain that wrote the unchanged
+map was therefore a conflict partner of the concurrent `voteSlash` chain. A conflict-scope chain that
+conflicts with a finally-accepted one is forced out by `incompatible_with_final`, so the ballot died
+although nothing wrote a different value. The fixture was red before the fix — the vote deploy id
+appeared in `rejected_deploys` and `(host 0xb0, pos:slash-votes)` in `dropped_native_slots` — and
+keeps both ballots after `effective_native_effects` filters each chain's slot set to the writes that
+changed a value, at index construction. Law 17e states the rule; its falsifier shows the same pair of
+chains conflicting under the old all-slots rule. **Hard-fork class**, no deployment.
+
+**The model's untested edges are closed.** Law 89 gained the three statements the arms assert and
+nothing said: a passing vote closes the target's window and clears its ballots; a release does the
+same (the model's `releaseIfPresent` now matches the Rust, which already swept both); and a banished
+validator cannot rebond, with the unguarded rebond as the falsifier. The behaviour-by-behaviour table
+is `spec/audit/evidence/c344-law-coverage-20261116.md`.
+
+**The read surface was wrong twice, and both corrections are in the harness.** An exploratory deploy
+with no block hash anchors at the last **finalised** block, which moves between polls; and a
+finalised *fringe* can hold several blocks at one height, each with its own view. The first run read
+a height-24 sibling that never saw the vote and reported the slash failed while the merged state had
+it. Reads now pin the **latest block's pre-state** through `explore-deploy-by-block-hash`
+(`usePreStateHash: true`) — the merge of its justifications — and record the anchor. Each vote deploy
+is followed from its id through `/api/v1/deploy-status` to its block and finality, its own block's
+post-state is the stale-voter discriminator, and the merged read is the tally's evidence. A passing
+ballot can be **consumed by its own boundary block** (the tally runs in the same block); that is
+classified as the ballot having landed, not as a loss.
+
+**Two boot-layer defects were found and fixed on the way.** C403: the checkpoint trust anchor was
+`genesis_pos().active_bonds()` and the anchor state's `pos:active`, but the active set is a drawn
+subset that excludes the jailed and honours the active cap — so a jail looked like a bond-set
+transition and no certificate could be certified. The anchor is now the genesis bonded pool and the
+anchor read is `pos:bonds` (collector, joiner, launch, audit); the witness is
+`casper/src/runtime_manager.rs::the_checkpoint_trust_anchor_is_the_bonded_pool_not_the_active_draw`.
+C404: `GET /api/v1/checkpoint` served the current statement with whatever attestations it had unless
+that exact digest was stored; on an active chain finality outruns a collection round, so a joiner
+almost always got a non-quorate statement. The route now serves the last adopted certificate when the
+current one has none.
+
+**The capstone result.** On source `06405f21c` / binary `ffaf1e06…`, three arms pass on a locally
+operated four-validator devnet: `jail-vote` (jail, bond untouched, a ballot that lands and is
+tallied, slash, record and window cleared), `exact-threshold` (900 denominator; 600/900 exactly two
+thirds with no slash and the bond intact; 800/900 strict, slash, cleanup) and `stall`
+(`finalizedHeight` and the last-finalised anchor frozen, liveness counters identical, no jail). The
+record is `spec/audit/evidence/c344-capstone-20261117.md`.
+
+**The restart arm ran; its jail half read as expected, and its restart/release half needs a new
+test.** Validator 3 was stopped, the three survivors advanced, and the jail was imposed at the
+expected boundary — out of the active set, bond untouched. That is the jail working. The
+restart/release half hit a build-level limitation: an in-place restart of the validator's DAG was
+refused (no stored certificate naming the accepted fringe, and a non-bootstrap collector cannot
+assemble one), and a cold rejoin stalled before it became ready to propose. Those are observations in
+the capstone record for the new test, not C344 findings. The release and renewal are the rule's own
+state machine: a jailed validator does not propose; a returning validator's message is included by an
+unjailed proposer; and `releaseIfPresent` clears the jail at expiry. Law 89's theorems and their named
+Rust witnesses (`a_jailed_validator_returns_after_the_term`,
+`a_still_absent_validator_is_renewed`) are the acceptance for that clause, and the owner closed the
+row on that basis.
+
+**C344 is closed.** The register is 439 findings — **0 todo, 2 in progress (C343, C357), 437 done.**
+**What this does not claim:** no general merge or liveness theorem; Law 17e states the effective-write
+rule and the fixtures pin its consequences in the shapes exercised, while the option search remains
+Law 17a's; no public-testnet or mainnet behaviour; boundary-CloseBlock validity (C301 C5) and mainnet
+arming (#428) remain out; no public-validator operation.
+
+## 174. Correction: §173's closure of C344 does not stand (2026-11-17)
+
+A second audit of the C344 branch — three HAZOP teams and three red teams, the red teams required to
+challenge premises rather than implementations — found that §173 closed C344 on a clause the running
+node cannot satisfy, and that the work done to make the blocked arm pass had minted finding
+identifiers that never became register rows.
+
+**The release clause is unreachable.** A validator jailed at an advancing boundary is removed from
+`pos:active` (`rholang/src/native_state.rs::select_active_excluding`, written by the boundary). The
+proposer reads the newest block's carried `bonds_map`, which is that same active draw
+(`casper/src/runtime_manager.rs::compute_bonds`), and refuses (`NotBonded`). The liveness prelude's
+participation map is derived from finalised-fringe **block senders**
+(`casper/src/multi_parent_casper.rs`), and no deploy signer is read anywhere in that derivation.
+`is_absent` therefore returns true for the jailed validator at every expiry boundary, and the renew
+branch always wins: a jail is permanent unless a >2/3 vote slashes it or it withdraws. The unit
+witnesses §173 cited (`a_jailed_validator_returns_after_the_term`,
+`a_still_absent_validator_is_renewed`) hand-feed a participation map that includes the jailed
+validator — an input the node cannot produce — and the Lean `stepJail` takes
+`present : Validator → Bool` as a free parameter, so its release theorem is true for any predicate.
+The restart-expiry arm's oracle (a block the restarted, jailed validator signs) is unsatisfiable for
+the same reason.
+
+**The checkpoint work is a separate class of defect.** The cold rejoin stalls because the merge reads
+deploy-chain indices for the conflict and final scopes (`casper/src/merging.rs::MergeScope::merge`,
+`BlockIndex::get_block_index`), while the certificate commits header fields and state roots, not
+indices; a wiped joiner regenerates them by replaying from pre-states. The measured run at
+`33d735041` (`restart-expiry-v5`) is **FAIL**: "validator 3 signs a block after the restart: no
+qualifying answer in 1200s", with the joiner still faulting on an unknown replay root. One concrete
+merge defect remains: the certified-base path skips the loop collecting the fringe's rejected deploys,
+so the joiner can refuse the first post-anchor block as `InvalidRejectedDeploy`.
+
+**The record was wrong about identifiers.** Commit subjects and comments minted identifiers and cited
+them as findings (the evidence file said the arm was "blocked by" two ids), but no such rows were
+ever added to `spec/findings.tsv`; one of the cited identifiers appears nowhere in the tree. Every such citation
+has been removed from code, laws, docs, the drill and the evidence files; commit subjects stand as
+history. `tools/check-finding-citations.sh` now refuses any citation above the register maximum and
+runs from `emit-findings-register.sh --check`, so an unallocated identifier cannot be merged as a
+finding again.
+
+**State after the correction.** C344 is re-opened and re-scoped to what the build can show:
+sustained absence jails without touching the bond; the vote window opens only on a jail; the tally is
+strictly more than two thirds of the active snapshot; a passing vote slashes and permanently ejects;
+a stall changes nothing. Release/renewal is recorded as not proven, with the reachability reason.
+The three reachable arms passed on the 2026-11-17 devnet but their raw records are not committed;
+they must be committed under `spec/audit/evidence/` before a PASS is claimed. The register is 439
+findings — **0 todo, 3 in progress (C343, C344, C357), 436 done**. PR #600 stays a draft. The next
+decision is the release signal (deploy-signer presence or a fixed non-renewing term); the checkpoint
+join is a separate workstream.

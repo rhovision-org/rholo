@@ -366,6 +366,10 @@ render_or_check() {
     rm -f "$committed"; return 1
   fi
   rm -f "$committed"
+  # **A cited id must be an id the register could hold.** One failure minted ids in commit subjects
+  # and code comments without ever adding rows; this check refuses any citation above the register
+  # maximum, so the same phantom cannot be merged again. Retired ids below the maximum are warnings.
+  "$ROOT/tools/check-finding-citations.sh" || return 1
   printf 'emit-findings-register: ok — spec/AUDIT.md matches spec/findings.tsv (%s rows: %s todo, %s done)\n' \
     "$n_total" "$(count_of todo)" "$(count_of done)"
   return 0
@@ -375,3 +379,4 @@ render_or_check
 rc=$?
 rm -f "$panel"
 exit $rc
+

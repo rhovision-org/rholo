@@ -800,7 +800,7 @@ mod tests {
                 anchor: "anchor".to_string(),
                 anchor_height: 7,
                 age_blocks: Some(3),
-                validation_window_blocks: 8,
+                validation_window_heights: 14,
                 validation_window_committed: true,
                 metadata_committed: true,
             }),
@@ -828,7 +828,7 @@ mod tests {
         assert_eq!(public.sync_phase.as_deref(), Some("running"));
         let anchor = public.checkpoint.expect("the anchor travels");
         assert_eq!(anchor.kind, "checkpoint");
-        assert_eq!(anchor.validation_window_blocks, 8);
+        assert_eq!(anchor.validation_window_heights, 14);
         assert!(anchor.validation_window_committed);
         let audit = public.audit.expect("the audit reading travels");
         assert!(audit.available);

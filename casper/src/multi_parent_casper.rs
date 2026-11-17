@@ -268,12 +268,16 @@ pub async fn final_scope_rejections(
 }
 
 /// Compute the merged pre-state for a set of parent blocks (port of `getPreStateForParents`).
+///
+/// `trusted` is the checkpoint's signed merge base, present only when replay runs on a node whose
+/// accepted state is a checkpoint certificate. See [`merges_from_the_certified_fringe`].
 pub async fn get_pre_state_for_parents<F, Fut>(
     dag: &dyn BlockDagStorage,
     block_store: &BlockStore,
     runtime: &RuntimeManager,
     parent_hashes: &BTreeSet<BlockHash>,
     block_index: &F,
+    trusted: Option<&crate::engine::anchor::TrustedMergeBase>,
 ) -> Result<ParentsMergedState, String>
 where
     F: Fn(BlockHash) -> Fut,
@@ -324,8 +328,11 @@ where
     // is looked up under. Deriving it later, or from `dag_repr.latest_fringe()` separately, is the one
     // way play and replay could disagree about which fringe was meant. A validator with no message in
     // the fringe is simply absent from the map, which the rule reads as silence.
+    // The map is authors **and deploy signers** (C344: a jailed validator cannot author, but it can
+    // sign a funded deploy an unjailed proposer includes — that is the release signal). It is derived
+    // from the same `prev_fringe` the state hash is looked up under, so play and replay agree.
     let participation: BTreeMap<Validator, BlockHeight> =
-        liveness::latest_heights(prev_fringe.iter().map(|m| (m.sender, m.height)));
+        participation_from_fringe(block_store, prev_fringe.iter()).await?;
     // **The state at the previous fringe, read from the blocks that finalised it** (Law 66, C270).
     //
     // The record store used to hold one derived value per fringe key, joined with a `min` tie-break when
@@ -350,8 +357,32 @@ where
     // enough to carry no bonds leaf, and the chain stalled at height 20 with `propose failed … active-bonds
     // leaf not found in state`. A block's own `fringe_state_hash` is the state **at** the set it finalises,
     // which is what the retired record held (that same block wrote it) and what the merge must start from.
+    // **The certified merge base**. The first blocks after a checkpoint anchor finalise the
+    // very fringe the anchor itself finalised, so their merge base is the state the certificate
+    // signs. The parent records cannot supply it on a joiner: a sibling received by gossip and never
+    // validated carries a zero fringe state (no merge ran here), and a sibling whose body has not
+    // arrived cannot be read at all. The certificate's root is quorum-signed and is re-checked
+    // against the anchor header at join, so it is the answer — used **only** when the anchor's
+    // metadata names the same fringe, so a parent set that finalised some other fringe still derives
+    // its base from the records.
+    let certified_base = match trusted {
+        Some(t) => {
+            let anchor_meta = dag.lookup(&t.anchor).await?.ok_or_else(|| {
+                format!(
+                    "the checkpoint anchor {} has no metadata",
+                    t.anchor.to_hex()
+                )
+            })?;
+            (anchor_meta.fringe == prev_fringe_hashes).then_some(t.base)
+        }
+        None => None,
+    };
     let mut claims: Vec<(i64, BlockHash, Blake2b256Hash)> = Vec::new();
     let mut prev_fringe_rejected_deploys: BTreeSet<Vec<u8>> = BTreeSet::new();
+    // **The finalisers are read even under a certified base.** The certificate signs the base
+    // *state*, not the finalisers' rejected-deploy sets; skipping this loop made the joiner derive
+    // an empty set and refuse the first post-anchor block `InvalidRejectedDeploy`. The bodies are
+    // fetched with the checkpoint (the sync's join-input set), so the loop can always read them.
     for m in parents.iter().filter(|m| m.fringe == prev_fringe_hashes) {
         let meta = dag.lookup(&m.id).await?.ok_or_else(|| {
             format!(
@@ -403,20 +434,23 @@ where
                 .join("; "),
         );
     }
-    let prev_fringe_state = match claims.into_iter().max_by_key(|(h, id, _)| (*h, *id)) {
-        Some((_, _, state)) => state,
-        // **A parent set always has a finaliser**: `latest_fringe` returns the max-fringe parent's own
-        // `fringe`, so that parent is itself in the set this loop filters for. An empty set therefore
-        // means the message map and the metadata store disagree about the parents — not that the fringe
-        // is empty, which is a case with a finaliser like any other (a parent that finalised nothing has
-        // `fringe = ∅`, and is its own finaliser).
-        None => {
-            return Err(format!(
-                "no parent finalises the previous fringe {:?}: the parent set {:?} and the message map \
-                 disagree",
-                prev_fringe_hashes, parent_hashes
-            ))
-        }
+    let prev_fringe_state = match certified_base {
+        Some(base) => base,
+        None => match claims.into_iter().max_by_key(|(h, id, _)| (*h, *id)) {
+            Some((_, _, state)) => state,
+            // **A parent set always has a finaliser**: `latest_fringe` returns the max-fringe parent's own
+            // `fringe`, so that parent is itself in the set this loop filters for. An empty set therefore
+            // means the message map and the metadata store disagree about the parents — not that the fringe
+            // is empty, which is a case with a finaliser like any other (a parent that finalised nothing has
+            // `fringe = ∅`, and is its own finaliser).
+            None => {
+                return Err(format!(
+                    "no parent finalises the previous fringe {:?}: the parent set {:?} and the message map \
+                     disagree",
+                    prev_fringe_hashes, parent_hashes
+                ))
+            }
+        },
     };
     // Captured here rather than at the struct literal, because `prev_fringe_hashes` is moved into
     // `new_fringe` below (#139). These two are what a state disagreement is reported with: the fringe
@@ -587,6 +621,8 @@ where
         kept_chains: fringe_merge.report.kept_chains + conflict_merge.report.kept_chains,
         rejected_chains: fringe_merge.report.rejected_chains
             + conflict_merge.report.rejected_chains,
+        fork_rejected_chains: fringe_merge.report.fork_rejected_chains
+            + conflict_merge.report.fork_rejected_chains,
         final_scope_rejected_chains: fringe_merge.report.final_scope_rejected_chains
             + conflict_merge.report.final_scope_rejected_chains,
         final_scope_rejected_deploys: {
@@ -687,6 +723,7 @@ where
 /// un-indexable.
 pub async fn participation_for_block(
     dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
     block: &BlockMessage,
 ) -> Result<BTreeMap<Validator, BlockHeight>, String> {
     let dag_repr = dag.get_representation().await;
@@ -706,9 +743,78 @@ pub async fn participation_for_block(
     // An empty parent set has no fringe, and no participation: the genesis shape, and the arm
     // `validate_block_checkpoint` handles separately.
     let fringe = message_map::latest_fringe(msg_map, &parents);
-    Ok(liveness::latest_heights(
-        fringe.iter().map(|m| (m.sender, m.height)),
-    ))
+    participation_from_fringe(block_store, fringe.iter()).await
+}
+
+/// A deploy's signer, when it is a validator key: the `deployer` field is a 65-byte public key, and
+/// any other length is an account rather than a validator.
+pub fn validator_from_deployer(bytes: &[u8]) -> Option<Validator> {
+    <[u8; 65]>::try_from(bytes).ok().map(Validator::new)
+}
+
+/// **The validators whose keys signed a deploy this block included.** The body is hash-covered, so
+/// every node derives the same set.
+pub fn deploy_signers(block: &BlockMessage) -> impl Iterator<Item = Validator> + '_ {
+    block
+        .state
+        .deploys
+        .iter()
+        .filter_map(|deploy| validator_from_deployer(&deploy.deploy.deployer))
+}
+
+/// **The participation map's rule**: a validator is present at the greatest height at which it either
+/// authored a fringe block or signed a deploy included in one. The second arm is the release signal:
+/// a jailed validator is outside the drawn active set and the proposer refuses it, so it cannot
+/// author; it can still sign a funded deploy that an unjailed proposer includes. Reading only authors
+/// made the release clause unreachable and every jail permanent.
+pub fn participation_map(
+    authors: impl IntoIterator<Item = (Validator, BlockHeight)>,
+    deployers: impl IntoIterator<Item = (Validator, BlockHeight)>,
+) -> BTreeMap<Validator, BlockHeight> {
+    let mut participation = BTreeMap::new();
+    for (validator, height) in authors.into_iter().chain(deployers) {
+        participation
+            .entry(validator)
+            .and_modify(|current| {
+                if height > *current {
+                    *current = height;
+                }
+            })
+            .or_insert(height);
+    }
+    participation
+}
+
+/// **The boundary's participation map**, derived from the finalised fringe and the bodies of its
+/// blocks. It is the presence the advancing boundary's absence rule reads, and it must be derived
+/// identically by the proposer, the validator and the replay (`participation_for_block`).
+pub async fn participation_from_fringe<'a>(
+    block_store: &BlockStore,
+    fringe: impl Iterator<Item = &'a Message<BlockHash, Validator>>,
+) -> Result<BTreeMap<Validator, BlockHeight>, String> {
+    let mut presence: Vec<(Validator, BlockHeight)> = Vec::new();
+    for member in fringe {
+        // A missing body is a block this node cannot read: the whole map would then differ from the
+        // one the proposer derived, so it is an error, not a silently smaller map.
+        let block = block_store
+            .get(&[member.id])
+            .await?
+            .into_iter()
+            .next()
+            .flatten()
+            .ok_or_else(|| {
+                format!(
+                    "the fringe block {} has no body, so the absence rule's participation map cannot \
+                     be derived",
+                    member.id.to_hex()
+                )
+            })?;
+        for signer in deploy_signers(&block) {
+            presence.push((signer, member.height));
+        }
+        presence.push((member.sender, member.height));
+    }
+    Ok(participation_map(presence, std::iter::empty()))
 }
 
 /// Compute the pre-state for a new block from the DAG's latest messages (port of
@@ -748,7 +854,9 @@ where
         dag_repr.dag_message_state.parents_for_new_block()
     };
     let parent_hashes: BTreeSet<BlockHash> = parents.into_iter().map(|m| m.id).collect();
-    get_pre_state_for_parents(dag, block_store, runtime, &parent_hashes, block_index).await
+    // Proposing is the full-node path: this node holds every state its parents name, so no
+    // certificate base is needed (and a checkpoint joiner proposes only after it has caught up).
+    get_pre_state_for_parents(dag, block_store, runtime, &parent_hashes, block_index, None).await
 }
 
 /// How many times one record may be re-validated before the node gives up on it.
@@ -935,6 +1043,7 @@ where
             log,
             health,
             ValidationOrigin::Peer,
+            accepted_window,
         )
         .await;
         // **A fault is not a verdict** (C253's E3/E5). `Internal` says *this node* could not run the
@@ -1461,6 +1570,7 @@ async fn restore_divergent_justifications<F, Fut>(
             log,
             health,
             ValidationOrigin::Peer,
+            accepted_window,
         )
         .await;
         let (record, restored) = match revalidated_record(&stored, outcome) {
@@ -1667,6 +1777,7 @@ where
         log,
         health,
         origin,
+        accepted_window,
     )
     .await
 }
@@ -1674,6 +1785,21 @@ where
 /// The two bounds are immutable PoS parameters in this release. A validated parent's post-state
 /// therefore supplies the same values as the merged pre-state, without performing an unbounded
 /// merge before applying the parent-count guard. Legacy records alone retain the old config rule.
+/// The merge base a checkpoint certificate signs, when this node runs from one. Read once per
+/// validation so play and replay see the same base.
+async fn certified_base_from(
+    accepted_window: Option<&crate::engine::anchor::SharedAcceptedWindow>,
+) -> Option<Blake2b256Hash> {
+    match accepted_window {
+        Some(window) => window
+            .read()
+            .await
+            .as_ref()
+            .and_then(|w| w.merge_base().map(|base| base.base)),
+        None => None,
+    }
+}
+
 async fn validation_bounds_for_block(
     dag: &dyn BlockDagStorage,
     block_store: &BlockStore,
@@ -1681,23 +1807,44 @@ async fn validation_bounds_for_block(
     block: &BlockMessage,
     legacy_min_phlo_price: i64,
     legacy_max_number_of_parents: i32,
+    // **The state a checkpoint joiner holds.** Its parent bodies are absent by design (the
+    // certificate commits headers and roots), so the parent walk below yields nothing and the
+    // oldest-accepted fallback would read genesis, whose state the certified sync never hydrates.
+    // The signed merge base is a validated, hydrated state: read the immutable params there.
+    certified_base: Option<Blake2b256Hash>,
 ) -> Result<(i64, i64), String> {
     let legacy = (
         legacy_min_phlo_price,
         i64::from(legacy_max_number_of_parents),
     );
+    // **The signed base is the joiner's committed state.** Reading genesis here is what made every
+    // post-anchor block fail with `PoS params leaf not found in committed state`: the certified sync
+    // hydrates the certificate's roots, not the genesis post-state. The base is signed by the quorum,
+    // re-checked against the anchor header at join, and hydrated before readiness. It is also the
+    // state in force when the block is proposed, so it is read before any parent's.
+    if let Some(base) = certified_base {
+        let state = rchain_models::block::state_hash::StateHash::from_slice(base.as_bytes());
+        return Ok(runtime
+            .committed_validation_bounds(&state)
+            .await?
+            .unwrap_or(legacy));
+    }
     for parent_hash in &block.justifications {
         if let Some(parent_meta) = dag.lookup(parent_hash).await? {
             if parent_meta.validated && !parent_meta.validation_failed {
-                let parent = block_store
+                let Some(parent) = block_store
                     .get(&[*parent_hash])
                     .await?
                     .into_iter()
                     .next()
                     .flatten()
-                    .ok_or_else(|| {
-                        format!("validated parent {parent_hash:?} is absent from the block store")
-                    })?;
+                else {
+                    // **A checkpoint joiner has every committed header and no historical body.**
+                    // The bounds are immutable params, so a body it cannot read adds nothing to the
+                    // config values the walk already trusts; requiring the body here refused
+                    // every post-anchor block before its merge could even start.
+                    continue;
+                };
                 return Ok(runtime
                     .committed_validation_bounds(&parent.post_state_hash)
                     .await?
@@ -1756,6 +1903,7 @@ async fn validate_checks<F, Fut>(
     log: &Arc<dyn Log>,
     health: &ShardHealth,
     origin: ValidationOrigin,
+    accepted_window: Option<&crate::engine::anchor::SharedAcceptedWindow>,
 ) -> Result<BlockMetadata, ValidateError>
 where
     F: Fn(BlockHash) -> Fut,
@@ -1777,6 +1925,7 @@ where
             block,
             min_phlo_price,
             max_number_of_parents,
+            certified_base_from(accepted_window).await,
         ),
     )
     .await
@@ -1805,6 +1954,7 @@ where
         block_index,
         log,
         health,
+        accepted_window,
     )
     .await
     .map_err(|e| ValidateError::Internal(format!("validateBlockCheckpoint failed: {e}")))?;
@@ -2810,5 +2960,54 @@ mod mark_failed_tests {
             !diverged.slashable,
             "a node whose state differs is not evidence"
         );
+    }
+
+    fn validator(byte: u8) -> crate::multi_parent_casper::Validator {
+        crate::multi_parent_casper::Validator::new([byte; 65])
+    }
+
+    fn height(n: i64) -> crate::multi_parent_casper::BlockHeight {
+        crate::multi_parent_casper::BlockHeight::try_from(n).expect("height")
+    }
+
+    /// **A deploy signed by a validator key is a presence at the including block's height.** A
+    /// deployer that is not 65 bytes is an account, not a validator, and never enters the map. This
+    /// is the release signal: a jailed validator cannot author a block, but it can sign a funded
+    /// deploy an unjailed proposer includes.
+    #[test]
+    fn a_deploy_signer_is_presence_at_the_including_height() {
+        assert_eq!(
+            crate::multi_parent_casper::validator_from_deployer(&[7u8; 65]),
+            Some(validator(7))
+        );
+        assert_eq!(
+            crate::multi_parent_casper::validator_from_deployer(&[7u8; 20]),
+            None
+        );
+        let map = crate::multi_parent_casper::participation_map(
+            [(validator(1), height(10))],
+            [(validator(4), height(10))],
+        );
+        assert_eq!(
+            map.get(&validator(1)),
+            Some(&height(10)),
+            "an author is present"
+        );
+        assert_eq!(
+            map.get(&validator(4)),
+            Some(&height(10)),
+            "a deployed validator is present even when it could not author"
+        );
+    }
+
+    /// The map keeps the greatest height per validator, so a later, shorter presence cannot lower it.
+    #[test]
+    fn presence_keeps_the_greatest_height() {
+        let map = crate::multi_parent_casper::participation_map(
+            [(validator(1), height(12))],
+            [(validator(1), height(9)), (validator(4), height(7))],
+        );
+        assert_eq!(map.get(&validator(1)), Some(&height(12)));
+        assert_eq!(map.get(&validator(4)), Some(&height(7)));
     }
 }

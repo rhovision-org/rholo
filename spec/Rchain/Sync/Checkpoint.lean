@@ -11,8 +11,10 @@ certificate is quorate under the finality rule's exact integer form, `3 * suppor
 
 **What this law says.** Two quorums intersect, so two conflicting checkpoints at one parent require a
 signer that signed both — an equivocator, which is what makes the certificate attributable. And the
-digest binds the anchor and the parent, so a signature over one checkpoint is not a signature over
-another.
+digest binds the anchor, the parent and **the finality fringe's merged state**, so a signature over
+one checkpoint is not a signature over another. The merged fringe state is the root a post-anchor
+block actually builds on; without it in the digest, the certificate's run root would be a member's
+post-state that no first post-fringe block uses (Law 108's defect found on 2026-11-17).
 
 **What it does not claim.** It does not claim a quorum is honest, or that the root it signs is
 correct: a quorum that all computed the same wrong root still certifies it. That residual is Law 85's,
@@ -87,14 +89,18 @@ structure Parent where
   digest : Nat
 deriving DecidableEq
 
-/-- One checkpoint statement: the anchor, the parent, the anchor's post-state, the fringe and the
-    epoch. The epoch is an `Int` on purpose: the Rust verifier now rejects a negative epoch, and the
-    model states that shape rule instead of assuming it away with a `Nat`. -/
+/-- One checkpoint statement: the anchor, the parent, the anchor's post-state, the fringe, the
+    **merged state of that fringe**, and the epoch. `fringeState` is the state a block whose
+    justifications are the fringe builds on — the finality fringe's merge, which is not any member's
+    post-state when the fringe has more than one member (Law 85). The epoch is an `Int` on purpose:
+    the Rust verifier now rejects a negative epoch, and the model states that shape rule instead of
+    assuming it away with a `Nat`. -/
 structure Statement where
   anchor : Nat
   parent : Parent
   post : Nat
   fringe : Nat
+  fringeState : Nat
   epoch : Int
 deriving DecidableEq
 
@@ -141,6 +147,14 @@ theorem the_digest_binds_the_anchor_and_parent (s t : Statement) (h : digest s =
     s.anchor = t.anchor ∧ s.parent = t.parent := by
   unfold digest at h
   exact ⟨congrArg Statement.anchor h, congrArg Statement.parent h⟩
+
+/-- **Law 104d — the digest binds the fringe's merged state.** A signature over one statement is
+    not a signature over another that names a different fringe merge, which is what makes the
+    certificate's run root attributable rather than a member's assumed claim. -/
+theorem the_digest_binds_the_fringe_state (s t : Statement) (h : digest s = digest t) :
+    s.fringeState = t.fringeState := by
+  unfold digest at h
+  exact congrArg Statement.fringeState h
 
 /-- Non-vacuity of 104c: two statements with different anchors have different digests. -/
 theorem the_digest_separates_two_anchors (s t : Statement) (h : s.anchor ≠ t.anchor) :

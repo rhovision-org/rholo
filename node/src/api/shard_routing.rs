@@ -530,11 +530,13 @@ mod tests {
                 anchor: "00".repeat(32),
                 anchor_height: 1,
                 anchor_post_state: "11".repeat(32),
+                fringe_state: None,
                 fringe_hashes: vec!["00".repeat(32)],
                 parent_digest: None,
                 epoch: 0,
                 metadata_root: None,
                 history_root: None,
+                fringe_headers_root: None,
             })
         }
 

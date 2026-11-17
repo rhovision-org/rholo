@@ -23,7 +23,7 @@ use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{
-    BlockFringe, BlockMessage, BlockMetadataMessage, CasperMessage, FinalizedFringe,
+    BlockFringe, BlockHeader, BlockMessage, BlockMetadataMessage, CasperMessage, FinalizedFringe,
     StoreItemsMessage,
 };
 use rchain_rspace::state::RSpaceImporter;
@@ -371,6 +371,30 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             return Ok(());
         }
 
+        // **A pinned certificate is one source of truth.** The launch fetched the certificate and
+        // requested the fringe anchored at its anchor; the responder answers that request with the
+        // anchor alone (`node_running.rs`). Every later broadcast is a *newer* history, and pairing
+        // it with the pinned statement is the cold-join failure measured on the C344 build:
+        // `tie_certificate_to_fringe` refuses it (correctly), and the retry reuses the same
+        // certificate, so every attempt fails the same way. Ignore a fringe that is not the
+        // certified anchor; the anchored request's own retry is what re-supplies the target.
+        if let Some(certificate) = self.prefetched_certificate.as_ref() {
+            if let Ok(anchor) = decode_hash(&certificate.checkpoint.anchor, "certificate anchor") {
+                let is_anchored_target = fringe.hashes.len() == 1 && fringe.hashes[0] == anchor;
+                if !is_anchored_target {
+                    self.log.info(
+                        self.log_source,
+                        &format!(
+                            "Ignoring a fringe from {sender} that is not the certified anchor {}: \
+                             a pinned certificate and a later broadcast are two different histories.",
+                            anchor.to_hex()
+                        ),
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
         // **Every bootstrap answer reaches the slot, not only the first** (AUDIT C181, #125). The
         // old code kept the fringe only when it was about to start a request, so a later — and
         // necessarily *newer* — answer was dropped in silence, which is precisely the thing a retry
@@ -492,6 +516,7 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             let block_requests = self.block_requests.clone();
             let replay = self.replay.clone();
             let prefetched_certificate = self.prefetched_certificate.clone();
+            let trim_state = self.trim_state;
             tokio::spawn(async move {
                 let source = LogSource::new("casper.engine.NodeSyncing");
                 let mut importer = importer;
@@ -541,6 +566,9 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                         prefetched_certificate.as_ref(),
                         replay.as_ref(),
                         &approved_store,
+                        latest_fringe.as_ref(),
+                        fringe_arrived.as_ref(),
+                        trim_state,
                     )
                     .await;
                     let outcome = match outcome {
@@ -663,6 +691,67 @@ fn notify_when_restored(outcome: &Result<(), String>, finished: &tokio::sync::No
     }
 }
 
+/// **Re-pin the sync target to the certificate's anchor.**
+///
+/// When the launch could not fetch a certificate, it falls back to the ordinary fringe request.
+/// That answer — and every later broadcast — is the bootstrap's *latest* fringe, while a retry's
+/// freshly fetched certificate names the fringe at its own anchor. Under autopropose the two reads
+/// happen at different times, so `tie_certificate_to_fringe` refuses the pair (correctly), and the
+/// retry can repeat the mismatch indefinitely. Ask for the anchor's own fringe and wait for that
+/// answer, so the statement and the served history are the same history by construction.
+async fn wait_for_anchored_target(
+    anchor: BlockHash,
+    latest_fringe: &tokio::sync::Mutex<Option<FinalizedFringe>>,
+    fringe_arrived: &tokio::sync::Notify,
+    comm_util: &CommUtil,
+    trim_state: bool,
+    log: &dyn Log,
+) -> Result<FinalizedFringe, String> {
+    if let Some(fringe) = latest_fringe.lock().await.clone() {
+        if fringe.hashes.len() == 1 && fringe.hashes[0] == anchor {
+            return Ok(fringe);
+        }
+    }
+    let source = LogSource::new("casper.engine.NodeSyncing");
+    const ATTEMPTS: u32 = 3;
+    for attempt in 1..=ATTEMPTS {
+        comm_util
+            .request_finalized_fringe(trim_state, true, Some(anchor))
+            .await
+            .map_err(|e| {
+                format!(
+                    "the anchored fringe request for {} failed: {e}",
+                    anchor.to_hex()
+                )
+            })?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let notified = fringe_arrived.notified();
+            if let Some(fringe) = latest_fringe.lock().await.clone() {
+                if fringe.hashes.len() == 1 && fringe.hashes[0] == anchor {
+                    return Ok(fringe);
+                }
+            }
+            tokio::select! {
+                _ = notified => {}
+                _ = tokio::time::sleep_until(deadline) => break,
+            }
+        }
+        log.warn(
+            source,
+            &format!(
+                "the bootstrap did not answer the anchored fringe request for {} \
+                 (attempt {attempt} of {ATTEMPTS})",
+                anchor.to_hex()
+            ),
+        );
+    }
+    Err(format!(
+        "the bootstrap did not serve the fringe anchored at the certificate's anchor {}",
+        anchor.to_hex()
+    ))
+}
+
 /// Download the approved (last finalized) state — blocks + tuple space in parallel — and populate the
 /// DAG (port of `requestApprovedState`). Free function so it can be spawned off the dispatch loop.
 #[allow(clippy::too_many_arguments)]
@@ -686,6 +775,12 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     >,
     replay: Option<&RecoveryReplay>,
     approved_store: &ApprovedStore,
+    // **One source of truth**: the retry loop's target slot and wake-up, so an attempt whose
+    // certificate was fetched after the ordinary fringe request can re-pin to the certificate's
+    // anchor instead of pairing a moving target with a fixed statement.
+    latest_fringe: &tokio::sync::Mutex<Option<FinalizedFringe>>,
+    fringe_arrived: &tokio::sync::Notify,
+    trim_state: bool,
 ) -> Result<crate::engine::anchor::AcceptedState, String> {
     let source = LogSource::new("casper.engine.NodeSyncing");
     let replay =
@@ -793,14 +888,49 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     // node cannot attribute. `verified` is the statement plus the stake that signed it, checked
     // against the genesis active bonds before a single block or page is requested; a source that
     // cannot produce one fails the attempt with the reason, and no fallback to the old path exists.
-    let trusted_bonds = replay.runtime.genesis_pos().active_bonds();
+    // **The genesis bonded pool is the trust anchor, not the genesis active draw** (C403). The
+    // active set excludes the jailed and honours the active cap; weighing a certificate under it
+    // would refuse every jail and every capped epoch.
+    let trusted_bonds = replay.runtime.genesis_pos().bonds.clone();
+    // **Fetch the certificate before choosing the target.** `prefetched_certificate` is the
+    // launch's statement; when the launch could not fetch one (the bootstrap was not certifiable
+    // yet), this attempt fetches its own. The target is then the fringe *anchored at that
+    // statement's anchor*, never the ordinary answer the retry loop happens to hold.
+    let fetched_certificate =
+        match (prefetched_certificate, replay.checkpoint_source.as_deref()) {
+            (None, Some(source)) => Some(source.fetch_certificate().await.map_err(|e| {
+                format!("the bootstrap's checkpoint certificate was not fetched: {e}")
+            })?),
+            _ => None,
+        };
+    let certificate = prefetched_certificate.or(fetched_certificate.as_ref());
+    let anchored = match certificate {
+        Some(certificate) => {
+            let anchor = decode_hash(&certificate.checkpoint.anchor, "certificate anchor")?;
+            if fringe.hashes.len() == 1 && fringe.hashes[0] == anchor {
+                fringe.clone()
+            } else {
+                wait_for_anchored_target(
+                    anchor,
+                    latest_fringe,
+                    fringe_arrived,
+                    comm_util.as_ref(),
+                    trim_state,
+                    log.as_ref(),
+                )
+                .await?
+            }
+        }
+        None => fringe.clone(),
+    };
+    let fringe = &anchored;
     let verified = certified_checkpoint(
         replay.checkpoint_source.as_deref(),
         &trusted_bonds,
         &replay.shard_id,
         fringe,
         replay.checkpoint_store.as_ref(),
-        prefetched_certificate,
+        certificate,
     )
     .await?;
     let checkpoint_root = checkpoint_state_root(&verified.checkpoint)?;
@@ -821,24 +951,80 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         log.as_ref(),
     )
     .await?;
-    let (entries, fringe_state_root, window) =
-        certified_metadata_entries(&walk, &verified.checkpoint, checkpoint_root)?;
+    let (mut entries, fringe_state_root, window) =
+        certified_metadata_entries(&walk, &verified.checkpoint)?;
+    // **The signed merge base is the anchor header's own fringe state**. The statement
+    // signs the state a post-anchor block's merge starts from; the anchor header commits that same
+    // value under `metadataRoot`, so the joiner can check that the quorum signed the base the header
+    // claims. A v1 statement carries no merge base (its root is the anchor post-state); a v2
+    // statement must match exactly.
+    if verified.checkpoint.fringe_state.is_some() && checkpoint_root != fringe_state_root {
+        return Err(format!(
+            "the certificate's signed fringe state {} is not the anchor header's committed fringe \
+             state {} — the statement names a merge base its anchor does not",
+            checkpoint_root.to_hex(),
+            fringe_state_root.to_hex()
+        ));
+    }
 
-    // **The hydrated set is the certified set.** The checkpoint's post-state, the max fringe
-    // member's `fringe_state_hash`, the approved fringe's state, and exactly the validation-window
-    // roots the statement commits to. The joiner does not guess a window or widen it; a root it
-    // cannot hydrate is a failed sync.
+    // **The v3 fringe members' headers.** The ancestor walk excludes same-height siblings; the
+    // certificate commits their headers, and a post-anchor block that justifies one cannot have its
+    // pre-state recomputed without them. Every named member must be fetched, and the root over them
+    // must be the signed one. A v2 certificate carries `None`; the join-input set then refuses a
+    // member it cannot obtain, rather than joining a history it cannot extend.
+    let fringe_hashes: BTreeSet<BlockHash> = verified
+        .checkpoint
+        .fringe_hashes
+        .iter()
+        .map(|hex| decode_hash(hex, "certificate fringe hash"))
+        .collect::<Result<_, _>>()?;
+    let fringe_headers: BTreeMap<BlockHash, BlockHeader> =
+        if verified.checkpoint.fringe_headers_root.is_some() {
+            let fetched = super::lfs_metadata_requester::request_headers(
+                &fringe_hashes,
+                metadata_rx,
+                transport.as_ref(),
+                &conf,
+                comm_util.as_ref(),
+                log.as_ref(),
+            )
+            .await?;
+            crate::checkpoint::verify_fringe_headers(&verified.checkpoint, &fetched)
+                .map_err(|e| e.to_string())?;
+            fetched
+        } else {
+            BTreeMap::new()
+        };
+    for header in fringe_headers.values() {
+        if !walk.headers.contains_key(&header.block_hash) {
+            entries.push(metadata_entry_from_header(header));
+        }
+    }
+    entries.sort_by_key(|(hash, meta)| (i64::from(meta.block_num), *hash));
+
+    // **The merge inputs the certificate does not carry.** Validation of the first post-anchor block
+    // reads the anchor's body, the bodies of the fringe the anchor finalised, and (for a boundary
+    // re-index) those members' own finalised fringe. A joiner that accepts the certificate without
+    // them reaches "ready" and then cannot validate anything: the state is representable today and
+    // this set removes it. The bodies are hash-checked by `fetch_block_body`; the roots come from
+    // their committed headers.
+    let (join_bodies, join_roots) = join_input_set(&walk, &verified.checkpoint, &fringe_headers)?;
+
+    // **The hydrated set is the certified set.** The checkpoint's **signed fringe state** (the run
+    // root), the anchor header's own `fringe_state_hash`, the anchored reply's
+    // post-state, and exactly the validation-window roots the statement commits to. The joiner does
+    // not guess a window or widen it; a root it cannot hydrate is a failed sync.
     let mut required_roots = BTreeSet::from([checkpoint_root, fringe_state_root]);
     required_roots.insert(Blake2b256Hash::from_byte_array(
         fringe.state_hash.as_bytes(),
     ));
     required_roots.extend(window.iter().copied());
+    required_roots.extend(join_roots);
     crate::engine::sync_metrics::census().add_state_roots(required_roots.len() as u64);
 
-    // The anchored fringe's own root is the checkpoint root (`node_running` answers an anchored
-    // request with the anchor's post-state), so this walk hydrates it; any other root is a second
-    // walk. `request_tuple_space` is the first because its exit state is the one the C271 guard
-    // below reads.
+    // The anchored reply serves the **anchor's post-state** (Law 85); the certificate's signed
+    // fringe state — the run root — is hydrated in the second walk. `request_tuple_space` is first
+    // because its exit state is the one the C271 guard below reads.
     // **The fan-out read is bounded**: the walk must not freeze on a connections cell a writer is
     // holding. The bootstrap is still asked by the requester; the connected set is only the hedge.
     let page_peers = match tokio::time::timeout(Duration::from_secs(2), comm_util.connected_peers())
@@ -908,9 +1094,29 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         .map_err(|e| e.to_string())?;
     }
 
-    // **The genesis is the one body this path fetches** — the plan's exception. It anchors the
-    // operator's genesis pin and is the only block whose body this node will need before a
-    // backfill; fetching it here also *content-verifies* it, which no header can be.
+    // **The join bodies are fetched before readiness.** Every one is content-checked against the
+    // hash it was requested by, so a peer cannot substitute a different block. A fetch failure is a
+    // failed sync: the node retries and never publishes an accepted state it cannot validate from.
+    for hash in &join_bodies {
+        fetch_block_body(
+            &block_store,
+            *hash,
+            incoming_blocks_rx,
+            comm_util.as_ref(),
+            log.as_ref(),
+        )
+        .await?;
+    }
+    log.info(
+        source,
+        &format!(
+            "fetch {} checkpoint join body/bodies (anchor, its finalised fringe, and their fringes)",
+            join_bodies.len()
+        ),
+    );
+
+    // **The genesis is also fetched** — the plan's exception. It anchors the
+    // operator's genesis pin; fetching it here also *content-verifies* it, which no header can be.
     let genesis = walk
         .headers
         .values()
@@ -943,14 +1149,15 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         .map_err(|e| format!("the certified history's genesis header is refused: {e}"))?;
 
     // **The bond drift check is the last gate.** The signatures were weighed against the genesis
-    // active bonds; if the anchor state's active bonds differ, those signatures were cast under a
-    // different partition and counting them here would weigh the wrong stake. This runs after the
-    // state walk because the bond set is read from the state the certificate names.
+    // **bonded pool**; if the anchor state's pool differs, those signatures were cast under a
+    // different partition and counting them here would weigh the wrong stake. The epoch's active
+    // draw is a subset of this map and is not a partition change (C403). This runs after the state
+    // walk because the bond set is read from the state the certificate names.
     let anchor_bonds = replay
         .runtime
-        .compute_bonds(&StateHash::from_slice(checkpoint_root.as_bytes()))
+        .compute_bonded_pool(&StateHash::from_slice(checkpoint_root.as_bytes()))
         .await
-        .map_err(|e| format!("the checkpoint state's bonds are unavailable: {e}"))?;
+        .map_err(|e| format!("the checkpoint state's bonded pool is unavailable: {e}"))?;
     check_bond_set_unchanged(&trusted_bonds, &anchor_bonds).map_err(|e| e.to_string())?;
 
     mark_recovery_pending(approved_store, fringe).await?;
@@ -1105,18 +1312,12 @@ async fn certified_checkpoint(
 }
 
 /// Decode the checkpoint's state root.
+/// The checkpoint's run root: the signed merged fringe state (v2), or a v1 singleton's member
+/// post-state. It is the state the first post-anchor block builds on.
 fn checkpoint_state_root(
     checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
 ) -> Result<Blake2b256Hash, String> {
-    let bytes = rchain_shared::base16::decode(&checkpoint.anchor_post_state)
-        .ok_or_else(|| "the checkpoint's anchor post-state is not base16".to_string())?;
-    if bytes.len() != 32 {
-        return Err(format!(
-            "the checkpoint's anchor post-state is {} bytes, not 32",
-            bytes.len()
-        ));
-    }
-    Ok(Blake2b256Hash::from_byte_array(&bytes))
+    crate::checkpoint::checkpoint_run_root(checkpoint).map_err(|e| e.to_string())
 }
 
 fn decode_hash(hex: &str, what: &str) -> Result<BlockHash, String> {
@@ -1177,10 +1378,38 @@ pub(super) fn tie_certificate_to_fringe(
 /// and post-state against the certificate, the fringe's max `(height, hash)` rule, and the walk's
 /// own shape. `validated` means "accepted into this node's DAG under the certificate", not "this
 /// node executed it".
+/// **The DAG record a certified header publishes.** `validated: true` is the certificate's
+/// statement about the header, not this node's execution of it; a body may be absent.
+pub(super) fn metadata_entry_from_header(header: &BlockHeader) -> (BlockHash, BlockMetadata) {
+    (
+        header.block_hash,
+        BlockMetadata {
+            block_hash: header.block_hash,
+            block_num: header.block_num,
+            sender: header.sender,
+            seq_num: header.seq_num,
+            justifications: header.justifications.clone(),
+            bonds_map: header.bonds_map.clone(),
+            validated: true,
+            validation_failed: false,
+            slashable: false,
+            failure_cause: None,
+            slash_severity: rchain_models::block_metadata::SlashSeverity::Unspecified,
+            restore_attempts: 0,
+            fringe: header.fringe.clone(),
+            fringe_state_hash: header.fringe_state_hash,
+            pre_state_hash: header.pre_state_hash,
+            post_state_hash: header.post_state_hash,
+            sig: header.sig.clone(),
+            sig_algorithm: header.sig_algorithm.clone(),
+            member_of_fringe: None,
+        },
+    )
+}
+
 pub(super) fn certified_metadata_entries(
     walk: &super::lfs_metadata_requester::MetadataWalk,
     checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
-    checkpoint_root: Blake2b256Hash,
 ) -> Result<
     (
         Vec<(BlockHash, BlockMetadata)>,
@@ -1205,11 +1434,21 @@ pub(super) fn certified_metadata_entries(
             checkpoint.anchor_height, anchor_header.block_num
         ));
     }
-    if Blake2b256Hash::from_byte_array(anchor_header.post_state_hash.as_bytes()) != checkpoint_root
-    {
+    // **The anchor's identity check is against the certificate's anchor post-state**, not the run
+    // root: since v2 the run root is the signed merged fringe state, which no single header carries
+    //. The anchor post-state remains the certificate's statement about the anchor block.
+    let anchor_post = rchain_shared::base16::decode(&checkpoint.anchor_post_state)
+        .ok_or_else(|| "the certificate's anchor post-state is not base16".to_string())?;
+    if anchor_post.len() != 32 {
+        return Err(format!(
+            "the certificate's anchor post-state is {} bytes, not 32",
+            anchor_post.len()
+        ));
+    }
+    if anchor_header.post_state_hash.as_bytes() != anchor_post.as_slice() {
         return Err(format!(
             "the certificate names post-state {}, but the anchor header's post-state is {}",
-            checkpoint_root.to_hex(),
+            rchain_shared::base16::encode(&anchor_post),
             rchain_shared::base16::encode(anchor_header.post_state_hash.as_bytes())
         ));
     }
@@ -1273,30 +1512,7 @@ pub(super) fn certified_metadata_entries(
 
     let mut entries = Vec::with_capacity(walk.headers.len());
     for header in walk.headers.values() {
-        entries.push((
-            header.block_hash,
-            BlockMetadata {
-                block_hash: header.block_hash,
-                block_num: header.block_num,
-                sender: header.sender,
-                seq_num: header.seq_num,
-                justifications: header.justifications.clone(),
-                bonds_map: header.bonds_map.clone(),
-                validated: true,
-                validation_failed: false,
-                slashable: false,
-                failure_cause: None,
-                slash_severity: rchain_models::block_metadata::SlashSeverity::Unspecified,
-                restore_attempts: 0,
-                fringe: header.fringe.clone(),
-                fringe_state_hash: header.fringe_state_hash,
-                pre_state_hash: header.pre_state_hash,
-                post_state_hash: header.post_state_hash,
-                sig: header.sig.clone(),
-                sig_algorithm: header.sig_algorithm.clone(),
-                member_of_fringe: None,
-            },
-        ));
+        entries.push(metadata_entry_from_header(header));
     }
     // Parents before children for the insert; the DAG refuses a block whose justifications are
     // absent, and the walk's own shape check has already guaranteed the order exists.
@@ -1306,6 +1522,80 @@ pub(super) fn certified_metadata_entries(
         Blake2b256Hash::from_byte_array(anchor_header.fringe_state_hash.as_bytes()),
         window,
     ))
+}
+
+/// **The bodies a checkpoint joiner must hold before it can validate the first post-anchor block.**
+///
+/// The certificate commits headers and state roots, not the blocks the merge reads. The set is the
+/// anchor, the certificate's finalized fringe (including same-height siblings the ancestor walk
+/// excludes), the fringe the anchor itself finalised, and each of those members' own finalised
+/// fringe (the participation an index regeneration at a boundary derives). The headers come from
+/// the walk or from the v3 fringe-headers commitment; a member obtainable from neither is a refusal.
+pub(super) fn join_input_set(
+    walk: &super::lfs_metadata_requester::MetadataWalk,
+    checkpoint: &rchain_models::casper::protocol::checkpoint::Checkpoint,
+    fringe_headers: &BTreeMap<BlockHash, BlockHeader>,
+) -> Result<(BTreeSet<BlockHash>, BTreeSet<Blake2b256Hash>), String> {
+    let anchor = decode_hash(&checkpoint.anchor, "certificate anchor")?;
+    let header_for = |hash: &BlockHash| fringe_headers.get(hash).or_else(|| walk.headers.get(hash));
+    let anchor_header = header_for(&anchor).ok_or_else(|| {
+        format!(
+            "the metadata walk does not hold the certificate's anchor {}",
+            anchor.to_hex()
+        )
+    })?;
+    // **The certificate's fringe, not only the anchor's own.** A post-anchor block routinely
+    // justifies a same-height sibling; the merge reads that sibling's deploy chain, so its body and
+    // state roots are join inputs too.
+    let mut replay_layer: BTreeSet<BlockHash> = BTreeSet::from([anchor]);
+    for hex in &checkpoint.fringe_hashes {
+        replay_layer.insert(decode_hash(hex, "certificate fringe hash")?);
+    }
+    replay_layer.extend(anchor_header.fringe.iter().copied());
+    let finalised: Vec<BlockHash> = replay_layer.iter().copied().collect();
+    for member in finalised {
+        let header = header_for(&member).ok_or_else(|| {
+            format!(
+                "the certificate's fringe member {} is in neither the metadata walk nor the v3 \
+                 fringe-headers commitment",
+                member.to_hex()
+            )
+        })?;
+        replay_layer.extend(header.fringe.iter().copied());
+    }
+    // **Every replay-layer body's roots are committed in its header.** Hydrating them is what lets
+    // the merge replay an index from the block's own pre-state without replaying its ancestry.
+    let mut roots = BTreeSet::new();
+    for hash in &replay_layer {
+        let header = header_for(hash).ok_or_else(|| {
+            format!(
+                "join input block {} is in neither the metadata walk nor the v3 fringe-headers \
+                 commitment",
+                hash.to_hex()
+            )
+        })?;
+        for root in [
+            header.pre_state_hash,
+            header.post_state_hash,
+            header.fringe_state_hash,
+        ] {
+            if root != rchain_models::block::state_hash::StateHash::new([0u8; 32]) {
+                roots.insert(Blake2b256Hash::from_byte_array(root.as_bytes()));
+            }
+        }
+    }
+    // **The deploy-duplication check reads bodies, not roots.** `repeat_deploy` walks every block
+    // body within `DEPLOY_LIFESPAN` heights of the parents; a joiner without them fails the first
+    // post-anchor block in its block summary. The bodies are hash-checked on fetch; their states are
+    // not replayed and are not hydrated.
+    let mut bodies = replay_layer;
+    let floor = checkpoint.anchor_height - crate::multi_parent_casper::DEPLOY_LIFESPAN;
+    for header in walk.headers.values() {
+        if i64::from(header.block_num) > floor {
+            bodies.insert(header.block_hash);
+        }
+    }
+    Ok((bodies, roots))
 }
 
 /// **Fetch and content-verify the genesis body.** The one body the certified path downloads: the
@@ -1516,6 +1806,31 @@ mod tests {
         let mut bytes = [0u8; 32];
         bytes[0] = byte;
         BlockHash::new(bytes)
+    }
+
+    /// A certificate whose only meaningful field is the anchor: the fringe-target test never
+    /// verifies the signature (that is `certified_checkpoint`'s job), it only needs the statement
+    /// the launch would have pinned.
+    fn certificate_for(
+        anchor: BlockHash,
+    ) -> rchain_models::casper::protocol::checkpoint::CheckpointCertificate {
+        use rchain_models::casper::protocol::checkpoint::{Checkpoint, CheckpointCertificate};
+        CheckpointCertificate {
+            checkpoint: Checkpoint {
+                shard_id: "root".to_string(),
+                anchor: anchor.to_hex(),
+                anchor_height: 5,
+                anchor_post_state: hash(0).to_hex(),
+                fringe_state: Some(hash(0).to_hex()),
+                fringe_hashes: vec![anchor.to_hex()],
+                parent_digest: None,
+                epoch: 0,
+                metadata_root: None,
+                history_root: None,
+                fringe_headers_root: None,
+            },
+            attestations: Vec::new(),
+        }
     }
 
     fn chain_block(block_num: i64, justification: Option<BlockHash>) -> BlockMessage {
@@ -1926,6 +2241,67 @@ mod tests {
             .expect("an outsider's update must be ignored");
         assert_eq!(*engine.latest_fringe.lock().await, Some(fringe));
         assert!(!log.contains("Received finalized fringe from bootstrap node"));
+    }
+
+    /// **A pinned certificate does not follow a later broadcast.** The launch fetched the
+    /// certificate and requested the fringe anchored at its anchor; that anchored answer is the
+    /// only target the pinned statement can be tied to. A newer broadcast is a different history,
+    /// and adopting it makes `tie_certificate_to_fringe` refuse every retry (the measured cold-join
+    /// failure). The anchored answer must start the sync; every later broadcast must not replace it.
+    #[tokio::test]
+    async fn a_pinned_certificate_does_not_follow_a_later_broadcast_fringe() {
+        let log = Arc::new(RecordingLog::default());
+        let (mut engine, bootstrap, _approved) = failing_engine(&log).await;
+        let anchor = hash(5);
+        engine.set_checkpoint_certificate(certificate_for(anchor));
+        let signal = engine.initial_fringe_received_handle();
+
+        let newer = FinalizedFringe {
+            hashes: vec![hash(9)],
+            state_hash: StateHash::new([9u8; 32]),
+            ancestry: Vec::new(),
+        };
+        engine
+            .handle(&bootstrap, &CasperMessage::FinalizedFringe(newer.clone()))
+            .await
+            .expect("a broadcast is ignored without error");
+        assert!(
+            engine.latest_fringe.lock().await.is_none(),
+            "a broadcast replaced the pinned certificate's target"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), signal.notified())
+                .await
+                .is_err(),
+            "a broadcast consumed the one-shot trigger"
+        );
+
+        let anchored = FinalizedFringe {
+            hashes: vec![anchor],
+            state_hash: StateHash::new([5u8; 32]),
+            ancestry: Vec::new(),
+        };
+        engine
+            .handle(
+                &bootstrap,
+                &CasperMessage::FinalizedFringe(anchored.clone()),
+            )
+            .await
+            .expect("the anchored answer is admitted");
+        assert_eq!(*engine.latest_fringe.lock().await, Some(anchored.clone()));
+        tokio::time::timeout(Duration::from_secs(1), signal.notified())
+            .await
+            .expect("the anchored answer starts the sync");
+
+        engine
+            .handle(&bootstrap, &CasperMessage::FinalizedFringe(newer))
+            .await
+            .expect("a later broadcast is ignored without error");
+        assert_eq!(
+            *engine.latest_fringe.lock().await,
+            Some(anchored),
+            "a later broadcast replaced the pinned certificate's target"
+        );
     }
 
     /// A hostname/IP or advertised-port change does not change the TLS-authenticated node key.
@@ -2695,12 +3071,26 @@ mod tests {
         )
     }
 
+    /// **The sync root is the certificate's signed fringe state**, not the anchor block's
+    /// post-state: the joiner must hydrate the merge the first post-anchor block builds on.
+    #[test]
+    fn the_sync_root_is_the_certified_fringe_state() {
+        let mut c = statement(BlockHash::new([1u8; 32]), vec![BlockHash::new([1u8; 32])]);
+        c.fringe_state = Some(rchain_shared::base16::encode(&[0x77u8; 32]));
+        assert_eq!(
+            checkpoint_state_root(&c).expect("the run root"),
+            Blake2b256Hash::from_byte_array(&[0x77u8; 32]),
+            "the sync hydrates the signed fringe merge"
+        );
+    }
+
     fn statement(anchor: BlockHash, fringe: Vec<BlockHash>) -> Checkpoint {
         Checkpoint {
             shard_id: "root".to_string(),
             anchor: base16::encode(anchor.as_bytes()),
             anchor_height: 1,
             anchor_post_state: base16::encode(anchor.as_bytes()),
+            fringe_state: Some(base16::encode(&[0xEE; 32])),
             fringe_hashes: fringe
                 .iter()
                 .map(|h| base16::encode(h.as_bytes()))
@@ -2709,6 +3099,7 @@ mod tests {
             epoch: 0,
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         }
     }
 
@@ -2856,6 +3247,7 @@ mod tests {
             anchor: base16::encode(anchor.as_bytes()),
             anchor_height: 2,
             anchor_post_state: base16::encode(post.as_bytes()),
+            fringe_state: Some(base16::encode(post.as_bytes())),
             fringe_hashes: fringe
                 .iter()
                 .map(|h| base16::encode(h.as_bytes()))
@@ -2864,6 +3256,7 @@ mod tests {
             epoch: 0,
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         }
     }
 
@@ -2891,12 +3284,8 @@ mod tests {
             )
             .to_hex(),
         );
-        let (entries, fringe_root, _window) = certified_metadata_entries(
-            &walk,
-            &checkpoint,
-            Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
-        )
-        .expect("a certified header set publishes");
+        let (entries, fringe_root, _window) = certified_metadata_entries(&walk, &checkpoint)
+            .expect("a certified header set publishes");
         assert_eq!(entries.len(), 3);
         assert!(
             entries
@@ -2928,12 +3317,8 @@ mod tests {
             grandchild.post_state_hash,
             vec![grandchild.block_hash],
         );
-        let err = certified_metadata_entries(
-            &walk,
-            &checkpoint,
-            Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
-        )
-        .expect_err("a legacy statement has no metadata commitment");
+        let err = certified_metadata_entries(&walk, &checkpoint)
+            .expect_err("a legacy statement has no metadata commitment");
         assert!(err.contains("does not commit"), "got {err}");
     }
 
@@ -2960,12 +3345,8 @@ mod tests {
             .get_mut(&child.block_hash)
             .expect("the child header is in the walk");
         tampered.pre_state_hash = StateHash::new([0x9A; 32]);
-        let err = certified_metadata_entries(
-            &walk,
-            &checkpoint,
-            Blake2b256Hash::from_byte_array(grandchild.post_state_hash.as_bytes()),
-        )
-        .expect_err("the headers are not the set the certificate committed to");
+        let err = certified_metadata_entries(&walk, &checkpoint)
+            .expect_err("the headers are not the set the certificate committed to");
         assert!(err.contains("commits"), "got {err}");
     }
 
@@ -2979,6 +3360,7 @@ mod tests {
             anchor: base16::encode(child.block_hash.as_bytes()),
             anchor_height: 1,
             anchor_post_state: base16::encode(child.post_state_hash.as_bytes()),
+            fringe_state: Some(base16::encode(&[0xCD; 32])),
             fringe_hashes: vec![
                 base16::encode(child.block_hash.as_bytes()),
                 base16::encode(grandchild.block_hash.as_bytes()),
@@ -2988,13 +3370,10 @@ mod tests {
             shard_id: "root".to_string(),
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         };
-        let err = certified_metadata_entries(
-            &walk,
-            &checkpoint,
-            Blake2b256Hash::from_byte_array(child.post_state_hash.as_bytes()),
-        )
-        .expect_err("the anchor rule is max (height, hash)");
+        let err = certified_metadata_entries(&walk, &checkpoint)
+            .expect_err("the anchor rule is max (height, hash)");
         assert!(err.contains("max (height, hash)"), "{err}");
     }
 
@@ -3007,19 +3386,17 @@ mod tests {
             anchor: base16::encode(child.block_hash.as_bytes()),
             anchor_height: 1,
             anchor_post_state: base16::encode(&[0xAB; 32]),
+            fringe_state: None,
             fringe_hashes: vec![base16::encode(child.block_hash.as_bytes())],
             parent_digest: None,
             epoch: 0,
             shard_id: "root".to_string(),
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         };
-        let err = certified_metadata_entries(
-            &walk,
-            &checkpoint,
-            Blake2b256Hash::from_byte_array(&[0xAB; 32]),
-        )
-        .expect_err("the header's post-state must be the certificate's");
+        let err = certified_metadata_entries(&walk, &checkpoint)
+            .expect_err("the header's post-state must be the certificate's");
         assert!(err.contains("post-state"), "{err}");
     }
 
@@ -3069,6 +3446,74 @@ mod tests {
         assert!(
             checked_genesis_anchor(None, &genesis).is_ok(),
             "an absent pin accepts the content-verified genesis"
+        );
+    }
+
+    /// **The join input set is declared, not discovered at validation time.** The set is the anchor,
+    /// the fringe the anchor finalised, those members' own fringes, and the bodies the deploy
+    /// duplicate check reads (`DEPLOY_LIFESPAN` heights). The roots hydrated are only the replay
+    /// layer's; a deploy-window body is not replayed.
+    #[test]
+    fn the_join_input_set_is_the_anchor_its_fringe_and_the_deploy_window() {
+        fn root(byte: u8, kind: u8) -> StateHash {
+            let mut bytes = [0u8; 32];
+            bytes[0] = byte;
+            bytes[1] = kind;
+            StateHash::new(bytes)
+        }
+        fn header(block_num: i64, fringe: &[u8]) -> BlockHeader {
+            let byte = block_num as u8;
+            BlockHeader {
+                block_hash: hash(byte),
+                block_num: BlockHeight::try_from(block_num).unwrap(),
+                sender: Validator::new([0u8; 65]),
+                seq_num: block_num.try_into().unwrap(),
+                justifications: BTreeSet::new(),
+                bonds_map: BTreeMap::new(),
+                fringe: fringe.iter().map(|b| hash(*b)).collect(),
+                fringe_state_hash: root(byte, 2),
+                pre_state_hash: root(byte, 0),
+                post_state_hash: root(byte, 1),
+                body_available: false,
+                sig: vec![],
+                sig_algorithm: "secp256k1".to_string(),
+            }
+        }
+        let walk = crate::engine::lfs_metadata_requester::MetadataWalk {
+            headers: BTreeMap::from([
+                (hash(3), header(3, &[])),
+                (hash(58), header(58, &[])),
+                (hash(59), header(59, &[58])),
+                (hash(60), header(60, &[59])),
+            ]),
+        };
+        let checkpoint = rchain_models::casper::protocol::checkpoint::Checkpoint {
+            shard_id: "/root".to_string(),
+            anchor: rchain_shared::base16::encode(hash(60).as_bytes()),
+            anchor_height: 60,
+            anchor_post_state: rchain_shared::base16::encode(&[2u8; 32]),
+            fringe_state: Some(rchain_shared::base16::encode(&[63u8; 32])),
+            fringe_hashes: vec![rchain_shared::base16::encode(hash(60).as_bytes())],
+            parent_digest: None,
+            epoch: 20,
+            metadata_root: None,
+            history_root: None,
+            fringe_headers_root: None,
+        };
+        let (bodies, roots) = join_input_set(&walk, &checkpoint, &BTreeMap::new()).unwrap();
+        assert_eq!(
+            bodies,
+            BTreeSet::from([hash(58), hash(59), hash(60)]),
+            "the anchor, the fringe it finalised, and that member's fringe"
+        );
+        assert!(
+            !bodies.contains(&hash(3)),
+            "a body below the deploy window is not a join input"
+        );
+        assert_eq!(
+            roots.len(),
+            9,
+            "only the three replay-layer blocks contribute the three roots each"
         );
     }
 }

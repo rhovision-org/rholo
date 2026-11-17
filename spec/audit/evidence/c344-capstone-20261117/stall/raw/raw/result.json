@@ -1,0 +1,192 @@
+{
+  "arm": "stall",
+  "arm_config": {
+    "absence_threshold": 1,
+    "jail_after": 2,
+    "jail_epochs": 10,
+    "severity": "misdemeanour",
+    "stakes": "400,300,200,100",
+    "vote_window": 6
+  },
+  "checks": {
+    "finalized_anchor_unchanged_below_quorum": true,
+    "finalized_height_frozen_below_quorum": true,
+    "liveness_counters_frozen_below_quorum": true,
+    "no_jail_below_quorum": true
+  },
+  "epoch_length": 3,
+  "execution_proven": false,
+  "inconclusive": [],
+  "observations": {
+    "after": {
+      "active": [
+        "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0",
+        "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc",
+        "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e",
+        "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+      ],
+      "anchor": {
+        "hash": "96f5133ac7108e120a181472b408e66cc1107919601e5322c6687f2dbaee2f81",
+        "number": 6,
+        "port": 47403,
+        "pre": true
+      },
+      "bonds": {
+        "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0": 200,
+        "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc": 300,
+        "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e": 100,
+        "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4": 400
+      },
+      "finalized_anchor": {
+        "hash": "6bc1173ffde97c96eb9725007549d000e301ed1e62912546cbf7f08147e43a71",
+        "number": 1,
+        "port": 47403
+      },
+      "health": {
+        "acceptsDeploys": true,
+        "blockPipeline": {
+          "capacity": 1024,
+          "pending": 0,
+          "sampledPeak": 2
+        },
+        "bootId": "1-1794880516415",
+        "degraded": "normal",
+        "diagVersion": 2,
+        "finalityStallEpisodes": 2,
+        "finalityStalled": false,
+        "finalizedHeight": 1,
+        "finalizedHeightError": null,
+        "finalizedLag": 5,
+        "height": 7,
+        "lastBlockAgeMs": 41548,
+        "lastFinalityAgeMs": 41517,
+        "lastPeerAgeMs": 41097,
+        "lastPipelineFault": null,
+        "maxObservedHeight": 6,
+        "nodePhase": "running",
+        "ok": true,
+        "orphanBodies": 0,
+        "orphanDetections": 0,
+        "phase": "running",
+        "pipelineFaults": 0,
+        "pipelineFaultsOutstanding": 0,
+        "pool": {
+          "bytes": 0,
+          "deploys": 0,
+          "maxBytes": 67108864,
+          "maxDeploys": 10000
+        },
+        "proposalHaltReason": null,
+        "proposalHalted": false,
+        "ready": true,
+        "readyReasons": [],
+        "selfValidationRefusal": null,
+        "shardPhases": {
+          "/root": "running"
+        }
+      },
+      "liveness": {},
+      "pos": {
+        "activeValidators": [
+          "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0",
+          "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc",
+          "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e",
+          "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+        ],
+        "blocksUntilEpochBoundary": 2,
+        "epoch": 2,
+        "epochLength": 3,
+        "latestBlockNumber": 7,
+        "pendingWithdrawals": [],
+        "quarantineLength": 50000
+      }
+    },
+    "before": {
+      "active": [
+        "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0",
+        "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc",
+        "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e",
+        "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+      ],
+      "anchor": {
+        "hash": "9d4988411ba8f07bddbe6ca949f0be2c6a613feebbd7d17be4760114c454770e",
+        "number": 4,
+        "port": 47403,
+        "pre": true
+      },
+      "bonds": {
+        "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0": 200,
+        "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc": 300,
+        "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e": 100,
+        "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4": 400
+      },
+      "finalized_anchor": {
+        "hash": "6bc1173ffde97c96eb9725007549d000e301ed1e62912546cbf7f08147e43a71",
+        "number": 1,
+        "port": 47403
+      },
+      "health": {
+        "acceptsDeploys": true,
+        "blockPipeline": {
+          "capacity": 1024,
+          "pending": 0,
+          "sampledPeak": 2
+        },
+        "bootId": "1-1794880516415",
+        "degraded": "normal",
+        "diagVersion": 2,
+        "finalityStallEpisodes": 2,
+        "finalityStalled": false,
+        "finalizedHeight": 1,
+        "finalizedHeightError": null,
+        "finalizedLag": 3,
+        "height": 5,
+        "lastBlockAgeMs": 11522,
+        "lastFinalityAgeMs": 11492,
+        "lastPeerAgeMs": 11072,
+        "lastPipelineFault": null,
+        "maxObservedHeight": 4,
+        "nodePhase": "running",
+        "ok": true,
+        "orphanBodies": 0,
+        "orphanDetections": 0,
+        "phase": "running",
+        "pipelineFaults": 0,
+        "pipelineFaultsOutstanding": 0,
+        "pool": {
+          "bytes": 0,
+          "deploys": 0,
+          "maxBytes": 67108864,
+          "maxDeploys": 10000
+        },
+        "proposalHaltReason": null,
+        "proposalHalted": false,
+        "ready": true,
+        "readyReasons": [],
+        "selfValidationRefusal": null,
+        "shardPhases": {
+          "/root": "running"
+        }
+      },
+      "liveness": {},
+      "pos": {
+        "activeValidators": [
+          "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0",
+          "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc",
+          "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e",
+          "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+        ],
+        "blocksUntilEpochBoundary": 1,
+        "epoch": 1,
+        "epochLength": 3,
+        "latestBlockNumber": 5,
+        "pendingWithdrawals": [],
+        "quarantineLength": 50000
+      }
+    },
+    "note": "pos.epoch derives from DAG height, which the surviving proposer may keep extending; the quorum claim is measured on /health.finalizedHeight, the last-finalised anchor and the liveness counters. The canonical read anchor may advance with DAG blocks below quorum; the freeze claim is the finalised one."
+  },
+  "source_sha": "06405f21c5c2e8c15cf00aa70f34f6acaba6faaf",
+  "tool": "liveness-enforcement-drill.py",
+  "verdict_hint": "PASS"
+}

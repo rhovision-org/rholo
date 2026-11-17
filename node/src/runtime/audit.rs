@@ -348,7 +348,7 @@ pub async fn run(
 
     let verified = rchain_casper::checkpoint::verify_genesis_rooted_certificate(
         &certificate,
-        &parts.runtime_manager.genesis_pos().active_bonds(),
+        &parts.runtime_manager.genesis_pos().bonds,
     )
     .map_err(|e| format!("the checkpoint certificate was refused: {e}"))?;
 
@@ -1103,11 +1103,13 @@ mod tests {
                 anchor: base16::encode(&[1u8; 32]),
                 anchor_height: 9,
                 anchor_post_state: base16::encode(&[2u8; 32]),
+                fringe_state: None,
                 fringe_hashes: vec![base16::encode(&[1u8; 32])],
                 parent_digest: None,
                 epoch: 0,
                 metadata_root: None,
                 history_root: None,
+                fringe_headers_root: None,
             },
             digest,
             supporting_stake: 3,

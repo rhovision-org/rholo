@@ -659,7 +659,7 @@ block_processor.rs`, `block_receiver.rs`, `casper/src/dag.rs`, `casper/src/engin
 | **F-U21-01** | NO | **No action without an advancing boundary**: a chain that cannot finalise must not jail | liveness counters and vote windows advance only at an epoch boundary whose quorum-supported tip moved; `apply_liveness_prelude` skips an empty participation map or an unchanged tip | a stall freezes both clocks | Terminal | R4 | rholang/src/native_state.rs::a_stall_freezes_the_jail_clock |
 | **F-U21-02** | MORE | **A colluding supermajority can eject a dissenter**: a passing vote slashes and permanently bans, with no unban path | the vote threshold is strict `3·for > 2·total` of the active stake; a capture above it is the fixed policy decision, mitigated by jail-first, one open window per target, default-off and TERMS disclosure | the risk is stated and accepted; no unban in this pass | Terminal | R4 | rholang/src/native_state.rs::a_passing_vote_slashes_and_permanently_ejects |
 | **F-U21-03** | LESS | **Less than two thirds leaves a jailed validator jailed**: the liveness problem is priced (no income, no active membership) but the bond stays and the finality denominator does not shrink | `passes` is strict; a failed window expires and the target stays jailed until it speaks | a jailed validator can return; the network may have to wait for it or withdraw | Terminal | R3 | rholang/src/native_state.rs::a_vote_below_two_thirds_does_not_slash |
-| **F-U21-04** | AS WELL AS | **Alongside a partition, the finalising side may jail the minority**: jail is automatic and bond-preserving; a vote could then slash | the advance test reads the quorum-supported tip, so the side that cannot finalise counts nothing; the side that can, counts the other's silence | the partition drill (jail but no slash until a vote) is owed | Terminal | R4 | attempted on a local four-validator devnet (2026-11-14) and **FAILED**: no jail was imposed while the three survivors advanced to height 305 (`tools/liveness-enforcement-drill.py`, `spec/audit/evidence/c344-liveness-enforcement-20261114/README.md`). The anchor persistence is repaired — `final_scope_rejections` no longer propagates 33-byte system-deploy ids, and the merge refuses to reject a system-deploy chain — but the 2026-11-16 re-run stalls at height 12 with a merge/replay disagreement (**C402**; the unmodified `d4b9bfb` base stalls identically), so the jail and partition arms remain owed. Records: `spec/audit/evidence/c344-anchor-persistence-20261116/` and `spec/audit/evidence/c402-partition-stall-20261116/` |
+| **F-U21-04** | AS WELL AS | **Alongside a partition, the finalising side may jail the minority**: jail is automatic and bond-preserving; a vote could then slash | the advance test reads the quorum-supported tip, so the side that cannot finalise counts nothing; the side that can, counts the other's silence | the 2026-11-17 arms show the finalising side jailing the stopped validator (jail-vote) and the exactly-two-thirds ballot not slashing (exact-threshold) | Terminal | R4 | `casper/src/merging.rs::a_finalized_boundary_noop_does_not_reject_a_concurrent_ballot` pins the shape the arm exposed — a finalised boundary's unchanged rewrite of `pos:slash-votes` vetoed the concurrent vote chain, and the effective-write filter (Law 17e) keeps both ballots. The anchor persistence is repaired (C344, 2026-11-16) and C402 is closed; the 2026-11-17 capstone passes jail-vote, exact-threshold and stall, and the restart/release clause is Law 89's state machine with its named witnesses (the arm's jail half read as expected; its restart/release half needs a new test) |
 | **F-U21-05** | PART OF | **Only the finalised-fringe participation is read**: a stale reachable fringe can shift a reading | participation is the receiver-derived `latest_heights` of the boundary's finalised fringe; a one-boundary omission is not enough because `jail_after` is at least 2 | a one-boundary lapse does not jail | Drift | R3 | rholang/src/native_state.rs::one_boundary_omission_does_not_jail |
 | **F-U21-06** | OTHER THAN | **Stake, not node count, decides**: one large staker can decide for many operators | the tally sums pool bonds of active voters, not keys | the threshold is stated in stake | Terminal | R4 | rholang/src/native_state.rs::a_passing_vote_slashes_and_permanently_ejects |
 | **F-U21-07** | REVERSE | **One message releases the jail**: a validator can oscillate absent N−1 / present 1 to avoid it | a present boundary resets the counter; the jail term then runs and a present validator is released at expiry | the jail is not a sentence; continued silence renews it | Drift | R4 | rholang/src/native_state.rs::a_jailed_validator_returns_after_the_term |
@@ -686,16 +686,21 @@ This is a desk study of the liveness-enforcement design (RCHIP #55), not a live 
 `docs/src/node/validator-economics.md`, `docs/src/node/operator-risk.md`, `TERMS.md`. Ran
 `tools/check-hazop-worksheet.sh --gate`.
 
-**Devnet follow-up, 2026-11-14.** The first operational arm was run:
-`tools/liveness-enforcement-drill.py --arm jail-vote` on four local validators (stakes 700/100/100/100,
-epoch 3, absence threshold 1, jail after 2) stopped validator 3. Over 420 s the three survivors
-advanced the chain from ~20 to height 305 / finalized 302, and `getLiveness` stayed empty — **the jail
-was never imposed** (`spec/audit/evidence/c344-liveness-enforcement-20261114/`, verdict FAIL). An
-instrumented build showed `apply_liveness_prelude` running with `jail_after=2` and a three-validator
-participation map, but `liveness_anchor()` returning `None` at every boundary after the first armed
-one: the `pos:liveness-anchor` write set at a boundary is not visible in the next boundary's merged
-pre-state on this path. The unit tests share one in-memory store across boundaries and cannot see
-this. The live testnet arms, the partition arm and a repair of the anchor persistence remain owed.
+**Devnet follow-up, 2026-11-16.** The first operational arm (2026-11-14) jailed nothing: the
+`pos:liveness-anchor` write set at a boundary was not visible in the next boundary's merged
+pre-state. That was repaired (`final_scope_rejections` no longer propagates 33-byte system-deploy
+ids, and the merge refuses to reject a system-deploy chain), and the follow-up run reached the vote:
+its exact-threshold arm lost validator 1's ballot while the target stayed jailed. The cause was
+reduced to a merge fixture — a finalised boundary's **unchanged** rewrite of `pos:slash-votes`
+counted as a slot and forced the concurrent vote chain out — and fixed by Law 17e's effective-write
+filter (`casper/src/merging.rs::effective_native_effects`, with the red-then-green fixture
+`a_finalized_boundary_noop_does_not_reject_a_concurrent_ballot`). The drill now pins every read to a
+finalised block and follows each ballot to its block and its finalised state. The 2026-11-17 capstone passes
+jail-vote, exact-threshold and stall; the restart/release clause is Law 89's state machine and its
+named witnesses, and the arm's jail half read as expected; its restart/release half needs a new test.
+The partition arm and the live-testnet discharge remain owed; the coverage table is
+`spec/audit/evidence/c344-law-coverage-20261116.md` and the run record is
+`spec/audit/evidence/c344-capstone-20261117.md`.
 
 ### U22 — Self-built block replay and the recorded cost
 

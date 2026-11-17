@@ -1,0 +1,178 @@
+{
+  "arm": "jail-vote",
+  "arm_config": {
+    "absence_threshold": 1,
+    "jail_after": 2,
+    "jail_epochs": 10,
+    "severity": "misdemeanour",
+    "stakes": "700,100,100,100",
+    "vote_window": 6
+  },
+  "checks": {
+    "bond_untouched_by_jail": true,
+    "jailed": true,
+    "liveness_record_cleared_after_slash": true,
+    "target_excluded_from_active_after_jail": true,
+    "vote_ballot_in_own_block": true,
+    "vote_deploy_committed": true,
+    "vote_deploy_not_rejected": true,
+    "vote_slashed_the_bond": true,
+    "vote_window_closed_after_slash": true,
+    "vote_window_opened": true
+  },
+  "epoch_length": 3,
+  "execution_proven": false,
+  "inconclusive": [],
+  "observations": {
+    "after_jail": {
+      "active": [
+        "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0",
+        "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc",
+        "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+      ],
+      "anchor": {
+        "hash": "b85a363f0f10c1abde3c138d27cf2c4b2f38effde8848222761abb5a272f8652",
+        "number": 19,
+        "port": 47403,
+        "pre": true
+      },
+      "bonds": {
+        "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0": 100,
+        "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc": 100,
+        "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e": 100,
+        "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4": 700
+      },
+      "liveness": {
+        "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e": [
+          0,
+          10
+        ]
+      }
+    },
+    "after_slash": {
+      "active": [
+        "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0",
+        "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc",
+        "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+      ],
+      "anchor": {
+        "hash": "1512e73c7f4820fa58db09c953badded48fc37e3089205091fe7286ee02eb094",
+        "number": 25,
+        "port": 47403,
+        "pre": true
+      },
+      "bonds": {
+        "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0": 100,
+        "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc": 100,
+        "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4": 700
+      },
+      "liveness": {}
+    },
+    "baseline": {
+      "active": [
+        "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0",
+        "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc",
+        "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e",
+        "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+      ],
+      "anchor": {
+        "hash": "e974ad9b84130c7041f24754d6fc75784d9d9e810238415e0679898ba1799b9e",
+        "number": 4,
+        "port": 47403,
+        "pre": true
+      },
+      "bonds": {
+        "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0": 100,
+        "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc": 100,
+        "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e": 100,
+        "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4": 700
+      },
+      "liveness": {}
+    },
+    "jail_record": [
+      0,
+      10
+    ],
+    "vote": {
+      "block": {
+        "blockHash": "5752ca756628ff135cb94fb77b6b8275721ec642701d15cb1985e365a182ff5f",
+        "blockNumber": 21,
+        "blockSize": "1741",
+        "bonds": [
+          {
+            "stake": 100,
+            "validator": "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0"
+          },
+          {
+            "stake": 100,
+            "validator": "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc"
+          },
+          {
+            "stake": 700,
+            "validator": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+          }
+        ],
+        "deployCount": 1,
+        "justifications": [
+          "1e2b41f684d772160978e022921ef5a620a4e0e59e9135153a52ed597212d03f",
+          "211003382123cccf37814c5103d6b1fa1ed9ddb7540a26295140ec9bf5fdca85",
+          "ae2f839e068f4856da1e54fec02f181556faf571a9490e131369aad2cf0718cb",
+          "d2335a0aefe5eb1f0daac761d6195166586bb52d7db664b4c883b076342d4de3"
+        ],
+        "postStateHash": "6af21c69fe54a88a13bfafb1f45b7691d90cd5d5f7ee886903b5bb1574bdb99e",
+        "preStateHash": "6c0e138c8c360c60bed4ded2d665a7ad757cd5194677d5386de3a3e10f2f3ab0",
+        "rejectedDeploys": [
+          "5312d9cf51ac57b18c6e756580a527e2f663ad3c783910a8ff90ef61954e775502"
+        ],
+        "sender": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4",
+        "seqNum": 21,
+        "shardId": "/root",
+        "sig": "3045022100c459f155d3f0c1cfd6f4642b86ab26b7eab1eb6909edd80810a3150249f13c4d02206ec7512590a386fa7bbcdec3cb0484b3990def18a0c693173ac14d12e5b06dbc",
+        "sigAlgorithm": "secp256k1",
+        "timestamp": 1794880345303,
+        "version": 1
+      },
+      "consumed_in_own_block": true,
+      "deploy_id": "3045022100e09c6a559d2095b30f0d92585e62adfa0600c9127e2ab8da89e3aa33968e9dcf02207b1f29a850f0e77486f3c937bb1eca84bfd0445d7aa607eea9c59ddb53c43206",
+      "height": 21,
+      "margin_required": 3,
+      "merged_anchor": {
+        "hash": "1512e73c7f4820fa58db09c953badded48fc37e3089205091fe7286ee02eb094",
+        "number": 25,
+        "port": 47403,
+        "pre": true
+      },
+      "merged_ballots": [],
+      "merged_votes": null,
+      "missing_ballot": null,
+      "outcome": "committed",
+      "own_block_ballots": [],
+      "own_block_target_absent": true,
+      "own_block_votes": null,
+      "rejected_in": [],
+      "signer_anchor": {
+        "hash": "b85a363f0f10c1abde3c138d27cf2c4b2f38effde8848222761abb5a272f8652",
+        "number": 19,
+        "port": 47403,
+        "pre": true
+      },
+      "signer_port": 47403,
+      "stale_snapshot": [],
+      "status": "ProcessedWithSuccess",
+      "validator": 0,
+      "window_at_submission": {
+        "ballots": {},
+        "opened_at": 18,
+        "remaining": 6
+      }
+    },
+    "vote_window": {
+      "ballots": {},
+      "opened_at": 18,
+      "remaining": 6
+    }
+  },
+  "source_sha": "06405f21c5c2e8c15cf00aa70f34f6acaba6faaf",
+  "tool": "liveness-enforcement-drill.py",
+  "verdict_hint": "PASS"
+}

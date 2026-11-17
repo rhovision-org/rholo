@@ -154,6 +154,13 @@ pub struct AcceptedWindow {
     anchor_root: Blake2b256Hash,
     /// The anchor block: a valid justification even before it is in `validated`.
     anchor_block: BlockHash,
+    /// The anchor's height. A checkpoint joiner's accepted state begins here: blocks at or below it
+    /// are committed history it holds no state for and must not re-validate.
+    anchor_height: i64,
+    /// **The merge base the certificate signs**. A post-anchor block's merge starts from the
+    /// state at the fringe its parents finalised; the checkpoint signs that state (the anchor's own
+    /// `fringe_state_hash`), and a witness test asserts the signed root is the anchor header's claim.
+    merge_base: Option<TrustedMergeBase>,
     /// The certificate's validation window (Law 109).
     certified: BTreeSet<Blake2b256Hash>,
     /// Roots this node derived by accepting a validated post-anchor block.
@@ -164,18 +171,50 @@ pub struct AcceptedWindow {
     validated: BTreeSet<BlockHash>,
 }
 
+/// **The state a checkpoint signs as the merge base**.
+///
+/// The merge of a block's parents starts from `prev_fringe_state`: the state at the fringe its
+/// parents finalised. A joiner has that root signed by the quorum (the certificate's `fringeState`,
+/// which must equal the anchor header's committed `fringe_state_hash`), so replay can use it instead
+/// of the fringe-state claim of a sibling the joiner received but never validated — whose metadata
+/// carries no derived fringe root at all. `anchor` names the block whose metadata decides which
+/// fringe the root belongs to: the substitution applies exactly when the parent set's own fringe is
+/// the anchor's.
+#[derive(Clone, Debug)]
+pub struct TrustedMergeBase {
+    /// The anchor block: its metadata names the fringe whose state is `base`.
+    pub anchor: BlockHash,
+    /// The state at the fringe the anchor finalised (the certificate's signed `fringeState`).
+    pub base: Blake2b256Hash,
+}
+
 impl AcceptedWindow {
     /// The window an accepted state starts with: the anchor root, the certified set and the
     /// certificate's committed fringe. The fringe members are the justifications a first
     /// post-checkpoint block may name, so a joiner does not refuse its first multi-parent round.
     pub fn from_accepted(state: &AcceptedState) -> Self {
-        let (anchor_block, validated) = match state.anchor() {
-            TrustAnchor::Genesis(pin) => (pin.block, BTreeSet::new()),
-            TrustAnchor::Checkpoint { block, fringe, .. } => (*block, fringe.clone()),
+        let (anchor_block, anchor_height, validated, merge_base) = match state.anchor() {
+            TrustAnchor::Genesis(pin) => (pin.block, 0, BTreeSet::new(), None),
+            TrustAnchor::Checkpoint {
+                block,
+                verified,
+                fringe,
+                ..
+            } => (
+                *block,
+                verified.checkpoint.anchor_height,
+                fringe.clone(),
+                Some(TrustedMergeBase {
+                    anchor: *block,
+                    base: state.root(),
+                }),
+            ),
         };
         AcceptedWindow {
             anchor_root: state.root(),
             anchor_block,
+            anchor_height,
+            merge_base,
             certified: state.window().clone(),
             derived: BTreeSet::new(),
             validated,
@@ -215,16 +254,56 @@ impl AcceptedWindow {
                 .all(|h| *h == self.anchor_block || self.validated.contains(h))
     }
 
-    /// The pre-replay gate's rule: a known accepted root, **or** an anchored justification set.
+    /// **The replay base must be a root whose state this node holds.** The anchor root and the
+    /// roots this node derived by accepting validated post-anchor blocks are held (the anchor's
+    /// state was downloaded, a derived root came from a replay). A **certified** window root is
+    /// *named* by the certificate but its state is not downloaded by a checkpoint joiner: the
+    /// certificate commits roots, not states. Using a certified root as a replay base therefore
+    /// reaches the store's "unknown root" — which is a fact about this node's accepted history, not
+    /// an internal fault, so it must be refused before replay.
+    ///
+    /// The case that found this: a block at the anchor's own height, a sibling of the anchor, has
+    /// the anchor's **pre-state** as its pre-state. That root is certified (it is the anchor
+    /// header's pre-state) but not held; the block was admitted, the replay failed "unknown root",
+    /// and the fault latched readiness so the rejoined validator never proposed.
+    pub fn permits_replay_root(&self, pre_state: StateHash) -> bool {
+        let root = Blake2b256Hash::from_byte_array(pre_state.as_bytes());
+        root == self.anchor_root || self.derived.contains(&root)
+    }
+
+    /// The pre-replay gate's rule: a **held** accepted root, **or** an anchored justification set.
     /// The second arm does not make the state store permission — replay still recomputes the
     /// pre-state from the justifications and refuses a mismatch with `InvalidPreStateHash`.
     pub fn permits_block(&self, pre_state: StateHash, justifications: &[BlockHash]) -> bool {
-        self.permits(pre_state) || self.permits_justifications(justifications)
+        self.permits_replay_root(pre_state) || self.permits_justifications(justifications)
     }
 
     /// The block this window is anchored to.
     pub fn anchor_block(&self) -> BlockHash {
         self.anchor_block
+    }
+
+    /// The anchor's height.
+    pub fn anchor_height(&self) -> i64 {
+        self.anchor_height
+    }
+
+    /// **The signed merge base**: none for a genesis anchor, the certificate's signed
+    /// `fringeState` and its anchor for a checkpoint.
+    pub fn merge_base(&self) -> Option<&TrustedMergeBase> {
+        self.merge_base.as_ref()
+    }
+
+    /// **The accepted state begins at the anchor.** A block at or below the anchor height that is
+    /// not the anchor itself is committed history this node holds no pre-state for (a sibling at the
+    /// anchor's height, or an ancestor): re-validating it reaches a certified-but-unheld root. It is
+    /// refused as an uncertified pre-state, not faulted as an internal error.
+    pub fn is_committed_at_or_below_anchor(
+        &self,
+        block_number: i64,
+        block_hash: BlockHash,
+    ) -> bool {
+        block_number <= self.anchor_height && block_hash != self.anchor_block
     }
 }
 
@@ -232,16 +311,11 @@ impl AcceptedWindow {
 /// retryable internal fault, not an acceptance and not a verdict about the block.
 pub type SharedAcceptedWindow = Arc<tokio::sync::RwLock<Option<AcceptedWindow>>>;
 
+/// **The checkpoint's run root: the signed merged fringe state (v2), or the member's post-state for
+/// a v1 singleton.** It is not the anchor block's post-state in general: a multi-member fringe's
+/// merge is the state the first post-anchor block builds on (Laws 104/108).
 fn checkpoint_root(verified: &VerifiedCheckpoint) -> Result<Blake2b256Hash, String> {
-    let bytes = base16::decode(&verified.checkpoint.anchor_post_state)
-        .ok_or_else(|| "the checkpoint anchor post-state is not base16".to_string())?;
-    if bytes.len() != 32 {
-        return Err(format!(
-            "the checkpoint anchor post-state is {} bytes, not 32",
-            bytes.len()
-        ));
-    }
-    Ok(Blake2b256Hash::from_byte_array(&bytes))
+    crate::checkpoint::checkpoint_run_root(&verified.checkpoint).map_err(|e| e.to_string())
 }
 
 fn checkpoint_anchor_hash(verified: &VerifiedCheckpoint) -> Result<BlockHash, String> {
@@ -300,11 +374,13 @@ mod tests {
                 anchor: base16::encode(&[1u8; 32]),
                 anchor_height: 9,
                 anchor_post_state: base16::encode(&[post_byte; 32]),
+                fringe_state: None,
                 fringe_hashes: vec![base16::encode(&[1u8; 32])],
                 parent_digest: None,
                 epoch: 0,
                 metadata_root: None,
                 history_root: None,
+                fringe_headers_root: None,
             },
             digest: Blake2b256Hash::from_byte_array(&[7u8; 32]),
             supporting_stake: 3,
@@ -327,6 +403,25 @@ mod tests {
             state.root(),
             Blake2b256Hash::from_byte_array(&[0xAB; 32]),
             "the root is the certificate's anchor post-state"
+        );
+    }
+
+    /// **The checkpoint's run root is the certified fringe state**, not the anchor block's
+    /// post-state: the multi-member merge is the state the first post-anchor block builds on.
+    #[test]
+    fn a_checkpoint_root_is_the_certified_fringe_state() {
+        let mut v = verified(0xAB);
+        v.checkpoint.fringe_state = Some(base16::encode(&[0xCD; 32]));
+        let state = AcceptedState::from_certificate(v, BTreeSet::new()).expect("anchor");
+        assert_eq!(
+            state.root(),
+            Blake2b256Hash::from_byte_array(&[0xCD; 32]),
+            "the root is the signed fringe merge"
+        );
+        assert_ne!(
+            state.root(),
+            Blake2b256Hash::from_byte_array(&[0xAB; 32]),
+            "the anchor block's post-state is not the merge"
         );
     }
 
@@ -391,6 +486,66 @@ mod tests {
         assert!(
             window.permits(meta.post_state_hash),
             "a root derived by a validated post-anchor block"
+        );
+    }
+
+    /// **a certified root is not a replay base.** The certificate names its validation
+    /// window's roots; a checkpoint joiner holds only the anchor state (and what it derived). A
+    /// sibling of the anchor has the anchor's *pre-state* as its pre-state — certified, but not
+    /// held — and must be refused before replay as an uncertified pre-state verdict, not faulted as
+    /// an internal "unknown root" that latches readiness for ever.
+    #[test]
+    fn a_certified_root_that_is_not_the_anchor_is_not_a_replay_base() {
+        let certified = Blake2b256Hash::from_byte_array(&[0xCC; 32]);
+        let state = AcceptedState::from_certificate(verified(0xAB), BTreeSet::from([certified]))
+            .expect("anchor");
+        let window = AcceptedWindow::from_accepted(&state);
+
+        assert!(
+            window.permits(StateHash::new([0xCC; 32])),
+            "the read rule still admits a certified window root"
+        );
+        assert!(
+            !window.permits_replay_root(StateHash::new([0xCC; 32])),
+            "a certified root is not a state this node holds"
+        );
+        assert!(
+            !window.permits_block(StateHash::new([0xCC; 32]), &[BlockHash::new([9u8; 32])]),
+            "an anchor sibling is refused before replay"
+        );
+        assert!(
+            window.permits_block(StateHash::new([0xAB; 32]), &[]),
+            "the anchor root is held"
+        );
+    }
+
+    /// **the accepted state begins at the anchor.** A checkpoint joiner must not re-validate a
+    /// block at or below the anchor height: a sibling of the anchor at the same height has a
+    /// committed-but-unheld pre-state, and replaying it is what faulted the pipeline and kept the
+    /// rejoined validator from proposing. The anchor itself is the exception; blocks above are the
+    /// catch-up.
+    #[test]
+    fn a_checkpoint_window_refuses_a_block_at_or_below_the_anchor() {
+        let state =
+            AcceptedState::from_certificate(verified(0xAB), BTreeSet::new()).expect("anchor");
+        let window = AcceptedWindow::from_accepted(&state);
+        let anchor_block = BlockHash::new([1u8; 32]);
+        assert_eq!(window.anchor_height(), 9, "the fixture's checkpoint height");
+        assert!(
+            window.is_committed_at_or_below_anchor(9, BlockHash::new([9u8; 32])),
+            "a sibling at the anchor's height is committed history"
+        );
+        assert!(
+            window.is_committed_at_or_below_anchor(8, BlockHash::new([8u8; 32])),
+            "an ancestor below the anchor is committed history"
+        );
+        assert!(
+            !window.is_committed_at_or_below_anchor(9, anchor_block),
+            "the anchor itself is not re-validated"
+        );
+        assert!(
+            !window.is_committed_at_or_below_anchor(10, anchor_block),
+            "a post-anchor block is the catch-up, not committed history"
         );
     }
 

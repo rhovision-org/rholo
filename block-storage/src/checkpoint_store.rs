@@ -370,11 +370,13 @@ mod tests {
                 anchor: anchor.clone(),
                 anchor_height: i64::from(anchor_byte),
                 anchor_post_state: base16::encode(&[post_byte; 32]),
+                fringe_state: None,
                 fringe_hashes: vec![anchor],
                 parent_digest: None,
                 epoch: 1,
                 metadata_root: None,
                 history_root: None,
+                fringe_headers_root: None,
             },
             attestations: vec![CheckpointAttestation {
                 checkpoint_digest: "ef".repeat(32),

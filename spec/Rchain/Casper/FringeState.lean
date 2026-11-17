@@ -26,6 +26,14 @@ need not equal any state its block carries (that is the refuted pin, as a theore
 `engine::recovery::RecoveryReplay::verify` now recomputes metadata using the existing
 validator and checks this relation before publishing recovered history (C339).
 That Rust implementation is tested separately; no refinement proof is claimed here.
+
+**The checkpoint closes the residual differently, and that correction is Law 108's.** A checkpoint
+certificate does not serve a member's one-fringe-earlier claim: it **signs the merged state of the
+finalized fringe** (Law 104's `fringeState`), and the joiner hydrates exactly that root. The model
+still does not implement the merge, so the signed merge root is a quorum claim (Law 83's residual,
+now a *signed* claim rather than an assumed one); the audit (Law 106) remains the counterweight. For
+a **singleton** fringe the merge is the member's post-state, which is why a legacy certificate
+without the signed field is accepted only in that case.
 -/
 
 namespace Rchain
@@ -46,6 +54,16 @@ variable (stateAt : List Nat → Nat)
     validator makes once, when it validates the block whose `fringe` is that set. -/
 def ClaimsTheStateAtItsFringe (b : FringeClaim) : Prop :=
   b.fringeState = stateAt b.fringe
+
+/-- The merge of a **singleton** fringe: the member's post-state. This is the legacy-compatibility
+    case for a certificate without a signed fringe state. -/
+def singletonState (postOf : Nat → Nat) : List Nat → Nat
+  | [id] => postOf id
+  | _ => 0
+
+/-- **A singleton fringe's merge is its member's post-state.** -/
+theorem a_singleton_fringe_state_is_the_member_post_state (postOf : Nat → Nat) (id : Nat) :
+    singletonState postOf [id] = postOf id := rfl
 
 /-- The member with the greater block id — the responder's max `(height, hash)` tie-break. -/
 def later (a b : FringeClaim) : FringeClaim := if a.blockId < b.blockId then b else a

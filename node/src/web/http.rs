@@ -2037,7 +2037,7 @@ pub const OPENAPI_JSON: &str = r##"{
             "anchor": { "type": "string" },
             "anchorHeight": { "type": "integer", "format": "int64" },
             "ageBlocks": { "type": "integer", "format": "int64", "nullable": true, "description": "Latest observed block minus the anchor; a height difference, not a wall clock" },
-            "validationWindowBlocks": { "type": "integer", "format": "int64", "description": "The recent headers whose state roots a post-anchor block may read (8)" },
+            "validationWindowHeights": { "type": "integer", "format": "int64", "description": "How many heights below the anchor a post-anchor block may read state roots for (14)" },
             "validationWindowCommitted": { "type": "boolean", "description": "Whether the statement commits to the validation window (historyRoot, Law 109)" },
             "metadataCommitted": { "type": "boolean", "description": "Whether the statement commits to the ancestor metadata (metadataRoot)" }
           } },
@@ -2084,7 +2084,7 @@ pub const OPENAPI_JSON: &str = r##"{
             "anchor": { "type": "string" },
             "anchorHeight": { "type": "integer", "format": "int64" },
             "ageBlocks": { "type": "integer", "format": "int64", "nullable": true, "description": "Latest observed block minus the anchor; a height difference, not a wall clock" },
-            "validationWindowBlocks": { "type": "integer", "format": "int64", "description": "The recent headers whose state roots a post-anchor block may read (8)" },
+            "validationWindowHeights": { "type": "integer", "format": "int64", "description": "How many heights below the anchor a post-anchor block may read state roots for (14)" },
             "validationWindowCommitted": { "type": "boolean", "description": "Whether the statement commits to the validation window (historyRoot, Law 109)" },
             "metadataCommitted": { "type": "boolean", "description": "Whether the statement commits to the ancestor metadata (metadataRoot)" }
           } },
@@ -3661,11 +3661,13 @@ mod tests {
                 anchor: "00".repeat(32),
                 anchor_height: 7,
                 anchor_post_state: "11".repeat(32),
+                fringe_state: None,
                 fringe_hashes: vec!["00".repeat(32)],
                 parent_digest: None,
                 epoch: 0,
                 metadata_root: None,
                 history_root: None,
+                fringe_headers_root: None,
             })
         }
 
@@ -4953,11 +4955,13 @@ mod tests {
             anchor: "44".repeat(32),
             anchor_height: 9,
             anchor_post_state: "55".repeat(32),
+            fringe_state: None,
             fringe_hashes: vec!["44".repeat(32)],
             parent_digest: None,
             epoch: 0,
             metadata_root: Some("66".repeat(32)),
             history_root: Some("77".repeat(32)),
+            fringe_headers_root: None,
         };
         let certificate = rchain_models::casper::protocol::checkpoint::CheckpointCertificate {
             checkpoint,

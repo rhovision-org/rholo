@@ -547,7 +547,7 @@ pub async fn apply<
                     Ok(certificate) => {
                         match crate::checkpoint::verify_genesis_rooted_certificate(
                             &certificate,
-                            &runtime_manager.genesis_pos().active_bonds(),
+                            &runtime_manager.genesis_pos().bonds,
                         ) {
                             Ok(verified) if verified.checkpoint.shard_id == spec.shard_id.to_string() => {
                                 match BlockHash::try_from_hex(&verified.checkpoint.anchor) {
@@ -748,7 +748,7 @@ pub async fn apply<
         if let Some(certificate) = checkpoint_store.latest().await? {
             let verified = crate::checkpoint::verify_genesis_rooted_certificate(
                 &certificate,
-                &runtime_manager.genesis_pos().active_bonds(),
+                &runtime_manager.genesis_pos().bonds,
             )
             .map_err(|e| {
                 format!(
@@ -790,8 +790,10 @@ pub async fn apply<
                         ),
                     );
                     // **The stored certificate is the anchor** (Law 108): its checkpoint root is the
-                    // root this node runs from. The approved fringe's state is the finality fringe's
-                    // merged state, not the execution root, so it is not substituted here.
+                    // root this node runs from. Since the merge-base correction, that root is the **merge base** — the
+                    // state at the fringe the anchor itself finalised, which is where a post-anchor
+                    // block's merge starts — so the approved fringe's state and the certificate's
+                    // root agree by construction rather than being two different claims.
                     let window = rebuild_window_from_dag(dag.as_ref(), &verified).await?;
                     accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
                         verified.clone(),
@@ -802,14 +804,49 @@ pub async fn apply<
                     certified,
                     accepted,
                 } => {
-                    log.warn(
-                        source,
-                        &format!(
-                            "boot: the stored checkpoint certificate names another fringe than the \
-                             accepted fringe ({certified} certified, {accepted} accepted); the \
-                             accepted state is not re-verified by it"
-                        ),
-                    );
+                    // **A newer accepted fringe is not a disagreement when it descends from the
+                    // certificate's anchor.** The certificate is a snapshot; the approved store
+                    // records the tip at shutdown. Refusing every later tip is the in-place-restart
+                    // stall: the validator can never boot again. The certificate still anchors the
+                    // history (its closure and commitments are re-verified below), and
+                    // `seed_derived_roots` re-seeds the validated blocks above it. A recorded
+                    // fringe that does **not** descend from the anchor is a fork and is refused.
+                    let anchor =
+                        BlockHash::try_from_hex(&verified.checkpoint.anchor).map_err(|e| {
+                            format!("the stored certificate's anchor is not a block hash: {e}")
+                        })?;
+                    let descends = match recorded.as_ref() {
+                        Some(recorded) => {
+                            fringe_descends_from(dag.as_ref(), recorded, anchor).await?
+                        }
+                        None => false,
+                    };
+                    if descends {
+                        log.warn(
+                            source,
+                            &format!(
+                                "boot: the accepted fringe ({accepted} block(s)) is a validated \
+                                 descendant of the certificate's fringe ({certified} block(s)); \
+                                 adopting the certificate as the base and re-deriving the window"
+                            ),
+                        );
+                        let window = rebuild_window_from_dag(dag.as_ref(), &verified).await?;
+                        accepted_state =
+                            Some(crate::engine::anchor::AcceptedState::from_certificate(
+                                verified.clone(),
+                                window,
+                            )?);
+                    } else {
+                        log.warn(
+                            source,
+                            &format!(
+                                "boot: the stored checkpoint certificate names another fringe than \
+                                 the accepted fringe ({certified} certified, {accepted} accepted) \
+                                 and the accepted fringe does not descend from its anchor; the \
+                                 accepted state is not re-verified by it"
+                            ),
+                        );
+                    }
                 }
                 StoredFringeAgreement::Absent => {
                     // **No accepted fringe is recorded, but a verified certificate is.** A genesis
@@ -1499,8 +1536,11 @@ async fn start_catchup_if_anchored(
 /// "run unanchored":
 ///
 /// - the approved fringe is recorded and the certificate names exactly it — **re-verified**;
-/// - both are recorded and disagree — **mismatch**, and the node must not adopt the certificate
-///   silently over a newer accepted fringe;
+/// - both are recorded, they differ, and the accepted fringe is a **descendant extension** of the
+///   certificate's anchor — the certificate still anchors the history; it is adopted as the base
+///   and the window is re-derived (the in-place-restart case);
+/// - both are recorded and the accepted fringe does **not** descend from the anchor — **mismatch**,
+///   and the node must not adopt the certificate silently over an unrelated accepted fringe;
 /// - no approved fringe is recorded at all — a genesis master, or an interrupted approved-fringe
 ///   write — the verified certificate is the only accepted-state record, so it is **adopted**.
 ///   Refusing to run here was the observed defect: a validator that had certified normally could
@@ -1524,6 +1564,28 @@ fn stored_fringe_agreement(
         },
         None => StoredFringeAgreement::Absent,
     }
+}
+
+/// **Is every recorded fringe member the anchor or one of its descendants?** The DAG's message map
+/// carries each block's `seen` set, so this is a lookup, not a walk. A member the DAG does not hold
+/// is not evidence of descent and refuses the adoption (safe default).
+async fn fringe_descends_from(
+    dag: &dyn BlockDagStorage,
+    recorded: &BTreeSet<BlockHash>,
+    anchor: BlockHash,
+) -> Result<bool, String> {
+    let representation = dag.get_representation().await;
+    let msg_map = &representation.dag_message_state.msg_map;
+    for member in recorded {
+        if *member == anchor {
+            continue;
+        }
+        match msg_map.get(member) {
+            Some(message) if message.seen.contains(&anchor) => {}
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
 }
 
 async fn anchor_closure(
@@ -1580,6 +1642,27 @@ async fn rebuild_window_from_dag(
     crate::checkpoint::verify_metadata_root(&verified.checkpoint, closure.iter()).map_err(|e| {
         format!("the stored certificate's metadata commitment does not verify: {e}")
     })?;
+    // **The signed merge base is the anchor header's own fringe state** — the same check the
+    // sync path makes. A v2 statement whose `fringeState` is not the anchor's committed
+    // `fringe_state_hash` names a base its anchor does not, and this node will not run from it.
+    if verified.checkpoint.fringe_state.is_some() {
+        let anchor_header = closure
+            .iter()
+            .find(|header| header.block_hash == anchor)
+            .ok_or_else(|| {
+                "the stored certificate's committed header set does not hold its anchor".to_string()
+            })?;
+        let signed = crate::checkpoint::checkpoint_run_root(&verified.checkpoint)
+            .map_err(|e| format!("the stored certificate's fringeState is malformed: {e}"))?;
+        if signed.as_bytes() != anchor_header.fringe_state_hash.as_bytes() {
+            return Err(format!(
+                "the stored certificate's signed fringe state {} is not the anchor header's \
+                 committed fringe state {}",
+                signed.to_hex(),
+                rchain_shared::base16::encode(anchor_header.fringe_state_hash.as_bytes())
+            ));
+        }
+    }
     crate::checkpoint::verify_validation_window(&verified.checkpoint, closure.iter()).map_err(
         |e| format!("the stored certificate's validation-window commitment does not verify: {e}"),
     )?;
@@ -1878,11 +1961,13 @@ mod tests {
             anchor: anchor.block_hash.to_hex(),
             anchor_height: 1,
             anchor_post_state: rchain_shared::base16::encode(anchor.post_state_hash.as_bytes()),
+            fringe_state: None,
             fringe_hashes: vec![anchor.block_hash.to_hex()],
             parent_digest: None,
             epoch: 0,
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         };
         let verified = crate::checkpoint::VerifiedCheckpoint {
             checkpoint,
@@ -1941,11 +2026,13 @@ mod tests {
             anchor: anchor.to_hex(),
             anchor_height: 1,
             anchor_post_state: rchain_shared::base16::encode(child.post_state_hash.as_bytes()),
+            fringe_state: None,
             fringe_hashes: vec![anchor.to_hex()],
             parent_digest: None,
             epoch: 0,
             metadata_root: Some(model::metadata_root(headers.iter()).to_hex()),
             history_root: Some(model::validation_window_root(headers.iter()).to_hex()),
+            fringe_headers_root: None,
         };
         let verified = crate::checkpoint::VerifiedCheckpoint {
             checkpoint,

@@ -196,9 +196,9 @@ pub struct CheckpointStatus {
     pub anchor_height: i64,
     /// Latest block minus the anchor, when the tip is known.
     pub age_blocks: Option<i64>,
-    /// `VALIDATION_WINDOW_BLOCKS`: the number of recent headers whose state roots a post-anchor
-    /// block may read.
-    pub validation_window_blocks: i64,
+    /// `VALIDATION_WINDOW_HEIGHTS`: how many heights below the anchor a post-anchor block's merge
+    /// may read state roots for.
+    pub validation_window_heights: i64,
     /// Whether the statement commits to the validation window (`historyRoot`).
     pub validation_window_committed: bool,
     /// Whether the statement commits to the ancestor metadata (`metadataRoot`).

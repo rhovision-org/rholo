@@ -1161,18 +1161,18 @@ jobs:
         run: |
           mkdir -p target/lfs-crash
           git rev-parse HEAD > target/lfs-crash/source.txt
-          cargo test --locked -p rchain-node --test lfs_restore_dev_tax --no-run --message-format=json > target/lfs-crash/build.jsonl
+          cargo test --locked -p rchain-node --test checkpoint_restore --no-run --message-format=json > target/lfs-crash/build.jsonl
       - name: Stress undebugged restores and capture a native core on failure
         shell: bash
         run: |
           set -euo pipefail
-          binary=$(python3 -c 'import json; rows=[json.loads(l) for l in open("target/lfs-crash/build.jsonl")]; print(next(r["executable"] for r in rows if r.get("target",{}).get("name")=="lfs_restore_dev_tax" and r.get("executable")))')
+          binary=$(python3 -c 'import json; rows=[json.loads(l) for l in open("target/lfs-crash/build.jsonl")]; print(next(r["executable"] for r in rows if r.get("target",{}).get("name")=="checkpoint_restore" and r.get("executable")))')
           ulimit -c unlimited
           echo "$PWD/target/lfs-crash/core.%p" | sudo tee /proc/sys/kernel/core_pattern
           for attempt in $(seq 1 12); do
             log="target/lfs-crash/undebugged-$attempt.log"
             if timeout 240s "$binary" --nocapture --test-threads=4 > "$log" 2>&1; then
-              grep -q 'test result: ok. 9 passed; 0 failed' "$log"
+              grep -q 'test result: ok. 2 passed; 0 failed' "$log"
               echo "undebugged attempt=$attempt PASS" | tee -a target/lfs-crash/verdicts.txt
             else
               echo "undebugged attempt=$attempt FAIL" | tee -a target/lfs-crash/verdicts.txt
@@ -1189,7 +1189,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          binary=$(python3 -c 'import json; rows=[json.loads(l) for l in open("target/lfs-crash/build.jsonl")]; print(next(r["executable"] for r in rows if r.get("target",{}).get("name")=="lfs_restore_dev_tax" and r.get("executable")))')
+          binary=$(python3 -c 'import json; rows=[json.loads(l) for l in open("target/lfs-crash/build.jsonl")]; print(next(r["executable"] for r in rows if r.get("target",{}).get("name")=="checkpoint_restore" and r.get("executable")))')
           sha256sum "$binary" > target/lfs-crash/SHA256SUMS
           failed=0
           for threads in 1 4; do
@@ -1197,7 +1197,7 @@ jobs:
               log="target/lfs-crash/threads-$threads-run-$attempt.log"
               # Rust ignores SIGPIPE; preserve that behavior under gdb while fatal signals still stop.
               gdb --batch -ex 'set pagination off' -ex 'handle SIGPIPE nostop noprint pass' -ex run -ex 'thread apply all bt' --args "$binary" --nocapture --test-threads="$threads" > "$log" 2>&1 || true
-              if grep -q 'test result: ok. 9 passed; 0 failed' "$log" && ! grep -Eq 'received signal SIG|exited with code' "$log"; then
+              if grep -q 'test result: ok. 2 passed; 0 failed' "$log" && ! grep -Eq 'received signal SIG|exited with code' "$log"; then
                 echo "threads=$threads attempt=$attempt PASS" | tee -a target/lfs-crash/verdicts.txt
               else
                 echo "threads=$threads attempt=$attempt FAIL" | tee -a target/lfs-crash/verdicts.txt
@@ -1240,8 +1240,8 @@ jobs:
           set -euo pipefail
           mkdir -p target/lfs-asan
           git rev-parse HEAD > target/lfs-asan/source.txt
-          cargo test --locked --target x86_64-unknown-linux-gnu -p rchain-node --test lfs_restore_dev_tax -- --nocapture --test-threads=4 2>&1 | tee target/lfs-asan/restore.log
-          grep -q 'test result: ok. 9 passed; 0 failed' target/lfs-asan/restore.log
+          cargo test --locked --target x86_64-unknown-linux-gnu -p rchain-node --test checkpoint_restore -- --nocapture --test-threads=4 2>&1 | tee target/lfs-asan/restore.log
+          grep -q 'test result: ok. 2 passed; 0 failed' target/lfs-asan/restore.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:

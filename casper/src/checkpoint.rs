@@ -6,9 +6,10 @@
 //! bonded stake (Law 14's exact integer rule, `is_super_majority`).
 //!
 //! The digest is the statement. It binds the shard, the finalized anchor block, the anchor's
-//! **post-state** (the checkpoint root — not the ordinary fringe root, which is a member's claim),
-//! the previous checkpoint's digest, the epoch and the finalized fringe. A signature over one
-//! checkpoint is therefore not a signature over another, and a certificate cannot cross shards.
+//! **post-state** (an audit field), the **merge base — the state at the fringe the anchor itself
+//! finalised** (`fringeState`, the root a post-anchor block's merge starts from), the previous
+//! checkpoint's digest, the epoch and the finalized fringe. A signature over one checkpoint is
+//! therefore not a signature over another, and a certificate cannot cross shards.
 //!
 //! **An absent parent is encoded as 32 zero bytes, and an explicit zero parent is refused.** The
 //! sentinel is deliberate: without it `parent_digest: None` and `Some("00…00")` would be two
@@ -35,8 +36,19 @@ use rchain_shared::refined::NonNegI64;
 
 use crate::validator_identity::checkpoint_attestation_prehash;
 
-/// Domain tag of the checkpoint digest (distinct from the finality attestation's tag).
+/// Domain tag of the v1 checkpoint digest (a statement with no signed fringe state).
 pub const CHECKPOINT_TAG: &[u8] = b"rchain-checkpoint-v1";
+
+/// Domain tag of the v2 checkpoint digest: the statement carries the **merge base** — the state at
+/// the fringe the anchor finalised (`fringeState`, checked against the anchor header's committed
+/// fringe root at join). A v1 and a v2 statement never share a digest, so old and new attestations
+/// cannot combine; the verifier refuses a v1 statement over a multi-member fringe.
+pub const CHECKPOINT_V2_TAG: &[u8] = b"rchain-checkpoint-v2";
+
+/// Domain tag of the v3 checkpoint digest: the statement additionally commits the **finalized
+/// fringe members' headers** (`fringeHeadersRoot`), so a joiner can verify the derived
+/// `fringe`/`fringe_state` of same-height siblings that the anchor's ancestor walk excludes.
+pub const CHECKPOINT_V3_TAG: &[u8] = b"rchain-checkpoint-v3";
 
 /// Why a checkpoint or a certificate was refused. Every arm names the fact; none is a generic
 /// "invalid".
@@ -70,10 +82,11 @@ pub enum CheckpointError {
     /// **The certificate has no validation-window commitment.** The sync path requires one; a legacy
     /// statement is accepted only by the audit, which reports the absence.
     MissingValidationWindow,
-    /// The anchor state's active bonds differ from the bond set the verifier trusts. Weighing the
+    /// The anchor state's **bonded pool** differs from the pool the verifier trusts. Weighing the
     /// signatures against the old set would count the wrong stake, so the certificate is refused.
     /// A bond-set transition needs the checkpoint chain (each certificate verified against its
-    /// parent's state); until that rule exists this node refuses rather than guessing.
+    /// parent's state); until that rule exists this node refuses rather than guessing. The epoch's
+    /// active draw is a subset of the pool and is **not** a transition (C403).
     BondSetDrifted { genesis: usize, anchor: usize },
 }
 
@@ -119,9 +132,9 @@ impl std::fmt::Display for CheckpointError {
             ),
             CheckpointError::BondSetDrifted { genesis, anchor } => write!(
                 f,
-                "the anchor state's active bond set ({anchor} validator(s)) differs from the \
+                "the anchor state's bonded pool ({anchor} validator(s)) differs from the \
                  genesis trust anchor's ({genesis}); a certificate signed over one partition \
-                 cannot be weighed under the other"
+                 cannot be weighed under the other (an active-set draw is not a partition)"
             ),
         }
     }
@@ -206,12 +219,52 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
         ));
     }
 
+    // **The run root is the merge base — the state at the fringe the anchor finalised — and it is
+    // signed from v2.** A v1 statement has no signed base; it is accepted only for a **singleton**
+    // fringe, where the anchor's post-state is the legacy rule. A multi-member v1 statement has no
+    // signed root a joiner could hydrate, so it is refused rather than guessed.
+    let fringe_state = match &checkpoint.fringe_state {
+        Some(hex) => Some(decode_32(hex, "fringeState")?),
+        None => {
+            if fringe.len() != 1 {
+                return Err(CheckpointError::Malformed(
+                    "a v1 certificate without a signed fringe state is accepted only for a \
+                     single-member fringe; a multi-member fringe has no signed merge root"
+                        .to_string(),
+                ));
+            }
+            None
+        }
+    };
+
+    // **The v3 tag is unambiguous even when the v2 fields are present.** A statement carrying the
+    // fringe-headers commitment must never share a digest with a v2 statement, or a signer could
+    // be shown one shape and sign the other.
+    let fringe_headers_root = checkpoint
+        .fringe_headers_root
+        .as_ref()
+        .map(|root| decode_32(root, "fringeHeadersRoot"))
+        .transpose()?;
     let mut buf = Vec::with_capacity(64 + fringe.len() * 32);
-    lp(&mut buf, CHECKPOINT_TAG);
+    lp(
+        &mut buf,
+        match (fringe_headers_root.is_some(), fringe_state.is_some()) {
+            (true, _) => CHECKPOINT_V3_TAG,
+            (false, true) => CHECKPOINT_V2_TAG,
+            (false, false) => CHECKPOINT_TAG,
+        },
+    );
     lp(&mut buf, checkpoint.shard_id.as_bytes());
     buf.extend_from_slice(&anchor);
     buf.extend_from_slice(&checkpoint.anchor_height.to_be_bytes());
     buf.extend_from_slice(&post);
+    if let Some(root) = fringe_state {
+        lp(
+            &mut buf,
+            rchain_models::casper::protocol::checkpoint::FRINGE_STATE_TAG,
+        );
+        buf.extend_from_slice(&root);
+    }
     buf.extend_from_slice(&parent);
     buf.extend_from_slice(&checkpoint.epoch.to_be_bytes());
     buf.extend_from_slice(&(fringe.len() as u32).to_be_bytes());
@@ -235,7 +288,9 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
         .as_ref()
         .map(|root| decode_32(root, "historyRoot"))
         .transpose()?;
-    let presence = u8::from(metadata_root.is_some()) | (u8::from(history_root.is_some()) << 1);
+    let presence = u8::from(metadata_root.is_some())
+        | (u8::from(history_root.is_some()) << 1)
+        | (u8::from(fringe_headers_root.is_some()) << 2);
     if presence != 0 {
         buf.push(presence);
         if let Some(root) = metadata_root {
@@ -252,8 +307,28 @@ pub fn checkpoint_digest(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, Chec
             );
             buf.extend_from_slice(&root);
         }
+        if let Some(root) = fringe_headers_root {
+            lp(
+                &mut buf,
+                rchain_models::casper::protocol::checkpoint::FRINGE_HEADERS_ROOT_TAG,
+            );
+            buf.extend_from_slice(&root);
+        }
     }
     Ok(Blake2b256Hash::create(&buf))
+}
+
+/// **The state a checkpoint anchors** — the signed **merge base** (v2): the state at the fringe the
+/// anchor itself finalised, which is the root a post-anchor block's merge starts from. A v1
+/// statement falls back to the anchor post-state, the legacy singleton rule; for a v1 multi-member
+/// statement `checkpoint_digest` has already refused, so there is no unnamed root here.
+pub fn checkpoint_run_root(checkpoint: &Checkpoint) -> Result<Blake2b256Hash, CheckpointError> {
+    let hex = checkpoint
+        .fringe_state
+        .as_deref()
+        .unwrap_or(&checkpoint.anchor_post_state);
+    let bytes = decode_32(hex, "fringeState")?;
+    Ok(Blake2b256Hash::from_byte_array(&bytes))
 }
 
 /// **The shape and self-consistency of the headers the metadata commitment covers.**
@@ -425,6 +500,45 @@ pub fn verify_metadata_root<'a>(
     Ok(())
 }
 
+/// **Verify a v3 certificate's fringe-headers commitment against the headers fetched for it.**
+///
+/// The certificate names the finalized fringe by hash; the v3 statement also commits each member's
+/// header, because a body does not carry the derived `fringe`/`fringe_state` fields and the anchor's
+/// ancestor walk excludes same-height siblings. Every named member must have been fetched, and the
+/// root over them must be the signed one. A v2 statement (`None`) is not refused here; the sync
+/// decides whether it can join without the commitment.
+pub fn verify_fringe_headers(
+    checkpoint: &Checkpoint,
+    headers: &std::collections::BTreeMap<BlockHash, BlockHeader>,
+) -> Result<(), CheckpointError> {
+    let Some(claimed) = checkpoint.fringe_headers_root.as_ref() else {
+        return Ok(());
+    };
+    let claimed_bytes = decode_32(claimed, "fringeHeadersRoot")?;
+    let mut members = std::collections::BTreeSet::new();
+    for hex in &checkpoint.fringe_hashes {
+        members.insert(
+            BlockHash::try_from_hex(hex)
+                .map_err(|e| CheckpointError::Malformed(format!("fringe hash: {e}")))?,
+        );
+    }
+    if let Some(missing) = members.iter().find(|hash| !headers.contains_key(*hash)) {
+        return Err(CheckpointError::Malformed(format!(
+            "the v3 certificate's fringe member {} has no fetched header",
+            missing.to_hex()
+        )));
+    }
+    let derived =
+        rchain_models::casper::protocol::checkpoint::fringe_headers_root(headers.values());
+    if derived.as_bytes() != &claimed_bytes {
+        return Err(CheckpointError::Malformed(format!(
+            "the fringe-headers commitment {claimed} does not match the fetched headers {}",
+            derived.to_hex()
+        )));
+    }
+    Ok(())
+}
+
 /// A verified certificate: the statement, its digest, and the stake that signed it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedCheckpoint {
@@ -562,8 +676,9 @@ fn named_parent(certificate: &CheckpointCertificate) -> Option<Blake2b256Hash> {
 }
 
 /// **Refuse a certificate whose anchor state is not governed by the trusted bond set.** The
-/// certificate is weighed against `trusted`; if the anchor post-state's active bonds differ from it,
-/// those signatures were cast under a different partition and cannot be counted here.
+/// certificate is weighed against `trusted`, which is the genesis **bonded pool**; if the anchor
+/// post-state's pool differs, those signatures were cast under a different partition and cannot be
+/// counted here. The epoch's active draw is a subset of the pool and is not such a difference.
 pub fn check_bond_set_unchanged(
     trusted: &BTreeMap<Validator, NonNegI64>,
     at_anchor: &BTreeMap<Validator, NonNegI64>,
@@ -600,11 +715,14 @@ mod tests {
             anchor: hash(1),
             anchor_height: 42,
             anchor_post_state: hash(2),
+            // A singleton fringe: the v1 shape, where the merge is the member's post-state.
+            fringe_state: None,
             fringe_hashes: vec![hash(1)],
             parent_digest: None,
             epoch: 4,
             metadata_root: None,
             history_root: None,
+            fringe_headers_root: None,
         }
     }
 
@@ -673,11 +791,13 @@ mod tests {
             },
             |c: &mut Checkpoint| c.anchor_height = 43,
             |c: &mut Checkpoint| c.anchor_post_state = hash(9),
+            |c: &mut Checkpoint| c.fringe_state = Some(hash(9)),
             |c: &mut Checkpoint| c.epoch = 5,
             |c: &mut Checkpoint| c.parent_digest = Some(hash(7)),
             |c: &mut Checkpoint| c.metadata_root = Some(hash(7)),
             |c: &mut Checkpoint| c.history_root = Some(hash(7)),
             |c: &mut Checkpoint| {
+                c.fringe_state = Some(hash(3));
                 c.fringe_hashes = vec![hash(1), hash(9)];
             },
         ] {
@@ -694,6 +814,7 @@ mod tests {
     #[test]
     fn the_fringe_order_does_not_change_the_digest_and_a_duplicate_is_refused() {
         let mut a = checkpoint();
+        a.fringe_state = Some(hash(3));
         a.fringe_hashes = vec![hash(1), hash(2)];
         let mut b = a.clone();
         b.fringe_hashes.reverse();
@@ -706,6 +827,54 @@ mod tests {
             checkpoint_digest(&b),
             Err(CheckpointError::Malformed(_))
         ));
+    }
+
+    /// **The digest binds the signed fringe state** (Law 104d): two statements that differ only in
+    /// the merged fringe state have different digests, so a signature over one is not a signature
+    /// over the other. The run root cannot be swapped under an attestation.
+    #[test]
+    fn the_digest_binds_the_fringe_state() {
+        let mut a = checkpoint();
+        a.fringe_state = Some(hash(3));
+        let mut b = a.clone();
+        b.fringe_state = Some(hash(9));
+        assert_ne!(
+            checkpoint_digest(&a).expect("v2 digest"),
+            checkpoint_digest(&b).expect("v2 digest"),
+            "a changed fringe state must change the digest"
+        );
+    }
+
+    /// **A v1 certificate is accepted only for a singleton fringe.** A multi-member fringe's merge
+    /// is not any member's post-state, and a v1 statement has no signed merge root; the digest
+    /// function refuses it rather than letting a joiner hydrate the anchor's post-state and fail on
+    /// the first post-anchor block.
+    #[test]
+    fn a_v1_certificate_over_a_multi_member_fringe_is_refused() {
+        let mut c = checkpoint();
+        c.fringe_hashes = vec![hash(1), hash(2)];
+        assert!(
+            matches!(checkpoint_digest(&c), Err(CheckpointError::Malformed(_))),
+            "a v1 multi-member statement must be refused"
+        );
+    }
+
+    /// **The run root is the signed fringe state (v2), or the member's post-state (v1 singleton).**
+    #[test]
+    fn the_run_root_is_the_signed_fringe_state() {
+        let mut c = checkpoint();
+        c.fringe_state = Some(hash(3));
+        assert_eq!(
+            checkpoint_run_root(&c).expect("v2 root"),
+            Blake2b256Hash::from_byte_array(&[3u8; 32]),
+            "the v2 run root is the signed fringe merge"
+        );
+        let legacy = checkpoint();
+        assert_eq!(
+            checkpoint_run_root(&legacy).expect("v1 root"),
+            Blake2b256Hash::from_byte_array(&[2u8; 32]),
+            "a v1 singleton's root is the member's post-state"
+        );
     }
 
     #[test]
@@ -1090,6 +1259,42 @@ mod tests {
                 .collect()
         };
         assert!(!senders(&cert_a).is_disjoint(&senders(&cert_b)));
+    }
+
+    /// **A v3 statement commits the fringe members' headers and never aliases v2.** The tag changes
+    /// with the shape; the fetched headers verify the root; a tampered or missing member is refused.
+    #[test]
+    fn a_v3_statement_commits_the_fringe_headers_and_never_aliases_v2() {
+        use rchain_models::casper::protocol::checkpoint::fringe_headers_root;
+
+        let mut statement = checkpoint();
+        statement.fringe_state = Some(hash(9)); // the v2 shape
+        let v2 = checkpoint_digest(&statement).expect("v2 digest");
+
+        let member = BlockHash::new([1u8; 32]);
+        let headers = BTreeMap::from([(member, header(42, 1))]);
+        statement.fringe_headers_root = Some(fringe_headers_root(headers.values()).to_hex());
+
+        let v3 = checkpoint_digest(&statement).expect("v3 digest");
+        assert_ne!(
+            v2, v3,
+            "a v3 statement must never share a digest with a v2 one"
+        );
+        verify_fringe_headers(&statement, &headers).expect("the committed headers verify");
+
+        let mut tampered = headers.clone();
+        tampered
+            .get_mut(&member)
+            .expect("the member is present")
+            .post_state_hash = rchain_models::block::state_hash::StateHash::new([7u8; 32]);
+        assert!(
+            verify_fringe_headers(&statement, &tampered).is_err(),
+            "a changed header is not the committed one"
+        );
+        assert!(
+            verify_fringe_headers(&statement, &BTreeMap::new()).is_err(),
+            "a named member with no fetched header is a refusal"
+        );
     }
 
     /// **The metadata commitment is a set commitment over the walked headers.** Genesis is

@@ -412,4 +412,70 @@ theorem the_fold_refuses_concurrent_writers_of_one_slot :
     foldRefuses (fun _ _ => False) [⟨1, {1}⟩, ⟨2, {1}⟩] := by
   refine ⟨⟨1, {1}⟩, by simp, ⟨2, {1}⟩, by simp, by decide, by decide, by simp, by simp, by decide⟩
 
+/-! ## Law 17e — an unchanged native write is not a write
+
+Law 17c puts the native relation on the chain and on the slots that chain wrote. It leaves one thing
+open that the port then got wrong: **which slots count as written**. `NativeStore::put` records a
+`Put` even when the bytes equal what the pre-state holds, so `pos:slash-votes`, `pos:vote-windows`
+and `pos:liveness` — which the armed liveness prelude rewrites at every advancing boundary — entered
+a boundary chain's slot set although the boundary changed nothing.
+
+A no-op write in that set is a conflict partner of a concurrent user chain that did write the leaf.
+When the boundary is finalised and the user chain is not, the port's `incompatible_with_final` forces
+the user chain out, and its deploy's effect dies with a boundary that wrote the same bytes back. That
+is C344's exact-threshold arm losing validator 1's ballot, reduced to
+`casper/src/merging.rs::a_finalized_boundary_noop_does_not_reject_a_concurrent_ballot`.
+
+The port's fix is `effective_native_effects` at index construction: walk the deploys in order against
+a local view seeded from the pre-state and keep only the writes that change a value. This law states
+the value-level fact that rule implements. -/
+
+/-- One native write: its slot, the value the pre-state (or an earlier deploy's write) held, and the
+    value it leaves. `Option Nat` is the port's `Option<Vec<u8>>`; `none` is an absent leaf. -/
+structure NativeWrite where
+  slot : Nat
+  before : Option Nat
+  after : Option Nat
+  deriving DecidableEq
+
+/-- A write that leaves the slot as it found it. -/
+def NativeWrite.isNoop (w : NativeWrite) : Prop := w.before = w.after
+
+/-- The slots a write list **effectively** writes: those whose value changed. The port walks the
+    writes in deploy order, so a later write's `before` is what an earlier write left — which is why
+    a later deploy restoring an earlier value is itself effective and must be kept. -/
+def effectiveSlots (ws : List NativeWrite) : Finset Nat :=
+  (ws.filter (fun w => w.before != w.after)).foldl (fun s w => s ∪ {w.slot}) ∅
+
+/-- Every slot the list touches, changed or not — the rule that stood before this law. -/
+def allSlots (ws : List NativeWrite) : Finset Nat :=
+  ws.foldl (fun s w => s ∪ {w.slot}) ∅
+
+/-- **A no-op write is not a conflict partner.** A chain whose only write to a slot leaves the value
+    unchanged is not in conflict with a concurrent chain that really writes that slot: its effective
+    slot set is empty, so `chainConflict` has nothing to overlap. -/
+def law17e_statement : Prop :=
+  ∀ (sees : Chain → Chain → Prop) (w : NativeWrite), w.isNoop →
+    ¬ chainConflict sees ⟨1, effectiveSlots [w]⟩ ⟨2, allSlots [w]⟩
+
+theorem law17e : law17e_statement := by
+  intro sees w h
+  simp only [NativeWrite.isNoop] at h
+  simp [chainConflict, effectiveSlots, h]
+
+/-- **The rule it replaces, refuted on the same pair of chains.** With the no-op write counted by
+    its slot (`allSlots`), the two chains are in conflict; with its effective set (`effectiveSlots`,
+    empty), they are not. This is the falsifier: drop the value comparison from `effectiveSlots` and
+    the port is back to rejecting a chain for bytes it did not change. -/
+theorem all_writes_conflict_where_the_effective_ones_do_not :
+    chainConflict (fun _ _ => False)
+        ⟨1, allSlots [⟨7, some 1, some 1⟩]⟩
+        ⟨2, allSlots [⟨7, some 1, some 1⟩]⟩ ∧
+      ¬ chainConflict (fun _ _ => False)
+        ⟨1, effectiveSlots [⟨7, some 1, some 1⟩]⟩
+        ⟨2, allSlots [⟨7, some 1, some 1⟩]⟩ := by
+  constructor
+  · simp [chainConflict, allSlots]
+  · simp [chainConflict, effectiveSlots, allSlots]
+
 end Rchain

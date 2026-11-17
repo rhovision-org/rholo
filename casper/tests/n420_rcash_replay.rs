@@ -447,6 +447,7 @@ fn the_live_pre_state_boundary_merge_replays() {
             async move { found.ok_or_else(|| format!("no index for {h:?}")) }
         };
         let scope = MergeScope {
+            fork_blocks: BTreeSet::new(),
             final_scope: BTreeSet::new(),
             conflict_scope: blocks.iter().map(|b| b.hash).collect(),
             ancestry: BTreeMap::new(),
@@ -508,6 +509,7 @@ fn the_live_pre_state_boundary_merge_replays() {
             async move { found.ok_or_else(|| format!("no index for {h:?}")) }
         };
         let one_scope = MergeScope {
+            fork_blocks: BTreeSet::new(),
             final_scope: BTreeSet::new(),
             conflict_scope: BTreeSet::from([blocks[0].hash]),
             ancestry: BTreeMap::new(),

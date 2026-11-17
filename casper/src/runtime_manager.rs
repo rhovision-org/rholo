@@ -28,8 +28,8 @@ use rchain_rholang::merging::{
     NumberChannel,
 };
 use rchain_rholang::native_state::{
-    decode_bonds, decode_params, pos_active_key, pos_dev_vesting_key, pos_params_key, DevVesting,
-    NativeSystemState, PosGenesis,
+    decode_bonds, decode_params, pos_active_key, pos_bonds_key, pos_dev_vesting_key,
+    pos_params_key, DevVesting, NativeSystemState, PosGenesis,
 };
 use rchain_rholang::runtime::{ReplayRhoRuntime, RhoRuntime};
 use rchain_rholang::scheduler::EffectMode;
@@ -43,7 +43,9 @@ use rchain_rspace::native_store::{
 };
 
 use crate::batch;
-use crate::merging::{BlockIndex, DeployChainIndex, DeployIndex, MergeScope};
+use crate::merging::{
+    effective_native_effects, BlockIndex, DeployChainIndex, DeployIndex, MergeScope,
+};
 use rchain_rspace::rspace::RSpace;
 use rchain_shared::refined::{BlockHeight, NonNegI64};
 use rchain_shared::typed_store::KeyValueTypedStore;
@@ -1959,6 +1961,12 @@ impl RuntimeManager {
         });
         let effects = BlockNativeEffects::from_drain(&fork.last_native_drain())
             .map_err(RuntimeRunError::Other)?;
+        // **A write that changes nothing is not a write** (law 17e): filter against the state this
+        // deploy was played on, so the chain's slot set — and `batch::compatible`'s view of it — is
+        // the same effective set `BlockIndex::apply` will build from the sidecar.
+        let effects = effective_native_effects(&self.history_repo, base, effects)
+            .await
+            .map_err(RuntimeRunError::Other)?;
         let native = effects.of_deploy(ordinal).to_vec();
         let chain = DeployChainIndex::apply(
             base,
@@ -2331,6 +2339,26 @@ impl RuntimeManager {
             .await
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "active-bonds leaf not found in state".to_string())?;
+        decode_bonds(&bytes)
+    }
+
+    /// **The bonded pool at a committed state** — `pos:bonds`, the set a checkpoint certificate is
+    /// weighed under (`genesis_pos().bonds`), not the epoch's active draw.
+    ///
+    /// [`Self::compute_bonds`] reads `pos:active`, which is a *drawn subset* of this map: it excludes
+    /// the jailed and honours `number_of_active_validators`. Using it as the certificate's trust
+    /// anchor made a jail (or any capped draw) look like a bond-set transition, so the collector
+    /// refused every certificate and a restarted validator could not boot during its jail (C403).
+    pub async fn compute_bonded_pool(
+        &self,
+        hash: &StateHash,
+    ) -> Result<BTreeMap<Validator, NonNegI64>, String> {
+        let reader = self.history_repo.get_history_reader(to_blake(hash)).await;
+        let bytes = reader
+            .get_native(PREFIX_POS, pos_bonds_key())
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "bonds leaf not found in state".to_string())?;
         decode_bonds(&bytes)
     }
 
@@ -2904,6 +2932,52 @@ mod tests {
             100,
             "and the denominator a quorum is measured against halves — 200 against 100 is the same \
              quorum read as a different fraction of the same chain"
+        );
+    }
+
+    /// **The checkpoint's trust anchor is the genesis bonded pool, not the genesis active draw**
+    /// (C403). With a capped active set the two maps differ from genesis; the pool is what a
+    /// certificate is weighed under, and what a jail leaves unchanged. Using the draw made every
+    /// certificate after a jail look like a bond-set transition, so the collector refused it and a
+    /// restarted validator could not boot during its jail.
+    #[tokio::test]
+    async fn the_checkpoint_trust_anchor_is_the_bonded_pool_not_the_active_draw() {
+        use rchain_rholang::native_state::PosParams;
+
+        let rm = manager().await;
+        let rand = Blake2b512Random::from_init(&[0u8; 32]);
+        let one = Validator::from_slice(&[1u8; 65]);
+        let two = Validator::from_slice(&[2u8; 65]);
+        let pos = PosGenesis {
+            bonds: BTreeMap::from([
+                (one, NonNegI64::try_from(100).expect("a stake")),
+                (two, NonNegI64::try_from(100).expect("a stake")),
+            ]),
+            trusted: BTreeSet::new(),
+            params: PosParams {
+                number_of_active_validators: 1,
+                ..PosParams::default()
+            },
+            dev_vesting: None,
+        };
+        let (_pre, genesis_post, _) = rm
+            .compute_genesis(&[], &rand, BlockData::empty(), &pos, &[])
+            .await
+            .expect("compute_genesis");
+
+        let active = rm
+            .compute_bonds(&StateHash::from_slice(genesis_post.as_bytes()))
+            .await
+            .expect("the active draw");
+        let pool = rm
+            .compute_bonded_pool(&StateHash::from_slice(genesis_post.as_bytes()))
+            .await
+            .expect("the bonded pool");
+        assert_eq!(active.len(), 1, "the draw honours the active cap");
+        assert_eq!(pool.len(), 2, "the pool is every bonded validator");
+        assert_eq!(
+            pool, pos.bonds,
+            "the genesis trust anchor is the pool, so a capped draw (or a jail) is not a drift"
         );
     }
 

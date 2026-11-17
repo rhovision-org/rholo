@@ -1,8 +1,11 @@
 # What a joining node trusts
 
 A node with no state does **not** restore a prefix by replaying it. It moves from a trust anchor to
-the tip over authenticated data, and it runs from the state that anchor names. "Trustless" is a word
-that hides which inputs are checked; this page states the model precisely. The machine forms are
+the tip over authenticated data, and it runs from the state that anchor names. The join does replay
+a bounded segment — the finalised layer's deploy-chain indices, regenerated from committed
+pre-states, because the merge consumes indices as well as roots — and that replay is a merge input,
+never an acceptance path. "Trustless" is a word that hides which inputs are checked; this page
+states the model precisely. The machine forms are
 Laws 104, 105, 108 and 109 (`spec/Rchain/Sync/`); Law 83's content-transfer theorem remains, and
 the finality residual it enumerated is **closed on the checkpoint path** by Laws 105 and 108.
 
@@ -13,11 +16,14 @@ A joiner has exactly one of two anchors:
 - the operator's **pinned genesis** — height zero, the pinned block hash and post-state, with the
   genesis state pages hydrated; or
 - a **verified checkpoint certificate** — a statement signed by strictly more than two thirds of
-  the genesis active bonds, carrying the anchor, its post-state, the fringe, the epoch and the
+  the genesis **bonded pool**, carrying the anchor, its post-state, the fringe, the epoch and the
   optional `metadataRoot` and `historyRoot` commitments.
 
-The bond set that verifies the certificate is the genesis active bonds. A certificate whose anchor
-state's bonds have drifted from that set is refused. A node with neither anchor does not run.
+The bond set that verifies the certificate is the genesis bonded pool (`pos:bonds` at genesis), not
+the epoch's active draw (`pos:active`): the draw is a subset that excludes the jailed and honours the
+active cap, so treating it as the anchor made a jail look like a partition change. A certificate
+whose anchor state's **pool** has drifted is refused; an active-set difference is not a drift
+(C403). A node with neither anchor does not run.
 
 ## What the joiner checks
 
@@ -26,8 +32,9 @@ state's bonds have drifted from that set is refused. A node with neither anchor 
 | Genesis | Exactly one height-zero block, content hash, and the configured genesis pin when present |
 | Certificate | Statement shape; every signer is a bonded key; signatures verify over the domain-tagged digest; the signers hold strictly more than two thirds of the bonded stake; the bond set has not drifted |
 | `metadataRoot` | The walked ancestor header set recomputes to the committed root; each header's **fringe membership and fringe state root** are part of the projection, and the set's shape is checked (one parentless genesis, older fringe members, non-zero non-genesis fringe roots); a missing or mismatched root is refused |
-| `historyRoot` | The last `VALIDATION_WINDOW_BLOCKS = 8` headers' pre/post/fringe roots recompute to the committed root; the joiner hydrates exactly that set and never widens it |
-| Checkpoint post-state | The anchor's post-state is the root the node runs from; an accepted state cannot carry a root its anchor does not name |
+| `historyRoot` | Every header within `VALIDATION_WINDOW_HEIGHTS = 14` heights of the anchor contributes its pre/post/fringe roots; the set recomputes to the committed root, the joiner hydrates exactly that set and never widens it |
+| Signed fringe state | The statement's `fringeState` equals the anchor header's committed `fringe_state_hash`: the merge base a post-anchor block's merge starts from; a v2 statement that names a different root is refused |
+| Checkpoint post-state | The anchor's post-state is an audit field; the node **runs from the signed fringe state**, and an accepted state cannot carry a root its anchor does not name |
 | Genesis body | The one body this path downloads: re-hashed, and its fields checked against the walked genesis header (empty fringe, fringe state = pre-state) |
 | Ancestry shape | The walked closure is contiguous and each header's justifications are present |
 | Post-anchor block | Its pre-state must be the anchor root, a certified window root, or a root this node derived from a validated post-anchor block; the state store's contents are not permission |

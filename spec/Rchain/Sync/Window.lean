@@ -9,8 +9,11 @@ import Mathlib.Data.Finset.Basic
 that set; it does not guess a window or widen one.
 
 **What this law says.** A block validates only against the checkpoint root plus the certified window.
-A root outside that set is refused, not fetched into a bigger window. Under collision-freedom a
-changed window is a different commitment, so a peer cannot substitute it under the same statement.
+The checkpoint root is the **merged state of the finalized fringe** (Law 108), so the first
+post-fringe block's pre-state — a fresh merge of the fringe members — *is* the checkpoint root, not a
+root the joiner would have to guess or widen the window for. A root outside the set is refused, not
+fetched into a bigger window. Under collision-freedom a changed window is a different commitment, so
+a peer cannot substitute it under the same statement.
 
 **What it does not claim.** The window size is a protocol constant, not a theorem about how many
 blocks a PoS close reads; a future builder that needs a deeper root must change the constant (and the
@@ -62,6 +65,13 @@ theorem the_history_root_binds_the_window (hash : Finset Nat → Nat)
     (h : commitment hash w₁ = commitment hash w₂) : w₁.roots = w₂.roots := by
   unfold commitment at h
   exact hash_inj _ _ h
+
+/-- **Law 109d — the first post-fringe block builds on the certified checkpoint root.** Its
+    pre-state is the fringe merge the certificate signs, so it is the checkpoint member of the
+    certified set; the window is for historical reads, not for this base. -/
+theorem the_first_post_fringe_block_builds_on_the_certified_root (checkpoint : Nat)
+    (w : CertifiedWindow) : validates checkpoint checkpoint w := by
+  simp [validates, certifiedRoots]
 
 /-- Non-vacuity: a window member validates against the checkpoint that certifies it. -/
 theorem a_window_root_validates (checkpoint r : Nat) (w : CertifiedWindow)

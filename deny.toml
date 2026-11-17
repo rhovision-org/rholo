@@ -11,6 +11,12 @@
 # visible and scoped to the specific RustSec advisory while the dependency is replaced.
 ignore = [
     "RUSTSEC-2021-0153",
+    # **`chrono` is unmaintained; all versions are affected** (RUSTSEC-2026-0543, no safe upgrade).
+    # It reaches the tree through `rchain-comm` only. The advisory is "unmaintained", not a
+    # vulnerability, and the dependency audit must stay green for every branch until the use is
+    # replaced with `time` (the advisory's recommended alternative). Remove this entry when that
+    # replacement lands; an unused ignore is itself an error here.
+    "RUSTSEC-2026-0543",
     # RUSTSEC-2026-0381 was ignored here for the webpki-roots 0.26.11 re-export shim while the
     # advisory matched it. The locked tree is now on the unaffected versions (the 0.26.11 shim
     # re-exports a 1.0.10+ provider), so nothing matches the advisory and an unused ignore is

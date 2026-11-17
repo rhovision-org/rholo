@@ -21,7 +21,7 @@ use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
 use rchain_models::casper::protocol::checkpoint::{
-    Checkpoint, CheckpointAttestation, CheckpointCertificate, VALIDATION_WINDOW_BLOCKS,
+    Checkpoint, CheckpointAttestation, CheckpointCertificate, VALIDATION_WINDOW_HEIGHTS,
 };
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, CheckpointStatus, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
@@ -84,7 +84,7 @@ async fn genesis_anchor_status(
         anchor: genesis.to_hex(),
         anchor_height: 0,
         age_blocks: None,
-        validation_window_blocks: VALIDATION_WINDOW_BLOCKS as i64,
+        validation_window_heights: VALIDATION_WINDOW_HEIGHTS,
         validation_window_committed: false,
         metadata_committed: false,
     })
@@ -672,7 +672,7 @@ impl BlockApi for BlockApiImpl {
                 anchor: certificate.checkpoint.anchor.clone(),
                 anchor_height: certificate.checkpoint.anchor_height,
                 age_blocks: Some(tip.saturating_sub(certificate.checkpoint.anchor_height)),
-                validation_window_blocks: VALIDATION_WINDOW_BLOCKS as i64,
+                validation_window_heights: VALIDATION_WINDOW_HEIGHTS,
                 validation_window_committed: certificate.checkpoint.history_root.is_some(),
                 metadata_committed: certificate.checkpoint.metadata_root.is_some(),
             }),
@@ -1287,10 +1287,49 @@ impl BlockApi for BlockApiImpl {
         // unable to attest until the backfill reached the anchor. The fallback keeps the old
         // behaviour for a node whose metadata predates this path.
         let anchor_post_state = self.anchor_post_state(&anchor_hash).await?;
+        // **The run root is the merge base of the blocks that build on the anchor**: the state
+        // at the fringe the anchor's *own* merge finalised, read from the anchor's `fringe_state_hash`.
+        // A post-anchor block's merge starts from `prev_fringe_state` — the state at the fringe its
+        // parents finalised — not from the anchor's post-state and not from the merged state of the
+        // finalized fringe. The anchor is the newest finalized block, so the first blocks after it
+        // carry the anchor's fringe, and that fringe's state is this value. It is a function of the
+        // anchor block alone, so every validator signs the same root, and the anchor's header commits
+        // it (the joiner re-checks the signed value against the header it walked).
+        let anchor_meta = self
+            .dag
+            .lookup(&anchor_hash)
+            .await?
+            .ok_or_else(|| format!("the anchor {} has no metadata", anchor_hash.to_hex()))?;
+        if anchor_meta.fringe.is_empty()
+            || anchor_meta.fringe_state_hash
+                == rchain_models::block::state_hash::StateHash::new([0u8; 32])
+        {
+            return Err(format!(
+                "the anchor {} has finalised no fringe, so there is no merge base to sign",
+                anchor_hash.to_hex()
+            ));
+        }
+        let fringe_state = anchor_meta.fringe_state_hash;
         // **The statement commits to the headers it is a statement about and to the validation
         // window.** The anchor's ancestor closure is the set the joiner will walk; a validator that
         // cannot read every ancestor's metadata refuses to attest rather than sign a partial root.
         let (metadata_root, history_root) = self.anchor_commitments(&anchor_hash).await?;
+        // **The fringe members' own headers** (v3). The ancestor walk excludes same-height siblings,
+        // so their derived `fringe`/`fringe_state` is not otherwise available to a joiner — and a
+        // post-anchor block that justifies one cannot be validated without it. Refuse to sign a
+        // statement that names a member whose header this node cannot read.
+        let mut fringe_headers = Vec::with_capacity(fringe.len());
+        for member in &fringe {
+            let meta = self.dag.lookup(&member.id).await?.ok_or_else(|| {
+                format!(
+                    "the fringe member {} has no metadata, so its header cannot be committed",
+                    member.id.to_hex()
+                )
+            })?;
+            fringe_headers.push(meta.to_header(false));
+        }
+        let fringe_headers_root =
+            rchain_models::casper::protocol::checkpoint::fringe_headers_root(&fringe_headers);
         let epoch_length = self.runtime.genesis_pos().params.epoch_length.max(1);
         let anchor_height = i64::from(anchor.height);
         Ok(Checkpoint {
@@ -1298,6 +1337,7 @@ impl BlockApi for BlockApiImpl {
             anchor: base16::encode(anchor_hash.as_bytes()),
             anchor_height,
             anchor_post_state: base16::encode(anchor_post_state.as_bytes()),
+            fringe_state: Some(base16::encode(fringe_state.as_bytes())),
             fringe_hashes: fringe
                 .iter()
                 .map(|m| base16::encode(m.id.as_bytes()))
@@ -1312,6 +1352,7 @@ impl BlockApi for BlockApiImpl {
             epoch: anchor_height / epoch_length,
             metadata_root: Some(metadata_root.to_hex()),
             history_root: Some(history_root.to_hex()),
+            fringe_headers_root: Some(fringe_headers_root.to_hex()),
         })
     }
 
@@ -1378,9 +1419,20 @@ impl BlockApi for BlockApiImpl {
             }
             return Ok(certificate);
         }
-        // No quorum has been assembled for the *current* statement yet. Serve the statement with
-        // this node's own attestation when it has an identity: a caller then sees a partial
-        // certificate rather than a bare claim, and a joiner refuses it by its own quorum rule.
+        // No quorum has been assembled for the *current* statement yet. **Serve the last
+        // certificate this node adopted, if it has one** (C404): a joiner on an active chain cannot
+        // hit the exact current anchor — finality moves faster than the collector's attestation
+        // round — so a current-only route hands it a partial statement it must refuse, and a node
+        // restarted during a jail can never boot. The head is quorate, verified and a valid anchor
+        // one or more finality steps behind; the joiner syncs forward from it. This is what the
+        // collector's contract says the route is for (`node_runtime.rs`: "stores the first quorate
+        // certificate, which GET /api/v1/checkpoint then serves to joiners").
+        if let Some(head) = self.checkpoint_store.latest().await? {
+            return Ok(head);
+        }
+        // With no adopted certificate at all, serve the statement with this node's own attestation
+        // when it has an identity: a caller then sees a partial certificate rather than a bare
+        // claim, and a joiner refuses it by its own quorum rule.
         let attestations = match self.checkpoint_attestation().await {
             Ok(attestation) => vec![attestation],
             Err(_) => Vec::new(),

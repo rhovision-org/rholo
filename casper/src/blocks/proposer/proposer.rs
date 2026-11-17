@@ -1410,12 +1410,27 @@ impl Proposer {
                 let dag = dag.clone();
                 Box::pin(async move {
                     let dag_repr = dag.get_representation().await;
-                    dag_repr
+                    let latest = dag_repr
                         .dag_message_state
                         .latest_msgs
                         .get(&sender)
                         .map(|m| i64::from(m.sender_seq))
-                        .unwrap_or(-1)
+                        .unwrap_or(-1);
+                    // **A restarted node must not reuse a sequence it already signed.** After a
+                    // store wipe the node's own earlier blocks arrive through the catch-up and can
+                    // sit in `msg_map` without being the key's `latest_msgs` entry; proposing
+                    // `latest + 1` then collides with one of them and the DAG's own-key gate refuses
+                    // (AUDIT C190's warning: "in msg_map but not latest_msgs"). The next sequence is
+                    // past every message this node's key has in the DAG, not just the latest map.
+                    let anywhere = dag_repr
+                        .dag_message_state
+                        .msg_map
+                        .values()
+                        .filter(|m| m.sender == sender)
+                        .map(|m| i64::from(m.sender_seq))
+                        .max()
+                        .unwrap_or(-1);
+                    latest.max(anywhere)
                 })
             })
         };

@@ -26,15 +26,27 @@ pub const METADATA_ROOT_TAG: &[u8] = b"rchain-checkpoint-metadata-root-v1";
 /// Domain tag of the optional history-root slot in the statement digest.
 pub const HISTORY_ROOT_TAG: &[u8] = b"rchain-checkpoint-history-root-v1";
 
+/// Domain tag of the finalized-fringe headers commitment (v3).
+pub const FRINGE_HEADERS_ROOT_TAG: &[u8] = b"rchain-checkpoint-fringe-headers-v1";
+
+/// Domain tag of the **signed fringe state** slot in a v2 statement digest. The slot is mandatory in
+/// v2 (the statement's run root); the tag keeps it distinguishable from the anchor post-state, which
+/// is not the merge when the finalized fringe has more than one member.
+pub const FRINGE_STATE_TAG: &[u8] = b"rchain-checkpoint-fringe-state-v1";
+
 /// Domain tag of one header's canonical projection.
 pub const HEADER_COMMITMENT_TAG: &[u8] = b"rchain-header-v1";
 
-/// **How many recent headers' state roots a post-anchor block may read.** A post-anchor block runs
-/// the PoS close for the block finalized a few heights behind it; the state roots it needs are the
-/// last `VALIDATION_WINDOW_BLOCKS` headers' pre/post/fringe roots. The window is a protocol constant:
-/// the producer commits to it (`historyRoot`), the joiner hydrates exactly it, and a validator needing
-/// a root outside it is refused rather than widening the window.
-pub const VALIDATION_WINDOW_BLOCKS: usize = 8;
+/// **How far below the anchor a post-anchor block's merge can reach, in heights.** A block's merge
+/// starts from the state at the fringe its parents finalised and reads the deploy chains of every
+/// block between that fringe and the prune fringe; those blocks' pre-states are the state roots the
+/// joiner must hold. That depth is the finality lag (at most `LIVENESS_WINDOW` heights, 5) plus one
+/// more finality step, so the window is defined over **heights**, not a header count: with several
+/// bonded validators per height, eight headers cover barely two heights and left the merge's
+/// finalised layer without a state. The producer commits to the window (`historyRoot`), the
+/// joiner hydrates exactly it, and a validator needing a root outside it is refused rather than
+/// widening the window.
+pub const VALIDATION_WINDOW_HEIGHTS: i64 = 14;
 
 /// Domain tag of the validation-window commitment.
 pub const VALIDATION_WINDOW_TAG: &[u8] = b"rchain-validation-window-v1";
@@ -111,17 +123,25 @@ pub fn metadata_root<'a>(headers: impl IntoIterator<Item = &'a BlockHeader>) -> 
     Blake2b256Hash::create(&out)
 }
 
-/// **The distinct state roots of the last [`VALIDATION_WINDOW_BLOCKS`] headers**, ordered by height
-/// and then by block hash, with each header contributing its pre-state, post-state and fringe-state
-/// roots (zero roots are the absence marker and are skipped). The selection is deterministic from the
-/// walked header set, so the producer and the joiner derive the same window.
+/// **The distinct state roots of every header within [`VALIDATION_WINDOW_HEIGHTS`] of the newest**,
+/// with each header contributing its pre-state, post-state and fringe-state roots (zero roots are the
+/// absence marker and are skipped). The selection is deterministic from the walked header set — the
+/// newest height is the anchor's, and everything within the depth is included at every width — so the
+/// producer and the joiner derive the same window.
 pub fn validation_window_roots<'a>(
     headers: impl IntoIterator<Item = &'a BlockHeader>,
 ) -> std::collections::BTreeSet<[u8; 32]> {
     let mut ordered: Vec<&BlockHeader> = headers.into_iter().collect();
     ordered.sort_by_key(|header| (i64::from(header.block_num), header.block_hash));
+    let Some(newest) = ordered.last() else {
+        return std::collections::BTreeSet::new();
+    };
+    let floor = i64::from(newest.block_num).saturating_sub(VALIDATION_WINDOW_HEIGHTS);
     let mut roots = std::collections::BTreeSet::new();
-    for header in ordered.iter().rev().take(VALIDATION_WINDOW_BLOCKS) {
+    for header in ordered
+        .iter()
+        .filter(|header| i64::from(header.block_num) > floor)
+    {
         for root in [
             header.pre_state_hash,
             header.post_state_hash,
@@ -150,6 +170,28 @@ pub fn validation_window_root<'a>(
     Blake2b256Hash::create(&out)
 }
 
+/// **The commitment over the finalized fringe's own headers** (v3). The certificate's
+/// `fringe_hashes` names the set; this binds each member's *derived* fields (`fringe`,
+/// `fringe_state_hash`) and state roots, which a block body does not carry and the anchor's
+/// ancestor walk excludes for same-height siblings. Without it a joiner cannot recompute the
+/// pre-state of a block that justifies a sibling, which is the measured cold-join failure of
+/// 2026-11-17.
+pub fn fringe_headers_root<'a>(
+    headers: impl IntoIterator<Item = &'a BlockHeader>,
+) -> Blake2b256Hash {
+    let mut entries: Vec<&BlockHeader> = headers.into_iter().collect();
+    entries.sort_by_key(|header| header.block_hash);
+    entries.dedup_by_key(|header| header.block_hash);
+    let mut out = Vec::new();
+    lp(&mut out, FRINGE_HEADERS_ROOT_TAG);
+    out.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+    for header in entries {
+        out.extend_from_slice(header.block_hash.as_bytes());
+        lp(&mut out, &header_commitment_bytes(header));
+    }
+    Blake2b256Hash::create(&out)
+}
+
 /// The checkpoint statement, as signed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -161,7 +203,14 @@ pub struct Checkpoint {
     /// The anchor's block number.
     pub anchor_height: i64,
     /// The anchor's **post-state** root (not the ordinary fringe root, which is a member's claim).
+    /// Identity/audit only since v2; the run root is [`Self::fringe_state`].
     pub anchor_post_state: String,
+    /// **The merged state of the finalized fringe** — the state the first post-anchor block builds
+    /// on, and the checkpoint's run root (Laws 104/108). It is not any member's post-state when
+    /// the fringe has more than one member. `None` is a v1 legacy statement: accepted only when the
+    /// fringe has a single member, where the merge is that member's post-state.
+    #[serde(default)]
+    pub fringe_state: Option<String>,
     /// The finalized fringe, sorted and unique. The anchor is one of its members.
     pub fringe_hashes: Vec<String>,
     /// The previous checkpoint's digest; `None` for a genesis-rooted checkpoint.
@@ -179,6 +228,13 @@ pub struct Checkpoint {
     /// `None` is a legacy statement; only the audit accepts it, and it reports the absence.
     #[serde(default)]
     pub history_root: Option<String>,
+    /// **The commitment to the finalized fringe members' headers** ([`fringe_headers_root`], v3).
+    /// A joiner fetches those headers by the signed `fringe_hashes` and verifies them against this
+    /// root before it accepts their derived `fringe`/`fringe_state` fields. `None` is a v2
+    /// statement: a joiner then has no way to build a pre-state for a block that justifies a
+    /// same-height sibling, which is the measured cold-join failure.
+    #[serde(default)]
+    pub fringe_headers_root: Option<String>,
 }
 
 /// One validator's signature over a checkpoint digest.

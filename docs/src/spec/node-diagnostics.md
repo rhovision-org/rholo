@@ -182,7 +182,7 @@ not-ready node: the two readings differ, and only one of them is the node's verd
   node serving a chain", which `latestBlockNumber` cannot: a node can hold blocks and serve none.
 - `checkpoint` — the trust anchor. `kind` is `checkpoint` (with the certificate `digest`) or
   `genesis` (digest `null`); it carries `anchor`, `anchorHeight`, `ageBlocks`,
-  `validationWindowBlocks` (8), and whether the statement committed to the validation window
+  `validationWindowHeights` (14), and whether the statement committed to the validation window
   (`historyRoot`) and the ancestor metadata (`metadataRoot`). `null` means the node has **no
   anchor**, and a node with no anchor is not running (Law 108).
 - `audit` — whether this node serves audit attestations (`available`), whether a replay is
