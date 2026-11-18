@@ -120,7 +120,7 @@
       "mutation": {
         "file": "casper/src/validate.rs",
         "before": "    if max_number_of_parents <= 0 || b.justifications.len() as u128 <= max_number_of_parents as u128",
-        "after": "    if max_number_of_parents <= 0 || b.justifications.len() as u128 < max_number_of_parents as u128",
+        "after": "    if max_number_of_parents <= 0 || (b.justifications.len() as u128) < max_number_of_parents as u128",
         "description": "Change the parent bound from at-most to fewer-than; the over-limit witness must fail."
       },
       "scope_note": "A block's justification set is bounded by max-number-of-parents and refused on the receiving side.",
