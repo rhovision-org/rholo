@@ -434,14 +434,15 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
         self.log.info(
             self.log_source,
             &format!(
-                "Received finalized fringe from bootstrap node ({}) {}.",
+                "Received finalized fringe from bootstrap node ({}) {} from peer {}.",
                 rchain_shared::base16::encode(fringe.state_hash.as_bytes()),
                 fringe
                     .hashes
                     .iter()
                     .map(|h| h.to_hex())
                     .collect::<Vec<_>>()
-                    .join(" ")
+                    .join(" "),
+                sender.s_key()
             ),
         );
 
@@ -576,8 +577,22 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                             // **The accepted state is written before `finished`.** The launch reads
                             // this slot and refuses a `finished` signal without it (Law 108): a sync
                             // that did not produce an anchor cannot move the node to Running.
+                            let accepted_root = state.root();
+                            let accepted_kind = match state.anchor() {
+                                crate::engine::anchor::TrustAnchor::Genesis(_) => "genesis",
+                                crate::engine::anchor::TrustAnchor::Checkpoint { .. } => {
+                                    "checkpoint"
+                                }
+                            };
                             *accepted_state.lock().await = Some(state);
-                            report_restored_checkpoint(&approved_store, &target, log.as_ref()).await
+                            report_restored_checkpoint(
+                                &approved_store,
+                                &target,
+                                accepted_root,
+                                accepted_kind,
+                                log.as_ref(),
+                            )
+                            .await
                         }
                         Err(error) => Err(error),
                     };
@@ -651,6 +666,8 @@ async fn mark_recovery_pending(
 async fn report_restored_checkpoint(
     approved_store: &ApprovedStore,
     fringe: &FinalizedFringe,
+    accepted_root: Blake2b256Hash,
+    accepted_kind: &str,
     log: &dyn Log,
 ) -> Result<(), String> {
     let result = async {
@@ -669,7 +686,16 @@ async fn report_restored_checkpoint(
     .await;
     let source = LogSource::new("casper.engine.NodeSyncing");
     match &result {
-        Ok(()) => log.info(source, "LFS state is successfully restored."),
+        Ok(()) => log.info(
+            source,
+            &format!(
+                "LFS state is successfully restored. Served state {}, accepted run root {} ({}), \
+                 approved checkpoint read back.",
+                rchain_shared::base16::encode(fringe.state_hash.as_bytes()),
+                accepted_root.to_hex(),
+                accepted_kind
+            ),
+        ),
         Err(error) => log.error(
             source,
             &format!("Recovery checkpoint incomplete; refusing completion: {error}"),
@@ -849,6 +875,17 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
                     tuple_st.outstanding_count()
                 ));
             }
+            // **The M3 stage-6 walk witness** (#428): the served root (the genesis post-state,
+            // checked above) was walked to completion. The restore line names the same hash.
+            log.info(
+                source,
+                &format!(
+                    "LFS tuple-space walk finished for served state {}: {} of {} page key(s) done.",
+                    rchain_shared::base16::encode(fringe.state_hash.as_bytes()),
+                    tuple_st.finished_count(),
+                    tuple_st.outstanding_count()
+                ),
+            );
             put_block(&block_store, block.clone()).await?;
             insert_genesis(dag.as_ref(), block.clone()).await?;
             put_approved_block(approved_store, fringe.clone()).await?;
@@ -1062,6 +1099,17 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
             tuple_st.outstanding_count()
         ));
     }
+    // **The M3 stage-6 walk witness** (#428): the served fringe root was walked to completion.
+    // `finished_count == outstanding_count` is the page-count equality the chain requires.
+    log.info(
+        source,
+        &format!(
+            "LFS tuple-space walk finished for served state {}: {} of {} page key(s) done.",
+            rchain_shared::base16::encode(fringe.state_hash.as_bytes()),
+            tuple_st.finished_count(),
+            tuple_st.outstanding_count()
+        ),
+    );
 
     let fringe_root = Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes());
     let extra_roots: Vec<Blake2b256Hash> = required_roots
@@ -2445,9 +2493,12 @@ mod tests {
             ancestry: Vec::new(),
         };
 
+        let accepted_root = Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes());
         let failure_log = RecordingLog::default();
         mark_recovery_pending(&working, &fringe).await.unwrap();
-        let failure = report_restored_checkpoint(&failing, &fringe, &failure_log).await;
+        let failure =
+            report_restored_checkpoint(&failing, &fringe, accepted_root, "genesis", &failure_log)
+                .await;
         assert!(failure.is_err());
         let finished = tokio::sync::Notify::new();
         let notified = finished.notified();
@@ -2470,7 +2521,7 @@ mod tests {
         );
 
         let success_log = RecordingLog::default();
-        report_restored_checkpoint(&working, &fringe, &success_log)
+        report_restored_checkpoint(&working, &fringe, accepted_root, "genesis", &success_log)
             .await
             .unwrap();
         assert_eq!(
@@ -2478,6 +2529,9 @@ mod tests {
             vec![None]
         );
         assert!(success_log.contains("LFS state is successfully restored."));
+        assert!(success_log.contains("Served state"));
+        assert!(success_log.contains("accepted run root"));
+        assert!(success_log.contains("approved checkpoint read back"));
         assert_eq!(
             working.get(&[FINALIZED_FRINGE_KEY]).await.unwrap(),
             vec![Some(fringe)]
@@ -2547,8 +2601,15 @@ mod tests {
                 );
             } else {
                 started.unwrap();
-                let outcome =
-                    report_restored_checkpoint(&faulty, &fringe, &RecordingLog::default()).await;
+                let accepted_root = Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes());
+                let outcome = report_restored_checkpoint(
+                    &faulty,
+                    &fringe,
+                    accepted_root,
+                    "genesis",
+                    &RecordingLog::default(),
+                )
+                .await;
                 assert!(
                     outcome.is_err(),
                     "acknowledging a write or delete is not a durable completion proof"
@@ -2557,9 +2618,15 @@ mod tests {
                     inner.get(&[RECOVERY_PENDING_KEY]).await.unwrap(),
                     vec![Some(fringe.clone())]
                 );
-                report_restored_checkpoint(&inner, &fringe, &RecordingLog::default())
-                    .await
-                    .unwrap();
+                report_restored_checkpoint(
+                    &inner,
+                    &fringe,
+                    Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes()),
+                    "genesis",
+                    &RecordingLog::default(),
+                )
+                .await
+                .unwrap();
                 assert_eq!(
                     inner.get(&[RECOVERY_PENDING_KEY]).await.unwrap(),
                     vec![None]

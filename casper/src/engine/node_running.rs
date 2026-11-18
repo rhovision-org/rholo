@@ -649,10 +649,11 @@ pub async fn handle_finalized_fringe_request(
     peer: &PeerNode,
     fringe: &FinalizedFringe,
 ) {
-    log.info(
-        source,
-        &format!("Received FinalizedFringeRequest from {peer}"),
-    );
+    // **The M3 stage-4 outcome, not a send line** (#428). `stream_to_peer` returns the transport's
+    // per-peer outcome; `delivered` means the joiner's gRPC receiver accepted the stream (its ack
+    // follows the dispatch spawn), not that the joiner applied the fringe. Stages 5 and 6 are the
+    // joiner-side witnesses.
+    let served = rchain_shared::base16::encode(fringe.state_hash.as_bytes());
     match transport_layer_syntax::stream_to_peer(
         transport,
         conf,
@@ -661,10 +662,18 @@ pub async fn handle_finalized_fringe_request(
     )
     .await
     {
-        Ok(()) => log.info(source, &format!("FinalizedFringe sent to {peer}")),
+        Ok(()) => log.info(
+            source,
+            &format!(
+                "FinalizedFringe sent to {peer}: transport outcome delivered (state {served})"
+            ),
+        ),
         Err(error) => log.error(
             source,
-            &format!("FinalizedFringe to {peer} was not sent: {error:?}"),
+            &format!(
+                "FinalizedFringe to {peer} was not sent: transport outcome failed (state \
+                 {served}): {error:?}"
+            ),
         ),
     }
 }
@@ -1488,6 +1497,20 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                 }
             }
             CasperMessage::FinalizedFringeRequest(req) => {
+                // **The M3 stage-2 receipt** (#428). The requested anchor is the correlation key
+                // the requester logged at stage 1; the responder must name it, or the two logs
+                // cannot be joined without trusting a send line.
+                let requested_anchor = req
+                    .anchor
+                    .map(|anchor| anchor.to_hex())
+                    .unwrap_or_else(|| "latest".to_string());
+                self.log.info(
+                    self.log_source,
+                    &format!(
+                        "Received FinalizedFringeRequest from {peer} (requested anchor \
+                         {requested_anchor})"
+                    ),
+                );
                 // The response construction — the peer's own fringe, or the block a recovery sync
                 // named, with the ancestry either way — is a free function of its own so the choice
                 // has a test that does not need a whole engine (C259a).
@@ -1500,6 +1523,28 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                 )
                 .await
                 {
+                    // **The M3 stage-3 construction** (#428): the served state hash and the
+                    // requested anchor, so the responder-side half is typed rather than inferred.
+                    self.log.info(
+                        self.log_source,
+                        &format!(
+                            "Fringe response prepared for {peer}: state {}, requested anchor {}, \
+                             {} block(s) [{} .. {}]",
+                            rchain_shared::base16::encode(fringe_response.state_hash.as_bytes()),
+                            requested_anchor,
+                            fringe_response.hashes.len(),
+                            fringe_response
+                                .hashes
+                                .first()
+                                .map(|h| h.to_hex())
+                                .unwrap_or_else(|| "none".to_string()),
+                            fringe_response
+                                .hashes
+                                .last()
+                                .map(|h| h.to_hex())
+                                .unwrap_or_else(|| "none".to_string()),
+                        ),
+                    );
                     handle_finalized_fringe_request(
                         self.transport.as_ref(),
                         &self.conf,
@@ -1509,18 +1554,6 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                         &fringe_response,
                     )
                     .await;
-                    self.log.info(
-                        self.log_source,
-                        &format!(
-                            "Sent fringe response ({}).",
-                            fringe_response
-                                .hashes
-                                .iter()
-                                .map(|h| h.to_hex())
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                        ),
-                    );
                 }
             }
             CasperMessage::StoreItemsMessageRequest(req) => {
@@ -1798,11 +1831,21 @@ mod tests {
             failed.lines
         );
         assert!(failed.contains("was not sent"), "{:?}", failed.lines);
+        assert!(
+            failed.contains("transport outcome failed"),
+            "{:?}",
+            failed.lines
+        );
 
         let sent = RecordingLog::default();
         let transport = MockTransport::default();
         handle_finalized_fringe_request(&transport, &conf, &sent, source, &remote, &fringe).await;
         assert!(sent.contains("FinalizedFringe sent to"), "{:?}", sent.lines);
+        assert!(
+            sent.contains("transport outcome delivered"),
+            "{:?}",
+            sent.lines
+        );
     }
 
     /// A store-items server for the gate test: one leaf and one internal node, so the handler has
