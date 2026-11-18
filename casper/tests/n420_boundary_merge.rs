@@ -542,6 +542,66 @@ async fn a_final_scope_user_deploy_named_in_the_rejection_map_is_rejected() {
     );
 }
 
+/// **M5-06's independent readback.** `kept_effect_coverage` compares the per-chain changes to the
+/// combined change — the same fold that builds the state — so it cannot see a trie application that
+/// drops a channel. This test merges one deploy block and re-opens the **produced state**, asserting
+/// every kept datum the chain names is actually readable from its channel. The untouched-channel
+/// control keeps the read from being vacuous.
+#[tokio::test]
+async fn kept_effects_are_readable_from_the_produced_state() {
+    let rm = build_runtime_manager_with_mode(EffectMode::Sequential).await;
+    let start = seed(&rm).await;
+    let block = play(&rm, 0x43, VALIDATORS[0], start, Some(r#"@"s"!(1)"#), &[]).await;
+    let chain = block
+        .index
+        .deploy_chains
+        .iter()
+        .next()
+        .expect("the block carries one chain");
+    let expected: Vec<(Blake2b256Hash, Vec<Vec<u8>>)> = chain
+        .state_changes
+        .datums_changes
+        .iter()
+        .filter(|(_, diff)| !diff.added.is_empty())
+        .map(|(channel, diff)| (*channel, diff.added.clone()))
+        .collect();
+    assert!(
+        !expected.is_empty(),
+        "control: the deploy writes at least one datum, or the readback is vacuous"
+    );
+
+    let outcome = merge_single_block(&rm, start, &block).await;
+    assert!(
+        outcome.report.unapplied_kept_datums.is_empty(),
+        "{:?}",
+        outcome.report.unapplied_kept_datums
+    );
+    let reader = rm
+        .get_history_repo()
+        .get_history_reader(outcome.state)
+        .await
+        .reader_binary();
+    for (channel, added) in expected {
+        let data = reader.get_data(channel).await.expect("a readable channel");
+        let raw: BTreeSet<Vec<u8>> = data.into_iter().map(|datum| datum.raw).collect();
+        for payload in added {
+            assert!(
+                raw.contains(&payload),
+                "a kept datum is absent from the state the merge produced"
+            );
+        }
+    }
+    let untouched = Blake2b256Hash::from_byte_array(&[0xEE; 32]);
+    assert!(
+        reader
+            .get_data(untouched)
+            .await
+            .expect("a readable channel")
+            .is_empty(),
+        "control: a channel the block never wrote stays empty"
+    );
+}
+
 /// **Does a deploy's three parallel register-shaped RMWs serialize under the deployed scheduler?**
 ///
 /// The live `kernel` deploy (block 825) issues three `Root.register` calls in parallel, each a
