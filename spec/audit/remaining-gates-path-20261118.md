@@ -89,6 +89,22 @@ pressure adapter: `spec/audit/gate-criteria.json` currently evaluates only sourc
 (`tools/gate-principles.py::bounded_admission`), so a source fixture would pass and neither the
 pressure arm nor the unset-default mutation could fail.
 
+## M3: the chain is checkable; the positive is still owed
+
+`G428-M3` is the only open gate with no `depends_on`. Its in-box half is now executable:
+`tools/m3-join-chain.py` correlates the joiner's and the responder's logs into a typed six-stage
+`chain.json`, and the M3 criterion (`join_chain`) refuses a send-log-only, missing-stage or
+hash-mismatched chain and composes the off-host locality check.
+
+- The responder now logs the requested anchor (stage 2), the served state hash (stage 3), and a
+  `transport outcome delivered|failed` (stage 4); the joiner logs the sender key (stage 5), the
+  completed page walk, and the served/accepted/restored hashes (stage 6).
+- Run on a local devnet, the chain check passes (`--locality local-devnet`) while the M3 criterion
+  correctly FAILs the record for locality.
+- Still owed: a two-host off-host run (the runbook is pre-registered at
+  `spec/audit/runbooks/m3-off-host-20261118.md`), the loopback refusal from a real second host, and
+  failover (M3-11).
+
 ## External inputs
 
 | owner | input | unlocks |
@@ -107,5 +123,6 @@ pressure arm nor the unset-default mutation could fail.
 - The A1.3 record is `local-devnet`, not the live TA-C1 witness; the rehearsal's preflight is
   synthetic and is not #584 evidence.
 - No public deployment, real key, transfer or disruptive public-network arm ran.
-- M1/M3/M4 also carry code gaps before their campaigns: a typed tier record, a transport-completion
-  witness and failover (M3), and a cross-host arm (M4). They are not host-only tasks.
+- M1/M4 also carry code gaps before their campaigns: a typed tier record (M1) and a cross-host arm
+  (M4). M3's transport/stage-6 witness is now typed and checkable; its off-host arm and failover
+  remain. They are not host-only tasks.

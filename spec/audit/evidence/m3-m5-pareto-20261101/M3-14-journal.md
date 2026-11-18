@@ -32,3 +32,15 @@ Rules for the recovery:
 
 This note is a provenance record, not an M3 run; it is not labelled for the locality checker and
 claims no off-host completion.
+
+## Update 2026-11-18 — stages 4 and 6 are witnessable now
+
+`431305f67` (2026-11-18 12:07 UTC) makes `TransportLayer::stream` return one outcome per peer and
+gates the responder's "sent" line on it, so a build after that commit can witness stage 4. The
+responder now also names the requested anchor (stage 2) and the served state hash (stage 3); the
+joiner names the sender key (stage 5), the completed page walk, and the served/accepted/restored
+hashes (stage 6). `tools/m3-join-chain.py` turns the correlation into a typed `chain.json` and
+refuses a send-line witness.
+
+The 2026-10-27 record above predates all of this and remains INCOMPLETE/UNWITNESSED; no stage is
+retroactively claimed from it.

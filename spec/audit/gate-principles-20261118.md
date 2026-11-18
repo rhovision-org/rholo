@@ -64,7 +64,8 @@ The layer is deliberately small:
 | `phase_diagnosis` | the phase table's conditions hold; block-6 disposition is structural; a later orphan overrides an earlier accepted; 404/unparsed is `PRECONDITION` | C343 |
 | `lockstep_acceptance` | selected pins; derived/declared lockstep window; no mixed version; required shape; independent reviewer; accepted verdict; incident trace | C357 |
 | `bounded_admission` | every ingress queue is bounded by a named constant; no unbounded channel; a full queue refuses in the bounded class | G428-M2 |
-| `off_host_claim` | an off-host/live-host claim carries a routable peer; loopback/private/encoded addresses cannot satisfy it; a send-log-only witness is refused | G428-M3 |
+| `off_host_claim` | an off-host/live-host claim carries a routable peer; loopback/private/encoded addresses cannot satisfy it | G428-M3 (locality half) |
+| `join_chain` | the six-stage chain is typed and complete: all stages keyed by peer + anchor, a transport outcome (not a send line), and served = received = restored = walked hashes; the off-host policy composes `off_host_claim` | G428-M3 |
 | `resource_attribution` | process accounting counts only the node's processes; unrelated processes cannot inflate or hide the count | G428-M1 |
 
 `human_attestation` is the only principle that consumes a human record. The layer checks the
@@ -84,7 +85,7 @@ evidence, not for the test logic.
 
 `G584-G2/G3/G5` keep their `human-attestation` register rows. The executable criterion is an
 additional measurement binding cited by the evidence record; changing a `witness_kind` is a
-separate governance decision. `G428-M3`'s declared witness is an evidence README and
+separate governance decision. `G428-M3`'s declared witness is now `tools/m3-join-chain.py::check_chain` and
 `G428-M5`'s is the `MergeReport` struct; both are `blocked`, so `resolve_witness` never runs.
 The layer records the real adapters and does not silently rewrite those rows.
 
@@ -96,9 +97,10 @@ python3 -m unittest discover -s tests -p test_gate_collect.py -v
 python3 -m unittest discover -s tests -p test_gate_criterion.py -v
 python3 -m unittest discover -s tests -p test_live_gate.py -v
 python3 -m unittest discover -s tests -p test_mainnet_gates.py -v
+python3 -m unittest discover -s tests -p test_m3_join_chain.py -v
 python3 tools/gate-check.py --list
-python3 tools/check-mainnet-gates.py --check        # 111 gates, 0 met
+python3 tools/check-mainnet-gates.py --check        # 59 gates, 47 met, 12 unresolved
 python3 tools/check-mainnet-gates.py --assert-closeable   # exits 3
 ```
 
-Expected unchanged: 111 gates, 0 met; 46 reviewable + 1 withdrawn; closeout exits 3.
+Expected unchanged by this layer: 59 gates, 47 met, 12 unresolved; closeout exits 3.
