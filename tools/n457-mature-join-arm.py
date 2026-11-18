@@ -36,6 +36,7 @@ Usage: tools/n457-mature-join-arm.py [--min-height 28] [--timeout 600] [--out DI
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -43,6 +44,8 @@ import subprocess
 import sys
 import time
 from datetime import datetime
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 PREFIX = os.environ.get("DEVNET_PREFIX", "n457join")
 CONTAINERS = [f"{PREFIX}-bootstrap"] + [f"{PREFIX}-validator-{i}" for i in (1, 2, 3)]
@@ -63,6 +66,26 @@ def run(cmd, check=True, env=None):
 
 def docker(*args, check=True):
     return run(["docker", *args], check=check)
+
+
+def chain_tool():
+    """Load the M3 join-chain checker without making the arm's import depend on it."""
+    spec = importlib.util.spec_from_file_location(
+        "n457_m3_join_chain", os.path.join(ROOT, "tools", "m3-join-chain.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def build_join_chain(joiner_text, responder_text):
+    return chain_tool().build_chain(
+        joiner_log=joiner_text,
+        responder_log=responder_text,
+        locality="local-devnet",
+        joiner_container=RESET_TARGET,
+        responder_container=CONTAINERS[0],
+    )
 
 
 def get(container, path):
@@ -234,12 +257,17 @@ def main():
         )
     else:
         print(f"== reset {RESET_TARGET} (empty store, --bootstrap)", flush=True)
+    # The responder-side half of the M3 chain is only the exchange that follows this reset. Docker
+    # `--since` takes a Unix second; one second early, so the first line after the reset is never
+    # cut off.
+    reset_since = str(max(0, int(time.time()) - 1))
     run(["tools/devnet.sh", "reset", RESET_INDEX], env=reset_env)
 
     # **The supported recovery is two steps** (#576): restore and catch up with no signing key, so
     # the proposer cannot derive a sequence from a parent set that lacks the node's own pre-reset
     # blocks, then give the key back from a DAG that holds them.
     passive_seconds = None
+    passive_text = None
     if args.supported_recovery:
         passive_started = time.time()
         _, _, last_seen = wait_recovered(
@@ -252,9 +280,10 @@ def main():
         # **The passive phase's log dies with the container** (`activate` recreates it), so it is
         # captured here: it is the evidence that the node restored and followed with no signing key.
         passive_log = run(["docker", "logs", RESET_TARGET], check=False)
+        passive_text = passive_log.stdout + passive_log.stderr
         os.makedirs(args.out, exist_ok=True)
         with open(os.path.join(args.out, "passive.log"), "w") as handle:
-            handle.write(passive_log.stdout + passive_log.stderr)
+            handle.write(passive_text)
         print(
             f"== passive replica caught up in {passive_seconds:.1f}s; activating its key",
             flush=True,
@@ -337,6 +366,20 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "activated.log"), "w") as handle:
         handle.write(combined)
+
+    # **The M3 six-stage chain** (#428). Correlate the joiner's restore with the responder's
+    # segment since the reset. Best-effort and outside this arm's exit semantics: an incomplete
+    # chain is written with its reasons and the checker (`tools/m3-join-chain.py`) decides.
+    responder_log = docker("logs", "--since", reset_since, CONTAINERS[0], check=False)
+    responder_text = responder_log.stdout + responder_log.stderr
+    chain_log_method = "since"
+    if responder_log.returncode != 0 or not responder_text.strip():
+        responder_text = container_log(CONTAINERS[0])
+        chain_log_method = "full"
+    joiner_text = passive_text if args.supported_recovery and passive_text else combined
+    chain = build_join_chain(joiner_text, responder_text)
+    with open(os.path.join(args.out, "chain.json"), "w") as handle:
+        json.dump(chain, handle, indent=2, sort_keys=True)
     container = run(
         ["docker", "inspect", "-f", "{{.Id}} {{.Created}}", RESET_TARGET], check=False
     ).stdout.strip()
@@ -396,8 +439,13 @@ def main():
         "proposed_sequences": sequences,
         "proposed_lines": proposed_lines,
         "manual_reset": True,
+        "chain": "chain.json",
+        "chain_complete": chain["complete"],
+        "chain_log_method": chain_log_method,
         "non_claims": [
             "one local four-validator devnet; a finite witness, not a universal join theorem",
+            "the chain is a log correlation, not a cryptographic delivery receipt",
+            "a local-devnet chain is not an M3 off-host positive",
             "the chain is this build's own; the live testnet replay is #421/#429's",
             (
                 "the reset node is staged as a passive replicator and then activated, the "

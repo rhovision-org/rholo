@@ -9,8 +9,35 @@ SPEC = importlib.util.spec_from_file_location(
 module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(module)
 
+FIXTURE_SPEC = importlib.util.spec_from_file_location(
+    "gate_fixtures", Path(__file__).parents[1] / "tests/gate_fixtures.py"
+)
+fixtures = importlib.util.module_from_spec(FIXTURE_SPEC)
+FIXTURE_SPEC.loader.exec_module(fixtures)
+
 
 class MatureJoinEvidence(unittest.TestCase):
+    def test_build_join_chain_correlates_the_two_logs(self):
+        stages = fixtures.m3_chain()["stages"]
+        joiner = "\n".join(
+            [
+                stages["1_request"]["log_line"],
+                stages["5_receive"]["log_line"],
+                stages["6_apply"]["walk_log_line"],
+                stages["6_apply"]["log_line"],
+            ]
+        )
+        responder = "\n".join(
+            [
+                stages["2_receipt"]["log_line"],
+                stages["3_construction"]["log_line"],
+                stages["4_transport"]["log_line"],
+            ]
+        )
+        chain = module.build_join_chain(joiner, responder)
+        self.assertTrue(chain["complete"], chain["incomplete_reasons"])
+        self.assertEqual(module.chain_tool().check_chain(chain), [])
+
     def test_two_digit_sequences_stay_whole(self):
         # The 2026-11-13 defect: one capture group unpacked into `(_, seq)` splits "15" into "1"
         # and "5", so the arm witnessed sequence 5 for a block that used 15.
