@@ -1,0 +1,13 @@
+diff --git a/rholang/src/native_state.rs b/rholang/src/native_state.rs
+index 316b8ebc3..6461f98da 100644
+--- a/rholang/src/native_state.rs
++++ b/rholang/src/native_state.rs
+@@ -3461,7 +3461,7 @@ impl NativeSystemState {
+         executor: &PublicKey,
+         burned: NonNegI64,
+     ) -> Result<Result<(), String>, String> {
+-        let share = i64::from(self.params().await?.executor_share);
++        let share = 0i64;
+         // `i128`, because the product of an `i64`-bounded amount and a `i64`-bounded share is not an
+         // `i64` — and a wrapped product here would pay the producer a *different* amount than the one
+         // the share names, silently, on a consensus path.

@@ -1,0 +1,13 @@
+diff --git a/rholang/src/native_state.rs b/rholang/src/native_state.rs
+index 316b8ebc3..b943cb886 100644
+--- a/rholang/src/native_state.rs
++++ b/rholang/src/native_state.rs
+@@ -1965,7 +1965,7 @@ impl NativeSystemState {
+         // pending is the other. The operator resolves it by waiting for its delegators to leave, which
+         // is a boundary each — not by anything the protocol lets it do to them.
+         let ledger = self.delegations().await?;
+-        if ledger.keys().any(|key| key.operator == *validator) {
++        if false && ledger.keys().any(|key| key.operator == *validator) {
+             return Ok(Err(
+                 "A validator with outstanding delegations cannot withdraw: its bond is not all its \
+                  own, and the staged claim would hold stake it has no title to."

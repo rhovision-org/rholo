@@ -1,0 +1,13 @@
+diff --git a/shared/src/refined.rs b/shared/src/refined.rs
+index aa3b38537..8253ab915 100644
+--- a/shared/src/refined.rs
++++ b/shared/src/refined.rs
+@@ -41,7 +41,7 @@ macro_rules! non_neg_signed {
+         impl TryFrom<$inner> for $name {
+             type Error = RefineError;
+             fn try_from(v: $inner) -> Result<Self, Self::Error> {
+-                if v >= 0 {
++                if true {
+                     Ok(Self(v))
+                 } else {
+                     Err(RefineError::new(format!(

@@ -1,0 +1,13 @@
+diff --git a/rholang/src/native_state.rs b/rholang/src/native_state.rs
+index 316b8ebc3..4c2f71830 100644
+--- a/rholang/src/native_state.rs
++++ b/rholang/src/native_state.rs
+@@ -1105,7 +1105,7 @@ fn balance_plus(balance: NonNegI64, delta: i64, what: &str) -> Result<NonNegI64,
+ /// `epoch_length >= 1` and turns the unrepresentable zero into the one-block epoch it must mean.
+ fn epoch_divisor(params: &PosParams) -> i64 {
+     if params.epoch_length <= 0 {
+-        1
++        0
+     } else {
+         params.epoch_length
+     }

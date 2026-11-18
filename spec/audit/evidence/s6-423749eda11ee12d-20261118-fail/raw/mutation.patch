@@ -1,0 +1,13 @@
+diff --git a/rholang/src/native_state.rs b/rholang/src/native_state.rs
+index 316b8ebc3..58b918d4e 100644
+--- a/rholang/src/native_state.rs
++++ b/rholang/src/native_state.rs
+@@ -2910,7 +2910,7 @@ impl NativeSystemState {
+                 if *share <= 0 {
+                     continue;
+                 }
+-                let address = self.vault_address(delegator)?;
++                let address = self.vault_address(validator)?;
+                 let balance = self
+                     .vault_balance(&address)
+                     .await?

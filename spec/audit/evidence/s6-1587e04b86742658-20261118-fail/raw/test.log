@@ -1,0 +1,26 @@
+
+running 1 test
+test native_state::tests::the_absence_rule_takes_income_only_and_releases_it_on_a_single_block ... FAILED
+
+failures:
+
+---- native_state::tests::the_absence_rule_takes_income_only_and_releases_it_on_a_single_block stdout ----
+[pos] close_block 12 boundary=true epoch_length=1 max_active=0 bond=[1, 9223372036854775807]
+[pos] participation lag at boundary 12: drawn=2 never_spoke=1 min=8 median=8 p90=8 max=8 (heights behind the last finalised fringe)
+[pos] close_block 20 boundary=true epoch_length=1 max_active=0 bond=[1, 9223372036854775807]
+[pos] participation lag at boundary 20: drawn=2 never_spoke=1 min=4 median=4 p90=4 max=4 (heights behind the last finalised fringe)
+
+thread 'native_state::tests::the_absence_rule_takes_income_only_and_releases_it_on_a_single_block' (1748821) panicked at rholang/src/native_state.rs:5916:9:
+a validator that has signed again is paid again — the rule has no memory of the lapse
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    native_state::tests::the_absence_rule_takes_income_only_and_releases_it_on_a_single_block
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 375 filtered out; finished in 0.01s
+
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.32s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rholang-a11f031a6ae27227)
+error: test failed, to rerun pass `-p rchain-rholang --lib`

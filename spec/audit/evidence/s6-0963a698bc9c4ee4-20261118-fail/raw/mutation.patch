@@ -1,0 +1,13 @@
+diff --git a/rholang/src/native_state.rs b/rholang/src/native_state.rs
+index 316b8ebc3..e630e004c 100644
+--- a/rholang/src/native_state.rs
++++ b/rholang/src/native_state.rs
+@@ -2638,7 +2638,7 @@ impl NativeSystemState {
+             } else {
+                 record.absent_boundaries = 0;
+             }
+-            if !record.is_jailed() && record.absent_boundaries >= jail_after {
++            if false && !record.is_jailed() && record.absent_boundaries >= jail_after {
+                 record.absent_boundaries = 0;
+                 record.jail_remaining = jail_epochs;
+                 outcome.jailed.insert(*validator);

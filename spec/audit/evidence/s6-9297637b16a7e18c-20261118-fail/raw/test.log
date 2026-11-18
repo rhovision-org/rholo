@@ -1,0 +1,32 @@
+
+running 1 test
+test native_state::delegation_tests::a_boundary_splits_the_reward_across_the_delegations ... FAILED
+
+failures:
+
+---- native_state::delegation_tests::a_boundary_splits_the_reward_across_the_delegations stdout ----
+[pos] close_block 1 boundary=true epoch_length=0 max_active=0 bond=[1, 9223372036854775807]
+
+thread 'native_state::delegation_tests::a_boundary_splits_the_reward_across_the_delegations' (1762917) panicked at rholang/src/native_state.rs:7965:32:
+no entry found for key
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    native_state::delegation_tests::a_boundary_splits_the_reward_across_the_delegations
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 375 filtered out; finished in 0.00s
+
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+warning: unused variable: `amounts`
+    --> rholang/src/native_state.rs:2137:17
+     |
+2137 |             let amounts: Vec<i64> = held.iter().map(|(_, amount)| *amount).collect();
+     |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_amounts`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rchain-rholang` (lib test) generated 1 warning (run `cargo fix --lib -p rchain-rholang --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.24s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rholang-a11f031a6ae27227)
+error: test failed, to rerun pass `-p rchain-rholang --lib`

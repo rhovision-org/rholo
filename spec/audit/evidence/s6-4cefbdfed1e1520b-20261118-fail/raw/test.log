@@ -1,0 +1,33 @@
+
+running 1 test
+test native_state::delegation_tests::a_delegation_enlarges_the_pool_and_a_second_one_accumulates ... FAILED
+
+failures:
+
+---- native_state::delegation_tests::a_delegation_enlarges_the_pool_and_a_second_one_accumulates stdout ----
+
+thread 'native_state::delegation_tests::a_delegation_enlarges_the_pool_and_a_second_one_accumulates' (1761697) panicked at rholang/src/native_state.rs:7875:9:
+assertion `left == right` failed: a second delegation adds to the first
+  left: 40
+ right: 100
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    native_state::delegation_tests::a_delegation_enlarges_the_pool_and_a_second_one_accumulates
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 375 filtered out; finished in 0.00s
+
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+warning: unused variable: `held`
+    --> rholang/src/native_state.rs:7539:13
+     |
+7539 |         let held = ledger.get(&key).copied().unwrap_or(NonNegI64::zero());
+     |             ^^^^ help: if this is intentional, prefix it with an underscore: `_held`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rchain-rholang` (lib test) generated 1 warning (run `cargo fix --lib -p rchain-rholang --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.28s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rholang-a11f031a6ae27227)
+error: test failed, to rerun pass `-p rchain-rholang --lib`

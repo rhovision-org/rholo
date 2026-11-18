@@ -1,0 +1,22 @@
+
+running 1 test
+test native_state::tests::splitting_a_stake_across_keys_does_not_buy_slots ... FAILED
+
+failures:
+
+---- native_state::tests::splitting_a_stake_across_keys_does_not_buy_slots stdout ----
+
+thread 'native_state::tests::splitting_a_stake_across_keys_does_not_buy_slots' (1773249) panicked at rholang/src/native_state.rs:4396:9:
+half the stake takes about half the draws; got 0.17578125
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    native_state::tests::splitting_a_stake_across_keys_does_not_buy_slots
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 375 filtered out; finished in 0.04s
+
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.08s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rholang-a11f031a6ae27227)
+error: test failed, to rerun pass `-p rchain-rholang --lib`

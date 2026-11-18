@@ -1,0 +1,1 @@
+cargo test -p rchain-rholang --lib pos_fund_pot_moves_the_callers_rev_into_the_staking_vault

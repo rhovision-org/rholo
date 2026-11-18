@@ -1,0 +1,15 @@
+diff --git a/rholang/src/system_processes.rs b/rholang/src/system_processes.rs
+index b909862ef..7e9ca211a 100644
+--- a/rholang/src/system_processes.rs
++++ b/rholang/src/system_processes.rs
+@@ -2677,9 +2677,7 @@ impl SystemProcesses {
+                         // Unauthenticated mint removed (issue #4): the Scala RevVault mints REV
+                         // only via the genesis `init` path; a deploy callable `deposit` would let
+                         // any deploy create REV from nothing.
+-                        Err(illegal_arg(
+-                            "revVault: deposit is not callable (REV is minted at genesis only)",
+-                        ))
++                        Ok(())
+                     }
+                     "transfer" => {
+                         let [deployer_id, to, amount, ret] = rest else {

@@ -1,0 +1,12 @@
+diff --git a/rholang/src/native_state.rs b/rholang/src/native_state.rs
+index 316b8ebc3..cfaaeea38 100644
+--- a/rholang/src/native_state.rs
++++ b/rholang/src/native_state.rs
+@@ -2791,7 +2791,6 @@ impl NativeSystemState {
+             .remove(validator)
+             .map(|claim| i64::from(claim.bond))
+             .unwrap_or(0);
+-        pending.remove(validator);
+         let accrued = committed.remove(validator).map(i64::from).unwrap_or(0);
+ 
+         // **The delegated holdings, collected per delegator** (law 57, #193) — because a delegator is

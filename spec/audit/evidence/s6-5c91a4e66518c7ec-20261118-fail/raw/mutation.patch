@@ -1,0 +1,13 @@
+diff --git a/rholang/src/native_state.rs b/rholang/src/native_state.rs
+index 316b8ebc3..70e77e3bc 100644
+--- a/rholang/src/native_state.rs
++++ b/rholang/src/native_state.rs
+@@ -6754,7 +6754,7 @@ impl Weighted for (&Validator, NonNegI64) {
+     fn weight(&self) -> i128 {
+         // Total: `i128::from(i64)` is a widening conversion, and `i64::from` on the refinement is the
+         // macro's own infallible accessor. Nothing here can fail, so nothing here can default.
+-        i128::from(i64::from(self.1))
++        1
+     }
+ }
+ 

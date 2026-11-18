@@ -1,0 +1,13 @@
+diff --git a/rholang/src/native_state.rs b/rholang/src/native_state.rs
+index 316b8ebc3..7cb950a72 100644
+--- a/rholang/src/native_state.rs
++++ b/rholang/src/native_state.rs
+@@ -2135,7 +2135,7 @@ impl NativeSystemState {
+                 ));
+             }
+             let amounts: Vec<i64> = held.iter().map(|(_, amount)| *amount).collect();
+-            let (shares, operator_share) = split_reward(i64::from(*reward), own, &amounts)?;
++            let (shares, operator_share) = (Vec::new(), i64::from(*reward));
+             for ((key, _), share) in held.iter().zip(shares.iter()) {
+                 let accrued = delegated_rewards
+                     .get(key)

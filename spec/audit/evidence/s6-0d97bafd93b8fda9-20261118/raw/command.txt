@@ -1,0 +1,1 @@
+cargo test -p rchain-casper --lib a_boundarys_participation_reaches_play_and_replay_alike

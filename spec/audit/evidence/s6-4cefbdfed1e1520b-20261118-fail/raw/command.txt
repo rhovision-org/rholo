@@ -1,0 +1,1 @@
+cargo test -p rchain-rholang --lib a_delegation_enlarges_the_pool_and_a_second_one_accumulates

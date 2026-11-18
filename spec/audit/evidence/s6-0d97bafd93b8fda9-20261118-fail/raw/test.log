@@ -1,0 +1,31 @@
+
+running 1 test
+test runtime_manager::tests::a_boundarys_participation_reaches_play_and_replay_alike ... FAILED
+
+failures:
+
+---- runtime_manager::tests::a_boundarys_participation_reaches_play_and_replay_alike stdout ----
+[deploy] deployer=0707070707070707 ok cost=3 
+[pos] close_block 20 boundary=true epoch_length=1 max_active=0 bond=[1, 9223372036854775807]
+[pos] participation lag at boundary 20: drawn=1 never_spoke=0 min=1 median=1 p90=1 max=1 (heights behind the last finalised fringe)
+[deploy] deployer=0707070707070707 ok cost=3 
+[pos] close_block 20 boundary=true epoch_length=1 max_active=0 bond=[1, 9223372036854775807]
+[pos] participation lag at boundary 20: drawn=1 never_spoke=0 min=19 median=19 p90=19 max=19 (heights behind the last finalised fringe)
+
+thread 'runtime_manager::tests::a_boundarys_participation_reaches_play_and_replay_alike' (1748076) panicked at casper/src/runtime_manager.rs:2766:9:
+assertion `left != right` failed: the participation changes what the boundary commits, or the arm below proves nothing
+  left: Blake2b256Hash(Hash32([14, 90, 190, 66, 185, 119, 129, 189, 150, 59, 218, 179, 162, 169, 94, 101, 124, 96, 5, 96, 215, 252, 80, 100, 177, 207, 135, 211, 252, 43, 7, 144]))
+ right: Blake2b256Hash(Hash32([14, 90, 190, 66, 185, 119, 129, 189, 150, 59, 218, 179, 162, 169, 94, 101, 124, 96, 5, 96, 215, 252, 80, 100, 177, 207, 135, 211, 252, 43, 7, 144]))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    runtime_manager::tests::a_boundarys_participation_reaches_play_and_replay_alike
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 747 filtered out; finished in 0.21s
+
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.41s
+     Running unittests src/lib.rs (target/debug/deps/rchain_casper-64d507b1a93523ca)
+error: test failed, to rerun pass `-p rchain-casper --lib`

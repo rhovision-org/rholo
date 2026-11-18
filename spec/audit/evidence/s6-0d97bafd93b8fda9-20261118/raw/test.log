@@ -1,0 +1,13 @@
+
+running 1 test
+test runtime_manager::tests::a_boundarys_participation_reaches_play_and_replay_alike ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 747 filtered out; finished in 0.28s
+
+   Compiling rchain-models v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/models)
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+   Compiling rchain-comm v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/comm)
+   Compiling rchain-block-storage v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/block-storage)
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.02s
+     Running unittests src/lib.rs (target/debug/deps/rchain_casper-64d507b1a93523ca)

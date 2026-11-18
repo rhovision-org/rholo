@@ -1,0 +1,1 @@
+cargo test -p rchain-rholang --lib a_validator_with_delegations_cannot_withdraw

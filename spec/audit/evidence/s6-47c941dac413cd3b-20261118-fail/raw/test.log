@@ -1,0 +1,24 @@
+
+running 1 test
+test native_state::tests::an_epoch_length_of_zero_makes_every_block_a_boundary ... FAILED
+
+failures:
+
+---- native_state::tests::an_epoch_length_of_zero_makes_every_block_a_boundary stdout ----
+
+thread 'native_state::tests::an_epoch_length_of_zero_makes_every_block_a_boundary' (1774055) panicked at rholang/src/native_state.rs:4843:9:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    native_state::tests::an_epoch_length_of_zero_makes_every_block_a_boundary
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 375 filtered out; finished in 0.00s
+
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.48s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rholang-a11f031a6ae27227)
+error: test failed, to rerun pass `-p rchain-rholang --lib`

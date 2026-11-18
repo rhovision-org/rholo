@@ -1,0 +1,25 @@
+
+running 1 test
+test native_state::tests::a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier ... FAILED
+
+failures:
+
+---- native_state::tests::a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier stdout ----
+
+thread 'native_state::tests::a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier' (1771762) panicked at rholang/src/native_state.rs:5530:9:
+assertion `left == right` failed: the escrowed claim is part of what the tier is a share of — a bond-only cap would have missed it, and before C199 the claim was forfeited outright
+  left: 30
+ right: 7
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    native_state::tests::a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 375 filtered out; finished in 0.01s
+
+   Compiling rchain-models v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/models)
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.81s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rholang-a11f031a6ae27227)
+error: test failed, to rerun pass `-p rchain-rholang --lib`

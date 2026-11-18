@@ -1,0 +1,13 @@
+diff --git a/rholang/src/native_state.rs b/rholang/src/native_state.rs
+index 316b8ebc3..8e8526e2d 100644
+--- a/rholang/src/native_state.rs
++++ b/rholang/src/native_state.rs
+@@ -7541,7 +7541,7 @@ impl NativeSystemState {
+         // same delegator **adds** to the first rather than replacing it (law 57's
+         // `a_second_delegation_accumulates`). A replace here would silently burn the earlier principal
+         // while the pool entry kept it, so the two would disagree for ever.
+-        ledger.insert(key, balance_plus(held, stake, "delegated principal")?);
++        ledger.insert(key, balance_plus(NonNegI64::zero(), stake, "delegated principal")?);
+         self.set_delegations(&ledger).await?;
+         Ok(Ok(()))
+     }
