@@ -1,0 +1,22 @@
+   Compiling rchain-models v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/models)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.92s
+     Running tests/expr_refusal.rs (target/debug/deps/expr_refusal-d8170cd89657318a)
+
+running 1 test
+test an_unknown_only_expression_is_refused_after_real_wire_decode ... FAILED
+
+failures:
+
+---- an_unknown_only_expression_is_refused_after_real_wire_decode stdout ----
+
+thread 'an_unknown_only_expression_is_refused_after_real_wire_decode' (1455436) panicked at models/tests/expr_refusal.rs:18:10:
+an unsupported expression must not become false: Par { sends: [], receives: [], news: [], exprs: [GBool(false)], matches: [], unforgeables: [], bundles: [], connectives: [], locally_free: AlwaysEqual([]), connective_used: false, _sort: PhantomData<rchain_models::ast::ProcSort> }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    an_unknown_only_expression_is_refused_after_real_wire_decode
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rchain-models --test expr_refusal`

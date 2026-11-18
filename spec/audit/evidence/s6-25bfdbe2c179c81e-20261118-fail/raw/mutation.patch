@@ -1,0 +1,13 @@
+diff --git a/models/src/wire.rs b/models/src/wire.rs
+index 3da6e9ab8..8c9ffb6cb 100644
+--- a/models/src/wire.rs
++++ b/models/src/wire.rs
+@@ -498,7 +498,7 @@ pub fn expr_from_proto(p: &p::Expr) -> Result<a::Expr, ModelsError> {
+         Some(E::EMapBody(m)) => a::Expr::EMap(emap_from_proto(m)?),
+         Some(E::EMethodBody(m)) => a::Expr::EMethod(emethod_from_proto(m)?),
+         // Missing and unknown-only oneof values are not the boolean false.
+-        None => return Err(ModelsError::Malformed("expr_instance")),
++        None => a::Expr::GBool(false),
+     })
+ }
+ 

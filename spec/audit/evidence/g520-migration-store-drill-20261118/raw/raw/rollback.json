@@ -1,0 +1,44 @@
+{
+  "anchor": "c90bd56f84d0f9c11f9d0e5469b576a6c4db9fb3b1587a2a503c05b9840d4294",
+  "anchor_height": 8,
+  "anchor_post_state": "3384fb9374fe9ed3d6ba41e9b4dd11ba4679104867b8aaf565f10694f7020648",
+  "block_hash": "c90bd56f84d0f9c11f9d0e5469b576a6c4db9fb3b1587a2a503c05b9840d4294",
+  "certificate": {
+    "attestations": [
+      {
+        "checkpointDigest": "75f8abf5a49352de548d2474470bb5382d76843905178e8110f106496b4d1701",
+        "sender": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4",
+        "sig": "304402204f03bed5e8d104c7df7110b086ee5c31d4aeb2ec18724a1945f6cb0f0ef4cd8e0220782e0aaf1a7e9edefdf47ab7dc08610745712544aa1f8a583eb3295656471da0",
+        "sigAlgorithm": "secp256k1"
+      }
+    ],
+    "checkpoint": {
+      "anchor": "c90bd56f84d0f9c11f9d0e5469b576a6c4db9fb3b1587a2a503c05b9840d4294",
+      "anchorHeight": 8,
+      "anchorPostState": "3384fb9374fe9ed3d6ba41e9b4dd11ba4679104867b8aaf565f10694f7020648",
+      "epoch": 0,
+      "fringeHashes": [
+        "c90bd56f84d0f9c11f9d0e5469b576a6c4db9fb3b1587a2a503c05b9840d4294"
+      ],
+      "fringeHeadersRoot": "b98ff7cd763dc3fb61aa32a93f6f170d00d5372243d77fbdb0c6fd0454fa42c1",
+      "fringeState": "a996f5a909ff9b7ba8c1125114491092a5c2d6ff2651270d44233e04faf8cef5",
+      "historyRoot": "90e19ee6d8d5ecbda95a33d1158cde9d7d1668096c67dc67a78864234c702d67",
+      "metadataRoot": "c7b211ac84b2b80420229ab5141ddc8c9e16338d6b4248a5464920b3653d24e4",
+      "parentDigest": null,
+      "shardId": "/root"
+    }
+  },
+  "digest": "280eb2021a63d0599346d28d6ccb2dade042338d035e390b3fba17aab9ca5135",
+  "genesis_hash": "f66b0b8a513b52e6248a9867bec37315eac184ef68f43fb7f4494a793d0b3929",
+  "height": 8,
+  "post_state": "3384fb9374fe9ed3d6ba41e9b4dd11ba4679104867b8aaf565f10694f7020648",
+  "verdict": {
+    "anchor": "c90bd56f84d0f9c11f9d0e5469b576a6c4db9fb3b1587a2a503c05b9840d4294",
+    "anchorHeight": 8,
+    "digest": "75f8abf5a49352de548d2474470bb5382d76843905178e8110f106496b4d1701",
+    "supportingStake": 100,
+    "totalStake": 100,
+    "verified": true
+  },
+  "verified": true
+}

@@ -1,0 +1,13 @@
+diff --git a/crypto/src/signatures/secp256k1.rs b/crypto/src/signatures/secp256k1.rs
+index e5b5486e5..2755dca54 100644
+--- a/crypto/src/signatures/secp256k1.rs
++++ b/crypto/src/signatures/secp256k1.rs
+@@ -55,7 +55,7 @@ impl Secp256k1 {
+         // Named, because the number is the *point* of the check: `sha256`, `blake2b256` and `keccak256`
+         // all serve the 32-byte prehash the two algorithms' `signature_hash` produces.
+         const PREHASH_LEN: usize = 32;
+-        if data.len() != PREHASH_LEN {
++        if false && data.len() != PREHASH_LEN {
+             return false;
+         }
+         let Ok(sig) = Signature::from_der(signature) else {
