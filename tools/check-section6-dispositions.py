@@ -19,6 +19,7 @@ INVENTORY = ROOT / "spec/audit/section6-gap-inventory.json"
 DISPOSITIONS = ROOT / "spec/audit/section6-dispositions.json"
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 VERDICTS = {"accepted", "withdrawn", "reviewable"}
+EFFECTS = {"state-hash", "replay-verdict", "wire-format", "none"}
 
 
 class DispositionError(ValueError):
@@ -61,7 +62,14 @@ def validate(inventory: dict, document: dict) -> dict:
                 f"{ident}: a derivation is required")
         require(isinstance(row.get("reason"), str) and row["reason"].strip(),
                 f"{ident}: a reason is required")
+        effect = row.get("category_a_effect")
+        require(effect in EFFECTS, f"{ident}: unknown category_a_effect {effect!r}")
+        require(isinstance(row.get("category_a_derivation"), str)
+                and row["category_a_derivation"].strip(),
+                f"{ident}: a category-A derivation is required")
         if verdict == "accepted":
+            require(effect != "none",
+                    f"{ident}: an accepted row needs a derived category-A effect")
             require(isinstance(row.get("reviewer"), str) and row["reviewer"].strip(),
                     f"{ident}: an accepted row needs a named reviewer")
             require(row.get("reviewer_independent") is True,
@@ -70,6 +78,19 @@ def validate(inventory: dict, document: dict) -> dict:
             require(isinstance(row.get("evidence_sha256"), str)
                     and HEX64.fullmatch(row["evidence_sha256"]),
                     f"{ident}: an accepted row needs an evidence SHA-256")
+            review_record = row.get("review_record")
+            require(isinstance(review_record, str) and review_record.strip(),
+                    f"{ident}: an accepted row needs a review record")
+            review_path = Path(review_record)
+            review_path = review_path if review_path.is_absolute() else ROOT / review_path
+            if review_path.is_dir():
+                review_path = review_path / "README.md"
+            require(review_path.is_file(), f"{ident}: the review record does not exist")
+            text = review_path.read_text(errors="ignore")
+            require(str(row["reviewer"]) in text,
+                    f"{ident}: the review record does not name the reviewer")
+            require(str(row["evidence_sha256"]) in text,
+                    f"{ident}: the review record does not carry the evidence digest")
             accepted += 1
         elif verdict == "withdrawn":
             require(url(row.get("review_url")),

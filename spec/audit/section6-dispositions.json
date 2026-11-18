@@ -4,10 +4,13 @@
   "observed_date": "2026-11-18",
   "rows": [
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "A named test exists, but no negative control is recorded.",
       "evidence_sha256": null,
       "id": "S6:f735095c746556f3",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -15,10 +18,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:25bfdbe2c179c81e",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -26,10 +32,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:5bd51477a56edf07",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -37,10 +46,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:0b46037b3783e4ca",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -48,10 +60,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived; the row is withdrawn.",
+      "category_a_effect": "none",
       "derivation": "Issue #527 removed the GDecimal value type before mainnet; wire tag 35 is reserved.",
       "evidence_sha256": null,
       "id": "S6:dc8df48ecb6197ee",
       "reason": "The row records a type that no longer exists; withdrawal is the recorded correction, not a safety pass.",
+      "review_record": null,
       "review_url": "https://github.com/rhovision-org/rholo/issues/527",
       "reviewer": null,
       "reviewer_independent": false,
@@ -59,10 +74,13 @@
       "verdict": "withdrawn"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:29a0672aff87290b",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -70,10 +88,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:f4e50770cc349ad3",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -81,10 +102,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:d36503203399d227",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -92,10 +116,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:2228415e1ac6b83e",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -103,10 +130,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:c7536b90bd39cf71",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -114,10 +144,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:dcbe72b936ef74ae",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -125,10 +158,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:212cef89b85456e0",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -136,10 +172,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:d7dd0a06a5dee537",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -147,10 +186,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:cc87a089357b25fa",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -158,10 +200,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:5c91a4e66518c7ec",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -169,10 +214,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:45c551728731f6da",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -180,10 +228,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:47c941dac413cd3b",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -191,10 +242,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:9b7d0ce349e22aa8",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -202,10 +256,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:fbcd04455372e58c",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -213,10 +270,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:c59c38eeab097a7b",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -224,10 +284,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:0879bf292d995e9f",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -235,10 +298,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:83825d04fdb174bc",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -246,10 +312,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:5896ceb7cf2b4804",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -257,10 +326,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:0f37971fba3a1c92",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -268,10 +340,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:d39645b95737497d",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -279,10 +354,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:a641f6fa8cc3ce54",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -290,10 +368,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:0d97bafd93b8fda9",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -301,10 +382,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:1587e04b86742658",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -312,10 +396,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:3d5848fba9a91692",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -323,10 +410,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:4a1606a2375f4e97",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -334,10 +424,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:91b05027373a3107",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -345,10 +438,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:f7d55fe093312364",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -356,10 +452,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:aff8e713fee0981e",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -367,10 +466,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:002725fa6a14a386",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -378,10 +480,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:de66e3b5b934584f",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -389,10 +494,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:a03b7b63647b8746",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -400,10 +508,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:fb6f884e759d7af7",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -411,10 +522,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:4cefbdfed1e1520b",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -422,10 +536,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:9297637b16a7e18c",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -433,10 +550,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:423749eda11ee12d",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -444,10 +564,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:a2f660ef8d236b06",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -455,10 +578,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:e2cdf44a5cc0c81e",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -466,10 +592,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:7b9fe37e74b318db",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -477,10 +606,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:957351356597c77d",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -488,10 +620,13 @@
       "verdict": "reviewable"
     },
     {
-      "derivation": "A named test exists, but no negative control is recorded.",
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
+      "derivation": "The named test tests/liveness-enforcement.py is absent; no witness.",
       "evidence_sha256": null,
       "id": "S6:0963a698bc9c4ee4",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -499,10 +634,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "The acceptance text is a template; it names no executable witness.",
       "evidence_sha256": null,
       "id": "S6:ccb08bb8dcafdd3c",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,
@@ -510,10 +648,13 @@
       "verdict": "reviewable"
     },
     {
+      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
+      "category_a_effect": "none",
       "derivation": "A named test exists, but no negative control is recorded.",
       "evidence_sha256": null,
       "id": "S6:5651614bf8e3eeb7",
       "reason": "No per-candidate independent disposition yet.",
+      "review_record": null,
       "review_url": null,
       "reviewer": null,
       "reviewer_independent": false,

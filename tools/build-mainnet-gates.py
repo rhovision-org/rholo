@@ -28,11 +28,46 @@ LEDGER = AUDIT / "hardfork-51-closeout.json"
 INVENTORY = AUDIT / "section6-gap-inventory.json"
 
 REGISTER_DEV_SHA = "dd6a25d69128375d83b7a7701c169ce672e57536"
-S6_NAMED_TEST = {
-    "S6:f735095c746556f3",
-    "S6:5651614bf8e3eeb7",
-}
-S6_MISSING_TEST = {"S6:0963a698bc9c4ee4"}
+TEST_PATH = re.compile(
+    r"((?:[A-Za-z0-9_./-]+\.(?:py|rs|sh|lean)::[A-Za-z0-9_:]+)"
+    r"|(?:[A-Za-z0-9_./-]+/tests?/[A-Za-z0-9_./-]+\.(?:py|rs|sh|lean))"
+    r"|(?:tests?/[A-Za-z0-9_./-]+\.(?:py|rs|sh|lean)))")
+
+
+def _is_test(path: Path, symbol: str) -> bool:
+    text = path.read_text(errors="ignore")
+    if path.suffix == ".rs":
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if re.search(rf"\bfn\s+{re.escape(symbol)}\b", line):
+                window = "\n".join(lines[max(0, index - 3):index + 1])
+                return "#[test]" in window or "#[tokio::test]" in window
+        return False
+    if path.suffix == ".py":
+        return symbol.startswith("test") and bool(
+            re.search(rf"\bdef\s+{re.escape(symbol)}\b", text))
+    if path.suffix == ".lean":
+        return bool(re.search(rf"\btheorem\s+{re.escape(symbol)}\b", text))
+    return "test" in path.name or "tests" in path.parts
+
+
+def named_test_status(row: dict) -> str | None:
+    statuses = []
+    for match in TEST_PATH.finditer(str(row.get("acceptance_test") or "")):
+        path_text = match.group(1)
+        path_name, _, symbol = path_text.partition("::")
+        path = ROOT / path_name
+        if not path.is_file():
+            if "/" in path_name:
+                statuses.append("missing")
+            continue
+        if _is_test(path, symbol):
+            statuses.append("named")
+    if "missing" in statuses:
+        return "missing"
+    if "named" in statuses:
+        return "named"
+    return None
 OVERRIDES = {
     "B:breaking-release": (
         "blocked",
@@ -52,14 +87,14 @@ CROSSWALK = {
     "Audit:section6-categoryA": [("G428-M6", "the section-6 category-A disposition is a separate audit sign-off")],
     "A:shard-config": [("G428-M4", "committed bounds are a finality/recovery prerequisite")],
     "Release:attachment-upgrade": [("G584-G1", "uniform validator/client rollout is a release prerequisite")],
-    "Batch:activation-schedule": [("G584-G1", "the activation schedule is a release pin")],
+    "Batch:activation-schedule": [("G584-G1", "the activation schedule is a release prerequisite")],
     "A:vault-export": [("G428-M5", "state-export conservation is a state-integrity input, not merge accounting")],
-    "Batch:state-preservation": [("G428-M6", "the preservation export is a reproducibility input")],
-    "Audit:inactivity-leak": [("G428-M4", "the inactivity leak is a liveness input, explicitly deferred")],
+    "Batch:state-preservation": [("G428-M6", "the preservation export is a reproducibility component")],
+    "Audit:inactivity-leak": [("G428-M4", "the inactivity leak is a liveness component, explicitly deferred")],
 }
 S6_CROSSWALK = {
     "S6:f735095c746556f3": [("G428-M5", "one merge-diff component")],
-    "S6:5651614bf8e3eeb7": [("C357", "C357 replay-order witness")],
+    "S6:5651614bf8e3eeb7": [("C357", "C357 replay-order component")],
     "S6:0963a698bc9c4ee4": [("G428-M4", "liveness-enforcement component")],
 }
 
@@ -167,13 +202,20 @@ def s6_rows(inventory: dict) -> list[dict]:
         evidence = row.get("existing_evidence") or {}
         source_url = evidence.get("url")
         disposition = dispositions.get(ident) or {}
+        test_status = named_test_status(row)
         if disposition.get("verdict") == "withdrawn":
             status = "superseded"
             reason = "Recorded withdrawn: " + str(disposition.get("reason") or "")
-        elif ident in S6_MISSING_TEST:
+        elif test_status == "missing":
+            missing = next(
+                (match.group(1) for match in TEST_PATH.finditer(
+                    str(row.get("acceptance_test") or ""))
+                 if "/" in match.group(1)
+                 and not (ROOT / match.group(1).split("::", 1)[0]).is_file()),
+                "the named test")
             status = "owes"
-            reason = "The named test tests/liveness-enforcement.py is absent."
-        elif ident in S6_NAMED_TEST:
+            reason = f"The named test {missing} is absent."
+        elif test_status == "named":
             status = "owes"
             reason = "A named test exists, but no recorded negative control."
         else:
@@ -234,6 +276,17 @@ def build() -> dict:
     ledger = json.loads(LEDGER.read_text())
     inventory = json.loads(INVENTORY.read_text())
     external = json.loads(EXTERNAL.read_text())
+    for source in external["sources"].values():
+        excerpt = source.get("excerpt")
+        if excerpt:
+            path = ROOT / excerpt
+            if not path.is_file():
+                raise ValueError(f"source excerpt {excerpt} is absent")
+            source["excerpt_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    for row in external["gates"]:
+        criteria = "\n".join(str(row.get(field, "")) for field in
+                             ("title", "pass_condition", "fail_condition", "observable"))
+        row["criteria_sha256"] = hashlib.sha256(criteria.encode()).hexdigest()
     rows = list(external["gates"])
     rows.extend(hf51_rows(matrix, ledger))
     rows.extend(s6_rows(inventory))

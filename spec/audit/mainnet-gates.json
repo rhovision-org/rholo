@@ -1,6 +1,7 @@
 {
   "gates": [
     {
+      "criteria_sha256": "cf7d48477fe882edaf75a423f0dbb21dcafde298ea8e61afe3e96c1271e4157a",
       "depends_on": [],
       "docker_free": true,
       "does_not_claim": "The collector has not run live; the old build is not a current-build gate.",
@@ -18,7 +19,7 @@
         "88b"
       ],
       "locality": "live-host",
-      "negative_control": "A pre-fix host lacking a field is PRECONDITION; 'block 6 unknown' must not be a PASS; a contradictory ready/reason pair must FAIL.",
+      "negative_control": "A pre-fix host lacking a field is PRECONDITION; 'block 6 unknown', a JSON 'unaccepted'/'unfinalized' disposition, and an 'issue #6 accepted' line must not be a PASS; a later orphan must override an earlier accepted; a contradictory ready/reason pair must FAIL.",
       "observable": "The phase-diagnosis table classification, the operator gate keys, the block-6 disposition, the height gap, and the readiness/fault/isolation consistencies.",
       "owner": "Aria / operator",
       "pass_condition": "A read-only B/C/D GET /health and GET /api/v1/status/operator snapshot with the phase discriminator, block-6 disposition, height gap, fault latch and isolation, each PASS/FAIL/PRECONDITION.",
@@ -36,6 +37,7 @@
       "witness_scope": "integration"
     },
     {
+      "criteria_sha256": "5b4425dfccfca4762b769fe6a8a3823eda8fef8f70bb0da36cc3d58425523eb5",
       "depends_on": [
         "G584-G1",
         "G584-G6"
@@ -73,7 +75,7 @@
           "id": "G584-G6"
         },
         {
-          "criterion": "C357 replay-order witness",
+          "criterion": "C357 replay-order component",
           "id": "S6-5651614bf8e3eeb7"
         }
       ],
@@ -90,6 +92,7 @@
       "witness_scope": "integration"
     },
     {
+      "criteria_sha256": "525ddb82e4857479544663c4a7716604c209f1f2c728d6033d9e737b574b6dd1",
       "depends_on": [
         "G584-G1"
       ],
@@ -117,6 +120,7 @@
       ],
       "sole_evidence": "none",
       "source_label": "#428 M1",
+      "source_phrase": "per-validator minimum RAM/CPU",
       "source_retrieved": "2026-11-18",
       "source_sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
       "source_url": "https://github.com/rhovision-org/rholo/issues/428",
@@ -128,6 +132,7 @@
       "witness_scope": "unit"
     },
     {
+      "criteria_sha256": "c4a3539b1c784cf88794e1507f94c6a9b21725a57921a4ea18b30e46a6b0eb22",
       "depends_on": [
         "G584-G1"
       ],
@@ -155,6 +160,7 @@
       ],
       "sole_evidence": "none",
       "source_label": "#428 M2",
+      "source_phrase": "bounded queues",
       "source_retrieved": "2026-11-18",
       "source_sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
       "source_url": "https://github.com/rhovision-org/rholo/issues/428",
@@ -166,6 +172,7 @@
       "witness_scope": "unit"
     },
     {
+      "criteria_sha256": "f6cfdecacbaaf05099fa56b712f39211f6c2a11c526f93fd6e094c71fc7e8919",
       "depends_on": [],
       "docker_free": false,
       "does_not_claim": "Instrument or send-log PASS is not state application.",
@@ -191,6 +198,7 @@
       ],
       "sole_evidence": "live-host",
       "source_label": "#428 M3",
+      "source_phrase": "receives and applies",
       "source_retrieved": "2026-11-18",
       "source_sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
       "source_url": "https://github.com/rhovision-org/rholo/issues/428",
@@ -202,6 +210,7 @@
       "witness_scope": "integration"
     },
     {
+      "criteria_sha256": "2555b281effd86d01e7afad4a2aa71b5d644b7f9d00bc02d2ef23c59a9ff57c8",
       "depends_on": [
         "G584-G1",
         "G520-MIGRATION"
@@ -244,7 +253,7 @@
           "id": "HF51-Audit-law52-partition"
         },
         {
-          "criterion": "the inactivity leak is a liveness input, explicitly deferred",
+          "criterion": "the inactivity leak is a liveness component, explicitly deferred",
           "id": "HF51-Audit-inactivity-leak"
         },
         {
@@ -254,6 +263,7 @@
       ],
       "sole_evidence": "local-devnet",
       "source_label": "#428 M4",
+      "source_phrase": "N=4 and N=8",
       "source_retrieved": "2026-11-18",
       "source_sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
       "source_url": "https://github.com/rhovision-org/rholo/issues/428",
@@ -265,6 +275,7 @@
       "witness_scope": "integration"
     },
     {
+      "criteria_sha256": "5a461ff6fc32f6bc7b49f335485e8a253af7374444306fff745013d1d6aac9ad",
       "depends_on": [],
       "docker_free": true,
       "does_not_claim": "Component/hot-cell accounting is not the historical 840->841 replay; the unavailable bundle is not a pass.",
@@ -302,6 +313,7 @@
       ],
       "sole_evidence": "none",
       "source_label": "#428 M5",
+      "source_phrase": "final_scope_rejected_chains",
       "source_retrieved": "2026-11-18",
       "source_sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
       "source_url": "https://github.com/rhovision-org/rholo/issues/428",
@@ -313,6 +325,7 @@
       "witness_scope": "integration"
     },
     {
+      "criteria_sha256": "2027cedba7c641869f5c6ff52a02681e718d13767456b4ea81e6fd4c4af839b4",
       "depends_on": [
         "G584-G1",
         "G584-G5"
@@ -351,12 +364,13 @@
           "id": "G584-G5"
         },
         {
-          "criterion": "the preservation export is a reproducibility input",
+          "criterion": "the preservation export is a reproducibility component",
           "id": "HF51-Batch-state-preservation"
         }
       ],
       "sole_evidence": "external",
       "source_label": "#428 M6",
+      "source_phrase": "reviewer conclusions",
       "source_retrieved": "2026-11-18",
       "source_sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
       "source_url": "https://github.com/rhovision-org/rholo/issues/428",
@@ -368,6 +382,7 @@
       "witness_scope": null
     },
     {
+      "criteria_sha256": "ad0136571e9e31038276c88a75b95a60b70a78ee02931fc37ab90bf2dd05c7a4",
       "depends_on": [],
       "docker_free": true,
       "does_not_claim": "A fresh-genesis or debug-build run is not a populated-store migration.",
@@ -404,6 +419,7 @@
       "witness_scope": "integration"
     },
     {
+      "criteria_sha256": "5e8e287334f0a6c327a4e7b8b55b0b0b1639c0c33e76de779e3d5d0c87325942",
       "depends_on": [],
       "docker_free": false,
       "does_not_claim": "The collector's ok flag is not an operational GO.",
@@ -423,19 +439,19 @@
       "pass_condition": "One selected source commit / artifact / executable SHA-256 installed on all four validators, with four distinct validator identities, and the genesis/bond set pinned. Pins collected per host by #572 and checked independently of the collector's own ok flag.",
       "related": [
         {
-          "criterion": "the selected candidate is the M1 measurement subject",
+          "criterion": "the selected candidate is an M1 prerequisite",
           "id": "G428-M1"
         },
         {
-          "criterion": "the selected candidate must carry the v3 statement",
+          "criterion": "the v3 statement is a selected-candidate prerequisite",
           "id": "S6-PR600-CHECKPOINT-V3"
         },
         {
-          "criterion": "the selected candidate must carry the trimmed rule",
+          "criterion": "the trimmed rule is a selected-candidate prerequisite",
           "id": "S6-PR600-MERGE-FORK"
         },
         {
-          "criterion": "the activation schedule is a release pin",
+          "criterion": "the activation schedule is a release prerequisite",
           "id": "HF51-Batch-activation-schedule"
         },
         {
@@ -445,6 +461,7 @@
       ],
       "sole_evidence": "live-host",
       "source_label": "#584 G1",
+      "source_phrase": "installed pins",
       "source_retrieved": "2026-11-18",
       "source_sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
       "source_url": "https://github.com/rhovision-org/rholo/issues/584",
@@ -456,6 +473,7 @@
       "witness_scope": "integration"
     },
     {
+      "criteria_sha256": "53379d6e03cece2fd317eddb178e2527284081a50ca2c8b6d07380e7feb37344",
       "depends_on": [
         "G584-G1"
       ],
@@ -478,6 +496,7 @@
       "related": [],
       "sole_evidence": "live-host",
       "source_label": "#584 G2",
+      "source_phrase": "signed deploy lifecycle",
       "source_retrieved": "2026-11-18",
       "source_sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
       "source_url": "https://github.com/rhovision-org/rholo/issues/584",
@@ -489,6 +508,7 @@
       "witness_scope": null
     },
     {
+      "criteria_sha256": "12b0833556603e286affef6fe9fec175a0cfc8e371d795d325b486d576ca717b",
       "depends_on": [
         "G584-G1"
       ],
@@ -516,6 +536,7 @@
       ],
       "sole_evidence": "live-host",
       "source_label": "#584 G3",
+      "source_phrase": "no false settlement",
       "source_retrieved": "2026-11-18",
       "source_sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
       "source_url": "https://github.com/rhovision-org/rholo/issues/584",
@@ -527,6 +548,7 @@
       "witness_scope": null
     },
     {
+      "criteria_sha256": "e2139c103ad8a29bbab1e5a6ec24c0bb8bc37a744754c2e24c8cfe4dfc5852c6",
       "depends_on": [
         "G584-G1"
       ],
@@ -554,6 +576,7 @@
       ],
       "sole_evidence": "live-host",
       "source_label": "#584 G4",
+      "source_phrase": "recovery without loss",
       "source_retrieved": "2026-11-18",
       "source_sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
       "source_url": "https://github.com/rhovision-org/rholo/issues/584",
@@ -565,6 +588,7 @@
       "witness_scope": "integration"
     },
     {
+      "criteria_sha256": "4ccfcf472fb8b6a4ac7317e5cb66c2160b985d2539d429135ae4175a8c296707",
       "depends_on": [
         "G584-G1"
       ],
@@ -592,6 +616,7 @@
       ],
       "sole_evidence": "live-host",
       "source_label": "#584 G5",
+      "source_phrase": "independent observations",
       "source_retrieved": "2026-11-18",
       "source_sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
       "source_url": "https://github.com/rhovision-org/rholo/issues/584",
@@ -603,6 +628,7 @@
       "witness_scope": null
     },
     {
+      "criteria_sha256": "9fffc585063c91f38d3edc959d54585411a4b2a5ff7275e2cdabf839d7a09135",
       "depends_on": [
         "G584-G5"
       ],
@@ -624,7 +650,7 @@
       "pass_condition": "PASS / FAIL / INCONCLUSIVE recorded by the named independent reviewer against G1-G5, with the evidence record cited.",
       "related": [
         {
-          "criterion": "G6 is the live verdict; M6 is the wider reproducibility and sign-off gate",
+          "criterion": "G6 is a subset of the M6 reproducibility and sign-off gate",
           "id": "G428-M6"
         },
         {
@@ -634,6 +660,7 @@
       ],
       "sole_evidence": "external",
       "source_label": "#584 G6",
+      "source_phrase": "verdict",
       "source_retrieved": "2026-11-18",
       "source_sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
       "source_url": "https://github.com/rhovision-org/rholo/issues/584",
@@ -1360,7 +1387,7 @@
       "pass_condition": "A landed protocol change must exercise both allowed/refused transitions and historical replay; a deferral must record its owner and reason.",
       "related": [
         {
-          "criterion": "the inactivity leak is a liveness input, explicitly deferred",
+          "criterion": "the inactivity leak is a liveness component, explicitly deferred",
           "id": "G428-M4"
         }
       ],
@@ -1890,7 +1917,7 @@
       "pass_condition": "Height boundary and mismatch rejection; startup/restart/replay on #373 integrated source",
       "related": [
         {
-          "criterion": "the activation schedule is a release pin",
+          "criterion": "the activation schedule is a release prerequisite",
           "id": "G584-G1"
         }
       ],
@@ -2065,7 +2092,7 @@
       "pass_condition": "Operators export authenticated finalized state/history; independently reconcile all entries and replay",
       "related": [
         {
-          "criterion": "the preservation export is a reproducibility input",
+          "criterion": "the preservation export is a reproducibility component",
           "id": "G428-M6"
         }
       ],
@@ -2794,7 +2821,7 @@
       "pass_condition": "casper/tests/replay_trace_order.rs::pending_peeks_replay_with_exact_cost_and_state asserts 1860/2606/4844 for 0/1/4 requests and matching strict replay state; recorded-history sweep or accepted new-genesis boundary; corrected proposer plus second-node strict replay of the identical serialized block; merged #568 recovery arms on the integrated corrected build.",
       "related": [
         {
-          "criterion": "C357 replay-order witness",
+          "criterion": "C357 replay-order component",
           "id": "C357"
         }
       ],
@@ -3119,6 +3146,7 @@
       "witness_scope": null
     },
     {
+      "criteria_sha256": "3b8ad74fe5b6376159d7ecad7a322555e5145c5f14df6d34e47113433a18fb44",
       "depends_on": [
         "G584-G1"
       ],
@@ -3143,7 +3171,7 @@
       "pass_condition": "A source-pinned replay/compatibility acceptance for checkpoint v3: a v2 and v3 node are not mixed across a cold join; the join input set is the v3 set; an absent root is the legitimate v2 statement.",
       "related": [
         {
-          "criterion": "the selected candidate must carry the v3 statement",
+          "criterion": "the v3 statement is a selected-candidate prerequisite",
           "id": "G584-G1"
         }
       ],
@@ -3160,6 +3188,7 @@
       "witness_scope": "integration"
     },
     {
+      "criteria_sha256": "aa548027f07c173dd5425f828a5338eea52a49a0a859e50de4aa2d5b05e13656",
       "depends_on": [
         "G584-G1"
       ],
@@ -3184,7 +3213,7 @@
       "pass_condition": "A source-pinned replay/compatibility acceptance for the trimmed conflict-scope rule; all validators upgrade in lockstep, or the owner records an accepted-history compatibility decision or coordinated new genesis.",
       "related": [
         {
-          "criterion": "the selected candidate must carry the trimmed rule",
+          "criterion": "the trimmed rule is a selected-candidate prerequisite",
           "id": "G584-G1"
         }
       ],
@@ -3886,6 +3915,7 @@
       "witness_scope": null
     },
     {
+      "criteria_sha256": "d99b1b9feab033d7206b2849d9a82787817de027fc8b92e7ff92c8c423a10953",
       "depends_on": [
         "G584-G1"
       ],
@@ -3907,7 +3937,7 @@
       "pass_condition": "A deploy finalises (last-finalized-block >= its height), never 'the height stopped moving'.",
       "related": [
         {
-          "criterion": "A1.3 is a finality/supermajority observation on the M4 envelope",
+          "criterion": "A1.3 is a finality/supermajority component of the M4 envelope",
           "id": "G428-M4"
         },
         {
@@ -3921,6 +3951,7 @@
       ],
       "sole_evidence": "live-host",
       "source_label": "testnet acceptance criterion 1",
+      "source_phrase": "deploy finalises",
       "source_retrieved": "2026-11-18",
       "source_sha256": "5457d7cdd53bf4985b91e96b078d41c13361fe999a4807444ad8863c25623f0a",
       "source_url": "https://github.com/rhovision-org/rholo/blob/dd6a25d69128375d83b7a7701c169ce672e57536/docs/src/spec/testnet-acceptance.md#L64-L68",
@@ -3932,6 +3963,7 @@
       "witness_scope": null
     },
     {
+      "criteria_sha256": "58687379142da79f932bf2171732bc8725826929464abf15885faed5af3dcbd7",
       "depends_on": [
         "G584-G1"
       ],
@@ -3959,6 +3991,7 @@
       ],
       "sole_evidence": "live-host",
       "source_label": "testnet acceptance criterion 2",
+      "source_phrase": "finalise past the kill",
       "source_retrieved": "2026-11-18",
       "source_sha256": "5457d7cdd53bf4985b91e96b078d41c13361fe999a4807444ad8863c25623f0a",
       "source_url": "https://github.com/rhovision-org/rholo/blob/dd6a25d69128375d83b7a7701c169ce672e57536/docs/src/spec/testnet-acceptance.md#L64-L68",
@@ -3970,6 +4003,7 @@
       "witness_scope": null
     },
     {
+      "criteria_sha256": "49843177b367cbaf39040d334af5b7cf13dd53c8a116691cea6e60cb38ce926d",
       "depends_on": [],
       "docker_free": true,
       "does_not_claim": "This criterion cannot go green by construction.",
@@ -3990,6 +4024,7 @@
       "related": [],
       "sole_evidence": "none",
       "source_label": "testnet acceptance criterion 3",
+      "source_phrase": "rate and a class census",
       "source_retrieved": "2026-11-18",
       "source_sha256": "5457d7cdd53bf4985b91e96b078d41c13361fe999a4807444ad8863c25623f0a",
       "source_url": "https://github.com/rhovision-org/rholo/blob/dd6a25d69128375d83b7a7701c169ce672e57536/docs/src/spec/testnet-acceptance.md#L64-L68",
@@ -4007,21 +4042,29 @@
   "schema": 1,
   "sources": {
     "G428": {
+      "excerpt": "spec/audit/sources/g428-m1-m6.md",
+      "excerpt_sha256": "32cd366b7c690de4909833c712809da68255e656e8053fd4dfb768621acc30d7",
       "retrieved": "2026-11-18",
       "sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
       "url": "https://github.com/rhovision-org/rholo/issues/428"
     },
     "G428-decision": {
+      "excerpt": "spec/audit/sources/g428-decision.md",
+      "excerpt_sha256": "b05d3597a86de40eb7972c894bf45dd6fecd35850a3522ca36c36fdcf0ce7d82",
       "retrieved": "2026-11-18",
       "sha256": null,
       "url": "https://github.com/rhovision-org/rholo/issues/428#issuecomment-6892934659"
     },
     "G584": {
+      "excerpt": "spec/audit/sources/g584-g1-g6.md",
+      "excerpt_sha256": "c72afd923a3398fa2b0dcfc28a39249ac46aeac70a601ccc3e3a007c65db4b0e",
       "retrieved": "2026-11-18",
       "sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
       "url": "https://github.com/rhovision-org/rholo/issues/584"
     },
     "TA": {
+      "excerpt": "spec/audit/sources/testnet-criteria.md",
+      "excerpt_sha256": "9d7f12c8858087c84266e520f9359eb331135d7f346b64f62aa75a9a8f9e8a72",
       "retrieved": "2026-11-18",
       "sha256": "5457d7cdd53bf4985b91e96b078d41c13361fe999a4807444ad8863c25623f0a",
       "url": "https://github.com/rhovision-org/rholo/blob/dd6a25d69128375d83b7a7701c169ce672e57536/docs/src/spec/testnet-acceptance.md#L64-L68"

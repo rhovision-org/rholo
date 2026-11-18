@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime as dt
 import hashlib
 import importlib.util
 import json
@@ -82,6 +83,10 @@ def load_laws() -> dict[str, dict[str, str]]:
     return index
 
 
+def normalize_source(text: str) -> str:
+    return re.sub(r"\s+", " ", text.replace("*", "").replace("`", "")).strip().lower()
+
+
 def test_attribute(text: str, symbol: str) -> bool:
     lines = text.splitlines()
     for index, line in enumerate(lines):
@@ -103,10 +108,38 @@ def resolve_test_ref(ref: str) -> None:
                 f"control {ref} is not a #[test]")
     elif path.suffix == ".py":
         require(re.search(rf"\bdef\s+{re.escape(symbol)}\b", text)
-                and symbol.startswith("test"),
-                f"control {ref} is not a test function")
+                and (symbol.startswith("test") or symbol == "self_test"),
+                f"control {ref} is not a test function or self_test")
     else:
         require(symbol in text, f"control symbol {symbol} not found in {path_text}")
+
+
+def record_path(value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else ROOT / path
+
+
+def verify_record(value: object, gate_id: str, verdict: str) -> dict:
+    require(isinstance(value, str) and value.strip(),
+            f"{gate_id}: an evidence record path is required")
+    path = record_path(value)
+    require(path.is_dir(), f"{gate_id}: evidence record {path} is not a directory")
+    require((path / "manifest.json").is_file() and (path / "SHA256SUMS.json").is_file(),
+            f"{gate_id}: evidence record needs manifest.json and SHA256SUMS.json")
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "tools/evidence-pack.py"), "verify",
+         "--record", str(path)],
+        capture_output=True, text=True, timeout=120, check=False)
+    require(proc.returncode == 0,
+            f"{gate_id}: evidence-pack verify failed: {proc.stdout.strip()} {proc.stderr.strip()}")
+    manifest = json.loads((path / "manifest.json").read_text())
+    require(manifest.get("execution_proven") is False,
+            f"{gate_id}: execution_proven must be false")
+    named = manifest.get("gate_id") == gate_id or gate_id in (manifest.get("component_of") or [])
+    require(named, f"{gate_id}: the evidence record names {manifest.get('gate_id')!r}")
+    require(manifest.get("verdict") == verdict,
+            f"{gate_id}: the evidence verdict is {manifest.get('verdict')!r}, not {verdict}")
+    return manifest
 
 
 def load_builder():
@@ -188,22 +221,38 @@ def resolve_witness(row: dict) -> None:
                 f"{row['id']}: a human attestation must be a markdown record")
     elif kind == "decision":
         require(False, f"{row['id']}: a decision gate has no executable witness")
-    control = row.get("negative_control")
-    require(isinstance(control, dict),
-            f"{row['id']}: a met gate needs a control object, not a string")
-    for field in ("description", "control_ref", "expected"):
-        require(isinstance(control.get(field), str) and control[field].strip(),
-                f"{row['id']}: negative_control.{field} is required")
-    require(control.get("expected") in ("FAIL", "PRECONDITION"),
-            f"{row['id']}: negative_control.expected must be FAIL or PRECONDITION")
-    resolve_test_ref(control["control_ref"])
+    binding = row.get("witness_binding")
+    require(isinstance(binding, dict),
+            f"{row['id']}: a met gate needs witness_binding")
+    expected_asserts = hashlib.sha256(str(row["pass_condition"]).encode()).hexdigest()
+    require(binding.get("asserts_sha256") == expected_asserts,
+            f"{row['id']}: witness_binding.asserts_sha256 does not match the gate acceptance")
+    control = binding.get("control") or {}
+    require(isinstance(control, dict), f"{row['id']}: witness_binding.control is required")
+    require(control.get("control_of") == ref,
+            f"{row['id']}: the control must be of this witness")
+    require(isinstance(control.get("description"), str) and control["description"].strip(),
+            f"{row['id']}: the control needs a description")
+    mutation = control.get("mutation") or {}
+    mutation_file = ROOT / str(mutation.get("file") or "")
+    require(mutation_file.is_file(),
+            f"{row['id']}: the mutation file does not exist")
+    before = mutation.get("before")
+    after = mutation.get("after")
+    require(isinstance(before, str) and before.strip()
+            and isinstance(after, str) and after.strip() and before != after,
+            f"{row['id']}: the mutation needs distinct before/after text")
+    require(before in mutation_file.read_text(errors="ignore"),
+            f"{row['id']}: the mutation's before text is not in the file")
+    require(isinstance(control.get("test"), str) and control["test"].strip(),
+            f"{row['id']}: the control test is required")
+    resolve_test_ref(control["test"])
+    require(control["test"] == ref or control["test"].endswith("::self_test"),
+            f"{row['id']}: the control test must be the witness or its self-test")
+    require(control.get("expected") == "FAIL",
+            f"{row['id']}: the control's expected result must be FAIL")
+    verify_record(control.get("run_record"), row["id"], "FAIL")
     evidence = row.get("evidence") or {}
-    record = evidence.get("record")
-    require(isinstance(record, str) and (ROOT / record).is_dir(),
-            f"{row['id']}: evidence.record must be a retained record directory")
-    require((ROOT / record / "manifest.json").is_file()
-            and (ROOT / record / "SHA256SUMS.json").is_file(),
-            f"{row['id']}: evidence.record must carry manifest.json and SHA256SUMS.json")
     source = evidence.get("source_sha")
     binary = evidence.get("binary_sha256")
     digest = evidence.get("digest")
@@ -216,9 +265,16 @@ def resolve_witness(row: dict) -> None:
             f"{row['id']}: evidence.digest must be a digest")
     require(isinstance(url, str) and url.startswith("https://"),
             f"{row['id']}: evidence.url must be https")
+    manifest = verify_record(evidence.get("record"), row["id"], "PASS")
+    require(manifest.get("binary_sha256") == binary,
+            f"{row['id']}: the evidence binary does not match the record")
+    if manifest.get("source_sha") is not None:
+        require(manifest["source_sha"] == source,
+                f"{row['id']}: the evidence source does not match the record")
     if kind == "human-attestation":
         attestation = row.get("attestation") or {}
-        for field in ("reviewer", "relationship", "independent", "signed_at", "verdict"):
+        for field in ("reviewer", "relationship", "independent", "signed_at",
+                      "verdict", "review_record"):
             require(field in attestation, f"{row['id']}: attestation.{field} is required")
         require(attestation.get("independent") is True,
                 f"{row['id']}: the reviewer must be independent")
@@ -228,6 +284,58 @@ def resolve_witness(row: dict) -> None:
         reviewer = str(attestation.get("reviewer") or "").casefold()
         require(reviewer and reviewer not in owner and owner not in reviewer,
                 f"{row['id']}: the reviewer must not be the gate owner")
+        try:
+            signed = dt.datetime.fromisoformat(str(attestation["signed_at"]).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise GateError(f"{row['id']}: signed_at is not a UTC timestamp") from exc
+        require(signed.tzinfo is not None, f"{row['id']}: signed_at must be timezone-aware")
+        review_path = record_path(str(attestation["review_record"]))
+        require(review_path.exists(), f"{row['id']}: the review record does not exist")
+        review_text = ((review_path / "README.md").read_text(errors="ignore")
+                       if review_path.is_dir() else review_path.read_text(errors="ignore"))
+        require(str(attestation["reviewer"]) in review_text,
+                f"{row['id']}: the review record does not name the reviewer")
+        require(str(attestation["verdict"]) in review_text,
+                f"{row['id']}: the review record does not carry the verdict")
+        require(str(attestation.get("evidence_sha256") or "") in review_text,
+                f"{row['id']}: the review record does not carry the evidence digest")
+
+
+def run_control(row: dict) -> str:
+    """Apply a Python/tool control's mutation and run the control test.
+
+    Returns CONTROLLED (the test failed as required), UNPROVEN (it passed),
+    SKIPPED (a Rust control; recorded for the PR checklist), or ERROR.
+    """
+    binding = row.get("witness_binding") or {}
+    control = binding.get("control") or {}
+    mutation = control.get("mutation") or {}
+    path = ROOT / str(mutation.get("file") or "")
+    if not path.is_file():
+        return "ERROR"
+    original = path.read_text()
+    before = str(mutation.get("before") or "")
+    after = str(mutation.get("after") or "")
+    if not before or before not in original or before == after:
+        return "ERROR"
+    path.write_text(original.replace(before, after, 1))
+    try:
+        test = str(control.get("test") or "")
+        path_text, symbol = test.split("::", 1) if "::" in test else (test, "")
+        if symbol == "self_test":
+            proc = subprocess.run(
+                [sys.executable, str(ROOT / path_text), "self-test"],
+                capture_output=True, text=True, timeout=600, check=False)
+        elif path_text.startswith("tests/") and path_text.endswith(".py"):
+            module = path_text[:-3].replace("/", ".")
+            proc = subprocess.run(
+                [sys.executable, "-m", "unittest", module, "-q"],
+                capture_output=True, text=True, timeout=600, check=False)
+        else:
+            return "SKIPPED"
+        return "CONTROLLED" if proc.returncode != 0 else "UNPROVEN"
+    finally:
+        path.write_text(original)
 
 
 def check_dependencies(rows: list[dict]) -> None:
@@ -267,6 +375,11 @@ def check_related(rows: list[dict]) -> None:
                     f"{row['id']}: related target {target!r} not found")
             require(isinstance(criterion, str) and len(criterion.strip()) >= 10,
                     f"{row['id']}: related edge to {target} needs a criterion")
+            if row["family"] != by_id[target]["family"]:
+                require(re.search(
+                    r"\b(not|only|subset|peer|separate|prerequisite|component)\b",
+                    criterion, re.I),
+                    f"{row['id']}: a cross-family edge to {target} needs a direction")
             reverse = by_id[target].get("related") or []
             require(any(back.get("id") == row["id"] for back in reverse),
                     f"{row['id']}: related edge to {target} is not symmetric")
@@ -297,6 +410,15 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
         family_rows = [row for row in rows if row["family"] == family]
         require(all(row["source_sha256"] == sources[key]["sha256"] for row in family_rows),
                 f"{family}: a gate does not pin the family source hash")
+    for key, source in sources.items():
+        excerpt = source.get("excerpt")
+        if not excerpt:
+            continue
+        path = ROOT / str(excerpt)
+        require(path.is_file(), f"{key}: source excerpt {excerpt} is absent")
+        require(source.get("excerpt_sha256")
+                == hashlib.sha256(path.read_bytes()).hexdigest(),
+                f"{key}: source excerpt hash is stale")
     laws = load_laws()
     for row in rows:
         ident = row["id"]
@@ -310,6 +432,20 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
                 f"{ident}: source_url must be https")
         require(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(row.get("source_retrieved"))),
                 f"{ident}: source_retrieved must be YYYY-MM-DD")
+        if row["family"] in PINNED_EXTERNAL:
+            require(isinstance(row.get("source_phrase"), str) and row["source_phrase"].strip(),
+                    f"{ident}: a source phrase is required")
+            source = sources.get(row["family"]) or {}
+            excerpt_path = ROOT / str(source.get("excerpt") or "")
+            require(excerpt_path.is_file(), f"{ident}: the source excerpt is absent")
+            require(normalize_source(row["source_phrase"])
+                    in normalize_source(excerpt_path.read_text(errors="ignore")),
+                    f"{ident}: the source phrase is not in the excerpt")
+            criteria = "\n".join(str(row.get(field, "")) for field in
+                                 ("title", "pass_condition", "fail_condition", "observable"))
+            require(row.get("criteria_sha256")
+                    == hashlib.sha256(criteria.encode()).hexdigest(),
+                    f"{ident}: the criteria hash does not match the gate text")
         status = row.get("status")
         require(status in STATUSES, f"{ident}: unknown status {status!r}")
         require(row.get("locality") in LOCALITIES, f"{ident}: unknown locality {row.get('locality')!r}")
@@ -336,6 +472,31 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
         resolve_source(row, matrix, inventory, ledger)
     check_dependencies(rows)
     check_related(rows)
+    dispositions: dict[str, dict] = {}
+    disposition_path = ROOT / "spec" / "audit" / "section6-dispositions.json"
+    if disposition_path.is_file():
+        document = json.loads(disposition_path.read_text())
+        dispositions = {row["id"]: row for row in document.get("rows", [])}
+    for row in rows:
+        if row["family"] != "S6" or row["id"].startswith("S6-PR600"):
+            continue
+        ident = "S6:" + row["id"][3:]
+        disposition = dispositions.get(ident)
+        require(disposition is not None, f"{row['id']}: no disposition record")
+        verdict = disposition.get("verdict")
+        if verdict == "withdrawn":
+            require(row["status"] == "superseded",
+                    f"{row['id']}: a withdrawn disposition must be superseded")
+        elif verdict == "reviewable":
+            require(row["status"] in ("reviewable", "owes"),
+                    f"{row['id']}: a reviewable disposition cannot be {row['status']}")
+            if row["status"] == "owes":
+                reason = str(row.get("status_reason") or "").lower()
+                require("named test" in reason or "absent" in reason,
+                        f"{row['id']}: an owes status needs the named-test reason")
+        elif verdict == "accepted":
+            require(row["status"] in ("reviewable", "met"),
+                    f"{row['id']}: an accepted disposition cannot be {row['status']}")
     unresolved = [row["id"] for row in rows if row["status"] != "met"]
     return {
         "result": "REGISTER_VALID",
@@ -352,8 +513,13 @@ def main() -> int:
     parser.add_argument("--check", action="store_true",
                         help="compare the committed register with a fresh build")
     parser.add_argument("--assert-closeable", action="store_true",
-                        help="exit 3 unless every gate is met")
+                        help="exit 3 unless every gate is met (implies --check)")
+    parser.add_argument("--run-controls", action="store_true",
+                        help="apply the Python/tool control mutations and run their tests")
     args = parser.parse_args()
+    if args.assert_closeable:
+        # Closeability must not trust a hand-edited register: compare it to the build.
+        args.check = True
     try:
         document = json.loads(args.register.read_text())
         matrix = json.loads(MATRIX.read_text())
@@ -373,6 +539,11 @@ def main() -> int:
                 print(json.dumps({"result": "STALE", "files": stale}, sort_keys=True))
                 return 1
         report = validate(document, matrix, inventory, ledger)
+        if args.run_controls:
+            report["controls"] = {
+                row["id"]: run_control(row)
+                for row in document["gates"] if row.get("status") == "met"
+            }
     except (OSError, ValueError, KeyError, TypeError, GateError) as exc:
         print(json.dumps({"result": "INVALID_REGISTER", "reason": str(exc)}, sort_keys=True))
         return 2

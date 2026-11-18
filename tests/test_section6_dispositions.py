@@ -48,7 +48,9 @@ class DispositionTests(unittest.TestCase):
         row.update(verdict="accepted", reviewer=None,
                    reviewer_independent=True,
                    review_url="https://github.com/rhovision-org/rholo/issues/1",
-                   evidence_sha256="a" * 64)
+                   evidence_sha256="a" * 64,
+                   category_a_effect="replay-verdict",
+                   category_a_derivation="a replay verdict moves")
         with self.assertRaisesRegex(gate.DispositionError, "named reviewer"):
             self.inspect()
 
@@ -57,8 +59,30 @@ class DispositionTests(unittest.TestCase):
         row.update(verdict="accepted", reviewer="reviewer",
                    reviewer_independent=False,
                    review_url="https://github.com/rhovision-org/rholo/issues/1",
-                   evidence_sha256="a" * 64)
+                   evidence_sha256="a" * 64,
+                   category_a_effect="replay-verdict",
+                   category_a_derivation="a replay verdict moves")
         with self.assertRaisesRegex(gate.DispositionError, "independent reviewer"):
+            self.inspect()
+
+    def test_accepted_needs_a_derived_effect(self):
+        row = self.row("S6:f735095c746556f3")
+        row.update(verdict="accepted", reviewer="reviewer",
+                   reviewer_independent=True,
+                   review_url="https://github.com/rhovision-org/rholo/issues/1",
+                   evidence_sha256="a" * 64)
+        with self.assertRaisesRegex(gate.DispositionError, "derived category-A"):
+            self.inspect()
+
+    def test_accepted_needs_a_review_record(self):
+        row = self.row("S6:f735095c746556f3")
+        row.update(verdict="accepted", reviewer="reviewer",
+                   reviewer_independent=True,
+                   review_url="https://github.com/rhovision-org/rholo/issues/1",
+                   evidence_sha256="a" * 64,
+                   category_a_effect="replay-verdict",
+                   category_a_derivation="a replay verdict moves")
+        with self.assertRaisesRegex(gate.DispositionError, "review record"):
             self.inspect()
 
     def test_withdrawn_needs_a_decision_url(self):

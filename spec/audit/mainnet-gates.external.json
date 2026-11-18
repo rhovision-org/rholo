@@ -5,22 +5,26 @@
     "G428": {
       "url": "https://github.com/rhovision-org/rholo/issues/428",
       "retrieved": "2026-11-18",
-      "sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda"
+      "sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
+      "excerpt": "spec/audit/sources/g428-m1-m6.md"
     },
     "G428-decision": {
       "url": "https://github.com/rhovision-org/rholo/issues/428#issuecomment-6892934659",
       "retrieved": "2026-11-18",
-      "sha256": null
+      "sha256": null,
+      "excerpt": "spec/audit/sources/g428-decision.md"
     },
     "G584": {
       "url": "https://github.com/rhovision-org/rholo/issues/584",
       "retrieved": "2026-11-18",
-      "sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610"
+      "sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
+      "excerpt": "spec/audit/sources/g584-g1-g6.md"
     },
     "TA": {
       "url": "https://github.com/rhovision-org/rholo/blob/dd6a25d69128375d83b7a7701c169ce672e57536/docs/src/spec/testnet-acceptance.md#L64-L68",
       "retrieved": "2026-11-18",
-      "sha256": "5457d7cdd53bf4985b91e96b078d41c13361fe999a4807444ad8863c25623f0a"
+      "sha256": "5457d7cdd53bf4985b91e96b078d41c13361fe999a4807444ad8863c25623f0a",
+      "excerpt": "spec/audit/sources/testnet-criteria.md"
     }
   },
   "gates": [
@@ -45,10 +49,23 @@
       "owner": "Jim / release coordination",
       "status": "blocked",
       "status_reason": "No declared supported tier or independently provisioned host/stake map. The resource-safety witness counts rnode processes only; it does not measure capacity or fault domains.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1"],
-      "related": [{"id": "G584-G1", "criterion": "the installed candidate pins are a prerequisite for measuring its tier"}],
-      "does_not_claim": "A 1 GiB fault injection is a diagnosability probe, not supported-tier acceptance."
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1"
+      ],
+      "related": [
+        {
+          "id": "G584-G1",
+          "criterion": "the installed candidate pins are a prerequisite for measuring its tier"
+        }
+      ],
+      "does_not_claim": "A 1 GiB fault injection is a diagnosability probe, not supported-tier acceptance.",
+      "source_phrase": "per-validator minimum RAM/CPU"
     },
     {
       "id": "G428-M2",
@@ -71,10 +88,23 @@
       "owner": "Jim / release coordination",
       "status": "owes",
       "status_reason": "Source-shape queue bounds and the C105 backpressure work exist; no installed-candidate pressure acceptance across HTTP, direct HTTP and gRPC.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1"],
-      "related": [{"id": "TA-C1", "criterion": "bounded production is a prerequisite for the deploy-finalises witness"}],
-      "does_not_claim": "A source-shape queue bound is not a pressure test."
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1"
+      ],
+      "related": [
+        {
+          "id": "TA-C1",
+          "criterion": "bounded production is a prerequisite for the deploy-finalises witness"
+        }
+      ],
+      "does_not_claim": "A source-shape queue bound is not a pressure test.",
+      "source_phrase": "bounded queues"
     },
     {
       "id": "G428-M3",
@@ -97,10 +127,21 @@
       "owner": "Aria / evidence work",
       "status": "blocked",
       "status_reason": "The historical #575 result is instrument PASS / join FAIL, retained; no fresh routable off-host receive/apply witness or failover.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
       "depends_on": [],
-      "related": [{"id": "TA-C2", "criterion": "the join subset (A2.2/A2.4) is a different criterion from off-host fringe delivery"}],
-      "does_not_claim": "Instrument or send-log PASS is not state application."
+      "related": [
+        {
+          "id": "TA-C2",
+          "criterion": "the join subset (A2.2/A2.4) is a different criterion from off-host fringe delivery"
+        }
+      ],
+      "does_not_claim": "Instrument or send-log PASS is not state application.",
+      "source_phrase": "receives and applies"
     },
     {
       "id": "G428-M4",
@@ -123,13 +164,28 @@
       "owner": "Jim / release coordination",
       "status": "blocked",
       "status_reason": "N=4/N=8 has not run on the selected candidate. The historical 69bf868f pass is under the superseded equal-heads criterion; the standing criterion is anchor retention.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1", "G520-MIGRATION"],
-      "related": [
-        {"id": "G584-G4", "criterion": "G4 is the restart/recovery arm only, not the full N=4/N=8 envelope"},
-        {"id": "TA-C1", "criterion": "A1.3's N=8 finality failure is a finality/supermajority observation, not a separate campaign"}
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1",
+        "G520-MIGRATION"
       ],
-      "does_not_claim": "A local partition drill or a green CI badge is not the N=4/N=8 release envelope."
+      "related": [
+        {
+          "id": "G584-G4",
+          "criterion": "G4 is the restart/recovery arm only, not the full N=4/N=8 envelope"
+        },
+        {
+          "id": "TA-C1",
+          "criterion": "A1.3's N=8 finality failure is a finality/supermajority observation, not a separate campaign"
+        }
+      ],
+      "does_not_claim": "A local partition drill or a green CI badge is not the N=4/N=8 release envelope.",
+      "source_phrase": "N=4 and N=8"
     },
     {
       "id": "G428-M5",
@@ -152,14 +208,29 @@
       "owner": "Jim / release coordination",
       "status": "blocked",
       "status_reason": "The authenticated historical 840->841 bundle is UNAVAILABLE (owner decision 2026-11-15, comment 6892934659). M5-04/M5-06 component accounting is verified; it is not the historical M5 gate. Unavailability is a continuing blocker, not a waiver.",
-      "evidence": {"url": "https://github.com/rhovision-org/rholo/issues/428#issuecomment-6892934659", "digest": null, "source_sha": null, "binary_sha256": null},
+      "evidence": {
+        "url": "https://github.com/rhovision-org/rholo/issues/428#issuecomment-6892934659",
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
       "depends_on": [],
       "related": [
-        {"id": "HF51-A-block-merge", "criterion": "A:block-merge is an open semantic decision, not an M5 witness"},
-        {"id": "HF51-Audit-sidecar-merge", "criterion": "sidecar-merge is cost composition, not per-chain accounting"},
-        {"id": "S6-f735095c746556f3", "criterion": "the merge-diff row is one merge-accounting component"}
+        {
+          "id": "HF51-A-block-merge",
+          "criterion": "A:block-merge is an open semantic decision, not an M5 witness"
+        },
+        {
+          "id": "HF51-Audit-sidecar-merge",
+          "criterion": "sidecar-merge is cost composition, not per-chain accounting"
+        },
+        {
+          "id": "S6-f735095c746556f3",
+          "criterion": "the merge-diff row is one merge-accounting component"
+        }
       ],
-      "does_not_claim": "Component/hot-cell accounting is not the historical 840->841 replay; the unavailable bundle is not a pass."
+      "does_not_claim": "Component/hot-cell accounting is not the historical 840->841 replay; the unavailable bundle is not a pass.",
+      "source_phrase": "final_scope_rejected_chains"
     },
     {
       "id": "G428-M6",
@@ -182,14 +253,32 @@
       "owner": "Patrick / independent technical review",
       "status": "external",
       "status_reason": "No selected candidate reproducibility record or independent reviewer conclusion exists.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1", "G584-G5"],
-      "related": [
-        {"id": "G584-G6", "criterion": "the #584 verdict is a live-run sign-off, not the full M6 reproducibility review"},
-        {"id": "HF51-Audit-section6-categoryA", "criterion": "the section-6 category-A disposition is a separate audit sign-off"},
-        {"id": "C357", "criterion": "C357 acceptance is a narrow hardfork boundary, not M6"}
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1",
+        "G584-G5"
       ],
-      "does_not_claim": "One sign-off does not discharge M6, G6, the section-6 audit and C357 together."
+      "related": [
+        {
+          "id": "G584-G6",
+          "criterion": "the #584 verdict is a live-run sign-off, not the full M6 reproducibility review"
+        },
+        {
+          "id": "HF51-Audit-section6-categoryA",
+          "criterion": "the section-6 category-A disposition is a separate audit sign-off"
+        },
+        {
+          "id": "C357",
+          "criterion": "C357 acceptance is a narrow hardfork boundary, not M6"
+        }
+      ],
+      "does_not_claim": "One sign-off does not discharge M6, G6, the section-6 audit and C357 together.",
+      "source_phrase": "reviewer conclusions"
     },
     {
       "id": "G584-G1",
@@ -212,10 +301,21 @@
       "owner": "Aria / operator",
       "status": "external",
       "status_reason": "The installed candidate and preflight inputs are unfilled; #559 is a draft and #584 has not executed.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
       "depends_on": [],
-      "related": [{"id": "G428-M1", "criterion": "the selected candidate is the M1 measurement subject"}],
-      "does_not_claim": "The collector's ok flag is not an operational GO."
+      "related": [
+        {
+          "id": "G428-M1",
+          "criterion": "the selected candidate is an M1 prerequisite"
+        }
+      ],
+      "does_not_claim": "The collector's ok flag is not an operational GO.",
+      "source_phrase": "installed pins"
     },
     {
       "id": "G584-G2",
@@ -238,10 +338,18 @@
       "owner": "Aria / operator",
       "status": "external",
       "status_reason": "The live run has not executed.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1"],
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1"
+      ],
       "related": [],
-      "does_not_claim": "A local devnet transfer is not the live lifecycle."
+      "does_not_claim": "A local devnet transfer is not the live lifecycle.",
+      "source_phrase": "signed deploy lifecycle"
     },
     {
       "id": "G584-G3",
@@ -264,10 +372,23 @@
       "owner": "Aria / operator",
       "status": "external",
       "status_reason": "The live run has not executed.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1"],
-      "related": [{"id": "TA-C1", "criterion": "finality is the criterion-1 witness; admission is not finality"}],
-      "does_not_claim": "Acceptance and inclusion are not settlement."
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1"
+      ],
+      "related": [
+        {
+          "id": "TA-C1",
+          "criterion": "finality is the criterion-1 witness; admission is not finality"
+        }
+      ],
+      "does_not_claim": "Acceptance and inclusion are not settlement.",
+      "source_phrase": "no false settlement"
     },
     {
       "id": "G584-G4",
@@ -290,10 +411,23 @@
       "owner": "Aria / operator",
       "status": "external",
       "status_reason": "The planned single-validator restart arm has not executed.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1"],
-      "related": [{"id": "G428-M4", "criterion": "G4 is the restart/recovery arm only; M4 is the full N=4/N=8 envelope"}],
-      "does_not_claim": "G4 recovery does not discharge the M4 partition/rejoin or host-loss criteria."
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1"
+      ],
+      "related": [
+        {
+          "id": "G428-M4",
+          "criterion": "G4 is the restart/recovery arm only; M4 is the full N=4/N=8 envelope"
+        }
+      ],
+      "does_not_claim": "G4 recovery does not discharge the M4 partition/rejoin or host-loss criteria.",
+      "source_phrase": "recovery without loss"
     },
     {
       "id": "G584-G5",
@@ -316,10 +450,23 @@
       "owner": "Aria / operator",
       "status": "external",
       "status_reason": "The live run and retained evidence bundle do not exist.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1"],
-      "related": [{"id": "G428-M6", "criterion": "G5 is the live-observation subset of the M6 reproducibility record"}],
-      "does_not_claim": "A public-route snapshot is not four independent observations."
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1"
+      ],
+      "related": [
+        {
+          "id": "G428-M6",
+          "criterion": "G5 is the live-observation subset of the M6 reproducibility record"
+        }
+      ],
+      "does_not_claim": "A public-route snapshot is not four independent observations.",
+      "source_phrase": "independent observations"
     },
     {
       "id": "G584-G6",
@@ -342,10 +489,23 @@
       "owner": "Patrick / independent technical review",
       "status": "external",
       "status_reason": "No verdict exists; the live run has not executed.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G5"],
-      "related": [{"id": "G428-M6", "criterion": "G6 is the live verdict; M6 is the wider reproducibility and sign-off gate"}],
-      "does_not_claim": "G6 does not discharge M6 or the #51 audit sign-off."
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G5"
+      ],
+      "related": [
+        {
+          "id": "G428-M6",
+          "criterion": "G6 is a subset of the M6 reproducibility and sign-off gate"
+        }
+      ],
+      "does_not_claim": "G6 does not discharge M6 or the #51 audit sign-off.",
+      "source_phrase": "verdict"
     },
     {
       "id": "TA-C1",
@@ -368,13 +528,27 @@
       "owner": "Jim / release coordination",
       "status": "blocked",
       "status_reason": "A1.3 (N=8) fails: the supporting stake is 400 of 800, not a supermajority. A1.2 (N=5) passes; A1.1/A1.4/A1.5 pass on the older tree.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1"],
-      "related": [
-        {"id": "G428-M4", "criterion": "A1.3 is a finality/supermajority observation on the M4 envelope"},
-        {"id": "G584-G3", "criterion": "finality is the settlement witness; admission is not settlement"}
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1"
       ],
-      "does_not_claim": "A height trace or acceptsDeploys is not criterion 1."
+      "related": [
+        {
+          "id": "G428-M4",
+          "criterion": "A1.3 is a finality/supermajority component of the M4 envelope"
+        },
+        {
+          "id": "G584-G3",
+          "criterion": "finality is the settlement witness; admission is not settlement"
+        }
+      ],
+      "does_not_claim": "A height trace or acceptsDeploys is not criterion 1.",
+      "source_phrase": "deploy finalises"
     },
     {
       "id": "TA-C2",
@@ -397,10 +571,23 @@
       "owner": "Aria / evidence work",
       "status": "external",
       "status_reason": "The 5/5 arms are recorded on the older tree; the live re-run on the selected candidate has not happened.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1"],
-      "related": [{"id": "G428-M3", "criterion": "the join subset (A2.2/A2.4) is not off-host fringe delivery"}],
-      "does_not_claim": "The join subset is not the whole criterion."
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1"
+      ],
+      "related": [
+        {
+          "id": "G428-M3",
+          "criterion": "the join subset (A2.2/A2.4) is not off-host fringe delivery"
+        }
+      ],
+      "does_not_claim": "The join subset is not the whole criterion.",
+      "source_phrase": "finalise past the kill"
     },
     {
       "id": "TA-C3",
@@ -423,10 +610,16 @@
       "owner": "Jim / release coordination",
       "status": "reviewable",
       "status_reason": "Census only; the bounded-adversary statement exists at docs/src/spec/adversary.md, and the census is not a pass/fail verdict.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
       "depends_on": [],
       "related": [],
-      "does_not_claim": "This criterion cannot go green by construction."
+      "does_not_claim": "This criterion cannot go green by construction.",
+      "source_phrase": "rate and a class census"
     },
     {
       "id": "C343",
@@ -441,16 +634,24 @@
       "observable": "The phase-diagnosis table classification, the operator gate keys, the block-6 disposition, the height gap, and the readiness/fault/isolation consistencies.",
       "witness_kind": "python",
       "witness_ref": "tools/c343-live.py::verify",
-      "negative_control": "A pre-fix host lacking a field is PRECONDITION; 'block 6 unknown' must not be a PASS; a contradictory ready/reason pair must FAIL.",
+      "negative_control": "A pre-fix host lacking a field is PRECONDITION; 'block 6 unknown', a JSON 'unaccepted'/'unfinalized' disposition, and an 'issue #6 accepted' line must not be a PASS; a later orphan must override an earlier accepted; a contradictory ready/reason pair must FAIL.",
       "docker_free": true,
       "sole_evidence": "live-host",
       "locality": "live-host",
       "witness_scope": "integration",
       "owner": "Aria / operator",
-      "laws": ["88a", "88b"],
+      "laws": [
+        "88a",
+        "88b"
+      ],
       "status": "precondition",
       "status_reason": "Aria's 16 Nov read-only observation reaches four instances on two SSH hosts, but the installed build returns 404 for /api/v1/status/operator and the file logs are not a structured block-6 disposition. The collector must be run by the operator with a local plan.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
       "depends_on": [],
       "related": [],
       "does_not_claim": "The collector has not run live; the old build is not a current-build gate."
@@ -474,14 +675,34 @@
       "locality": "external",
       "witness_scope": "integration",
       "owner": "Jim / release coordination",
-      "laws": ["11", "92", "94", "95a", "95b"],
+      "laws": [
+        "11",
+        "92",
+        "94",
+        "95a",
+        "95b"
+      ],
       "status": "external",
       "status_reason": "No selected release lockstep campaign, independent category-A verdict, or reconstructed-trace acceptance exists. The #584 candidate/GO is a related live arm, not C357 closure.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1", "G584-G6"],
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1",
+        "G584-G6"
+      ],
       "related": [
-        {"id": "G428-M6", "criterion": "C357 acceptance is a narrow hardfork boundary, not the M6 reproducibility review"},
-        {"id": "G584-G6", "criterion": "the #584 verdict is a live-run sign-off, not the C357 lockstep acceptance"}
+        {
+          "id": "G428-M6",
+          "criterion": "C357 acceptance is a narrow hardfork boundary, not the M6 reproducibility review"
+        },
+        {
+          "id": "G584-G6",
+          "criterion": "the #584 verdict is a live-run sign-off, not the C357 lockstep acceptance"
+        }
       ],
       "does_not_claim": "The acceptance checker validates a record; it does not prove a campaign ran."
     },
@@ -506,9 +727,19 @@
       "owner": "Jim / release coordination",
       "status": "owes",
       "status_reason": "No in-tree gate row or witness; the dependency is recorded but unqualified.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
       "depends_on": [],
-      "related": [{"id": "G428-M4", "criterion": "the populated-store migration is an M4 prerequisite"}],
+      "related": [
+        {
+          "id": "G428-M4",
+          "criterion": "the populated-store migration is an M4 prerequisite"
+        }
+      ],
       "does_not_claim": "A fresh-genesis or debug-build run is not a populated-store migration."
     },
     {
@@ -530,12 +761,26 @@
       "locality": "integration",
       "witness_scope": "integration",
       "owner": "Jim / release coordination",
-      "laws": ["117"],
+      "laws": [
+        "117"
+      ],
       "status": "reviewable",
       "status_reason": "Prose-only correction; not in the 94-row inventory or a per-candidate disposition.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1"],
-      "related": [{"id": "G584-G1", "criterion": "the selected candidate must carry the v3 statement"}],
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1"
+      ],
+      "related": [
+        {
+          "id": "G584-G1",
+          "criterion": "the v3 statement is a selected-candidate prerequisite"
+        }
+      ],
       "does_not_claim": "The prose correction is not an independent safety attestation."
     },
     {
@@ -557,12 +802,26 @@
       "locality": "external",
       "witness_scope": "integration",
       "owner": "Jim / release coordination",
-      "laws": ["115"],
+      "laws": [
+        "115"
+      ],
       "status": "reviewable",
       "status_reason": "Prose-only correction; not in the 94-row inventory or a per-candidate disposition.",
-      "evidence": {"url": null, "digest": null, "source_sha": null, "binary_sha256": null},
-      "depends_on": ["G584-G1"],
-      "related": [{"id": "G584-G1", "criterion": "the selected candidate must carry the trimmed rule"}],
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [
+        "G584-G1"
+      ],
+      "related": [
+        {
+          "id": "G584-G1",
+          "criterion": "the trimmed rule is a selected-candidate prerequisite"
+        }
+      ],
       "does_not_claim": "The prose correction is not an independent safety attestation."
     }
   ]
