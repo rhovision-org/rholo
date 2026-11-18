@@ -319,6 +319,7 @@
     },
     {
       "id": "G584-G2",
+      "machine_check": true,
       "family": "G584",
       "title": "Signed deploy lifecycle",
       "source_label": "#584 G2",
@@ -353,6 +354,7 @@
     },
     {
       "id": "G584-G3",
+      "machine_check": true,
       "family": "G584",
       "title": "No false settlement",
       "source_label": "#584 G3",
@@ -431,6 +433,7 @@
     },
     {
       "id": "G584-G5",
+      "machine_check": true,
       "family": "G584",
       "title": "Independent observations",
       "source_label": "#584 G5",

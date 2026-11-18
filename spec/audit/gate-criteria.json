@@ -1,0 +1,564 @@
+{
+ "schema": 1,
+ "generated": "2026-11-18",
+ "source": "spec/audit/mainnet-gates.external.json",
+ "criteria": [
+  {
+   "gate_id": "G428-M1",
+   "principle": "resource_attribution",
+   "adapter": "tools/gate-principles.py::resource_attribution",
+   "parameters": {
+    "process_name": "rnode"
+   },
+   "requires": [
+    "record/host_processes"
+   ],
+   "negative_controls": [
+    {
+     "name": "declared count disagrees",
+     "mutation": [
+      "set",
+      "record/declared_count",
+      2
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "no node process",
+     "mutation": [
+      "set",
+      "record/host_processes",
+      [
+       {
+        "pid": 1,
+        "name": "bash"
+       }
+      ]
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "missing process list",
+     "mutation": [
+      "delete",
+      "record/host_processes"
+     ],
+     "expected": "PRECONDITION"
+    }
+   ],
+   "pass_condition_sha256": "8090b5de08f923f19998a33a51efd622da8e1ea5a50bfd7aff0ce1ec35b2adef"
+  },
+  {
+   "gate_id": "G428-M2",
+   "principle": "bounded_admission",
+   "adapter": "tools/check-bounded-ingress-queues.sh::--gate",
+   "parameters": {},
+   "requires": [
+    "source"
+   ],
+   "negative_controls": [
+    {
+     "name": "an unbounded queue",
+     "mutation": [
+      "set",
+      "source/text",
+      "let (incoming_blocks_tx, incoming_blocks_rx) = mpsc::unbounded();\nlet (processor_input_tx, processor_input_rx) = mpsc::channel(MAX_PROCESSOR_INPUT);\nlet (validated_blocks_tx, validated_blocks_rx) = mpsc::channel(MAX_VALIDATED_BLOCKS);\nlet (tap_tx, tap_rx) = mpsc::channel(MAX_TAP_VALIDATED_BLOCKS);\n"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an absent binding",
+     "mutation": [
+      "set",
+      "source/text",
+      "let (processor_input_tx, processor_input_rx) = mpsc::channel(MAX_PROCESSOR_INPUT);\nlet (validated_blocks_tx, validated_blocks_rx) = mpsc::channel(MAX_VALIDATED_BLOCKS);\nlet (tap_tx, tap_rx) = mpsc::channel(MAX_TAP_VALIDATED_BLOCKS);\n"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an unpinned bound",
+     "mutation": [
+      "set",
+      "source/text",
+      "let (incoming_blocks_tx, incoming_blocks_rx) = mpsc::channel(usize::MAX);\nlet (processor_input_tx, processor_input_rx) = mpsc::channel(MAX_PROCESSOR_INPUT);\nlet (validated_blocks_tx, validated_blocks_rx) = mpsc::channel(MAX_VALIDATED_BLOCKS);\nlet (tap_tx, tap_rx) = mpsc::channel(MAX_TAP_VALIDATED_BLOCKS);\n"
+     ],
+     "expected": "FAIL"
+    }
+   ],
+   "pass_condition_sha256": "25c97f9b905e6251de65e5d387b4290fcbf379440ab013eb098083921a2747a1"
+  },
+  {
+   "gate_id": "G428-M3",
+   "principle": "off_host_claim",
+   "adapter": "tools/check-evidence-locality.py::check",
+   "parameters": {},
+   "requires": [
+    "record"
+   ],
+   "negative_controls": [
+    {
+     "name": "loopback advertised on an off-host claim",
+     "mutation": [
+      "set",
+      "record/files/raw~1peer.txt",
+      "rnode://abc@127.0.0.1"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "single-host claiming an off-host positive",
+     "mutation": [
+      "set",
+      "record/files/README.md",
+      "**Evidence locality.** single-host \u2014 an off-host positive\n"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "no record",
+     "mutation": [
+      "delete",
+      "record/files"
+     ],
+     "expected": "PRECONDITION"
+    }
+   ],
+   "pass_condition_sha256": "37535abb7765885214fc5cacac4702996c94e0095b2b885589dccc3dbd560429"
+  },
+  {
+   "gate_id": "G428-M4",
+   "principle": "healing_anchor",
+   "adapter": "tools/check-gate-criterion.py::check_rejoin",
+   "parameters": {
+    "floor": 270,
+    "ceiling": 600,
+    "min_dwell": 3
+   },
+   "requires": [
+    "record_data"
+   ],
+   "negative_controls": [
+    {
+     "name": "healing window below the floor",
+     "mutation": [
+      "set",
+      "record_data/window/seconds",
+      100
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "victim did not finalize the anchor",
+     "mutation": [
+      "set",
+      "record_data/validators/0/finalized_anchor",
+      false
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "missing evidence record",
+     "mutation": [
+      "delete",
+      "record_data/evidence"
+     ],
+     "expected": "PRECONDITION"
+    }
+   ],
+   "pass_condition_sha256": "e6daf0b8e87077cab97821c329bab4110431ef2fcb89d76c37753bff9af1b17d"
+  },
+  {
+   "gate_id": "G428-M5",
+   "principle": "merge_accounting",
+   "adapter": "tools/check-gate-criterion.py::check_merge",
+   "parameters": {},
+   "requires": [
+    "record_data"
+   ],
+   "negative_controls": [
+    {
+     "name": "an unapplied kept write",
+     "mutation": [
+      "set",
+      "record_data/unapplied_kept_writes",
+      1
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a rejection without a conflict",
+     "mutation": [
+      "set",
+      "record_data/rejections_without_a_conflict",
+      1
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "unavailable bundle",
+     "mutation": [
+      "set",
+      "record_data/bundle/available",
+      false
+     ],
+     "expected": "PRECONDITION"
+    }
+   ],
+   "pass_condition_sha256": "9d1078dcc7b9498e2b4530dbfaa928d19ca8c2daff26a602bccb9ea391038437"
+  },
+  {
+   "gate_id": "G584-G1",
+   "principle": "identity_agreement",
+   "adapter": "tools/live-gate.py::check_g1",
+   "parameters": {
+    "min_observers": 4
+   },
+   "requires": [
+    "preflight"
+   ],
+   "negative_controls": [
+    {
+     "name": "disagreeing binary digests",
+     "mutation": [
+      "set",
+      "preflight/validators/1/binary_sha256",
+      "9999999999999999999999999999999999999999999999999999999999999999"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "not the selected candidate",
+     "mutation": [
+      "set",
+      "preflight/operator_fields/selected_source_sha",
+      "9999999999999999999999999999999999999999"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "three records",
+     "mutation": [
+      "delete",
+      "preflight/validators/3"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "missing preflight",
+     "mutation": [
+      "delete",
+      "preflight"
+     ],
+     "expected": "PRECONDITION"
+    }
+   ],
+   "pass_condition_sha256": "ac8631bae794c4e2e64a04e39e9ebe35aa7121db87168c07220c0542e0c6c938"
+  },
+  {
+   "gate_id": "G584-G2",
+   "principle": "staged_lifecycle",
+   "adapter": "tools/live-gate.py::check_g2",
+   "parameters": {
+    "stages": [
+     "pooled",
+     "includedUnfinalized",
+     "finalizedSuccess"
+    ],
+    "per_observer": true,
+    "min_observers": 4
+   },
+   "requires": [
+    "subject/deploy_id",
+    "run",
+    "events"
+   ],
+   "negative_controls": [
+    {
+     "name": "accepted but never finalized",
+     "mutation": [
+      "remove_where",
+      "events",
+      {
+       "route": "deploy_settlement",
+       "body.stage": "finalizedSuccess"
+      }
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "one observer misses pooled",
+     "mutation": [
+      "remove_where",
+      "events",
+      {
+       "alias": "v1",
+       "route": "deploy_settlement",
+       "body.stage": "pooled"
+      }
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "success and failure for one deploy",
+     "mutation": [
+      "append",
+      "events",
+      {
+       "alias": "v1",
+       "route": "deploy_status",
+       "body": {
+        "ProcessedWithError": {
+         "deployResult": []
+        }
+       }
+      }
+     ],
+     "expected": "FAIL"
+    }
+   ],
+   "pass_condition_sha256": "5bbe105d00104c8ea6f8d771f62af0447c03227d43966b2255b154d00b2afb8f"
+  },
+  {
+   "gate_id": "G584-G3",
+   "principle": "no_false_settlement",
+   "adapter": "tools/live-gate.py::check_g3",
+   "parameters": {},
+   "requires": [
+    "claims",
+    "events"
+   ],
+   "negative_controls": [
+    {
+     "name": "claims settlement without a finalized observation",
+     "mutation": [
+      "remove_where",
+      "events",
+      {
+       "route": "deploy_settlement",
+       "body.stage": "finalizedSuccess"
+      }
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "no pre-finality sample",
+     "mutation": [
+      [
+       "remove_where",
+       "events",
+       {
+        "route": "deploy_settlement",
+        "body.stage": "pooled"
+       }
+      ],
+      [
+       "remove_where",
+       "events",
+       {
+        "route": "deploy_settlement",
+        "body.stage": "includedUnfinalized"
+       }
+      ]
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "contradictory finalized hashes",
+     "mutation": [
+      "set_where",
+      "events",
+      {
+       "route": "finality",
+       "alias": "v1"
+      },
+      {
+       "body.finalizedBlockHash": "other"
+      }
+     ],
+     "expected": "FAIL"
+    }
+   ],
+   "pass_condition_sha256": "2f0b7bfcebd3ce75df8e9003bd2723a5fd937e7740e06dc39e6fa521a6bc93b7"
+  },
+  {
+   "gate_id": "G584-G4",
+   "principle": "recovery_no_loss",
+   "adapter": "tools/live-gate.py::check_g4",
+   "parameters": {},
+   "requires": [
+    "recovery",
+    "events"
+   ],
+   "negative_controls": [
+    {
+     "name": "lost accepted work",
+     "mutation": [
+      "append",
+      "recovery/lost_deploys",
+      "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "own-key halt on a healthy key",
+     "mutation": [
+      "set",
+      "recovery/own_key_halt_observed",
+      true
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "no recovery arm",
+     "mutation": [
+      "delete",
+      "recovery"
+     ],
+     "expected": "PRECONDITION"
+    }
+   ],
+   "pass_condition_sha256": "2c291ce8d6c866076f31c6549fb8c09170999f7765010de7e8db99d16d370c39"
+  },
+  {
+   "gate_id": "G584-G5",
+   "principle": "independent_observations",
+   "adapter": "tools/live-gate.py::check_g5",
+   "parameters": {
+    "min_observers": 4
+   },
+   "requires": [
+    "run",
+    "events",
+    "record/dir"
+   ],
+   "negative_controls": [
+    {
+     "name": "two aliases resolve to one endpoint",
+     "mutation": [
+      "set",
+      "run/validators/1/endpoint_sha256",
+      "3bfc269594ef649228e9a74bab00f042efc91d5acc6fbee31a382e80d42388fe"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a tampered body digest",
+     "mutation": [
+      "set",
+      "events/0/body_sha256",
+      "0000000000000000000000000000000000000000000000000000000000000000"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "three validators",
+     "mutation": [
+      "delete",
+      "run/validators/3"
+     ],
+     "expected": "PRECONDITION"
+    }
+   ],
+   "pass_condition_sha256": "629fc7467f9c188e48fed7a28eaad2749f389f4e08dae32d9976938e9970c854"
+  },
+  {
+   "gate_id": "C343",
+   "principle": "phase_diagnosis",
+   "adapter": "tools/c343-live.py::verify_run",
+   "parameters": {
+    "table": "spec/audit/phase-diagnosis.tsv"
+   },
+   "requires": [
+    "health",
+    "operator",
+    "block6"
+   ],
+   "negative_controls": [
+    {
+     "name": "block 6 unknown",
+     "mutation": [
+      "set",
+      "block6",
+      "block 6 unknown"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "contradictory ready and reasons",
+     "mutation": [
+      "set",
+      "health/readyReasons",
+      [
+       "x"
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "unmodelled observation",
+     "mutation": [
+      [
+       "set",
+       "health/ready",
+       false
+      ],
+      [
+       "set",
+       "health/readyReasons",
+       [
+        "unknown"
+       ]
+      ],
+      [
+       "set",
+       "operator/finalityStalled",
+       true
+      ]
+     ],
+     "expected": "PRECONDITION"
+    }
+   ],
+   "pass_condition_sha256": "27995ccfcd55dee8e44806cb04d6904e223c8ed97a9c0e5fe728d98be80a6a25"
+  },
+  {
+   "gate_id": "C357",
+   "principle": "lockstep_acceptance",
+   "adapter": "tools/c357-acceptance.py::check_record",
+   "parameters": {
+    "table": "spec/audit/c357-acceptance.tsv",
+    "require_original_trace": false
+   },
+   "requires": [
+    "record_data"
+   ],
+   "negative_controls": [
+    {
+     "name": "a validator still serving the old version",
+     "mutation": [
+      "set",
+      "record_data/validators/1/still_serving_old",
+      true
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "no independent review",
+     "mutation": [
+      "delete",
+      "record_data/independent_review"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "no record",
+     "mutation": [
+      "delete",
+      "record_data"
+     ],
+     "expected": "PRECONDITION"
+    }
+   ],
+   "pass_condition_sha256": "4114f0ebe377194c4c98339078440d67bd18701e5275f2438fc9c90eaa32c3bc"
+  }
+ ]
+}
