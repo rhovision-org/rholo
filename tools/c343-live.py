@@ -285,7 +285,7 @@ def cell(verdict: str, detail: str) -> dict[str, str]:
 
 
 BLOCK6 = re.compile(
-    r"(?<!\d)(?:block[- ]?#?|height[- ]?#?|#)\s*0*6(?!\d)", re.I)
+    r"(?<!\d)(?:block[- ]?#?|height[- ]?#?)\s*0*6(?!\d)", re.I)
 BLOCK6_DISPOSITIONS = {
     "orphan": ("FAIL", "block 6 is an orphan"),
     "held": ("FAIL", "block 6 is held"),
@@ -298,37 +298,44 @@ BLOCK6_DISPOSITIONS = {
     "proposed": ("PASS", "block 6 is proposed"),
     "added": ("PASS", "block 6 is added"),
 }
+BLOCK6_RANK = {"FAIL": 0, "PRECONDITION": 1, "PASS": 2}
+
+
+def _line_disposition(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if stripped.startswith("{"):
+        try:
+            record = json.loads(stripped)
+        except ValueError:
+            record = None
+        if isinstance(record, dict) and (record.get("block") == 6
+                                         or record.get("height") == 6):
+            token = str(record.get("disposition") or record.get("status") or "").lower()
+            for name, (verdict, detail) in BLOCK6_DISPOSITIONS.items():
+                if re.search(rf"\b{name}\b", token):
+                    return verdict, detail
+            return "PRECONDITION", "block 6 is named without a disposition"
+    if not BLOCK6.search(line):
+        return None
+    low = line.lower()
+    for name, (verdict, detail) in BLOCK6_DISPOSITIONS.items():
+        if re.search(rf"\b{name}\b", low):
+            return verdict, detail
+    return "PRECONDITION", "block 6 is named without a disposition"
 
 
 def block6_disposition(text: str) -> tuple[str, str]:
-    """Read a structured block-6 disposition, not a substring.
+    """Read every block-6 disposition and return the worst verdict.
 
     A line that names block 6 without a disposition (``block 6 unknown``) is a
-    precondition, never a pass. A JSON record with a block/height and a
-    disposition/status is read first; free text is matched next.
+    precondition, never a pass. A later contradiction cannot be hidden by an
+    earlier pass; ``issue #6 accepted`` is not a block-6 line.
     """
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("{"):
-            try:
-                record = json.loads(stripped)
-            except ValueError:
-                record = None
-            if isinstance(record, dict) and (record.get("block") == 6
-                                             or record.get("height") == 6):
-                token = str(record.get("disposition") or record.get("status") or "").lower()
-                for name, (verdict, detail) in BLOCK6_DISPOSITIONS.items():
-                    if name in token:
-                        return verdict, detail
-                return "PRECONDITION", "block 6 is named without a disposition"
-        if not BLOCK6.search(line):
-            continue
-        low = line.lower()
-        for name, (verdict, detail) in BLOCK6_DISPOSITIONS.items():
-            if re.search(rf"\b{name}\b", low):
-                return verdict, detail
-        return "PRECONDITION", "block 6 is named without a disposition"
-    return "PRECONDITION", "no block-6 line"
+    findings = [result for line in text.splitlines()
+                if (result := _line_disposition(line)) is not None]
+    if not findings:
+        return "PRECONDITION", "no block-6 line"
+    return min(findings, key=lambda result: BLOCK6_RANK[result[0]])
 
 
 def verify_run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
@@ -404,9 +411,16 @@ def verify_run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         if not journal or "error" in journal:
             cells["block6-disposition"] = cell("PRECONDITION", "no journal line")
         else:
-            text = (raw / Path(journal["path"]).name).read_text(errors="replace")
-            verdict, detail = block6_disposition(text)
-            cells["block6-disposition"] = cell(verdict, detail)
+            journal_path = raw / Path(journal["path"]).name
+            text = journal_path.read_text(errors="replace")
+            recorded = journal.get("sha256")
+            actual = hashlib.sha256(journal_path.read_bytes()).hexdigest()
+            if recorded and recorded != actual:
+                cells["block6-disposition"] = cell(
+                    "FAIL", "the journal digest does not match the collected file")
+            else:
+                verdict, detail = block6_disposition(text)
+                cells["block6-disposition"] = cell(verdict, detail)
         if "maxObservedHeight" in health and "finalizedHeight" in health:
             expected = max(0, int(health["maxObservedHeight"]) - int(health["finalizedHeight"]))
             if expected != int(health.get("finalizedLag", -1)):
@@ -552,10 +566,17 @@ def self_test() -> int:
     block6_cases = [
         ("block 6 accepted", "PASS"),
         ("block 6 unknown", "PRECONDITION"),
+        ("block 6 unaccepted", "PRECONDITION"),
+        ("block 6 unfinalized", "PRECONDITION"),
         ("block 6 orphan", "FAIL"),
         ("block 16 accepted", "PRECONDITION"),
         ("proposed and added block #6", "PASS"),
+        ("issue #6 accepted", "PRECONDITION"),
+        ("port #6 open accepted", "PRECONDITION"),
+        ("block 6 accepted\nblock 6 orphan", "FAIL"),
         ('{"block": 6, "disposition": "unknown"}', "PRECONDITION"),
+        ('{"block": 6, "disposition": "unaccepted"}', "PRECONDITION"),
+        ('{"block": 6, "disposition": "unfinalized"}', "PRECONDITION"),
         ('{"block": 6, "disposition": "finalized"}', "PASS"),
     ]
     for text, expected in block6_cases:
