@@ -745,12 +745,10 @@ pub struct ShardHealthEntry {
 /// **A deploy refusal that is a bound, not a malformed request** (Law 86a). The pool's count/byte
 /// bounds, a deployer's share and the per-deployer rate are all "come back", not "your request is
 /// wrong"; the HTTP and gRPC surfaces must say so with 429/`RESOURCE_EXHAUSTED` and a `Retry-After`,
-/// never with a 400. The strings are the pool's own (`casper/src/dag.rs`), and this is the one place
-/// the two surfaces agree on the classification.
+/// never with a 400. The vocabulary and its exact classification live in `casper/src/pool.rs`; this
+/// is the one place the two surfaces agree on the answer.
 pub fn deploy_refusal_is_bounded(message: &str) -> bool {
-    message.starts_with("deploy pool is full")
-        || message.contains("holds its share of the deploy pool")
-        || message.contains("deploy rate limit exceeded")
+    crate::pool::classify(message).is_some_and(crate::pool::PoolError::is_bounded)
 }
 
 /// **The deploy pool's capacity**, as the public status surface reads it (Law 86a).

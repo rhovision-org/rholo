@@ -32,17 +32,109 @@ pub enum PoolError {
     Duplicate,
 }
 
+/// The per-deployer rate refusal. The ingress middleware uses this constant directly, so the
+/// limiter and the pool cannot drift into two spellings the classifier does not know.
+pub const RATE_LIMITED_MESSAGE: &str = "deploy rate limit exceeded";
+
 impl PoolError {
-    /// The stable phrase the API surfaces carry. A dynamic duplicate id is appended by the caller.
+    /// The stable phrase the API surfaces carry. Dynamic variants (a duplicate id, the byte
+    /// counts in use) are built by [`PoolError::duplicate_message`],
+    /// [`PoolError::admitting_message`] and [`PoolError::byte_full_message`], so this module is
+    /// the only place the refusal prose is written.
     pub fn message(self) -> &'static str {
         match self {
             PoolError::Full => "deploy pool is full",
             PoolError::ByteFull => "deploy pool is full: term-byte budget exhausted",
             PoolError::DeployerShare => "this deployer holds its share of the deploy pool",
-            PoolError::RateLimited => "deploy rate limit exceeded for this deployer",
+            PoolError::RateLimited => RATE_LIMITED_MESSAGE,
             PoolError::Duplicate => "deploy is already in the pool",
         }
     }
+
+    /// The byte bound with the counts in use. This exact shape is what [`classify`] reads; a
+    /// message built anywhere else is not a bound.
+    pub fn byte_full_message(in_use: usize, max_bytes: usize) -> String {
+        format!("deploy pool is full: {in_use} of {max_bytes} term bytes in use")
+    }
+
+    /// A deploy already committed to the pool.
+    pub fn duplicate_message(id: &str) -> String {
+        format!("deploy {id} is already in the pool")
+    }
+
+    /// A deploy another admission is currently committing.
+    pub fn admitting_message(id: &str) -> String {
+        format!("deploy {id} is already being admitted")
+    }
+
+    /// Whether this refusal is a bound ("come back"), not a malformed request. A duplicate is
+    /// not: the request is well formed and the answer is 400.
+    pub fn is_bounded(self) -> bool {
+        matches!(
+            self,
+            PoolError::Full
+                | PoolError::ByteFull
+                | PoolError::DeployerShare
+                | PoolError::RateLimited
+        )
+    }
+}
+
+/// **The one classifier** the HTTP and gRPC surfaces share. It reads the stable phrases and the
+/// two dynamic shapes exactly; arbitrary prose that merely contains a phrase is not a bound.
+pub fn classify(message: &str) -> Option<PoolError> {
+    if message == PoolError::Full.message() {
+        return Some(PoolError::Full);
+    }
+    if message == RATE_LIMITED_MESSAGE {
+        return Some(PoolError::RateLimited);
+    }
+    if message == PoolError::DeployerShare.message() {
+        return Some(PoolError::DeployerShare);
+    }
+    if message == PoolError::ByteFull.message() {
+        return Some(PoolError::ByteFull);
+    }
+    if message == PoolError::Duplicate.message() {
+        return Some(PoolError::Duplicate);
+    }
+    if byte_full_shape(message) {
+        return Some(PoolError::ByteFull);
+    }
+    if duplicate_shape(message, " is already in the pool")
+        || duplicate_shape(message, " is already being admitted")
+    {
+        return Some(PoolError::Duplicate);
+    }
+    None
+}
+
+fn byte_full_shape(message: &str) -> bool {
+    let Some(body) = message.strip_prefix("deploy pool is full: ") else {
+        return false;
+    };
+    let Some(numbers) = body.strip_suffix(" term bytes in use") else {
+        return false;
+    };
+    let mut parts = numbers.split(" of ");
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(in_use), Some(max_bytes), None)
+            if digits(in_use) && digits(max_bytes)
+    )
+}
+
+fn digits(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn duplicate_shape(message: &str, suffix: &str) -> bool {
+    message
+        .strip_prefix("deploy ")
+        .and_then(|rest| rest.strip_suffix(suffix))
+        .is_some_and(|id| {
+            !id.is_empty() && !id.bytes().any(|byte| byte.is_ascii_whitespace())
+        })
 }
 
 impl fmt::Display for PoolError {
@@ -152,5 +244,75 @@ mod tests {
         assert!(has_room(&limits(), 9, 99));
         assert!(!has_room(&limits(), 10, 0));
         assert!(!has_room(&limits(), 0, 100));
+    }
+
+    #[test]
+    fn every_static_refusal_classifies_to_itself() {
+        for error in [
+            PoolError::Full,
+            PoolError::ByteFull,
+            PoolError::DeployerShare,
+            PoolError::RateLimited,
+            PoolError::Duplicate,
+        ] {
+            assert_eq!(classify(error.message()), Some(error), "{error:?}");
+        }
+        assert_eq!(PoolError::RateLimited.message(), RATE_LIMITED_MESSAGE);
+    }
+
+    #[test]
+    fn only_the_exact_byte_full_shape_is_a_bound() {
+        assert_eq!(
+            classify(&PoolError::byte_full_message(5, 10)),
+            Some(PoolError::ByteFull)
+        );
+        assert_eq!(
+            classify(&PoolError::byte_full_message(0, 67108864)),
+            Some(PoolError::ByteFull)
+        );
+        // Prose that merely starts with the phrase is not the bound.
+        assert_eq!(classify("deploy pool is full of surprises"), None);
+        assert_eq!(classify("deploy pool is full: soon"), None);
+        assert_eq!(classify("deploy pool is full: 5 or 10 term bytes in use"), None);
+        assert_eq!(classify("deploy pool is full: 5 of 10 term bytes"), None);
+        // And the phrase inside another sentence is no longer a bound (the old `contains` bug).
+        assert_eq!(
+            classify("the deploy pool is full: 5 of 10 term bytes in use"),
+            None
+        );
+        assert_eq!(
+            classify("x holds its share of the deploy pool"),
+            None
+        );
+        assert_eq!(classify("a deploy rate limit exceeded"), None);
+    }
+
+    #[test]
+    fn duplicate_ids_classify_as_duplicates_not_bounds() {
+        assert_eq!(
+            classify(&PoolError::duplicate_message("ab12")),
+            Some(PoolError::Duplicate)
+        );
+        assert_eq!(
+            classify(&PoolError::admitting_message("ab12")),
+            Some(PoolError::Duplicate)
+        );
+        assert_eq!(classify("deploy  is already in the pool"), None);
+        assert_eq!(classify("deploy ab12 is already in the pool for ever"), None);
+        assert!(!PoolError::Duplicate.is_bounded());
+    }
+
+    #[test]
+    fn the_bounded_set_is_exactly_the_four_submitter_and_pool_bounds() {
+        for error in [
+            PoolError::Full,
+            PoolError::ByteFull,
+            PoolError::DeployerShare,
+            PoolError::RateLimited,
+        ] {
+            assert!(error.is_bounded(), "{error:?}");
+        }
+        assert!(!PoolError::Duplicate.is_bounded());
+        assert_eq!(classify("deploy signature is invalid"), None);
     }
 }

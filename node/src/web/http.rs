@@ -2697,7 +2697,7 @@ pub fn router(state: HttpState) -> Router {
         .route_layer(middleware::from_fn_with_state(
             (
                 state.deploy_rate_limiter.clone(),
-                "deploy rate limit exceeded",
+                rchain_casper::pool::RATE_LIMITED_MESSAGE,
             ),
             peer_rate_limit,
         ));
@@ -2733,7 +2733,7 @@ pub fn router(state: HttpState) -> Router {
         .route_layer(middleware::from_fn_with_state(
             (
                 state.deploy_rate_limiter.clone(),
-                "deploy rate limit exceeded",
+                rchain_casper::pool::RATE_LIMITED_MESSAGE,
             ),
             peer_rate_limit,
         ));
@@ -4869,10 +4869,26 @@ mod tests {
         )));
         assert_eq!(share.status(), StatusCode::TOO_MANY_REQUESTS);
 
+        let rate = deploy_response(Err(BlockApiException::client(
+            rchain_casper::pool::RATE_LIMITED_MESSAGE.to_string(),
+        )));
+        assert_eq!(rate.status(), StatusCode::TOO_MANY_REQUESTS);
+
         let malformed = deploy_response(Err(BlockApiException::client(
             "deploy signature is invalid".to_string(),
         )));
         assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+
+        // The old classifier used `contains`, so these two were 429s. The request is well
+        // formed; only the exact pool phrase is a bound.
+        let near_miss = deploy_response(Err(BlockApiException::client(
+            "deploy pool is full of surprises".to_string(),
+        )));
+        assert_eq!(near_miss.status(), StatusCode::BAD_REQUEST);
+        let share_in_prose = deploy_response(Err(BlockApiException::client(
+            "the log says x holds its share of the deploy pool".to_string(),
+        )));
+        assert_eq!(share_in_prose.status(), StatusCode::BAD_REQUEST);
     }
 
     /// **AUDIT C148**: the PoS read has a route, and the route renders what it was handed. The

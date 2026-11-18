@@ -156,7 +156,7 @@ pub async fn serve_deploy(
             Ok(req)
         } else {
             Err(::tonic::Status::resource_exhausted(
-                "deploy rate limit exceeded",
+                rchain_casper::pool::RATE_LIMITED_MESSAGE,
             ))
         }
     });
