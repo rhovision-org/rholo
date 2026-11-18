@@ -109,6 +109,19 @@ class QueueGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("absent", result.stdout)
 
+    def test_a_custom_queue_set_is_honoured(self):
+        bounded = "let (other_tx, other_rx) = mpsc::channel(MAX_OTHER);\n"
+        result = self.run_gate(
+            bounded, "--queues", "other|let (other_tx", "--gate"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        unbounded = "let (other_tx, other_rx) = mpsc::unbounded();\n"
+        result = self.run_gate(
+            unbounded, "--queues", "other|let (other_tx", "--gate"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("unbounded", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
