@@ -373,7 +373,7 @@ def binding_entry(entry: dict, row: dict, source: str, pass_record: Path,
         },
         "evidence": {
             "digest": manifest_digest,
-            "source_sha": source,
+            "source_sha": pass_manifest.get("source_sha") or source,
             "binary_sha256": pass_manifest["binary_sha256"],
             "record": str(pass_record.relative_to(ROOT)),
         },
