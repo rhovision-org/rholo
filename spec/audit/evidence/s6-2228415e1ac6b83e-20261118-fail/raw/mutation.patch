@@ -1,0 +1,13 @@
+diff --git a/rholang/src/parser.rs b/rholang/src/parser.rs
+index a20b79000..6225ea8ba 100644
+--- a/rholang/src/parser.rs
++++ b/rholang/src/parser.rs
+@@ -637,7 +637,7 @@ pub fn parse(source: &str) -> Result<Proc, RholangError> {
+     };
+     let proc = p.parse_proc()?;
+     p.expect(Tok::Eof)?;
+-    if exceeds_ast_depth(&proc, MAX_AST_DEPTH) {
++    if false && exceeds_ast_depth(&proc, MAX_AST_DEPTH) {
+         return Err(RholangError::SyntaxError(
+             "term nesting too deep".to_string(),
+         ));

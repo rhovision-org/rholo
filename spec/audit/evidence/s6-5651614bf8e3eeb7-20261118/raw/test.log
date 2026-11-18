@@ -1,0 +1,9 @@
+
+running 1 test
+test pending_peeks_replay_with_exact_cost_and_state ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
+
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 26.16s
+     Running tests/replay_trace_order.rs (target/debug/deps/replay_trace_order-321f300e8cd1a65c)

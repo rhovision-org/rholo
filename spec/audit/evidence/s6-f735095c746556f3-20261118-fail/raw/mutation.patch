@@ -1,0 +1,13 @@
+diff --git a/rspace/src/merger/state_change.rs b/rspace/src/merger/state_change.rs
+index fd4fb7bf4..7efd7eed2 100644
+--- a/rspace/src/merger/state_change.rs
++++ b/rspace/src/merger/state_change.rs
+@@ -81,7 +81,7 @@ impl StateChange {
+         // key.
+         let produce_hashes: BTreeSet<Blake2b256Hash> = produces_affected(event_log_index)
+             .iter()
+-            .map(|p| p.channels_hash)
++            .map(|p| p.hash)
+             .collect();
+         for history_pointer in produce_hashes {
+             let start: Vec<Vec<u8>> = pre_state_reader

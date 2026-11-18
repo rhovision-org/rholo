@@ -1,0 +1,13 @@
+diff --git a/rholang/src/storage.rs b/rholang/src/storage.rs
+index c3c7e8686..296e4aee3 100644
+--- a/rholang/src/storage.rs
++++ b/rholang/src/storage.rs
+@@ -205,7 +205,7 @@ impl ChargingRSpace {
+             let cost =
+                 Costs::storage_cost_consume(&cont.channels, &cont.patterns, &cont.continuation);
+             self.cost
+-                .charge(Cost::new(-cost.value, "consume storage refund"))?;
++                .charge(Cost::new(cost.value, "consume storage refund"))?;
+         }
+         // `refundForRemovingProduces`: every datum this op removed is refunded its produce cost —
+         // except a persistent datum that this op did not itself produce, which stays in the space. The

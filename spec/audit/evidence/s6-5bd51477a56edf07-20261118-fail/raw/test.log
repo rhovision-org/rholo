@@ -1,0 +1,22 @@
+
+running 1 test
+test runtime_manager::tests::a_negative_cost_is_refused_before_it_becomes_a_pcost ... FAILED
+
+failures:
+
+---- runtime_manager::tests::a_negative_cost_is_refused_before_it_becomes_a_pcost stdout ----
+
+thread 'runtime_manager::tests::a_negative_cost_is_refused_before_it_becomes_a_pcost' (1793613) panicked at casper/src/runtime_manager.rs:2452:9:
+a negative cost must not become a u64
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    runtime_manager::tests::a_negative_cost_is_refused_before_it_becomes_a_pcost
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 748 filtered out; finished in 0.00s
+
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.90s
+     Running unittests src/lib.rs (target/debug/deps/rchain_casper-64d507b1a93523ca)
+error: test failed, to rerun pass `-p rchain-casper --lib`

@@ -1,0 +1,13 @@
+diff --git a/rholang/src/reduce.rs b/rholang/src/reduce.rs
+index e5642195b..5e4cb26c8 100644
+--- a/rholang/src/reduce.rs
++++ b/rholang/src/reduce.rs
+@@ -197,7 +197,7 @@ fn int_binop(
+                 cost.charge(int_cost)?;
+                 Ok(Expr::GInt(value))
+             }
+-            None => int_bigop(&BigInt::from(*l), &BigInt::from(*r), cost, big, big_cost),
++            None => Err(RholangError::ReduceError("integer overflow".to_string())),
+         },
+         (Expr::GInt(l), Expr::GBigInt(r)) => int_bigop(&BigInt::from(*l), r, cost, big, big_cost),
+         (Expr::GBigInt(l), Expr::GInt(r)) => int_bigop(l, &BigInt::from(*r), cost, big, big_cost),

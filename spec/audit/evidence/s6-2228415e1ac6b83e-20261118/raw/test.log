@@ -1,0 +1,9 @@
+
+running 1 test
+test parser::tests::the_three_depth_guards_refuse_an_over_deep_term ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 376 filtered out; finished in 0.01s
+
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.79s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rholang-a11f031a6ae27227)

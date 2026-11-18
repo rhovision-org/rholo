@@ -1,0 +1,10 @@
+
+running 1 test
+test accounting::tests::collection_and_censure_charges_are_the_models ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 376 filtered out; finished in 0.00s
+
+   Compiling rchain-rspace v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rspace)
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.93s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rholang-a11f031a6ae27227)

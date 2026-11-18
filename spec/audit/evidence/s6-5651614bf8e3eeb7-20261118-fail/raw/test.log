@@ -1,0 +1,35 @@
+
+running 1 test
+test pending_peeks_replay_with_exact_cost_and_state ... FAILED
+
+failures:
+
+---- pending_peeks_replay_with_exact_cost_and_state stdout ----
+[deploy] deployer=0000000000000000 ok cost=1860 
+REPLAY_ORDER pending=0 play_cost=1860 trace_events=2
+[deploy] deployer=0000000000000000 ok cost=282 
+[deploy] deployer=0000000000000000 ok cost=2606 
+REPLAY_ORDER pending=1 play_cost=2606 trace_events=8
+[deploy] deployer=0000000000000000 ok cost=282 
+[deploy] deployer=0000000000000000 ok cost=282 
+[deploy] deployer=0000000000000000 ok cost=282 
+[deploy] deployer=0000000000000000 ok cost=282 
+[deploy] deployer=0000000000000000 ok cost=4844 
+REPLAY_ORDER pending=4 play_cost=4844 trace_events=26
+
+thread 'pending_peeks_replay_with_exact_cost_and_state' (1795954) panicked at casper/tests/replay_trace_order.rs:156:33:
+REPLAY_ORDER_FAILURE pending=4: ReplayCostMismatch { initial_cost: 4844, replay_cost: 4554 }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    pending_peeks_replay_with_exact_cost_and_state
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+
+   Compiling rchain-rspace v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rspace)
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.48s
+     Running tests/replay_trace_order.rs (target/debug/deps/replay_trace_order-321f300e8cd1a65c)
+error: test failed, to rerun pass `-p rchain-casper --test replay_trace_order`

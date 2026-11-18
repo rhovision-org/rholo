@@ -1,0 +1,8 @@
+
+running 1 test
+test wire::differential::round_trips::a_negative_bind_pattern_free_count_is_refused_at_the_proto_boundary ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 193 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running unittests src/lib.rs (target/debug/deps/rchain_models-ba348ab9afbaf01c)

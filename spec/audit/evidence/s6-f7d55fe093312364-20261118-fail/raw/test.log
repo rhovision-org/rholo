@@ -1,0 +1,22 @@
+
+running 1 test
+test merging::native_merge_tests::two_branch_blocks_writing_one_native_slot_do_not_panic_the_merge ... FAILED
+
+failures:
+
+---- merging::native_merge_tests::two_branch_blocks_writing_one_native_slot_do_not_panic_the_merge stdout ----
+
+thread 'merging::native_merge_tests::two_branch_blocks_writing_one_native_slot_do_not_panic_the_merge' (1803235) panicked at casper/src/merging.rs:3889:14:
+two accepted blocks writing one native slot must merge rather than panic (#83): an epoch boundary puts several `close_block`s at one height by construction: "blocks 0101010101010101010101010101010101010101010101010101010101010101 and 0202020202020202020202020202020202020202020202020202020202020202 both write native slot 04/0909090909090909090909090909090909090909090909090909090909090909 and neither has seen the other; conflict resolution must reject one"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    merging::native_merge_tests::two_branch_blocks_writing_one_native_slot_do_not_panic_the_merge
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 748 filtered out; finished in 0.00s
+
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.03s
+     Running unittests src/lib.rs (target/debug/deps/rchain_casper-64d507b1a93523ca)
+error: test failed, to rerun pass `-p rchain-casper --lib`

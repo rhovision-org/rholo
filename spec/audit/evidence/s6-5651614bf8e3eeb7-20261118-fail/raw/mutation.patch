@@ -1,0 +1,13 @@
+diff --git a/rspace/src/replay_rspace.rs b/rspace/src/replay_rspace.rs
+index 01d9d9bbe..56b3148b3 100644
+--- a/rspace/src/replay_rspace.rs
++++ b/rspace/src/replay_rspace.rs
+@@ -145,7 +145,7 @@ where
+         // RSpace prepends events, so restore execution order before binding COMMs.
+         // A later pending request may otherwise run before the peek repetition
+         // its recorded COMM requires, suppressing work and changing replay cost.
+-        for event in log.iter().rev() {
++        for event in log.iter() {
+             if let Event::Comm(comm) = event {
+                 if consumes.contains(&comm.consume) {
+                     data.by_consume

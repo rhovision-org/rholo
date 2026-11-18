@@ -1,0 +1,1 @@
+cargo test -p rchain-rspace --lib combining_refuses_a_diff_that_leaves_i64

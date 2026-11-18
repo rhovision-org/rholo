@@ -1,0 +1,13 @@
+diff --git a/models/src/wire.rs b/models/src/wire.rs
+index 3f1c171ca..e9eec34ac 100644
+--- a/models/src/wire.rs
++++ b/models/src/wire.rs
+@@ -886,7 +886,7 @@ pub fn bind_pattern_from_proto(p: &p::BindPattern) -> Result<BindPattern, Models
+         // than the pattern's free variables pads the extra bindings with `Nil`. Both are a peer's
+         // message changing execution without an error, which is the silent partiality the port's type
+         // discipline exists to refuse.
+-        free_count: i32::from(FreeCount::try_from(p.free_count).map_err(ModelsError::Decode)?),
++        free_count: p.free_count.max(0),
+     })
+ }
+ 

@@ -1,0 +1,1 @@
+cargo test -p rchain-rspace --lib a_consume_and_replace_diffs_its_channel_once

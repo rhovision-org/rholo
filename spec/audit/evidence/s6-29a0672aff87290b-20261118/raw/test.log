@@ -1,0 +1,8 @@
+
+running 1 test
+test merger::event_log_index::tests::combining_refuses_a_diff_that_leaves_i64 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 194 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rspace-3e8cc9b76677a749)

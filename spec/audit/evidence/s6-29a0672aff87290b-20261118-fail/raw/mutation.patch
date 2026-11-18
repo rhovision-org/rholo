@@ -1,0 +1,13 @@
+diff --git a/rspace/src/merger/event_log_index.rs b/rspace/src/merger/event_log_index.rs
+index 016ce6f3c..13823dc39 100644
+--- a/rspace/src/merger/event_log_index.rs
++++ b/rspace/src/merger/event_log_index.rs
+@@ -157,7 +157,7 @@ impl EventLogIndex {
+         let mut number_channels = x.number_channels_data.clone();
+         for (k, v) in &y.number_channels_data {
+             let entry = number_channels.entry(*k).or_insert(0);
+-            let sum = entry.checked_add(*v).ok_or_else(|| {
++            let sum = entry.checked_add(*v).or(Some(0)).ok_or_else(|| {
+                 format!("number channel diff accumulation overflow: {entry} + {v} does not fit i64")
+             })?;
+             *entry = sum;

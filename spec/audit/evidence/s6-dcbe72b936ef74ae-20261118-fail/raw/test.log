@@ -1,0 +1,24 @@
+
+running 1 test
+test if_not_first_in_a_par_holds_across_effect_modes ... FAILED
+
+failures:
+
+---- if_not_first_in_a_par_holds_across_effect_modes stdout ----
+
+thread 'if_not_first_in_a_par_holds_across_effect_modes' (1798415) panicked at rholang/tests/if_par.rs:69:9:
+assertion `left == right` failed: if-not-first must run with concurrent=false and effects=Sequential
+  left: [1]
+ right: [1, 2]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    if_not_first_in_a_par_holds_across_effect_modes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.02s
+
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.74s
+     Running tests/if_par.rs (target/debug/deps/if_par-3bd1a10b378d9384)
+error: test failed, to rerun pass `-p rchain-rholang --test if_par`

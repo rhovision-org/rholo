@@ -1,0 +1,13 @@
+diff --git a/rspace/src/rspace.rs b/rspace/src/rspace.rs
+index 20e6d735a..f1a43ee9a 100644
+--- a/rspace/src/rspace.rs
++++ b/rspace/src/rspace.rs
+@@ -233,7 +233,7 @@ where
+                 .collect();
+             // Content-addressed selection: sort candidates by their produce hash so the sorted-first
+             // matching datum is chosen regardless of insertion order (Law 4/8).
+-            indexed.sort_by(|a, b| a.0.source.cmp(&b.0.source));
++            indexed.sort_by(|a, b| a.1.cmp(&b.1));
+             map.insert(c.clone(), indexed);
+         }
+         Ok(map)

@@ -1,0 +1,27 @@
+
+running 1 test
+test merging::boundary_merge_tests::a_cost_accounted_block_keeps_its_own_native_writes_through_the_merge ... FAILED
+
+failures:
+
+---- merging::boundary_merge_tests::a_cost_accounted_block_keeps_its_own_native_writes_through_the_merge stdout ----
+[pos] close_block 7 boundary=false epoch_length=10 max_active=10 bond=[1, 100]
+[pos] close_block 7 boundary=false epoch_length=10 max_active=10 bond=[1, 100]
+[pos] close_block 7 boundary=false epoch_length=10 max_active=10 bond=[1, 100]
+
+thread 'merging::boundary_merge_tests::a_cost_accounted_block_keeps_its_own_native_writes_through_the_merge' (1800493) panicked at casper/src/merging.rs:5026:13:
+assertion `left == right` failed: and the vault holds the **sum** of the two charges: keeping both blocks must not become paying the vault once for two debits, which is the REV this whole path is answerable for
+  left: 750
+ right: 1250
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    merging::boundary_merge_tests::a_cost_accounted_block_keeps_its_own_native_writes_through_the_merge
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 748 filtered out; finished in 0.02s
+
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.22s
+     Running unittests src/lib.rs (target/debug/deps/rchain_casper-64d507b1a93523ca)
+error: test failed, to rerun pass `-p rchain-casper --lib`
