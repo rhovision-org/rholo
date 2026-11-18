@@ -152,6 +152,13 @@ def staged_lifecycle(observations: dict, parameters: dict) -> dict:
                                 f"asserts {sorted(required)}"])
     if parameters.get("per_observer") is False:
         return verdict("FAIL", ["the staged lifecycle is per-observer by definition"])
+    events = _events(observations)
+    minimum = parameters.get("min_observers")
+    if isinstance(minimum, int):
+        aliases = {event.get("alias") for event in events if event.get("alias")}
+        if len(aliases) < minimum:
+            return verdict("PRECONDITION",
+                           [f"{len(aliases)} observer(s) contributed; at least {minimum} required"])
     report = _live.check_g2(
         observations.get("submission"), observations.get("run"), _events(observations))
     return _live_report(report)
