@@ -202,6 +202,14 @@ class CloseoutTests(unittest.TestCase):
         self.assertFalse(result["gates_bound"])
         self.assertEqual(len(result["gates_unresolved"]), len(gate.REQUIRED))
 
+    def test_gate_binding_validates_the_register(self):
+        with patch.object(gate, "_gate_checker") as checker:
+            checker.return_value.validate.side_effect = ValueError("fabricated witness")
+            bound, unresolved, error = gate.gate_binding(ROOT)
+        self.assertFalse(bound)
+        self.assertEqual(unresolved, [])
+        self.assertIn("fabricated witness", error)
+
     def test_missing_gate_register_is_unbound_not_invalid(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = gate.validate(self.payload, repo=Path(tmp), require_gates=True)

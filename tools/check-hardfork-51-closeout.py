@@ -8,6 +8,7 @@ verify current GitHub state and archived data before formally closing #51.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import subprocess
@@ -77,21 +78,40 @@ def is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
     return p.returncode == 0
 
 
+def _gate_checker():
+    path = Path(__file__).resolve().parent / "check-mainnet-gates.py"
+    spec = importlib.util.spec_from_file_location("mainnet_gate_checker", path)
+    if spec is None or spec.loader is None:
+        raise ValueError("cannot load check-mainnet-gates.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def gate_binding(repo: Path | None) -> tuple[bool, list[str], str | None]:
     """Bind each #51 row to its canonical-register status, when requested.
 
-    This is deliberately non-fatal: a missing or stale register is an unbound
-    gate (the tracker stays open), not a malformed ledger. The default path does
-    not call this, so the existing ledger tests keep their semantics.
+    This is deliberately non-fatal: a missing, stale or invalid register is an
+    unbound gate (the tracker stays open), not a malformed ledger. The status
+    strings are not trusted on their own: the register is validated first, so a
+    hand-edited all-`met` file with no witness is unbound.
     """
     root = repo or Path(__file__).resolve().parents[1]
-    path = root / "spec" / "audit" / "mainnet-gates.json"
+    audit = root / "spec" / "audit"
+    path = audit / "mainnet-gates.json"
     try:
         document = json.loads(path.read_text())
     except OSError:
         return False, [], "mainnet-gates.json unavailable"
     except (ValueError, TypeError) as exc:
         return False, [], f"mainnet-gates.json invalid: {exc}"
+    try:
+        matrix = json.loads((audit / "final-gap-matrix.json").read_text())
+        inventory = json.loads((audit / "section6-gap-inventory.json").read_text())
+        ledger = json.loads((audit / "hardfork-51-closeout.json").read_text())
+        _gate_checker().validate(document, matrix, inventory, ledger)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return False, [], f"register invalid: {exc}"
     rows = [row for row in document.get("gates", []) if row.get("family") == "HF51"]
     expected = {"HF51-" + ident.replace(":", "-") for ident in REQUIRED}
     actual = {row.get("id") for row in rows}
