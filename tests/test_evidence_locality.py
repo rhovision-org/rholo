@@ -91,6 +91,33 @@ class EvidenceLocalityTests(unittest.TestCase):
         )
         self.assertTrue(any("loopback" in p for p in problems), problems)
 
+    def test_private_and_encoded_addresses_are_local(self):
+        for host in (
+            "10.0.0.1", "172.16.0.1", "192.168.1.1", "169.254.1.1",
+            "fc00::1", "fe80::1", "2130706433", "0x7f000001", "017700000001",
+            "127.1", "[::ffff:192.168.1.1]",
+        ):
+            with self.subTest(host=host):
+                self.assertTrue(locality.local_address(host), host)
+        for host in ("8.8.8.8", "2001:4860::8888", "203.0.113.7"):
+            with self.subTest(host=host):
+                self.assertFalse(locality.local_address(host), host)
+
+    def test_only_loopback_satisfies_the_diagnostic_label(self):
+        self.assertTrue(locality.loopback_address("127.0.0.1"))
+        self.assertTrue(locality.loopback_address("2130706433"))
+        self.assertFalse(locality.loopback_address("10.0.0.1"))
+
+    def test_an_off_host_claim_with_a_private_captured_peer_fails(self):
+        problems = self.check(
+            "M3 off-host positive.\n**Evidence locality.** `off-host-claim` — two hosts.\n"
+            "The bootstrap's dial-back to 203.0.113.7:40400 succeeded.\n",
+            acceptance='{"peer": "rnode://6b70@10.0.0.7?protocol=40400", '
+                       '"other": "rnode://aa@203.0.113.7?protocol=40400"}',
+        )
+        self.assertTrue(
+            any("local (loopback/private/reserved)" in p for p in problems), problems)
+
     def test_an_off_host_claim_without_a_dial_back_fails(self):
         problems = self.check(
             "M3 off-host positive.\n**Evidence locality.** `off-host-claim` — two hosts.\n"
