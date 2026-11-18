@@ -181,7 +181,8 @@ with no concrete defect-passing scenario is a no-defect argument, not an omissio
 | Deferral fog | `Audit:law53-estrangement` (C173) and `Audit:inactivity-leak` are deferred for non-technical reasons while their §6/liveness obligations remain A-candidates or M4 inputs | Keep the deferral but record the underlying obligation in the register |
 
 **Landed by this readiness commit:** the #51 gate binding (`require_gates`, default off, exit 3
-preserved); the 47 per-candidate dispositions (45 reviewable, 1 withdrawn, 1 missing-test owed);
+preserved); the 47 per-candidate dispositions (46 reviewable, 1 withdrawn), with the register's S6
+rows at 45 reviewable, 3 owes and 1 superseded (43 inventory candidates plus the 2 PR #600 rules);
 the register's `S6-0963` correction, the Decimal `superseded` status and the two PR #600 rows;
 the three release-blocker contract schemas/checkers. **Remaining:** independent dispositions,
 the §6 sign-off's digest binding, a test-running acceptance checker, and the pinned-blob check.
@@ -239,7 +240,7 @@ check proves a test ran, not that it asserts the gate's invariant).
    an ancestor; no test runs.
 4. **The 47 §6 candidates are authored sentences.** Two named tests exist, one is missing, and
    the Decimal row is a phantom; the register now marks it `superseded` and adds the two PR #600
-   rules, but 45 candidates remain `reviewable`.
+   rules, but 43 inventory candidates plus the 2 PR #600 rules remain `reviewable`.
 5. **G1–G6 have no typed verdict/selection binding.** G1 checks agreement, not the selected
    candidate; G2 unions aliases; G3 has no negative pre-finality sample; G4's no-loss facts are
    self-authored; G5 is self-consistent-fabricable; G6 is a hardcoded pending stub.

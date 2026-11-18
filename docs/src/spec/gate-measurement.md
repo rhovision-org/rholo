@@ -62,3 +62,11 @@ The register ships no `met` gate until those conditions hold. `check-mainnet-gat
 `G584-G6` (live verdict), the section-6 category-A sign-off and C357 acceptance are four
 different sign-offs. A `related` edge in the register names the shared criterion; it does not
 let one campaign discharge another gate.
+
+## Round two — the witness, control and evidence binding
+
+A `met` gate now carries a `witness_binding`: the gate's acceptance hash, a control whose
+`control_of` is the witness, a real mutation and the control test (the witness or its
+`self_test`), and the expected red. The evidence record is verified by `evidence-pack.py`
+and must name the gate; `execution_proven` stays false. The contract and criterion checkers
+emit `record_check: true` and never flip a register gate. A record check is not a campaign.
