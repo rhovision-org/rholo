@@ -52,7 +52,14 @@
    "gate_id": "G428-M2",
    "principle": "bounded_admission",
    "adapter": "tools/check-bounded-ingress-queues.sh::--gate",
-   "parameters": {},
+   "parameters": {
+    "queues": [
+     "incoming_blocks|let (incoming_blocks_tx",
+     "processor_input|let (processor_input_tx",
+     "validated_blocks|let (validated_blocks_tx",
+     "tap_validated_blocks|let (tap_tx"
+    ]
+   },
    "requires": [
     "source"
    ],

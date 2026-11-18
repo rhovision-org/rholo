@@ -314,10 +314,13 @@ def bounded_admission(observations: dict, parameters: dict) -> dict:
                 path = ROOT / path
         if not path.is_file():
             return verdict("PRECONDITION", [f"source {path} is absent"])
-        proc = subprocess.run(
-            ["bash", str(ROOT / "tools" / "check-bounded-ingress-queues.sh"),
-             "--source", str(path), "--gate"],
-            capture_output=True, text=True, timeout=120, check=False)
+        command = ["bash", str(ROOT / "tools" / "check-bounded-ingress-queues.sh"),
+                   "--source", str(path), "--gate"]
+        queues = parameters.get("queues")
+        if isinstance(queues, list) and queues:
+            command.extend(["--queues", ",".join(str(queue) for queue in queues)])
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=120,
+                              check=False)
         if proc.returncode == 0:
             return verdict("PASS", [], {"source": str(path)})
         return verdict("FAIL", [line for line in (proc.stderr or proc.stdout).splitlines() if line][-4:])
@@ -406,7 +409,7 @@ PARAMETER_SCHEMA = {
     "phase_diagnosis": {"table": str},
     "lockstep_acceptance": {"table": str, "require_original_trace": bool,
                             "max_window": (int, float)},
-    "bounded_admission": {},
+    "bounded_admission": {"queues": list},
     "off_host_claim": {},
     "resource_attribution": {"process_name": str},
 }

@@ -22,16 +22,20 @@
 # Usage: tools/check-bounded-ingress-queues.sh          # report
 #        tools/check-bounded-ingress-queues.sh --gate   # exit non-zero on a violation (for CI)
 #        tools/check-bounded-ingress-queues.sh --source PATH [--gate]  # test a fixture
+#        tools/check-bounded-ingress-queues.sh --queues "name|binding,..."  # another pipeline
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 GATE=0
 SRC=node/src/runtime/node_runtime.rs
+QUEUES_SPEC=""
 while (( $# )); do
   case "$1" in
     --gate) GATE=1 ;;
     --source) shift; SRC="${1:-}" ;;
     --source=*) SRC="${1#*=}" ;;
+    --queues) shift; QUEUES_SPEC="${1:-}" ;;
+    --queues=*) QUEUES_SPEC="${1#*=}" ;;
     *) echo "check-bounded-ingress-queues: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -52,12 +56,16 @@ printf '  %-28s %-14s %s\n' ----- ----- ----
 # Each queue is identified by the binding that creates it, not by its constructor call — the
 # constructor text alone appears three times (a test's channel among them) and would report the wrong
 # site for two of the three queues.
-declare -a QUEUES=(
-  "incoming_blocks|let (incoming_blocks_tx"
-  "processor_input|let (processor_input_tx"
-  "validated_blocks|let (validated_blocks_tx"
-  "tap_validated_blocks|let (tap_tx"
-)
+if [[ -n "$QUEUES_SPEC" ]]; then
+  IFS=',' read -r -a QUEUES <<< "$QUEUES_SPEC"
+else
+  QUEUES=(
+    "incoming_blocks|let (incoming_blocks_tx"
+    "processor_input|let (processor_input_tx"
+    "validated_blocks|let (validated_blocks_tx"
+    "tap_validated_blocks|let (tap_tx"
+  )
+fi
 while IFS='|' read -r name binding; do
   site="$(grep -nF "$binding" "$SRC" | head -1)"
   if [[ -z "$site" ]]; then
