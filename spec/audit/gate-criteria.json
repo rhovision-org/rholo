@@ -526,7 +526,8 @@
    "adapter": "tools/c357-acceptance.py::check_record",
    "parameters": {
     "table": "spec/audit/c357-acceptance.tsv",
-    "require_original_trace": false
+    "require_original_trace": false,
+    "max_window": 600
    },
    "requires": [
     "record_data"

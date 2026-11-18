@@ -92,7 +92,8 @@ def artifact_text(value: Any) -> str | None:
 MAX_WINDOW = 600.0
 
 
-def window_status(record: dict[str, Any]) -> tuple[float | None, str | None]:
+def window_status(record: dict[str, Any],
+                  max_window: float = MAX_WINDOW) -> tuple[float | None, str | None]:
     """The derived lockstep window, or why the campaign's window is invalid.
 
     The window is not an author-chosen number: it is `round_seconds x
@@ -107,8 +108,8 @@ def window_status(record: dict[str, Any]) -> tuple[float | None, str | None]:
             and isinstance(heights, int) and not isinstance(heights, bool) and heights > 0):
         return None, "round_seconds and liveness_heights must be positive"
     derived = float(round_seconds) * float(heights)
-    if derived > MAX_WINDOW:
-        return None, f"derived window {derived:.0f}s exceeds the {MAX_WINDOW:.0f}s maximum"
+    if derived > max_window:
+        return None, f"derived window {derived:.0f}s exceeds the {max_window:.0f}s maximum"
     rationale = campaign.get("lockstep_window_rationale")
     if not (isinstance(rationale, str) and rationale.strip()):
         return None, "lockstep_window_rationale is required"
@@ -122,8 +123,9 @@ def window_status(record: dict[str, Any]) -> tuple[float | None, str | None]:
     return derived, None
 
 
-def record_window(record: dict[str, Any]) -> float | None:
-    return window_status(record)[0]
+def record_window(record: dict[str, Any],
+                  max_window: float = MAX_WINDOW) -> float | None:
+    return window_status(record, max_window)[0]
 
 
 def derive_mixed(record: dict[str, Any], window: float | None) -> tuple[bool, str | None]:
@@ -157,7 +159,8 @@ def derive_mixed(record: dict[str, Any], window: float | None) -> tuple[bool, st
     return False, None
 
 
-def check_requirement(name: str, record: dict[str, Any], window: float) -> tuple[str, str]:
+def check_requirement(name: str, record: dict[str, Any], window: float,
+                      max_window: float = MAX_WINDOW) -> tuple[str, str]:
     campaign = record.get("campaign") or {}
     owner = record.get("release_owner") or {}
     review = record.get("independent_review") or {}
@@ -181,7 +184,7 @@ def check_requirement(name: str, record: dict[str, Any], window: float) -> tuple
         return ("PASS", "the release owner selected the campaign pins") if ok else (
             "FAIL", "the release owner's selected pins do not match the campaign")
     if name == "lockstep":
-        effective, problem = window_status(record)
+        effective, problem = window_status(record, max_window)
         if problem:
             return ("FAIL", problem)
         if effective is None:
@@ -191,7 +194,7 @@ def check_requirement(name: str, record: dict[str, Any], window: float) -> tuple
             return ("FAIL", why or "the activation is not lockstep")
         return ("PASS", "every validator activated in lockstep")
     if name == "noMixedVersion":
-        effective, problem = window_status(record)
+        effective, problem = window_status(record, max_window)
         if problem:
             return ("FAIL", problem)
         mixed, why = derive_mixed(record, effective)
@@ -284,7 +287,8 @@ class _Checker:
 
 def check_record(record: dict[str, Any], requirements: dict[str, list[str]],
                  require_original_trace: bool = False,
-                 window: float | None = None) -> dict[str, Any]:
+                 window: float | None = None,
+                 max_window: float = MAX_WINDOW) -> dict[str, Any]:
     record = dict(record)
     record["_checker"] = _Checker(require_original_trace)
     checks: dict[str, dict[str, str]] = {}
@@ -293,7 +297,7 @@ def check_record(record: dict[str, Any], requirements: dict[str, list[str]],
         return {"result": "PRECONDITION", "checks": {},
                 "detail": "the record names no admitted boundary shape"}
     for requirement in requirements[shape]:
-        verdict, detail = check_requirement(requirement, record, window)
+        verdict, detail = check_requirement(requirement, record, window, max_window)
         checks[requirement] = {"verdict": verdict, "detail": detail}
     if record.get("execution_proven") is not False:
         checks["execution_proven"] = {
@@ -302,7 +306,7 @@ def check_record(record: dict[str, Any], requirements: dict[str, list[str]],
     result = "FAIL" if "FAIL" in verdicts else (
         "PRECONDITION" if "PRECONDITION" in verdicts else "PASS")
     return {"result": result, "checks": checks, "shape": shape,
-            "lockstep_window_seconds": record_window(record)}
+            "lockstep_window_seconds": record_window(record, max_window)}
 
 
 def init_record(out: Path, shape: str | None) -> int:
@@ -532,6 +536,8 @@ def main() -> int:
     check_p.add_argument("--assert-closeable", action="store_true")
     check_p.add_argument("--require-original-trace", action="store_true")
     check_p.add_argument("--report")
+    check_p.add_argument("--max-window", type=float, default=MAX_WINDOW,
+                         help="lockstep window ceiling in seconds (default 600)")
     sub.add_parser("self-test")
     args = parser.parse_args()
     if args.command == "init":
@@ -540,7 +546,8 @@ def main() -> int:
         return self_test()
     requirements = load_table(Path(args.table))
     record = json.loads(Path(args.record).read_text())
-    report = check_record(record, requirements, args.require_original_trace)
+    report = check_record(record, requirements, args.require_original_trace,
+                          max_window=args.max_window)
     if args.report:
         Path(args.report).write_text(json.dumps(report, indent=1, sort_keys=True) + "\n")
     print(f"c357-acceptance: {report['result']}")

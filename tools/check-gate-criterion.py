@@ -61,7 +61,8 @@ def check_evidence(data: dict, gate_id: str, token: object) -> tuple[str, list[s
     return ("FAIL" if errors else "PASS"), errors
 
 
-def check_rejoin(data: dict) -> tuple[str, list[str], dict]:
+def check_rejoin(data: dict, floor: float = FLOOR, ceiling: float = CEILING,
+                 min_dwell: int = 3) -> tuple[str, list[str], dict]:
     errors: list[str] = []
     anchor = data.get("anchor") or {}
     evidence_status, evidence_errors = check_evidence(data, "G428-M4", anchor.get("hash"))
@@ -72,16 +73,16 @@ def check_rejoin(data: dict) -> tuple[str, list[str], dict]:
     if not nonneg(anchor.get("height")):
         errors.append("anchor.height must be a non-negative integer")
     dwell = data.get("dwell") or {}
-    if not (isinstance(dwell.get("samples"), int) and dwell["samples"] >= 3):
-        errors.append("dwell.samples must be at least 3")
+    if not (isinstance(dwell.get("samples"), int) and dwell["samples"] >= min_dwell):
+        errors.append(f"dwell.samples must be at least {min_dwell}")
     if dwell.get("stable") is not True:
         errors.append("dwell.stable must be true")
     window = data.get("window") or {}
     seconds = window.get("seconds")
     if not (isinstance(seconds, (int, float)) and not isinstance(seconds, bool)):
         errors.append("window.seconds must be a number")
-    elif not (FLOOR <= float(seconds) <= CEILING):
-        errors.append(f"window.seconds {seconds} is outside [{FLOOR}, {CEILING}]")
+    elif not (floor <= float(seconds) <= ceiling):
+        errors.append(f"window.seconds {seconds} is outside [{floor}, {ceiling}]")
     validators = data.get("validators") or []
     if not isinstance(validators, list) or not validators:
         errors.append("validators must be a non-empty list")

@@ -234,7 +234,7 @@ def endpoint_digest(base: str) -> str:
     return sha256_bytes(normal.encode())
 
 
-def load_plan(path: Path) -> dict:
+def load_plan(path: Path, expected_observers: int = 4) -> dict:
     plan, error = read_json(path)
     if not isinstance(plan, dict):
         fail(f"sampling plan is not a JSON object: {error or path}")
@@ -244,8 +244,8 @@ def load_plan(path: Path) -> dict:
     if not isinstance(deploy_id, str) or not deploy_id.strip():
         fail("sampling plan has no deploy_id")
     validators = plan.get("validators")
-    if not isinstance(validators, list) or len(validators) != 4:
-        fail("the sampling plan must name exactly four validators")
+    if not isinstance(validators, list) or len(validators) != expected_observers:
+        fail(f"the sampling plan must name exactly {expected_observers} validators")
     aliases, digests = set(), set()
     for entry in validators:
         if not isinstance(entry, dict):
@@ -297,7 +297,7 @@ def body_fields(raw: bytes):
 
 def cmd_sample(args) -> int:
     plan_path = Path(args.plan)
-    plan = load_plan(plan_path)
+    plan = load_plan(plan_path, getattr(args, "observers", 4))
     out = Path(args.out)
     if out.exists() and not out.is_dir():
         fail(f"{out} exists and is not a directory")
@@ -475,7 +475,7 @@ def execution_tag(body):
     return None
 
 
-def check_g1(preflight) -> dict:
+def check_g1(preflight, expected_observers: int = 4) -> dict:
     finding = Finding()
     if not isinstance(preflight, dict):
         finding.incomplete("the #572 preflight manifest is absent or unreadable")
@@ -487,10 +487,12 @@ def check_g1(preflight) -> dict:
     if not isinstance(validators, list):
         finding.incomplete("preflight has no validator records")
         return finding.report()
-    if len(validators) < 4:
-        finding.incomplete(f"preflight has {len(validators)} validator record(s), not four")
-    elif len(validators) > 4:
-        finding.fail(f"preflight has {len(validators)} validator records; the gate is four")
+    if len(validators) < expected_observers:
+        finding.incomplete(
+            f"preflight has {len(validators)} validator record(s), not {expected_observers}")
+    elif len(validators) > expected_observers:
+        finding.fail(
+            f"preflight has {len(validators)} validator records; the gate is {expected_observers}")
 
     names = [v.get("name") for v in validators if isinstance(v, dict) and present(v.get("name"))]
     boot_ids = [v.get("boot_id") for v in validators if isinstance(v, dict) and present(v.get("boot_id"))]
@@ -532,8 +534,9 @@ def check_g1(preflight) -> dict:
     checks = preflight.get("checks") or {}
     if checks.get("ok") is not True:
         finding.incomplete("the collector's own checks.ok is not true (independent checks still apply)")
-    if checks.get("validator_count") != 4:
-        finding.incomplete("the collector did not record four validators")
+    if checks.get("validator_count") != expected_observers:
+        finding.incomplete(
+            f"the collector did not record {expected_observers} validators")
 
     operator = preflight.get("operator_fields")
     if not isinstance(operator, dict):
@@ -868,12 +871,12 @@ def verify_sums_text(path: Path):
     return listed, None
 
 
-def check_g5(run, events, run_dir: Path) -> dict:
+def check_g5(run, events, run_dir: Path, expected_observers: int = 4) -> dict:
     finding = Finding()
     validators = run.get("validators") if isinstance(run, dict) else None
     aliases = []
-    if not isinstance(validators, list) or len(validators) != 4:
-        finding.incomplete("run.json does not name four validators")
+    if not isinstance(validators, list) or len(validators) != expected_observers:
+        finding.incomplete(f"run.json does not name {expected_observers} validators")
     else:
         aliases = [entry.get("alias") for entry in validators if isinstance(entry, dict)]
         digests = [entry.get("endpoint_sha256") for entry in validators if isinstance(entry, dict)]
@@ -1011,7 +1014,8 @@ def check_g6(verdict, preflight) -> dict:
     return finding.report()
 
 
-def evaluate(run_dir: Path, preflight_path: Path, verdict_path: Path | None = None):
+def evaluate(run_dir: Path, preflight_path: Path, verdict_path: Path | None = None,
+             expected_observers: int = 4):
     preflight, preflight_error = read_json(preflight_path)
     if not isinstance(preflight, dict):
         preflight = None
@@ -1032,11 +1036,11 @@ def evaluate(run_dir: Path, preflight_path: Path, verdict_path: Path | None = No
             verdict = None
 
     criteria = {
-        "G1": check_g1(preflight),
+        "G1": check_g1(preflight, expected_observers),
         "G2": check_g2(submission, run, events),
         "G3": check_g3(claims, events),
         "G4": check_g4(recovery, events),
-        "G5": check_g5(run, events, run_dir),
+        "G5": check_g5(run, events, run_dir, expected_observers),
         "G6": check_g6(verdict, preflight),
     }
     details = {}
@@ -1087,7 +1091,7 @@ def cmd_check(args) -> int:
     if not preflight.is_file():
         fail(f"no preflight manifest at {preflight} (pass the private #572 merge record)")
     verdict_path = Path(args.verdict) if getattr(args, "verdict", None) else None
-    report = evaluate(run_dir, preflight, verdict_path)
+    report = evaluate(run_dir, preflight, verdict_path, getattr(args, "observers", 4))
     destination = Path(args.report) if args.report else run_dir / "gate-report.json"
     destination.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 
@@ -1126,6 +1130,8 @@ def main(argv: list[str]) -> int:
     sample.add_argument("--interval", type=float, default=5.0)
     sample.add_argument("--duration", type=float, default=900.0)
     sample.add_argument("--timeout", type=float, default=5.0)
+    sample.add_argument("--observers", type=int, default=4,
+                        help="exact validator count the plan must name (default 4)")
     sample.set_defaults(func=cmd_sample)
 
     check = sub.add_parser("check", help="G1-G5 worksheet; optional G6 record; never a verdict")
@@ -1133,6 +1139,8 @@ def main(argv: list[str]) -> int:
     check.add_argument("--preflight", required=True, help="the private #572 merge record")
     check.add_argument("--verdict", help="optional typed G6 record (reviewer, verdict, evidence)")
     check.add_argument("--report", help="where to write gate-report.json")
+    check.add_argument("--observers", type=int, default=4,
+                       help="expected validator count (default 4)")
     check.set_defaults(func=cmd_check)
 
     args = parser.parse_args(argv)

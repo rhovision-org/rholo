@@ -133,7 +133,8 @@ def _materialise(files: dict) -> tempfile.TemporaryDirectory:
 
 
 def identity_agreement(observations: dict, parameters: dict) -> dict:
-    report = _live.check_g1(observations.get("preflight"))
+    report = _live.check_g1(
+        observations.get("preflight"), parameters.get("min_observers", 4))
     expected = parameters.get("min_observers")
     if report.get("status") == "PASS" and isinstance(expected, int):
         validators = (observations.get("preflight") or {}).get("validators") or []
@@ -144,6 +145,13 @@ def identity_agreement(observations: dict, parameters: dict) -> dict:
 
 
 def staged_lifecycle(observations: dict, parameters: dict) -> dict:
+    configured = set(parameters.get("stages") or [])
+    required = {"pooled", "includedUnfinalized", "finalizedSuccess"}
+    if configured and configured != required:
+        return verdict("FAIL", [f"unsupported stage set {sorted(configured)}; the principle "
+                                f"asserts {sorted(required)}"])
+    if parameters.get("per_observer") is False:
+        return verdict("FAIL", ["the staged lifecycle is per-observer by definition"])
     report = _live.check_g2(
         observations.get("submission"), observations.get("run"), _events(observations))
     return _live_report(report)
@@ -169,7 +177,9 @@ def independent_observations(observations: dict, parameters: dict) -> dict:
         path = ROOT / path
     if not path.is_dir():
         return verdict("PRECONDITION", [f"record.dir {directory!r} is absent"])
-    report = _live.check_g5(observations.get("run"), _events(observations), path)
+    report = _live.check_g5(
+        observations.get("run"), _events(observations), path,
+        parameters.get("min_observers", 4))
     return _live_report(report)
 
 
@@ -221,19 +231,10 @@ def healing_anchor(observations: dict, parameters: dict) -> dict:
     data = observations.get("record_data")
     if not isinstance(data, dict):
         return verdict("PRECONDITION", ["record_data is absent"])
-    window = data.get("window") if isinstance(data.get("window"), dict) else {}
-    if "floor" in parameters and isinstance(window.get("seconds"), (int, float)):
-        if window["seconds"] < parameters["floor"]:
-            return verdict("FAIL", [f"window.seconds {window['seconds']} is below {parameters['floor']}"])
-    if "ceiling" in parameters and isinstance(window.get("seconds"), (int, float)):
-        if window["seconds"] > parameters["ceiling"]:
-            return verdict("FAIL", [f"window.seconds {window['seconds']} is above {parameters['ceiling']}"])
-    dwell = data.get("dwell") if isinstance(data.get("dwell"), dict) else {}
-    minimum = parameters.get("min_dwell")
-    if isinstance(minimum, int) and isinstance(dwell.get("samples"), int):
-        if dwell["samples"] < minimum:
-            return verdict("FAIL", [f"dwell.samples {dwell['samples']} is below {minimum}"])
-    return _criterion_report(_criterion.check_rejoin(data))
+    return _criterion_report(_criterion.check_rejoin(
+        data, parameters.get("floor", _criterion.FLOOR),
+        parameters.get("ceiling", _criterion.CEILING),
+        parameters.get("min_dwell", 3)))
 
 
 def merge_accounting(observations: dict, parameters: dict) -> dict:
@@ -280,7 +281,8 @@ def lockstep_acceptance(observations: dict, parameters: dict) -> dict:
         return verdict("PRECONDITION", [f"acceptance table {table_path} is absent"])
     requirements = _c357.load_table(table_path)
     report = _c357.check_record(record, requirements,
-                                bool(parameters.get("require_original_trace")))
+                                bool(parameters.get("require_original_trace")),
+                                max_window=parameters.get("max_window", _c357.MAX_WINDOW))
     status = report.get("result")
     if status not in STATUSES:
         return verdict("FAIL", [f"unknown acceptance result {status!r}"])
@@ -402,7 +404,8 @@ PARAMETER_SCHEMA = {
     "healing_anchor": {"floor": (int, float), "ceiling": (int, float), "min_dwell": int},
     "merge_accounting": {},
     "phase_diagnosis": {"table": str},
-    "lockstep_acceptance": {"table": str, "require_original_trace": bool},
+    "lockstep_acceptance": {"table": str, "require_original_trace": bool,
+                            "max_window": (int, float)},
     "bounded_admission": {},
     "off_host_claim": {},
     "resource_attribution": {"process_name": str},
