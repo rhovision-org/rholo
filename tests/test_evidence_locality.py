@@ -59,9 +59,29 @@ class EvidenceLocalityTests(unittest.TestCase):
         problems = self.check(
             "M3 off-host positive.\n"
             "**Evidence locality.** `off-host-claim` — two declared hosts.\n"
-            "The bootstrap's dial-back to 203.0.113.7:40400 succeeded before the join.\n"
+            "The bootstrap's dial-back to 203.0.113.7:40400 succeeded before the join.\n",
+            acceptance='{"peer": "rnode://6b70@203.0.113.7?protocol=40400"}',
         )
         self.assertEqual(problems, [])
+
+    def test_an_off_host_claim_with_only_wording_fails(self):
+        problems = self.check(
+            "M3 off-host positive.\n"
+            "**Evidence locality.** `off-host-claim` — two declared hosts.\n"
+            "The bootstrap's dial-back to 203.0.113.7:40400 succeeded.\n"
+        )
+        self.assertTrue(any("captured non-loopback" in p for p in problems), problems)
+
+    def test_a_packed_live_host_mutation_in_a_script_fails(self):
+        directory = Path(tempfile.mkdtemp())
+        (directory / "README.md").write_text(
+            "Read-only snapshot.\n**Evidence locality.** live-host — four instances.\n")
+        (directory / "manifest.json").write_text(json.dumps(
+            {"locality": "live-host", "execution_proven": False}))
+        (directory / "raw").mkdir()
+        (directory / "raw" / "drill.sh").write_text("POST /deploy\n")
+        problems = locality.check(directory)
+        self.assertTrue(any("mutation" in p for p in problems), problems)
 
     def test_an_off_host_claim_with_a_loopback_advertised_peer_fails(self):
         problems = self.check(

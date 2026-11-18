@@ -62,6 +62,11 @@ LABEL_RE = re.compile(r"\*\*Evidence locality\.\*\*\s*`?([a-z-]+)`?\s*[—-]?")
 
 def run_record(directory: Path) -> bool:
     names = [p.name for p in directory.iterdir() if p.is_file()]
+    if not (any(n in RUN_ARTEFACTS for n in names)
+            or any(n.startswith(RUN_PREFIXES) for n in names)):
+        raw = directory / "raw"
+        if raw.is_dir():
+            names = [p.name for p in raw.iterdir() if p.is_file()]
     return any(n in RUN_ARTEFACTS for n in names) or any(
         n.startswith(RUN_PREFIXES) for n in names
     )
@@ -69,12 +74,9 @@ def run_record(directory: Path) -> bool:
 
 def text_files(directory: Path) -> list[Path]:
     # Packed records keep their raw artefacts under raw/; scan the whole record,
-    # not only the top level, or a packed mutation/loopback is invisible.
-    return [
-        p
-        for p in directory.rglob("*")
-        if p.is_file() and p.suffix in {".md", ".json", ".py", ".txt", ".log", ".jsonl"}
-    ]
+    # including .sh/.yml/.body and suffix-less files, or a packed mutation or
+    # loopback is invisible to the mutation/loopback scan.
+    return [p for p in directory.rglob("*") if p.is_file()]
 
 
 def loopback_claims(directory: Path) -> list[str]:
@@ -103,6 +105,20 @@ def loopback_claims(directory: Path) -> list[str]:
                 for match in pattern.finditer(value):
                     if local_address(match.group(1)):
                         found.append(f"{path.name}: {match.group(0)}")
+    return found
+
+
+def advertised_peers(directory: Path) -> list[str]:
+    found = []
+    for path in text_files(directory):
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        for pattern in ADVERTISED:
+            for match in pattern.finditer(text):
+                if not local_address(match.group(1)):
+                    found.append(f"{path.name}: {match.group(0)}")
     return found
 
 
@@ -169,6 +185,11 @@ def check(directory: Path) -> list[str]:
         if not re.search(r"dial[- ]?back", readme, re.I):
             problems.append(
                 f"{directory.name}: an off-host claim must name the bootstrap's dial-back result"
+            )
+        if not advertised_peers(directory):
+            problems.append(
+                f"{directory.name}: an off-host claim must carry a captured non-loopback "
+                "advertised peer, not only README wording"
             )
     elif label == "loopback-diagnostic":
         if not loopbacks:
