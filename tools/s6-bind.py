@@ -37,7 +37,7 @@ CHECKER = ROOT / "tools" / "check-mainnet-gates.py"
 PACKER = ROOT / "tools" / "evidence-pack.py"
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
-RUNNING = re.compile(r"Running\s+\S+\s+\(([^)]+)\)")
+RUNNING = re.compile(r"Running\s+[^\n(]*\(([^)]+)\)")
 STATUSES = {"owes", "reviewable", "external"}
 
 
