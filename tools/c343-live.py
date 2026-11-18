@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import urllib.error
@@ -283,6 +284,53 @@ def cell(verdict: str, detail: str) -> dict[str, str]:
     return {"verdict": verdict, "detail": detail}
 
 
+BLOCK6 = re.compile(
+    r"(?<!\d)(?:block[- ]?#?|height[- ]?#?|#)\s*0*6(?!\d)", re.I)
+BLOCK6_DISPOSITIONS = {
+    "orphan": ("FAIL", "block 6 is an orphan"),
+    "held": ("FAIL", "block 6 is held"),
+    "faulted": ("FAIL", "block 6 is faulted"),
+    "pending": ("PRECONDITION", "block 6 is pending"),
+    "unknown": ("PRECONDITION", "block 6 is unknown"),
+    "accepted": ("PASS", "block 6 is accepted"),
+    "included": ("PASS", "block 6 is included"),
+    "finalized": ("PASS", "block 6 is finalized"),
+    "proposed": ("PASS", "block 6 is proposed"),
+    "added": ("PASS", "block 6 is added"),
+}
+
+
+def block6_disposition(text: str) -> tuple[str, str]:
+    """Read a structured block-6 disposition, not a substring.
+
+    A line that names block 6 without a disposition (``block 6 unknown``) is a
+    precondition, never a pass. A JSON record with a block/height and a
+    disposition/status is read first; free text is matched next.
+    """
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("{"):
+            try:
+                record = json.loads(stripped)
+            except ValueError:
+                record = None
+            if isinstance(record, dict) and (record.get("block") == 6
+                                             or record.get("height") == 6):
+                token = str(record.get("disposition") or record.get("status") or "").lower()
+                for name, (verdict, detail) in BLOCK6_DISPOSITIONS.items():
+                    if name in token:
+                        return verdict, detail
+                return "PRECONDITION", "block 6 is named without a disposition"
+        if not BLOCK6.search(line):
+            continue
+        low = line.lower()
+        for name, (verdict, detail) in BLOCK6_DISPOSITIONS.items():
+            if re.search(rf"\b{name}\b", low):
+                return verdict, detail
+        return "PRECONDITION", "block 6 is named without a disposition"
+    return "PRECONDITION", "no block-6 line"
+
+
 def verify_run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     run_dir = Path(args.run_dir)
     raw = run_dir / "raw"
@@ -357,13 +405,8 @@ def verify_run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             cells["block6-disposition"] = cell("PRECONDITION", "no journal line")
         else:
             text = (raw / Path(journal["path"]).name).read_text(errors="replace")
-            low = text.lower()
-            if "orphan" in low and ("block 6" in low or "height 6" in low or "#6" in low):
-                cells["block6-disposition"] = cell("FAIL", "block 6 is an orphan")
-            elif "block 6" in low or "height 6" in low or "#6" in low or "block-6" in low:
-                cells["block6-disposition"] = cell("PASS", "block 6 has a disposition")
-            else:
-                cells["block6-disposition"] = cell("PRECONDITION", "no block-6 line")
+            verdict, detail = block6_disposition(text)
+            cells["block6-disposition"] = cell(verdict, detail)
         if "maxObservedHeight" in health and "finalizedHeight" in health:
             expected = max(0, int(health["maxObservedHeight"]) - int(health["finalizedHeight"]))
             if expected != int(health.get("finalizedLag", -1)):
@@ -506,6 +549,19 @@ def self_test() -> int:
     bad = observation(_base_health(ready=True, readyReasons=["x"]), _base_operator())
     if consistent(bad):
         failures.append("a ready/reasons contradiction passed the consistency check")
+    block6_cases = [
+        ("block 6 accepted", "PASS"),
+        ("block 6 unknown", "PRECONDITION"),
+        ("block 6 orphan", "FAIL"),
+        ("block 16 accepted", "PRECONDITION"),
+        ("proposed and added block #6", "PASS"),
+        ('{"block": 6, "disposition": "unknown"}', "PRECONDITION"),
+        ('{"block": 6, "disposition": "finalized"}', "PASS"),
+    ]
+    for text, expected in block6_cases:
+        actual, _ = block6_disposition(text)
+        if actual != expected:
+            failures.append(f"block-6 {text!r}: {actual}, expected {expected}")
     if failures:
         for failure in failures:
             print(f"c343-live self-test: FAIL {failure}", file=sys.stderr)

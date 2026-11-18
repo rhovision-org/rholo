@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -127,6 +128,40 @@ class EvidenceLocalityTests(unittest.TestCase):
             "**Evidence locality.** `external` — verdict.\n"
         )
         self.assertEqual(good, [])
+
+    def test_a_packed_record_is_scanned(self):
+        directory = Path(tempfile.mkdtemp())
+        (directory / "README.md").write_text(
+            "M3\n**Evidence locality.** local-devnet — packed record.\n")
+        (directory / "manifest.json").write_text(json.dumps(
+            {"locality": "local-devnet", "execution_proven": False, "verdict": "PASS"}))
+        (directory / "SHA256SUMS.json").write_text("{}")
+        (directory / "raw").mkdir()
+        (directory / "raw" / "run.log").write_text("ok\n")
+        self.assertTrue(locality.run_record(directory))
+        self.assertEqual(locality.check(directory), [])
+
+    def test_a_packed_locality_mismatch_fails(self):
+        directory = Path(tempfile.mkdtemp())
+        (directory / "README.md").write_text(
+            "**Evidence locality.** local-devnet — packed record.\n")
+        (directory / "manifest.json").write_text(json.dumps(
+            {"locality": "external", "execution_proven": False}))
+        (directory / "raw").mkdir()
+        (directory / "raw" / "run.log").write_text("ok\n")
+        problems = locality.check(directory)
+        self.assertTrue(any("disagrees" in p for p in problems), problems)
+
+    def test_a_packed_live_host_mutation_in_raw_fails(self):
+        directory = Path(tempfile.mkdtemp())
+        (directory / "README.md").write_text(
+            "Read-only snapshot.\n**Evidence locality.** live-host — four instances.\n")
+        (directory / "manifest.json").write_text(json.dumps(
+            {"locality": "live-host", "execution_proven": False}))
+        (directory / "raw").mkdir()
+        (directory / "raw" / "run.log").write_text("POST /deploy\n")
+        problems = locality.check(directory)
+        self.assertTrue(any("mutation" in p for p in problems), problems)
 
     def test_an_empty_evidence_directory_is_not_vacuous(self):
         # The main() vacuity rule is exercised against a real temporary directory.

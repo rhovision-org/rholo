@@ -2,6 +2,8 @@
 
 **Scope:** disposable Docker devnets on one GitHub runner. **Qualification verdict: PASS. Release/live readiness: NO-GO.** This is an unselected qualification build, not an installed or maintainer-approved release candidate.
 
+**Evidence locality.** `single-host` — disposable Docker devnets on one GitHub runner; this is not an off-host positive.
+
 ## Provenance
 
 | Field | Retained value |
@@ -12,7 +14,8 @@
 | Docker image ID | `sha256:ec527b36491baaae9c008bd783babf97c8cba93236fd34ebdf32bdd00721f0a6` |
 | Harness revision | `4c0ec2f1ceda8354690b00d798df01ca0b052c74` on the personal fork |
 | Run / attempt | [43479787916, attempt 1](https://github.com/aixaria0/rchain-rust/actions/runs/43479787916/attempts/1) |
-| Evidence locality | `off-host-claim`; the runner's validators share one disposable host |
+| Evidence locality | `single-host`; the runner's validators share one disposable host |
+| Evidence correction (2026-11-18) | The earlier `off-host-claim` label contradicted the one-host description; this is a single-host qualification, not an off-host positive. |
 | Installed public candidate | **Not supplied** |
 | Maintainer release selection | **Not supplied** |
 

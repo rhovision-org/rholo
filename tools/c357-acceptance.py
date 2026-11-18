@@ -79,7 +79,26 @@ def parse_utc(value: Any) -> dt.datetime | None:
         return None
 
 
-def derive_mixed(record: dict[str, Any], window: float) -> tuple[bool, str | None]:
+def record_window(record: dict[str, Any]) -> float | None:
+    """The declared lockstep window, or the round x liveness derivation.
+
+    A bare 60 s constant is not a network parameter. The record must declare
+    `campaign.lockstep_window_seconds` (with a rationale) or the two values the
+    window is derived from; otherwise the lockstep requirement is PRECONDITION.
+    """
+    campaign = record.get("campaign") or {}
+    declared = campaign.get("lockstep_window_seconds")
+    if isinstance(declared, (int, float)) and declared > 0:
+        return float(declared)
+    round_seconds = campaign.get("round_seconds")
+    heights = campaign.get("liveness_heights")
+    if (isinstance(round_seconds, (int, float)) and round_seconds > 0
+            and isinstance(heights, int) and heights > 0):
+        return float(round_seconds) * float(heights)
+    return None
+
+
+def derive_mixed(record: dict[str, Any], window: float | None) -> tuple[bool, str | None]:
     validators = record.get("validators") or []
     if not validators:
         return False, "no validators"
@@ -96,7 +115,7 @@ def derive_mixed(record: dict[str, Any], window: float) -> tuple[bool, str | Non
         return True, "an activation time is missing or unparseable"
     assert all(t is not None for t in times)
     span = (max(times) - min(times)).total_seconds()  # type: ignore[type-var]
-    if span > window:
+    if window is not None and span > window:
         return True, f"activations span {span:.0f}s, beyond the {window:.0f}s lockstep window"
     return False, None
 
@@ -125,12 +144,15 @@ def check_requirement(name: str, record: dict[str, Any], window: float) -> tuple
         return ("PASS", "the release owner selected the campaign pins") if ok else (
             "FAIL", "the release owner's selected pins do not match the campaign")
     if name == "lockstep":
-        mixed, why = derive_mixed(record, window)
+        effective = window if window is not None else record_window(record)
+        if effective is None:
+            return ("PRECONDITION", "no declared lockstep window")
+        mixed, why = derive_mixed(record, effective)
         if mixed:
             return ("FAIL", why or "the activation is not lockstep")
         return ("PASS", "every validator activated in lockstep")
     if name == "noMixedVersion":
-        mixed, why = derive_mixed(record, window)
+        mixed, why = derive_mixed(record, window if window is not None else record_window(record))
         if mixed:
             return ("FAIL", why or "a mixed-version rollout is present")
         if record.get("mixed_versions") is True:
@@ -155,13 +177,21 @@ def check_requirement(name: str, record: dict[str, Any], window: float) -> tuple
         reviewer = (review.get("reviewer") or "").casefold()
         owner_name = (owner.get("name") or "").casefold()
         operator = (record.get("operator") or "").casefold()
+        independence = review.get("independence") or {}
+        attested = (isinstance(independence, dict)
+                    and independence.get("attested") is True
+                    and all(isinstance(independence.get(field), str)
+                            and independence[field].strip()
+                            for field in ("relationship", "affiliation",
+                                          "prior_authorship", "conflicts")))
         ok = (bool(reviewer) and reviewer not in (owner_name, operator)
+              and attested
               and review.get("verdict") == "category-A-accepted"
               and is_hex(review.get("evidence_sha256"), HEX64)
               and is_https(review.get("verdict_url"))
               and bool(review.get("signed_at")))
         return ("PASS", "the publisher is independent and accepted") if ok else (
-            "FAIL", "the independent review is missing, self-authored or unpinned")
+            "FAIL", "the independent review is missing, unattested, self-authored or unpinned")
     if name == "verdictAccepted":
         ok = review.get("verdict") == "category-A-accepted"
         return ("PASS", "the category-A verdict is accepted") if ok else (
@@ -189,7 +219,8 @@ class _Checker:
 
 
 def check_record(record: dict[str, Any], requirements: dict[str, list[str]],
-                 require_original_trace: bool = False, window: float = 60.0) -> dict[str, Any]:
+                 require_original_trace: bool = False,
+                 window: float | None = None) -> dict[str, Any]:
     record = dict(record)
     record["_checker"] = _Checker(require_original_trace)
     checks: dict[str, dict[str, str]] = {}
@@ -206,7 +237,8 @@ def check_record(record: dict[str, Any], requirements: dict[str, list[str]],
     verdicts = [check["verdict"] for check in checks.values()]
     result = "FAIL" if "FAIL" in verdicts else (
         "PRECONDITION" if "PRECONDITION" in verdicts else "PASS")
-    return {"result": result, "checks": checks, "shape": shape}
+    return {"result": result, "checks": checks, "shape": shape,
+            "lockstep_window_seconds": window if window is not None else record_window(record)}
 
 
 def init_record(out: Path, shape: str | None) -> int:
@@ -215,7 +247,10 @@ def init_record(out: Path, shape: str | None) -> int:
         "schema": 1,
         "campaign": {"id": placeholder, "digest": placeholder, "manifest_sha256": placeholder,
                      "source_sha": placeholder, "artifact_digest": placeholder,
-                     "binary_sha256": placeholder, "boundary_height": 0},
+                     "binary_sha256": placeholder, "boundary_height": 0,
+                     "lockstep_window_seconds": 0,
+                     "lockstep_window_rationale": placeholder,
+                     "round_seconds": 0, "liveness_heights": 0},
         "shape": shape or placeholder,
         "release_owner": {"name": placeholder, "selected_source_sha": placeholder,
                           "selected_artifact_digest": placeholder,
@@ -229,7 +264,12 @@ def init_record(out: Path, shape: str | None) -> int:
         "mixed_versions": False,
         "independent_review": {"reviewer": placeholder, "verdict": placeholder,
                                "reconstruction_accepted": False, "verdict_url": placeholder,
-                               "evidence_sha256": placeholder, "signed_at": placeholder},
+                               "evidence_sha256": placeholder, "signed_at": placeholder,
+                               "independence": {"attested": False,
+                                                "relationship": placeholder,
+                                                "affiliation": placeholder,
+                                                "prior_authorship": placeholder,
+                                                "conflicts": placeholder}},
         "incident_trace": {"mode": placeholder, "sha256": placeholder,
                            "provenance_url": placeholder, "owner_decision_url": placeholder},
         "execution_proven": False,
@@ -259,7 +299,10 @@ def _base_record(shape: str) -> dict[str, Any]:
         "schema": 1,
         "campaign": {"id": "campaign", "digest": digest, "manifest_sha256": digest,
                      "source_sha": source, "artifact_digest": digest,
-                     "binary_sha256": digest, "boundary_height": 10},
+                     "binary_sha256": digest, "boundary_height": 10,
+                     "lockstep_window_seconds": 30,
+                     "lockstep_window_rationale": "30 s = three 10 s rounds; the campaign's declared round time.",
+                     "round_seconds": 10, "liveness_heights": 3},
         "shape": shape,
         "release_owner": {"name": owner, "selected_source_sha": source,
                           "selected_artifact_digest": digest,
@@ -275,7 +318,13 @@ def _base_record(shape: str) -> dict[str, Any]:
                                "reconstruction_accepted": True,
                                "verdict_url": "https://example.invalid/verdict",
                                "evidence_sha256": digest,
-                               "signed_at": "2026-11-17T21:00:00Z"},
+                               "signed_at": "2026-11-17T21:00:00Z",
+                               "independence": {
+                                   "attested": True,
+                                   "relationship": "not the release owner or operator",
+                                   "affiliation": "independent reviewer",
+                                   "prior_authorship": "none on the selected source or evidence",
+                                   "conflicts": "none"}},
         "incident_trace": {"mode": "original-bytes", "sha256": digest,
                            "provenance_url": "https://example.invalid/trace",
                            "owner_decision_url": ""},
@@ -309,6 +358,20 @@ def self_test() -> int:
     mixed = _base_record("coordinated-new-genesis")
     mixed["validators"][0]["still_serving_old"] = True
     failures += _case("mixed-version", mixed, requirements, False)
+    no_window = _base_record("coordinated-new-genesis")
+    for key in ("lockstep_window_seconds", "round_seconds", "liveness_heights"):
+        no_window["campaign"].pop(key, None)
+    failures += _case("no-declared-window", no_window, requirements, False)
+    no_independence = _base_record("coordinated-new-genesis")
+    del no_independence["independent_review"]["independence"]
+    failures += _case("no-independence-attestation", no_independence, requirements, False)
+    unattested = _base_record("coordinated-new-genesis")
+    unattested["independent_review"]["independence"]["attested"] = False
+    failures += _case("unattested-independence", unattested, requirements, False)
+    span = _base_record("coordinated-new-genesis")
+    span["validators"][1]["activated_utc"] = "2026-11-17T20:00:20Z"
+    span["validators"][2]["activated_utc"] = "2026-11-17T20:00:40Z"
+    failures += _case("activation-span-beyond-window", span, requirements, False)
     missing_reviewer = _base_record("coordinated-new-genesis")
     del missing_reviewer["independent_review"]["reviewer"]
     failures += _case("missing-reviewer", missing_reviewer, requirements, False)
@@ -366,7 +429,8 @@ def main() -> int:
     check_p.add_argument("--table", default=str(DEFAULT_TABLE))
     check_p.add_argument("--assert-closeable", action="store_true")
     check_p.add_argument("--require-original-trace", action="store_true")
-    check_p.add_argument("--lockstep-window", type=float, default=60.0)
+    check_p.add_argument("--lockstep-window", type=float, default=None,
+                         help="optional override; the record's campaign window is preferred")
     check_p.add_argument("--report")
     sub.add_parser("self-test")
     args = parser.parse_args()

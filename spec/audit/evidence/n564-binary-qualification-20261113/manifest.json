@@ -746,7 +746,7 @@
     }
   ],
   "gate_id": "C357-binary-qualification",
-  "locality": "off-host-claim",
+  "locality": "single-host",
   "packer": {
     "packaged_at": "2026-11-13T18:18:19+00:00",
     "tool": "evidence-pack",
