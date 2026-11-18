@@ -13609,3 +13609,66 @@ ran. The register stays 439 findings with C343 and C357 `in progress`.
 
 **State.** 439 findings — **0 todo, 2 in progress (C343, C357), 437 done**. The readiness PR is not
 a close-out: each row's close-out PR is separate and waits on its external artefacts.
+
+## 177. Mainnet gate measurement: the multi-lens attack and the canonical register (2026-11-18)
+
+**Found.** The repo's actual mainnet gate is external #428 M1–M6, with #584 G1–G6 as the live
+verdict; the #51/§6 tracker, testnet §3 and C343/C357 are the other families. The gate was
+measured by bookkeeping, not by the property. `check-hardfork-51-closeout.py` accepts a merged
+row on PR + commit ancestry and a deferred row on owner + reason; its close condition needs only
+those, the single §6 sign-off (a 64-hex string + URLs + a name) and the git flag. Thirteen
+ledger-merged rows are simultaneously `IMPLEMENTED / EVIDENCE INCOMPLETE`. None of the 44 matrix
+acceptance fields names a `path::symbol` test; 42 of the 47 §6 A candidates are templated and
+only three name a test — and `tests/liveness-enforcement.py` does not exist. One sign-off covers
+47 candidates. Open owners are free text. Campaign `aggregate: PASS` is trusted without its
+criterion. "Independent" is reviewer-name inequality and "category-A" a string literal; the
+lockstep window is an arbitrary 60 s; C343's block-6 disposition is a substring ("block 6 unknown"
+passed); the Decimal row is a phantom after #527; 107 done rows have only a `candidate:` law;
+the C343/C357 self-tests are not in CI; the locality gate cannot see packed records; and the
+Rust witness checker proves a test ran, not that it asserts the invariant.
+
+The gate lenses found concrete defect-passing paths: M1's supported tier is a policy table
+("estimate, not a measurement", "unmeasured above 5k") and its host topology is advisory and
+PID-namespace-blind; M3's transport `stream()` returns `()` and "FinalizedFringe sent" is
+unconditional, so a dropped reply still logs sent; M4's N=4/N=8 arms are single-host Docker at
+1.5 GiB, below the 8 GiB floor; M5's final-scope ledger trusts `block.rejected_deploys` and its
+report is computed from the same fold that builds the state; M6's evidence verify is
+pin-format-blind; G1 checks four-way agreement, not the selected candidate; G2 unions aliases;
+G3 has no negative pre-finality sample; G4's no-loss facts are self-authored; G5 is
+self-consistent-fabricable; G6 is a hardcoded pending stub. The measurement lens also broke the
+first register: a bare file, a `struct`, a never-run control, a format-only digest and a
+self-asserted independence all passed.
+
+**What landed.** A canonical register (`spec/audit/mainnet-gates.json`, emitted `.md`) of **111
+gates — 0 met**: 6 M, 6 G, 3 TA, 44 #51, 49 §6 (47 inventory A candidates plus the two PR #600
+rules), C343, C357 and #520. The builder links the ledgers by row hash; the checker requires a
+`path::symbol` witness with a verified `#[test]`, a resolvable control object, a retained evidence
+record, an owner-independent attestation, a `source_ref` that names the gate, a `sources` block,
+`register_dev_sha` ancestry, a resolving law citation with a formal rung for a met gate, and a
+non-empty `does_not_claim`; `--assert-closeable` exits 3. The 47 §6 dispositions are recorded
+(45 reviewable, the Decimal `withdrawn`, the missing liveness test owed). The #51 checker gains
+an optional, default-off gate binding. C343's block-6 cell is structural with seven self-test
+cases. C357 requires an independence attestation and a declared lockstep window. The locality
+gate scans packed `raw/` records, adds `single-host`, and `n564` is corrected from a false
+off-host claim. The TA-C3 census is corrected. The vault, state-preservation and attachment
+contracts have schemas and a Docker-free checker; the M4 rejoin and M5 merge-accounting checkers
+exist. The gate glossary and measurement standard are docs pages.
+
+**Why believed.** Every new checker rule has a mutant in `tests/`: bare path, struct witness,
+unresolved control, aggregate-only evidence, Docker sole evidence, unclassified locality,
+unmet dependency, cycle, asymmetric crosswalk, stale matrix hash, self-attested independence,
+missing sources block, wrong source row, non-ancestor register, unresolved law, missing
+non-claim, conservation mismatch, duplicate vault, incomplete manifest, mixed attachment
+rollout, missing clients, rejoin dwell/window/anchor, unavailable merge bundle, unapplied kept
+write, unexplained rejection and missing readback. The emitted markdown and JSON are `--check`
+clean; the locality gate is 0 violations over 36 records; the docs link gate is clean; the #51
+and §6 checkers still report open.
+
+**What it does not claim.** No gate is met; no live campaign, operator export, independent
+verdict or lockstep run happened; M5's historical bundle remains unavailable; C343's live
+snapshot remains precondition-only; C357 remains external. The new Python tests are not wired
+into CI (the workflow edit needs the owner's merge), so they run locally and in the PR
+checklist. The register is a measurement binding, not a release authorization.
+
+**State.** 439 findings — **0 todo, 2 in progress (C343, C357), 437 done**. 111 registered
+gates, 0 met; C343 and C357 stay in progress; no row is flipped; no release is claimed.
