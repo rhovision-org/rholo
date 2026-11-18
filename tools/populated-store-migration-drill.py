@@ -125,7 +125,7 @@ def volume_manifest(volume: str) -> dict:
 
 
 def genesis_block(port: int) -> dict:
-    body = mature.http_json(port, "/api/blocks/0/0")
+    body = mature.try_http_json(port, "/api/blocks/0/0")
     info = {}
     if isinstance(body, list) and body:
         info = body[0]
@@ -140,11 +140,13 @@ def genesis_hash(port: int) -> str | None:
 
 
 def finalized(port: int) -> dict:
-    body = mature.http_json(port, "/api/last-finalized-block")
-    info = body.get("blockInfo") or body
-    certificate = mature.http_json(port, "/api/v1/checkpoint")
-    fields = mature.certificate_fields(certificate) or {}
-    verdict = mature.http_post_json(port, "/api/v1/checkpoint/verify", certificate)
+    body = mature.try_http_json(port, "/api/last-finalized-block")
+    info = (body.get("blockInfo") or body) if isinstance(body, dict) else {}
+    certificate = mature.try_http_json(port, "/api/v1/checkpoint")
+    fields = (mature.certificate_fields(certificate) or {}
+              if isinstance(certificate, dict) else {})
+    verdict = (mature.try_post_json(port, "/api/v1/checkpoint/verify", certificate)
+               if isinstance(certificate, dict) else None)
     return {
         "height": info.get("blockNumber"),
         "block_hash": info.get("blockHash"),
@@ -157,6 +159,20 @@ def finalized(port: int) -> dict:
         "certificate": certificate,
         "verdict": verdict,
     }
+
+
+def wait_finalized_state(port: int, height: int, label: str) -> dict:
+    """The `/health` height can lead the route by a tick; retry the state view."""
+    deadline = time.monotonic() + WAIT_SECONDS
+    last: dict = {}
+    while time.monotonic() < deadline:
+        last = finalized(port)
+        if (last.get("height") is not None
+                and last["height"] >= height
+                and last.get("block_hash")):
+            return last
+        time.sleep(POLL_SECONDS)
+    raise TimeoutError(f"{label}: no finalized state in {WAIT_SECONDS:.0f}s; last={last}")
 
 
 def verified(value: object) -> bool:
@@ -275,8 +291,7 @@ def run_gate(args) -> int:
         except RuntimeError:
             pass
         devnet("up", "--validators", "3", "--fresh")
-        wait_finalized(HTTP_BASE, TARGET_HEIGHT, "the populated chain")
-        pre = finalized(HTTP_BASE)
+        pre = wait_finalized_state(HTTP_BASE, TARGET_HEIGHT, "the populated chain")
         pre["genesis_hash"] = genesis_hash(HTTP_BASE)
         result["arms"]["populated"] = pre
         capture(raw / "populated.json", json.dumps(pre, indent=2, sort_keys=True) + "\n")
@@ -295,9 +310,8 @@ def run_gate(args) -> int:
 
         devnet("up", "--validators", "3", "--data-volume", copy_volume_name,
                "--no-autopropose")
-        wait_finalized(HTTP_BASE, pre.get("height") or TARGET_HEIGHT,
-                       "the copied store's restart")
-        copied = finalized(HTTP_BASE)
+        copied = wait_finalized_state(HTTP_BASE, pre.get("height") or TARGET_HEIGHT,
+                                      "the copied store's restart")
         copied["genesis_hash"] = genesis_hash(HTTP_BASE)
         result["arms"]["copied"] = copied
         capture(raw / "copied.json", json.dumps(copied, indent=2, sort_keys=True) + "\n")
@@ -306,12 +320,12 @@ def run_gate(args) -> int:
         snapshots = snapshot_all("h0")
         devnet("up", "--validators", "3", "--data-volume", copy_volume_name,
                "--no-autopropose")
-        wait_finalized(HTTP_BASE, pre.get("height") or TARGET_HEIGHT,
-                       "the advance arm's start")
+        wait_finalized_state(HTTP_BASE, pre.get("height") or TARGET_HEIGHT,
+                             "the advance arm's start")
         devnet("propose")
-        advanced = wait_finalized(HTTP_BASE, (pre.get("height") or 0) + 1,
-                                  "the advance arm's next finalized block")
-        advanced_state = finalized(HTTP_BASE)
+        advanced_state = wait_finalized_state(
+            HTTP_BASE, (pre.get("height") or 0) + 1,
+            "the advance arm's next finalized block")
         advanced_state["genesis_hash"] = genesis_hash(HTTP_BASE)
         result["arms"]["advanced"] = advanced_state
         capture(raw / "advanced.json",
@@ -320,9 +334,8 @@ def run_gate(args) -> int:
         devnet("down")
         restore_all(snapshots)
         devnet("up", "--validators", "3", "--no-autopropose")
-        wait_finalized(HTTP_BASE, pre.get("height") or TARGET_HEIGHT,
-                       "the rollback arm's start")
-        rollback = finalized(HTTP_BASE)
+        rollback = wait_finalized_state(HTTP_BASE, pre.get("height") or TARGET_HEIGHT,
+                                        "the rollback arm's start")
         rollback["genesis_hash"] = genesis_hash(HTTP_BASE)
         result["arms"]["rollback"] = rollback
         capture(raw / "rollback.json", json.dumps(rollback, indent=2, sort_keys=True) + "\n")
