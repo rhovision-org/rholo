@@ -87,9 +87,11 @@ The layer records the real adapters and does not silently rewrite those rows.
 
 ```sh
 python3 -m unittest discover -s tests -p test_gate_principles.py -v
+python3 -m unittest discover -s tests -p test_gate_collect.py -v
 python3 -m unittest discover -s tests -p test_gate_criterion.py -v
 python3 -m unittest discover -s tests -p test_live_gate.py -v
 python3 -m unittest discover -s tests -p test_mainnet_gates.py -v
+python3 tools/gate-check.py --list
 python3 tools/check-mainnet-gates.py --check        # 111 gates, 0 met
 python3 tools/check-mainnet-gates.py --assert-closeable   # exits 3
 ```
