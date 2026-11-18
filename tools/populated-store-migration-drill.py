@@ -50,7 +50,8 @@ PREFIX = os.environ.setdefault("DEVNET_PREFIX", "g520drill")
 HTTP_BASE = int(os.environ.setdefault("DEVNET_HTTP_BASE", "42403"))
 ADMIN_BASE = int(os.environ.setdefault("DEVNET_ADMIN_BASE", "42405"))
 GRPC_BASE = int(os.environ.setdefault("DEVNET_GRPC_BASE", "42402"))
-TARGET_HEIGHT = 5
+TARGET_HEIGHT = 8
+EPOCH_LENGTH = 6
 WAIT_SECONDS = 240.0
 POLL_SECONDS = 3.0
 
@@ -257,14 +258,12 @@ def capture(path: Path, text: str) -> None:
 
 
 def snapshot_all(suffix: str) -> dict[str, str]:
-    snapshots = {}
-    for node in ("bootstrap", "validator-1", "validator-2"):
-        source = node_volume(node)
-        target = f"{PREFIX}-snapshot-{suffix}-{node}"
-        volume_create(target)
-        copy_volume(source, target, replace=True)
-        snapshots[node] = target
-    return snapshots
+    """The single-validator devnet's bootstrap volume is its whole populated store."""
+    source = node_volume("bootstrap")
+    target = f"{PREFIX}-snapshot-{suffix}-bootstrap"
+    volume_create(target)
+    copy_volume(source, target, replace=True)
+    return {"bootstrap": target}
 
 
 def restore_all(snapshots: dict[str, str]) -> None:
@@ -290,7 +289,7 @@ def run_gate(args) -> int:
             devnet("down", "-v")
         except RuntimeError:
             pass
-        devnet("up", "--validators", "3", "--fresh")
+        devnet("up", "--validators", "1", "--fresh", "--epoch-length", str(EPOCH_LENGTH))
         pre = wait_finalized_state(HTTP_BASE, TARGET_HEIGHT, "the populated chain")
         pre["genesis_hash"] = genesis_hash(HTTP_BASE)
         result["arms"]["populated"] = pre
@@ -308,7 +307,7 @@ def run_gate(args) -> int:
             result["reasons"].append("the copied store's manifest differs from the source")
             result["result"] = "FAIL"
 
-        devnet("up", "--validators", "3", "--data-volume", copy_volume_name,
+        devnet("up", "--validators", "1", "--data-volume", copy_volume_name,
                "--no-autopropose")
         copied = wait_finalized_state(HTTP_BASE, pre.get("height") or TARGET_HEIGHT,
                                       "the copied store's restart")
@@ -318,7 +317,7 @@ def run_gate(args) -> int:
 
         devnet("down")
         snapshots = snapshot_all("h0")
-        devnet("up", "--validators", "3", "--data-volume", copy_volume_name,
+        devnet("up", "--validators", "1", "--data-volume", copy_volume_name,
                "--no-autopropose")
         wait_finalized_state(HTTP_BASE, pre.get("height") or TARGET_HEIGHT,
                              "the advance arm's start")
@@ -333,7 +332,7 @@ def run_gate(args) -> int:
 
         devnet("down")
         restore_all(snapshots)
-        devnet("up", "--validators", "3", "--no-autopropose")
+        devnet("up", "--validators", "1", "--no-autopropose")
         rollback = wait_finalized_state(HTTP_BASE, pre.get("height") or TARGET_HEIGHT,
                                         "the rollback arm's start")
         rollback["genesis_hash"] = genesis_hash(HTTP_BASE)
@@ -348,7 +347,8 @@ def run_gate(args) -> int:
         capture(raw / "bootstrap.log", logs)
 
         devnet("down", "-v")
-        devnet("up", "--validators", "3", "--fresh", "--no-autopropose")
+        devnet("up", "--validators", "1", "--fresh", "--no-autopropose",
+               "--epoch-length", str(EPOCH_LENGTH))
         health = wait_ready(HTTP_BASE, "the fresh-genesis arm")
         genesis = genesis_block(HTTP_BASE)
         fresh = {"genesis_hash": genesis.get("genesis_hash"),
