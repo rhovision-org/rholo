@@ -74,6 +74,21 @@ class AcceptancePredicateTests(unittest.TestCase):
             "thread panicked: replay divergence")
         self.assertEqual(verdict, "FAIL")
 
+    def test_a_different_certificate_digest_is_not_a_state_divergence(self):
+        # The digest commits to the live fringe (fringe hashes, metadata/history
+        # roots), which can move between a running node and a restart at the same
+        # anchor; the identity is the anchor/post-state, not the digest.
+        verdict, reasons = drill.populated_acceptance(
+            PRE, dict(COPIED, digest="9" * 64), ROLLBACK, ADVANCED, FRESH)
+        self.assertEqual(verdict, "PASS", reasons)
+
+    def test_a_different_checkpoint_anchor_fails(self):
+        verdict, _ = drill.populated_acceptance(
+            dict(PRE, anchor="a" * 64, anchor_post_state="b" * 64),
+            dict(COPIED, anchor="c" * 64, anchor_post_state="b" * 64),
+            ROLLBACK, ADVANCED, FRESH)
+        self.assertEqual(verdict, "FAIL")
+
     def test_a_missing_certificate_verdict_fails(self):
         verdict, _ = drill.populated_acceptance(
             PRE, dict(COPIED, verified=False), ROLLBACK, ADVANCED, FRESH)

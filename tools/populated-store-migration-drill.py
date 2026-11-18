@@ -13,8 +13,10 @@ Arms:
   2. copy the bootstrap's store byte-for-byte to a second volume and compare the
      file manifests (lock.mdb excluded);
   3. restart the bootstrap from the copy; require the same genesis, height,
-     finalized block, post-state and checkpoint digest, and the node's own
-     `POST /api/v1/checkpoint/verify` verdict;
+     finalized block, post-state, checkpoint anchor/post-state and the node's
+     own `POST /api/v1/checkpoint/verify` verdict (the certificate digest
+     commits to the live fringe, so it is recorded but not compared across
+     restarts);
   4. advance to H1, snapshot the H0 stores, restore them and require the chain
      back at H0 - not H1;
   5. run a fresh-genesis arm and require it **not** to substitute for the
@@ -230,16 +232,22 @@ def populated_acceptance(pre: dict, copied: dict, rollback: dict,
         reasons.append("the copy restart serves a different finalized block")
     if copied.get("post_state") != pre.get("post_state"):
         reasons.append("the copy restart serves a different post-state")
-    if copied.get("digest") != pre.get("digest"):
-        reasons.append("the copy restart's checkpoint digest differs")
+    if pre.get("anchor") and copied.get("anchor") != pre.get("anchor"):
+        reasons.append("the copy restart's checkpoint anchor differs")
+    if (pre.get("anchor_post_state")
+            and copied.get("anchor_post_state") != pre.get("anchor_post_state")):
+        reasons.append("the copy restart's anchor post-state differs")
     if copied.get("verified") is not True:
         reasons.append("the copied certificate did not verify")
     if rollback.get("height") != pre.get("height"):
         reasons.append("the rollback did not return to the populated height")
     if rollback.get("block_hash") != pre.get("block_hash"):
         reasons.append("the rollback serves a different finalized block")
-    if rollback.get("digest") != pre.get("digest"):
-        reasons.append("the rollback's checkpoint digest differs")
+    if pre.get("anchor") and rollback.get("anchor") != pre.get("anchor"):
+        reasons.append("the rollback's checkpoint anchor differs")
+    if (pre.get("anchor_post_state")
+            and rollback.get("anchor_post_state") != pre.get("anchor_post_state")):
+        reasons.append("the rollback's anchor post-state differs")
     if advanced and advanced.get("height", -1) <= pre.get("height", -1):
         reasons.append("the advance arm did not move past the populated height")
     if _fresh_is_substitute(fresh, pre):
