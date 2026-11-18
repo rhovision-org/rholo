@@ -1628,10 +1628,7 @@ mod differential {
                 "a negative free-count must be refused at the proto boundary"
             );
             proto.free_count = 0;
-            assert!(
-                bind_pattern_from_proto(&proto).is_ok(),
-                "zero is a count"
-            );
+            assert!(bind_pattern_from_proto(&proto).is_ok(), "zero is a count");
         }
 
         /// The `from_proto` half is **partial** where the proto has an optional inner message: a

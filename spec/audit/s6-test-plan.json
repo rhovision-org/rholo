@@ -569,7 +569,7 @@
       "cargo_target": "lib",
       "mutation": {
         "file": "casper/src/runtime_manager.rs",
-        "before": "        cost: u64::try_from(value).map_err(|_| {\n            RuntimeRunError::Other(format!(\"deploy cost is negative: {value}\"))\n        })?,",
+        "before": "        cost: u64::try_from(value)\n            .map_err(|_| RuntimeRunError::Other(format!(\"deploy cost is negative: {value}\")))?,",
         "after": "        cost: value as u64,",
         "description": "Wrap a negative cost into a huge u64; the negative-cost witness must fail."
       },

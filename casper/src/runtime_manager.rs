@@ -2435,9 +2435,8 @@ impl RuntimeManager {
 /// refused here rather than wrapping into a huge positive cost.
 fn pcost_from_i64(value: i64) -> Result<PCost, RuntimeRunError> {
     Ok(PCost {
-        cost: u64::try_from(value).map_err(|_| {
-            RuntimeRunError::Other(format!("deploy cost is negative: {value}"))
-        })?,
+        cost: u64::try_from(value)
+            .map_err(|_| RuntimeRunError::Other(format!("deploy cost is negative: {value}")))?,
     })
 }
 
@@ -2451,7 +2450,10 @@ mod tests {
 
     #[test]
     fn a_negative_cost_is_refused_before_it_becomes_a_pcost() {
-        assert!(pcost_from_i64(-1).is_err(), "a negative cost must not become a u64");
+        assert!(
+            pcost_from_i64(-1).is_err(),
+            "a negative cost must not become a u64"
+        );
         match pcost_from_i64(0) {
             Ok(cost) => assert_eq!(cost.cost, 0),
             Err(_) => panic!("zero must be accepted"),

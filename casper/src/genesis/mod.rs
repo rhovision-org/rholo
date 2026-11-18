@@ -740,8 +740,7 @@ mod tests {
         let mut proof_of_stake = pos();
         proof_of_stake.pos_multi_sig_public_keys = vec![base16::encode(&[3u8; 65])];
         let genesis = build_pos_genesis(&proof_of_stake, None);
-        let multisig = ModelsValidator::try_from(&[3u8; 65][..])
-            .expect("a 65-byte validator key");
+        let multisig = ModelsValidator::try_from(&[3u8; 65][..]).expect("a 65-byte validator key");
         assert!(
             genesis.trusted.contains(&multisig),
             "the configured multisig key is not in the trusted stakeholder set"
