@@ -13787,3 +13787,45 @@ The code and checker changes do not manufacture evidence.
 **State.** 439 findings — **0 todo, 2 in progress (C343, C357), 437 done**. 111 registered
 gates, 0 met; 47 dispositions (46 reviewable, 1 withdrawn); register S6 45 reviewable, 3 owes,
 1 superseded; no row is flipped; no release is claimed.
+
+## 180. Principle-level gate criteria: the executable instance beside the prose bar (2026-11-18)
+
+The medium pass left a different blocker: the checks that support the external gates are
+written for one campaign and, in several tools, the instance constants are in the code
+(`G428-M4`/`G428-M5` and the 270–600 s window; `ISSUE=584` and exactly four validators; block 6
+and the B/C/D routes; the C357 shapes and 600 s cap; the M3 trigger; four named queue
+bindings). A test that knows only one instance cannot be run by another party and cannot show
+that the criterion is falsifiable before the campaign.
+
+This pass adds a small layer instead of rewriting the checkers. `spec/audit/gate-criteria.json`
+gives every executable external gate (G428-M1..M5, G584-G1..G5, C343, C357) a closed principle,
+the instance parameters, the required observation fields, the declared negative controls and
+the legacy adapter. `tools/gate-principles.py` evaluates the principle over one normalised
+observation document; `tools/gate-check.py` is the CLI (`PASS` 0, `FAIL` 1, `PRECONDITION` 3).
+`tests/test_gate_principles.py` runs the same assertions over every entry: satisfiable,
+falsifiable (each control produces its declared FAIL/PRECONDITION), precondition-honest, total
+on malformed input, non-vacuous, owner-independent (renaming actors changes nothing), and
+covered against the register. A changed prose bar makes the entry stale through
+`pass_condition_sha256`.
+
+The deep semantics stay in the existing checkers, so there is one implementation. The surgical
+change is the other direction: the validator count, the healing window, the C357 cap, the queue
+bindings and the C343 table path become **parameters** with the current values as defaults. A
+future campaign supplies a config, not a patch.
+
+`tools/gate-collect.py` is the read-only instrument for any observer count: a config names
+aliases, routes, subject and window; it reuses the `live-gate.py` sampler and
+`release-pin-probe.py` observe path. `G584-G2/G3/G5` remain attestation rows in the register;
+their executable criterion is an additional measurement binding, not a reinterpretation of the
+frozen bar. `G428-M6`, `G584-G6` and `TA-C1/C2` keep a human verdict under one typed record.
+
+**Why believed.** Every entry declares at least one contradictory control and the meta-test
+requires it to fail; a missing required field must be PRECONDITION, never PASS; the malformed
+corpus is seeded and deterministic; renaming every alias must not change a verdict; and the
+coverage equality refuses an executable gate without a criterion or a criterion without a row.
+The old negative-control suites stay in place and must stay green.
+
+**What it does not claim.** A `PASS` is a record measurement, not a `met` promotion. No gate is
+met, no row is flipped, no campaign ran, no evidence is invented. The multi-host campaigns, the
+measured soak, the M5 historical bundle and the live G1–G6 run remain external. The register
+stays 111 gates / 0 met; `--assert-closeable` and the #51 tracker still exit 3.

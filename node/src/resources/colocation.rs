@@ -42,4 +42,44 @@ mod tests {
         assert_eq!(count_rnode_processes(&dir), 1);
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn the_count_is_exactly_the_numeric_rnode_entries() {
+        let cases: &[(&[(&str, &str)], usize)] = &[
+            (
+                &[
+                    ("101", "rnode\n"),
+                    ("202", "bash\n"),
+                    ("not-a-pid", "rnode\n"),
+                ],
+                1,
+            ),
+            (
+                &[
+                    ("101", "rnode\n"),
+                    ("202", " rnode \n"),
+                    ("303", "rnodex\n"),
+                ],
+                2,
+            ),
+            (&[("101", "Rnode\n"), ("202", "\n"), ("303", "")], 0),
+            (&[("0001", "rnode\n")], 1),
+            (&[], 0),
+        ];
+        for (index, (entries, expected)) in cases.iter().enumerate() {
+            let dir =
+                std::env::temp_dir().join(format!("rnode-proc-{}-{index}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            for (pid, comm) in *entries {
+                std::fs::create_dir_all(dir.join(pid)).unwrap();
+                if !comm.is_empty() {
+                    std::fs::write(dir.join(pid).join("comm"), comm).unwrap();
+                }
+            }
+            assert_eq!(count_rnode_processes(&dir), *expected, "case {index}");
+            std::fs::remove_dir_all(&dir).ok();
+        }
+        let absent = std::env::temp_dir().join(format!("rnode-proc-absent-{}", std::process::id()));
+        assert_eq!(count_rnode_processes(&absent), 0);
+    }
 }

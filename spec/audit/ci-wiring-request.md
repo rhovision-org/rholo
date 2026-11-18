@@ -30,6 +30,27 @@ Add the register and table paths to any path-gated job that should run on a chan
 itself (`tools/check-bounded-ingress-queues.sh --gate`) already runs in the lint job; the new
 test proves the gate's own absent/unbounded/unpinned/unknown cases.
 
+## Principle-level criteria (2026-11-18)
+
+Add beside the runs above:
+
+```sh
+python3 -m unittest discover -s tests -p test_gate_principles.py -v
+python3 -m unittest discover -s tests -p test_gate_collect.py -v
+python3 tools/gate-check.py --list
+```
+
+`test_gate_principles.py` is the generic suite over every entry in
+`spec/audit/gate-criteria.json`: a satisfying observation, each declared negative control, each
+missing required observation, malformed input, non-vacuity, actor-name independence and coverage
+against the external register. `check-mainnet-gates.py::validate` already validates the registry,
+and that function runs inside `check-hardfork-51-closeout.py` (which is wired), so a drift in
+the criteria coverage fails today even before this test is added. `gate-collect.py` is a
+read-only operator tool; it is not run in CI.
+
+Add `spec/audit/gate-criteria.json` and `spec/audit/gate-principles-20261118.md` to the
+path-gated job's paths.
+
 ## Local equivalent
 
 The PR checklist runs the same commands; `check-mainnet-gates.py --assert-closeable` and

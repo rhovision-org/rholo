@@ -80,7 +80,7 @@ mod tests {
     use rchain_models::comm::protocol::Protocol;
     use rchain_shared::refined::Port;
 
-    use crate::errors::CommErr;
+    use crate::errors::{CommErr, CommError};
     use crate::peer_node::{NodeIdentifier, PeerNode};
     use crate::rp::rp_conf::ClearConnectionsConf;
 
@@ -111,6 +111,27 @@ mod tests {
         async fn stream(&self, peers: &[PeerNode], blob: Blob) -> Vec<CommErr<()>> {
             self.streams.lock().unwrap().push((peers.to_vec(), blob));
             peers.iter().map(|_| Ok(())).collect()
+        }
+    }
+
+    /// A transport with a scripted outcome vector: the single-peer helper must select this peer's
+    /// outcome, whatever the rest of the script says.
+    struct ScriptedTransport {
+        outcomes: Vec<CommErr<()>>,
+    }
+
+    #[async_trait]
+    impl TransportLayer for ScriptedTransport {
+        async fn send(&self, _peer: &PeerNode, _msg: Protocol) -> CommErr<()> {
+            unreachable!("the scripted transport only answers stream")
+        }
+
+        async fn broadcast(&self, _peers: &[PeerNode], _msg: Protocol) -> Vec<CommErr<()>> {
+            unreachable!("the scripted transport only answers stream")
+        }
+
+        async fn stream(&self, _peers: &[PeerNode], _blob: Blob) -> Vec<CommErr<()>> {
+            self.outcomes.clone()
         }
     }
 
@@ -267,6 +288,38 @@ mod tests {
                 assert_eq!(p, &packet());
             }
             other => panic!("expected a packet protocol, got {other:?}"),
+        }
+    }
+
+    /// For every scripted outcome vector, the single-peer helper returns the **first** peer's
+    /// outcome (and an empty vector is `Ok`, because no peer refused). Extras and order are not
+    /// silently reinterpreted.
+    #[tokio::test]
+    async fn stream1_selects_the_first_peers_outcome_for_every_script() {
+        let remote = peer("remote", 40401);
+        let failure = Err(CommError::TimeOut);
+        let scripts = vec![
+            vec![],
+            vec![Ok(())],
+            vec![failure.clone()],
+            vec![Ok(()), failure.clone()],
+            vec![failure.clone(), Ok(())],
+            vec![failure.clone(), failure.clone(), Ok(())],
+        ];
+        for outcomes in scripts {
+            let expected = outcomes.first().cloned().unwrap_or(Ok(()));
+            let transport = ScriptedTransport {
+                outcomes: outcomes.clone(),
+            };
+            let blob = Blob {
+                sender: peer("local", 40400),
+                packet: packet(),
+            };
+            assert_eq!(
+                stream1(&transport, &remote, blob).await,
+                expected,
+                "script {outcomes:?}"
+            );
         }
     }
 }
