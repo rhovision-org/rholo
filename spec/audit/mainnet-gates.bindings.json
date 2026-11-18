@@ -2,13 +2,27 @@
   "schema": 1,
   "generated": "2026-11-18",
   "met_ratchet": {
-    "minimum": 5,
+    "minimum": 19,
     "required_ids": [
       "G520-MIGRATION",
       "S6-25bfdbe2c179c81e",
       "S6-c7536b90bd39cf71",
       "S6-91b05027373a3107",
-      "S6-d7dd0a06a5dee537"
+      "S6-d7dd0a06a5dee537",
+      "S6-002725fa6a14a386",
+      "S6-0879bf292d995e9f",
+      "S6-0f37971fba3a1c92",
+      "S6-4a1606a2375f4e97",
+      "S6-5896ceb7cf2b4804",
+      "S6-83825d04fdb174bc",
+      "S6-a03b7b63647b8746",
+      "S6-aff8e713fee0981e",
+      "S6-de66e3b5b934584f",
+      "S6-f4e50770cc349ad3",
+      "S6-fb6f884e759d7af7",
+      "S6-7b9fe37e74b318db",
+      "S6-c59c38eeab097a7b",
+      "S6-d39645b95737497d"
     ]
   },
   "bindings": [
@@ -175,6 +189,468 @@
         "source_sha": "8b4c6b21ca9c6eea266a73ce9bb8127f914ff510",
         "binary_sha256": "284ceca58b39178508d3811a670134ea3930c2be56ea6c58e61fa33a9b25e29e",
         "record": "spec/audit/evidence/s6-d7dd0a06a5dee537-20261118"
+      }
+    },
+    {
+      "gate_id": "S6-002725fa6a14a386",
+      "witness_kind": "rust-unit",
+      "witness_ref": "block-storage/src/dag/liveness.rs::n8_proposer_outlier_cannot_set_the_staleness_clock",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Let every bonded sender set the staleness clock; the live-weight-set witness must fail.",
+      "does_not_claim": "A current-build regression witness; not a historical replay or a coordinated rollout.",
+      "witness_binding": {
+        "asserts_sha256": "9649b763a2d6377d6f43ee1f1be857208c6b91b110ca669f861b169370061ae5",
+        "control": {
+          "description": "Let every bonded sender set the staleness clock; the live-weight-set witness must fail.",
+          "control_of": "block-storage/src/dag/liveness.rs::n8_proposer_outlier_cannot_set_the_staleness_clock",
+          "mutation": {
+            "file": "block-storage/src/dag/liveness.rs",
+            "before": "                .is_some_and(|h| heights_behind(tip, *h) <= window)",
+            "after": "                .is_some_and(|h| heights_behind(tip, *h) <= i64::MAX)"
+          },
+          "test": "block-storage/src/dag/liveness.rs::n8_proposer_outlier_cannot_set_the_staleness_clock",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-002725fa6a14a386-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "b2b488397fda3cbbd945e7a412ce96c1eccb6259b6b6c3c2e757be0e77a6cebc",
+        "source_sha": "98e8681f156ab0d171fdd7f727576d25744334f4",
+        "binary_sha256": "44044386d0ab84aa2ae2804dbd512514db96c5f75eb1ae26cbe1c0b8d4c67257",
+        "record": "spec/audit/evidence/s6-002725fa6a14a386-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-002725fa6a14a386-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-0879bf292d995e9f",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/dag.rs::insert_rejects_equivocation_same_seq_num",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Disable the H-1 insert check; the equivocation witness must fail.",
+      "does_not_claim": "A current-build regression witness for the insert arm; the restore arm and a live rollout remain separate.",
+      "witness_binding": {
+        "asserts_sha256": "8129016f04fe7de9f7ad2308c78216cf281b597f0ba8049e832a41c7557f1c07",
+        "control": {
+          "description": "Disable the H-1 insert check; the equivocation witness must fail.",
+          "control_of": "casper/src/dag.rs::insert_rejects_equivocation_same_seq_num",
+          "mutation": {
+            "file": "casper/src/dag.rs",
+            "before": "            // enter the DAG nor stall finalization.\n            let equivocating = {",
+            "after": "            // enter the DAG nor stall finalization.\n            let equivocating = false; {"
+          },
+          "test": "casper/src/dag.rs::insert_rejects_equivocation_same_seq_num",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-0879bf292d995e9f-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "6464976980b1ed65d0be71a373ca45cffb4cc8c13b4b113f2c31ebc3cf60636b",
+        "source_sha": "98e8681f156ab0d171fdd7f727576d25744334f4",
+        "binary_sha256": "287370e1473811d206daf9c37fde3dc48c4ea4360248c5a99c101c56012f5148",
+        "record": "spec/audit/evidence/s6-0879bf292d995e9f-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-0879bf292d995e9f-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-0f37971fba3a1c92",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/validate.rs::a_deploy_that_its_named_key_did_not_sign_is_refused",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Accept every deploy signature; the forged-deploy witness must fail.",
+      "does_not_claim": "A current-build regression witness; no historical replay or client rollout is claimed.",
+      "witness_binding": {
+        "asserts_sha256": "20ae1e50afe1055c74dac04f9e498764b35b74415875e1cd345c93f0eff05d00",
+        "control": {
+          "description": "Accept every deploy signature; the forged-deploy witness must fail.",
+          "control_of": "casper/src/validate.rs::a_deploy_that_its_named_key_did_not_sign_is_refused",
+          "mutation": {
+            "file": "casper/src/validate.rs",
+            "before": "    if b.state.deploys.iter().all(|d| d.deploy.verify_signature()) {",
+            "after": "    if true || b.state.deploys.iter().all(|d| d.deploy.verify_signature()) {"
+          },
+          "test": "casper/src/validate.rs::a_deploy_that_its_named_key_did_not_sign_is_refused",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-0f37971fba3a1c92-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "0b68a8bf6dc78e459b7f8f1384b195bdafe688e7afd7e8229e01df5b0dda7712",
+        "source_sha": "98e8681f156ab0d171fdd7f727576d25744334f4",
+        "binary_sha256": "287370e1473811d206daf9c37fde3dc48c4ea4360248c5a99c101c56012f5148",
+        "record": "spec/audit/evidence/s6-0f37971fba3a1c92-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-0f37971fba3a1c92-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-4a1606a2375f4e97",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/validate.rs::equivocation_evidence_is_proved_only_by_a_signed_conflict",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Skip the offender's signature re-check; the signed-conflict witness must fail.",
+      "does_not_claim": "A current-build regression witness for the proof check; wire carriage and a live restart remain separate.",
+      "witness_binding": {
+        "asserts_sha256": "fde9a0b5386cd32b7756db409ed5013d90d50a740200d8e48cb5077563c5c66b",
+        "control": {
+          "description": "Skip the offender's signature re-check; the signed-conflict witness must fail.",
+          "control_of": "casper/src/validate.rs::equivocation_evidence_is_proved_only_by_a_signed_conflict",
+          "mutation": {
+            "file": "casper/src/validate.rs",
+            "before": "    if !proved.is_signed_by(offender) {",
+            "after": "    if false && !proved.is_signed_by(offender) {"
+          },
+          "test": "casper/src/validate.rs::equivocation_evidence_is_proved_only_by_a_signed_conflict",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-4a1606a2375f4e97-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "2ee393c4d6357669fbc8a9c609fa2429b92980690d517d058bb4708c9fb2a7db",
+        "source_sha": "98e8681f156ab0d171fdd7f727576d25744334f4",
+        "binary_sha256": "287370e1473811d206daf9c37fde3dc48c4ea4360248c5a99c101c56012f5148",
+        "record": "spec/audit/evidence/s6-4a1606a2375f4e97-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-4a1606a2375f4e97-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-5896ceb7cf2b4804",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/validate.rs::a_failed_parent_still_sets_its_childs_height",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Skip failed parents in the height maximum; the failed-parent witness must fail.",
+      "does_not_claim": "A current-build regression witness; the historical fork-point rollout is separate.",
+      "witness_binding": {
+        "asserts_sha256": "3c90dc0f051279448e260c95c9a69b732bd09955506c4bd1b9166f44cd5cd664",
+        "control": {
+          "description": "Skip failed parents in the height maximum; the failed-parent witness must fail.",
+          "control_of": "casper/src/validate.rs::a_failed_parent_still_sets_its_childs_height",
+          "mutation": {
+            "file": "casper/src/validate.rs",
+            "before": "        max_block_number = max_block_number.max(i64::from(meta.block_num));",
+            "after": "        if !meta.validation_failed {\n            max_block_number = max_block_number.max(i64::from(meta.block_num));\n        }"
+          },
+          "test": "casper/src/validate.rs::a_failed_parent_still_sets_its_childs_height",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-5896ceb7cf2b4804-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "a0167acb09eac718d11b679f89813b1a589685f383c3ee168623ea0932e16493",
+        "source_sha": "98e8681f156ab0d171fdd7f727576d25744334f4",
+        "binary_sha256": "287370e1473811d206daf9c37fde3dc48c4ea4360248c5a99c101c56012f5148",
+        "record": "spec/audit/evidence/s6-5896ceb7cf2b4804-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-5896ceb7cf2b4804-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-83825d04fdb174bc",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/dag.rs::h1b_a_failed_parent_above_the_childs_height_is_refused",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Accept every block number (both the descent bound and the height maximum); the H1b witness must fail.",
+      "does_not_claim": "A current-build regression witness; the historical replay and rollout remain separate.",
+      "witness_binding": {
+        "asserts_sha256": "01f68586fa8de303e210ccc857d46396108dcd9f89dd491f38f8e260217fb893",
+        "control": {
+          "description": "Accept every block number (both the descent bound and the height maximum); the H1b witness must fail.",
+          "control_of": "casper/src/dag.rs::h1b_a_failed_parent_above_the_childs_height_is_refused",
+          "mutation": {
+            "file": "casper/src/validate.rs",
+            "before": "    let mut max_block_number = -1i64;\n    for j in &b.justifications {\n        let meta = dag\n            .lookup(j)\n            .await?\n            .ok_or_else(|| format!(\"missing justification {}\", j.to_hex()))?;\n        // The descent bound, for *every* resolved parent (H1b).\n        if i64::from(meta.block_num) >= i64::from(b.block_number) {\n            return Ok(Err(BlockStatus::InvalidBlockNumber));\n        }\n        // The maximum, over **every** resolved parent. A failed block still counts: skipping it made\n        // the failure hide the block, refusing its child for the parent's record alone (AUDIT C173).\n        max_block_number = max_block_number.max(i64::from(meta.block_num));\n    }\n    if max_block_number + 1 == i64::from(b.block_number) {\n        Ok(Ok(()))\n    } else {\n        Ok(Err(BlockStatus::InvalidBlockNumber))\n    }",
+            "after": "    Ok(Ok(()))"
+          },
+          "test": "casper/src/dag.rs::h1b_a_failed_parent_above_the_childs_height_is_refused",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-83825d04fdb174bc-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "156051dfbf832f70f4a5f4060506d188ba69b3477b4179f9b840f6796e491567",
+        "source_sha": "98e8681f156ab0d171fdd7f727576d25744334f4",
+        "binary_sha256": "287370e1473811d206daf9c37fde3dc48c4ea4360248c5a99c101c56012f5148",
+        "record": "spec/audit/evidence/s6-83825d04fdb174bc-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-83825d04fdb174bc-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-a03b7b63647b8746",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/validate.rs::a_block_justifying_more_parents_than_the_network_allows_is_refused",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Change the parent bound from at-most to fewer-than; the over-limit witness must fail.",
+      "does_not_claim": "A current-build regression witness; the committed-bound rollout is a separate release obligation.",
+      "witness_binding": {
+        "asserts_sha256": "cc20563c3257f6b2f10ad3c417390e237183b0235b647752123319fba96d4a1c",
+        "control": {
+          "description": "Change the parent bound from at-most to fewer-than; the over-limit witness must fail.",
+          "control_of": "casper/src/validate.rs::a_block_justifying_more_parents_than_the_network_allows_is_refused",
+          "mutation": {
+            "file": "casper/src/validate.rs",
+            "before": "    if max_number_of_parents <= 0 || b.justifications.len() as u128 <= max_number_of_parents as u128",
+            "after": "    if max_number_of_parents <= 0 || (b.justifications.len() as u128) < max_number_of_parents as u128"
+          },
+          "test": "casper/src/validate.rs::a_block_justifying_more_parents_than_the_network_allows_is_refused",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-a03b7b63647b8746-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "1dd6449fd32f06101a08978e64d46212a95e558305dcb2beceece6aba368d6bb",
+        "source_sha": "22f17d10310859262924799a5f594ed6c12c13ba",
+        "binary_sha256": "287370e1473811d206daf9c37fde3dc48c4ea4360248c5a99c101c56012f5148",
+        "record": "spec/audit/evidence/s6-a03b7b63647b8746-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-a03b7b63647b8746-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-aff8e713fee0981e",
+      "witness_kind": "rust-unit",
+      "witness_ref": "block-storage/src/dag/finalizer.rs::check_min_messages_needs_all_bonded_senders",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Compare counts instead of sender sets; the non-bonded-sender witness must fail.",
+      "does_not_claim": "A current-build regression witness; the live finality campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "1d532eda38707668defff47e413d8b0bd4084c6fcd442379280d4a174906a0a8",
+        "control": {
+          "description": "Compare counts instead of sender sets; the non-bonded-sender witness must fail.",
+          "control_of": "block-storage/src/dag/finalizer.rs::check_min_messages_needs_all_bonded_senders",
+          "mutation": {
+            "file": "block-storage/src/dag/finalizer.rs",
+            "before": "        min_msgs.len() == bonds_map.len() && minimum_senders == bonded_senders",
+            "after": "        min_msgs.len() == bonds_map.len() && minimum_senders.len() == bonded_senders.len()"
+          },
+          "test": "block-storage/src/dag/finalizer.rs::check_min_messages_needs_all_bonded_senders",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-aff8e713fee0981e-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "c190b7bbd3f4bf27d059740e2f38b796262ba028f3f7f3a81717300af980cf7a",
+        "source_sha": "22f17d10310859262924799a5f594ed6c12c13ba",
+        "binary_sha256": "44044386d0ab84aa2ae2804dbd512514db96c5f75eb1ae26cbe1c0b8d4c67257",
+        "record": "spec/audit/evidence/s6-aff8e713fee0981e-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-aff8e713fee0981e-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-de66e3b5b934584f",
+      "witness_kind": "rust-unit",
+      "witness_ref": "block-storage/src/dag/finalizer.rs::the_seer_test_is_containment_of_the_partition",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Require equality instead of containment; the non-live-seer witness must fail.",
+      "does_not_claim": "A current-build regression witness; the partition campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "9a95e127ef983ce394da93d41058a06a9547bdac27d68cb4fb5789c8f0d34eea",
+        "control": {
+          "description": "Require equality instead of containment; the non-live-seer witness must fail.",
+          "control_of": "block-storage/src/dag/finalizer.rs::the_seer_test_is_containment_of_the_partition",
+          "mutation": {
+            "file": "block-storage/src/dag/finalizer.rs",
+            "before": "    !seen_by.is_empty() && seen_by.values().all(|v| must_be_seen.is_subset(v))",
+            "after": "    !seen_by.is_empty() && seen_by.values().all(|v| v == must_be_seen)"
+          },
+          "test": "block-storage/src/dag/finalizer.rs::the_seer_test_is_containment_of_the_partition",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-de66e3b5b934584f-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "c947f4a335f622e031af9f4ca886a42469e9f599c5ab181e5d21517c3fdf3df6",
+        "source_sha": "22f17d10310859262924799a5f594ed6c12c13ba",
+        "binary_sha256": "44044386d0ab84aa2ae2804dbd512514db96c5f75eb1ae26cbe1c0b8d4c67257",
+        "record": "spec/audit/evidence/s6-de66e3b5b934584f-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-de66e3b5b934584f-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-f4e50770cc349ad3",
+      "witness_kind": "rust-integration",
+      "witness_ref": "node/tests/lean_stake_corpus.rs::the_node_agrees_with_the_model_on_every_supermajority_pair",
+      "witness_scope": "integration",
+      "locality": "integration",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Treat exactly two thirds as a supermajority; the boundary-corpus witness must fail.",
+      "does_not_claim": "A current-build regression witness; the live N=8 finality campaign is separate (TA-C1).",
+      "witness_binding": {
+        "asserts_sha256": "f707e8fab77b1b9b860752e9419f78618c190afff3a8ccca1c7f765e0d95ebd5",
+        "control": {
+          "description": "Treat exactly two thirds as a supermajority; the boundary-corpus witness must fail.",
+          "control_of": "node/tests/lean_stake_corpus.rs::the_node_agrees_with_the_model_on_every_supermajority_pair",
+          "mutation": {
+            "file": "sdk/src/consensus.rs",
+            "before": "    stake * 3 > total_stake * 2",
+            "after": "    stake * 3 >= total_stake * 2"
+          },
+          "test": "node/tests/lean_stake_corpus.rs::the_node_agrees_with_the_model_on_every_supermajority_pair",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-f4e50770cc349ad3-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "f31dfd2c7bf5d4b52233a5b3da7a77e2fc857208800e084d9b51f12ae20be47b",
+        "source_sha": "22f17d10310859262924799a5f594ed6c12c13ba",
+        "binary_sha256": "08e9f7033d52d1a4162e5a773e51dd48b47fdd06973fa0635f9b533f37fd2537",
+        "record": "spec/audit/evidence/s6-f4e50770cc349ad3-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-f4e50770cc349ad3-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-fb6f884e759d7af7",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/validate.rs::a_block_timestamp_is_never_a_validity_input",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Make the header time a validity input; the timestamp-independence witness must fail.",
+      "does_not_claim": "A current-build regression witness; the old/new validator comparison and coordinated activation remain release obligations.",
+      "witness_binding": {
+        "asserts_sha256": "2b9ad733b6de4cd3a745903995ae54fc1f2c5598a9650730ac2e6f23e0e93e62",
+        "control": {
+          "description": "Make the header time a validity input; the timestamp-independence witness must fail.",
+          "control_of": "casper/src/validate.rs::a_block_timestamp_is_never_a_validity_input",
+          "mutation": {
+            "file": "casper/src/validate.rs",
+            "before": "    if let Err(status) = justification_regressions(dag, block).await? {",
+            "after": "    if block.timestamp == 0 {\n        return Ok(Err(BlockStatus::InvalidBlockNumber));\n    }\n    if let Err(status) = justification_regressions(dag, block).await? {"
+          },
+          "test": "casper/src/validate.rs::a_block_timestamp_is_never_a_validity_input",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-fb6f884e759d7af7-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "00d36e05c22e32604a8e44f6052c7b5fb6ff7c5fbd400d234a0316d6ab8aca60",
+        "source_sha": "22f17d10310859262924799a5f594ed6c12c13ba",
+        "binary_sha256": "287370e1473811d206daf9c37fde3dc48c4ea4360248c5a99c101c56012f5148",
+        "record": "spec/audit/evidence/s6-fb6f884e759d7af7-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-fb6f884e759d7af7-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-7b9fe37e74b318db",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/genesis/mod.rs::the_validity_bounds_are_committed_in_the_genesis_params",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Drop the committed fee floor; the genesis-params witness must fail.",
+      "does_not_claim": "A current-build regression witness; the genesis-hash/config/restore acceptance is a release obligation.",
+      "witness_binding": {
+        "asserts_sha256": "48c9e8a85c17dc16021c43f7cca28a7f3ee0b96fffad9b94d7f98ab2af006719",
+        "control": {
+          "description": "Drop the committed fee floor; the genesis-params witness must fail.",
+          "control_of": "casper/src/genesis/mod.rs::the_validity_bounds_are_committed_in_the_genesis_params",
+          "mutation": {
+            "file": "casper/src/genesis/mod.rs",
+            "before": "        min_phlo_price: proof_of_stake.min_phlo_price,",
+            "after": "        min_phlo_price: NonNegI64::zero(),"
+          },
+          "test": "casper/src/genesis/mod.rs::the_validity_bounds_are_committed_in_the_genesis_params",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-7b9fe37e74b318db-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "7a4d2acdf12057a622afd8a1f9003d6187851bdd6df9b8d00a9b707fba53031e",
+        "source_sha": "22f17d10310859262924799a5f594ed6c12c13ba",
+        "binary_sha256": "287370e1473811d206daf9c37fde3dc48c4ea4360248c5a99c101c56012f5148",
+        "record": "spec/audit/evidence/s6-7b9fe37e74b318db-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-7b9fe37e74b318db-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-c59c38eeab097a7b",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/genesis/mod.rs::the_multisig_keys_are_in_the_trusted_stakeholder_set",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Stop inserting the configured multisig keys; the trusted-set witness must fail.",
+      "does_not_claim": "A current-build regression witness; the governance ceremony and key custody are separate.",
+      "witness_binding": {
+        "asserts_sha256": "1fc520a9f24014b03bd7f0054c074c5e26d2e324e2b0d47b4a174e8abb842fec",
+        "control": {
+          "description": "Stop inserting the configured multisig keys; the trusted-set witness must fail.",
+          "control_of": "casper/src/genesis/mod.rs::the_multisig_keys_are_in_the_trusted_stakeholder_set",
+          "mutation": {
+            "file": "casper/src/genesis/mod.rs",
+            "before": "            trusted.insert(validator);",
+            "after": "            let _ = validator;"
+          },
+          "test": "casper/src/genesis/mod.rs::the_multisig_keys_are_in_the_trusted_stakeholder_set",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-c59c38eeab097a7b-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "06f8c90f196fbfdf75dc32bb2527eadf92a459a434ca3ff192ceda35002ce923",
+        "source_sha": "22f17d10310859262924799a5f594ed6c12c13ba",
+        "binary_sha256": "287370e1473811d206daf9c37fde3dc48c4ea4360248c5a99c101c56012f5148",
+        "record": "spec/audit/evidence/s6-c59c38eeab097a7b-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-c59c38eeab097a7b-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-d39645b95737497d",
+      "witness_kind": "rust-unit",
+      "witness_ref": "models/src/block_metadata.rs::a_slashable_flag_survives_the_store_round_trip",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Drop the slashable flag from the proto encoding; the round-trip witness must fail.",
+      "does_not_claim": "A current-build regression witness; it does not replay historical block metadata.",
+      "witness_binding": {
+        "asserts_sha256": "e768bed710bf179438328d1b679bc2cac2002793a1f267dbc35ebe8e250118cd",
+        "control": {
+          "description": "Drop the slashable flag from the proto encoding; the round-trip witness must fail.",
+          "control_of": "models/src/block_metadata.rs::a_slashable_flag_survives_the_store_round_trip",
+          "mutation": {
+            "file": "models/src/block_metadata.rs",
+            "before": "            slashable: self.slashable,",
+            "after": "            slashable: false,"
+          },
+          "test": "models/src/block_metadata.rs::a_slashable_flag_survives_the_store_round_trip",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-d39645b95737497d-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "600b527f21e434699ce8111bec614607b6cb92edbd398ac2293fac48ca212229",
+        "source_sha": "22f17d10310859262924799a5f594ed6c12c13ba",
+        "binary_sha256": "cdd9a5fb6a67e6bee576c2c28ee5e18a5087b376133ac02e23b68db6a4127857",
+        "record": "spec/audit/evidence/s6-d39645b95737497d-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-d39645b95737497d-20261118/manifest.json"
       }
     }
   ]
