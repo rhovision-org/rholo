@@ -1,0 +1,7 @@
+arm	noauto
+n	8
+attempt	2
+t0	1795031518
+settle_end	1795031578
+idle_end_and_deploy	1795031608
+read_end	1795031788

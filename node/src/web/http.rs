@@ -4183,6 +4183,53 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST.as_u16(), "{response}");
     }
 
+    /// **The served bound under concurrency.** With the deploy budget fully held, 32 simultaneous
+    /// bodies over a real listener are all refused `429` with `Retry-After` before their bodies are
+    /// decoded, and none is a `5xx`. Releasing the permits admits the same request to the extractor.
+    /// The per-peer rate limiter is taken out of the measurement so the arm is the in-flight bound.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_full_in_flight_budget_refuses_concurrent_bodies_with_429_and_never_5xx() {
+        let mut limited = state();
+        limited.deploy_rate_limiter = Arc::new(KeyedRateLimiter::new(u64::MAX, MAX_TRACKED_PEERS));
+        let admission = InFlightAdmission::new(4);
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            held.push(
+                admission
+                    .semaphore
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .expect("a permit"),
+            );
+        }
+        limited.deploy_admission = Some(admission);
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(32));
+        let mut tasks = Vec::new();
+        for _ in 0..32 {
+            let state = limited.clone();
+            let barrier = barrier.clone();
+            tasks.push(tokio::spawn(async move {
+                barrier.wait().await;
+                post_deploy_over_listener(state, "invalid json").await
+            }));
+        }
+        for task in tasks {
+            let (status, response) = task.await.expect("the request task");
+            assert_eq!(status, StatusCode::TOO_MANY_REQUESTS.as_u16(), "{response}");
+            assert!(
+                response.to_ascii_lowercase().contains("retry-after: 1"),
+                "{response}"
+            );
+            assert!(!response.starts_with("HTTP/1.1 5"), "{response}");
+        }
+
+        drop(held);
+        let (status, response) = post_deploy_over_listener(limited, "invalid json").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST.as_u16(), "{response}");
+    }
+
     /// A real handler holds the permit across its await; completion and
     /// cancellation both return capacity without a waiting request queue.
     #[tokio::test]
