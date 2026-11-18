@@ -523,6 +523,240 @@
       "result_note": "The named test passes on the current build; the mutation disables the jail and the inner test fails.",
       "does_not_claim": "The in-process jail rule only. The devnet/partition arms of tools/liveness-enforcement-drill.py and the live G428-M4 campaign are release obligations.",
       "timeout_s": 900
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-0b46037b3783e4ca",
+      "witness_ref": "rholang/src/reduce.rs::division_and_modulo_overflow_promote_to_bigint",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/reduce.rs",
+        "before": "            None => int_bigop(&BigInt::from(*l), &BigInt::from(*r), cost, big, big_cost),",
+        "after": "            None => Err(RholangError::ReduceError(\"integer overflow\".to_string())),",
+        "description": "Refuse instead of promoting on i64 overflow; the promotion witness must fail."
+      },
+      "scope_note": "Integer arithmetic promotes to BigInt on i64 overflow and never wraps; mixed Int/BigInt operands promote.",
+      "result_note": "The named test passes on the current build; the mutation errors instead of promoting and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the historical replay and rollout are separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-29a0672aff87290b",
+      "witness_ref": "rspace/src/merger/event_log_index.rs::combining_refuses_a_diff_that_leaves_i64",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rspace",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rspace/src/merger/event_log_index.rs",
+        "before": "            let sum = entry.checked_add(*v).ok_or_else(|| {",
+        "after": "            let sum = entry.checked_add(*v).or(Some(0)).ok_or_else(|| {",
+        "description": "Replace an overflowing accumulation with zero; the overflow witness must fail."
+      },
+      "scope_note": "Number-channel merge diffs are checked; the subtraction, the merge and the accumulation all refuse i64 overflow.",
+      "result_note": "The named test passes on the current build; the mutation hides the overflow and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the historical replay is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-5bd51477a56edf07",
+      "witness_ref": "casper/src/runtime_manager.rs::a_negative_cost_is_refused_before_it_becomes_a_pcost",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "casper/src/runtime_manager.rs",
+        "before": "        cost: u64::try_from(value).map_err(|_| {\n            RuntimeRunError::Other(format!(\"deploy cost is negative: {value}\"))\n        })?,",
+        "after": "        cost: value as u64,",
+        "description": "Wrap a negative cost into a huge u64; the negative-cost witness must fail."
+      },
+      "scope_note": "Negative deploy cost is rejected at the protobuf uint64 boundary, not wrapped.",
+      "result_note": "The named test passes on the current build; the mutation wraps the negative and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the historical replay is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-5651614bf8e3eeb7",
+      "witness_ref": "casper/tests/replay_trace_order.rs::pending_peeks_replay_with_exact_cost_and_state",
+      "witness_kind": "rust-integration",
+      "package": "rchain-casper",
+      "cargo_target": "replay_trace_order",
+      "mutation": {
+        "file": "rspace/src/replay_rspace.rs",
+        "before": "        for event in log.iter().rev() {",
+        "after": "        for event in log.iter() {",
+        "description": "Reverse the replay event order; the exact-cost replay witness must fail."
+      },
+      "scope_note": "Replay COMM candidates follow chronological execution order; strict replay verdicts equal the play verdict.",
+      "result_note": "The named test passes on the current build; the mutation changes the replay order and the same test fails.",
+      "does_not_claim": "The in-process replay order only. The recorded-history sweep, second-node replay and coordinated rollout are release obligations.",
+      "timeout_s": 900
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-ccb08bb8dcafdd3c",
+      "witness_ref": "rholang/src/accounting.rs::collection_and_censure_charges_are_the_models",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/accounting.rs",
+        "before": "        Self::canonicalization_cost(left.saturating_add(right))",
+        "after": "        Self::canonicalization_cost(right)",
+        "description": "Charge only one side of a union; the cost-model witness must fail."
+      },
+      "scope_note": "Cost charges track the work of collection canonicalisation, union and rho:gov:censure.",
+      "result_note": "The named test passes on the current build; the mutation undercharges the union and the same test fails.",
+      "does_not_claim": "The in-process charge model only. The pre-fork replay and two-binary acceptance are release obligations.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-dcbe72b936ef74ae",
+      "witness_ref": "rholang/tests/if_par.rs::if_not_first_in_a_par_holds_across_effect_modes",
+      "witness_kind": "rust-integration",
+      "package": "rchain-rholang",
+      "cargo_target": "if_par",
+      "mutation": {
+        "file": "rholang/src/normalizer.rs",
+        "before": "    let target = normalize_proc(\n        value,\n        ProcVisitInputs {\n            par: Par::default(),",
+        "after": "    let target = normalize_proc(\n        value,\n        ProcVisitInputs {\n            par: input_par.clone(),",
+        "description": "Seed the if-condition with the accumulated par; the not-first witness must fail."
+      },
+      "scope_note": "if's condition is normalized against an empty par, never the accumulated one.",
+      "result_note": "The named test passes on the current build; the mutation makes the condition eat its prefix and the same test fails.",
+      "does_not_claim": "A current-build regression witness; a live rollout is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-e2cdf44a5cc0c81e",
+      "witness_ref": "casper/src/merging.rs::a_cost_accounted_block_keeps_its_own_native_writes_through_the_merge",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "casper/src/merging.rs",
+        "before": "    for chain in accepted {",
+        "after": "    for chain in accepted.iter().take(1) {",
+        "description": "Compose only the first accepted chain's cost moves; the merge cost-accounting witness must fail."
+      },
+      "scope_note": "The merge composes cost accounting per accepted deploy instead of a block carrying it.",
+      "result_note": "The named test passes on the current build; the mutation drops the other chains' moves and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the live M5 replay is a release obligation.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-f735095c746556f3",
+      "witness_ref": "rspace/src/merger/state_change.rs::a_consume_and_replace_diffs_its_channel_once",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rspace",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rspace/src/merger/state_change.rs",
+        "before": "            .map(|p| p.channels_hash)",
+        "after": "            .map(|p| p.hash)",
+        "description": "Diff a channel once per produce event; the merge-diff witness must fail."
+      },
+      "scope_note": "A merge diffs each affected channel once, not once per produce/consume event.",
+      "result_note": "The named test passes on the current build; the mutation reintroduces the per-event diff and the same test fails.",
+      "does_not_claim": "The in-process merge diff only. The live 840-to-841 M5 replay is unavailable and remains a release obligation.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-f7d55fe093312364",
+      "witness_ref": "casper/src/merging.rs::two_branch_blocks_writing_one_native_slot_do_not_panic_the_merge",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "casper/src/merging.rs",
+        "before": "        self.native_effects\n            .iter()\n            .map(NativeStoreAction::slot)\n            .collect()",
+        "after": "        BTreeSet::new()",
+        "description": "Remove native writes from the conflict relation; the two-writer witness must fail."
+      },
+      "scope_note": "Native writes join the merge's conflict relation; two branches writing one slot conflict.",
+      "result_note": "The named test passes on the current build; the mutation makes the writers disjoint and the same test fails.",
+      "does_not_claim": "A current-build regression witness; a live merge campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-fbcd04455372e58c",
+      "witness_ref": "rholang/src/storage.rs::a_matched_produce_refunds_its_storage_before_the_event_costs",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/storage.rs",
+        "before": "                .charge(Cost::new(-cost.value, \"consume storage refund\"))?;",
+        "after": "                .charge(Cost::new(cost.value, \"consume storage refund\"))?;",
+        "description": "Flip the refund sign; the storage-refund witness must fail."
+      },
+      "scope_note": "Storage is refunded when a produce/consume matches, before the event costs.",
+      "result_note": "The named test passes on the current build; the mutation charges instead of refunding and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the historical replay is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-2228415e1ac6b83e",
+      "witness_ref": "rholang/src/parser.rs::the_three_depth_guards_refuse_an_over_deep_term",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/parser.rs",
+        "before": "    if exceeds_ast_depth(&proc, MAX_AST_DEPTH) {",
+        "after": "    if false && exceeds_ast_depth(&proc, MAX_AST_DEPTH) {",
+        "description": "Disable the composed AST budget; the three-guard witness must fail."
+      },
+      "scope_note": "The parser depth guards: MAX_PARSE_DEPTH on recursion, MAX_CHAIN_LENGTH on a flat chain, MAX_AST_DEPTH on the term.",
+      "result_note": "The named test passes on the current build; the mutation admits the over-deep AST and the same test fails.",
+      "does_not_claim": "A current-build regression witness; a live corpus replay is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-212cef89b85456e0",
+      "witness_ref": "models/src/wire.rs::a_negative_bind_pattern_free_count_is_refused_at_the_proto_boundary",
+      "witness_kind": "rust-unit",
+      "package": "rchain-models",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "models/src/wire.rs",
+        "before": "        free_count: i32::from(FreeCount::try_from(p.free_count).map_err(ModelsError::Decode)?),",
+        "after": "        free_count: p.free_count.max(0),",
+        "description": "Clamp a negative BindPattern free-count; the proto-boundary witness must fail."
+      },
+      "scope_note": "BindPattern.freeCount is rejected when negative at the proto boundary.",
+      "result_note": "The named test passes on the current build; the mutation clamps the negative and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the historical replay is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "C",
+      "gate_id": "S6-cc87a089357b25fa",
+      "witness_ref": "rspace/src/rspace.rs::candidate_selection_is_sorted_by_content_hash_not_insertion_order",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rspace",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rspace/src/rspace.rs",
+        "before": "            // matching datum is chosen regardless of insertion order (Law 4/8).\n            indexed.sort_by(|a, b| a.0.source.cmp(&b.0.source));",
+        "after": "            // matching datum is chosen regardless of insertion order (Law 4/8).\n            indexed.sort_by(|a, b| a.1.cmp(&b.1));",
+        "description": "Sort candidates by insertion index; the content-hash selection witness must fail."
+      },
+      "scope_note": "RSpace candidate selection is sorted-first by content hash, not newest-first insertion order.",
+      "result_note": "The named test passes on the current build; the mutation restores insertion order and the same test fails.",
+      "does_not_claim": "A current-build regression witness; a live RSpace campaign is separate.",
+      "timeout_s": 600
     }
   ]
 }

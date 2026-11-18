@@ -1611,6 +1611,29 @@ mod differential {
             }
         }
 
+        /// A dedicated boundary witness for `BindPattern.free_count`: the broad payload round-trip
+        /// asserts it too, but a named test gives the gate a falsifiable witness rather than a
+        /// sub-assertion inside another test.
+        #[test]
+        fn a_negative_bind_pattern_free_count_is_refused_at_the_proto_boundary() {
+            let pattern = BindPattern {
+                patterns: vec![],
+                remainder: None,
+                free_count: 0,
+            };
+            let mut proto = bind_pattern_to_proto(&pattern);
+            proto.free_count = -1;
+            assert!(
+                bind_pattern_from_proto(&proto).is_err(),
+                "a negative free-count must be refused at the proto boundary"
+            );
+            proto.free_count = 0;
+            assert!(
+                bind_pattern_from_proto(&proto).is_ok(),
+                "zero is a count"
+            );
+        }
+
         /// The `from_proto` half is **partial** where the proto has an optional inner message: a
         /// missing one is `Malformed(<field>)` naming the field, rather than a defaulted value. Two
         /// representative arms are exercised — the shape is the same for all twenty-one binary

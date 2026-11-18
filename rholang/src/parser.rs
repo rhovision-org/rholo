@@ -2009,6 +2009,39 @@ mod tests {
         assert!(parse(&deep_not).is_err());
     }
 
+    /// The three guards are separate claims: parser nesting, flat-chain width, and the composed
+    /// AST depth. Each has a refusal, and the control just under the composed bound still parses.
+    #[test]
+    fn the_three_depth_guards_refuse_an_over_deep_term() {
+        let deep_new = format!("{}Nil", "new x in ".repeat(MAX_PARSE_DEPTH + 10));
+        assert!(
+            parse(&deep_new)
+                .unwrap_err()
+                .to_string()
+                .contains("parse depth exceeded"),
+            "the parser-recursion guard must name its refusal"
+        );
+        let over_chain = format!("1{}", " + 1".repeat(MAX_CHAIN_LENGTH + 1));
+        assert!(
+            parse(&over_chain)
+                .unwrap_err()
+                .to_string()
+                .contains("operator chain too long"),
+            "the flat-chain guard must name its refusal"
+        );
+        assert!(
+            parse(&nested_chain(4, 200))
+                .unwrap_err()
+                .to_string()
+                .contains("term nesting too deep"),
+            "the composed AST guard must refuse 4 levels x 200 links"
+        );
+        assert!(
+            parse(&nested_chain(3, 100)).is_ok(),
+            "the control just under the composed bound must parse"
+        );
+    }
+
     /// The **product** of the two guards is what `MAX_AST_DEPTH` exists for, and the shape below is
     /// inside both of them: 4 levels against `MAX_PARSE_DEPTH`'s 128, and 200 operators against
     /// `MAX_CHAIN_LENGTH`'s 512 — while the AST is ~800 deep. Before the AST budget this parsed and the

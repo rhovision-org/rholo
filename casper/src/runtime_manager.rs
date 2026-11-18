@@ -1024,16 +1024,9 @@ impl RuntimeManager {
         let deploy_log: Vec<Event> = checkpoint.log.iter().map(to_casper_event).collect();
         let processed = ProcessedDeploy {
             deploy: deploy.clone(),
-            cost: PCost {
-                // `PCost.cost` is a protobuf `uint64`; a negative (over-charged) cost is an
-                // accounting anomaly. Reject it rather than silently clamping to 0.
-                cost: u64::try_from(eval_result.cost.value).map_err(|_| {
-                    RuntimeRunError::Other(format!(
-                        "deploy cost is negative: {}",
-                        eval_result.cost.value
-                    ))
-                })?,
-            },
+            // `PCost.cost` is a protobuf `uint64`; a negative (over-charged) cost is an
+            // accounting anomaly. Reject it rather than silently clamping to 0.
+            cost: pcost_from_i64(eval_result.cost.value)?,
             deploy_log,
             is_failed: !succeeded,
             system_deploy_error,
@@ -2438,6 +2431,16 @@ impl RuntimeManager {
     }
 }
 
+/// The protobuf `uint64` boundary: a negative (over-charged) cost is an accounting anomaly and is
+/// refused here rather than wrapping into a huge positive cost.
+fn pcost_from_i64(value: i64) -> Result<PCost, RuntimeRunError> {
+    Ok(PCost {
+        cost: u64::try_from(value).map_err(|_| {
+            RuntimeRunError::Other(format!("deploy cost is negative: {value}"))
+        })?,
+    })
+}
+
 fn to_blake(hash: &StateHash) -> Blake2b256Hash {
     Blake2b256Hash::from_byte_array(hash.as_bytes())
 }
@@ -2445,6 +2448,19 @@ fn to_blake(hash: &StateHash) -> Blake2b256Hash {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_negative_cost_is_refused_before_it_becomes_a_pcost() {
+        assert!(pcost_from_i64(-1).is_err(), "a negative cost must not become a u64");
+        match pcost_from_i64(0) {
+            Ok(cost) => assert_eq!(cost.cost, 0),
+            Err(_) => panic!("zero must be accepted"),
+        }
+        match pcost_from_i64(42) {
+            Ok(cost) => assert_eq!(cost.cost, 42),
+            Err(_) => panic!("42 must be accepted"),
+        }
+    }
     use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
     use rchain_rholang::merging::{DeployMergeableDataCodec, NativeSidecarCodec};
     use rchain_rspace::factory::create_history_repository;
