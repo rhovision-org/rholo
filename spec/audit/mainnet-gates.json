@@ -151,7 +151,7 @@
       "status_reason": "The historical #575 result is instrument PASS / join FAIL, retained; no fresh routable off-host receive/apply witness or failover.",
       "title": "Off-host bootstrap and fringe completion",
       "witness_kind": "python",
-      "witness_ref": "spec/audit/evidence/m3-fringe-witness-20261113/README.md",
+      "witness_ref": "tools/m3-join-chain.py::check_chain",
       "witness_scope": "integration"
     },
     {

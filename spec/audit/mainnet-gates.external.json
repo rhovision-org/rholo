@@ -118,7 +118,7 @@
       "fail_condition": "A claim based on a send log alone; an invalid observer address treated as a handler defect; a missing transport-delivery witness.",
       "observable": "The correlation request -> receipt -> response construction -> transport completion -> requester receive -> state application, with peer address and identity; the loopback negative control.",
       "witness_kind": "python",
-      "witness_ref": "spec/audit/evidence/m3-fringe-witness-20261113/README.md",
+      "witness_ref": "tools/m3-join-chain.py::check_chain",
       "negative_control": "A loopback address advertised from another host must fail clearly; a send-log-only claim must not pass; the responder's stream completion must be observable, and a 'sent' log alone must fail.",
       "docker_free": false,
       "sole_evidence": "live-host",
