@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "State-preservation manifest",
+  "description": "An authenticated manifest of native state, RSpace state and deploy history. Completeness is every entry in the manifest with matched counts and roots, not an assertion.",
+  "type": "object",
+  "required": ["schema", "checkpoint", "roots", "counts", "complete"],
+  "properties": {
+    "schema": {"const": 1},
+    "checkpoint": {
+      "type": "object",
+      "required": ["height", "hash"],
+      "properties": {
+        "height": {"type": "integer", "minimum": 0},
+        "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "roots": {
+      "type": "object",
+      "required": ["native", "rspace", "history"],
+      "properties": {
+        "native": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "rspace": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "history": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "counts": {
+      "type": "object",
+      "required": ["native", "rspace", "history"],
+      "properties": {
+        "native": {"type": "integer", "minimum": 0},
+        "rspace": {"type": "integer", "minimum": 0},
+        "history": {"type": "integer", "minimum": 0}
+      }
+    },
+    "entries": {
+      "type": "object",
+      "properties": {
+        "native": {"type": "array"},
+        "rspace": {"type": "array"},
+        "history": {"type": "array"}
+      }
+    },
+    "complete": {"const": true}
+  }
+}
