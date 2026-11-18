@@ -1445,7 +1445,7 @@
           "expected": "FAIL",
           "mutation": {
             "after": "        cost: value as u64,",
-            "before": "        cost: u64::try_from(value).map_err(|_| {\n            RuntimeRunError::Other(format!(\"deploy cost is negative: {value}\"))\n        })?,",
+            "before": "        cost: u64::try_from(value)\n            .map_err(|_| RuntimeRunError::Other(format!(\"deploy cost is negative: {value}\")))?,",
             "file": "casper/src/runtime_manager.rs"
           },
           "run_record": "spec/audit/evidence/s6-5bd51477a56edf07-20261118-fail",

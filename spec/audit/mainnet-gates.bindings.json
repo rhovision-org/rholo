@@ -1259,7 +1259,7 @@
           "control_of": "casper/src/runtime_manager.rs::a_negative_cost_is_refused_before_it_becomes_a_pcost",
           "mutation": {
             "file": "casper/src/runtime_manager.rs",
-            "before": "        cost: u64::try_from(value).map_err(|_| {\n            RuntimeRunError::Other(format!(\"deploy cost is negative: {value}\"))\n        })?,",
+            "before": "        cost: u64::try_from(value)\n            .map_err(|_| RuntimeRunError::Other(format!(\"deploy cost is negative: {value}\")))?,",
             "after": "        cost: value as u64,"
           },
           "test": "casper/src/runtime_manager.rs::a_negative_cost_is_refused_before_it_becomes_a_pcost",
