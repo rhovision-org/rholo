@@ -2753,11 +2753,18 @@ fn deploy_relay_from_env(
                     rchain_comm::diagnostics::stats().note_relay_failure();
                     continue;
                 };
-                if rchain_casper::protocol::client::DeployService::deploy(&client, &deploy)
-                    .await
-                    .is_err()
-                {
-                    rchain_comm::diagnostics::stats().note_relay_failure();
+                // **Expected backpressure is counted apart from a relay fault.** A peer whose pool
+                // is at a bound answers 429/`RESOURCE_EXHAUSTED`; that is the relay working, not a
+                // failure of this node's connection to it.
+                use rchain_casper::protocol::client::DeployAttempt;
+                match client.deploy_with_capacity(&deploy).await {
+                    DeployAttempt::Accepted(_) => {}
+                    DeployAttempt::CapacityRefused(_) => {
+                        rchain_comm::diagnostics::stats().note_relay_capacity_refusal()
+                    }
+                    DeployAttempt::Refused(_) => {
+                        rchain_comm::diagnostics::stats().note_relay_failure()
+                    }
                 }
             }
         });

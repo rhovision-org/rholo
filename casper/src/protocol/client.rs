@@ -233,6 +233,24 @@ pub trait DeployService: Send + Sync {
     async fn status(&self) -> Result<String, Vec<String>>;
 }
 
+/// The relay's view of one deploy attempt. A capacity refusal is the peer's pool working
+/// (429 / `RESOURCE_EXHAUSTED`), not a relay fault; `DeployService::deploy` flattens both to
+/// strings, which is right for a client but loses the distinction the relay counts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeployAttempt {
+    Accepted(String),
+    CapacityRefused(String),
+    Refused(Vec<String>),
+}
+
+fn classify_deploy_status(status: tonic::Status) -> DeployAttempt {
+    if status.code() == tonic::Code::ResourceExhausted {
+        DeployAttempt::CapacityRefused(status.message().to_string())
+    } else {
+        DeployAttempt::Refused(vec![status.to_string()])
+    }
+}
+
 /// tonic-backed deploy service client (port of `GrpcDeployService`).
 pub struct GrpcDeployService {
     client: DeployServiceClient<Channel>,
@@ -248,20 +266,30 @@ impl GrpcDeployService {
             ),
         })
     }
+
+    /// **The deploy with the bound classified** (Law 86a).
+    pub async fn deploy_with_capacity(&self, d: &SignedDeployData) -> DeployAttempt {
+        let mut client = self.client.clone();
+        match client.do_deploy(d.to_proto()).await {
+            Err(status) => classify_deploy_status(status),
+            Ok(response) => match response.into_inner().message {
+                Some(wire::deploy_response::Message::Result(s)) => DeployAttempt::Accepted(s),
+                Some(wire::deploy_response::Message::Error(e)) => {
+                    DeployAttempt::Refused(service_error(&e))
+                }
+                None => DeployAttempt::Refused(vec!["empty response".to_string()]),
+            },
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl DeployService for GrpcDeployService {
     async fn deploy(&self, d: &SignedDeployData) -> Result<String, Vec<String>> {
-        let mut client = self.client.clone();
-        let response = client
-            .do_deploy(d.to_proto())
-            .await
-            .map_err(|s| vec![s.to_string()])?;
-        match response.into_inner().message {
-            Some(wire::deploy_response::Message::Result(s)) => Ok(s),
-            Some(wire::deploy_response::Message::Error(e)) => Err(service_error(&e)),
-            None => Err(vec!["empty response".to_string()]),
+        match self.deploy_with_capacity(d).await {
+            DeployAttempt::Accepted(result) => Ok(result),
+            DeployAttempt::CapacityRefused(message) => Err(vec![message]),
+            DeployAttempt::Refused(messages) => Err(messages),
         }
     }
 
@@ -826,6 +854,31 @@ mod tests {
     fn pub_name_normalizes_source() {
         let par = build_par(&Name::PubName("Nil".to_string())).unwrap();
         assert!(par.unforgeables.is_empty());
+    }
+
+    /// **A capacity refusal is the peer's bound, not a relay fault** (Law 86a). The gRPC spelling
+    /// is `RESOURCE_EXHAUSTED`; every other status is a fault. Falsified by classifying on the
+    /// message text, or by folding `RESOURCE_EXHAUSTED` into the generic arm.
+    #[test]
+    fn a_resource_exhausted_deploy_is_capacity_and_anything_else_is_a_fault() {
+        assert_eq!(
+            classify_deploy_status(tonic::Status::resource_exhausted(
+                "deploy pool is full: 10 of 10 term bytes in use"
+            )),
+            DeployAttempt::CapacityRefused(
+                "deploy pool is full: 10 of 10 term bytes in use".to_string()
+            )
+        );
+        for status in [
+            tonic::Status::invalid_argument("deploy signature is invalid"),
+            tonic::Status::unavailable("connection reset"),
+            tonic::Status::unauthenticated("bad certificate"),
+        ] {
+            assert!(
+                matches!(classify_deploy_status(status), DeployAttempt::Refused(_)),
+                "a non-429 status is a fault"
+            );
+        }
     }
 }
 

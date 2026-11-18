@@ -28,6 +28,7 @@ pub struct ConnectionStats {
     heartbeat_pings: AtomicU64,
     heartbeat_failures: AtomicU64,
     relay_offers: AtomicU64,
+    relay_capacity_refusals: AtomicU64,
     relay_failures: AtomicU64,
     routing_queue_depth: AtomicU64,
     last_peer_contact_at: AtomicI64,
@@ -44,6 +45,9 @@ pub struct ConnectionSnapshot {
     pub heartbeat_pings: u64,
     pub heartbeat_failures: u64,
     pub relay_offers: u64,
+    /// A relayed deploy refused by the peer's pool as a **bound** (429 / `RESOURCE_EXHAUSTED`),
+    /// not a relay fault. Expected backpressure, counted apart from `relay_failures`.
+    pub relay_capacity_refusals: u64,
     pub relay_failures: u64,
     pub routing_queue_depth: u64,
     pub peer_contact_age_ms: Option<u64>,
@@ -68,6 +72,7 @@ impl ConnectionStats {
             heartbeat_pings: AtomicU64::new(0),
             heartbeat_failures: AtomicU64::new(0),
             relay_offers: AtomicU64::new(0),
+            relay_capacity_refusals: AtomicU64::new(0),
             relay_failures: AtomicU64::new(0),
             routing_queue_depth: AtomicU64::new(0),
             last_peer_contact_at: AtomicI64::new(i64::MIN),
@@ -99,6 +104,11 @@ impl ConnectionStats {
     }
     pub fn note_relay_offer(&self) {
         self.relay_offers.fetch_add(1, Ordering::Relaxed);
+    }
+    /// The peer answered the relay with a bound (429 / `RESOURCE_EXHAUSTED`): backpressure, not a
+    /// relay fault.
+    pub fn note_relay_capacity_refusal(&self) {
+        self.relay_capacity_refusals.fetch_add(1, Ordering::Relaxed);
     }
     pub fn note_relay_failure(&self) {
         self.relay_failures.fetch_add(1, Ordering::Relaxed);
@@ -135,6 +145,7 @@ impl ConnectionStats {
             heartbeat_pings: self.heartbeat_pings.load(Ordering::Relaxed),
             heartbeat_failures: self.heartbeat_failures.load(Ordering::Relaxed),
             relay_offers: self.relay_offers.load(Ordering::Relaxed),
+            relay_capacity_refusals: self.relay_capacity_refusals.load(Ordering::Relaxed),
             relay_failures: self.relay_failures.load(Ordering::Relaxed),
             routing_queue_depth: self.routing_queue_depth.load(Ordering::Relaxed),
             peer_contact_age_ms: self.peer_contact_age_ms(),
@@ -206,6 +217,7 @@ mod tests {
         cell.note_heartbeat_ping();
         cell.note_heartbeat_failure();
         cell.note_relay_offer();
+        cell.note_relay_capacity_refusal();
         cell.note_relay_failure();
         cell.set_routing_queue_depth(7);
         let snap = cell.snapshot();
@@ -216,6 +228,7 @@ mod tests {
         assert_eq!(snap.heartbeat_pings, 1);
         assert_eq!(snap.heartbeat_failures, 1);
         assert_eq!(snap.relay_offers, 1);
+        assert_eq!(snap.relay_capacity_refusals, 1);
         assert_eq!(snap.relay_failures, 1);
         assert_eq!(snap.routing_queue_depth, 7);
     }

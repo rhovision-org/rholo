@@ -3136,6 +3136,7 @@ pub async fn acquire_http_server(
                             ("heartbeat_pings_total", conn.heartbeat_pings),
                             ("heartbeat_failures_total", conn.heartbeat_failures),
                             ("relay_offers_total", conn.relay_offers),
+                            ("relay_capacity_refusals_total", conn.relay_capacity_refusals),
                             ("relay_failures_total", conn.relay_failures),
                             ("routing_queue_depth", conn.routing_queue_depth),
                         ] {
