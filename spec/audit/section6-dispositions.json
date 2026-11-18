@@ -18,18 +18,18 @@
       "verdict": "reviewable"
     },
     {
-      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
-      "category_a_effect": "none",
-      "derivation": "The acceptance text is a template; it names no executable witness.",
-      "evidence_sha256": null,
+      "category_a_derivation": "An instance-less or unknown-only Expr that arrives on the wire is refused instead of decoding as false; a peer or bridge that emitted that message changes the accepted wire language.",
+      "category_a_effect": "wire-format",
+      "derivation": "The witness decodes real wire bytes and requires Malformed(\"expr_instance\"); the control mutates the None arm to return Expr::GBool(false) and the same test fails.",
+      "evidence_sha256": "a4117fa609fe87656b64846c914eae1159602e320e3a443dcb7472320631fff7",
       "id": "S6:25bfdbe2c179c81e",
-      "reason": "No per-candidate independent disposition yet.",
-      "review_record": null,
-      "review_url": null,
-      "reviewer": null,
-      "reviewer_independent": false,
+      "reason": "Independent review accepted the PASS/FAIL records and the category-A effect on 2026-11-18.",
+      "review_record": "spec/audit/section6-reviews/S6-25bfdbe2c179c81e.md",
+      "review_url": "https://github.com/rhovision-org/rholo/blob/103a636c9c3c7e8e2c7863d3caf6bb7c1aa638b3/spec/audit/section6-reviews/S6-25bfdbe2c179c81e.md",
+      "reviewer": "Patrick Mockridge",
+      "reviewer_independent": true,
       "row_sha256": "25bfdbe2c179c81e4f0a686b5286e5edb2c443e4a11688c1f152d8b23e5fe35f",
-      "verdict": "reviewable"
+      "verdict": "accepted"
     },
     {
       "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
@@ -130,18 +130,18 @@
       "verdict": "reviewable"
     },
     {
-      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
-      "category_a_effect": "none",
-      "derivation": "The acceptance text is a template; it names no executable witness.",
-      "evidence_sha256": null,
+      "category_a_derivation": "A deploy whose runtime-built value exceeds 256 now receives a deterministic refusal where the old node aborted near 401; the deploy/replay outcome is chain-visible, while every admitted value's encoding is unchanged.",
+      "category_a_effect": "replay-verdict",
+      "derivation": "The witness builds a runtime value; a shallow fold evaluates and a 400-deep fold is refused with the named reason. The control raises the depth bound, the value reaches the space and the same test aborts or fails.",
+      "evidence_sha256": "800f3256429c63175f22179c9344f659995b43ad850d44041012369de3fbbe79",
       "id": "S6:c7536b90bd39cf71",
-      "reason": "No per-candidate independent disposition yet.",
-      "review_record": null,
-      "review_url": null,
-      "reviewer": null,
-      "reviewer_independent": false,
+      "reason": "Independent review accepted the PASS/FAIL records and the category-A effect on 2026-11-18.",
+      "review_record": "spec/audit/section6-reviews/S6-c7536b90bd39cf71.md",
+      "review_url": "https://github.com/rhovision-org/rholo/blob/103a636c9c3c7e8e2c7863d3caf6bb7c1aa638b3/spec/audit/section6-reviews/S6-c7536b90bd39cf71.md",
+      "reviewer": "Patrick Mockridge",
+      "reviewer_independent": true,
       "row_sha256": "c7536b90bd39cf714c7c871c17994539810d2d04147ae51e9f852924c7861517",
-      "verdict": "reviewable"
+      "verdict": "accepted"
     },
     {
       "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
@@ -172,18 +172,18 @@
       "verdict": "reviewable"
     },
     {
-      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
-      "category_a_effect": "none",
-      "derivation": "The acceptance text is a template; it names no executable witness.",
-      "evidence_sha256": null,
+      "category_a_derivation": "A wire bind_count below zero is refused at ingress instead of being carried or clamped; only hand-built or injected messages can carry one, so no honest deploy changes.",
+      "category_a_effect": "wire-format",
+      "derivation": "The witness feeds a negative bind_count to the Receive and New decoders and requires an error from each. The control restores the clamp on the first (Receive) decoder and the first is_err assertion fails.",
+      "evidence_sha256": "c3d56019b53392f66497520bd93d6c6245755f9b6358efcd57f9c1bda30dcb49",
       "id": "S6:d7dd0a06a5dee537",
-      "reason": "No per-candidate independent disposition yet.",
-      "review_record": null,
-      "review_url": null,
-      "reviewer": null,
-      "reviewer_independent": false,
+      "reason": "Independent review accepted the PASS/FAIL records and the category-A effect on 2026-11-18.",
+      "review_record": "spec/audit/section6-reviews/S6-d7dd0a06a5dee537.md",
+      "review_url": "https://github.com/rhovision-org/rholo/blob/103a636c9c3c7e8e2c7863d3caf6bb7c1aa638b3/spec/audit/section6-reviews/S6-d7dd0a06a5dee537.md",
+      "reviewer": "Patrick Mockridge",
+      "reviewer_independent": true,
       "row_sha256": "d7dd0a06a5dee537b8fed62ba9d1f4f9d0c8efd553ec60083aa75fcf96207807",
-      "verdict": "reviewable"
+      "verdict": "accepted"
     },
     {
       "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
@@ -424,18 +424,18 @@
       "verdict": "reviewable"
     },
     {
-      "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",
-      "category_a_effect": "none",
-      "derivation": "The acceptance text is a template; it names no executable witness.",
-      "evidence_sha256": null,
+      "category_a_derivation": "rho:crypto:secp256k1Verify answers false for a non-32-byte message where the old path verified over a 32-byte prefix; a contract branch and its replay verdict change.",
+      "category_a_effect": "replay-verdict",
+      "derivation": "The witness signs a 32-byte prehash and requires a suffixed message to verify false. The control bypasses the PREHASH_LEN refusal; the dependency truncates the suffixed message and the !verify_bytes assertion fails.",
+      "evidence_sha256": "68221d98ad5201f7b9501e45ce64dac7aa2fdbba3c3a8dde0a2ae8afc42fe1e6",
       "id": "S6:91b05027373a3107",
-      "reason": "No per-candidate independent disposition yet.",
-      "review_record": null,
-      "review_url": null,
-      "reviewer": null,
-      "reviewer_independent": false,
+      "reason": "Independent review accepted the PASS/FAIL records and the category-A effect on 2026-11-18.",
+      "review_record": "spec/audit/section6-reviews/S6-91b05027373a3107.md",
+      "review_url": "https://github.com/rhovision-org/rholo/blob/103a636c9c3c7e8e2c7863d3caf6bb7c1aa638b3/spec/audit/section6-reviews/S6-91b05027373a3107.md",
+      "reviewer": "Patrick Mockridge",
+      "reviewer_independent": true,
       "row_sha256": "91b05027373a31079d4315e60935bf6340758a0e4370e1b27d766b2c12b02038",
-      "verdict": "reviewable"
+      "verdict": "accepted"
     },
     {
       "category_a_derivation": "The consensus effect is not derived in this record; the row stays reviewable.",

@@ -165,9 +165,25 @@ class RegisterTests(unittest.TestCase):
             },
         }
 
+    def unmet(self, ident="G520-MIGRATION"):
+        """A pre-promotion copy: the real register now carries the met rows."""
+        row = copy.deepcopy(self.row(ident))
+        row.update({
+            "status": "owes",
+            "status_reason": "synthetic unmet row for the binding tests",
+            "witness_kind": None,
+            "witness_ref": None,
+            "witness_scope": None,
+            "witness_binding": None,
+            "negative_control": None,
+            "evidence": {"url": None, "digest": None, "source_sha": None,
+                         "binary_sha256": None, "record": None},
+        })
+        return row
+
     def apply_bindings(self, bindings, rows=None, required=None):
         rows = rows if rows is not None else [
-            copy.deepcopy(self.row("G520-MIGRATION")),
+            self.unmet("G520-MIGRATION"),
             copy.deepcopy(self.row("G428-M1"))]
         required = required if required is not None else [
             binding["gate_id"] for binding in bindings]
@@ -188,7 +204,7 @@ class RegisterTests(unittest.TestCase):
         self.assertTrue(rows[1]["status_reason"])
 
     def test_an_orphan_binding_is_refused(self):
-        rows = [copy.deepcopy(self.row("G520-MIGRATION"))]
+        rows = [self.unmet("G520-MIGRATION")]
         with self.assertRaisesRegex(ValueError, "names no gate"):
             self.apply_bindings([self.make_binding("G428-M1")], rows=rows)
 
@@ -196,7 +212,7 @@ class RegisterTests(unittest.TestCase):
         binding = self.make_binding()
         with self.assertRaisesRegex(ValueError, "duplicate"):
             self.apply_bindings([binding, copy.deepcopy(binding)],
-                                rows=[copy.deepcopy(self.row("G520-MIGRATION"))],
+                                rows=[self.unmet("G520-MIGRATION")],
                                 required=["G520-MIGRATION"])
 
     def test_a_partial_binding_is_refused(self):
@@ -251,7 +267,8 @@ class RegisterTests(unittest.TestCase):
         self.assertIn("not a pass/fail gate", reason)
 
     def test_an_s6_binding_needs_an_accepted_disposition(self):
-        row = copy.deepcopy(self.row("S6-25bfdbe2c179c81e"))
+        row = {"id": "S6-25bfdbe2c179c81e", "family": "S6",
+               "status": "reviewable", "depends_on": []}
         with self.assertRaisesRegex(ValueError, "no disposition record"):
             builder._eligible(row, {}, {}, set())
         eligible, reason = builder._eligible(
@@ -295,7 +312,7 @@ class RegisterTests(unittest.TestCase):
             self.apply_bindings([self.make_binding()], required=[])
 
     def test_an_unbound_row_keeps_its_status_and_reason(self):
-        rows = self.apply_bindings([], rows=[copy.deepcopy(self.row("G520-MIGRATION"))],
+        rows = self.apply_bindings([], rows=[self.unmet("G520-MIGRATION")],
                                    required=[])
         self.assertEqual(rows[0]["status"], "owes")
         self.assertTrue(rows[0]["status_reason"])
@@ -303,8 +320,11 @@ class RegisterTests(unittest.TestCase):
     def test_current_register_is_valid_and_not_closeable(self):
         out = self.inspect()
         self.assertEqual(out["result"], "REGISTER_VALID")
-        self.assertEqual(out["met"], 0)
-        self.assertEqual(out["unresolved"], len(self.payload["gates"]))
+        promoted = self.payload["met_ratchet"]["required_ids"]
+        self.assertEqual(out["met"], len(promoted))
+        self.assertEqual(out["unresolved"], len(self.payload["gates"]) - len(promoted))
+        for ident in promoted:
+            self.assertEqual(self.row(ident)["status"], "met")
 
     def test_met_gate_without_a_witness_is_refused(self):
         row = self.make_met()

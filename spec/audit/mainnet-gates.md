@@ -7,7 +7,7 @@ Do not edit by hand; the checker compares this file with the JSON.
 - ledger source dev: `e33125f65a95cff4f12baf8139a7361c7d158e43`
 - generated: 2026-11-18
 - gates: 111
-- met: 0
+- met: 5
 
 | gate | family | status | title | locality | owner |
 |---|---|---|---|---|---|
@@ -19,7 +19,7 @@ Do not edit by hand; the checker compares this file with the JSON.
 | `G428-M4` | G428 | **blocked** | Finality, liveness and autonomous recovery | multi-host | Jim / release coordination |
 | `G428-M5` | G428 | **blocked** | Finalized state integrity and merge accounting | integration | Jim / release coordination |
 | `G428-M6` | G428 | **external** | Reproducibility and independent sign-off | external | Patrick / independent technical review |
-| `G520-MIGRATION` | G520 | **owes** | Populated-store migration and replay qualification | single-host | Jim / release coordination |
+| `G520-MIGRATION` | G520 | **met** | Populated-store migration and replay qualification | single-host | Jim / release coordination |
 | `G584-G1` | G584 | **external** | Installed pins | live-host | Aria / operator |
 | `G584-G2` | G584 | **external** | Signed deploy lifecycle | live-host | Aria / operator |
 | `G584-G3` | G584 | **external** | No false settlement | live-host | Aria / operator |
@@ -79,7 +79,7 @@ Do not edit by hand; the checker compares this file with the JSON.
 | `S6-1587e04b86742658` | S6 | **reviewable** | **A validator's epoch reward is scaled by its participation** — `PosParams::absence_slack` is the *knee* (the lag at whi | unclassified | Jim / independent audit reviewer |
 | `S6-212cef89b85456e0` | S6 | **reviewable** | `BindPattern.freeCount` **rejected** when negative at the proto boundary | unclassified | Jim / independent audit reviewer |
 | `S6-2228415e1ac6b83e` | S6 | **reviewable** | rholang depth guards (`MAX_PARSE_DEPTH = 128` on the parser's own recursion, `MAX_CHAIN_LENGTH = 512` on one flat chain, | unclassified | Jim / independent audit reviewer |
-| `S6-25bfdbe2c179c81e` | S6 | **reviewable** | An instance-less or unknown-only `Expr` is **refused** with `Malformed("expr_instance")` rather than decoded as `false` | unclassified | Jim / independent audit reviewer |
+| `S6-25bfdbe2c179c81e` | S6 | **met** | An instance-less or unknown-only `Expr` is **refused** with `Malformed("expr_instance")` rather than decoded as `false` | integration | Jim / independent audit reviewer |
 | `S6-29a0672aff87290b` | S6 | **reviewable** | Number-channel merge diffs are **checked** (`i64` overflow is an error) — the subtraction, the merge, **and the accumula | unclassified | Jim / independent audit reviewer |
 | `S6-3d5848fba9a91692` | S6 | **reviewable** | **The block's producer is paid a share of what its deploys burned** — `PosParams::executor_share` basis points of a depl | unclassified | Jim / independent audit reviewer |
 | `S6-423749eda11ee12d` | S6 | **reviewable** | **A slash fans the untaken remainder out to each delegator's own vault, and clears the delegation ledgers** — `atRisk` r | unclassified | Jim / independent audit reviewer |
@@ -93,7 +93,7 @@ Do not edit by hand; the checker compares this file with the JSON.
 | `S6-5c91a4e66518c7ec` | S6 | **reviewable** | Active validator set = a **stake-weighted draw without replacement** from the eligible pool, seeded one epoch ahead | unclassified | Jim / independent audit reviewer |
 | `S6-7b9fe37e74b318db` | S6 | **reviewable** | **The fee floor and the parent bound are committed in the genesis state** — `casper.min-phlo-price` and `casper.max-numb | unclassified | Jim / independent audit reviewer |
 | `S6-83825d04fdb174bc` | S6 | **reviewable** | **A resolved parent at or above the block's number is refused** — the **failed** ones included (H1b, `casper/src/validat | unclassified | Jim / independent audit reviewer |
-| `S6-91b05027373a3107` | S6 | **reviewable** | `Secp256k1::verify_bytes` **refuses a message that is not the 32-byte prehash** (a named `PREHASH_LEN`), where the depen | unclassified | Jim / independent audit reviewer |
+| `S6-91b05027373a3107` | S6 | **met** | `Secp256k1::verify_bytes` **refuses a message that is not the 32-byte prehash** (a named `PREHASH_LEN`), where the depen | unit | Jim / independent audit reviewer |
 | `S6-9297637b16a7e18c` | S6 | **reviewable** | **An epoch's reward for a key with delegators is split pro-rata, and a delegator's share is credited to `pos:delegated_r | unclassified | Jim / independent audit reviewer |
 | `S6-957351356597c77d` | S6 | **reviewable** | **`fundPot` adds REV to the validators' reward pot with no claim** — `rho:rchain:pos!("fundPot", deployerId, amount, ret | unclassified | Jim / independent audit reviewer |
 | `S6-9b7d0ce349e22aa8` | S6 | **reviewable** | Vaults are a **balance map keyed by REV address**; `transfer` takes the caller's `deployerId` rather than a minted purse | unclassified | Jim / independent audit reviewer |
@@ -104,12 +104,12 @@ Do not edit by hand; the checker compares this file with the JSON.
 | `S6-a641f6fa8cc3ce54` | S6 | **reviewable** | **A slash is graded by the offence** — `Malicious` takes everything the validator holds in the PoS system, `Misdemeanour | unclassified | Jim / independent audit reviewer |
 | `S6-aff8e713fee0981e` | S6 | **reviewable** | `check_min_messages` requires the minimum-message **sender set** to equal the bonded set, where the oracle compares coun | unclassified | Jim / independent audit reviewer |
 | `S6-c59c38eeab097a7b` | S6 | **reviewable** | The Coop **multisig public keys** are read as the port's initial **trusted stakeholder** set | unclassified | Jim / independent audit reviewer |
-| `S6-c7536b90bd39cf71` | S6 | **reviewable** | `MAX_VALUE_DEPTH = 256` on a **produced value** (`rholang/src/storage.rs`, both produce paths) | unclassified | Jim / independent audit reviewer |
+| `S6-c7536b90bd39cf71` | S6 | **met** | `MAX_VALUE_DEPTH = 256` on a **produced value** (`rholang/src/storage.rs`, both produce paths) | integration | Jim / independent audit reviewer |
 | `S6-cc87a089357b25fa` | S6 | **reviewable** | RSpace candidate selection is **sorted-first** by content hash (not newest-first insertion order) | unclassified | Jim / independent audit reviewer |
 | `S6-ccb08bb8dcafdd3c` | S6 | **reviewable** | Cost charges track the work of collection canonicalisation, union and rho:gov:censure. | unclassified | Jim / consensus |
 | `S6-d36503203399d227` | S6 | **reviewable** | `bonds_map`/stake carried as `NonNegI64` (reject negative) | unclassified | Jim / independent audit reviewer |
 | `S6-d39645b95737497d` | S6 | **reviewable** | The node's own block metadata **carries the `slashable` flag** (`BlockMetadataProto.slashable = 22`), where the port dro | unclassified | Jim / independent audit reviewer |
-| `S6-d7dd0a06a5dee537` | S6 | **reviewable** | `New.bind_count`/`Receive.bind_count` are a **`FreeCount`** carrier, and a negative count is **rejected at the proto bou | unclassified | Jim / independent audit reviewer |
+| `S6-d7dd0a06a5dee537` | S6 | **met** | `New.bind_count`/`Receive.bind_count` are a **`FreeCount`** carrier, and a negative count is **rejected at the proto bou | unit | Jim / independent audit reviewer |
 | `S6-dc8df48ecb6197ee` | S6 | **superseded** | A **new exact decimal value type** (`GDecimal`, wire tag 35, sort rank 14, scale ≤ 38, canonical coefficient) | unclassified | Jim / independent audit reviewer |
 | `S6-dcbe72b936ef74ae` | S6 | **reviewable** | `if`'s condition is normalized against an **empty** par (`normalizer.rs::normalize_if`), as `match`'s target is | unclassified | Jim / independent audit reviewer |
 | `S6-de66e3b5b934584f` | S6 | **reviewable** | **The full-partition filter is containment, not equality** (`sees_the_whole_partition`, `block-storage/src/dag/finalizer | unclassified | Jim / independent audit reviewer |
@@ -126,5 +126,5 @@ Do not edit by hand; the checker compares this file with the JSON.
 Status is a disposition of the evidence, not a release claim. A gate is `met` only
 when its witness resolves, its negative control is recorded, its evidence is pinned,
 and every dependency is satisfied.
-The register records **0 of 111 gates `met`**; every other
+The register records **5 of 111 gates `met`**; every other
 gate is open with a stated reason.

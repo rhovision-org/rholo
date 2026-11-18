@@ -384,19 +384,20 @@
     {
       "criteria_sha256": "ad0136571e9e31038276c88a75b95a60b70a78ee02931fc37ab90bf2dd05c7a4",
       "depends_on": [],
-      "docker_free": true,
-      "does_not_claim": "A fresh-genesis or debug-build run is not a populated-store migration.",
+      "docker_free": false,
+      "does_not_claim": "A single-validator local store copy, not a 2->4/3->4 scale-up, a live operator archive, or a store-format migration. Docker is the harness; the store bytes and the node's own certificate verification are the evidence.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "8e4596b71a107a2c0f85efd6db06990ee86f41515b48f9aa31c5bfafaebb5ad8",
+        "digest": "f3dbc85de62961cae355ac801c2f8f0933b98e2676e76d9a6d9ab64e54f0b14c",
+        "record": "spec/audit/evidence/g520-migration-store-drill-20261118",
+        "source_sha": "8b4c6b21ca9c6eea266a73ce9bb8127f914ff510",
+        "url": "https://github.com/rhovision-org/rholo/blob/103a636c9c3c7e8e2c7863d3caf6bb7c1aa638b3/spec/audit/evidence/g520-migration-store-drill-20261118/manifest.json"
       },
       "fail_condition": "A populated store is swapped without an exact-format copy/rollback/restart acceptance or a replay qualification.",
       "family": "G520",
       "id": "G520-MIGRATION",
       "locality": "single-host",
-      "negative_control": "A fresh-genesis run must not substitute for the populated-store arm.",
+      "negative_control": "A fresh-genesis run must not substitute for the populated-store arm; the control disables the substitution check and the self-test must fail.",
       "observable": "The copy/rollback/restart result and the replay verdict on the populated store.",
       "owner": "Jim / release coordination",
       "pass_condition": "An exact-format populated-store copy/rollback/restart acceptance, including replay qualification, before a store swap.",
@@ -406,16 +407,31 @@
           "id": "G428-M4"
         }
       ],
-      "sole_evidence": "none",
+      "sole_evidence": "local-devnet",
       "source_label": "#520; docs/src/node/updating.md",
       "source_retrieved": "2026-11-18",
       "source_sha256": null,
       "source_url": "https://github.com/rhovision-org/rholo/issues/520",
-      "status": "owes",
-      "status_reason": "No in-tree gate row or witness; the dependency is recorded but unqualified.",
+      "status": "met",
+      "status_reason": null,
       "title": "Populated-store migration and replay qualification",
-      "witness_kind": null,
-      "witness_ref": null,
+      "witness_binding": {
+        "asserts_sha256": "7a8b9b3ce91dc0a208ff1d3d79135c78df3355125174b2f661e8b6108dcc6432",
+        "control": {
+          "control_of": "tools/populated-store-migration-drill.py::run_gate",
+          "description": "Disable the fresh-genesis substitution check; the drill self-test must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "    if False and _fresh_is_substitute(fresh, pre):",
+            "before": "    if _fresh_is_substitute(fresh, pre):",
+            "file": "tools/populated-store-migration-drill.py"
+          },
+          "run_record": "spec/audit/evidence/g520-migration-store-drill-20261118-fail",
+          "test": "tools/populated-store-migration-drill.py::self_test"
+        }
+      },
+      "witness_kind": "local-devnet",
+      "witness_ref": "tools/populated-store-migration-drill.py::run_gate",
       "witness_scope": "integration"
     },
     {
@@ -1582,7 +1598,7 @@
       "source_sha256": "200fa86de262781203863bb892e124368513e14834be168151150d38b72dadc0",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/final-gap-matrix.json",
       "status": "owes",
-      "status_reason": "46 section-6 A candidates lack a per-candidate disposition.",
+      "status_reason": "42 section-6 A candidates lack a per-candidate disposition.",
       "title": "Exhaustive \u00a76 category-A reverse inventory",
       "witness_kind": null,
       "witness_ref": null,
@@ -2533,20 +2549,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-code regression witness, not a historical Scala-era replay or a coordinated validator/client rollout.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "4d5cd904ca50217ea7a9d33a4cea4a829cabefd38061bfef83cb275c949385f0",
+        "digest": "a4117fa609fe87656b64846c914eae1159602e320e3a443dcb7472320631fff7",
+        "record": "spec/audit/evidence/s6-25bfdbe2c179c81e-20261118",
+        "source_sha": "8b4c6b21ca9c6eea266a73ce9bb8127f914ff510",
+        "url": "https://github.com/rhovision-org/rholo/blob/103a636c9c3c7e8e2c7863d3caf6bb7c1aa638b3/spec/audit/evidence/s6-25bfdbe2c179c81e-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-25bfdbe2c179c81e",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "integration",
+      "negative_control": "Restore the default-to-false arm; the witness must fail.",
       "observable": "An instance-less or unknown-only `Expr` is **refused** with `Malformed(\"expr_instance\")` rather than decoded as `false`",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: An instance-less or unknown-only `Expr` is **refused** with `Malformed(\"expr_instance\")` rather than decoded as `false`",
@@ -2558,12 +2575,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "25bfdbe2c179c81e4f0a686b5286e5edb2c443e4a11688c1f152d8b23e5fe35f",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "An instance-less or unknown-only `Expr` is **refused** with `Malformed(\"expr_instance\")` rather than decoded as `false`",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "45afc9d8f189914ae96cde918bf032737709e4681169c77189ec6c90529ab620",
+        "control": {
+          "control_of": "models/tests/expr_refusal.rs::an_unknown_only_expression_is_refused_after_real_wire_decode",
+          "description": "Return Expr::GBool(false) for an instance-less Expr; the refusal witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "        None => a::Expr::GBool(false),",
+            "before": "        None => return Err(ModelsError::Malformed(\"expr_instance\")),",
+            "file": "models/src/wire.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-25bfdbe2c179c81e-20261118-fail",
+          "test": "models/tests/expr_refusal.rs::an_unknown_only_expression_is_refused_after_real_wire_decode"
+        }
+      },
+      "witness_kind": "rust-integration",
+      "witness_ref": "models/tests/expr_refusal.rs::an_unknown_only_expression_is_refused_after_real_wire_decode",
+      "witness_scope": "integration"
     },
     {
       "depends_on": [],
@@ -3014,20 +3046,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-code regression witness; the C134 oracle ambiguity and the coordinated rollout remain separate obligations.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "b5816de4f92df77a9953898f2eb93dd6b94550a1bc98ffa1c3d0c2832417c6e5",
+        "digest": "68221d98ad5201f7b9501e45ce64dac7aa2fdbba3c3a8dde0a2ae8afc42fe1e6",
+        "record": "spec/audit/evidence/s6-91b05027373a3107-20261118",
+        "source_sha": "8b4c6b21ca9c6eea266a73ce9bb8127f914ff510",
+        "url": "https://github.com/rhovision-org/rholo/blob/103a636c9c3c7e8e2c7863d3caf6bb7c1aa638b3/spec/audit/evidence/s6-91b05027373a3107-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-91b05027373a3107",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Bypass the PREHASH_LEN refusal; the suffixed message verifies over its prefix and the witness must fail.",
       "observable": "`Secp256k1::verify_bytes` **refuses a message that is not the 32-byte prehash** (a named `PREHASH_LEN`), where the dependency truncates a longer one to its leftmost 32 bytes",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: `Secp256k1::verify_bytes` **refuses a message that is not the 32-byte prehash** (a named `PREHASH_LEN`), where the dependency truncates a longer one to its leftmost 32 bytes",
@@ -3039,12 +3072,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "91b05027373a31079d4315e60935bf6340758a0e4370e1b27d766b2c12b02038",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "`Secp256k1::verify_bytes` **refuses a message that is not the 32-byte prehash** (a named `PREHASH_LEN`), where the dependency truncates a longer one to its left",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "350724d3db26c49ab67639dbe44a27cdaed7d38ba9d775168f6e11bc0e4e72b3",
+        "control": {
+          "control_of": "crypto/src/signatures/secp256k1.rs::a_message_that_is_not_32_bytes_is_refused_not_truncated",
+          "description": "Bypass the 32-byte prehash length check; the extended message verifies over its prefix.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "        if false && data.len() != PREHASH_LEN {",
+            "before": "        if data.len() != PREHASH_LEN {",
+            "file": "crypto/src/signatures/secp256k1.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-91b05027373a3107-20261118-fail",
+          "test": "crypto/src/signatures/secp256k1.rs::a_message_that_is_not_32_bytes_is_refused_not_truncated"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "crypto/src/signatures/secp256k1.rs::a_message_that_is_not_32_bytes_is_refused_not_truncated",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
@@ -3404,20 +3452,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-code regression witness; the hard-fork fork-point and validator rollout remain separate obligations, and the witness does not measure every value shape.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "122189f08dd425c970464707e3f7c6f3669e30c220ccff731935df5f2a7ffbd0",
+        "digest": "800f3256429c63175f22179c9344f659995b43ad850d44041012369de3fbbe79",
+        "record": "spec/audit/evidence/s6-c7536b90bd39cf71-20261118",
+        "source_sha": "8b4c6b21ca9c6eea266a73ce9bb8127f914ff510",
+        "url": "https://github.com/rhovision-org/rholo/blob/103a636c9c3c7e8e2c7863d3caf6bb7c1aa638b3/spec/audit/evidence/s6-c7536b90bd39cf71-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-c7536b90bd39cf71",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "integration",
+      "negative_control": "Raise the produced-value depth bound; the over-bound value reaches the space or aborts, and the witness must fail.",
       "observable": "`MAX_VALUE_DEPTH = 256` on a **produced value** (`rholang/src/storage.rs`, both produce paths)",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: `MAX_VALUE_DEPTH = 256` on a **produced value** (`rholang/src/storage.rs`, both produce paths)",
@@ -3429,12 +3478,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "c7536b90bd39cf714c7c871c17994539810d2d04147ae51e9f852924c7861517",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "`MAX_VALUE_DEPTH = 256` on a **produced value** (`rholang/src/storage.rs`, both produce paths)",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "e985fb3a531f26d50d161505b86740919b337f0f021281d2cc3202dd9072c36d",
+        "control": {
+          "control_of": "rholang/tests/deep_value_bound.rs::a_value_built_at_runtime_is_refused_above_the_bound",
+          "description": "Raise MAX_VALUE_DEPTH from 256 to the parser ceiling; the over-bound fold must no longer be refused.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "const MAX_VALUE_DEPTH: usize = if 1024 < crate::parser::MAX_AST_DEPTH {",
+            "before": "const MAX_VALUE_DEPTH: usize = if 256 < crate::parser::MAX_AST_DEPTH {",
+            "file": "rholang/src/storage.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-c7536b90bd39cf71-20261118-fail",
+          "test": "rholang/tests/deep_value_bound.rs::a_value_built_at_runtime_is_refused_above_the_bound"
+        }
+      },
+      "witness_kind": "rust-integration",
+      "witness_ref": "rholang/tests/deep_value_bound.rs::a_value_built_at_runtime_is_refused_above_the_bound",
+      "witness_scope": "integration"
     },
     {
       "depends_on": [],
@@ -3574,20 +3638,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-code regression witness; it does not scan historical blocks for malformed counts and covers the decoder boundary, not every later reader of a bind count.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "284ceca58b39178508d3811a670134ea3930c2be56ea6c58e61fa33a9b25e29e",
+        "digest": "c3d56019b53392f66497520bd93d6c6245755f9b6358efcd57f9c1bda30dcb49",
+        "record": "spec/audit/evidence/s6-d7dd0a06a5dee537-20261118",
+        "source_sha": "8b4c6b21ca9c6eea266a73ce9bb8127f914ff510",
+        "url": "https://github.com/rhovision-org/rholo/blob/103a636c9c3c7e8e2c7863d3caf6bb7c1aa638b3/spec/audit/evidence/s6-d7dd0a06a5dee537-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-d7dd0a06a5dee537",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Restore the clamp on the first decoder; the witness must fail.",
       "observable": "`New.bind_count`/`Receive.bind_count` are a **`FreeCount`** carrier, and a negative count is **rejected at the proto boundary**",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: `New.bind_count`/`Receive.bind_count` are a **`FreeCount`** carrier, and a negative count is **rejected at the proto boundary**",
@@ -3599,12 +3664,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "d7dd0a06a5dee537b8fed62ba9d1f4f9d0c8efd553ec60083aa75fcf96207807",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "`New.bind_count`/`Receive.bind_count` are a **`FreeCount`** carrier, and a negative count is **rejected at the proto boundary**",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "1e7f2b2e8d60471d4b19fa3bb63d8ab53d44c8822f81af27384d8e519b6ba7f3",
+        "control": {
+          "control_of": "models/src/wire.rs::a_negative_bind_count_is_refused_at_the_wire_boundary",
+          "description": "Replace the first bind_count boundary check with a clamp; the receive decoder accepts the negative count.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "        bind_count: FreeCount::new(p.bind_count).unwrap_or(FreeCount::ZERO),",
+            "before": "        bind_count: FreeCount::try_from(p.bind_count).map_err(ModelsError::Decode)?,",
+            "file": "models/src/wire.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-d7dd0a06a5dee537-20261118-fail",
+          "test": "models/src/wire.rs::a_negative_bind_count_is_refused_at_the_wire_boundary"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "models/src/wire.rs::a_negative_bind_count_is_refused_at_the_wire_boundary",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
@@ -4042,8 +4122,14 @@
   "generated": "2026-11-18",
   "ledger_source_dev_sha": "e33125f65a95cff4f12baf8139a7361c7d158e43",
   "met_ratchet": {
-    "minimum": 0,
-    "required_ids": []
+    "minimum": 5,
+    "required_ids": [
+      "G520-MIGRATION",
+      "S6-25bfdbe2c179c81e",
+      "S6-c7536b90bd39cf71",
+      "S6-91b05027373a3107",
+      "S6-d7dd0a06a5dee537"
+    ]
   },
   "register_dev_sha": "dd6a25d69128375d83b7a7701c169ce672e57536",
   "schema": 1,
