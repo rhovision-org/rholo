@@ -206,6 +206,8 @@ the §6 sign-off's digest binding, a test-running acceptance checker, and the pi
 C357 independence attestation, declared lockstep window and self-test cases; the packed-record
 locality scan and the `n564` correction; the TA-C3 correction; and the register's C357 wording.
 **Remaining:** the G1–G6 typed records/checkers and CI wiring; the live G1–G6 run itself.
+The principle-level layer that makes these criteria executable and owner-independent is
+[`gate-principles-20261118.md`](gate-principles-20261118.md).
 
 ### Measurement validity
 
