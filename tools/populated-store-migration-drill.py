@@ -265,6 +265,15 @@ def capture(path: Path, text: str) -> None:
     path.write_text(text)
 
 
+def container_logs() -> str:
+    """The node writes its journal to stderr; merge it rather than dropping it."""
+    try:
+        return mature.docker(["logs", "--timestamps", "--tail", "2000",
+                              f"{PREFIX}-bootstrap"])
+    except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return ""
+
+
 def snapshot_all(suffix: str) -> dict[str, str]:
     """The single-validator devnet's bootstrap volume is its whole populated store."""
     source = node_volume("bootstrap")
@@ -322,6 +331,8 @@ def run_gate(args) -> int:
         copied["genesis_hash"] = genesis_hash(HTTP_BASE)
         result["arms"]["copied"] = copied
         capture(raw / "copied.json", json.dumps(copied, indent=2, sort_keys=True) + "\n")
+        copied_log = container_logs()
+        capture(raw / "copied-bootstrap.log", copied_log)
 
         devnet("down")
         snapshots = snapshot_all("h0")
@@ -346,13 +357,9 @@ def run_gate(args) -> int:
         rollback["genesis_hash"] = genesis_hash(HTTP_BASE)
         result["arms"]["rollback"] = rollback
         capture(raw / "rollback.json", json.dumps(rollback, indent=2, sort_keys=True) + "\n")
-
-        logs = ""
-        try:
-            logs = docker(["logs", "--timestamps", "--tail", "2000", f"{PREFIX}-bootstrap"])
-        except (RuntimeError, subprocess.TimeoutExpired):
-            logs = ""
-        capture(raw / "bootstrap.log", logs)
+        rollback_log = container_logs()
+        capture(raw / "rollback-bootstrap.log", rollback_log)
+        logs = copied_log + "\n" + rollback_log
 
         devnet("down", "-v")
         devnet("up", "--validators", "1", "--fresh", "--no-autopropose",
