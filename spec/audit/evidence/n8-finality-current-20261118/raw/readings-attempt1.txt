@@ -1,0 +1,6 @@
+run dir: target/n149-blocks/4e097cc8d-20261118T193909Z
+run                 idle  deploys  blocks  senders maxpar  ttf_s  note
+n8-noauto-a1           0        1     312        8      8     24  
+
+by N (primary arm = noauto):
+  N=8   arm=noauto  attempts=1  blocks=[312] senders=[8] maxpar=[8] ttf_s=['24']

@@ -1,0 +1,7 @@
+run dir: target/pareto/n149-n8-repeat3/4e097cc8d-20261118T194640Z
+run                 idle  deploys  blocks  senders maxpar  ttf_s  note
+n8-noauto-a1           0        1      64        8      8      7  
+n8-noauto-a2           0        1      64        8      8      7  
+
+by N (primary arm = noauto):
+  N=8   arm=noauto  attempts=2  blocks=[64, 64] senders=[8, 8] maxpar=[8, 8] ttf_s=['7', '7']
