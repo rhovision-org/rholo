@@ -354,7 +354,7 @@
       "mutation": {
         "file": "rholang/src/native_state.rs",
         "before": "        ledger.insert(key, balance_plus(held, stake, \"delegated principal\")?);",
-        "after": "        ledger.insert(key, stake);",
+        "after": "        ledger.insert(key, balance_plus(NonNegI64::zero(), stake, \"delegated principal\")?);",
         "description": "Replace instead of accumulate a second delegation; the aggregate-bond witness must fail."
       },
       "scope_note": "A validator's bond may be other people's stake: pos:bonds carries the aggregate and pos:delegations attributes it.",
