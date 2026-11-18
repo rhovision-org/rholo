@@ -48,6 +48,8 @@ RUN_URL = re.compile(
     rf"^https://github\.com/{UPSTREAM}/actions/runs/(\d+)(/attempts/(\d+))?/?$"
 )
 PLACEHOLDER = re.compile(r"<fill:[^>]*>")
+HEX40 = re.compile(r"^[0-9a-f]{40}$")
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def fail(message: str):
@@ -305,6 +307,12 @@ def cmd_verify(args) -> int:
         fail(f"manifest schema {manifest.get('schema')!r} is not {SCHEMA}")
     if manifest.get("execution_proven") is not False:
         fail("execution_proven must be false: a digest chain does not prove execution")
+    source = manifest.get("source_sha")
+    if source is not None and not HEX40.fullmatch(str(source)):
+        fail("source_sha is not a 40-hex commit")
+    binary = manifest.get("binary_sha256")
+    if binary is not None and not HEX64.fullmatch(str(binary)):
+        fail("binary_sha256 is not a 64-hex digest")
     url = (manifest.get("run") or {}).get("url")
     if url and not RUN_URL.match(url):
         fail(f"the recorded run URL is not an {UPSTREAM} actions run: {url}")

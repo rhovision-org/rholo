@@ -10,9 +10,11 @@ the runbook's arms and that review:
   and its digest. It never submits a deploy, restarts a node, signs anything or touches a key. The
   single authorized submission is the operator's, recorded separately in `submission.json`.
 * `check` reads a run directory and reports each of G1–G5 as PASS / FAIL / INCOMPLETE with the
-  checks that produced it. It **never** records G6 and never emits an acceptance verdict: the report
-  always says `G6: PENDING` and `overall: NOT_A_VERDICT`. A zero exit means "the worksheet is
-  complete", not "the gate passed".
+  checks that produced it. A supplied `--verdict` record is validated (reviewer, named reviewer,
+  verdict enum, evidence digest, https verdict URL, UTC timestamp and a cited evidence record) and
+  its G6 status is reported. The tool **never** records G6 and never emits an acceptance verdict:
+  `overall` is always `NOT_A_VERDICT`. A zero exit means the worksheet (and, if supplied, the G6
+  record) is complete, not that the gate passed.
 
 Inputs and outputs stay separate: the private sampling plan and the private #572 preflight manifest
 are never written into the run directory, and the run directory records validator **aliases** and
@@ -23,7 +25,7 @@ Usage:
   python3 tools/live-gate.py sample --plan /secure/n584-plan.json --out target/n584-live \\
       [--interval 5] [--duration 900] [--timeout 5]
   python3 tools/live-gate.py check --run-dir target/n584-live --preflight /secure/preflight.json \\
-      [--report target/n584-live/gate-report.json]
+      [--verdict /secure/g6-verdict.json] [--report target/n584-live/gate-report.json]
 
 Exit codes:
   sample  0 every alias answered at least one deploy-status/settlement sample; 3 an alias never
@@ -55,6 +57,7 @@ ISSUE = 584
 MAX_BODY_BYTES = 1 << 20
 ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+SOURCE_RE = re.compile(r"^[0-9a-f]{40}$")
 URL_RE = re.compile(r"https?://", re.IGNORECASE)
 IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
@@ -99,6 +102,9 @@ DIGEST_FIELDS = ("binary_sha256", "genesis_raw_sha256", "bonds_sha256")
 OPERATOR_FIELDS = (
     "release_tag",
     "release_branch",
+    "selected_source_sha",
+    "selected_artifact_digest",
+    "selected_binary_sha256",
     "window_start_utc",
     "window_end_utc",
     "operator",
@@ -536,6 +542,21 @@ def check_g1(preflight) -> dict:
     for field in OPERATOR_FIELDS:
         if not present(operator.get(field)):
             finding.incomplete(f"operator_fields.{field} is absent")
+    selected_source = operator.get("selected_source_sha")
+    selected_binary = operator.get("selected_binary_sha256")
+    if present(selected_source) and not SOURCE_RE.match(str(selected_source)):
+        finding.fail("operator_fields.selected_source_sha is not a commit")
+    if present(selected_binary) and not DIGEST_RE.match(str(selected_binary)):
+        finding.fail("operator_fields.selected_binary_sha256 is not a 64-hex digest")
+    if present(selected_source) and present(selected_binary):
+        for record in validators:
+            if not isinstance(record, dict):
+                continue
+            if (record.get("source_sha") != selected_source
+                    or record.get("binary_sha256") != selected_binary):
+                finding.fail(
+                    f"{record.get('name') or 'a validator'} is not the selected candidate")
+                break
     start, end = parse_utc(operator.get("window_start_utc")), parse_utc(operator.get("window_end_utc"))
     if start is None or end is None:
         finding.incomplete("the approved UTC window is absent or unparseable")
@@ -614,6 +635,24 @@ def check_g2(submission, run, events) -> dict:
         for (before, _), (after, _) in zip(sequence, sequence[1:]):
             if after < before:
                 finding.fail(f"{alias} reports the lifecycle out of order")
+    for alias in aliases:
+        stages_for_alias = {
+            event["body"].get("stage")
+            for event in settlement_events(events) if event.get("alias") == alias
+        }
+        included_for_alias = any(
+            stage in ("includedUnfinalized", "finalityUnknown") for stage in stages_for_alias
+        ) or any(
+            execution_tag(event.get("body")) in PROCESSED_TAGS
+            for event in events
+            if event.get("alias") == alias and event.get("route") == "deploy_status"
+        )
+        if "pooled" not in stages_for_alias:
+            finding.incomplete(f"{alias} never observed the pooled stage")
+        if not included_for_alias:
+            finding.incomplete(f"{alias} never observed an included/executed stage")
+        if SETTLED not in stages_for_alias:
+            finding.incomplete(f"{alias} never observed the finalized stage")
 
     identities = set()
     for event in ordered:
@@ -654,6 +693,13 @@ def check_g3(claims, events) -> dict:
                 for event in settlement_events(events)
             ):
                 finding.fail("the record claims settlement without a finalizedSuccess observation")
+
+    if not any(
+        event["body"].get("finalized") is not True
+        and event["body"].get("settlementConfirmed") is not True
+        for event in settlement_events(events)
+    ):
+        finding.incomplete("no pre-finality not-finalized settlement sample")
 
     observations = finality_events(events)
     for event in observations:
@@ -764,6 +810,15 @@ def check_g4(recovery, events) -> dict:
         finding.fail("the same deploy did not finalize after recovery")
     elif recovery.get("same_deploy_finalized") is not True:
         finding.incomplete("same_deploy_finalized is not a boolean")
+    finalized_after = [
+        event
+        for event in settlement_events(events)
+        if end is not None
+        and (parse_utc(event.get("utc")) or start or end) >= end
+        and event["body"].get("stage") == SETTLED
+    ]
+    if not finalized_after:
+        finding.incomplete("no finalizedSuccess sample after the recovery window")
     post = recovery.get("post_recovery_settlement")
     if isinstance(post, dict):
         reason = controls.settlement_verdict(
@@ -771,16 +826,8 @@ def check_g4(recovery, events) -> dict:
         )
         if reason:
             finding.fail(f"post-recovery settlement: {reason}")
-    else:
-        finalized_after = [
-            event
-            for event in settlement_events(events)
-            if end is not None
-            and (parse_utc(event.get("utc")) or start or end) >= end
-            and event["body"].get("stage") == SETTLED
-        ]
-        if not finalized_after:
-            finding.incomplete("no finalizedSuccess sample after the recovery window")
+    elif post is not None:
+        finding.incomplete("post_recovery_settlement is not an object")
     return finding.report()
 
 
@@ -931,7 +978,40 @@ def check_g5(run, events, run_dir: Path) -> dict:
     return finding.report()
 
 
-def evaluate(run_dir: Path, preflight_path: Path):
+def check_g6(verdict, preflight) -> dict:
+    finding = Finding()
+    if not isinstance(verdict, dict):
+        finding.incomplete("G6 is not recorded")
+        return finding.report()
+    required = ("reviewer", "relationship", "independent", "verdict",
+                "evidence_sha256", "verdict_url", "signed_at", "evidence_record")
+    for field in required:
+        if not present(verdict.get(field)):
+            finding.incomplete(f"verdict.json has no {field}")
+    if any(not present(verdict.get(field)) for field in required):
+        return finding.report()
+    if verdict.get("independent") is not True:
+        finding.fail("the reviewer must be independent")
+    if verdict.get("verdict") not in ("PASS", "FAIL", "INCONCLUSIVE"):
+        finding.fail("the verdict must be PASS, FAIL or INCONCLUSIVE")
+    if not DIGEST_RE.match(str(verdict.get("evidence_sha256"))):
+        finding.fail("evidence_sha256 is not a 64-hex digest")
+    if not str(verdict.get("verdict_url")).startswith("https://"):
+        finding.fail("verdict_url must be https")
+    if parse_utc(verdict.get("signed_at")) is None:
+        finding.fail("signed_at is not a UTC timestamp")
+    operator = (preflight or {}).get("operator_fields") or {}
+    if verdict.get("reviewer") == operator.get("operator"):
+        finding.fail("the reviewer is the operator")
+    named = operator.get("independent_reviewer")
+    if named and verdict.get("reviewer") != named:
+        finding.fail("the reviewer is not the named independent reviewer")
+    if not Path(str(verdict.get("evidence_record"))).exists():
+        finding.incomplete("the cited evidence record does not exist")
+    return finding.report()
+
+
+def evaluate(run_dir: Path, preflight_path: Path, verdict_path: Path | None = None):
     preflight, preflight_error = read_json(preflight_path)
     if not isinstance(preflight, dict):
         preflight = None
@@ -944,6 +1024,12 @@ def evaluate(run_dir: Path, preflight_path: Path):
     run_path = find_file(run_dir, "run.json")
     run = read_json(run_path)[0] if run_path else None
     events, samples_error = load_samples(run_dir)
+    verdict = None
+    verdict_error = None
+    if verdict_path is not None:
+        verdict, verdict_error = read_json(verdict_path)
+        if not isinstance(verdict, dict):
+            verdict = None
 
     criteria = {
         "G1": check_g1(preflight),
@@ -951,6 +1037,7 @@ def evaluate(run_dir: Path, preflight_path: Path):
         "G3": check_g3(claims, events),
         "G4": check_g4(recovery, events),
         "G5": check_g5(run, events, run_dir),
+        "G6": check_g6(verdict, preflight),
     }
     details = {}
     if preflight_error and preflight is None:
@@ -978,8 +1065,10 @@ def evaluate(run_dir: Path, preflight_path: Path):
         "binary_sha256": binary_sha256,
         "criteria": criteria,
         "G6": {
-            "status": "PENDING",
-            "reviewer": None,
+            "status": criteria["G6"]["status"] if verdict_path is not None else "PENDING",
+            "reviewer": verdict.get("reviewer") if isinstance(verdict, dict) else None,
+            "verdict": verdict.get("verdict") if isinstance(verdict, dict) else None,
+            "reasons": criteria["G6"]["reasons"] if verdict_path is not None else [],
             "rule": "recorded by the named independent reviewer against G1-G5",
         },
         "overall": "NOT_A_VERDICT",
@@ -997,7 +1086,8 @@ def cmd_check(args) -> int:
     preflight = Path(args.preflight)
     if not preflight.is_file():
         fail(f"no preflight manifest at {preflight} (pass the private #572 merge record)")
-    report = evaluate(run_dir, preflight)
+    verdict_path = Path(args.verdict) if getattr(args, "verdict", None) else None
+    report = evaluate(run_dir, preflight, verdict_path)
     destination = Path(args.report) if args.report else run_dir / "gate-report.json"
     destination.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 
@@ -1007,9 +1097,18 @@ def cmd_check(args) -> int:
         print(f"  {name}: {criterion['status']}")
         for reason in criterion["reasons"][:4]:
             print(f"      {reason}")
-    print("  G6: PENDING - independent reviewer")
+    g6 = report["G6"]
+    if g6["status"] == "PENDING":
+        print("  G6: PENDING - independent reviewer")
+    else:
+        print(f"  G6: {g6['status']} record")
+        for reason in g6["reasons"][:4]:
+            print(f"      {reason}")
     print("  NOT ACCEPTANCE: this tool cannot record #584's G6 verdict.")
-    statuses = {criterion["status"] for criterion in report["criteria"].values()}
+    statuses = {
+        criterion["status"] for name, criterion in report["criteria"].items()
+        if name != "G6" or verdict_path is not None
+    }
     if "FAIL" in statuses:
         return 1
     if "INCOMPLETE" in statuses:
@@ -1029,9 +1128,10 @@ def main(argv: list[str]) -> int:
     sample.add_argument("--timeout", type=float, default=5.0)
     sample.set_defaults(func=cmd_sample)
 
-    check = sub.add_parser("check", help="G1-G5 worksheet; never a G6 verdict")
+    check = sub.add_parser("check", help="G1-G5 worksheet; optional G6 record; never a verdict")
     check.add_argument("--run-dir", required=True)
     check.add_argument("--preflight", required=True, help="the private #572 merge record")
+    check.add_argument("--verdict", help="optional typed G6 record (reviewer, verdict, evidence)")
     check.add_argument("--report", help="where to write gate-report.json")
     check.set_defaults(func=cmd_check)
 

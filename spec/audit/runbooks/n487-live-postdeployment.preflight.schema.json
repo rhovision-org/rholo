@@ -81,6 +81,9 @@
       "required": [
         "release_tag",
         "release_branch",
+        "selected_source_sha",
+        "selected_artifact_digest",
+        "selected_binary_sha256",
         "window_start_utc",
         "window_end_utc",
         "operator",
@@ -90,7 +93,12 @@
         "test_transfer",
         "rollback",
         "evidence_destination"
-      ]
+      ],
+      "properties": {
+        "selected_source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "selected_artifact_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "selected_binary_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
     },
     "unset_observed": { "type": "array", "maxItems": 0 },
     "unset_operator": { "type": "array", "maxItems": 0 },

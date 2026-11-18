@@ -42,6 +42,17 @@ Three lenses attacked the landed artifacts with the common schema
 | O6 | P1 | C357 category-A was a literal; the reconstructed trace was unbound. | A `category_a_effect` derivation and a reconstruction record carrying the trace digest and reviewer. |
 | O7 | P2 | The C343 journal digest was never re-checked; the register's C343 control was incomplete. | The journal digest is compared to `run.json`; the control names the JSON cases. |
 
+### G1–G6 worksheet
+
+| ID | sev | finding | fix in this round |
+|---|---|---|---|
+| G1 | P0 | The preflight checked four-way agreement but not that the agreed pins were the owner's selected candidate. | `selected_source_sha`, `selected_artifact_digest` and `selected_binary_sha256` are required preflight fields; each validator must match the selection; a missing selection is INCOMPLETE. |
+| G2 | P0 | The lifecycle was built from the union of all aliases, so one validator could miss pooled/included/finalized. | Each alias must observe pooled, an included/executed stage and finalized. |
+| G3 | P0 | A record could omit any pre-finality not-finalized sample and still pass. | A pre-finality not-finalized settlement sample is required. |
+| G4 | P0 | A self-authored `post_recovery_settlement` skipped the sampled post-window check. | A finalizedSuccess sample after the recovery window is required regardless; the claimed dict is an additional check. |
+| G5 | P0 | `evidence-pack.py verify` accepted arbitrary source/binary pin strings. | `source_sha` must be 40-hex and `binary_sha256` 64-hex. |
+| G6 | P1 | G6 was a hardcoded PENDING; no typed reviewer record existed. | A `--verdict` record is validated (reviewer, named reviewer, verdict enum, evidence digest, https URL, UTC timestamp, cited record); the tool still reports `NOT_A_VERDICT` and never records the verdict. |
+
 ### Contracts, criteria and claims
 
 | ID | sev | finding | fix in this round |

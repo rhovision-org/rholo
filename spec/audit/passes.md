@@ -13708,6 +13708,10 @@ C357 derives the window as `round_seconds × liveness_heights` (rationale requir
 derived, 600 s cap), requires at least two fully-described validators, parses `signed_at`,
 requires a review record, a category-A effect/derivation and a reconstruction record. The
 locality scan reads every file and requires a captured non-loopback peer for an off-host claim.
+The G1–G6 worksheet now binds the preflight to the owner's selected source/artifact/binary, requires
+each alias to observe pooled/included/finalized, requires a pre-finality not-finalized sample and a
+post-recovery finalized sample even when the record claims one, checks 40/64-hex pin formats in
+`evidence-pack.py`, and validates a typed G6 reviewer record without recording the verdict.
 The contracts require a verified provenance envelope, mandatory state entries and non-placeholder
 roots; the M4/M5 checks require an evidence record and a real bundle capture
 (`complete`, per-preimage `verify_ok`); `record_check: true` is explicit. The §6 disposition

@@ -151,10 +151,13 @@ python3 tools/live-gate.py check --run-dir target/n487-live-<run-id> \
 `sample` writes a plain `SHA256SUMS` over its own files; after authoring the three records, hash them
 too (or pack the record, which hashes everything), because `check` treats a partial sums file as
 INCOMPLETE. `check` re-derives G1–G5 from those records and the private #572 manifest; it does not
-trust the collector's `checks.ok` and cannot record G6. Exit 0 means "G1–G5 all PASS; the worksheet is
+trust the collector's `checks.ok` and cannot record G6. A supplied `--verdict` record is validated
+(reviewer, named reviewer, verdict enum, evidence digest, https verdict URL, UTC timestamp and a
+cited evidence record) and its G6 status is reported. Exit 0 means "G1–G5 all PASS; the worksheet is
 complete", 1 a FAIL, 3 an INCOMPLETE (missing evidence is never a pass), 2 a usage error. The report
-always carries `G6: PENDING`, `overall: NOT_A_VERDICT` and `execution_proven: false`. The named
-independent reviewer records G6.
+carries `G6: PENDING` when no record is supplied (and the record's status when one is);
+`overall: NOT_A_VERDICT` and `execution_proven: false` are always present. The named independent
+reviewer records the verdict; the tool only checks the record's shape.
 
 ### 1.4. Criterion map
 
@@ -166,6 +169,15 @@ independent reviewer records G6.
 | G4 recovery without loss | the named recovery arm, `recovery.json`, post-recovery samples |
 | G5 independent observations | four aliases' samples, hashed and redacted under §4 |
 | G6 verdict | §4, by the named independent reviewer; never by a tool |
+
+### 1.4.1 G6 verdict record
+
+The named independent reviewer writes `verdict.json` with `reviewer`, `relationship`,
+`independent: true`, `verdict` (`PASS`/`FAIL`/`INCONCLUSIVE`), `evidence_sha256`, `verdict_url`
+(https), `signed_at` (UTC) and `evidence_record` (the retained record it cites). The schema is
+`n487-g6-verdict.schema.json`; `live-gate.py check --verdict /secure/g6-verdict.json` validates the
+record's shape and reports its status. A tool PASS of the record is not the verdict: the reviewer's
+published conclusion remains the G6 record, and `overall` stays `NOT_A_VERDICT`.
 
 ## 2. Arms / sampling plan — freeze these criteria before execution
 
@@ -212,13 +224,13 @@ Publish a **redacted, reviewable** run record in `spec/audit/evidence/n487-live-
 
 - `README.md`: exact scope, human verdict, complete preflight pins, arms, observation times, limitations, non-claims, and any abnormal events. Declare `**Evidence locality.** public-live — <one line>`; this is a public live run, neither a local devnet nor an #428 M3 off-host claim.
 - `manifest.json` (`schema: 1`, `execution_proven: false`) and matching `SHA256SUMS.json`, checked by `python3 tools/evidence-pack.py verify --record <record>`; retain a conventional `SHA256SUMS` as well. The packed verdict is the reviewer's one of `PASS`, `FAIL`, `INCONCLUSIVE` or `ABORTED`.
-- `gate-report.json` from `python3 tools/live-gate.py check` (aliases only, always `G6: PENDING`): an input to the reviewer, not the verdict.
+- `gate-report.json` from `python3 tools/live-gate.py check` (aliases only; G6 is `PENDING` unless a `--verdict` record is supplied, and even then the report is input to the reviewer, not the verdict).
 - Source SHA, release/image/binary hashes, associated CI artifacts, genesis/bond digests, immutable four-validator membership, and operator/independent reviewer identities (redacting private endpoints/credentials).
 - Timestamped raw, redacted samples for `/health`, `/api/v1/finality-observation`, `/api/v1/deploy-status/{id}`, and `/api/v1/deploy-settlement/{id}` from all four validators, with gap/timeout information. Save the raw submission receipt and digest of the signed deploy without publishing signing material.
 - Inclusion block identity, finalized frontier/hash, explicit observed transitions, the negative safety assertion (never falsely settled), and post-window accepted-work audit.
 - Approved run window and go/no-go record; action log, abort/rollback decision and outcome, if applicable. Retain raw source securely and publish only reviewed redactions.
 
-**Do not call the record PASS because the digests verify**: the hash index attests file identity only. The reviewer must check the actual observed events independently and write a human verdict against the frozen criteria. Likewise, a `gate-report.json` whose five criteria all read PASS is a complete worksheet, not an acceptance: it never contains G6.
+**Do not call the record PASS because the digests verify**: the hash index attests file identity only. The reviewer must check the actual observed events independently and write a human verdict against the frozen criteria. Likewise, a `gate-report.json` whose five criteria all read PASS is a complete worksheet, not an acceptance: a supplied G6 record's status is reported, but `overall` remains `NOT_A_VERDICT`.
 
 ### Decision table
 
