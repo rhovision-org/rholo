@@ -14,8 +14,15 @@ SPEC = importlib.util.spec_from_file_location("gate_contracts", SCRIPT)
 gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
 
+PROVENANCE = {
+    "operator": "operator",
+    "signed_at": "2026-11-18T12:00:00Z",
+    "digest": "d" * 64,
+    "record": "spec/audit/evidence/n564-binary-qualification-20261113",
+}
 VAULT = {
     "schema": 1,
+    "provenance": PROVENANCE,
     "checkpoint": {"height": 10, "hash": "a" * 64},
     "entries": [
         {"id": "v1", "kind": "vault", "balance": 100},
@@ -27,6 +34,7 @@ VAULT = {
 }
 STATE = {
     "schema": 1,
+    "provenance": PROVENANCE,
     "checkpoint": {"height": 10, "hash": "a" * 64},
     "roots": {"native": "b" * 64, "rspace": "c" * 64, "history": "d" * 64},
     "counts": {"native": 2, "rspace": 3, "history": 4},
@@ -35,6 +43,7 @@ STATE = {
 }
 ATTACHMENT = {
     "schema": 1,
+    "provenance": PROVENANCE,
     "selected": {"source_sha": "a" * 40, "artifact_digest": "b" * 64,
                  "binary_sha256": "c" * 64},
     "validators": [
@@ -72,6 +81,22 @@ class ContractTests(unittest.TestCase):
         negative["entries"][0]["balance"] = -1
         self.assertEqual(gate.check_vault(negative)[0], "FAIL")
 
+    def test_schema_and_per_kind_conservation_mutants(self):
+        schema = copy.deepcopy(VAULT)
+        schema["schema"] = 2
+        self.assertEqual(gate.check_vault(schema)[0], "FAIL")
+        kind = copy.deepcopy(VAULT)
+        kind["totals"]["vaults"] = 99
+        self.assertEqual(gate.check_vault(kind)[0], "FAIL")
+        negative = copy.deepcopy(VAULT)
+        negative["totals"]["supply"] = -1
+        self.assertEqual(gate.check_vault(negative)[0], "FAIL")
+
+    def test_roots_format_is_checked(self):
+        bad = copy.deepcopy(STATE)
+        bad["roots"]["native"] = "x"
+        self.assertEqual(gate.check_state(bad)[0], "FAIL")
+
     def test_state_completeness_is_counts_and_roots(self):
         incomplete = copy.deepcopy(STATE)
         incomplete["complete"] = False
@@ -93,6 +118,31 @@ class ContractTests(unittest.TestCase):
         span = copy.deepcopy(ATTACHMENT)
         span["validators"][2]["activated_utc"] = "2026-11-18T20:01:00Z"
         self.assertEqual(gate.check_attachment(span)[0], "FAIL")
+
+    def test_missing_provenance_is_precondition(self):
+        for checker, record in ((gate.check_vault, VAULT), (gate.check_state, STATE),
+                                (gate.check_attachment, ATTACHMENT)):
+            with self.subTest(checker=checker.__name__):
+                bad = copy.deepcopy(record)
+                bad.pop("provenance")
+                self.assertEqual(checker(bad)[0], "PRECONDITION")
+
+    def test_state_entries_are_required(self):
+        bad = copy.deepcopy(STATE)
+        bad.pop("entries")
+        self.assertEqual(gate.check_state(bad)[0], "FAIL")
+
+    def test_zero_roots_are_refused(self):
+        bad = copy.deepcopy(STATE)
+        bad["roots"]["native"] = "0" * 64
+        self.assertEqual(gate.check_state(bad)[0], "FAIL")
+
+    def test_a_contract_pass_does_not_flip_a_register_gate(self):
+        register = json.loads((ROOT / "spec/audit/mainnet-gates.json").read_text())
+        for ident in ("HF51-A-vault-export", "HF51-Batch-state-preservation",
+                      "HF51-Release-attachment-upgrade"):
+            row = next(row for row in register["gates"] if row["id"] == ident)
+            self.assertNotEqual(row["status"], "met", ident)
 
     def test_missing_record_is_precondition(self):
         with tempfile.TemporaryDirectory() as tmp:

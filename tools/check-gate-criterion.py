@@ -12,7 +12,11 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 FLOOR = 270.0
@@ -23,9 +27,46 @@ def nonneg(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def check_evidence(data: dict, gate_id: str, token: object) -> tuple[str, list[str]]:
+    evidence = data.get("evidence")
+    if not isinstance(evidence, dict):
+        return "PRECONDITION", ["no evidence record"]
+    record = evidence.get("record")
+    path = Path(record) if isinstance(record, str) else None
+    if path is not None and not path.is_absolute():
+        path = ROOT / path
+    if path is None or not path.is_dir():
+        return "FAIL", ["evidence.record is not a retained directory"]
+    if not ((path / "manifest.json").is_file() and (path / "SHA256SUMS.json").is_file()):
+        return "FAIL", ["evidence.record needs manifest.json and SHA256SUMS.json"]
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "tools/evidence-pack.py"), "verify",
+         "--record", str(path)],
+        capture_output=True, text=True, timeout=120, check=False)
+    if proc.returncode != 0:
+        return "FAIL", ["evidence.record does not verify"]
+    manifest = json.loads((path / "manifest.json").read_text())
+    errors: list[str] = []
+    if manifest.get("gate_id") != gate_id:
+        errors.append(f"evidence names {manifest.get('gate_id')!r}, not {gate_id}")
+    if manifest.get("execution_proven") is not False:
+        errors.append("execution_proven must be false")
+    readme = path / "README.md"
+    text = readme.read_text(errors="ignore") if readme.is_file() else ""
+    if not isinstance(token, str) or not token or token not in text:
+        errors.append("the criterion token is not in the evidence record")
+    if not (isinstance(evidence.get("digest"), str)
+            and HEX64.fullmatch(evidence["digest"])):
+        errors.append("evidence.digest must be a 64-hex digest")
+    return ("FAIL" if errors else "PASS"), errors
+
+
 def check_rejoin(data: dict) -> tuple[str, list[str], dict]:
     errors: list[str] = []
     anchor = data.get("anchor") or {}
+    evidence_status, evidence_errors = check_evidence(data, "G428-M4", anchor.get("hash"))
+    if evidence_status != "PASS":
+        return evidence_status, evidence_errors, {}
     if not (isinstance(anchor.get("hash"), str) and HEX64.fullmatch(anchor["hash"])):
         errors.append("anchor.hash must be a 64-hex digest")
     if not nonneg(anchor.get("height")):
@@ -58,6 +99,30 @@ def check_merge(data: dict) -> tuple[str, list[str], dict]:
     bundle = data.get("bundle") or {}
     if bundle.get("available") is not True:
         return "PRECONDITION", ["the authenticated historical bundle is unavailable"], {}
+    capture_path = bundle.get("record")
+    path = Path(capture_path) if isinstance(capture_path, str) else None
+    if path is not None and not path.is_absolute():
+        path = ROOT / path
+    if path is None or not path.is_file():
+        return "FAIL", ["a bundle claimed available has no capture record"], {}
+    try:
+        capture = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return "FAIL", ["the bundle capture record is unreadable"], {}
+    if capture.get("complete") is not True:
+        return "FAIL", ["the bundle capture record is not complete"], {}
+    preimages = capture.get("preimages") or []
+    if not isinstance(preimages, list) or not preimages:
+        return "FAIL", ["the bundle capture record has no preimages"], {}
+    if not all(isinstance(item, dict) and item.get("verify_ok") is True
+               for item in preimages):
+        return "FAIL", ["a bundle preimage did not verify"], {}
+    digest = bundle.get("digest")
+    if not (isinstance(digest, str) and HEX64.fullmatch(digest)):
+        return "FAIL", ["bundle.digest must be a 64-hex digest"], {}
+    evidence_status, evidence_errors = check_evidence(data, "G428-M5", digest)
+    if evidence_status != "PASS":
+        return evidence_status, evidence_errors, {}
     for field in ("final_scope_rejected_chains", "rejections_without_a_conflict",
                   "unapplied_kept_writes"):
         if not nonneg(data.get(field)):
@@ -105,7 +170,8 @@ def main() -> int:
         return 1
     checker = {"rejoin": check_rejoin, "merge": check_merge}[args.command]
     result, errors, detail = checker(data)
-    print(json.dumps({"result": result, "errors": errors, "detail": detail}, sort_keys=True))
+    print(json.dumps({"result": result, "errors": errors, "detail": detail,
+                      "record_check": True}, sort_keys=True))
     return 0 if result == "PASS" else (3 if result == "PRECONDITION" else 1)
 
 

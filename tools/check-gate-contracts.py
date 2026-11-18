@@ -13,7 +13,12 @@ import argparse
 import datetime as dt
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PROVENANCE_RECORD = "spec/audit/evidence/n564-binary-qualification-20261113"
 
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -24,7 +29,46 @@ def nonneg(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def check_provenance(data: dict) -> tuple[str, list[str]]:
+    """An operator/evidence envelope is the external input; a synthetic record is not."""
+    provenance = data.get("provenance")
+    if not isinstance(provenance, dict):
+        return "PRECONDITION", ["no operator attestation/evidence record"]
+    errors: list[str] = []
+    if not (isinstance(provenance.get("operator"), str) and provenance["operator"].strip()):
+        errors.append("provenance.operator is required")
+    try:
+        signed = dt.datetime.fromisoformat(
+            str(provenance.get("signed_at") or "").replace("Z", "+00:00"))
+        if signed.tzinfo is None:
+            errors.append("provenance.signed_at must be timezone-aware")
+    except ValueError:
+        errors.append("provenance.signed_at is not a UTC timestamp")
+    if not (isinstance(provenance.get("digest"), str)
+            and HEX64.fullmatch(provenance["digest"])):
+        errors.append("provenance.digest must be a 64-hex digest")
+    record = provenance.get("record")
+    path = Path(record) if isinstance(record, str) else None
+    if path is not None and not path.is_absolute():
+        path = ROOT / path
+    if path is None or not path.is_dir():
+        errors.append("provenance.record must be a retained evidence directory")
+    elif not ((path / "manifest.json").is_file() and (path / "SHA256SUMS.json").is_file()):
+        errors.append("provenance.record needs manifest.json and SHA256SUMS.json")
+    else:
+        proc = subprocess.run(
+            [sys.executable, str(ROOT / "tools/evidence-pack.py"), "verify",
+             "--record", str(path)],
+            capture_output=True, text=True, timeout=120, check=False)
+        if proc.returncode != 0:
+            errors.append("provenance.record does not verify")
+    return ("FAIL" if errors else "PASS"), errors
+
+
 def check_vault(data: dict) -> tuple[str, list[str], dict]:
+    provenance, provenance_errors = check_provenance(data)
+    if provenance != "PASS":
+        return provenance, provenance_errors, {}
     errors: list[str] = []
     if data.get("schema") != 1:
         errors.append("schema 1 required")
@@ -78,6 +122,9 @@ def check_vault(data: dict) -> tuple[str, list[str], dict]:
 
 
 def check_state(data: dict) -> tuple[str, list[str], dict]:
+    provenance, provenance_errors = check_provenance(data)
+    if provenance != "PASS":
+        return provenance, provenance_errors, {}
     errors: list[str] = []
     if data.get("schema") != 1:
         errors.append("schema 1 required")
@@ -96,12 +143,19 @@ def check_state(data: dict) -> tuple[str, list[str], dict]:
             errors.append(f"counts.{key} must be a non-negative integer")
     if data.get("complete") is not True:
         errors.append("complete must be true; an assertion is not completeness")
-    entries = data.get("entries") or {}
-    for key in ("native", "rspace", "history"):
-        listed = entries.get(key)
-        if listed is not None and isinstance(listed, list) and nonneg(counts.get(key)):
-            if len(listed) != counts[key]:
+    entries = data.get("entries")
+    if not isinstance(entries, dict):
+        errors.append("entries is required for completeness")
+    else:
+        for key in ("native", "rspace", "history"):
+            listed = entries.get(key)
+            if not isinstance(listed, list):
+                errors.append(f"entries.{key} must be a list")
+            elif nonneg(counts.get(key)) and len(listed) != counts[key]:
                 errors.append(f"entries.{key} has {len(listed)} items, count says {counts[key]}")
+    for key in ("native", "rspace", "history"):
+        if roots.get(key) == "0" * 64:
+            errors.append(f"roots.{key} is an all-zero placeholder")
     return ("FAIL" if errors else "PASS"), errors, {"counts": counts}
 
 
@@ -116,6 +170,9 @@ def _utc(value: object) -> dt.datetime | None:
 
 
 def check_attachment(data: dict) -> tuple[str, list[str], dict]:
+    provenance, provenance_errors = check_provenance(data)
+    if provenance != "PASS":
+        return provenance, provenance_errors, {}
     errors: list[str] = []
     if data.get("schema") != 1:
         errors.append("schema 1 required")
@@ -181,7 +238,8 @@ def main() -> int:
         return 1
     checker = {"vault": check_vault, "state": check_state, "attachment": check_attachment}[args.command]
     result, errors, detail = checker(data)
-    print(json.dumps({"result": result, "errors": errors, "detail": detail}, sort_keys=True))
+    print(json.dumps({"result": result, "errors": errors, "detail": detail,
+                      "record_check": True}, sort_keys=True))
     return 0 if result == "PASS" else (3 if result == "PRECONDITION" else 1)
 
 
