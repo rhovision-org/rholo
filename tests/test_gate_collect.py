@@ -60,6 +60,8 @@ class SampleTests(unittest.TestCase):
             with gzip.open(out / "samples.jsonl.gz", "wt", encoding="utf-8") as stream:
                 stream.write(json.dumps({"alias": "B", "route": "health",
                                          "http_status": 200}) + "\n")
+                stream.write(json.dumps({"alias": "B", "route": "status",
+                                         "http_status": 200}) + "\n")
             return 0
 
         collector.live_gate.cmd_sample = fake
@@ -76,8 +78,34 @@ class SampleTests(unittest.TestCase):
         self.assertTrue(all("http" not in entry for entry in document["observers"]))
         self.assertTrue(all(len(entry["endpoint_sha256"]) == 64
                             for entry in document["observers"]))
-        self.assertEqual(len(document["events"]), 1)
+        self.assertEqual(len(document["events"]), 2)
         self.assertEqual(document["record"]["dir"], str(out))
+
+    def test_the_configured_routes_filter_the_observation_document(self):
+        original = collector.live_gate.cmd_sample
+
+        def fake(args):
+            out = Path(args.out)
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "run.json").write_text(json.dumps(
+                {"schema": 1, "deploy_id": DEPLOY, "validators": [], "execution_proven": False}))
+            with gzip.open(out / "samples.jsonl.gz", "wt", encoding="utf-8") as stream:
+                for route in ("health", "status"):
+                    stream.write(json.dumps({"alias": "B", "route": route,
+                                             "http_status": 200}) + "\n")
+            return 0
+
+        collector.live_gate.cmd_sample = fake
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp) / "run"
+                config = dict(CONFIG)
+                config["routes"] = ["health"]
+                collector.cmd_sample(config, out)
+                document = json.loads((out / "observations.json").read_text())
+        finally:
+            collector.live_gate.cmd_sample = original
+        self.assertEqual([event["route"] for event in document["events"]], ["health"])
 
 
 if __name__ == "__main__":

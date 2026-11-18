@@ -127,6 +127,10 @@ def cmd_sample(config: dict, out: Path) -> int:
         plan_path.unlink(missing_ok=True)
     run_path = out / "run.json"
     run = json.loads(run_path.read_text()) if run_path.is_file() else None
+    events = _read_samples(out)
+    routes = config.get("routes")
+    if isinstance(routes, list) and routes:
+        events = [event for event in events if event.get("route") in set(routes)]
     document = {
         "schema": SCHEMA,
         "subject": config.get("subject") or {},
@@ -136,7 +140,7 @@ def cmd_sample(config: dict, out: Path) -> int:
             for entry in config["observers"]
         ],
         "run": run,
-        "events": _read_samples(out),
+        "events": events,
         "record": {"dir": str(out)},
     }
     records = config.get("records") or {}
