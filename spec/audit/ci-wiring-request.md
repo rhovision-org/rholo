@@ -12,6 +12,7 @@ runs:
 ```sh
 python3 -m unittest discover -s tests -p test_mainnet_gates.py -v
 python3 -m unittest discover -s tests -p test_section6_dispositions.py -v
+python3 -m unittest discover -s tests -p test_bounded_ingress_queues.py -v
 python3 -m unittest discover -s tests -p test_gate_contracts.py -v
 python3 -m unittest discover -s tests -p test_gate_criterion.py -v
 python3 tools/check-mainnet-gates.py --check
@@ -25,7 +26,9 @@ Add the register and table paths to any path-gated job that should run on a chan
 - `spec/audit/sources/*.md`
 - `spec/audit/*.tsv` (the emitted C343/C357 tables)
 
-`test_evidence_locality.py` is already wired; the four tests above are not.
+`test_evidence_locality.py` is already wired; the five tests above are not. The queue gate
+itself (`tools/check-bounded-ingress-queues.sh --gate`) already runs in the lint job; the new
+test proves the gate's own absent/unbounded/unpinned/unknown cases.
 
 ## Local equivalent
 
