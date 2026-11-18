@@ -207,7 +207,7 @@ class CloseoutTests(unittest.TestCase):
             checker.return_value.validate.side_effect = ValueError("fabricated witness")
             bound, unresolved, error = gate.gate_binding(ROOT)
         self.assertFalse(bound)
-        self.assertEqual(unresolved, [])
+        self.assertEqual(len(unresolved), len(gate.REQUIRED))
         self.assertIn("fabricated witness", error)
 
     def test_missing_gate_register_is_unbound_not_invalid(self):

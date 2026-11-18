@@ -105,19 +105,21 @@ def gate_binding(repo: Path | None) -> tuple[bool, list[str], str | None]:
         return False, [], "mainnet-gates.json unavailable"
     except (ValueError, TypeError) as exc:
         return False, [], f"mainnet-gates.json invalid: {exc}"
+    rows = [row for row in document.get("gates", []) if row.get("family") == "HF51"]
+    expected = {"HF51-" + ident.replace(":", "-") for ident in REQUIRED}
+    actual = {row.get("id") for row in rows}
+    unresolved = [row["id"] for row in rows if row.get("status") != "met"]
     try:
         matrix = json.loads((audit / "final-gap-matrix.json").read_text())
         inventory = json.loads((audit / "section6-gap-inventory.json").read_text())
         ledger = json.loads((audit / "hardfork-51-closeout.json").read_text())
         _gate_checker().validate(document, matrix, inventory, ledger)
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        return False, [], f"register invalid: {exc}"
-    rows = [row for row in document.get("gates", []) if row.get("family") == "HF51"]
-    expected = {"HF51-" + ident.replace(":", "-") for ident in REQUIRED}
-    actual = {row.get("id") for row in rows}
+        # A shallow checkout cannot prove ancestry; keep the real unresolved list
+        # so the caller reports the tracker open rather than an empty mismatch.
+        return False, unresolved, f"register invalid: {exc}"
     if actual != expected:
         return False, sorted(expected - actual), "HF51 gate coverage mismatch"
-    unresolved = [row["id"] for row in rows if row.get("status") != "met"]
     return not unresolved, unresolved, None
 
 
