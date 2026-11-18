@@ -17,7 +17,8 @@ drill = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(drill)
 
 PRE = {"genesis_hash": "a" * 64, "height": 5, "block_hash": "b" * 64,
-       "post_state": "c" * 64, "digest": "d" * 64}
+       "post_state": "c" * 64, "digest": "d" * 64,
+       "anchor": "b" * 64, "anchor_height": 5, "anchor_post_state": "c" * 64}
 COPIED = dict(PRE, verified=True)
 ROLLBACK = dict(PRE)
 ADVANCED = dict(PRE, height=6)

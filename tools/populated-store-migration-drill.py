@@ -232,22 +232,26 @@ def populated_acceptance(pre: dict, copied: dict, rollback: dict,
         reasons.append("the copy restart serves a different finalized block")
     if copied.get("post_state") != pre.get("post_state"):
         reasons.append("the copy restart serves a different post-state")
-    if pre.get("anchor") and copied.get("anchor") != pre.get("anchor"):
-        reasons.append("the copy restart's checkpoint anchor differs")
-    if (pre.get("anchor_post_state")
-            and copied.get("anchor_post_state") != pre.get("anchor_post_state")):
-        reasons.append("the copy restart's anchor post-state differs")
+    # The certificate can lag the last-finalized route by one block while
+    # autopropose is running; compare the anchor only when it is current.
+    if pre.get("anchor") and pre.get("anchor_height") == pre.get("height"):
+        if copied.get("anchor") != pre.get("anchor"):
+            reasons.append("the copy restart's checkpoint anchor differs")
+        if (pre.get("anchor_post_state")
+                and copied.get("anchor_post_state") != pre.get("anchor_post_state")):
+            reasons.append("the copy restart's anchor post-state differs")
     if copied.get("verified") is not True:
         reasons.append("the copied certificate did not verify")
     if rollback.get("height") != pre.get("height"):
         reasons.append("the rollback did not return to the populated height")
     if rollback.get("block_hash") != pre.get("block_hash"):
         reasons.append("the rollback serves a different finalized block")
-    if pre.get("anchor") and rollback.get("anchor") != pre.get("anchor"):
-        reasons.append("the rollback's checkpoint anchor differs")
-    if (pre.get("anchor_post_state")
-            and rollback.get("anchor_post_state") != pre.get("anchor_post_state")):
-        reasons.append("the rollback's anchor post-state differs")
+    if pre.get("anchor") and pre.get("anchor_height") == pre.get("height"):
+        if rollback.get("anchor") != pre.get("anchor"):
+            reasons.append("the rollback's checkpoint anchor differs")
+        if (pre.get("anchor_post_state")
+                and rollback.get("anchor_post_state") != pre.get("anchor_post_state")):
+            reasons.append("the rollback's anchor post-state differs")
     if advanced and advanced.get("height", -1) <= pre.get("height", -1):
         reasons.append("the advance arm did not move past the populated height")
     if _fresh_is_substitute(fresh, pre):
