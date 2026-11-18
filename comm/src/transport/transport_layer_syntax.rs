@@ -13,9 +13,18 @@ use crate::rp::rp_conf::RPConf;
 use crate::transport::chunker::Blob;
 use crate::transport::transport_layer::TransportLayer;
 
-/// Stream a blob to a single peer (port of `stream1`).
-pub async fn stream1<T: TransportLayer + ?Sized>(transport: &T, peer: &PeerNode, blob: Blob) {
-    transport.stream(std::slice::from_ref(peer), blob).await;
+/// Stream a blob to a single peer (port of `stream1`), returning that peer's outcome.
+pub async fn stream1<T: TransportLayer + ?Sized>(
+    transport: &T,
+    peer: &PeerNode,
+    blob: Blob,
+) -> CommErr<()> {
+    transport
+        .stream(std::slice::from_ref(peer), blob)
+        .await
+        .into_iter()
+        .next()
+        .unwrap_or(Ok(()))
 }
 
 /// Send a packet to a peer, wrapped in a protocol message (port of `sendToPeer`).
@@ -34,18 +43,18 @@ pub async fn send_to_peer<T: TransportLayer + ?Sized>(
     transport.send(peer, msg).await
 }
 
-/// Stream a packet to a peer in chunks (port of `streamToPeer`).
+/// Stream a packet to a peer in chunks (port of `streamToPeer`), returning the peer's outcome.
 pub async fn stream_to_peer<T: TransportLayer + ?Sized>(
     transport: &T,
     conf: &RPConf,
     peer: &PeerNode,
     packet: Packet,
-) {
+) -> CommErr<()> {
     let blob = Blob {
         sender: conf.local.clone(),
         packet,
     };
-    stream1(transport, peer, blob).await;
+    stream1(transport, peer, blob).await
 }
 
 /// Send a packet to the configured bootstrap peer (port of `sendToBootstrap`).
@@ -99,8 +108,9 @@ mod tests {
             peers.iter().map(|_| Ok(())).collect()
         }
 
-        async fn stream(&self, peers: &[PeerNode], blob: Blob) {
+        async fn stream(&self, peers: &[PeerNode], blob: Blob) -> Vec<CommErr<()>> {
             self.streams.lock().unwrap().push((peers.to_vec(), blob));
+            peers.iter().map(|_| Ok(())).collect()
         }
     }
 
@@ -178,7 +188,7 @@ mod tests {
             packet: packet(),
         };
 
-        stream1(&transport, &target, blob.clone()).await;
+        assert!(stream1(&transport, &target, blob.clone()).await.is_ok());
 
         let streams = transport.streams.lock().unwrap();
         assert_eq!(streams.len(), 1);
@@ -200,7 +210,9 @@ mod tests {
         let remote = peer("remote", 40401);
         let conf = conf(local.clone(), None);
 
-        stream_to_peer(&transport, &conf, &remote, packet()).await;
+        assert!(stream_to_peer(&transport, &conf, &remote, packet())
+            .await
+            .is_ok());
 
         let streams = transport.streams.lock().unwrap();
         assert_eq!(streams.len(), 1);

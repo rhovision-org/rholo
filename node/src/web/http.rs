@@ -2697,7 +2697,7 @@ pub fn router(state: HttpState) -> Router {
         .route_layer(middleware::from_fn_with_state(
             (
                 state.deploy_rate_limiter.clone(),
-                "deploy rate limit exceeded",
+                rchain_casper::pool::RATE_LIMITED_MESSAGE,
             ),
             peer_rate_limit,
         ));
@@ -2733,7 +2733,7 @@ pub fn router(state: HttpState) -> Router {
         .route_layer(middleware::from_fn_with_state(
             (
                 state.deploy_rate_limiter.clone(),
-                "deploy rate limit exceeded",
+                rchain_casper::pool::RATE_LIMITED_MESSAGE,
             ),
             peer_rate_limit,
         ));
@@ -3136,6 +3136,7 @@ pub async fn acquire_http_server(
                             ("heartbeat_pings_total", conn.heartbeat_pings),
                             ("heartbeat_failures_total", conn.heartbeat_failures),
                             ("relay_offers_total", conn.relay_offers),
+                            ("relay_capacity_refusals_total", conn.relay_capacity_refusals),
                             ("relay_failures_total", conn.relay_failures),
                             ("routing_queue_depth", conn.routing_queue_depth),
                         ] {
@@ -4104,6 +4105,84 @@ mod tests {
         assert_ne!(reply.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
+    /// **The admission bound on the served path.** Every other admission test calls the router
+    /// directly; this binds a real listener and drives the same middleware over TCP, which is where
+    /// `ConnectInfo` and the layer ordering actually run.
+    async fn post_deploy_over_listener(state: HttpState, body: &'static str) -> (u16, String) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("an ephemeral listener");
+        let addr = listener.local_addr().expect("a bound address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                router(state).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .expect("the test server serves");
+        });
+        let mut stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("connect to the test server");
+        let request = format!(
+            "POST /api/deploy HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream
+            .write_all(request.as_bytes())
+            .await
+            .expect("write the request");
+        let mut response = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_to_end(&mut response),
+        )
+        .await
+        .expect("the server answers within the bound")
+        .expect("read the response");
+        server.abort();
+        let text = String::from_utf8_lossy(&response).into_owned();
+        let status = text
+            .split_whitespace()
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .unwrap_or(0);
+        (status, text)
+    }
+
+    #[tokio::test]
+    async fn a_real_listener_admits_by_default_and_refuses_when_the_budget_is_held() {
+        // Default (no configured in-flight budget): the malformed body reaches the extractor, so the
+        // answer is a client error, not a 429.
+        let (status, response) = post_deploy_over_listener(state(), "invalid json").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST.as_u16(), "{response}");
+
+        // Configured with one permit, held before the request: the middleware refuses before the
+        // body is decoded.
+        let mut limited = state();
+        let admission = InFlightAdmission::new(1);
+        let held = admission
+            .semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("the only permit");
+        limited.deploy_admission = Some(admission);
+        let (status, response) = post_deploy_over_listener(limited.clone(), "invalid json").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS.as_u16(), "{response}");
+        assert!(
+            response.to_ascii_lowercase().contains("retry-after: 1"),
+            "{response}"
+        );
+
+        // Released: the same request reaches the extractor again.
+        drop(held);
+        let (status, response) = post_deploy_over_listener(limited, "invalid json").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST.as_u16(), "{response}");
+    }
+
     /// A real handler holds the permit across its await; completion and
     /// cancellation both return capacity without a waiting request queue.
     #[tokio::test]
@@ -4869,10 +4948,26 @@ mod tests {
         )));
         assert_eq!(share.status(), StatusCode::TOO_MANY_REQUESTS);
 
+        let rate = deploy_response(Err(BlockApiException::client(
+            rchain_casper::pool::RATE_LIMITED_MESSAGE.to_string(),
+        )));
+        assert_eq!(rate.status(), StatusCode::TOO_MANY_REQUESTS);
+
         let malformed = deploy_response(Err(BlockApiException::client(
             "deploy signature is invalid".to_string(),
         )));
         assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+
+        // The old classifier used `contains`, so these two were 429s. The request is well
+        // formed; only the exact pool phrase is a bound.
+        let near_miss = deploy_response(Err(BlockApiException::client(
+            "deploy pool is full of surprises".to_string(),
+        )));
+        assert_eq!(near_miss.status(), StatusCode::BAD_REQUEST);
+        let share_in_prose = deploy_response(Err(BlockApiException::client(
+            "the log says x holds its share of the deploy pool".to_string(),
+        )));
+        assert_eq!(share_in_prose.status(), StatusCode::BAD_REQUEST);
     }
 
     /// **AUDIT C148**: the PoS read has a route, and the route renders what it was handed. The

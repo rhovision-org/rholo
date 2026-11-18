@@ -895,6 +895,9 @@ mod tests {
     #[derive(Default)]
     struct StubBlockApi {
         refuse: bool,
+        /// What `deploy` answers. `None` keeps the double refusing loudly for the tests that do not
+        /// exercise the deploy path; `Some` reaches the trait's two refusal arms.
+        deploy_refusal: Option<String>,
         /// What each conversion forwarded, as text. The `DeployService` trait's methods exist to
         /// *convert* a wire request into a domain one, so what can go wrong is a field that arrives
         /// swapped or dropped — which the response alone cannot show.
@@ -906,7 +909,10 @@ mod tests {
             unimplemented!()
         }
         async fn deploy(&self, _: &SignedDeployData) -> ApiErr<String> {
-            unimplemented!()
+            match &self.deploy_refusal {
+                Some(message) => Err(message.clone()),
+                None => unimplemented!(),
+            }
         }
         async fn deploy_status(&self, _: &Vec<u8>) -> ApiErr<DeployExecStatus> {
             unimplemented!()
@@ -1162,6 +1168,52 @@ mod tests {
             DeployGrpcServiceV1::new(api.clone(), report_api(), enable_reporting),
             api,
         )
+    }
+
+    /// **The two deploy refusals at the wire boundary.** A pool bound is `RESOURCE_EXHAUSTED` with
+    /// `retry-after: 1` (the gRPC spelling of HTTP 429); a malformed or duplicate refusal is still
+    /// an `OK` response carrying an `Error` message. Falsified by mapping the bound to
+    /// `Unauthenticated`, by dropping the metadata, or by turning the malformed refusal into a
+    /// status error.
+    #[tokio::test]
+    async fn a_pool_bound_is_resource_exhausted_and_a_malformed_refusal_is_a_message() {
+        use rchain_casper::pool::PoolError;
+        let (svc, _) = deploy_service(|stub| {
+            stub.deploy_refusal = Some(PoolError::byte_full_message(10, 10));
+        });
+        let error = <DeployGrpcServiceV1 as DeployService>::do_deploy(
+            &svc,
+            tonic::Request::new(Default::default()),
+        )
+        .await
+        .expect_err("a pool bound is RESOURCE_EXHAUSTED");
+        assert_eq!(error.code(), tonic::Code::ResourceExhausted);
+        assert_eq!(
+            error.metadata().get("retry-after").expect("retry-after"),
+            "1"
+        );
+        assert!(error.message().contains("deploy pool is full"));
+
+        let (svc, _) = deploy_service(|stub| {
+            stub.deploy_refusal = Some("deploy signature is invalid".to_string());
+        });
+        let response = <DeployGrpcServiceV1 as DeployService>::do_deploy(
+            &svc,
+            tonic::Request::new(Default::default()),
+        )
+        .await
+        .expect("a malformed refusal is an OK response with an Error message");
+        match response.into_inner().message {
+            Some(wire::deploy_response::Message::Error(error)) => assert!(
+                error
+                    .messages
+                    .iter()
+                    .any(|message| message.contains("signature is invalid")),
+                "{:?}",
+                error.messages
+            ),
+            other => panic!("expected an Error message, got {other:?}"),
+        }
     }
 
     /// **The `DeployService` trait's conversions, and their two refusals.** Every method here is a

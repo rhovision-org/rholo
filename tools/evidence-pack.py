@@ -41,6 +41,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA = 1
+# 2 adds the authored non-claims requirement to `verify`; v1 records stay verifiable and can be
+# used for diagnostics, but gate evidence additionally passes `--require-pins`.
+PACKER_VERSION = 2
 TOOL = "evidence-pack"
 MAX_FILE_BYTES = 64 * 1024 * 1024
 UPSTREAM = "rhovision-org/rholo"
@@ -48,6 +51,22 @@ RUN_URL = re.compile(
     rf"^https://github\.com/{UPSTREAM}/actions/runs/(\d+)(/attempts/(\d+))?/?$"
 )
 PLACEHOLDER = re.compile(r"<fill:[^>]*>")
+NON_CLAIMS_HEADING = re.compile(
+    r"^#{1,6}[ \t]*(?:what this does not establish|non-claims)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+NEXT_HEADING = re.compile(r"^#{1,6}[ \t]", re.MULTILINE)
+
+
+def non_claims_body(text: str) -> str | None:
+    """The body under the non-claims heading, or None when the section is absent or empty."""
+    heading = NON_CLAIMS_HEADING.search(text)
+    if not heading:
+        return None
+    rest = text[heading.end():]
+    following = NEXT_HEADING.search(rest)
+    body = (rest[: following.start()] if following else rest).strip()
+    return body or None
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -269,7 +288,7 @@ def cmd_pack(args) -> int:
         "files": files,
         "redactions": args.redact,
         "execution_proven": False,
-        "packer": {"tool": TOOL, "version": 1, "packaged_at": packaged_at},
+        "packer": {"tool": TOOL, "version": PACKER_VERSION, "packaged_at": packaged_at},
     }
     (record / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     (record / "SHA256SUMS.json").write_text(
@@ -313,6 +332,12 @@ def cmd_verify(args) -> int:
     binary = manifest.get("binary_sha256")
     if binary is not None and not HEX64.fullmatch(str(binary)):
         fail("binary_sha256 is not a 64-hex digest")
+    require_pins = bool(getattr(args, "require_pins", False))
+    if require_pins:
+        if source is None:
+            fail("--require-pins: source_sha is absent")
+        if binary is None:
+            fail("--require-pins: binary_sha256 is absent")
     url = (manifest.get("run") or {}).get("url")
     if url and not RUN_URL.match(url):
         fail(f"the recorded run URL is not an {UPSTREAM} actions run: {url}")
@@ -340,9 +365,16 @@ def cmd_verify(args) -> int:
     readme = record / "README.md"
     if not readme.is_file():
         fail("no README.md")
-    placeholders = PLACEHOLDER.findall(readme.read_text())
+    readme_text = readme.read_text()
+    placeholders = PLACEHOLDER.findall(readme_text)
     if placeholders:
         fail(f"README.md has {len(placeholders)} unresolved placeholder(s); author it first")
+    packer_version = (manifest.get("packer") or {}).get("version")
+    authored_non_claims = non_claims_body(readme_text) is not None
+    if isinstance(packer_version, int) and packer_version >= PACKER_VERSION and not authored_non_claims:
+        fail("README.md has no authored non-claims section (packer v2)")
+    if require_pins and not authored_non_claims:
+        fail("--require-pins: README.md has no authored non-claims section")
     verdict = verdict_from(manifest.get("verdict"))
     if not verdict:
         fail(f"manifest verdict is absent or not one of {', '.join(VERDICTS)}")
@@ -373,6 +405,11 @@ def main() -> int:
     pack.set_defaults(func=cmd_pack)
     verify = sub.add_parser("verify")
     verify.add_argument("--record", required=True)
+    verify.add_argument(
+        "--require-pins",
+        action="store_true",
+        help="gate evidence: require source/binary pins and an authored non-claims section",
+    )
     verify.set_defaults(func=cmd_verify)
     args = parser.parse_args()
     return args.func(args)

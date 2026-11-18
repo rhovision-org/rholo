@@ -2153,14 +2153,14 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         match pool::check_commit(&limits, count, in_use, term_bytes, duplicate) {
             Ok(()) => {}
             Err(PoolError::Duplicate) => {
-                return Err(format!(
-                    "deploy {} is already in the pool",
-                    rchain_shared::base16::encode(&deploy.sig)
+                return Err(PoolError::duplicate_message(
+                    &rchain_shared::base16::encode(&deploy.sig),
                 ))
             }
             Err(PoolError::ByteFull) => {
-                return Err(format!(
-                    "deploy pool is full: {in_use} of {MAX_POOLED_DEPLOY_BYTES} term bytes in use"
+                return Err(PoolError::byte_full_message(
+                    in_use,
+                    MAX_POOLED_DEPLOY_BYTES,
                 ))
             }
             Err(e) => return Err(e.to_string()),
@@ -2178,16 +2178,14 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
     async fn reserve_deploy_id(&self, deploy_id: &DeployId) -> Result<DeployIdPermit, String> {
         // The store first: a deploy that is already pooled is a duplicate whatever is in flight.
         if self.contains_deploy_in_pool(deploy_id).await? {
-            return Err(format!(
-                "deploy {} is already in the pool",
-                rchain_shared::base16::encode(deploy_id)
+            return Err(PoolError::duplicate_message(
+                &rchain_shared::base16::encode(deploy_id),
             ));
         }
         let mut reservations = self.deploy_reservations.lock().unpoison();
         if !reservations.insert(deploy_id.clone()) {
-            return Err(format!(
-                "deploy {} is already being admitted",
-                rchain_shared::base16::encode(deploy_id)
+            return Err(PoolError::admitting_message(
+                &rchain_shared::base16::encode(deploy_id),
             ));
         }
         drop(reservations);

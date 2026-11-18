@@ -21,16 +21,27 @@
 #
 # Usage: tools/check-bounded-ingress-queues.sh          # report
 #        tools/check-bounded-ingress-queues.sh --gate   # exit non-zero on a violation (for CI)
+#        tools/check-bounded-ingress-queues.sh --source PATH [--gate]  # test a fixture
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+GATE=0
 SRC=node/src/runtime/node_runtime.rs
+while (( $# )); do
+  case "$1" in
+    --gate) GATE=1 ;;
+    --source) shift; SRC="${1:-}" ;;
+    --source=*) SRC="${1#*=}" ;;
+    *) echo "check-bounded-ingress-queues: unknown argument $1" >&2; exit 2 ;;
+  esac
+  shift
+done
 [[ -r "$SRC" ]] || { echo "check-bounded-ingress-queues: no $SRC" >&2; exit 2; }
 
 violations=0
 report() {
   printf '  %-28s %-14s %s\n' "$1" "$2" "$3"
-  [[ "$2" == "unbounded" ]] && violations=$((violations + 1))
+  [[ "$2" != "bounded" ]] && violations=$((violations + 1))
 }
 
 echo "check-bounded-ingress-queues: queues on the ingress -> validate -> process path in $SRC"
@@ -54,17 +65,31 @@ while IFS='|' read -r name binding; do
     continue
   fi
   line="${site%%:*}"
-  if [[ "$site" == *unbounded_channel* ]]; then
+  # The constructor often sits on the line after the destructuring, so read the whole statement
+  # up to its `;`, not just the binding line.
+  statement="$(awk -v start="$line" 'NR >= start { printf "%s ", $0; if (index($0, ";")) exit }' "$SRC")"
+  if [[ "$statement" == *"UnboundedSender"* \
+        || "$statement" == *"unbounded_channel"* \
+        || "$statement" == *"mpsc::unbounded"* ]]; then
     report "$name" "unbounded" "${SRC}:${line}"
+  elif [[ "$statement" =~ mpsc::channel[[:space:]]*\([[:space:]]*([A-Za-z_][A-Za-z0-9_:]*)[[:space:]]*\) ]]; then
+    bound="${BASH_REMATCH[1]}"
+    if [[ "$bound" == "usize::MAX" ]]; then
+      report "$name" "unpinned" "${SRC}:${line} (channel(usize::MAX))"
+    else
+      report "$name" "bounded" "${SRC}:${line} ($bound)"
+    fi
+  elif [[ "$statement" == *"mpsc::channel"* ]]; then
+    report "$name" "unpinned" "${SRC}:${line} (channel argument is not a named constant)"
   else
-    report "$name" "bounded" "${SRC}:${line}"
+    report "$name" "unknown" "${SRC}:${line} (no mpsc channel constructor in the statement)"
   fi
 done < <(printf '%s\n' "${QUEUES[@]}")
 
 echo
 if (( violations > 0 )); then
   cat >&2 <<EOF
-check-bounded-ingress-queues: $violations unbounded queue(s) on the ingress -> validate -> process path.
+check-bounded-ingress-queues: $violations violation(s) (absent, unbounded, unpinned or unknown) on the ingress -> validate -> process path.
 
 This is C175 (spec/findings.tsv), and it is the defect this check exists to gate. R15's fix is the
 pattern: bound the queue with backpressure -- \`mpsc::channel(N)\` and an awaiting \`send\` -- and change
@@ -78,7 +103,7 @@ owed was the bound itself, and this is the check that row closes on.
 The bound is `mpsc::channel(N)` plus an awaiting `send`, which is what makes the producer wait rather
 than the queue grow. If this fires again, that is what to restore.
 EOF
-  [[ "${1:-}" == "--gate" ]] && exit 1
+  (( GATE )) && exit 1
   exit 0
 fi
 

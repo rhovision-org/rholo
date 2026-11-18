@@ -316,7 +316,13 @@ mod tests {
             Vec::new()
         }
 
-        async fn stream(&self, _peers: &[PeerNode], _blob: crate::transport::chunker::Blob) {}
+        async fn stream(
+            &self,
+            _peers: &[PeerNode],
+            _blob: crate::transport::chunker::Blob,
+        ) -> Vec<crate::errors::CommErr<()>> {
+            Vec::new()
+        }
     }
 
     fn conf_for(local: &PeerNode) -> RPConf {

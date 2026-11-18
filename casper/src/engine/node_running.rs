@@ -200,21 +200,30 @@ pub async fn handle_block_request(
             }
         };
         if let Some(block) = stored {
-            transport_layer_syntax::stream_to_peer(
+            match transport_layer_syntax::stream_to_peer(
                 transport,
                 conf,
                 peer,
                 BlockMessageSerde.mk_packet(&block),
             )
-            .await;
+            .await
+            {
+                Ok(()) => log.info(
+                    source,
+                    &format!(
+                        "Received request for block {} from {peer}. Response sent.",
+                        hash.to_hex()
+                    ),
+                ),
+                Err(error) => log.error(
+                    source,
+                    &format!(
+                        "Received request for block {} from {peer}. Response not sent: {error:?}",
+                        hash.to_hex()
+                    ),
+                ),
+            }
         }
-        log.info(
-            source,
-            &format!(
-                "Received request for block {} from {peer}. Response sent.",
-                hash.to_hex()
-            ),
-        );
     } else {
         log.info(
             source,
@@ -292,13 +301,19 @@ pub async fn handle_block_metadata_request(
         return;
     }
     let answer = BlockMetadataMessage { headers };
-    transport_layer_syntax::stream_to_peer(
+    if let Err(error) = transport_layer_syntax::stream_to_peer(
         transport,
         conf,
         peer,
         BlockMetadataMessageSerde.mk_packet(&answer),
     )
-    .await;
+    .await
+    {
+        log.warn(
+            source,
+            &format!("the metadata response to {peer} was not sent: {error:?}"),
+        );
+    }
 }
 
 /// The headers one metadata request answers. Split from the transport so the window semantics are
@@ -638,14 +653,20 @@ pub async fn handle_finalized_fringe_request(
         source,
         &format!("Received FinalizedFringeRequest from {peer}"),
     );
-    transport_layer_syntax::stream_to_peer(
+    match transport_layer_syntax::stream_to_peer(
         transport,
         conf,
         peer,
         FinalizedFringeSerde.mk_packet(fringe),
     )
-    .await;
-    log.info(source, &format!("FinalizedFringe sent to {peer}"));
+    .await
+    {
+        Ok(()) => log.info(source, &format!("FinalizedFringe sent to {peer}")),
+        Err(error) => log.error(
+            source,
+            &format!("FinalizedFringe to {peer} was not sent: {error:?}"),
+        ),
+    }
 }
 
 /// **The answer to a finalized-fringe request** — this node's own latest fringe, or the block a
@@ -1000,13 +1021,19 @@ pub async fn handle_store_items_request<E: RSpaceExporter>(
     );
     // Stream the response (matching Scala's `streamToPeer`); the unary `send_to_peer` path does
     // not deliver to the syncing peer, which stalls LFS state sync.
-    transport_layer_syntax::stream_to_peer(
+    if let Err(error) = transport_layer_syntax::stream_to_peer(
         transport,
         conf,
         peer,
         StoreItemsMessageSerde.mk_packet(&response),
     )
-    .await;
+    .await
+    {
+        log.warn(
+            log_source,
+            &format!("the store-items response was not sent: {error:?}"),
+        );
+    }
 }
 
 /// Bound on the inbound block queue. The channel is created upstream (node crate) with
@@ -1673,6 +1700,8 @@ mod tests {
     struct MockTransport {
         sends: std::sync::Mutex<Vec<(PeerNode, Protocol)>>,
         streams: std::sync::Mutex<Vec<(Vec<PeerNode>, Blob)>>,
+        /// Make every stream attempt fail, for the handler's "sent" gating.
+        fail_streams: bool,
     }
 
     #[async_trait]
@@ -1687,9 +1716,93 @@ mod tests {
             }
             peers.iter().map(|_| Ok(())).collect()
         }
-        async fn stream(&self, peers: &[PeerNode], blob: Blob) {
+        async fn stream(&self, peers: &[PeerNode], blob: Blob) -> Vec<CommErr<()>> {
             self.streams.lock().unwrap().push((peers.to_vec(), blob));
+            peers
+                .iter()
+                .map(|peer| {
+                    if self.fail_streams {
+                        Err(rchain_comm::errors::CommError::UnknownCommError(format!(
+                            "injected stream failure for {peer}"
+                        )))
+                    } else {
+                        Ok(())
+                    }
+                })
+                .collect()
         }
+    }
+
+    /// A logger that keeps its lines, so the handler's "sent" claim can be read back.
+    #[derive(Default)]
+    struct RecordingLog {
+        lines: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl RecordingLog {
+        fn contains(&self, needle: &str) -> bool {
+            self.lines
+                .lock()
+                .expect("log lock")
+                .iter()
+                .any(|line| line.contains(needle))
+        }
+    }
+
+    impl Log for RecordingLog {
+        fn is_trace_enabled(&self, _source: LogSource) -> bool {
+            false
+        }
+        fn trace(&self, _source: LogSource, _msg: &str) {}
+        fn debug(&self, _source: LogSource, _msg: &str) {}
+        fn info(&self, _source: LogSource, msg: &str) {
+            self.lines.lock().expect("log lock").push(msg.to_string());
+        }
+        fn warn(&self, _source: LogSource, msg: &str) {
+            self.lines
+                .lock()
+                .expect("log lock")
+                .push(format!("[warn] {msg}"));
+        }
+        fn error(&self, _source: LogSource, msg: &str) {
+            self.lines
+                .lock()
+                .expect("log lock")
+                .push(format!("[error] {msg}"));
+        }
+    }
+
+    /// **The responder's "sent" claim is a result now** (M3). A stream that failed must not log
+    /// `FinalizedFringe sent`; the control is the same handler over a successful transport.
+    #[tokio::test]
+    async fn a_failed_fringe_stream_is_not_logged_as_sent() {
+        let local = peer("local", 40400);
+        let remote = peer("remote", 40401);
+        let conf = conf(&local);
+        let fringe = FinalizedFringe {
+            hashes: Vec::new(),
+            state_hash: StateHash::new([9u8; 32]),
+            ancestry: Vec::new(),
+        };
+        let source = LogSource::new("test");
+
+        let failed = RecordingLog::default();
+        let transport = MockTransport {
+            fail_streams: true,
+            ..Default::default()
+        };
+        handle_finalized_fringe_request(&transport, &conf, &failed, source, &remote, &fringe).await;
+        assert!(
+            !failed.contains("sent to"),
+            "a failed stream must not claim delivery: {:?}",
+            failed.lines
+        );
+        assert!(failed.contains("was not sent"), "{:?}", failed.lines);
+
+        let sent = RecordingLog::default();
+        let transport = MockTransport::default();
+        handle_finalized_fringe_request(&transport, &conf, &sent, source, &remote, &fringe).await;
+        assert!(sent.contains("FinalizedFringe sent to"), "{:?}", sent.lines);
     }
 
     /// A store-items server for the gate test: one leaf and one internal node, so the handler has

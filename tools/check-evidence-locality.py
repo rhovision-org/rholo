@@ -20,8 +20,9 @@ Contract. A run record is a directory under `spec/audit/evidence/` containing a 
 
 Checks:
   1  a record that mentions M3/off-host carries exactly one declared locality;
-  2  `off-host-claim` carries **no** loopback advertised peer or host in any text file, and names a
-     **dial-back** (the bootstrap's own probe of the advertised address) — the M3 precondition;
+  2  `off-host-claim` carries **no** local advertised peer or host (loopback, private, link-local or
+     reserved, including legacy numeric IPv4 forms) in any text file, and names a **dial-back**
+     (the bootstrap's own probe of the advertised address) — the M3 precondition;
   3  `loopback-diagnostic` carries at least one loopback advertised peer/host and says in words that
      it is **not an M3 off-host positive** (the corrected 10-29 shape);
   4  `local-devnet` does not use the words "off-host positive";
@@ -40,8 +41,18 @@ from __future__ import annotations
 import ipaddress
 import json
 import re
+import socket
 import sys
 from pathlib import Path
+
+# The local classes this gate refuses, named explicitly: `ipaddress.is_private` is
+# version-dependent and counts the documentation range 203.0.113.0/24 as private, while a record
+# legitimately uses TEST-NET as a routable stand-in.
+PRIVATE_V4 = tuple(
+    ipaddress.IPv4Network(network)
+    for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+PRIVATE_V6 = (ipaddress.IPv6Network("fc00::/7"),)
 
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "spec/audit/evidence"
@@ -79,7 +90,17 @@ def text_files(directory: Path) -> list[Path]:
     return [p for p in directory.rglob("*") if p.is_file()]
 
 
+def local_claims(directory: Path) -> list[str]:
+    """Every advertised peer/host that is local: loopback, private, link-local or reserved."""
+    return claims(directory, local_address)
+
+
 def loopback_claims(directory: Path) -> list[str]:
+    """Every advertised peer/host that is loopback specifically (the diagnostic label)."""
+    return claims(directory, loopback_address)
+
+
+def claims(directory: Path, predicate) -> list[str]:
     found = []
     for path in text_files(directory):
         try:
@@ -103,7 +124,7 @@ def loopback_claims(directory: Path) -> list[str]:
         for value in texts:
             for pattern in ADVERTISED:
                 for match in pattern.finditer(value):
-                    if local_address(match.group(1)):
+                    if predicate(match.group(1)):
                         found.append(f"{path.name}: {match.group(0)}")
     return found
 
@@ -122,16 +143,61 @@ def advertised_peers(directory: Path) -> list[str]:
     return found
 
 
-def local_address(host: str) -> bool:
+def loopback_address(host: str) -> bool:
+    """Whether the literal is loopback specifically (the `loopback-diagnostic` label)."""
     host = host.strip("[]").lower().rstrip(".")
     if host == "localhost" or host.endswith(".localhost"):
         return True
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
+    address = parsed_address(host)
+    if address is None:
         return False
     address = getattr(address, "ipv4_mapped", None) or address
-    return address.is_loopback or address.is_unspecified
+    return address.is_loopback
+
+
+def local_address(host: str) -> bool:
+    """Whether the advertised literal is an address an off-host observer cannot be at.
+
+    Private, link-local, reserved and multicast ranges are local for this purpose: an off-host
+    claim cannot be satisfied by an address that never leaves the operator's network. Legacy
+    numeric IPv4 forms (`2130706433`, `0x7f000001`, `017700000001`, `127.1`) are accepted by
+    `inet_aton`, so they are normalised before the class check rather than string-matched.
+    """
+    host = host.strip("[]").lower().rstrip(".")
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    address = parsed_address(host)
+    if address is None:
+        return False
+    address = getattr(address, "ipv4_mapped", None) or address
+    if address.version == 4:
+        return (
+            address.is_loopback
+            or address.is_unspecified
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_reserved
+            or any(address in network for network in PRIVATE_V4)
+        )
+    return (
+        address.is_loopback
+        or address.is_unspecified
+        or address.is_link_local
+        or any(address in network for network in PRIVATE_V6)
+    )
+
+
+def parsed_address(
+    host: str,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    try:
+        return ipaddress.IPv4Address(socket.inet_aton(host))
+    except OSError:
+        return None
 
 
 def mentions_m3(readme: str) -> bool:
@@ -178,10 +244,13 @@ def check(directory: Path) -> list[str]:
                 problems.append(
                     f"{directory.name}: execution_proven must be false; a record check is "
                     "not proof that the campaign ran")
+    local = local_claims(directory)
     loopbacks = loopback_claims(directory)
     if label == "off-host-claim":
-        for claim in loopbacks:
-            problems.append(f"{directory.name}: an off-host claim carries a loopback {claim}")
+        for claim in local:
+            problems.append(
+                f"{directory.name}: an off-host claim carries a local "
+                f"(loopback/private/reserved) {claim}")
         if not re.search(r"dial[- ]?back", readme, re.I):
             problems.append(
                 f"{directory.name}: an off-host claim must name the bootstrap's dial-back result"
@@ -217,8 +286,10 @@ def check(directory: Path) -> list[str]:
         if "read-only" not in readme.lower():
             problems.append(
                 f"{directory.name}: a live-host record must say it is read-only")
-        for claim in loopbacks:
-            problems.append(f"{directory.name}: a live-host record carries a loopback {claim}")
+        for claim in local:
+            problems.append(
+                f"{directory.name}: a live-host record carries a local "
+                f"(loopback/private/reserved) {claim}")
         for path in text_files(directory):
             if path.name == "README.md":
                 continue

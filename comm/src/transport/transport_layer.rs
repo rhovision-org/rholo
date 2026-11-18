@@ -17,5 +17,9 @@ pub trait TransportLayer: Send + Sync {
 
     async fn broadcast(&self, peers: &[PeerNode], msg: Protocol) -> Vec<CommErr<()>>;
 
-    async fn stream(&self, peers: &[PeerNode], blob: Blob);
+    /// Stream a blob to each peer, returning **one outcome per input peer, in input order**.
+    ///
+    /// It used to return `()`, so a dropped reply was indistinguishable from a delivered one and
+    /// the responder logged "sent" unconditionally. A caller that does not care now has to say so.
+    async fn stream(&self, peers: &[PeerNode], blob: Blob) -> Vec<CommErr<()>>;
 }

@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use rchain_comm::errors::CommErr;
 use rchain_comm::peer_node::PeerNode;
 use rchain_comm::rp::connect::random_connections;
 use rchain_comm::rp::protocol_helper;
@@ -133,14 +134,18 @@ impl CommUtil {
 
     /// Broadcast a packet in chunks (stream) to up to `scope_size` random peers (port of
     /// `streamToPeers`).
-    pub async fn stream_to_peers(&self, packet: &Packet, scope_size: Option<usize>) {
+    pub async fn stream_to_peers(
+        &self,
+        packet: &Packet,
+        scope_size: Option<usize>,
+    ) -> Vec<CommErr<()>> {
         let max = scope_size.unwrap_or(self.conf.max_num_of_connections);
         let peers = random_connections(&self.connected_peers().await, max);
         let blob = Blob {
             sender: self.conf.local.clone(),
             packet: packet.clone(),
         };
-        self.transport.stream(&peers, blob).await;
+        self.transport.stream(&peers, blob).await
     }
 
     /// Send a packet with retry until it succeeds (port of `sendWithRetry`).
@@ -673,8 +678,9 @@ mod tests {
                 })
                 .collect()
         }
-        async fn stream(&self, peers: &[PeerNode], blob: Blob) {
+        async fn stream(&self, peers: &[PeerNode], blob: Blob) -> Vec<CommErr<()>> {
             self.streams.lock().unwrap().push((peers.to_vec(), blob));
+            peers.iter().map(|_| Ok(())).collect()
         }
     }
 
@@ -1025,7 +1031,9 @@ mod tests {
             connections.clone(),
         );
 
-        comm.stream_to_peers(&packet("BlockResponse"), None).await;
+        let outcomes = comm.stream_to_peers(&packet("BlockResponse"), None).await;
+        assert_eq!(outcomes.len(), 2, "one outcome per streamed peer");
+        assert!(outcomes.iter().all(|outcome| outcome.is_ok()));
         let streams = transport.streams.lock().unwrap();
         assert_eq!(streams.len(), 1);
         assert_eq!(

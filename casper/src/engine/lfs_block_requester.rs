@@ -854,7 +854,9 @@ mod tests {
             vec![Ok(()); peers.len()]
         }
 
-        async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+        async fn stream(&self, peers: &[PeerNode], _blob: Blob) -> Vec<CommErr<()>> {
+            peers.iter().map(|_| Ok(())).collect()
+        }
     }
 
     /// A transport that *answers*: every `BlockRequest` it sees is served by pushing the requested
@@ -889,7 +891,9 @@ mod tests {
             Vec::new()
         }
 
-        async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+        async fn stream(&self, peers: &[PeerNode], _blob: Blob) -> Vec<CommErr<()>> {
+            peers.iter().map(|_| Ok(())).collect()
+        }
     }
 
     /// The admitted bootstrap can answer; discovered peers accept requests but
@@ -927,7 +931,9 @@ mod tests {
             outcomes
         }
 
-        async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+        async fn stream(&self, peers: &[PeerNode], _blob: Blob) -> Vec<CommErr<()>> {
+            peers.iter().map(|_| Ok(())).collect()
+        }
     }
 
     /// The fringe and state-page source is already known before discovery adds
@@ -1032,7 +1038,9 @@ mod tests {
                 outcomes
             }
 
-            async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+            async fn stream(&self, peers: &[PeerNode], _blob: Blob) -> Vec<CommErr<()>> {
+                peers.iter().map(|_| Ok(())).collect()
+            }
         }
 
         let blocks = chain(12);
@@ -1555,7 +1563,9 @@ mod tests {
             Vec::new()
         }
 
-        async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+        async fn stream(&self, peers: &[PeerNode], _blob: Blob) -> Vec<CommErr<()>> {
+            peers.iter().map(|_| Ok(())).collect()
+        }
     }
 
     /// **Issue #102's owed falsifier: a walk whose fringe block is served by nobody fails rather than

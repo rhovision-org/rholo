@@ -147,6 +147,66 @@ class EvidencePackTests(unittest.TestCase):
         paths = {entry["path"] for entry in manifest["files"]}
         self.assertNotIn("raw/node-0.log", paths)
 
+    def verify(self, require_pins=False):
+        return pack.cmd_verify(
+            SimpleNamespace(record=str(self.record), require_pins=require_pins)
+        )
+
+    def manifest(self):
+        return json.loads((self.record / "manifest.json").read_text())
+
+    def write_manifest(self, manifest):
+        (self.record / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
+
+    def test_the_packer_stamps_version_two(self):
+        self.packed()
+        self.assertEqual(self.manifest()["packer"]["version"], 2)
+
+    def test_a_v2_record_without_authored_non_claims_fails(self):
+        pack.cmd_pack(self.args())
+        self.author()
+        readme = self.record / "README.md"
+        readme.write_text(
+            readme.read_text().replace(
+                "## What this does not establish", "## Other notes"
+            )
+        )
+        with self.assertRaises(SystemExit):
+            self.verify()
+
+    def test_require_pins_refuses_an_absent_pin(self):
+        self.packed()
+        manifest = self.manifest()
+        manifest["source_sha"] = None
+        self.write_manifest(manifest)
+        with self.assertRaises(SystemExit):
+            self.verify(require_pins=True)
+        # Without the gate flag the legacy-shaped record still verifies.
+        self.assertEqual(self.verify(), 0)
+
+    def test_require_pins_accepts_the_packed_pins(self):
+        self.packed()
+        manifest = self.manifest()
+        self.assertRegex(manifest["source_sha"], r"^[0-9a-f]{40}$")
+        self.assertRegex(manifest["binary_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(self.verify(require_pins=True), 0)
+
+    def test_a_v1_record_is_grandfathered_but_not_for_gate_evidence(self):
+        pack.cmd_pack(self.args())
+        self.author()
+        readme = self.record / "README.md"
+        readme.write_text(
+            readme.read_text().replace(
+                "## What this does not establish", "## Other notes"
+            )
+        )
+        manifest = self.manifest()
+        manifest["packer"]["version"] = 1
+        self.write_manifest(manifest)
+        self.assertEqual(self.verify(), 0)
+        with self.assertRaises(SystemExit):
+            self.verify(require_pins=True)
+
 
 if __name__ == "__main__":
     unittest.main()

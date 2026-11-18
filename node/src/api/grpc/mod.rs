@@ -80,6 +80,30 @@ fn ingress_key(peer: Option<std::net::SocketAddr>) -> Vec<u8> {
     }
 }
 
+/// **The deploy service's ingress bound**, extracted from `serve_deploy` so the refusal is testable
+/// without a listener. It is the peer-keyed limiter and nothing else: the deployer's own rate and
+/// pool share are charged downstream, where the identity exists.
+#[derive(Clone)]
+struct DeployIngressGuard {
+    limiter: Arc<KeyedRateLimiter>,
+}
+
+impl ::tonic::service::interceptor::Interceptor for DeployIngressGuard {
+    fn call(
+        &mut self,
+        request: ::tonic::Request<()>,
+    ) -> Result<::tonic::Request<()>, ::tonic::Status> {
+        let key = ingress_key(request.extensions().get::<PeerAddress>().and_then(|p| p.0));
+        if self.limiter.allow(&key) {
+            Ok(request)
+        } else {
+            Err(::tonic::Status::resource_exhausted(
+                rchain_casper::pool::RATE_LIMITED_MESSAGE,
+            ))
+        }
+    }
+}
+
 /// A plaintext inbound connection carrying its peer address, for tonic's `Connected`.
 struct PeerAddressIo {
     stream: tokio::net::TcpStream,
@@ -150,16 +174,7 @@ pub async fn serve_deploy(
         MAX_TRACKED_PEERS,
     ));
     let server = DeployServiceServer::new(deploy).max_decoding_message_size(max_message_size);
-    let service = InterceptedService::new(server, move |req: ::tonic::Request<()>| {
-        let key = ingress_key(req.extensions().get::<PeerAddress>().and_then(|p| p.0));
-        if limiter.allow(&key) {
-            Ok(req)
-        } else {
-            Err(::tonic::Status::resource_exhausted(
-                "deploy rate limit exceeded",
-            ))
-        }
-    });
+    let service = InterceptedService::new(server, DeployIngressGuard { limiter });
 
     // **Served from an accepted stream, so the peer address reaches the interceptor.** `serve` binds
     // its own listener and hands the service nothing but the request; `Connected::connect_info` is the
@@ -234,5 +249,31 @@ mod tests {
         let unattributed = ingress_key(None);
         assert!(limiter.allow(&unattributed));
         assert!(!limiter.allow(&unattributed));
+    }
+
+    /// The guard itself answers over-allowance with the gRPC spelling of 429: `RESOURCE_EXHAUSTED`
+    /// carrying the pool's own phrase. Falsified by returning `Unauthenticated`, by an empty
+    /// message, or by letting the second call through.
+    #[test]
+    fn the_ingress_guard_refuses_over_allowance_as_resource_exhausted() {
+        use ::tonic::service::interceptor::Interceptor as _;
+        let alice: std::net::SocketAddr = "192.0.2.9:5000".parse().expect("addr");
+        let mut guard = DeployIngressGuard {
+            limiter: Arc::new(KeyedRateLimiter::new(1, MAX_TRACKED_PEERS)),
+        };
+        let request = || {
+            let mut request = ::tonic::Request::new(());
+            request.extensions_mut().insert(PeerAddress(Some(alice)));
+            request
+        };
+        assert!(
+            guard.call(request()).is_ok(),
+            "the first call is within the allowance"
+        );
+        let error = guard
+            .call(request())
+            .expect_err("the second call is over it");
+        assert_eq!(error.code(), ::tonic::Code::ResourceExhausted);
+        assert_eq!(error.message(), rchain_casper::pool::RATE_LIMITED_MESSAGE);
     }
 }

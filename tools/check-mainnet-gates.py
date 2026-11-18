@@ -128,7 +128,7 @@ def verify_record(value: object, gate_id: str, verdict: str) -> dict:
             f"{gate_id}: evidence record needs manifest.json and SHA256SUMS.json")
     proc = subprocess.run(
         [sys.executable, str(ROOT / "tools/evidence-pack.py"), "verify",
-         "--record", str(path)],
+         "--record", str(path), "--require-pins"],
         capture_output=True, text=True, timeout=120, check=False)
     require(proc.returncode == 0,
             f"{gate_id}: evidence-pack verify failed: {proc.stdout.strip()} {proc.stderr.strip()}")
