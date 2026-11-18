@@ -204,6 +204,19 @@ def mentions_m3(readme: str) -> bool:
     return "M3" in readme or "off-host" in readme or "off host" in readme
 
 
+def declared_locality(directory: Path) -> str | None:
+    """The record's single declared locality, or `None` when it declares zero or several.
+
+    One reader for the README label, shared by `check()` and the M3 join-chain criterion so the
+    prose label and the typed `chain.json` cannot disagree about which locality applies.
+    """
+    readme_path = directory / "README.md"
+    if not readme_path.is_file():
+        return None
+    labels = LABEL_RE.findall(readme_path.read_text(errors="replace"))
+    return labels[0] if len(labels) == 1 else None
+
+
 def check(directory: Path) -> list[str]:
     problems: list[str] = []
     readme_path = directory / "README.md"
