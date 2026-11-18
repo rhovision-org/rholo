@@ -6,8 +6,8 @@
 independent reviewer's verdict, an unavailable historical archive, or an operator export is not a
 gate. Those live in their own trackers; they do not sit in `spec/audit/mainnet-gates.json`.
 
-After the 2026-11-18 sense check the register is **59 gates, 5 met, 54 open**. The rows removed from
-the gate register (51) remain recorded but are not gates:
+After the 2026-11-18 sense check the register is **59 gates, 47 met, 12 open**. The rows removed
+from the gate register (51) remain recorded but are not gates:
 
 - **HF51 (44)** — RCHIP policy decisions, release/operator obligations, and historical-replay or
   live-rollout evidence. They stay in `hardfork-51-closeout.json`; `#51` is a release tracker, not a
@@ -28,9 +28,9 @@ gate is the witness and its mutation control. The review records remain in
 
 ## What the 59 gates are
 
-- **46 S6 invariants** — each a testable claim about the current build. Four are met:
-  `S6-25bfdbe2c179c81e`, `S6-c7536b90bd39cf71`, `S6-91b05027373a3107`,
-  `S6-d7dd0a06a5dee537`.
+- **46 S6 invariants** — each a testable claim about the current build. **All 46 are met**: each
+  has a named witness and a mutation control whose FAIL record is committed. The test data is
+  `spec/audit/s6-test-plan.json`; the evidence is `spec/audit/evidence/s6-*`.
 - **G520-MIGRATION** — met by `tools/populated-store-migration-drill.py`.
 - **G428-M1..M4** — multi-host capacity, bounded ingress, off-host bootstrap, finality/recovery.
   Objective tests of the current build, runnable on the declared hardware.
@@ -44,20 +44,17 @@ data or a reviewer's opinion.
 
 ## Next
 
-1. **Write and bind the missing S6 tests.** 42 S6 invariants remain open (39 reviewable + 3 owes);
-   add the test or bind the existing one, add its mutation control, then bind it. Do not add a
-   reviewer requirement to a gate.
-2. **Run the live/multi-host gates on the current build.** G428-M1..M4, G584-G1..G5, C343, TA-C1/C2
+1. **Run the live/multi-host gates on the current build.** G428-M1..M4, G584-G1..G5, C343, TA-C1/C2
    need the declared hosts and a selected candidate. The local-devnet arms are prerequisites, not
-   substitutes.
-3. **Track the non-gates separately.** `hardfork-51-closeout.json` holds the 44 HF51 rows; the
+   substitutes. These are the 12 open gates.
+2. **Track the non-gates separately.** `hardfork-51-closeout.json` holds the 44 HF51 rows; the
    decision rows name their owners; the operator export/rollout rows are release obligations.
-4. **Do not promote a gate from a review, a decision or an unavailable archive.**
+3. **Do not promote a gate from a review, a decision or an unavailable archive.**
 
 ## What this does not claim
 
 - No external campaign has run and no operator artefact exists.
-- `--assert-closeable` exits 3: 54 gate tests remain open.
+- `--assert-closeable` exits 3: 12 live/multi-host gates remain open.
 - The four S6 review records are sign-off evidence, not gate conditions.
 - CI wiring for the new tests is requested in `ci-wiring-request.md`; no workflow file is edited
   here.

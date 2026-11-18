@@ -64,9 +64,20 @@ python3 tools/check-mainnet-gates.py --run-controls
 Add to the path-gated job:
 
 - `spec/audit/mainnet-gates.bindings.json`
+- `spec/audit/s6-test-plan.json`
 - `spec/audit/section6-reviews/`
 - `spec/audit/evidence/g520-migration-store-drill-*`
 - `spec/audit/evidence/s6-*-20261118*`
+
+The S6 test batch adds one Python witness that unittest discovery does not see:
+
+```sh
+python3 tests/liveness-enforcement.py self-test
+python3 -m unittest discover -s tests -p test_s6_bind.py -v
+```
+
+`tests/liveness-enforcement.py` runs the in-process jail test; the live/devnet liveness arms remain
+release obligations. `tools/s6-bind.py` is an operator tool and is not run in CI.
 
 `self_test` is hermetic; the full drill (`--gate`) needs Docker and a disposable devnet, so it is
 an operator run rather than a CI step. `check-mainnet-gates.py --run-controls` executes the G520

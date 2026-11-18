@@ -2,7 +2,7 @@
   "schema": 1,
   "generated": "2026-11-18",
   "met_ratchet": {
-    "minimum": 34,
+    "minimum": 47,
     "required_ids": [
       "G520-MIGRATION",
       "S6-25bfdbe2c179c81e",
@@ -37,7 +37,20 @@
       "S6-a641f6fa8cc3ce54",
       "S6-5c91a4e66518c7ec",
       "S6-47c941dac413cd3b",
-      "S6-0963a698bc9c4ee4"
+      "S6-0963a698bc9c4ee4",
+      "S6-0b46037b3783e4ca",
+      "S6-29a0672aff87290b",
+      "S6-5bd51477a56edf07",
+      "S6-5651614bf8e3eeb7",
+      "S6-ccb08bb8dcafdd3c",
+      "S6-dcbe72b936ef74ae",
+      "S6-e2cdf44a5cc0c81e",
+      "S6-f735095c746556f3",
+      "S6-f7d55fe093312364",
+      "S6-fbcd04455372e58c",
+      "S6-2228415e1ac6b83e",
+      "S6-212cef89b85456e0",
+      "S6-cc87a089357b25fa"
     ]
   },
   "bindings": [
@@ -1161,6 +1174,435 @@
         "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
         "record": "spec/audit/evidence/s6-0963a698bc9c4ee4-20261118",
         "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-0963a698bc9c4ee4-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-0b46037b3783e4ca",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/reduce.rs::division_and_modulo_overflow_promote_to_bigint",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Refuse instead of promoting on i64 overflow; the promotion witness must fail.",
+      "does_not_claim": "A current-build regression witness; the historical replay and rollout are separate.",
+      "witness_binding": {
+        "asserts_sha256": "5717025f44cae5330c01f35db8e0d88a0bd5823336538a2c3568a8d7485936c5",
+        "control": {
+          "description": "Refuse instead of promoting on i64 overflow; the promotion witness must fail.",
+          "control_of": "rholang/src/reduce.rs::division_and_modulo_overflow_promote_to_bigint",
+          "mutation": {
+            "file": "rholang/src/reduce.rs",
+            "before": "            None => int_bigop(&BigInt::from(*l), &BigInt::from(*r), cost, big, big_cost),",
+            "after": "            None => Err(RholangError::ReduceError(\"integer overflow\".to_string())),"
+          },
+          "test": "rholang/src/reduce.rs::division_and_modulo_overflow_promote_to_bigint",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-0b46037b3783e4ca-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "5059c36f5fcc66fa89587d356b8ec7d2c0bfea8766ccef860249e303b74804e1",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "b9054d88d965f054bf2482b033a0d4c87eb344f7a1583aec7ff2b35c865b422e",
+        "record": "spec/audit/evidence/s6-0b46037b3783e4ca-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-0b46037b3783e4ca-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-29a0672aff87290b",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rspace/src/merger/event_log_index.rs::combining_refuses_a_diff_that_leaves_i64",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Replace an overflowing accumulation with zero; the overflow witness must fail.",
+      "does_not_claim": "A current-build regression witness; the historical replay is separate.",
+      "witness_binding": {
+        "asserts_sha256": "2ff131bef18a3b37297ccf1b60e94043c45407e6f764cbe2ed04f425f7ceebdb",
+        "control": {
+          "description": "Replace an overflowing accumulation with zero; the overflow witness must fail.",
+          "control_of": "rspace/src/merger/event_log_index.rs::combining_refuses_a_diff_that_leaves_i64",
+          "mutation": {
+            "file": "rspace/src/merger/event_log_index.rs",
+            "before": "            let sum = entry.checked_add(*v).ok_or_else(|| {",
+            "after": "            let sum = entry.checked_add(*v).or(Some(0)).ok_or_else(|| {"
+          },
+          "test": "rspace/src/merger/event_log_index.rs::combining_refuses_a_diff_that_leaves_i64",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-29a0672aff87290b-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "443700dfe5a368249bdbfd1877b35f5034b4849ee28f982db45578f89741a7f6",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "4f4235033a6edc639787c6a0ce3d5ab0f862efcd95e5261c43e77fbc0bb46a70",
+        "record": "spec/audit/evidence/s6-29a0672aff87290b-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-29a0672aff87290b-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-5bd51477a56edf07",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/runtime_manager.rs::a_negative_cost_is_refused_before_it_becomes_a_pcost",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Wrap a negative cost into a huge u64; the negative-cost witness must fail.",
+      "does_not_claim": "A current-build regression witness; the historical replay is separate.",
+      "witness_binding": {
+        "asserts_sha256": "d50fdf97ad8dbd04a369db056d50038198a9d548e087c538b8323493d358f9cc",
+        "control": {
+          "description": "Wrap a negative cost into a huge u64; the negative-cost witness must fail.",
+          "control_of": "casper/src/runtime_manager.rs::a_negative_cost_is_refused_before_it_becomes_a_pcost",
+          "mutation": {
+            "file": "casper/src/runtime_manager.rs",
+            "before": "        cost: u64::try_from(value).map_err(|_| {\n            RuntimeRunError::Other(format!(\"deploy cost is negative: {value}\"))\n        })?,",
+            "after": "        cost: value as u64,"
+          },
+          "test": "casper/src/runtime_manager.rs::a_negative_cost_is_refused_before_it_becomes_a_pcost",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-5bd51477a56edf07-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "7180b437623db1b73b3d600965ac08e79a02ba3e3d3856474d6970a9775ea72e",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "80e901131f572b59aa34a9e1ebdbd07ee5bd04f08d9aa7ad6d08c0823f61d777",
+        "record": "spec/audit/evidence/s6-5bd51477a56edf07-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-5bd51477a56edf07-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-5651614bf8e3eeb7",
+      "witness_kind": "rust-integration",
+      "witness_ref": "casper/tests/replay_trace_order.rs::pending_peeks_replay_with_exact_cost_and_state",
+      "witness_scope": "integration",
+      "locality": "integration",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Reverse the replay event order; the exact-cost replay witness must fail.",
+      "does_not_claim": "The in-process replay order only. The recorded-history sweep, second-node replay and coordinated rollout are release obligations.",
+      "witness_binding": {
+        "asserts_sha256": "37d00db206c2ed5ad459b883e60059b5bdc8f630491f8db7238f634ce0713961",
+        "control": {
+          "description": "Reverse the replay event order; the exact-cost replay witness must fail.",
+          "control_of": "casper/tests/replay_trace_order.rs::pending_peeks_replay_with_exact_cost_and_state",
+          "mutation": {
+            "file": "rspace/src/replay_rspace.rs",
+            "before": "        for event in log.iter().rev() {",
+            "after": "        for event in log.iter() {"
+          },
+          "test": "casper/tests/replay_trace_order.rs::pending_peeks_replay_with_exact_cost_and_state",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-5651614bf8e3eeb7-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "c8b72423c20efa5ecb3add4a611c20928557bafe7cfaf8fb9963a795793fe840",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "ec5bb36ddc3498e49d7e71ff3e6116c0179f36725a64f7e2bf1eba48b8447880",
+        "record": "spec/audit/evidence/s6-5651614bf8e3eeb7-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-5651614bf8e3eeb7-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-ccb08bb8dcafdd3c",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/accounting.rs::collection_and_censure_charges_are_the_models",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Charge only one side of a union; the cost-model witness must fail.",
+      "does_not_claim": "The in-process charge model only. The pre-fork replay and two-binary acceptance are release obligations.",
+      "witness_binding": {
+        "asserts_sha256": "bb8425d3870d0d3dc21afc9b12fd266542e5ec91fb156fcd95a905aaf84cd1e0",
+        "control": {
+          "description": "Charge only one side of a union; the cost-model witness must fail.",
+          "control_of": "rholang/src/accounting.rs::collection_and_censure_charges_are_the_models",
+          "mutation": {
+            "file": "rholang/src/accounting.rs",
+            "before": "        Self::canonicalization_cost(left.saturating_add(right))",
+            "after": "        Self::canonicalization_cost(right)"
+          },
+          "test": "rholang/src/accounting.rs::collection_and_censure_charges_are_the_models",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-ccb08bb8dcafdd3c-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "7d1b162fb5cacc2d894ed221210d7d24a1ca238fa5c215190423092471e11a6d",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "b9054d88d965f054bf2482b033a0d4c87eb344f7a1583aec7ff2b35c865b422e",
+        "record": "spec/audit/evidence/s6-ccb08bb8dcafdd3c-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-ccb08bb8dcafdd3c-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-dcbe72b936ef74ae",
+      "witness_kind": "rust-integration",
+      "witness_ref": "rholang/tests/if_par.rs::if_not_first_in_a_par_holds_across_effect_modes",
+      "witness_scope": "integration",
+      "locality": "integration",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Seed the if-condition with the accumulated par; the not-first witness must fail.",
+      "does_not_claim": "A current-build regression witness; a live rollout is separate.",
+      "witness_binding": {
+        "asserts_sha256": "804faf94df997e1c1bd08b5024b7b6c81bfa6766fb8d1334d8244b829a96fdfa",
+        "control": {
+          "description": "Seed the if-condition with the accumulated par; the not-first witness must fail.",
+          "control_of": "rholang/tests/if_par.rs::if_not_first_in_a_par_holds_across_effect_modes",
+          "mutation": {
+            "file": "rholang/src/normalizer.rs",
+            "before": "    let target = normalize_proc(\n        value,\n        ProcVisitInputs {\n            par: Par::default(),",
+            "after": "    let target = normalize_proc(\n        value,\n        ProcVisitInputs {\n            par: input_par.clone(),"
+          },
+          "test": "rholang/tests/if_par.rs::if_not_first_in_a_par_holds_across_effect_modes",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-dcbe72b936ef74ae-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "01ed70fdb592e3e7f14987c7f01441615b6adcd888f6d6f3ae90134c0708debf",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "5f7d102327bd17f5666a96b8c81447ab762d9b64cdbae45f09947a92a6604714",
+        "record": "spec/audit/evidence/s6-dcbe72b936ef74ae-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-dcbe72b936ef74ae-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-e2cdf44a5cc0c81e",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/merging.rs::a_cost_accounted_block_keeps_its_own_native_writes_through_the_merge",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Compose only the first accepted chain's cost moves; the merge cost-accounting witness must fail.",
+      "does_not_claim": "A current-build regression witness; the live M5 replay is a release obligation.",
+      "witness_binding": {
+        "asserts_sha256": "cc4cf0fd9538456172013749b37bcbf4e6e1cfcda62cecbc15910c4adc477670",
+        "control": {
+          "description": "Compose only the first accepted chain's cost moves; the merge cost-accounting witness must fail.",
+          "control_of": "casper/src/merging.rs::a_cost_accounted_block_keeps_its_own_native_writes_through_the_merge",
+          "mutation": {
+            "file": "casper/src/merging.rs",
+            "before": "    for chain in accepted {",
+            "after": "    for chain in accepted.iter().take(1) {"
+          },
+          "test": "casper/src/merging.rs::a_cost_accounted_block_keeps_its_own_native_writes_through_the_merge",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-e2cdf44a5cc0c81e-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "3d9f9f120b1f8df02c013a33a37274d7763c5265d5726312b7f9d219f8eb8519",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "80e901131f572b59aa34a9e1ebdbd07ee5bd04f08d9aa7ad6d08c0823f61d777",
+        "record": "spec/audit/evidence/s6-e2cdf44a5cc0c81e-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-e2cdf44a5cc0c81e-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-f735095c746556f3",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rspace/src/merger/state_change.rs::a_consume_and_replace_diffs_its_channel_once",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Diff a channel once per produce event; the merge-diff witness must fail.",
+      "does_not_claim": "The in-process merge diff only. The live 840-to-841 M5 replay is unavailable and remains a release obligation.",
+      "witness_binding": {
+        "asserts_sha256": "505394c1eef7f0d6272590c18cdce7f3033c8bbb0ffc8a15650cec3cc9069757",
+        "control": {
+          "description": "Diff a channel once per produce event; the merge-diff witness must fail.",
+          "control_of": "rspace/src/merger/state_change.rs::a_consume_and_replace_diffs_its_channel_once",
+          "mutation": {
+            "file": "rspace/src/merger/state_change.rs",
+            "before": "            .map(|p| p.channels_hash)",
+            "after": "            .map(|p| p.hash)"
+          },
+          "test": "rspace/src/merger/state_change.rs::a_consume_and_replace_diffs_its_channel_once",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-f735095c746556f3-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "8261e29dde2c23a3b47940f2e047a133bfb4d79a06f385d4498f20e2f9738727",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "4f4235033a6edc639787c6a0ce3d5ab0f862efcd95e5261c43e77fbc0bb46a70",
+        "record": "spec/audit/evidence/s6-f735095c746556f3-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-f735095c746556f3-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-f7d55fe093312364",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/merging.rs::two_branch_blocks_writing_one_native_slot_do_not_panic_the_merge",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Remove native writes from the conflict relation; the two-writer witness must fail.",
+      "does_not_claim": "A current-build regression witness; a live merge campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "20256bd370953078dfaa6fcecacf31d1fccee368d4483fd056c05bb5d9e00c47",
+        "control": {
+          "description": "Remove native writes from the conflict relation; the two-writer witness must fail.",
+          "control_of": "casper/src/merging.rs::two_branch_blocks_writing_one_native_slot_do_not_panic_the_merge",
+          "mutation": {
+            "file": "casper/src/merging.rs",
+            "before": "        self.native_effects\n            .iter()\n            .map(NativeStoreAction::slot)\n            .collect()",
+            "after": "        BTreeSet::new()"
+          },
+          "test": "casper/src/merging.rs::two_branch_blocks_writing_one_native_slot_do_not_panic_the_merge",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-f7d55fe093312364-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "9fc2de05c8e638825a46b5cc03e53e8da7cf34abb6b0b1c958ceb7816d1703b2",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "80e901131f572b59aa34a9e1ebdbd07ee5bd04f08d9aa7ad6d08c0823f61d777",
+        "record": "spec/audit/evidence/s6-f7d55fe093312364-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-f7d55fe093312364-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-fbcd04455372e58c",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/storage.rs::a_matched_produce_refunds_its_storage_before_the_event_costs",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Flip the refund sign; the storage-refund witness must fail.",
+      "does_not_claim": "A current-build regression witness; the historical replay is separate.",
+      "witness_binding": {
+        "asserts_sha256": "9d1a45b22953465a0eb2d8a6c7a40e3321c73a53d238854c3cb0dfac54788bc6",
+        "control": {
+          "description": "Flip the refund sign; the storage-refund witness must fail.",
+          "control_of": "rholang/src/storage.rs::a_matched_produce_refunds_its_storage_before_the_event_costs",
+          "mutation": {
+            "file": "rholang/src/storage.rs",
+            "before": "                .charge(Cost::new(-cost.value, \"consume storage refund\"))?;",
+            "after": "                .charge(Cost::new(cost.value, \"consume storage refund\"))?;"
+          },
+          "test": "rholang/src/storage.rs::a_matched_produce_refunds_its_storage_before_the_event_costs",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-fbcd04455372e58c-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "3e7c8df29248c53babe689d4d9ba7ff8c354d1fcb5505cdfd0612da264d348fd",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "b9054d88d965f054bf2482b033a0d4c87eb344f7a1583aec7ff2b35c865b422e",
+        "record": "spec/audit/evidence/s6-fbcd04455372e58c-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-fbcd04455372e58c-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-2228415e1ac6b83e",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/parser.rs::the_three_depth_guards_refuse_an_over_deep_term",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Disable the composed AST budget; the three-guard witness must fail.",
+      "does_not_claim": "A current-build regression witness; a live corpus replay is separate.",
+      "witness_binding": {
+        "asserts_sha256": "945c700efc6f2cfa8b5f4266544caadb3100bfd28e304cc0e9e788916c846060",
+        "control": {
+          "description": "Disable the composed AST budget; the three-guard witness must fail.",
+          "control_of": "rholang/src/parser.rs::the_three_depth_guards_refuse_an_over_deep_term",
+          "mutation": {
+            "file": "rholang/src/parser.rs",
+            "before": "    if exceeds_ast_depth(&proc, MAX_AST_DEPTH) {",
+            "after": "    if false && exceeds_ast_depth(&proc, MAX_AST_DEPTH) {"
+          },
+          "test": "rholang/src/parser.rs::the_three_depth_guards_refuse_an_over_deep_term",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-2228415e1ac6b83e-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "f21333253fbb666b6cb6cb8a2358445f26d9cc456946ca95d790c5420d095ee9",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "b9054d88d965f054bf2482b033a0d4c87eb344f7a1583aec7ff2b35c865b422e",
+        "record": "spec/audit/evidence/s6-2228415e1ac6b83e-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-2228415e1ac6b83e-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-212cef89b85456e0",
+      "witness_kind": "rust-unit",
+      "witness_ref": "models/src/wire.rs::a_negative_bind_pattern_free_count_is_refused_at_the_proto_boundary",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Clamp a negative BindPattern free-count; the proto-boundary witness must fail.",
+      "does_not_claim": "A current-build regression witness; the historical replay is separate.",
+      "witness_binding": {
+        "asserts_sha256": "8ab424ba3bb374c53e4d6086509122d5a46401be24722afa0f5c79a4b1f92e46",
+        "control": {
+          "description": "Clamp a negative BindPattern free-count; the proto-boundary witness must fail.",
+          "control_of": "models/src/wire.rs::a_negative_bind_pattern_free_count_is_refused_at_the_proto_boundary",
+          "mutation": {
+            "file": "models/src/wire.rs",
+            "before": "        free_count: i32::from(FreeCount::try_from(p.free_count).map_err(ModelsError::Decode)?),",
+            "after": "        free_count: p.free_count.max(0),"
+          },
+          "test": "models/src/wire.rs::a_negative_bind_pattern_free_count_is_refused_at_the_proto_boundary",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-212cef89b85456e0-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "1a2866eb7c15afb247a3a690e0490776b6232979bb0136ede99688da0e4ea585",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "28b67825b898f5cb80e7269728afa45d18a351d319ff412cd7eba34c364aa787",
+        "record": "spec/audit/evidence/s6-212cef89b85456e0-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-212cef89b85456e0-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-cc87a089357b25fa",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rspace/src/rspace.rs::candidate_selection_is_sorted_by_content_hash_not_insertion_order",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Sort candidates by insertion index; the content-hash selection witness must fail.",
+      "does_not_claim": "A current-build regression witness; a live RSpace campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "9f2fb9b8105a6a00ea427691c2adf957dbfd2277912f332e56f0a7510fb7d85a",
+        "control": {
+          "description": "Sort candidates by insertion index; the content-hash selection witness must fail.",
+          "control_of": "rspace/src/rspace.rs::candidate_selection_is_sorted_by_content_hash_not_insertion_order",
+          "mutation": {
+            "file": "rspace/src/rspace.rs",
+            "before": "            // matching datum is chosen regardless of insertion order (Law 4/8).\n            indexed.sort_by(|a, b| a.0.source.cmp(&b.0.source));",
+            "after": "            // matching datum is chosen regardless of insertion order (Law 4/8).\n            indexed.sort_by(|a, b| a.1.cmp(&b.1));"
+          },
+          "test": "rspace/src/rspace.rs::candidate_selection_is_sorted_by_content_hash_not_insertion_order",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-cc87a089357b25fa-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "e62a12f97fc247b59d598529bd3ddf52f26e5c7538e74e7a046ceb31ff1213eb",
+        "source_sha": "c87ade74356ebd33f964b10d47942b99a5fe86e8",
+        "binary_sha256": "4f4235033a6edc639787c6a0ce3d5ab0f862efcd95e5261c43e77fbc0bb46a70",
+        "record": "spec/audit/evidence/s6-cc87a089357b25fa-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/281241d3b1b67c6c83d76512d38d322050b893b3/spec/audit/evidence/s6-cc87a089357b25fa-20261118/manifest.json"
       }
     }
   ]
