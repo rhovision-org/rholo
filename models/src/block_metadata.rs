@@ -472,6 +472,37 @@ mod tests {
         assert_eq!(decoded, meta);
     }
 
+    /// The `slashable` flag is the input to the slash rule (C110/C122); a codec that drops it
+    /// leaves every stored record unrestorable. The law-18 fixture uses `slashable: false`, so it
+    /// cannot see the field move; this one sets it true.
+    #[test]
+    fn a_slashable_flag_survives_the_store_round_trip() {
+        let meta = BlockMetadata {
+            block_hash: block_hash(1),
+            block_num: 3.try_into().unwrap(),
+            sender: validator(2),
+            seq_num: 1.try_into().unwrap(),
+            justifications: [block_hash(2), block_hash(1)].into_iter().collect(),
+            bonds_map: BTreeMap::from([(validator(2), 100.try_into().unwrap())]),
+            validated: true,
+            validation_failed: false,
+            slashable: true,
+            failure_cause: None,
+            slash_severity: SlashSeverity::Unspecified,
+            restore_attempts: 0,
+            fringe: [block_hash(5)].into_iter().collect(),
+            fringe_state_hash: StateHash::new([9u8; 32]),
+            pre_state_hash: StateHash::new([6u8; 32]),
+            post_state_hash: StateHash::new([7u8; 32]),
+            sig: vec![4u8; 64],
+            sig_algorithm: "secp256k1".to_string(),
+            member_of_fringe: Some(Blake2b256Hash::from_bytes([8u8; 32])),
+        };
+        let decoded = BlockMetadata::from_bytes(&meta.to_bytes()).unwrap();
+        assert!(decoded.slashable, "the slashable flag was not carried");
+        assert_eq!(decoded, meta);
+    }
+
     /// **The failure cause and the attempt count survive the codec, and an absent cause decodes as
     /// `None`.** The restoring rule (AUDIT C173) is keyed on the cause, so a codec that dropped it —
     /// the way `slashable` was once dropped (C122) — would leave every stored record unrestorable
