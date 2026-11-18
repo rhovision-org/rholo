@@ -193,6 +193,7 @@ pub fn has_room(limits: &PoolLimits, count: usize, bytes: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn limits() -> PoolLimits {
         PoolLimits {
@@ -315,5 +316,47 @@ mod tests {
         }
         assert!(!PoolError::Duplicate.is_bounded());
         assert_eq!(classify("deploy signature is invalid"), None);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn the_byte_full_shape_round_trips(
+            in_use in 0usize..1_000_000_000,
+            max_bytes in 0usize..1_000_000_000,
+        ) {
+            let message = PoolError::byte_full_message(in_use, max_bytes);
+            prop_assert_eq!(classify(&message), Some(PoolError::ByteFull));
+            prop_assert!(PoolError::ByteFull.is_bounded());
+        }
+
+        #[test]
+        fn a_duplicate_shape_names_a_non_whitespace_id(
+            id in "[A-Za-z0-9]{1,64}",
+        ) {
+            let message = PoolError::duplicate_message(&id);
+            prop_assert_eq!(classify(&message), Some(PoolError::Duplicate));
+            prop_assert!(!PoolError::Duplicate.is_bounded());
+        }
+
+        #[test]
+        fn every_classification_is_the_exact_phrase_or_its_shape(
+            message in "\\PC{0,200}",
+        ) {
+            match classify(&message) {
+                None => {}
+                Some(PoolError::ByteFull) => prop_assert!(
+                    message == PoolError::ByteFull.message()
+                        || (message.starts_with("deploy pool is full: ")
+                            && message.ends_with(" term bytes in use"))
+                ),
+                Some(PoolError::Duplicate) => prop_assert!(
+                    message == PoolError::Duplicate.message()
+                        || (message.starts_with("deploy ")
+                            && (message.ends_with(" is already in the pool")
+                                || message.ends_with(" is already being admitted")))
+                ),
+                Some(other) => prop_assert_eq!(message, other.message()),
+            }
+        }
     }
 }

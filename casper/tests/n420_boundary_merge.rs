@@ -601,6 +601,63 @@ async fn kept_effects_are_readable_from_the_produced_state() {
     );
 }
 
+/// The same readback principle on a deploy that writes **two** channels. The expectation is
+/// derived from the produced chain in both tests, so neither is tied to one deploy id or one
+/// channel name; the second shape is what rules out a readback that only happens to work when a
+/// merge touches a single datum.
+#[tokio::test]
+async fn kept_effects_are_readable_for_a_two_channel_deploy() {
+    let rm = build_runtime_manager_with_mode(EffectMode::Sequential).await;
+    let start = seed(&rm).await;
+    let block = play(
+        &rm,
+        0x44,
+        VALIDATORS[0],
+        start,
+        Some(r#"@"left"!(1) | @"right"!(2)"#),
+        &[],
+    )
+    .await;
+    let chain = block
+        .index
+        .deploy_chains
+        .first()
+        .expect("the block carries one chain");
+    let expected: Vec<(Blake2b256Hash, Vec<Vec<u8>>)> = chain
+        .state_changes
+        .datums_changes
+        .iter()
+        .filter(|(_, diff)| !diff.added.is_empty())
+        .map(|(channel, diff)| (*channel, diff.added.clone()))
+        .collect();
+    assert!(
+        expected.len() >= 2,
+        "control: the deploy writes at least two channels, or the shape is not exercised"
+    );
+
+    let outcome = merge_single_block(&rm, start, &block).await;
+    assert!(
+        outcome.report.unapplied_kept_datums.is_empty(),
+        "{:?}",
+        outcome.report.unapplied_kept_datums
+    );
+    let reader = rm
+        .get_history_repo()
+        .get_history_reader(outcome.state)
+        .await
+        .reader_binary();
+    for (channel, added) in expected {
+        let data = reader.get_data(channel).await.expect("a readable channel");
+        let raw: BTreeSet<Vec<u8>> = data.into_iter().map(|datum| datum.raw).collect();
+        for payload in added {
+            assert!(
+                raw.contains(&payload),
+                "a kept datum is absent from the state the merge produced"
+            );
+        }
+    }
+}
+
 /// **Does a deploy's three parallel register-shaped RMWs serialize under the deployed scheduler?**
 ///
 /// The live `kernel` deploy (block 825) issues three `Root.register` calls in parallel, each a
