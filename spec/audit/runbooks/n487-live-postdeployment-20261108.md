@@ -1,6 +1,11 @@
 # #487 / #584 — pre-registered public four-validator acceptance runbook
 
-**Status:** DRAFT / NOT EXECUTED. Refreshed 2026-11-14 onto `dev@88b8b5340` (including #572, #578 and the #580/#581 shared-halt fixture isolation): the scoring criteria and arms are unchanged; candidate/approval pins remain unpopulated. Sections 1.1–1.2 make collection, independent checks and the maintainer handoff explicit. This document is a proposed acceptance protocol, not authorization to touch validators, submit transactions, restart nodes or claim a live result.
+**Status:** DRAFT / NOT EXECUTED. Refreshed 2026-11-18 onto `dev@77953df4f` after the #611 local
+rehearsal: the collector now carries and requires the selected-candidate pins, the deploy
+distribution is a preflight pin, and the sampling cadence is 1 s. The scoring criteria and arms are
+unchanged; candidate/approval pins remain unpopulated. Sections 1.1–1.2 make collection, independent
+checks and the maintainer handoff explicit. This document is a proposed acceptance protocol, not
+authorization to touch validators, submit transactions, restart nodes or claim a live result.
 
 **Decision owner:** Jim + Patrick (maintainer go/no-go and final verdict); operator and independent evidence reviewer must be identified before execution. **Scope owner:** Aria (pre-registration/evidence design). Approval of this document alone does not authorize execution.
 
@@ -27,18 +32,24 @@ Create a **signed or maintainer-reviewed, time-stamped preflight manifest** with
 | Required field | Pre-registration requirement |
 |---|---|
 | Approved UTC start/end; operator, observers and rollback owner | Names and approval references, prior to test |
-| Release source `SHA`, release/tag and branch | Exact commit deployed to all four public validators; not merely a green PR |
-| Release build provenance | CI URL/attempt, artifact SHA-256, executable `rnode` SHA-256, `--version`, packaging/container digest if applicable |
-| Four validator identities | Stable ID/alias, bonded stake, host/instance identifier, binary SHA, boot ID, relevant API addresses retained **privately** |
+| Release source `SHA`, release/tag and branch | Exact approved commit (`selected_source_sha`, 40-hex) installed on all four public validators; not merely a green PR |
+| Release build provenance | CI URL/attempt, artifact SHA-256 (`selected_artifact_digest`), executable `rnode` SHA-256 (`selected_binary_sha256`), `--version`, packaging/container digest if applicable |
+| Four validator identities | Stable ID/alias, bonded stake, host/instance identifier, binary SHA, kernel `boot_id` (`boot_id_source: kernel`), relevant API addresses retained **privately** |
 | Chain identity | Network/shard, genesis hash **and** genesis/bonds file digests, live bond set and total weight; verify same network/genesis on all four |
 | Current deployment state | Per-node software version, online state, height, finalized height/hash, observed lag, `lastFinalityAgeMs`, `lastBlockAgeMs`, time-sync offset |
 | Signed test deploy | Authorized account, designated receiver, test amount/max fee, deploy signature/hash/id, signed payload digest, validity window, non-replay plan |
+| Deploy distribution | Typed `operator_fields.deploy_relay`: `mode` (`relay` or `four-ingress`), the four aliases, the peer external deploy port (`protocol port + 1`, default 40401; `RNODE_DEPLOY_RELAY_PORT` overrides), the UTC reachability check, and an empty `unreachable_aliases`. `relay` means `RNODE_DEPLOY_RELAY=1` on the ingress node(s) and each peer's deploy service reachable; `four-ingress` means the same signed deploy is offered to each validator and all four receipts are retained. No distribution plan is **NO-GO**: without one the other three validators never see `pooled`. |
 | Rollback configuration | Approved previous build/config, snapshot/reference and restoration authority, host capacity and rollback location; no unsafe in-place rebuild |
 | Evidence destination | Run ID, immutable source pins, capture paths, independent reviewer and redaction policy |
 
 **Do not pin the 2026-11-02 DevNet binary as the live release.** That artifact established the local contract only. A current release build actually installed on the four public validators is mandatory.
 
-**Hard NO-GO:** diverging binary/genesis/bond pins; unverified quorum/validator set; inability to observe finality and settlement surfaces; missing approval to submit the test transfer; unresolved host-capacity or rollback exposure; unstable time sync; unresolved network instability; or any request to run destructive restart/partition experiments during this window.
+**Hard NO-GO:** diverging binary/genesis/bond pins; unverified quorum/validator set; a missing or
+inconsistent `deploy_relay` plan; synthetic boot IDs (`synthetic_boot_ids: true` or any
+`boot_id_source` other than `kernel`); inability to observe finality and settlement surfaces;
+missing approval to submit the test transfer; unresolved host-capacity or rollback exposure;
+unstable time sync; unresolved network instability; or any request to run destructive
+restart/partition experiments during this window.
 
 ### 1.1. Collect the private candidate record with the merged probe
 
@@ -65,9 +76,11 @@ Create `$N487_OPERATOR_JSON` privately from this **deliberately incomplete** inp
 
 ```json
 {
-  "source_sha": null,
   "release_tag": null,
   "release_branch": null,
+  "selected_source_sha": null,
+  "selected_artifact_digest": null,
+  "selected_binary_sha256": null,
   "window_start_utc": null,
   "window_end_utc": null,
   "operator": null,
@@ -76,11 +89,32 @@ Create `$N487_OPERATOR_JSON` privately from this **deliberately incomplete** inp
   "rollback_owner": null,
   "test_transfer": null,
   "rollback": null,
-  "evidence_destination": null
+  "evidence_destination": null,
+  "deploy_relay": null
 }
 ```
 
-`source_sha` must be the full approved commit; record an explicit reviewed "untagged commit build" designation if there is no release tag, never invent a tag. `test_transfer` must include every signed-deploy field in §1, including approval reference, maximum fee, payload digest and non-replay plan. `rollback` must identify the prior build/config, state compatibility, snapshot, capacity, authority and separate procedure. The independent reviewer must differ from the operator. Keep signed payloads, endpoints, wallet authorizations and private identities outside Git.
+`selected_source_sha` must be the full 40-hex approved commit (record an explicit reviewed "untagged
+commit build" designation if there is no release tag; never invent a tag). `selected_artifact_digest`
+is the SHA-256 of the approved CI artifact/archive/image, not the executable; `selected_binary_sha256`
+is the installed executable's digest. The collector derives the manifest's `source` block from
+`selected_source_sha` and cross-checks every validator record against all three pins; a short or
+absent build self-report is a NO-GO, not a reason to shorten the pin.
+
+`deploy_relay` is the typed distribution plan:
+`{"mode": "relay" | "four-ingress", "aliases": [the four validator aliases],
+"destination_port": 40401, "reachability_checked_utc": "<UTC>", "unreachable_aliases": []}`.
+With `relay`, enable `RNODE_DEPLOY_RELAY=1` on the ingress node (all four for robustness) and verify
+each peer's external deploy port (advertised protocol port + 1, default 40401, overridden by
+`RNODE_DEPLOY_RELAY_PORT`) is reachable; after admission the relay offers the signed deploy to each
+peer's deploy service, the sender keeps its own pool row, a bounded seen set stops circulation, and
+the offer is async best-effort (offer/failure/capacity-refusal counters are on `/metrics`). With
+`four-ingress`, the same signed deploy is offered to each validator's ingress and **all four
+receipts** are retained; that is one deploy with four receipts, never four deploys. `merge --check`
+validates the shape and that `aliases` names the four records; it proves the declared plan, not the
+network.
+
+`test_transfer` must include every signed-deploy field in §1, including approval reference, maximum fee, payload digest and non-replay plan. `rollback` must identify the prior build/config, state compatibility, snapshot, capacity, authority and separate procedure. The independent reviewer must differ from the operator. Keep signed payloads, endpoints, wallet authorizations and private identities outside Git.
 
 ```sh
 # On the private aggregation host, after copying the four records.
@@ -99,9 +133,9 @@ A failed `merge --check` means **NO-GO / incomplete or inconsistent collection**
 | Check | Collector coverage / mandatory independent check |
 |---|---|
 | Record count and missing fields | `merge --expect 4 --check` checks count and recorded `unset` lists. Reviewer must verify actual values, four distinct bonded identities, and one fresh record per actual host; four filenames do not prove four validators. |
-| Agreement | Collector compares network, shard, genesis hash/raw digest and binary digest. Reviewer must also compare full source/artifact provenance, bonds/file digests, live bond set and weights against the approved pins. Genesis bonds alone are not proof of the current live validator set. |
-| Readiness and observations | A present `ready: false`, stale sample, endpoint/local read error or incomplete local provenance must not pass the human gate merely because `checks.ok` is true. Review `errors`, `local.local_errors`, boot IDs, API observability and the full A0 baseline; Date-header offset is coarse and not a time-sync attestation. Different latest finalized heights may be normal; conflicting hashes at the same finalized height are not. |
-| Operator fields | Collector checks top-level presence, not approval validity, nested transfer/rollback completeness, window ordering, reviewer independence or source-to-binary identity. Review every §1 field and approval reference independently. |
+| Agreement | Collector compares source, network, shard, genesis hash/raw digest, bond digest, stake and binary digest, and requires every record's source/binary to equal `selected_source_sha`/`selected_binary_sha256` (`selected_candidate_matches_validators`). Reviewer must also compare full source/artifact provenance, bonds/file digests, live bond set and weights against the approved pins. Genesis bonds alone are not proof of the current live validator set. |
+| Readiness and observations | A present `ready: false`, stale sample, endpoint/local read error or incomplete local provenance must not pass the human gate merely because `checks.ok` is true. Review `errors`, `local.local_errors`, boot IDs (`boot_id_source` must be `kernel`; `synthetic_boot_ids` must be false), API observability and the full A0 baseline; Date-header offset is coarse and not a time-sync attestation. Different latest finalized heights may be normal; conflicting hashes at the same finalized height are not. |
+| Operator fields | Collector checks presence, pin formats, the selected-candidate match, distinct names/boot IDs and the `deploy_relay` shape. It does not check approval validity, nested transfer/rollback completeness, window ordering, reviewer independence or the actual relay reachability. Review every §1 field and approval reference independently. |
 | Redaction | `--redact` masks known fields only. Read errors, node addresses, binary/config paths and nested free text may still expose host or endpoint details. Manually review the entire public copy; retain protected originals and document each redaction. |
 
 Retain the collector revision/command, private manifest digest, reviewed public manifest digest and a separate signed/maintainer-reviewed **§1 pin sheet** for fields the collector does not preserve (especially CI provenance, live membership and approvals). Freeze the runbook revision, pin sheet, transfer identity, A0/A1–A4 criteria and approved UTC window together. Jim/Patrick must explicitly record GO against that exact set **before** the sole submission. Any installation, identity, boot, source/binary or membership drift invalidates that freeze: stop, recollect and obtain a new decision.
@@ -128,11 +162,20 @@ window; the one authorized submission remains the operator's action.
 
 ```sh
 python3 tools/live-gate.py sample --plan /secure/n487-plan.json \
-    --out target/n487-live-<run-id> --interval 5 --duration 900
+    --out target/n487-live-<run-id> --interval 1 --duration 1020
 ```
 
-The private plan names the deploy id and four `{alias, base}` validators; it is never committed, and
-the run directory records aliases and endpoint digests rather than addresses. Each tick records
+**Why 1 s.** `check_g2` requires **every** alias to observe `pooled`, `includedUnfinalized`/
+`finalityUnknown` (or a Processed tag) and `finalizedSuccess` directly, and this runbook forbids a
+second deploy to manufacture a missed stage. The 2026-11-18 local four-validator rehearsal caught
+all stages on all four aliases at 1 s and missed `pooled`/`included` at 5 s. The sampler's default is
+now 1 s; the flag is written out so the pre-registered cadence is explicit. The 1020 s covers the
+120 s A0 baseline plus the 900 s post-submission window. If a timeout stretches a tick, the event's
+monotonic timestamp is authoritative; do not lower the cadence.
+
+The private plan names the deploy id and four `{alias, base}` validators; the deploy id must be the
+already-signed, approved deploy known before sampling starts. The plan is never committed, and the
+run directory records aliases and endpoint digests rather than addresses. Each tick records
 `/health`, `/api/status`, `/api/last-finalized-block`, `/api/v1/finality-observation`,
 `/api/v1/deploy-status/{id}` and `/api/v1/deploy-settlement/{id}` on every alias, including 503s,
 timeouts and connection errors, with UTC, monotonic time, HTTP status, the exact body and its digest.
@@ -163,8 +206,8 @@ reviewer records the verdict; the tool only checks the record's shape.
 
 | Gate | Where it is evidenced |
 |---|---|
-| G1 installed pins | §1 and §1.1, re-derived by `live-gate check` |
-| G2 signed deploy lifecycle | A1–A3 samples plus the operator's `submission.json` |
+| G1 installed pins | §1 and §1.1, re-derived by `live-gate check`; the selected-candidate pins and `deploy_relay` are required preflight fields |
+| G2 signed deploy lifecycle | A1–A3 samples plus the operator's `submission.json`; G2 is per-alias, which is why the 1 s cadence and the deploy-distribution pin are preflight requirements |
 | G3 no false settlement | §0 contract, §2 negative safety check, `claims.json` |
 | G4 recovery without loss | the named recovery arm, `recovery.json`, post-recovery samples |
 | G5 independent observations | four aliases' samples, hashed and redacted under §4 |
@@ -185,18 +228,35 @@ Keep this run **non-disruptive**. No deliberate validator shutdown, network part
 
 | Arm | Proposed cadence / window | Required evidence | Verdict |
 |---|---|---|---|
-| A0 — read-only preflight | Sample all four validators at 5-second intervals for **120 seconds** before submitting any deploy | UTC wall-clock plus monotonic/sample sequence, validator boot ID, version/binary hash, latest height, finalized height/hash and lag/ages | All four present; same expected chain/bond set; no unexplained finality divergence |
-| A1 — accepted / pooled | Submit **one** approved, bounded, already-signed native-REV test deploy once; poll its ID on all reachable validators every **5 seconds** | Raw redacted submission response; `/api/v1/deploy-status/{id}`; `/api/v1/deploy-settlement/{id}`; `/api/v1/finality-observation`; `/health` | Acceptance alone never marked settled; if `pooled` is seen, it is recorded as pending |
-| A2 — inclusion before finality | Continue 5-second samples until inclusion/terminal verdict or approved end of window | Inclusion block hash, height and timestamp; `ProcessedWithSuccess/Error`, `includedUnfinalized` / `finalityUnknown`, `settlementConfirmed`, local and independent finalized frontiers | No `settlementConfirmed=true` for an inclusion block lacking verified finality |
-| A3 — finalized and cross-checked | Continue at 5-second cadence until test deploy reaches `finalizedSuccess` (or an explicit failure/timeout); observe 60 more seconds after finalization | `finalizedSuccess` and `settlementConfirmed=true`; inclusion block finalized on independently queried validators with consistent finalized hash; finality frontier and sample IDs | PASS only when the transfer is genuinely finalized; execution success is insufficient |
+| A0 — read-only preflight | Sample all four validators at the run's 1-second interval for **120 seconds** before submitting any deploy | UTC wall-clock plus monotonic/sample sequence, validator boot ID, version/binary hash, latest height, finalized height/hash and lag/ages | All four present; same expected chain/bond set; no unexplained finality divergence |
+| A1 — accepted / pooled | Submit **one** approved, bounded, already-signed native-REV test deploy once; poll its ID on all reachable validators every **1 second** | Raw redacted submission response(s); `/api/v1/deploy-status/{id}`; `/api/v1/deploy-settlement/{id}`; `/api/v1/finality-observation`; `/health` | Acceptance alone never marked settled; if `pooled` is seen, it is recorded as pending |
+| A2 — inclusion before finality | Continue 1-second samples until inclusion/terminal verdict or approved end of window | Inclusion block hash, height and timestamp; `ProcessedWithSuccess/Error`, `includedUnfinalized` / `finalityUnknown`, `settlementConfirmed`, local and independent finalized frontiers | No `settlementConfirmed=true` for an inclusion block lacking verified finality |
+| A3 — finalized and cross-checked | Continue at the 1-second cadence until test deploy reaches `finalizedSuccess` (or an explicit failure/timeout); observe 60 more seconds after finalization | `finalizedSuccess` and `settlementConfirmed=true`; inclusion block finalized on independently queried validators with consistent finalized hash; finality frontier and sample IDs | PASS only when the transfer is genuinely finalized; execution success is insufficient |
 | A4 — recovery/retention check | Read-only audit of all submitted IDs and previously pooled work before and after the window | No missing accepted deploy, consistent finality observations, no false settlement, final raw captures | Evidence-only confirmation; do not force a network disruption to manufacture recovery |
+
+**One deploy, four pools.** G2 requires **every** alias to observe `pooled`; a single submission
+reaches only the receiving node's pool unless the deploy is distributed. The preflight's
+`deploy_relay` records the chosen path:
+
+- `relay`: `RNODE_DEPLOY_RELAY=1` on the ingress node (all four for robustness), each peer's external
+  deploy port (advertised protocol port + 1, default 40401; `RNODE_DEPLOY_RELAY_PORT` overrides)
+  verified reachable. After admission the relay offers the signed deploy to each peer's deploy
+  service under normal ingress validation; the sender keeps its own pool row and a bounded seen set
+  stops circulation. The offer is async best-effort: a peer can pool the deploy after the next tick,
+  and a full pool answers 429/`RESOURCE_EXHAUSTED` (counted as a capacity refusal, not a relay
+  fault). Check `/metrics` for offers, failures and capacity refusals.
+- `four-ingress`: the same pre-signed deploy is offered to each validator's ingress and **all four
+  receipts** are retained. That is one signed deploy with four receipts, not four deploys.
+
+A peer that never sees `pooled` makes G2 INCOMPLETE; do not resubmit to manufacture the stage.
+`merge --check` validates the plan's shape and aliases, not the network reachability.
 
 **G4 needs a named arm, not just A4.** The maintainers must choose and record the recovery arm (a
 restart or the runbook's chosen recovery) before GO, because A4 is deliberately read-only. If no
 restart occurs naturally and no arm was approved, G4 is **INCOMPLETE** — it is never inferred from
 ordinary operation.
 
-**Sampling and event model.** Capture the state transition as an ordered event stream with independent UTC timestamps on **each** node and the client. Persist HTTP status and response bodies, headers, observations, block identities, request IDs, boot IDs, node identity and endpoint version for each 5-second sample. Correlate by the **exact deploy signature/id and inclusion block hash**, not by balances or a coincidental block number. Sample all four; if a validator is inaccessible, state that explicitly instead of silently counting fewer.
+**Sampling and event model.** Capture the state transition as an ordered event stream with independent UTC timestamps on **each** node and the client. Persist HTTP status and response bodies, headers, observations, block identities, request IDs, boot IDs, node identity and endpoint version for each 1-second sample. Correlate by the **exact deploy signature/id and inclusion block hash**, not by balances or a coincidental block number. Sample all four; if a validator is inaccessible, state that explicitly instead of silently counting fewer.
 
 **Proposed maximum observation window:** 15 minutes after the single authorized submission (plus baseline/post-finalization samples), subject to maintainer pre-registration. At timeout without positive finalization, record **INCONCLUSIVE / NOT ACCEPTED**, not PASS. If A1 or A2 transition occurs between polls, retain the adjacent samples and mark the unobserved stage as **not directly observed**; do not fabricate a pooled or unfinalized observation. If the acceptance criterion requires direct proof of an intermediate state and it was missed, that arm is inconclusive. Do not submit extra deploys simply to manufacture a missing stage without another approved plan.
 
@@ -225,7 +285,7 @@ Publish a **redacted, reviewable** run record in `spec/audit/evidence/n487-live-
 - `README.md`: exact scope, human verdict, complete preflight pins, arms, observation times, limitations, non-claims, and any abnormal events. Declare `**Evidence locality.** public-live — <one line>`; this is a public live run, neither a local devnet nor an #428 M3 off-host claim.
 - `manifest.json` (`schema: 1`, `execution_proven: false`) and matching `SHA256SUMS.json`, checked by `python3 tools/evidence-pack.py verify --record <record>`; retain a conventional `SHA256SUMS` as well. The packed verdict is the reviewer's one of `PASS`, `FAIL`, `INCONCLUSIVE` or `ABORTED`.
 - `gate-report.json` from `python3 tools/live-gate.py check` (aliases only; G6 is `PENDING` unless a `--verdict` record is supplied, and even then the report is input to the reviewer, not the verdict).
-- Source SHA, release/image/binary hashes, associated CI artifacts, genesis/bond digests, immutable four-validator membership, and operator/independent reviewer identities (redacting private endpoints/credentials).
+- Source SHA, release/image/binary hashes, associated CI artifacts, genesis/bond digests, immutable four-validator membership, the `deploy_relay` pin, and operator/independent reviewer identities (redacting private endpoints/credentials). A local rehearsal record is `local-devnet` and never gate evidence; a live preflight must have `synthetic_boot_ids: false`.
 - Timestamped raw, redacted samples for `/health`, `/api/v1/finality-observation`, `/api/v1/deploy-status/{id}`, and `/api/v1/deploy-settlement/{id}` from all four validators, with gap/timeout information. Save the raw submission receipt and digest of the signed deploy without publishing signing material.
 - Inclusion block identity, finalized frontier/hash, explicit observed transitions, the negative safety assertion (never falsely settled), and post-window accepted-work audit.
 - Approved run window and go/no-go record; action log, abort/rollback decision and outcome, if applicable. Retain raw source securely and publish only reviewed redactions.
