@@ -13802,7 +13802,7 @@ gives every executable external gate (G428-M1..M5, G584-G1..G5, C343, C357) a cl
 the instance parameters, the required observation fields, the declared negative controls and
 the legacy adapter. `tools/gate-principles.py` evaluates the principle over one normalised
 observation document; `tools/gate-check.py` is the CLI (`PASS` 0, `FAIL` 1, `PRECONDITION` 3).
-`tests/test_gate_principles.py` runs the same seven assertions over every entry: satisfiable,
+`tests/test_gate_principles.py` runs the same assertions over every entry: satisfiable,
 falsifiable (each control produces its declared FAIL/PRECONDITION), precondition-honest, total
 on malformed input, non-vacuous, owner-independent (renaming actors changes nothing), and
 covered against the register. A changed prose bar makes the entry stale through

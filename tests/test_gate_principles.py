@@ -148,6 +148,42 @@ class CriterionTests(unittest.TestCase):
                 self.assertNotIn("v1", renamed_text)
                 self.assertNotIn("operator", renamed_text)
 
+    def test_the_human_attestation_record_is_typed_and_independent(self):
+        attestation = {
+            "reviewer": "independent-reviewer",
+            "relationship": "not the owner or operator",
+            "independent": True,
+            "signed_at": "2026-11-18T12:00:00Z",
+            "verdict": "PASS",
+            "evidence_sha256": "a" * 64,
+            "verdict_url": "https://example.invalid/verdict",
+            "evidence_record": "spec/audit/evidence/example",
+        }
+        parameters = {"owner": "Owner / release coordination"}
+        self.assertEqual(
+            principles.evaluate("human_attestation", {"attestation": attestation},
+                                parameters)["status"],
+            "PASS")
+        self_owned = dict(attestation, reviewer="Owner")
+        self.assertEqual(
+            principles.evaluate("human_attestation", {"attestation": self_owned},
+                                parameters)["status"],
+            "FAIL")
+        missing = dict(attestation)
+        missing.pop("verdict_url")
+        self.assertEqual(
+            principles.evaluate("human_attestation", {"attestation": missing},
+                                parameters)["status"],
+            "FAIL")
+        inconclusive = dict(attestation, verdict="INCONCLUSIVE")
+        self.assertEqual(
+            principles.evaluate("human_attestation", {"attestation": inconclusive},
+                                parameters)["status"],
+            "PRECONDITION")
+        self.assertEqual(
+            principles.evaluate("human_attestation", {}, parameters)["status"],
+            "PRECONDITION")
+
     def test_the_registry_covers_every_machine_checkable_external_gate(self):
         executable = {"python", "rust-unit", "rust-integration", "two-binary",
                       "local-devnet", "live-host"}
