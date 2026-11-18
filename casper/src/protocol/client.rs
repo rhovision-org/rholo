@@ -271,14 +271,21 @@ impl GrpcDeployService {
     pub async fn deploy_with_capacity(&self, d: &SignedDeployData) -> DeployAttempt {
         let mut client = self.client.clone();
         match client.do_deploy(d.to_proto()).await {
-            Err(status) => classify_deploy_status(status),
-            Ok(response) => match response.into_inner().message {
-                Some(wire::deploy_response::Message::Result(s)) => DeployAttempt::Accepted(s),
-                Some(wire::deploy_response::Message::Error(e)) => {
-                    DeployAttempt::Refused(service_error(&e))
+            // The arms are blocks so the poison-class scan does not read the next arm's
+            // `Response::into_inner` as a lock-guard recovery through this one.
+            Err(status) => {
+                return classify_deploy_status(status);
+            }
+            Ok(response) => {
+                let message = response.into_inner().message;
+                match message {
+                    Some(wire::deploy_response::Message::Result(s)) => DeployAttempt::Accepted(s),
+                    Some(wire::deploy_response::Message::Error(e)) => {
+                        DeployAttempt::Refused(service_error(&e))
+                    }
+                    None => DeployAttempt::Refused(vec!["empty response".to_string()]),
                 }
-                None => DeployAttempt::Refused(vec!["empty response".to_string()]),
-            },
+            }
         }
     }
 }
