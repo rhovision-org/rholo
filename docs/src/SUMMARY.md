@@ -95,6 +95,8 @@
 # Part VII — Testnet acceptance
 
 - [Testnet acceptance specification](spec/testnet-acceptance.md)
+- [Gate terms](spec/gate-terms.md)
+- [Gate measurement](spec/gate-measurement.md)
 - [The bounded adversary](spec/adversary.md)
 - [Failure-mode HAZOP and disposition](spec/failure-hazop.md)
 - [Node diagnostics](spec/node-diagnostics.md)

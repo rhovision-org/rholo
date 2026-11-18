@@ -109,6 +109,9 @@ def preflight():
         "operator_fields": {
             "release_tag": "v-test",
             "release_branch": "dev",
+            "selected_source_sha": SOURCE,
+            "selected_artifact_digest": "6" * 64,
+            "selected_binary_sha256": BINARY,
             "window_start_utc": "2026-11-14T10:00:00Z",
             "window_end_utc": "2026-11-14T10:15:00Z",
             "operator": "operator",
@@ -298,7 +301,8 @@ class LiveGateFixture(unittest.TestCase):
     def check(self):
         report = gate.evaluate(self.run_dir, self.preflight_path)
         code = gate.cmd_check(
-            SimpleNamespace(run_dir=str(self.run_dir), preflight=str(self.preflight_path), report=None)
+            SimpleNamespace(run_dir=str(self.run_dir), preflight=str(self.preflight_path),
+                            report=None, verdict=None)
         )
         return report, code
 
@@ -359,7 +363,8 @@ class PackedRecordTests(LiveGateFixture):
         report = gate.evaluate(record, self.preflight_path)
         self.assert_status(report, "G5", "PASS")
         self.assertEqual(
-            gate.cmd_check(SimpleNamespace(run_dir=str(record), preflight=str(self.preflight_path), report=None)),
+            gate.cmd_check(SimpleNamespace(run_dir=str(record), preflight=str(self.preflight_path),
+                                           report=None, verdict=None)),
             0,
         )
 
@@ -396,6 +401,24 @@ class G1Tests(LiveGateFixture):
         self.assert_status(report, "G1", "INCOMPLETE")
 
 
+    def test_agreeing_records_that_are_not_the_selected_candidate_fail(self):
+        document = preflight()
+        for validator in document["validators"]:
+            validator["binary_sha256"] = "9" * 64
+        self.write_bundle(preflight_doc=document)
+        report, code = self.check()
+        self.assert_status(report, "G1", "FAIL")
+        self.assertEqual(code, 1)
+
+    def test_a_missing_selected_binary_is_incomplete(self):
+        document = preflight()
+        del document["operator_fields"]["selected_binary_sha256"]
+        self.write_bundle(preflight_doc=document)
+        report, code = self.check()
+        self.assert_status(report, "G1", "INCOMPLETE")
+        self.assertEqual(code, 3)
+
+
 class G2Tests(LiveGateFixture):
     def test_a_missed_pooled_stage_is_incomplete_not_a_pass(self):
         events = [event for event in good_events() if not (event["route"] == "deploy_settlement" and event["body"]["stage"] == "pooled")]
@@ -420,6 +443,18 @@ class G2Tests(LiveGateFixture):
         report, code = self.check()
         self.assert_status(report, "G2", "INCOMPLETE")
         self.assert_status(report, "G3", "PASS")
+        self.assertEqual(code, 3)
+
+    def test_one_alias_missing_pooled_is_incomplete(self):
+        events = [
+            event for event in good_events()
+            if not (event.get("alias") == "v2"
+                    and event["route"] == "deploy_settlement"
+                    and event["body"].get("stage") == "pooled")
+        ]
+        self.write_bundle(events=events)
+        report, code = self.check()
+        self.assert_status(report, "G2", "INCOMPLETE")
         self.assertEqual(code, 3)
 
     def test_two_inclusion_blocks_fail_the_lifecycle(self):
@@ -489,6 +524,18 @@ class G3Tests(LiveGateFixture):
         self.assert_status(report, "G3", "FAIL")
 
 
+    def test_no_pre_finality_negative_sample_is_incomplete(self):
+        events = [
+            event for event in good_events()
+            if not (event["route"] == "deploy_settlement"
+                    and event["body"].get("finalized") is not True)
+        ]
+        self.write_bundle(events=events)
+        report, code = self.check()
+        self.assert_status(report, "G3", "INCOMPLETE")
+        self.assertEqual(code, 3)
+
+
 class G4Tests(LiveGateFixture):
     def test_no_recovery_arm_is_incomplete(self):
         (self.run_dir / "recovery.json").unlink()
@@ -513,6 +560,20 @@ class G4Tests(LiveGateFixture):
         self.write_sums()
         report, _ = self.check()
         self.assert_status(report, "G4", "FAIL")
+
+    def test_a_claimed_post_recovery_settlement_without_a_sample_is_incomplete(self):
+        events = [
+            event for event in good_events()
+            if not (event["route"] == "deploy_settlement"
+                    and event["body"].get("stage") == "finalizedSuccess")
+        ]
+        self.write_bundle(events=events)
+        (self.run_dir / "claims.json").write_text(
+            json.dumps(claims(settled=False, basis="notFinalized")))
+        self.write_sums()
+        report, code = self.check()
+        self.assert_status(report, "G4", "INCOMPLETE")
+        self.assertEqual(code, 3)
 
     def test_an_unfinalized_recovery_fails(self):
         document = recovery()
@@ -569,6 +630,53 @@ class G5Tests(LiveGateFixture):
         samples.write_text(samples.read_text() + "{}\n")
         report, _ = self.check()
         self.assert_status(report, "G5", "FAIL")
+
+
+class G6Tests(LiveGateFixture):
+    def verdict(self, **overrides):
+        record = {
+            "reviewer": "reviewer",
+            "relationship": "not the operator or release owner",
+            "independent": True,
+            "verdict": "PASS",
+            "evidence_sha256": "7" * 64,
+            "verdict_url": "https://example.invalid/verdict",
+            "signed_at": "2026-11-14T10:20:00Z",
+            "evidence_record": str(self.run_dir),
+        }
+        record.update(overrides)
+        path = self.base / "verdict.json"
+        path.write_text(json.dumps(record))
+        return path
+
+    def test_a_typed_g6_record_is_checked_but_not_recorded(self):
+        path = self.verdict()
+        report = gate.evaluate(self.run_dir, self.preflight_path, path)
+        self.assertEqual(report["G6"]["status"], "PASS")
+        self.assertEqual(report["G6"]["reviewer"], "reviewer")
+        self.assertEqual(report["overall"], "NOT_A_VERDICT")
+        self.assertIs(report["acceptance"], False)
+        code = gate.cmd_check(SimpleNamespace(
+            run_dir=str(self.run_dir), preflight=str(self.preflight_path),
+            report=None, verdict=str(path)))
+        self.assertEqual(code, 0)
+
+    def test_g6_reviewer_must_be_the_named_reviewer(self):
+        path = self.verdict(reviewer="someone-else")
+        report = gate.evaluate(self.run_dir, self.preflight_path, path)
+        self.assertEqual(report["G6"]["status"], "FAIL")
+        code = gate.cmd_check(SimpleNamespace(
+            run_dir=str(self.run_dir), preflight=str(self.preflight_path),
+            report=None, verdict=str(path)))
+        self.assertEqual(code, 1)
+
+    def test_a_missing_g6_record_is_incomplete(self):
+        report = gate.evaluate(self.run_dir, self.preflight_path, self.base / "missing.json")
+        self.assertEqual(report["G6"]["status"], "INCOMPLETE")
+        code = gate.cmd_check(SimpleNamespace(
+            run_dir=str(self.run_dir), preflight=str(self.preflight_path),
+            report=None, verdict=str(self.base / "missing.json")))
+        self.assertEqual(code, 3)
 
 
 class SamplerTests(unittest.TestCase):

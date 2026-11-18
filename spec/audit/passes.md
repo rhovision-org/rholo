@@ -13609,3 +13609,135 @@ ran. The register stays 439 findings with C343 and C357 `in progress`.
 
 **State.** 439 findings — **0 todo, 2 in progress (C343, C357), 437 done**. The readiness PR is not
 a close-out: each row's close-out PR is separate and waits on its external artefacts.
+
+## 177. Mainnet gate measurement: the multi-lens attack and the canonical register (2026-11-18)
+
+**Found.** The repo's actual mainnet gate is external #428 M1–M6, with #584 G1–G6 as the live
+verdict; the #51/§6 tracker, testnet §3 and C343/C357 are the other families. The gate was
+measured by bookkeeping, not by the property. `check-hardfork-51-closeout.py` accepts a merged
+row on PR + commit ancestry and a deferred row on owner + reason; its close condition needs only
+those, the single §6 sign-off (a 64-hex string + URLs + a name) and the git flag. Thirteen
+ledger-merged rows are simultaneously `IMPLEMENTED / EVIDENCE INCOMPLETE`. None of the 44 matrix
+acceptance fields names a `path::symbol` test; 42 of the 47 §6 A candidates are templated and
+only three name a test — and `tests/liveness-enforcement.py` does not exist. One sign-off covers
+47 candidates. Open owners are free text. Campaign `aggregate: PASS` is trusted without its
+criterion. "Independent" is reviewer-name inequality and "category-A" a string literal; the
+lockstep window is an arbitrary 60 s; C343's block-6 disposition is a substring ("block 6 unknown"
+passed); the Decimal row is a phantom after #527; 107 done rows have only a `candidate:` law;
+the C343/C357 self-tests are not in CI; the locality gate cannot see packed records; and the
+Rust witness checker proves a test ran, not that it asserts the invariant.
+
+The gate lenses found concrete defect-passing paths: M1's supported tier is a policy table
+("estimate, not a measurement", "unmeasured above 5k") and its host topology is advisory and
+PID-namespace-blind; M3's transport `stream()` returns `()` and "FinalizedFringe sent" is
+unconditional, so a dropped reply still logs sent; M4's N=4/N=8 arms are single-host Docker at
+1.5 GiB, below the 8 GiB floor; M5's final-scope ledger trusts `block.rejected_deploys` and its
+report is computed from the same fold that builds the state; M6's evidence verify is
+pin-format-blind; G1 checks four-way agreement, not the selected candidate; G2 unions aliases;
+G3 has no negative pre-finality sample; G4's no-loss facts are self-authored; G5 is
+self-consistent-fabricable; G6 is a hardcoded pending stub. The measurement lens also broke the
+first register: a bare file, a `struct`, a never-run control, a format-only digest and a
+self-asserted independence all passed.
+
+**What landed.** A canonical register (`spec/audit/mainnet-gates.json`, emitted `.md`) of **111
+gates — 0 met**: 6 M, 6 G, 3 TA, 44 #51, 49 §6 (47 inventory A candidates plus the two PR #600
+rules), C343, C357 and #520. The builder links the ledgers by row hash; the checker requires a
+`path::symbol` witness with a verified `#[test]`, a resolvable control object, a retained evidence
+record, an owner-independent attestation, a `source_ref` that names the gate, a `sources` block,
+`register_dev_sha` ancestry, a resolving law citation with a formal rung for a met gate, and a
+non-empty `does_not_claim`; `--assert-closeable` exits 3. The 47 §6 dispositions are recorded
+(46 reviewable, 1 withdrawn); the register's S6 rows are 45 reviewable, 3 owes and 1 superseded
+(43 inventory candidates plus the 2 PR #600 rules). The #51 checker gains
+an optional, default-off gate binding. C343's block-6 cell is structural with seven self-test
+cases. C357 requires an independence attestation and a declared lockstep window. The locality
+gate scans packed `raw/` records, adds `single-host`, and `n564` is corrected from a false
+off-host claim. The TA-C3 census is corrected. The vault, state-preservation and attachment
+contracts have schemas and a Docker-free checker; the M4 rejoin and M5 merge-accounting checkers
+exist. The gate glossary and measurement standard are docs pages.
+
+**Why believed.** Every major checker rule has a mutant in `tests/`: bare path, struct witness,
+unresolved control, aggregate-only evidence, Docker sole evidence, unclassified locality,
+unmet dependency, cycle, asymmetric crosswalk, stale matrix hash, self-attested independence,
+missing sources block, wrong source row, non-ancestor register, unresolved law, missing
+non-claim, conservation mismatch, duplicate vault, incomplete manifest, mixed attachment
+rollout, missing clients, rejoin dwell/window/anchor, unavailable merge bundle, unapplied kept
+write, unexplained rejection and missing readback. The emitted markdown and JSON are `--check`
+clean; the locality gate is 0 violations over 36 records; the docs link gate is clean; the #51
+and §6 checkers still report open.
+
+**What it does not claim.** No gate is met; no live campaign, operator export, independent
+verdict or lockstep run happened; M5's historical bundle remains unavailable; C343's live
+snapshot remains precondition-only; C357 remains external. The new register, contract and
+criterion Python tests are not wired into CI (the workflow edit needs the owner's merge), so
+they run locally and in the PR checklist; `test_evidence_locality` is wired. The register is a
+measurement binding, not a release authorization.
+
+**State.** 439 findings — **0 todo, 2 in progress (C343, C357), 437 done**. 111 registered
+gates, 0 met; C343 and C357 stay in progress; no row is flipped; no release is claimed.
+
+## 178. The second red-team pass: binding the witness, the evidence and the operational records (2026-11-18)
+
+**Found.** The first hardening still proved shape, not measurement. A `met` gate accepted any
+real `#[test]` anywhere (the fixture used an HTTP readiness test as the M5 witness); the
+negative control could be any test, needed not to be the witness, and was never run; evidence
+was any directory with a manifest and sums, never verified and never matched to the gate; the
+#51 `gate_binding` trusted status strings, so a fabricated all-`met` register could flip
+closeability; `--assert-closeable` did not compare the register to the build; human attestation
+was self-asserted; and external gate criteria could be rewritten while the source hash
+“matched”. C343's new JSON branch reintroduced the substring bug it claimed to close
+(`unaccepted`/`unfinalized` read as PASS), its bare `#` matched “issue #6”, and first-match-wins
+hid a later orphan. C357's lockstep window was author-chosen, its rationale unread, and a
+single validator passed; `signed_at: "yes"` and `@alice` against `@alice-smith` passed
+independence; category-A was still a literal and the reconstructed trace was unbound. The
+locality scan ignored `.sh`/`.yml`/`.body`/suffix-less files. The vault/state/attachment and
+M4/M5 checkers returned `PASS` for self-consistent fabrications, the state manifest's entries
+were optional, and the §6 dispositions could be bulk-accepted with a fake reviewer and any
+64-hex digest. The landed counts were stale (45/1/1 and “45 candidates”) and the “every rule has
+a mutant” claim was overstated.
+
+**What landed.** A `witness_binding` for a `met` gate now carries the gate's `asserts_sha256`, a
+`control_of` that is the witness, a real mutation, the control test (the witness or its
+`self_test`) and the expected red. The checker verifies the evidence pack with
+`evidence-pack.py verify`, requires the record to name the gate, `execution_proven: false` and
+the binary/source pins to match; `--run-controls` applies Python/tool mutations; human
+attestation needs a UTC timestamp, a non-overlapping reviewer and a review record that carries
+the verdict and digest. `--assert-closeable` implies `--check`; `gate_binding` runs the register
+validator before trusting a status. C343 uses `\b` in the JSON branch, drops the bare `#`, scans
+every line and returns the worst verdict, and compares the journal to its collected digest.
+C357 derives the window as `round_seconds × liveness_heights` (rationale required, declared ==
+derived, 600 s cap), requires at least two fully-described validators, parses `signed_at`,
+requires a review record, a category-A effect/derivation and a reconstruction record. The
+locality scan reads every file and requires a captured non-loopback peer for an off-host claim.
+The G1–G6 worksheet now binds the preflight to the owner's selected source/artifact/binary, requires
+each alias to observe pooled/included/finalized, requires a pre-finality not-finalized sample and a
+post-recovery finalized sample even when the record claims one, checks 40/64-hex pin formats in
+`evidence-pack.py`, and validates a typed G6 reviewer record without recording the verdict.
+The contracts require a verified provenance envelope, mandatory state entries and non-placeholder
+roots; the M4/M5 checks require an evidence record and a real bundle capture
+(`complete`, per-preimage `verify_ok`); `record_check: true` is explicit. The §6 disposition
+checker requires a review record and a resolving digest for an accepted row, the register
+checker cross-checks the dispositions, and the builder derives the named/missing-test status.
+Four pinned source excerpts and a per-gate source phrase/hash bind the external criteria; the
+crosswalk requires a direction word.
+
+**Why believed.** Every new rule has an attack test: unrelated witness/control/evidence,
+self-asserted attestation, missing review record, unverified pack, fabricated all-`met` register,
+hand-edited register under `--assert-closeable`, JSON `unaccepted`/`unfinalized`, bare `#`,
+accepted-then-orphan shadow, huge/mismatched/missing-rationale window, single validator,
+unparseable `signed_at`, reviewer substring, missing category-A effect/reconstruction record,
+`.sh` mutation, missing provenance, optional entries, zero roots, per-kind sums, negative
+counters, empty lists, window ceiling, bundle-without-capture, unverified preimage, bulk
+accepted disposition, source-phrase miss, criteria/excerpt hash drift and a directionless
+crosswalk edge. `check-mainnet-gates.py --check` is clean; `--assert-closeable` and the #51
+tracker exit 3; the localities and docs gates are clean.
+
+**What it does not claim.** No gate is met; no campaign, export or independent verdict happened;
+M5's historical bundle remains unavailable (continuing blocker); C343's live snapshot remains
+precondition-only; C357 remains external. The contract/criterion checkers validate records, not
+that a campaign ran. The new tests are not wired into CI; the request is in
+`spec/audit/ci-wiring-request.md`. The register is a measurement binding, not a release
+authorization.
+
+**State.** 439 findings — **0 todo, 2 in progress (C343, C357), 437 done**. 111 registered
+gates, 0 met; 47 dispositions (46 reviewable, 1 withdrawn); register S6 45 reviewable, 3 owes,
+1 superseded; no row is flipped; no release is claimed.

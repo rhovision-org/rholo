@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/rhovision-org/rholo/spec/audit/runbooks/n487-g6-verdict.schema.json",
+  "title": "#584 G6 verdict record",
+  "description": "The named independent reviewer's verdict against G1–G5. The tool validates this record's shape; it does not record the verdict or authorize release.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "reviewer",
+    "relationship",
+    "independent",
+    "verdict",
+    "evidence_sha256",
+    "verdict_url",
+    "signed_at",
+    "evidence_record"
+  ],
+  "properties": {
+    "reviewer": { "type": "string", "minLength": 1 },
+    "relationship": { "type": "string", "minLength": 1 },
+    "independent": { "const": true },
+    "verdict": { "enum": ["PASS", "FAIL", "INCONCLUSIVE"] },
+    "evidence_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "verdict_url": { "type": "string", "pattern": "^https://" },
+    "signed_at": { "type": "string", "minLength": 10 },
+    "evidence_record": { "type": "string", "minLength": 1 },
+    "notes": { "type": "string" }
+  }
+}

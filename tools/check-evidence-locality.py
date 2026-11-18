@@ -14,6 +14,7 @@ Contract. A run record is a directory under `spec/audit/evidence/` containing a 
     **Evidence locality.** off-host-claim — <one line>
     **Evidence locality.** loopback-diagnostic — <one line>
     **Evidence locality.** local-devnet — <one line>
+    **Evidence locality.** single-host — <one line>
     **Evidence locality.** public-live — <one line>
     **Evidence locality.** not-a-run — <one line>
 
@@ -46,10 +47,10 @@ ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "spec/audit/evidence"
 
 RUN_ARTEFACTS = ("acceptance.json", "collector.json", "plan.public.json", "report.json",
-                 "run.json", "result.json")
+                 "run.json", "result.json", "manifest.json")
 RUN_PREFIXES = ("journal", "observations", "progress-samples", "snapshots")
-LABELS = ("off-host-claim", "loopback-diagnostic", "local-devnet", "public-live", "live-host",
-          "external", "not-a-run")
+LABELS = ("off-host-claim", "loopback-diagnostic", "local-devnet", "single-host",
+          "public-live", "live-host", "external", "not-a-run")
 MUTATION_VERBS = ("POST ", "PUT ", "PATCH ", "DELETE ", "/deploy", "/propose", "/resume")
 ADVERTISED = [
     re.compile(r"rnode://[0-9a-zA-Z]+@(\[[^\]]+\]|[^\s?:/\"',}]+)"),
@@ -61,17 +62,21 @@ LABEL_RE = re.compile(r"\*\*Evidence locality\.\*\*\s*`?([a-z-]+)`?\s*[—-]?")
 
 def run_record(directory: Path) -> bool:
     names = [p.name for p in directory.iterdir() if p.is_file()]
+    if not (any(n in RUN_ARTEFACTS for n in names)
+            or any(n.startswith(RUN_PREFIXES) for n in names)):
+        raw = directory / "raw"
+        if raw.is_dir():
+            names = [p.name for p in raw.iterdir() if p.is_file()]
     return any(n in RUN_ARTEFACTS for n in names) or any(
         n.startswith(RUN_PREFIXES) for n in names
     )
 
 
 def text_files(directory: Path) -> list[Path]:
-    return [
-        p
-        for p in directory.iterdir()
-        if p.is_file() and p.suffix in {".md", ".json", ".py", ".txt", ".log", ".jsonl"}
-    ]
+    # Packed records keep their raw artefacts under raw/; scan the whole record,
+    # including .sh/.yml/.body and suffix-less files, or a packed mutation or
+    # loopback is invisible to the mutation/loopback scan.
+    return [p for p in directory.rglob("*") if p.is_file()]
 
 
 def loopback_claims(directory: Path) -> list[str]:
@@ -100,6 +105,20 @@ def loopback_claims(directory: Path) -> list[str]:
                 for match in pattern.finditer(value):
                     if local_address(match.group(1)):
                         found.append(f"{path.name}: {match.group(0)}")
+    return found
+
+
+def advertised_peers(directory: Path) -> list[str]:
+    found = []
+    for path in text_files(directory):
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        for pattern in ADVERTISED:
+            for match in pattern.finditer(text):
+                if not local_address(match.group(1)):
+                    found.append(f"{path.name}: {match.group(0)}")
     return found
 
 
@@ -143,6 +162,22 @@ def check(directory: Path) -> list[str]:
     if label not in LABELS:
         problems.append(f"{directory.name}: unknown locality {label!r}")
         return problems
+    manifest_path = directory / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except ValueError:
+            problems.append(f"{directory.name}: manifest.json is not valid JSON")
+        else:
+            declared = manifest.get("locality")
+            if declared is not None and declared != label:
+                problems.append(
+                    f"{directory.name}: manifest locality {declared!r} disagrees with the "
+                    f"README locality {label!r}")
+            if manifest.get("execution_proven") is True:
+                problems.append(
+                    f"{directory.name}: execution_proven must be false; a record check is "
+                    "not proof that the campaign ran")
     loopbacks = loopback_claims(directory)
     if label == "off-host-claim":
         for claim in loopbacks:
@@ -150,6 +185,11 @@ def check(directory: Path) -> list[str]:
         if not re.search(r"dial[- ]?back", readme, re.I):
             problems.append(
                 f"{directory.name}: an off-host claim must name the bootstrap's dial-back result"
+            )
+        if not advertised_peers(directory):
+            problems.append(
+                f"{directory.name}: an off-host claim must carry a captured non-loopback "
+                "advertised peer, not only README wording"
             )
     elif label == "loopback-diagnostic":
         if not loopbacks:
@@ -162,25 +202,32 @@ def check(directory: Path) -> list[str]:
                 f"{directory.name}: a loopback diagnostic must say in words that it is not an M3 "
                 "off-host positive"
             )
-    elif label == "local-devnet":
-        if "off-host positive" in readme:
-            problems.append(f"{directory.name}: a local-devnet record claims an off-host positive")
+    elif label in ("local-devnet", "single-host"):
+        # A negation ("not the off-host positive") is the honest shape; only an
+        # unnegated claim is a violation.
+        for line in readme.splitlines():
+            low = line.lower()
+            if "off-host positive" in low and not re.search(
+                    r"\b(not|no|never|neither|zero|cannot|owed|absent|missing|remain|pending)\b",
+                    low):
+                problems.append(
+                    f"{directory.name}: a {label} record claims an off-host positive")
+                break
     elif label == "live-host":
         if "read-only" not in readme.lower():
             problems.append(
                 f"{directory.name}: a live-host record must say it is read-only")
         for claim in loopbacks:
             problems.append(f"{directory.name}: a live-host record carries a loopback {claim}")
-        for name in ("run.json", "plan.public.json", "snapshots.jsonl", "report.json",
-                     "collector.json"):
-            path = directory / name
-            if not path.is_file():
+        for path in text_files(directory):
+            if path.name == "README.md":
                 continue
             text = path.read_text(errors="replace")
             for verb in MUTATION_VERBS:
                 if verb in text:
                     problems.append(
-                        f"{directory.name}: a live-host record carries the mutation {verb!r}")
+                        f"{directory.name}: a live-host record carries the mutation "
+                        f"{verb!r} in {path.name}")
     elif label == "external":
         lowered = readme.lower()
         if "independent" not in lowered:

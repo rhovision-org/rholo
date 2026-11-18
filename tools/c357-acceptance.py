@@ -79,10 +79,66 @@ def parse_utc(value: Any) -> dt.datetime | None:
         return None
 
 
-def derive_mixed(record: dict[str, Any], window: float) -> tuple[bool, str | None]:
+def artifact_text(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = Path(value)
+    path = path if path.is_absolute() else ROOT / path
+    if path.is_dir():
+        path = path / "README.md"
+    return path.read_text(errors="ignore") if path.is_file() else None
+
+
+MAX_WINDOW = 600.0
+
+
+def window_status(record: dict[str, Any]) -> tuple[float | None, str | None]:
+    """The derived lockstep window, or why the campaign's window is invalid.
+
+    The window is not an author-chosen number: it is `round_seconds x
+    liveness_heights`, capped at the measurement ceiling. A declared value must
+    equal the derivation, and the rationale is required.
+    """
+    campaign = record.get("campaign") or {}
+    round_seconds = campaign.get("round_seconds")
+    heights = campaign.get("liveness_heights")
+    if not (isinstance(round_seconds, (int, float))
+            and not isinstance(round_seconds, bool) and round_seconds > 0
+            and isinstance(heights, int) and not isinstance(heights, bool) and heights > 0):
+        return None, "round_seconds and liveness_heights must be positive"
+    derived = float(round_seconds) * float(heights)
+    if derived > MAX_WINDOW:
+        return None, f"derived window {derived:.0f}s exceeds the {MAX_WINDOW:.0f}s maximum"
+    rationale = campaign.get("lockstep_window_rationale")
+    if not (isinstance(rationale, str) and rationale.strip()):
+        return None, "lockstep_window_rationale is required"
+    declared = campaign.get("lockstep_window_seconds")
+    if declared is not None:
+        if not (isinstance(declared, (int, float))
+                and not isinstance(declared, bool) and declared > 0):
+            return None, "lockstep_window_seconds must be a positive number"
+        if abs(float(declared) - derived) > 1e-9:
+            return None, f"declared window {declared} != derived {derived:.0f}s"
+    return derived, None
+
+
+def record_window(record: dict[str, Any]) -> float | None:
+    return window_status(record)[0]
+
+
+def derive_mixed(record: dict[str, Any], window: float | None) -> tuple[bool, str | None]:
     validators = record.get("validators") or []
-    if not validators:
-        return False, "no validators"
+    if not isinstance(validators, list) or len(validators) < 2:
+        return True, "fewer than two validators cannot prove a lockstep span"
+    declared_count = (record.get("campaign") or {}).get("validator_count")
+    if declared_count is not None and declared_count != len(validators):
+        return True, f"campaign validator_count {declared_count} != {len(validators)} records"
+    for validator in validators:
+        if not isinstance(validator, dict):
+            return True, "a validator record is not an object"
+        for field in ("new_version", "binary_sha256", "activation_height"):
+            if validator.get(field) in (None, ""):
+                return True, f"a validator is missing {field}"
     if any(v.get("still_serving_old") is True for v in validators):
         return True, "a validator still serves the old version"
     if len({v.get("new_version") for v in validators}) > 1:
@@ -96,7 +152,7 @@ def derive_mixed(record: dict[str, Any], window: float) -> tuple[bool, str | Non
         return True, "an activation time is missing or unparseable"
     assert all(t is not None for t in times)
     span = (max(times) - min(times)).total_seconds()  # type: ignore[type-var]
-    if span > window:
+    if window is not None and span > window:
         return True, f"activations span {span:.0f}s, beyond the {window:.0f}s lockstep window"
     return False, None
 
@@ -125,12 +181,20 @@ def check_requirement(name: str, record: dict[str, Any], window: float) -> tuple
         return ("PASS", "the release owner selected the campaign pins") if ok else (
             "FAIL", "the release owner's selected pins do not match the campaign")
     if name == "lockstep":
-        mixed, why = derive_mixed(record, window)
+        effective, problem = window_status(record)
+        if problem:
+            return ("FAIL", problem)
+        if effective is None:
+            return ("PRECONDITION", "no declared lockstep window")
+        mixed, why = derive_mixed(record, effective)
         if mixed:
             return ("FAIL", why or "the activation is not lockstep")
         return ("PASS", "every validator activated in lockstep")
     if name == "noMixedVersion":
-        mixed, why = derive_mixed(record, window)
+        effective, problem = window_status(record)
+        if problem:
+            return ("FAIL", problem)
+        mixed, why = derive_mixed(record, effective)
         if mixed:
             return ("FAIL", why or "a mixed-version rollout is present")
         if record.get("mixed_versions") is True:
@@ -155,17 +219,42 @@ def check_requirement(name: str, record: dict[str, Any], window: float) -> tuple
         reviewer = (review.get("reviewer") or "").casefold()
         owner_name = (owner.get("name") or "").casefold()
         operator = (record.get("operator") or "").casefold()
-        ok = (bool(reviewer) and reviewer not in (owner_name, operator)
+        independence = review.get("independence") or {}
+        attested = (isinstance(independence, dict)
+                    and independence.get("attested") is True
+                    and all(isinstance(independence.get(field), str)
+                            and independence[field].strip()
+                            for field in ("relationship", "affiliation",
+                                          "prior_authorship", "conflicts")))
+        signed = parse_utc(review.get("signed_at"))
+        review_text = artifact_text(review.get("review_record"))
+        record_ok = (review_text is not None
+                     and str(review.get("reviewer") or "").casefold() in review_text.casefold()
+                     and str(review.get("verdict") or "") in review_text
+                     and str(review.get("evidence_sha256") or "") in review_text)
+
+        def overlaps(left: str, right: str) -> bool:
+            return bool(left and right and (left in right or right in left))
+
+        ok = (bool(reviewer)
+              and not overlaps(reviewer, owner_name)
+              and not overlaps(reviewer, operator)
+              and attested
+              and signed is not None and signed.tzinfo is not None
+              and record_ok
               and review.get("verdict") == "category-A-accepted"
               and is_hex(review.get("evidence_sha256"), HEX64)
-              and is_https(review.get("verdict_url"))
-              and bool(review.get("signed_at")))
+              and is_https(review.get("verdict_url")))
         return ("PASS", "the publisher is independent and accepted") if ok else (
-            "FAIL", "the independent review is missing, self-authored or unpinned")
+            "FAIL", "the independent review is missing, unattested, self-authored or unpinned")
     if name == "verdictAccepted":
-        ok = review.get("verdict") == "category-A-accepted"
-        return ("PASS", "the category-A verdict is accepted") if ok else (
-            "FAIL", "the category-A verdict is absent or not accepted")
+        effect = review.get("category_a_effect")
+        derivation = review.get("category_a_derivation")
+        ok = (review.get("verdict") == "category-A-accepted"
+              and effect in ("state-hash", "replay-verdict", "wire-format")
+              and isinstance(derivation, str) and derivation.strip())
+        return ("PASS", "the category-A verdict is accepted and derived") if ok else (
+            "FAIL", "the category-A verdict is absent, underived or not accepted")
     if name == "incidentTrace":
         mode = trace.get("mode")
         if mode not in ("original-bytes", "reconstructed"):
@@ -175,10 +264,15 @@ def check_requirement(name: str, record: dict[str, Any], window: float) -> tuple
         if mode == "reconstructed":
             if getattr(record.get("_checker"), "require_original_trace", False):
                 return ("PRECONDITION", "--require-original-trace and the trace is reconstructed")
+            reconstruction = artifact_text(trace.get("reconstruction_record"))
             ok = (is_https(trace.get("owner_decision_url"))
-                  and review.get("reconstruction_accepted") is True)
+                  and review.get("reconstruction_accepted") is True
+                  and reconstruction is not None
+                  and str(trace.get("sha256") or "") in reconstruction
+                  and str(review.get("reviewer") or "").casefold() in reconstruction.casefold())
             return ("PASS", "the reconstructed trace is owner- and reviewer-accepted") if ok else (
-                "FAIL", "a reconstructed trace needs the owner's decision and the reviewer's acceptance")
+                "FAIL", "a reconstructed trace needs the owner's decision, the reviewer's "
+                        "acceptance and a digest-bound reconstruction record")
         return ("PASS", "the original incident bytes are pinned")
     return ("FAIL", f"unknown requirement {name!r} in the emitted table")
 
@@ -189,7 +283,8 @@ class _Checker:
 
 
 def check_record(record: dict[str, Any], requirements: dict[str, list[str]],
-                 require_original_trace: bool = False, window: float = 60.0) -> dict[str, Any]:
+                 require_original_trace: bool = False,
+                 window: float | None = None) -> dict[str, Any]:
     record = dict(record)
     record["_checker"] = _Checker(require_original_trace)
     checks: dict[str, dict[str, str]] = {}
@@ -206,7 +301,8 @@ def check_record(record: dict[str, Any], requirements: dict[str, list[str]],
     verdicts = [check["verdict"] for check in checks.values()]
     result = "FAIL" if "FAIL" in verdicts else (
         "PRECONDITION" if "PRECONDITION" in verdicts else "PASS")
-    return {"result": result, "checks": checks, "shape": shape}
+    return {"result": result, "checks": checks, "shape": shape,
+            "lockstep_window_seconds": record_window(record)}
 
 
 def init_record(out: Path, shape: str | None) -> int:
@@ -215,7 +311,11 @@ def init_record(out: Path, shape: str | None) -> int:
         "schema": 1,
         "campaign": {"id": placeholder, "digest": placeholder, "manifest_sha256": placeholder,
                      "source_sha": placeholder, "artifact_digest": placeholder,
-                     "binary_sha256": placeholder, "boundary_height": 0},
+                     "binary_sha256": placeholder, "boundary_height": 0,
+                     "lockstep_window_seconds": 0,
+                     "lockstep_window_rationale": placeholder,
+                     "round_seconds": 0, "liveness_heights": 0,
+                     "validator_count": 0},
         "shape": shape or placeholder,
         "release_owner": {"name": placeholder, "selected_source_sha": placeholder,
                           "selected_artifact_digest": placeholder,
@@ -229,7 +329,15 @@ def init_record(out: Path, shape: str | None) -> int:
         "mixed_versions": False,
         "independent_review": {"reviewer": placeholder, "verdict": placeholder,
                                "reconstruction_accepted": False, "verdict_url": placeholder,
-                               "evidence_sha256": placeholder, "signed_at": placeholder},
+                               "evidence_sha256": placeholder, "signed_at": placeholder,
+                               "review_record": placeholder,
+                               "category_a_effect": placeholder,
+                               "category_a_derivation": placeholder,
+                               "independence": {"attested": False,
+                                                "relationship": placeholder,
+                                                "affiliation": placeholder,
+                                                "prior_authorship": placeholder,
+                                                "conflicts": placeholder}},
         "incident_trace": {"mode": placeholder, "sha256": placeholder,
                            "provenance_url": placeholder, "owner_decision_url": placeholder},
         "execution_proven": False,
@@ -259,7 +367,10 @@ def _base_record(shape: str) -> dict[str, Any]:
         "schema": 1,
         "campaign": {"id": "campaign", "digest": digest, "manifest_sha256": digest,
                      "source_sha": source, "artifact_digest": digest,
-                     "binary_sha256": digest, "boundary_height": 10},
+                     "binary_sha256": digest, "boundary_height": 10,
+                     "lockstep_window_seconds": 30,
+                     "lockstep_window_rationale": "30 s = three 10 s rounds; the campaign's declared round time.",
+                     "round_seconds": 10, "liveness_heights": 3, "validator_count": 3},
         "shape": shape,
         "release_owner": {"name": owner, "selected_source_sha": source,
                           "selected_artifact_digest": digest,
@@ -275,7 +386,16 @@ def _base_record(shape: str) -> dict[str, Any]:
                                "reconstruction_accepted": True,
                                "verdict_url": "https://example.invalid/verdict",
                                "evidence_sha256": digest,
-                               "signed_at": "2026-11-17T21:00:00Z"},
+                               "signed_at": "2026-11-17T21:00:00Z",
+                               "review_record": "tests/fixtures/c357-review.md",
+                               "category_a_effect": "replay-verdict",
+                               "category_a_derivation": "the COMM order change moves a replay verdict; 1860/2606/4844 witness",
+                               "independence": {
+                                   "attested": True,
+                                   "relationship": "not the release owner or operator",
+                                   "affiliation": "independent reviewer",
+                                   "prior_authorship": "none on the selected source or evidence",
+                                   "conflicts": "none"}},
         "incident_trace": {"mode": "original-bytes", "sha256": digest,
                            "provenance_url": "https://example.invalid/trace",
                            "owner_decision_url": ""},
@@ -304,11 +424,56 @@ def self_test() -> int:
     reconstructed["incident_trace"] = {
         "mode": "reconstructed", "sha256": "c" * 64,
         "provenance_url": "https://example.invalid/reconstructed",
-        "owner_decision_url": "https://example.invalid/owner-decision"}
+        "owner_decision_url": "https://example.invalid/owner-decision",
+        "reconstruction_record": "tests/fixtures/c357-reconstruction.md"}
     failures += _case("reconstructed-with-both-acceptances", reconstructed, requirements, True)
     mixed = _base_record("coordinated-new-genesis")
     mixed["validators"][0]["still_serving_old"] = True
     failures += _case("mixed-version", mixed, requirements, False)
+    no_window = _base_record("coordinated-new-genesis")
+    for key in ("lockstep_window_seconds", "round_seconds", "liveness_heights"):
+        no_window["campaign"].pop(key, None)
+    failures += _case("no-declared-window", no_window, requirements, False)
+    no_independence = _base_record("coordinated-new-genesis")
+    del no_independence["independent_review"]["independence"]
+    failures += _case("no-independence-attestation", no_independence, requirements, False)
+    unattested = _base_record("coordinated-new-genesis")
+    unattested["independent_review"]["independence"]["attested"] = False
+    failures += _case("unattested-independence", unattested, requirements, False)
+    span = _base_record("coordinated-new-genesis")
+    span["validators"][1]["activated_utc"] = "2026-11-17T20:00:20Z"
+    span["validators"][2]["activated_utc"] = "2026-11-17T20:00:40Z"
+    failures += _case("activation-span-beyond-window", span, requirements, False)
+    huge = _base_record("coordinated-new-genesis")
+    huge["campaign"]["lockstep_window_seconds"] = 999999
+    failures += _case("huge-declared-window", huge, requirements, False)
+    no_rationale = _base_record("coordinated-new-genesis")
+    del no_rationale["campaign"]["lockstep_window_rationale"]
+    failures += _case("missing-window-rationale", no_rationale, requirements, False)
+    mismatch = _base_record("coordinated-new-genesis")
+    mismatch["campaign"]["lockstep_window_seconds"] = 31
+    failures += _case("declared-window-mismatch", mismatch, requirements, False)
+    single = _base_record("coordinated-new-genesis")
+    single["validators"] = [single["validators"][0]]
+    single["campaign"]["validator_count"] = 1
+    failures += _case("single-validator", single, requirements, False)
+    bad_signed = _base_record("coordinated-new-genesis")
+    bad_signed["independent_review"]["signed_at"] = "yes"
+    failures += _case("unparseable-signed-at", bad_signed, requirements, False)
+    substring = _base_record("coordinated-new-genesis")
+    substring["release_owner"]["name"] = "@alice-smith"
+    substring["independent_review"]["reviewer"] = "@alice"
+    failures += _case("reviewer-substring-of-owner", substring, requirements, False)
+    no_review_record = _base_record("coordinated-new-genesis")
+    del no_review_record["independent_review"]["review_record"]
+    failures += _case("missing-review-record", no_review_record, requirements, False)
+    no_effect = _base_record("coordinated-new-genesis")
+    del no_effect["independent_review"]["category_a_effect"]
+    failures += _case("missing-category-a-effect", no_effect, requirements, False)
+    no_reconstruction_record = _base_record("retained-history-sweep")
+    no_reconstruction_record["incident_trace"] = dict(
+        reconstructed["incident_trace"], reconstruction_record="")
+    failures += _case("reconstructed-without-record", no_reconstruction_record, requirements, False)
     missing_reviewer = _base_record("coordinated-new-genesis")
     del missing_reviewer["independent_review"]["reviewer"]
     failures += _case("missing-reviewer", missing_reviewer, requirements, False)
@@ -366,7 +531,6 @@ def main() -> int:
     check_p.add_argument("--table", default=str(DEFAULT_TABLE))
     check_p.add_argument("--assert-closeable", action="store_true")
     check_p.add_argument("--require-original-trace", action="store_true")
-    check_p.add_argument("--lockstep-window", type=float, default=60.0)
     check_p.add_argument("--report")
     sub.add_parser("self-test")
     args = parser.parse_args()
@@ -376,7 +540,7 @@ def main() -> int:
         return self_test()
     requirements = load_table(Path(args.table))
     record = json.loads(Path(args.record).read_text())
-    report = check_record(record, requirements, args.require_original_trace, args.lockstep_window)
+    report = check_record(record, requirements, args.require_original_trace)
     if args.report:
         Path(args.report).write_text(json.dumps(report, indent=1, sort_keys=True) + "\n")
     print(f"c357-acceptance: {report['result']}")

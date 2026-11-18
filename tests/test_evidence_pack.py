@@ -62,6 +62,13 @@ class EvidencePackTests(unittest.TestCase):
         self.assertEqual(len(sums), 5)  # source, binary, result, observations, log
         self.assertTrue(all(path.startswith("raw/") for path in sums))
 
+    def test_a_pin_with_the_wrong_format_is_refused(self):
+        with self.assertRaises(SystemExit):
+            self.packed(source_sha="abc")
+        self.setUp()
+        with self.assertRaises(SystemExit):
+            self.packed(binary_sha256="xyz")
+
     def test_a_tampered_byte_fails_verification(self):
         self.packed()
         target = self.record / "raw" / "node-0.log"
