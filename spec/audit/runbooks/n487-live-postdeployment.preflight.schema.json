@@ -12,7 +12,8 @@
     "operator_fields",
     "unset_observed",
     "unset_operator",
-    "checks"
+    "checks",
+    "synthetic_boot_ids"
   ],
   "properties": {
     "schema": { "const": 1 },
@@ -49,6 +50,7 @@
           "finalized_hash",
           "finalized_lag",
           "ready",
+          "boot_id",
           "unset"
         ],
         "properties": {
@@ -58,6 +60,10 @@
           "binary_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
           "binary_path": { "type": "string" },
           "boot_id": { "type": "string" },
+          "boot_id_source": {
+            "type": "string",
+            "description": "kernel on a live host; any other value marks a rehearsal-only substitution."
+          },
           "network_id": { "type": "string" },
           "shard_id": { "type": "string" },
           "genesis_hash": { "type": "string" },
@@ -92,13 +98,36 @@
         "rollback_owner",
         "test_transfer",
         "rollback",
-        "evidence_destination"
+        "evidence_destination",
+        "deploy_relay"
       ],
       "properties": {
         "selected_source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "selected_artifact_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "selected_binary_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "selected_binary_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "deploy_relay": {
+          "type": "object",
+          "description": "How the one signed deploy reaches all four pools: the relay (each peer's deploy service is offered the admitted deploy) or the same signed deploy offered to each ingress. The pin is the operator's declared plan and reachability result, not a network measurement.",
+          "required": ["mode", "aliases", "reachability_checked_utc", "unreachable_aliases"],
+          "properties": {
+            "mode": { "enum": ["relay", "four-ingress"] },
+            "aliases": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "uniqueItems": true,
+              "items": { "type": "string" }
+            },
+            "destination_port": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
+            "reachability_checked_utc": { "type": "string" },
+            "unreachable_aliases": { "type": "array", "maxItems": 0 }
+          }
+        }
       }
+    },
+    "synthetic_boot_ids": {
+      "type": "boolean",
+      "description": "False for a live preflight. True means at least one record's boot ID was supplied by a rehearsal, so four distinct hosts are not established."
     },
     "unset_observed": { "type": "array", "maxItems": 0 },
     "unset_operator": { "type": "array", "maxItems": 0 },

@@ -23,7 +23,7 @@ they are private until a human redacts and packs the public record.
 
 Usage:
   python3 tools/live-gate.py sample --plan /secure/n584-plan.json --out target/n584-live \\
-      [--interval 5] [--duration 900] [--timeout 5]
+      [--interval 1] [--duration 900] [--timeout 5]
   python3 tools/live-gate.py check --run-dir target/n584-live --preflight /secure/preflight.json \\
       [--verdict /secure/g6-verdict.json] [--report target/n584-live/gate-report.json]
 
@@ -114,7 +114,12 @@ OPERATOR_FIELDS = (
     "test_transfer",
     "rollback",
     "evidence_destination",
+    "deploy_relay",
 )
+# G2 requires every alias to observe `pooled` and `included` directly, so a coarse cadence misses
+# the stages and the runbook forbids a second deploy to manufacture them. The #584 rehearsal caught
+# all stages on all four aliases at 1 s; 5 s is too coarse.
+DEFAULT_INTERVAL = 1.0
 SETTLED = "finalizedSuccess"
 UNSETTLED_STAGES = {"pooled", "notProcessed", "includedUnfinalized", "finalityUnknown"}
 PROCESSED_TAGS = ("ProcessedWithSuccess", "ProcessedWithError")
@@ -475,6 +480,46 @@ def execution_tag(body):
     return None
 
 
+def deploy_relay_problem(relay, validators) -> str | None:
+    """The typed deploy-distribution pin, or a reason it is not one.
+
+    `validators` is `None` when the record count is already wrong: then the alias-name comparison
+    is skipped so the existing "three records" control stays a PRECONDITION rather than becoming a
+    spurious FAIL.
+    """
+    if not isinstance(relay, dict):
+        return "operator_fields.deploy_relay is not an object"
+    mode = relay.get("mode")
+    if mode not in ("relay", "four-ingress"):
+        return "operator_fields.deploy_relay.mode is not relay or four-ingress"
+    aliases = relay.get("aliases")
+    if not isinstance(aliases, list) or not all(isinstance(a, str) and a for a in aliases):
+        return "operator_fields.deploy_relay.aliases must be a list of non-empty names"
+    if len(set(aliases)) != len(aliases):
+        return "operator_fields.deploy_relay.aliases contains duplicates"
+    if validators is not None:
+        names = {
+            v.get("name") for v in validators
+            if isinstance(v, dict) and present(v.get("name"))
+        }
+        if set(aliases) != names:
+            return "operator_fields.deploy_relay.aliases do not name the validator records"
+    if mode == "relay":
+        port = relay.get("destination_port")
+        if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+            return "operator_fields.deploy_relay.destination_port must be a port for mode relay"
+    elif relay.get("destination_port") is not None:
+        return "operator_fields.deploy_relay.destination_port is only for mode relay"
+    if parse_utc(relay.get("reachability_checked_utc")) is None:
+        return "operator_fields.deploy_relay.reachability_checked_utc is absent or unparseable"
+    unreachable = relay.get("unreachable_aliases")
+    if not isinstance(unreachable, list):
+        return "operator_fields.deploy_relay.unreachable_aliases must be a list"
+    if unreachable:
+        return f"operator_fields.deploy_relay.unreachable_aliases is not empty: {unreachable}"
+    return None
+
+
 def check_g1(preflight, expected_observers: int = 4) -> dict:
     finding = Finding()
     if not isinstance(preflight, dict):
@@ -498,8 +543,10 @@ def check_g1(preflight, expected_observers: int = 4) -> dict:
     boot_ids = [v.get("boot_id") for v in validators if isinstance(v, dict) and present(v.get("boot_id"))]
     if len(set(names)) != len(names):
         finding.fail("two validator records share a name")
-    if not boot_ids:
-        finding.incomplete("no boot IDs: four filenames do not prove four validators")
+    if len(boot_ids) < len(validators):
+        # One boot ID is not enough: the point of the field is four distinct validator instances.
+        finding.incomplete(
+            f"{len(validators) - len(boot_ids)} validator record(s) have no boot ID")
     elif len(set(boot_ids)) != len(boot_ids):
         finding.fail("two validator records share a boot ID")
 
@@ -547,10 +594,19 @@ def check_g1(preflight, expected_observers: int = 4) -> dict:
             finding.incomplete(f"operator_fields.{field} is absent")
     selected_source = operator.get("selected_source_sha")
     selected_binary = operator.get("selected_binary_sha256")
+    selected_artifact = operator.get("selected_artifact_digest")
     if present(selected_source) and not SOURCE_RE.match(str(selected_source)):
         finding.fail("operator_fields.selected_source_sha is not a commit")
     if present(selected_binary) and not DIGEST_RE.match(str(selected_binary)):
         finding.fail("operator_fields.selected_binary_sha256 is not a 64-hex digest")
+    if present(selected_artifact) and not DIGEST_RE.match(str(selected_artifact)):
+        finding.fail("operator_fields.selected_artifact_digest is not a 64-hex digest")
+    relay = operator.get("deploy_relay")
+    if present(relay):
+        problem = deploy_relay_problem(
+            relay, validators if len(validators) == expected_observers else None)
+        if problem:
+            finding.fail(problem)
     if present(selected_source) and present(selected_binary):
         for record in validators:
             if not isinstance(record, dict):
@@ -1120,14 +1176,17 @@ def cmd_check(args) -> int:
     return 0
 
 
-def main(argv: list[str]) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
     sample = sub.add_parser("sample", help="read-only four-validator sampling")
     sample.add_argument("--plan", required=True, help="private sampling plan (never committed)")
     sample.add_argument("--out", required=True, help="new run directory")
-    sample.add_argument("--interval", type=float, default=5.0)
+    sample.add_argument(
+        "--interval", type=float, default=DEFAULT_INTERVAL,
+        help="seconds between samples (default 1; G2 needs a cadence fine enough to observe "
+             "pooled and included on every alias)")
     sample.add_argument("--duration", type=float, default=900.0)
     sample.add_argument("--timeout", type=float, default=5.0)
     sample.add_argument("--observers", type=int, default=4,
@@ -1142,8 +1201,11 @@ def main(argv: list[str]) -> int:
     check.add_argument("--observers", type=int, default=4,
                        help="expected validator count (default 4)")
     check.set_defaults(func=cmd_check)
+    return parser
 
-    args = parser.parse_args(argv)
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
     return args.func(args)
 
 

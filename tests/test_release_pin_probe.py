@@ -12,12 +12,25 @@ probe = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(probe)
 
 
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+SOURCE = "a" * 40
+BINARY = "b" * 64
+ARTIFACT = "c" * 64
+ALIASES = [f"validator-{index}" for index in range(4)]
+
+
 def complete_record(name: str) -> dict:
     return {
         "name": name,
-        "version": "rnode 0.1.0 (0123456789abcdef)",
-        "source_sha": "0123456789abcdef",
-        "binary_sha256": "a" * 64,
+        "version": "rnode 0.1.0 (" + SOURCE + ")",
+        "source_sha": SOURCE,
+        "binary_sha256": BINARY,
         "binary_path": "/usr/local/bin/rnode",
         "network_id": "testnet",
         "shard_id": "/root",
@@ -30,15 +43,19 @@ def complete_record(name: str) -> dict:
         "finalized_hash": "e" * 64,
         "finalized_lag": 1,
         "ready": True,
+        "boot_id": f"boot-{name}",
+        "boot_id_source": "kernel",
         "unset": [],
     }
 
 
-def complete_operator() -> dict:
+def complete_operator(aliases=None) -> dict:
     return {
         "release_tag": "v0.2.0",
         "release_branch": "main",
-        "source_sha": "0123456789abcdef",
+        "selected_source_sha": SOURCE,
+        "selected_artifact_digest": ARTIFACT,
+        "selected_binary_sha256": BINARY,
         "window_start_utc": "2026-12-01T10:00:00Z",
         "window_end_utc": "2026-12-01T11:00:00Z",
         "operator": "operator-key",
@@ -48,6 +65,13 @@ def complete_operator() -> dict:
         "test_transfer": {"source": "s", "destination": "d", "amount": 1},
         "rollback": {"build": "previous-sha"},
         "evidence_destination": "spec/audit/evidence/n487-live-postdeployment-20261201",
+        "deploy_relay": {
+            "mode": "relay",
+            "aliases": list(aliases or ALIASES),
+            "destination_port": 40401,
+            "reachability_checked_utc": "2026-12-01T09:55:00Z",
+            "unreachable_aliases": [],
+        },
     }
 
 
@@ -121,6 +145,98 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(redacted["operator_fields"]["independent_reviewer"], "<redacted>")
 
 
+    def test_selected_candidate_pins_are_carried_and_required(self):
+        records = [complete_record(name) for name in ALIASES]
+        operator = complete_operator()
+        manifest = probe.build_manifest(records, operator)
+        for field in ("selected_source_sha", "selected_artifact_digest",
+                      "selected_binary_sha256"):
+            self.assertEqual(manifest["operator_fields"][field], operator[field])
+        del operator["selected_artifact_digest"]
+        manifest = probe.build_manifest(records, operator)
+        self.assertIn("selected_artifact_digest", manifest["unset_operator"])
+        self.assertFalse(manifest["checks"]["ok"])
+
+    def test_selected_pin_formats_are_enforced(self):
+        records = [complete_record(name) for name in ALIASES]
+        operator = complete_operator()
+        operator["selected_source_sha"] = "abc1234"
+        operator["selected_artifact_digest"] = "d" * 63
+        manifest = probe.build_manifest(records, operator)
+        self.assertFalse(manifest["checks"]["operator_fields_typed"])
+        self.assertFalse(manifest["checks"]["ok"])
+        self.assertTrue(any("selected_source_sha" in error for error in manifest["errors"]))
+        self.assertTrue(any("selected_artifact_digest" in error for error in manifest["errors"]))
+
+    def test_selected_candidate_must_match_the_validator_records(self):
+        records = [complete_record(name) for name in ALIASES]
+        records[2]["binary_sha256"] = "f" * 64
+        manifest = probe.build_manifest(records, complete_operator())
+        self.assertFalse(manifest["checks"]["selected_candidate_matches_validators"])
+        self.assertFalse(manifest["checks"]["ok"])
+
+    def test_deploy_relay_is_required_and_typed(self):
+        records = [complete_record(name) for name in ALIASES]
+        operator = complete_operator()
+        del operator["deploy_relay"]
+        manifest = probe.build_manifest(records, operator)
+        self.assertIn("deploy_relay", manifest["unset_operator"])
+        self.assertFalse(manifest["checks"]["ok"])
+        operator = complete_operator()
+        operator["deploy_relay"]["mode"] = "broadcast"
+        manifest = probe.build_manifest(records, operator)
+        self.assertFalse(manifest["checks"]["operator_fields_typed"])
+        self.assertTrue(any("deploy_relay.mode" in error for error in manifest["errors"]))
+
+    def test_distinct_boot_ids_are_required(self):
+        records = [complete_record(name) for name in ALIASES]
+        records[3]["boot_id"] = records[0]["boot_id"]
+        manifest = probe.build_manifest(records, complete_operator())
+        self.assertFalse(manifest["checks"]["distinct_boot_ids"])
+        self.assertFalse(manifest["checks"]["ok"])
+
+    def test_duplicate_validator_names_are_not_ok(self):
+        records = [complete_record(name) for name in ALIASES]
+        records[3]["name"] = records[0]["name"]
+        manifest = probe.build_manifest(records, complete_operator())
+        self.assertFalse(manifest["checks"]["distinct_names"])
+        self.assertFalse(manifest["checks"]["ok"])
+
+    def test_a_rehearsal_boot_id_is_marked_synthetic(self):
+        records = [complete_record(name) for name in ALIASES]
+        records[0]["boot_id_source"] = "rehearsal"
+        manifest = probe.build_manifest(records, complete_operator())
+        self.assertTrue(manifest["synthetic_boot_ids"])
+
+
+class ProtocolAgreementTests(unittest.TestCase):
+    """The collector, the live gate and the schema must describe one operator record."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gate = _load("gate_agreement_live_gate", ROOT / "tools" / "live-gate.py")
+        cls.schema = json.loads(
+            (ROOT / "spec" / "audit" / "runbooks"
+             / "n487-live-postdeployment.preflight.schema.json").read_text()
+        )
+
+    def test_the_two_tools_share_one_operator_field_list(self):
+        self.assertEqual(list(probe.OPERATOR_FIELDS), list(self.gate.OPERATOR_FIELDS))
+
+    def test_the_schema_requires_the_same_operator_fields(self):
+        required = self.schema["properties"]["operator_fields"]["required"]
+        self.assertEqual(set(required), set(probe.OPERATOR_FIELDS))
+        self.assertIn("boot_id",
+                      self.schema["properties"]["validators"]["items"]["required"])
+
+    def test_a_collector_produced_preflight_passes_g1(self):
+        records = [complete_record(name) for name in ALIASES]
+        manifest = probe.build_manifest(records, complete_operator())
+        self.assertTrue(manifest["checks"]["ok"], manifest["errors"])
+        report = self.gate.check_g1(manifest)
+        self.assertEqual(report["status"], "PASS", report)
+
+
 class CliTests(unittest.TestCase):
     def run_merge(self, out: Path, operator: Path | None) -> int:
         argv = ["merge", "--out", str(out), "--expect", "4", "--check"]
@@ -150,6 +266,21 @@ class CliTests(unittest.TestCase):
             operator = out / "operator.json"
             operator.write_text(json.dumps(complete_operator()))
             self.assertEqual(self.run_merge(out, operator), 1)
+
+    def test_merge_check_refuses_an_unreachable_relay_pin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            for index in range(4):
+                (out / f"validator-{index}.json").write_text(
+                    json.dumps(complete_record(f"validator-{index}")))
+            operator = complete_operator()
+            operator["deploy_relay"]["unreachable_aliases"] = ["validator-3"]
+            path = out / "operator.json"
+            path.write_text(json.dumps(operator))
+            self.assertEqual(self.run_merge(out, path), 1)
+            manifest = json.loads((out / "manifest.json").read_text())
+            self.assertFalse(manifest["checks"]["operator_fields_typed"])
+            self.assertFalse(manifest["checks"]["ok"])
 
 
 if __name__ == "__main__":

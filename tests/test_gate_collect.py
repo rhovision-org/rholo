@@ -25,6 +25,16 @@ CONFIG = {
 }
 
 
+class CadenceTests(unittest.TestCase):
+    def test_the_default_window_cadence_is_one_second(self):
+        live_gate = importlib.util.spec_from_file_location(
+            "collector_live_gate", ROOT / "tools" / "live-gate.py")
+        module = importlib.util.module_from_spec(live_gate)
+        live_gate.loader.exec_module(module)
+        self.assertEqual(collector.DEFAULT_INTERVAL, 1.0)
+        self.assertEqual(module.DEFAULT_INTERVAL, 1.0)
+
+
 class ConfigTests(unittest.TestCase):
     def test_no_observer_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
