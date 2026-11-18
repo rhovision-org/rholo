@@ -1,0 +1,33 @@
+
+running 1 test
+test dag::liveness::tests::n8_proposer_outlier_cannot_set_the_staleness_clock ... FAILED
+
+failures:
+
+---- dag::liveness::tests::n8_proposer_outlier_cannot_set_the_staleness_clock stdout ----
+
+thread 'dag::liveness::tests::n8_proposer_outlier_cannot_set_the_staleness_clock' (1699744) panicked at block-storage/src/dag/liveness.rs:221:9:
+assertion `left == right` failed
+  left: 8
+ right: 7
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dag::liveness::tests::n8_proposer_outlier_cannot_set_the_staleness_clock
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 97 filtered out; finished in 0.00s
+
+   Compiling rchain-block-storage v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/block-storage)
+warning: unused variable: `window`
+   --> block-storage/src/dag/liveness.rs:106:5
+    |
+106 |     window: i64,
+    |     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_window`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rchain-block-storage` (lib test) generated 1 warning (run `cargo fix --lib -p rchain-block-storage --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.67s
+     Running unittests src/lib.rs (target/debug/deps/rchain_block_storage-29bd045d5a9311b6)
+error: test failed, to rerun pass `-p rchain-block-storage --lib`

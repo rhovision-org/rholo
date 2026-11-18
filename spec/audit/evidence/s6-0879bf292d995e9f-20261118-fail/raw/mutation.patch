@@ -1,0 +1,13 @@
+diff --git a/casper/src/dag.rs b/casper/src/dag.rs
+index a568ffef6..8b17c5963 100644
+--- a/casper/src/dag.rs
++++ b/casper/src/dag.rs
+@@ -1706,7 +1706,7 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
+             // H-1: equivocation detection — a second, distinct block by the same sender reusing a
+             // `seq_num`. Reject it before any partial write so an equivocating validator can neither
+             // enter the DAG nor stall finalization.
+-            let equivocating = {
++            let equivocating = false; {
+                 let repr = self.representation.read().await;
+                 repr.dag_message_state.msg_map.values().any(|m| {
+                     m.sender == block_metadata.sender && m.sender_seq == block_metadata.seq_num

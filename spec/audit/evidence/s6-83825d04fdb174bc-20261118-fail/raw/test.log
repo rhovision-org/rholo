@@ -1,0 +1,37 @@
+
+running 1 test
+test dag::tests::h1b_a_failed_parent_above_the_childs_height_is_refused ... FAILED
+
+failures:
+
+---- dag::tests::h1b_a_failed_parent_above_the_childs_height_is_refused stdout ----
+
+thread 'dag::tests::h1b_a_failed_parent_above_the_childs_height_is_refused' (1706127) panicked at casper/src/dag.rs:4311:9:
+a resolved parent above the block's number must be refused: Ok(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dag::tests::h1b_a_failed_parent_above_the_childs_height_is_refused
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 747 filtered out; finished in 0.01s
+
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+warning: unused variable: `dag`
+   --> casper/src/validate.rs:319:5
+    |
+319 |     dag: &dyn BlockDagStorage,
+    |     ^^^ help: if this is intentional, prefix it with an underscore: `_dag`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `b`
+   --> casper/src/validate.rs:320:5
+    |
+320 |     b: &BlockMessage,
+    |     ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: `rchain-casper` (lib test) generated 2 warnings (run `cargo fix --lib -p rchain-casper --tests` to apply 2 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.37s
+     Running unittests src/lib.rs (target/debug/deps/rchain_casper-64d507b1a93523ca)
+error: test failed, to rerun pass `-p rchain-casper --lib`

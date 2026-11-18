@@ -1,0 +1,30 @@
+
+running 1 test
+test the_node_agrees_with_the_model_on_every_supermajority_pair ... FAILED
+
+failures:
+
+---- the_node_agrees_with_the_model_on_every_supermajority_pair stdout ----
+
+thread 'the_node_agrees_with_the_model_on_every_supermajority_pair' (1732523) panicked at node/tests/lean_stake_corpus.rs:69:9:
+assertion `left == right` failed: stake 2 of 3: the node says true, the Lean model says false (spec/conformance/stake.tsv, law 14a). The comparison is `3 * stake > 2 * total` exactly, so a disagreement at the boundary is an off-by-one in one of the two spellings.
+  left: true
+ right: false
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    the_node_agrees_with_the_model_on_every_supermajority_pair
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling rchain-sdk v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/sdk)
+   Compiling rchain-node v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/node)
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+   Compiling rchain-block-storage v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/block-storage)
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.44s
+warning: the following packages contain code that will be rejected by a future version of Rust: nom v4.2.3
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running tests/lean_stake_corpus.rs (target/debug/deps/lean_stake_corpus-10fec3f199242337)
+error: test failed, to rerun pass `-p rchain-node --test lean_stake_corpus`

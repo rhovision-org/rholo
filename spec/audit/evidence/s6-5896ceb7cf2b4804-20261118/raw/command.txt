@@ -1,0 +1,1 @@
+cargo test -p rchain-casper --lib a_failed_parent_still_sets_its_childs_height

@@ -1,0 +1,1 @@
+cargo test -p rchain-block-storage --lib n8_proposer_outlier_cannot_set_the_staleness_clock

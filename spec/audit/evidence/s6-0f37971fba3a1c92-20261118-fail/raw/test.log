@@ -1,0 +1,24 @@
+
+running 1 test
+test validate::tests::a_deploy_that_its_named_key_did_not_sign_is_refused ... FAILED
+
+failures:
+
+---- validate::tests::a_deploy_that_its_named_key_did_not_sign_is_refused stdout ----
+
+thread 'validate::tests::a_deploy_that_its_named_key_did_not_sign_is_refused' (1702347) panicked at casper/src/validate.rs:1380:9:
+assertion `left == right` failed: the unsigned fixture is the forged deploy: a block must not charge the key it names
+  left: Valid
+ right: InvalidDeploySignature
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    validate::tests::a_deploy_that_its_named_key_did_not_sign_is_refused
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 747 filtered out; finished in 0.00s
+
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.62s
+     Running unittests src/lib.rs (target/debug/deps/rchain_casper-64d507b1a93523ca)
+error: test failed, to rerun pass `-p rchain-casper --lib`

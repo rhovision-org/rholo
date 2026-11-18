@@ -1,0 +1,1 @@
+cargo test -p rchain-casper --lib a_block_timestamp_is_never_a_validity_input

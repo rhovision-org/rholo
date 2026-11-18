@@ -1,0 +1,22 @@
+
+running 1 test
+test dag::tests::insert_rejects_equivocation_same_seq_num ... FAILED
+
+failures:
+
+---- dag::tests::insert_rejects_equivocation_same_seq_num stdout ----
+
+thread 'dag::tests::insert_rejects_equivocation_same_seq_num' (1701150) panicked at casper/src/dag.rs:2695:9:
+equivocation must be rejected
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dag::tests::insert_rejects_equivocation_same_seq_num
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 747 filtered out; finished in 0.01s
+
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.45s
+     Running unittests src/lib.rs (target/debug/deps/rchain_casper-64d507b1a93523ca)
+error: test failed, to rerun pass `-p rchain-casper --lib`

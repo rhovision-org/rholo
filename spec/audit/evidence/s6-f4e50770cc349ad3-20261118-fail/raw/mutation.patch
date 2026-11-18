@@ -1,0 +1,13 @@
+diff --git a/sdk/src/consensus.rs b/sdk/src/consensus.rs
+index 37966719d..c4e455520 100644
+--- a/sdk/src/consensus.rs
++++ b/sdk/src/consensus.rs
+@@ -17,7 +17,7 @@ use rchain_shared::refined::{BlockHeight, NonNegI64};
+ /// Takes `i128` so callers accumulate bonded-stake sums in `i128` (a validator set with large
+ /// stakes can overflow `i64` before reaching this comparison).
+ pub fn is_super_majority(stake: i128, total_stake: i128) -> bool {
+-    stake * 3 > total_stake * 2
++    stake * 3 >= total_stake * 2
+ }
+ 
+ /// **The height a supermajority of the bonded stake has reached.** The finalizer's liveness clock:

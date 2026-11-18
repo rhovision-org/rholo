@@ -1,0 +1,24 @@
+
+running 1 test
+test validate::effectful_tests::a_failed_parent_still_sets_its_childs_height ... FAILED
+
+failures:
+
+---- validate::effectful_tests::a_failed_parent_still_sets_its_childs_height stdout ----
+
+thread 'validate::effectful_tests::a_failed_parent_still_sets_its_childs_height' (1704723) panicked at casper/src/validate.rs:1565:9:
+assertion `left == right` failed
+  left: Err(InvalidBlockNumber)
+ right: Ok(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    validate::effectful_tests::a_failed_parent_still_sets_its_childs_height
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 747 filtered out; finished in 0.00s
+
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.19s
+     Running unittests src/lib.rs (target/debug/deps/rchain_casper-64d507b1a93523ca)
+error: test failed, to rerun pass `-p rchain-casper --lib`

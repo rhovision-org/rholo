@@ -1,0 +1,1 @@
+cargo test -p rchain-casper --lib a_block_justifying_more_parents_than_the_network_allows_is_refused

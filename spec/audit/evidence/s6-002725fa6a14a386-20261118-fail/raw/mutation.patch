@@ -1,0 +1,13 @@
+diff --git a/block-storage/src/dag/liveness.rs b/block-storage/src/dag/liveness.rs
+index f51d5cf51..605f9eb85 100644
+--- a/block-storage/src/dag/liveness.rs
++++ b/block-storage/src/dag/liveness.rs
+@@ -113,7 +113,7 @@ where
+         .filter(|(v, _)| {
+             latest
+                 .get(*v)
+-                .is_some_and(|h| heights_behind(tip, *h) <= window)
++                .is_some_and(|h| heights_behind(tip, *h) <= i64::MAX)
+         })
+         .map(|(v, s)| (v.clone(), *s))
+         .collect()

@@ -1,0 +1,1 @@
+cargo test -p rchain-casper --lib the_multisig_keys_are_in_the_trusted_stakeholder_set
