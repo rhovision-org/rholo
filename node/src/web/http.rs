@@ -4105,6 +4105,84 @@ mod tests {
         assert_ne!(reply.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
+    /// **The admission bound on the served path.** Every other admission test calls the router
+    /// directly; this binds a real listener and drives the same middleware over TCP, which is where
+    /// `ConnectInfo` and the layer ordering actually run.
+    async fn post_deploy_over_listener(state: HttpState, body: &'static str) -> (u16, String) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("an ephemeral listener");
+        let addr = listener.local_addr().expect("a bound address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                router(state).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .expect("the test server serves");
+        });
+        let mut stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("connect to the test server");
+        let request = format!(
+            "POST /api/deploy HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream
+            .write_all(request.as_bytes())
+            .await
+            .expect("write the request");
+        let mut response = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_to_end(&mut response),
+        )
+        .await
+        .expect("the server answers within the bound")
+        .expect("read the response");
+        server.abort();
+        let text = String::from_utf8_lossy(&response).into_owned();
+        let status = text
+            .split_whitespace()
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .unwrap_or(0);
+        (status, text)
+    }
+
+    #[tokio::test]
+    async fn a_real_listener_admits_by_default_and_refuses_when_the_budget_is_held() {
+        // Default (no configured in-flight budget): the malformed body reaches the extractor, so the
+        // answer is a client error, not a 429.
+        let (status, response) = post_deploy_over_listener(state(), "invalid json").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST.as_u16(), "{response}");
+
+        // Configured with one permit, held before the request: the middleware refuses before the
+        // body is decoded.
+        let mut limited = state();
+        let admission = InFlightAdmission::new(1);
+        let held = admission
+            .semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("the only permit");
+        limited.deploy_admission = Some(admission);
+        let (status, response) = post_deploy_over_listener(limited.clone(), "invalid json").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS.as_u16(), "{response}");
+        assert!(
+            response.to_ascii_lowercase().contains("retry-after: 1"),
+            "{response}"
+        );
+
+        // Released: the same request reaches the extractor again.
+        drop(held);
+        let (status, response) = post_deploy_over_listener(limited, "invalid json").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST.as_u16(), "{response}");
+    }
+
     /// A real handler holds the permit across its await; completion and
     /// cancellation both return capacity without a waiting request queue.
     #[tokio::test]
