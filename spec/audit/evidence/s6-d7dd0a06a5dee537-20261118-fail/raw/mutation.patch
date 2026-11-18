@@ -1,0 +1,13 @@
+diff --git a/models/src/wire.rs b/models/src/wire.rs
+index 3da6e9ab8..0ccc0c0e0 100644
+--- a/models/src/wire.rs
++++ b/models/src/wire.rs
+@@ -676,7 +676,7 @@ pub fn receive_from_proto(p: &p::Receive) -> Result<a::Receive, ModelsError> {
+         // Refused here when negative, like the `free_count` of `ReceiveBind`/`MatchCase` — the same
+         // field family, the same boundary (U1; the carrier is `FreeCount`, so the term cannot hold a
+         // negative count and `well_scoped_par`'s `depth + bind_count` needs no clamp).
+-        bind_count: FreeCount::try_from(p.bind_count).map_err(ModelsError::Decode)?,
++        bind_count: FreeCount::new(p.bind_count).unwrap_or(FreeCount::ZERO),
+         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
+         connective_used: p.connective_used,
+     })

@@ -1,0 +1,13 @@
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.64s
+     Running tests/deep_value_bound.rs (target/debug/deps/deep_value_bound-6b71737a146a265e)
+
+running 1 test
+test a_value_built_at_runtime_is_refused_above_the_bound has been running for over 60 seconds
+
+thread 'tokio-rt-worker' (1467742) has overflowed its stack
+fatal runtime error: stack overflow, aborting
+error: test failed, to rerun pass `-p rchain-rholang --test deep_value_bound`
+
+Caused by:
+  process didn't exit successfully: `/home/patrick/RNodeRust/.claude/worktrees/pr-567/target/debug/deps/deep_value_bound-6b71737a146a265e --exact a_value_built_at_runtime_is_refused_above_the_bound` (signal: 6, SIGABRT: process abort signal)

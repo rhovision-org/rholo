@@ -1,0 +1,13 @@
+diff --git a/rholang/src/storage.rs b/rholang/src/storage.rs
+index c3c7e8686..e13b8c1f2 100644
+--- a/rholang/src/storage.rs
++++ b/rholang/src/storage.rs
+@@ -273,7 +273,7 @@ impl ChargingRSpace {
+ /// none, and the debt list is central in CI rather than scattered); and `256.min(..)`, which is not
+ /// const-callable on this toolchain. The `if` costs no counted site and no exception, and it says what
+ /// the invariant says.
+-const MAX_VALUE_DEPTH: usize = if 256 < crate::parser::MAX_AST_DEPTH {
++const MAX_VALUE_DEPTH: usize = if 1024 < crate::parser::MAX_AST_DEPTH {
+     256
+ } else {
+     crate::parser::MAX_AST_DEPTH

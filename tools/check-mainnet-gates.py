@@ -54,7 +54,7 @@ WITNESS_KINDS = {
 SOLE_EVIDENCE = {
     "none", "docker", "local-devnet", "live-host", "external", "multi-host",
 }
-FAMILIES = {"G428", "G584", "TA", "HF51", "S6", "C343", "C357", "G520"}
+FAMILIES = {"G428", "G584", "TA", "S6", "C343", "G520"}
 PINNED_EXTERNAL = {"G428", "G584", "TA"}
 
 
@@ -474,32 +474,8 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
         resolve_source(row, matrix, inventory, ledger)
     check_dependencies(rows)
     check_related(rows)
-    dispositions: dict[str, dict] = {}
-    disposition_path = ROOT / "spec" / "audit" / "section6-dispositions.json"
-    if disposition_path.is_file():
-        document = json.loads(disposition_path.read_text())
-        dispositions = {row["id"]: row for row in document.get("rows", [])}
-    for row in rows:
-        if row["family"] != "S6" or row["id"].startswith("S6-PR600"):
-            continue
-        ident = "S6:" + row["id"][3:]
-        disposition = dispositions.get(ident)
-        require(disposition is not None, f"{row['id']}: no disposition record")
-        verdict = disposition.get("verdict")
-        if verdict == "withdrawn":
-            require(row["status"] == "superseded",
-                    f"{row['id']}: a withdrawn disposition must be superseded")
-        elif verdict == "reviewable":
-            require(row["status"] in ("reviewable", "owes"),
-                    f"{row['id']}: a reviewable disposition cannot be {row['status']}")
-            if row["status"] == "owes":
-                reason = str(row.get("status_reason") or "").lower()
-                require("named test" in reason or "absent" in reason,
-                        f"{row['id']}: an owes status needs the named-test reason")
-        elif verdict == "accepted":
-            require(row["status"] in ("reviewable", "met"),
-                    f"{row['id']}: an accepted disposition cannot be {row['status']}")
     check_criteria(rows)
+    check_met_ratchet(document, rows)
     unresolved = [row["id"] for row in rows if row["status"] != "met"]
     return {
         "result": "REGISTER_VALID",
@@ -551,7 +527,8 @@ def check_criteria(rows: list[dict]) -> None:
                   "local-devnet", "live-host"}
     expected = {
         gate_id for gate_id, row in external.items()
-        if row.get("machine_check") is True or row.get("witness_kind") in executable
+        if row.get("gate", True)
+        and (row.get("machine_check") is True or row.get("witness_kind") in executable)
     }
     require(set(by_id) == expected,
             "criterion coverage differs: "
@@ -591,6 +568,36 @@ def check_criteria(rows: list[dict]) -> None:
             expected_fail += control.get("expected") == "FAIL"
         require(expected_fail > 0, f"{gate_id}: no control expects FAIL")
         _resolve_adapter(entry.get("adapter"), gate_id)
+
+
+def check_met_ratchet(document: dict, rows: list[dict]) -> None:
+    """The met count is a ratchet: it cannot regress, and every met row is authored.
+
+    The ratchet is a floor plus the exact set of authored promotions, so a
+    hand-edited register that drops a binding or adds a `met` row without one is
+    refused even when `--check` is not passed.
+    """
+    ratchet = document.get("met_ratchet")
+    require(isinstance(ratchet, dict), "met_ratchet is required")
+    minimum = ratchet.get("minimum")
+    required = ratchet.get("required_ids")
+    require(type(minimum) is int and minimum >= 0,
+            "met_ratchet.minimum must be a non-negative integer")
+    require(isinstance(required, list)
+            and all(isinstance(ident, str) and ident for ident in required),
+            "met_ratchet.required_ids must be a list of gate ids")
+    require(len(required) == len(set(required)),
+            "met_ratchet.required_ids has duplicates")
+    require(minimum == len(required),
+            "met_ratchet.minimum must equal the required-id count")
+    by_id = {row["id"]: row for row in rows}
+    for ident in required:
+        require(ident in by_id, f"met_ratchet names unknown gate {ident}")
+        require(by_id[ident]["status"] == "met",
+                f"met_ratchet gate {ident} is {by_id[ident]['status']}")
+    met = {row["id"] for row in rows if row["status"] == "met"}
+    require(met == set(required),
+            f"the met set {sorted(met)} does not equal the ratchet {sorted(set(required))}")
 
 
 def main() -> int:

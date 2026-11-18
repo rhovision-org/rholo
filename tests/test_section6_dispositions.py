@@ -29,7 +29,8 @@ class DispositionTests(unittest.TestCase):
     def test_current_dispositions_are_complete_and_open(self):
         out = self.inspect()
         self.assertEqual(out["candidates"], 47)
-        self.assertEqual(out["reviewable"], 46)
+        self.assertEqual(out["accepted"], 4)
+        self.assertEqual(out["reviewable"], 42)
         self.assertEqual(out["withdrawn"], 1)
         self.assertEqual(out["result"], "DISPOSITIONS_OPEN")
 

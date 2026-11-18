@@ -137,12 +137,15 @@ class ContractTests(unittest.TestCase):
         bad["roots"]["native"] = "0" * 64
         self.assertEqual(gate.check_state(bad)[0], "FAIL")
 
-    def test_a_contract_pass_does_not_flip_a_register_gate(self):
+    def test_the_contract_rows_are_release_obligations_not_gates(self):
+        # The gate register carries boolean current-build tests. The operator
+        # export/rollout rows are release obligations in the #51 ledger; a
+        # contract PASS cannot promote them.
         register = json.loads((ROOT / "spec/audit/mainnet-gates.json").read_text())
+        ids = {row["id"] for row in register["gates"]}
         for ident in ("HF51-A-vault-export", "HF51-Batch-state-preservation",
                       "HF51-Release-attachment-upgrade"):
-            row = next(row for row in register["gates"] if row["id"] == ident)
-            self.assertNotEqual(row["status"], "met", ident)
+            self.assertNotIn(ident, ids)
 
     def test_missing_record_is_precondition(self):
         with tempfile.TemporaryDirectory() as tmp:

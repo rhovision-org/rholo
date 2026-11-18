@@ -1,0 +1,65 @@
+{
+  "arms": [],
+  "binary_sha256": "8e4596b71a107a2c0f85efd6db06990ee86f41515b48f9aa31c5bfafaebb5ad8",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 65,
+      "kind": "txt",
+      "path": "raw/binary-sha256.txt",
+      "sha256": "a6b34044c0dc077cef25d06fa63cea1580f0150e6dd56e8d21bea271754fe79f"
+    },
+    {
+      "bytes": 841,
+      "kind": "patch",
+      "path": "raw/mutation.patch",
+      "sha256": "f1dc83a9100874c43385c2154fb9d2b88e792f03dc3b9b06b0e63dac023d2b2e"
+    },
+    {
+      "bytes": 0,
+      "kind": "diff",
+      "path": "raw/pre-mutation.diff",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 103,
+      "kind": "json",
+      "path": "raw/result.json",
+      "sha256": "9438dcea29aefebdb621b5a6f4b7c32345205991034ee3ed22162ce8232c35e2"
+    },
+    {
+      "bytes": 72,
+      "kind": "stderr",
+      "path": "raw/self-test.stderr",
+      "sha256": "c5249c9d83e56bd5a0a8c095f162b7ef5ed101828a9cd3254fc6df4dcec7c117"
+    },
+    {
+      "bytes": 0,
+      "kind": "stdout",
+      "path": "raw/self-test.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 41,
+      "kind": "txt",
+      "path": "raw/source-sha.txt",
+      "sha256": "6c296509c6d5e391a8a59ab4dae8649dab8482c6fe97dd93ba6ef643eadbbdf6"
+    }
+  ],
+  "gate_id": "G520-MIGRATION",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-18T16:42:22+00:00",
+    "tool": "evidence-pack",
+    "version": 2
+  },
+  "redactions": [],
+  "reference": null,
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "8b4c6b21ca9c6eea266a73ce9bb8127f914ff510",
+  "verdict": "FAIL"
+}

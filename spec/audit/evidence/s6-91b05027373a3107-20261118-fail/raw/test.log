@@ -1,0 +1,22 @@
+   Compiling rchain-crypto v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/crypto)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.67s
+     Running unittests src/lib.rs (target/debug/deps/rchain_crypto-c946905b165bdd67)
+
+running 1 test
+test signatures::secp256k1::tests::a_message_that_is_not_32_bytes_is_refused_not_truncated ... FAILED
+
+failures:
+
+---- signatures::secp256k1::tests::a_message_that_is_not_32_bytes_is_refused_not_truncated stdout ----
+
+thread 'signatures::secp256k1::tests::a_message_that_is_not_32_bytes_is_refused_not_truncated' (1459411) panicked at crypto/src/signatures/secp256k1.rs:173:9:
+a verdict over a prefix of the message is not a verdict over the message — this answered true on the pre-fix tree, where the suffix was silently dropped (AUDIT C134)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    signatures::secp256k1::tests::a_message_that_is_not_32_bytes_is_refused_not_truncated
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 107 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p rchain-crypto --lib`

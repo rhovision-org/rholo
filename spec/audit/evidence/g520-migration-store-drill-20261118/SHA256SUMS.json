@@ -1,0 +1,14 @@
+{
+  "raw/binary-sha256.txt": "a6b34044c0dc077cef25d06fa63cea1580f0150e6dd56e8d21bea271754fe79f",
+  "raw/campaign.json": "180fe00663077579625b52f4d421b9f8f524ac9714eb2d8df25eaf7e9f267288",
+  "raw/raw/advanced.json": "4b77c3e9ef0afbaacec09a6a544a5fd7856d95956f3c0f476631ef32c61f3988",
+  "raw/raw/copied-bootstrap.log": "c2f5820200bf3b4d76039f444ee625b779d6c2af678adcc59d3d22ff16a15d55",
+  "raw/raw/copied.json": "4ad6257f930faebafd065c19c9ba9e9533e2a22b0657d525f0f5e9615c8d323a",
+  "raw/raw/fresh.json": "c29090a839c43760b2f3985ed4fe1776e84fcf6fe8b0669608c1251ccb3ee808",
+  "raw/raw/populated.json": "b7392fd5373c3715f56163da5cb06be7521252b4e32c6d5effdaf1ecbbbc0df3",
+  "raw/raw/result.json": "860d394362c42f10b86ae3a87f615afe2c6486998470bee3d3e0bfa1404a5fca",
+  "raw/raw/rollback-bootstrap.log": "ced0d99773ff254581d226af15fe26b5cfc11f86cb78e37f39a04caa7b989d12",
+  "raw/raw/rollback.json": "4ad6257f930faebafd065c19c9ba9e9533e2a22b0657d525f0f5e9615c8d323a",
+  "raw/raw/store-manifests.json": "8941506f9acc1964784de1a21ba016c63272c8a3b95c448294d54e0e2e4aa8fb",
+  "raw/source-sha.txt": "6c296509c6d5e391a8a59ab4dae8649dab8482c6fe97dd93ba6ef643eadbbdf6"
+}

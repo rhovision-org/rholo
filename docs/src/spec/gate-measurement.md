@@ -3,6 +3,10 @@
 A gate is only as strong as its witness. This page is the standard every release gate in
 `spec/audit/mainnet-gates.json` is checked against; the terms are in [Gate terms](gate-terms.md).
 
+**A gate is a boolean test of the current build.** Run the build, get pass or fail. A decision, a
+reviewer's verdict, an unavailable historical archive, or an operator export is not a gate; those
+are tracked separately.
+
 ## What a gate record must name
 
 Every gate names:
@@ -52,8 +56,8 @@ authored disposition, not a measurement. `superseded` → a recorded correction 
 `met` → the witness resolves, the negative control is recorded, the evidence is pinned and every
 dependency is `met`.
 
-The register ships no `met` gate until those conditions hold. `check-mainnet-gates.py
---assert-closeable` exits 3 while any gate is unresolved; that is the expected state today.
+A gate is `met` only when those conditions hold; the register records how many and every other row
+names its blocker. `check-mainnet-gates.py --assert-closeable` exits 3 while any gate is unresolved.
 
 ## Cross-family crosswalk
 

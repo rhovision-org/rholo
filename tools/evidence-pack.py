@@ -20,7 +20,7 @@ What this does, and what it deliberately does not:
 Usage:
   python3 tools/evidence-pack.py pack --run-dir DIR --record spec/audit/evidence/<slug> \\
       --gate-id <id> --verdict PASS|FAIL|INCONCLUSIVE|ABORTED [--source-sha SHA] [--binary-sha256 HEX] [--run-url URL] \\
-      [--locality local-devnet|loopback-diagnostic|off-host-claim|public-live] [--copy|--move]
+      [--locality local-devnet|loopback-diagnostic|off-host-claim|public-live|single-host|live-host|external] [--copy|--move]
   python3 tools/evidence-pack.py verify --record spec/audit/evidence/<slug>
 
 `pack` defaults to copying. `--move` exists for a scratch run directory and is refused when the
@@ -297,7 +297,7 @@ def cmd_pack(args) -> int:
     )
     locality_line = (
         f"**Evidence locality.** `{args.locality}`" if args.locality else
-        "**Evidence locality.** <fill: local-devnet | loopback-diagnostic | off-host-claim | public-live | live-host | external>"
+        "**Evidence locality.** <fill: local-devnet | loopback-diagnostic | off-host-claim | single-host | public-live | live-host | external>"
     )
     (record / "README.md").write_text(
         README_TEMPLATE.format(
@@ -399,7 +399,7 @@ def main() -> int:
     pack.add_argument("--reference-url")
     pack.add_argument("--locality",
                       choices=["local-devnet", "loopback-diagnostic", "off-host-claim",
-                               "public-live", "live-host", "external"])
+                               "single-host", "public-live", "live-host", "external"])
     pack.add_argument("--redact", action="append", default=[])
     pack.add_argument("--move", action="store_true")
     pack.set_defaults(func=cmd_pack)

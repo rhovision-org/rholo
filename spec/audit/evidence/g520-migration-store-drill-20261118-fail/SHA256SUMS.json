@@ -1,0 +1,9 @@
+{
+  "raw/binary-sha256.txt": "a6b34044c0dc077cef25d06fa63cea1580f0150e6dd56e8d21bea271754fe79f",
+  "raw/mutation.patch": "f1dc83a9100874c43385c2154fb9d2b88e792f03dc3b9b06b0e63dac023d2b2e",
+  "raw/pre-mutation.diff": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "raw/result.json": "9438dcea29aefebdb621b5a6f4b7c32345205991034ee3ed22162ce8232c35e2",
+  "raw/self-test.stderr": "c5249c9d83e56bd5a0a8c095f162b7ef5ed101828a9cd3254fc6df4dcec7c117",
+  "raw/self-test.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "raw/source-sha.txt": "6c296509c6d5e391a8a59ab4dae8649dab8482c6fe97dd93ba6ef643eadbbdf6"
+}
