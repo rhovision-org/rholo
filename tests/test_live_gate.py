@@ -121,6 +121,13 @@ def preflight():
             "test_transfer": {"amount": 1},
             "rollback": {"build": "previous"},
             "evidence_destination": "spec/audit/evidence/n487-live-2026-11-14",
+            "deploy_relay": {
+                "mode": "relay",
+                "aliases": list(ALIASES),
+                "destination_port": 40401,
+                "reachability_checked_utc": "2026-11-14T09:55:00Z",
+                "unreachable_aliases": [],
+            },
         },
         "unset_observed": [],
         "unset_operator": [],
@@ -418,6 +425,45 @@ class G1Tests(LiveGateFixture):
         self.assert_status(report, "G1", "INCOMPLETE")
         self.assertEqual(code, 3)
 
+    def test_a_missing_deploy_relay_pin_is_incomplete(self):
+        document = preflight()
+        del document["operator_fields"]["deploy_relay"]
+        self.write_bundle(preflight_doc=document)
+        report, code = self.check()
+        self.assert_status(report, "G1", "INCOMPLETE")
+        self.assertEqual(code, 3)
+
+    def test_an_unreachable_relay_arm_is_a_failure(self):
+        document = preflight()
+        document["operator_fields"]["deploy_relay"]["unreachable_aliases"] = ["v4"]
+        self.write_bundle(preflight_doc=document)
+        report, code = self.check()
+        self.assert_status(report, "G1", "FAIL")
+        self.assertEqual(code, 1)
+
+    def test_deploy_relay_aliases_must_name_the_records(self):
+        document = preflight()
+        document["operator_fields"]["deploy_relay"]["aliases"] = ["v1"]
+        self.write_bundle(preflight_doc=document)
+        report, _ = self.check()
+        self.assert_status(report, "G1", "FAIL")
+
+    def test_selected_artifact_digest_must_be_a_64_hex_digest(self):
+        document = preflight()
+        document["operator_fields"]["selected_artifact_digest"] = "6" * 63
+        self.write_bundle(preflight_doc=document)
+        report, code = self.check()
+        self.assert_status(report, "G1", "FAIL")
+        self.assertEqual(code, 1)
+
+    def test_a_missing_boot_id_is_incomplete(self):
+        document = preflight()
+        del document["validators"][2]["boot_id"]
+        self.write_bundle(preflight_doc=document)
+        report, code = self.check()
+        self.assert_status(report, "G1", "INCOMPLETE")
+        self.assertEqual(code, 3)
+
 
 class G2Tests(LiveGateFixture):
     def test_a_missed_pooled_stage_is_incomplete_not_a_pass(self):
@@ -677,6 +723,12 @@ class G6Tests(LiveGateFixture):
             run_dir=str(self.run_dir), preflight=str(self.preflight_path),
             report=None, verdict=str(self.base / "missing.json")))
         self.assertEqual(code, 3)
+
+
+class ParserTests(unittest.TestCase):
+    def test_the_default_sample_cadence_is_one_second(self):
+        args = gate.build_parser().parse_args(["sample", "--plan", "p", "--out", "o"])
+        self.assertEqual(args.interval, 1.0)
 
 
 class SamplerTests(unittest.TestCase):

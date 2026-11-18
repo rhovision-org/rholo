@@ -1,0 +1,20 @@
+{
+  "deploy_id": "304402206d6247caa9e62a696843ac5e382d214161c6d537db3deedbd9d1459eab65bbe702201b843cb8057c748c86399947927879c6daee0ad5539f6889e68769ddb27eb9a1",
+  "utc": "2026-11-18T21:19:17+00:00",
+  "http_status": 200,
+  "transport": "grpc-rnode-cli",
+  "payload_sha256": "b67b52f649fe72b370b03af6f421623431a1e5995b6213887bea51fe0fb126df",
+  "pooled_observed_on": [
+    "v1",
+    "v2",
+    "v3",
+    "v4"
+  ],
+  "receipts": [
+    {
+      "alias": "v1",
+      "transport": "grpc-rnode-cli",
+      "accepted": true
+    }
+  ]
+}

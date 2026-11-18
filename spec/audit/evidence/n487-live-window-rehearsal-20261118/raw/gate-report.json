@@ -1,0 +1,52 @@
+{
+  "G6": {
+    "reasons": [],
+    "reviewer": null,
+    "rule": "recorded by the named independent reviewer against G1-G5",
+    "status": "PENDING",
+    "verdict": null
+  },
+  "acceptance": false,
+  "binary_sha256": "a353225ee1cb219b249f37d22fc66cccc31b5df2be8b2fcb4f0d1e3b75b3310f",
+  "criteria": {
+    "G1": {
+      "reasons": [],
+      "status": "PASS"
+    },
+    "G2": {
+      "reasons": [],
+      "status": "PASS"
+    },
+    "G3": {
+      "reasons": [],
+      "status": "PASS"
+    },
+    "G4": {
+      "reasons": [
+        "INCOMPLETE: recovery.json (the chosen G4 arm) is absent; A4 read-only alone is not G4"
+      ],
+      "status": "INCOMPLETE"
+    },
+    "G5": {
+      "reasons": [],
+      "status": "PASS"
+    },
+    "G6": {
+      "reasons": [
+        "INCOMPLETE: G6 is not recorded"
+      ],
+      "status": "INCOMPLETE"
+    }
+  },
+  "deploy_id": "304402206d6247caa9e62a696843ac5e382d214161c6d537db3deedbd9d1459eab65bbe702201b843cb8057c748c86399947927879c6daee0ad5539f6889e68769ddb27eb9a1",
+  "details": {},
+  "execution_proven": false,
+  "generated_at_utc": "2026-11-18T21:23:33.957Z",
+  "issue": 584,
+  "overall": "NOT_A_VERDICT",
+  "run_dir": "run",
+  "schema": 1,
+  "source_sha": "4e097cc8d776a2b52cd07aacdd7a09beb9620a1b",
+  "tool": "live-gate",
+  "version": 1
+}

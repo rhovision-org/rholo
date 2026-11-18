@@ -10,8 +10,9 @@ where the pin step goes wrong; this tool makes it one record per host and one me
 **What it is not.** A digest proves the bytes are the bytes, not that the run happened, and nothing
 here is acceptance. The tool records what it observes and *lists every field it could not fill*:
 `--check` fails on any missing §1 field, any disagreement between validators, or too few records.
-The private operator JSON (window, people, transfer, rollback) is supplied by the operator and is
-never committed; `--redact` removes endpoints and host identifiers from the public copy.
+The private operator JSON carries the selected-candidate pins, the deploy-distribution plan, the
+window, people, transfer and rollback; it is supplied by the operator and never committed;
+`--redact` removes endpoints and host identifiers from the public copy.
 
 Usage:
   # on each validator host (the HTTP/admin endpoints must be reachable from it)
@@ -64,12 +65,20 @@ OBSERVED_FIELDS = [
     "finalized_hash",
     "finalized_lag",
     "ready",
+    "boot_id",
 ]
 
 # The §1 fields only the operator can supply. They come from --operator-json and are private.
+# This tuple is mirrored by `tools/live-gate.py::OPERATOR_FIELDS` and the preflight schema; a test
+# keeps the three in step. `source_sha` is deliberately absent: the approved commit is
+# `selected_source_sha`, and the manifest's `source` block is derived from it, so the collector
+# cannot infer an approval from what it observed.
 OPERATOR_FIELDS = [
     "release_tag",
     "release_branch",
+    "selected_source_sha",
+    "selected_artifact_digest",
+    "selected_binary_sha256",
     "window_start_utc",
     "window_end_utc",
     "operator",
@@ -79,12 +88,18 @@ OPERATOR_FIELDS = [
     "test_transfer",
     "rollback",
     "evidence_destination",
+    "deploy_relay",
 ]
 
 REQUIRED_FIELDS = OBSERVED_FIELDS + OPERATOR_FIELDS
 
 # Per-validator fields that must agree across the four (where present); a disagreement is a NO-GO.
-AGREEMENT_FIELDS = ["network_id", "shard_id", "genesis_hash", "genesis_raw_sha256", "binary_sha256"]
+AGREEMENT_FIELDS = ["source_sha", "network_id", "shard_id", "genesis_hash", "genesis_raw_sha256",
+                    "binary_sha256"]
+
+SOURCE_RE = re.compile(r"^[0-9a-f]{40}$")
+DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+RELAY_MODES = ("relay", "four-ingress")
 
 
 def utc_now() -> str:
@@ -101,6 +116,70 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def parse_utc(value):
+    """A timezone-aware timestamp, or None. Naive times are refused (the window is UTC)."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def relay_problem(relay, record_names) -> str | None:
+    """The typed deploy-distribution pin, or a reason it is not one.
+
+    The relay is a *declared* plan, not a network measurement: `merge --check` proves the shape and
+    that the named aliases are the records, and the operator's reachability check is recorded in
+    `reachability_checked_utc` / `unreachable_aliases`.
+    """
+    if not isinstance(relay, dict):
+        return "deploy_relay is not an object"
+    mode = relay.get("mode")
+    if mode not in RELAY_MODES:
+        return f"deploy_relay.mode {mode!r} is not one of {RELAY_MODES}"
+    aliases = relay.get("aliases")
+    if not isinstance(aliases, list) or not all(isinstance(a, str) and a for a in aliases):
+        return "deploy_relay.aliases must be a list of non-empty names"
+    if len(set(aliases)) != len(aliases):
+        return "deploy_relay.aliases contains duplicates"
+    if record_names and set(aliases) != set(record_names):
+        return "deploy_relay.aliases do not name the validator records"
+    if mode == "relay":
+        port = relay.get("destination_port")
+        if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+            return "deploy_relay.destination_port must be a port for mode relay"
+    elif relay.get("destination_port") is not None:
+        return "deploy_relay.destination_port is only for mode relay"
+    if parse_utc(relay.get("reachability_checked_utc")) is None:
+        return "deploy_relay.reachability_checked_utc is absent or unparseable"
+    unreachable = relay.get("unreachable_aliases")
+    if not isinstance(unreachable, list):
+        return "deploy_relay.unreachable_aliases must be a list"
+    if unreachable:
+        return f"deploy_relay.unreachable_aliases is not empty: {unreachable}"
+    return None
+
+
+def operator_problems(operator: dict, record_names: list[str]) -> list[str]:
+    """Format and shape problems in the operator-supplied §1 fields."""
+    problems = []
+    selected_source = operator.get("selected_source_sha")
+    if selected_source and not SOURCE_RE.match(str(selected_source)):
+        problems.append("operator_fields.selected_source_sha is not a 40-hex commit")
+    for field in ("selected_artifact_digest", "selected_binary_sha256"):
+        value = operator.get(field)
+        if value and not DIGEST_RE.match(str(value)):
+            problems.append(f"operator_fields.{field} is not a 64-hex digest")
+    relay = operator.get("deploy_relay")
+    if relay is not None:
+        problem = relay_problem(relay, record_names)
+        if problem:
+            problems.append(f"operator_fields.{problem}")
+    return problems
 
 
 def canonical_bonds(bonds) -> tuple[list[dict], str, int]:
@@ -250,6 +329,7 @@ def local_observation(args) -> dict:
     boot_id = Path("/proc/sys/kernel/random/boot_id")
     if boot_id.is_file():
         observed["boot_id"] = boot_id.read_text().strip()
+        observed["boot_id_source"] = "kernel"
     observed["host"] = platform.node()
     try:
         observed["cpu_count"] = os.cpu_count()
@@ -375,7 +455,8 @@ def observe(args) -> int:
 
     if args.local:
         record["local"] = local_observation(args)
-        for key in ("version", "source_sha", "binary_sha256", "binary_path", "boot_id"):
+        for key in ("version", "source_sha", "binary_sha256", "binary_path", "boot_id",
+                    "boot_id_source"):
             if record.get(key) is None and record["local"].get(key) is not None:
                 record[key] = record["local"][key]
 
@@ -420,13 +501,23 @@ def build_manifest(records: list[dict], operator: dict | None) -> dict:
         else:
             manifest["unset_operator"].append(field)
     for record in records:
+        if not isinstance(record, dict):
+            manifest["errors"].append("a validator record is not an object")
+            continue
         for field in record.get("unset", []):
             entry = f"{record.get('name')}:{field}"
             if entry not in manifest["unset_observed"]:
                 manifest["unset_observed"].append(entry)
-    if operator.get("source_sha"):
+
+    record_names = [
+        record.get("name") for record in records
+        if isinstance(record, dict) and record.get("name")
+    ]
+    operator_errors = operator_problems(operator, record_names)
+    manifest["errors"].extend(operator_errors)
+    if operator.get("selected_source_sha"):
         manifest["source"] = {
-            "sha": operator.get("source_sha"),
+            "sha": operator.get("selected_source_sha"),
             "tag": operator.get("release_tag"),
             "branch": operator.get("release_branch"),
         }
@@ -437,16 +528,43 @@ def build_manifest(records: list[dict], operator: dict | None) -> dict:
         values = {
             record.get(field)
             for record in records
-            if record.get(field) not in (None, "")
+            if isinstance(record, dict) and record.get(field) not in (None, "")
         }
         checks[f"{field}_agreement"] = len(values) <= 1
         if len(values) > 1:
             manifest["errors"].append(f"{field} disagrees across validators: {sorted(values)}")
+    boot_ids = [
+        record.get("boot_id") for record in records
+        if isinstance(record, dict) and record.get("boot_id")
+    ]
+    manifest["synthetic_boot_ids"] = any(
+        isinstance(record, dict) and record.get("boot_id_source") not in (None, "kernel")
+        for record in records
+    )
+    selected_source = operator.get("selected_source_sha")
+    selected_binary = operator.get("selected_binary_sha256")
+    checks["operator_fields_typed"] = not operator_errors
+    checks["distinct_names"] = (
+        len(record_names) == len(records) and len(set(record_names)) == len(record_names)
+    )
+    checks["distinct_boot_ids"] = (
+        len(boot_ids) == len(records) and len(set(boot_ids)) == len(boot_ids)
+    )
+    checks["selected_candidate_matches_validators"] = all(
+        isinstance(record, dict)
+        and (not selected_source or record.get("source_sha") == selected_source)
+        and (not selected_binary or record.get("binary_sha256") == selected_binary)
+        for record in records
+    )
     checks["all_observed_fields"] = not manifest["unset_observed"]
     checks["all_operator_fields"] = not manifest["unset_operator"]
     checks["ok"] = (
         checks["all_observed_fields"]
         and checks["all_operator_fields"]
+        and checks["operator_fields_typed"]
+        and checks["distinct_names"]
+        and checks["distinct_boot_ids"]
+        and checks["selected_candidate_matches_validators"]
         and all(checks.get(f"{field}_agreement", True) for field in AGREEMENT_FIELDS)
         and checks["validator_count"] > 0
     )

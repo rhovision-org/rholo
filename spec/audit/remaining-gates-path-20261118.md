@@ -54,11 +54,18 @@ G1: PASS   G2: PASS   G3: PASS   G4: INCOMPLETE   G5: PASS   G6: PENDING
   `pooled`, `included` and `finalizedSuccess`. A single submission to one node only puts the deploy
   in that node's pool. The devnet's existing `DEVNET_NODE_ENV` switch carries
   `RNODE_DEPLOY_RELAY=1` (`node/src/runtime/node_runtime.rs:2707`); with it, one submission was
-  observed by all four validators at every stage. The live window must enable the relay on all four,
-  or offer the same signed deploy to each node. The runbook's "submit once" wording should name the
-  relay explicitly.
+  observed by all four validators at every stage. The runbook now records the distribution as the
+  typed `deploy_relay` preflight pin (`relay` or `four-ingress`); a missing plan is NO-GO.
 - **1 s cadence catches the stages.** At 5 s, `pooled` and `includedUnfinalized` can be missed; G2
-  then reports INCOMPLETE, and the runbook forbids a second deploy to manufacture the stage.
+  then reports INCOMPLETE, and the runbook forbids a second deploy to manufacture the stage. The
+  runbook now pre-registers 1 s and the sampler's default is 1 s.
+- **The collector now carries the selected candidate.** `release-pin-probe.py::OPERATOR_FIELDS` was
+  missing the three `selected_*` pins that `live-gate.py::check_g1` requires, so a real
+  `merge --check` preflight could never pass G1. The two tools and the preflight schema now share
+  one 15-field list, and the collector rejects a missing/malformed pin, a candidate/record
+  mismatch, duplicate names or boot IDs, and a malformed relay plan. The corrected protocol is
+  recorded in the local rehearsal `spec/audit/evidence/n487-live-window-rehearsal-20261118/`
+  (`local-devnet`, not gate evidence).
 - **G1 needs the operator fields**, including `evidence_destination`; a missing field is INCOMPLETE.
 - **G5** requires every run file to be covered by `SHA256SUMS`; adding `submission.json` after
   sampling breaks it unless the sums are regenerated.

@@ -1,0 +1,15 @@
+{
+  "raw/SHA256SUMS": "fa40138b559128ae888d797fb7890a0fcf11d4f3e693d5a9c108e06c0d86a265",
+  "raw/claims.json": "c06707c5821536cb7942fe9cfa000750bfc93328fb760e465ad8f0fa4b1877de",
+  "raw/gate-report.json": "cac88edf9f46adfaf07538da1685e3f4204af58d1b38411eb41f3a087bd56c4b",
+  "raw/plan.public.json": "64cf2e7720d1813813cecfb6c17bdbbf88ff95fbfc83e2ceb45beb8b82175b90",
+  "raw/pooled-v1.json": "2a345806fbfc8bedf7dcb2d69ea7a1a21fda1c288aeee1e9d8d56b90875365b3",
+  "raw/pooled-v2.json": "2a345806fbfc8bedf7dcb2d69ea7a1a21fda1c288aeee1e9d8d56b90875365b3",
+  "raw/pooled-v3.json": "2a345806fbfc8bedf7dcb2d69ea7a1a21fda1c288aeee1e9d8d56b90875365b3",
+  "raw/pooled-v4.json": "2a345806fbfc8bedf7dcb2d69ea7a1a21fda1c288aeee1e9d8d56b90875365b3",
+  "raw/preflight.manifest.json": "8fbfdd63094847d5f79dd341650d385ede0c6a2f218d78b53b2b18a53e6630fa",
+  "raw/relay-metrics.txt": "8a73d6cb849a9ea3646338c114dc65287b58b2b2929461397c90d7eeb3c2f49f",
+  "raw/run.json": "15aed25c3dd58951b95bc16c0a5894b3a332a49d71924108bd8e1fbf986dddac",
+  "raw/samples.jsonl.gz": "18df2cf998e817aef817732fe45eb30a928ee8e708e2ff43372b18875d609f43",
+  "raw/submission.json": "ef909eb5217178e89f5398cb6fbc42ad64c7a6248f0af09d5bab2deb45daa2a3"
+}

@@ -18,7 +18,7 @@ Config (schema 1):
     "observers": [{"alias": "B", "http": "https://...", "admin": "https://..."}],
     "routes": ["health", "status", "last_finalized", "finality",
                "deploy_status", "deploy_settlement"],
-    "window": {"interval": 5, "duration": 900, "timeout": 5},
+    "window": {"interval": 1, "duration": 900, "timeout": 5},
     "records": {"preflight": "/secure/preflight.json",
                 "submission": "/secure/submission.json",
                 "claims": "/secure/claims.json",
@@ -43,6 +43,9 @@ from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = 1
+# The #584 window's G2 requires every alias to observe `pooled` and `included` directly; the
+# sampler's 5 s fallback missed stages, so the collector's default follows the 1 s cadence.
+DEFAULT_INTERVAL = 1.0
 ROUTES = ("health", "status", "last_finalized", "finality",
           "deploy_status", "deploy_settlement")
 
@@ -118,7 +121,7 @@ def cmd_sample(config: dict, out: Path) -> int:
     try:
         code = live_gate.cmd_sample(SimpleNamespace(
             plan=str(plan_path), out=str(out),
-            interval=float(window.get("interval", 5)),
+            interval=float(window.get("interval", DEFAULT_INTERVAL)),
             duration=float(window.get("duration", 900)),
             timeout=float(window.get("timeout", 5)),
             observers=len(config["observers"]),
