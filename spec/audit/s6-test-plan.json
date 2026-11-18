@@ -253,6 +253,276 @@
       "result_note": "The named test passes on the current build; the mutation loses the flag and the same test fails.",
       "does_not_claim": "A current-build regression witness; it does not replay historical block metadata.",
       "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-0d97bafd93b8fda9",
+      "witness_ref": "casper/src/runtime_manager.rs::a_boundarys_participation_reaches_play_and_replay_alike",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/native_state.rs",
+        "before": "    if behind <= grace {",
+        "after": "    if behind <= i64::MAX {",
+        "description": "Treat every validator as inside the participation grace; the play/replay boundary witness must fail."
+      },
+      "scope_note": "A boundary's participation comes from the last finalised fringe; the participation map reaches play and replay arithmetic alike.",
+      "result_note": "The named test passes on the current build; the mutation removes the participation difference and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the live boundary campaign is a release obligation.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-1587e04b86742658",
+      "witness_ref": "rholang/src/native_state.rs::the_absence_rule_takes_income_only_and_releases_it_on_a_single_block",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/native_state.rs",
+        "before": "    if behind <= grace {\n        10_000",
+        "after": "    if behind <= grace {\n        0",
+        "description": "Withhold the whole participation share; the absence-rule witness must fail."
+      },
+      "scope_note": "A validator's epoch reward is scaled by its participation; the absence slack is the knee and the grace the recovery edge.",
+      "result_note": "The named test passes on the current build; the mutation removes the full share and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the historical replay and rollout are separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-3d5848fba9a91692",
+      "witness_ref": "rholang/src/native_state.rs::the_producer_is_paid_a_share_of_what_the_deploy_burned",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/native_state.rs",
+        "before": "        let share = i64::from(self.params().await?.executor_share);",
+        "after": "        let share = 0i64;",
+        "description": "Pay the producer nothing; the executor-share witness must fail."
+      },
+      "scope_note": "The block's producer is paid a share of what its deploys burned, sized by executor_share.",
+      "result_note": "The named test passes on the current build; the mutation zeroes the share and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the live reward campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-423749eda11ee12d",
+      "witness_ref": "rholang/src/native_state.rs::a_slash_fans_out_to_each_delegators_own_vault_at_every_tier",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/native_state.rs",
+        "before": "            for (delegator, share) in delegators.iter().zip(shares.iter()) {\n                if *share <= 0 {\n                    continue;\n                }\n                let address = self.vault_address(delegator)?;",
+        "after": "            for (delegator, share) in delegators.iter().zip(shares.iter()) {\n                if *share <= 0 {\n                    continue;\n                }\n                let address = self.vault_address(validator)?;",
+        "description": "Pay a delegator's remainder to the validator; the fan-out witness must fail."
+      },
+      "scope_note": "A slash fans the untaken remainder out to each delegator's own vault and clears the delegation ledgers, at every tier.",
+      "result_note": "The named test passes on the current build; the mutation redirects the delegator share and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the live slashing campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-45c551728731f6da",
+      "witness_ref": "rholang/src/native_state.rs::slash_persists_the_pending_map_it_edits",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/native_state.rs",
+        "before": "        pending.remove(validator);\n        let accrued = committed.remove(validator)",
+        "after": "        let accrued = committed.remove(validator)",
+        "description": "Leave a slashed validator in the pending-withdrawal map; the persistence witness must fail."
+      },
+      "scope_note": "A slashed validator that had a staged withdrawal is removed from the pending map.",
+      "result_note": "The named test passes on the current build; the mutation leaves the pending entry and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the live slashing campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-4cefbdfed1e1520b",
+      "witness_ref": "rholang/src/native_state.rs::a_delegation_enlarges_the_pool_and_a_second_one_accumulates",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/native_state.rs",
+        "before": "        ledger.insert(key, balance_plus(held, stake, \"delegated principal\")?);",
+        "after": "        ledger.insert(key, stake);",
+        "description": "Replace instead of accumulate a second delegation; the aggregate-bond witness must fail."
+      },
+      "scope_note": "A validator's bond may be other people's stake: pos:bonds carries the aggregate and pos:delegations attributes it.",
+      "result_note": "The named test passes on the current build; the mutation burns the earlier principal and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the live delegation campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-9297637b16a7e18c",
+      "witness_ref": "rholang/src/native_state.rs::a_boundary_splits_the_reward_across_the_delegations",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/native_state.rs",
+        "before": "            let (shares, operator_share) = split_reward(i64::from(*reward), own, &amounts)?;",
+        "after": "            let (shares, operator_share) = (Vec::new(), i64::from(*reward));",
+        "description": "Pay the whole epoch reward to the operator; the delegated-reward witness must fail."
+      },
+      "scope_note": "An epoch's reward for a key with delegators is split pro-rata, and a delegator's share is credited to pos:delegated_rewards.",
+      "result_note": "The named test passes on the current build; the mutation empties the delegated split and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the live reward campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-957351356597c77d",
+      "witness_ref": "rholang/src/system_processes.rs::pos_fund_pot_moves_the_callers_rev_into_the_staking_vault",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/native_state.rs",
+        "before": "        self.set_vault_balance(&address, remaining);",
+        "after": "        self.set_vault_balance(&address, balance);",
+        "description": "Fund the pot without debiting the caller; the fundPot witness must fail."
+      },
+      "scope_note": "fundPot adds REV to the validators' reward pot with no claim, debiting the caller's own vault.",
+      "result_note": "The named test passes on the current build; the mutation skips the debit and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the live governance campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-9b7d0ce349e22aa8",
+      "witness_ref": "rholang/src/system_processes.rs::rev_vault_transfer_uses_deployer_capability_and_deposit_is_rejected",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/system_processes.rs",
+        "before": "                        Err(illegal_arg(\n                            \"revVault: deposit is not callable (REV is minted at genesis only)\",\n                        ))",
+        "after": "                        Ok(())",
+        "description": "Make the vault deposit callable; the deployer-capability witness must fail."
+      },
+      "scope_note": "Vaults are a balance map keyed by REV address; transfer uses the caller's deployerId and an unauthenticated deposit is refused.",
+      "result_note": "The named test passes on the current build; the mutation accepts the mint path and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the wallet release campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-a2f660ef8d236b06",
+      "witness_ref": "rholang/src/native_state.rs::a_validator_with_delegations_cannot_withdraw",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/native_state.rs",
+        "before": "        if ledger.keys().any(|key| key.operator == *validator) {",
+        "after": "        if false && ledger.keys().any(|key| key.operator == *validator) {",
+        "description": "Allow a withdrawal while delegations are outstanding; the mutual-exclusion witness must fail."
+      },
+      "scope_note": "withdraw refuses while delegations are outstanding, and delegate refuses while a withdrawal is pending.",
+      "result_note": "The named test passes on the current build; the mutation allows the withdrawal and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the live staking campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-d36503203399d227",
+      "witness_ref": "shared/src/refined.rs::non_neg_i64_accepts_non_negative_rejects_negative",
+      "witness_kind": "rust-unit",
+      "package": "rchain-shared",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "shared/src/refined.rs",
+        "before": "                if v >= 0 {",
+        "after": "                if true {",
+        "description": "Accept a negative NonNegI64; the refinement witness must fail."
+      },
+      "scope_note": "bonds_map/stake are carried as NonNegI64; a negative stake is refused by the carrier, not clamped.",
+      "result_note": "The named test passes on the current build; the mutation accepts the negative and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the genesis-hash acceptance is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-a641f6fa8cc3ce54",
+      "witness_ref": "rholang/src/native_state.rs::a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "models/src/block_metadata.rs",
+        "before": "            SlashSeverity::Misdemeanour => 2_500,",
+        "after": "            SlashSeverity::Misdemeanour => 10_000,",
+        "description": "Grade a Misdemeanour as Malicious; the tier witness must fail."
+      },
+      "scope_note": "A slash is graded by the offence; the existing witness takes the worst tier and prices a Misdemeanour at a quarter.",
+      "result_note": "The named test passes on the current build; the mutation prices the tier as the whole bond and the same test fails.",
+      "does_not_claim": "A current-build regression witness for the Misdemeanour tier; the other tier constants are the same table and the live campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-5c91a4e66518c7ec",
+      "witness_ref": "rholang/src/native_state.rs::splitting_a_stake_across_keys_does_not_buy_slots",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/native_state.rs",
+        "before": "        i128::from(i64::from(self.1))",
+        "after": "        1",
+        "description": "Make the active-set draw uniform; the stake-weight witness must fail."
+      },
+      "scope_note": "The active validator set is a stake-weighted draw without replacement, seeded from the epoch.",
+      "result_note": "The named test passes on the current build; the mutation makes the draw per-key uniform and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the live active-set campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-47c941dac413cd3b",
+      "witness_ref": "rholang/src/native_state.rs::an_epoch_length_of_zero_makes_every_block_a_boundary",
+      "witness_kind": "rust-unit",
+      "package": "rchain-rholang",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "rholang/src/native_state.rs",
+        "before": "fn epoch_divisor(params: &PosParams) -> i64 {\n    if params.epoch_length <= 0 {\n        1",
+        "after": "fn epoch_divisor(params: &PosParams) -> i64 {\n    if params.epoch_length <= 0 {\n        0",
+        "description": "Leave the zero epoch unnormalised; the every-block-boundary witness must fail."
+      },
+      "scope_note": "Epoch length 0 (the permissive default) means every block is an epoch boundary.",
+      "result_note": "The named test passes on the current build; the mutation makes the divisor zero and the same test fails.",
+      "does_not_claim": "A current-build regression witness; a live epoch campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "B",
+      "gate_id": "S6-0963a698bc9c4ee4",
+      "witness_ref": "tests/liveness-enforcement.py::self_test",
+      "witness_kind": "python",
+      "package": "rchain-rholang",
+      "inner_test": "a_sustained_absence_jails_without_touching_the_bond",
+      "mutation": {
+        "file": "rholang/src/native_state.rs",
+        "before": "            if !record.is_jailed() && record.absent_boundaries >= jail_after {",
+        "after": "            if false && !record.is_jailed() && record.absent_boundaries >= jail_after {",
+        "description": "Disable the liveness jail; the in-process liveness witness must fail."
+      },
+      "scope_note": "The named liveness artifact runs the current build's in-process jail rule: a sustained absence jails without touching the bond.",
+      "result_note": "The named test passes on the current build; the mutation disables the jail and the inner test fails.",
+      "does_not_claim": "The in-process jail rule only. The devnet/partition arms of tools/liveness-enforcement-drill.py and the live G428-M4 campaign are release obligations.",
+      "timeout_s": 900
     }
   ]
 }

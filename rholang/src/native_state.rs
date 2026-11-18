@@ -4833,6 +4833,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_epoch_length_of_zero_makes_every_block_a_boundary() {
+        // The permissive default is `epoch_length: 0`; the contract's `%`/`/` by it would fault,
+        // so the port normalises it to a one-block epoch. The normalised divisor is the whole
+        // claim: every block is a boundary, and a positive length is unchanged.
+        let params = PosParams::default();
+        assert_eq!(params.epoch_length, 0);
+        assert_eq!(epoch_divisor(&params), 1);
+        for block in [0, 1, 2, 7, 100, i64::MAX] {
+            assert!(is_epoch_boundary(&params, block), "block {block}");
+        }
+        let ten = PosParams {
+            epoch_length: 10,
+            ..PosParams::default()
+        };
+        assert!(!is_epoch_boundary(&ten, 7));
+        assert!(is_epoch_boundary(&ten, 10));
+    }
+
     /// **Law 44 — the epoch gate.** `close_block` changes *nothing* except at a boundary
     /// (`Pos.rhox:517-519`): no reward is committed, no staged withdrawal moves, no claim is paid,
     /// and the active set is not recomputed. Done at a non-boundary, the whole sequence is a no-op
