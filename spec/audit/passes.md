@@ -13741,3 +13741,49 @@ authorization.
 **State.** 439 findings — **0 todo, 2 in progress (C343, C357), 437 done**. 111 registered
 gates, 0 met; 47 dispositions (46 reviewable, 1 withdrawn); register S6 45 reviewable, 3 owes,
 1 superseded; no row is flipped; no release is claimed.
+
+## 179. The Pareto pass: triaging the remaining mediums (2026-11-18)
+
+**Found.** After #606 the open set was dominated by two kinds of item: **external campaigns**
+(multi-host M1/M3/M4, M5's unavailable bundle, G1–G6, operator exports, A1.3) and
+**bookkeeping** (45 per-candidate §6 dispositions, per-witness controls across the register).
+Fourteen fog items had already landed; the remainder mixed cheap Docker-free checks with
+multi-host work. A register defect was also visible: HF51 and S6 rows are built with
+`witness_kind: null`, no control and no evidence, so those families cannot reach `met` without
+a builder change.
+
+**Selected.** The triage (`spec/audit/pareto-remediation-20261118.md`) scores every open item
+on benefit against implementation plus maintenance and selects ten Docker-free fixes:
+one closed deploy-refusal vocabulary; a queue gate that treats an absent or unpinned binding
+as a violation; gRPC interceptor and `resource_exhausted`/`retry-after` tests; an opt-in
+evidence-pack strict mode requiring pins and non-claims; locality private/encoded-address
+detection; a user-deploy M5-04 rejection falsifier; an M5-06 kept-effect readback from the
+produced state; a `stream()` that returns per-peer completion so the unconditional "sent" log
+is gated; a relay capacity-refusal counter; and a real-TCP-listener admission test. Several are
+double Pareto: one vocabulary replaces three prefixes, the stricter verify adds no record, the
+address classes replace string heuristics, and the transport change removes a false claim.
+
+**Dropped.** The C357 git-author check, the F19 key-mismatch startup refusal, the M1 tier/RSS
+records, the multi-host M1/M3/M4 campaigns, direct HTTP, M5's bundle and M5-03, the 45
+per-candidate dispositions and register-wide witness controls, owner `@login` conversion and
+the testnet live rows are recorded as not doing, with the reason (maintenance exceeds marginal
+Docker-free assurance, or the input is unavailable). They remain owed and owned; none is
+waived. The HF51/S6 derived-row `met` capability is a separate governance PR.
+
+**Why believed.** Each selected fix has an attack test first: near-miss refusal strings and a
+duplicate control; an absent binding, a continuation-line `unbounded_channel`, `mpsc::unbounded`
+and an unpinned `channel(n)`; the interceptor over its allowance and the pool-full deploy
+mapping; a missing/malformed pin, a missing non-claims section and a v1 grandfathering control;
+the RFC1918/ULA/link-local/numeric-IPv4 matrix with public controls; a user id in the
+rejection map with the no-entry control; a kept datum read back from `outcome.state`; a
+failing transport mock that must not log "sent"; capacity vs generic relay failures; and a
+held-permit 429 over a real listener. The register check still reports `REGISTER_VALID`, 0 met.
+
+**What it does not claim.** No gate is met; no campaign, export or independent verdict
+happened. The dropped items are owed, not waived: M5's historical bundle remains unavailable,
+C343 remains precondition-only, C357 remains external, and the multi-host arms remain external.
+The code and checker changes do not manufacture evidence.
+
+**State.** 439 findings — **0 todo, 2 in progress (C343, C357), 437 done**. 111 registered
+gates, 0 met; 47 dispositions (46 reviewable, 1 withdrawn); register S6 45 reviewable, 3 owes,
+1 superseded; no row is flipped; no release is claimed.
