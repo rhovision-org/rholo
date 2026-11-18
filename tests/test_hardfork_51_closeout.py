@@ -21,8 +21,9 @@ class CloseoutTests(unittest.TestCase):
     def setUp(self):
         self.payload = copy.deepcopy(LEDGER)
 
-    def inspect(self, verify_git=False):
-        return gate.validate(self.payload, verify_git=verify_git, repo=ROOT)
+    def inspect(self, verify_git=False, require_gates=False):
+        return gate.validate(self.payload, verify_git=verify_git, repo=ROOT,
+                             require_gates=require_gates)
 
     def test_current_tracker_is_not_closeable(self):
         out = self.inspect()
@@ -180,6 +181,32 @@ class CloseoutTests(unittest.TestCase):
         with patch.object(gate, "is_ancestor", return_value=True):
             self.assertEqual(self.inspect(verify_git=True)["result"],
                              "CLOSEOUT_ELIGIBLE_FOR_INDEPENDENT_REVIEW")
+
+    def test_gate_binding_blocks_an_otherwise_eligible_closeout(self):
+        for item in self.payload["items"]:
+            item.clear()
+            item.update(id="placeholder", title="Placeholder", status="deferred",
+                        decision_owner="@jimscarver",
+                        reason="Delay until a separately approved first-release fork design.")
+        for item, ident in zip(self.payload["items"], sorted(gate.REQUIRED)):
+            item["id"] = ident
+            if ident == gate.AUDIT_SIGNOFF_ID:
+                item.update(status="verified",
+                            evidence_url="https://github.com/rhovision-org/rholo/issues/51",
+                            approval_url="https://github.com/rhovision-org/rholo/issues/51",
+                            approved_by="Maintainer", evidence_sha256="a" * 64)
+        self.payload["closure_requested"] = True
+        with patch.object(gate, "is_ancestor", return_value=True):
+            result = self.inspect(verify_git=True, require_gates=True)
+        self.assertEqual(result["result"], "TRACKER_MUST_REMAIN_OPEN")
+        self.assertFalse(result["gates_bound"])
+        self.assertEqual(len(result["gates_unresolved"]), len(gate.REQUIRED))
+
+    def test_missing_gate_register_is_unbound_not_invalid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = gate.validate(self.payload, repo=Path(tmp), require_gates=True)
+        self.assertFalse(result["gates_bound"])
+        self.assertIn("unavailable", result["gates_error"])
 
     def test_cannot_defer_the_exhaustive_audit_itself(self):
         item = next(x for x in self.payload["items"] if x["id"] == gate.AUDIT_SIGNOFF_ID)

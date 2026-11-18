@@ -77,7 +77,32 @@ def is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
     return p.returncode == 0
 
 
-def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None) -> dict:
+def gate_binding(repo: Path | None) -> tuple[bool, list[str], str | None]:
+    """Bind each #51 row to its canonical-register status, when requested.
+
+    This is deliberately non-fatal: a missing or stale register is an unbound
+    gate (the tracker stays open), not a malformed ledger. The default path does
+    not call this, so the existing ledger tests keep their semantics.
+    """
+    root = repo or Path(__file__).resolve().parents[1]
+    path = root / "spec" / "audit" / "mainnet-gates.json"
+    try:
+        document = json.loads(path.read_text())
+    except OSError:
+        return False, [], "mainnet-gates.json unavailable"
+    except (ValueError, TypeError) as exc:
+        return False, [], f"mainnet-gates.json invalid: {exc}"
+    rows = [row for row in document.get("gates", []) if row.get("family") == "HF51"]
+    expected = {"HF51-" + ident.replace(":", "-") for ident in REQUIRED}
+    actual = {row.get("id") for row in rows}
+    if actual != expected:
+        return False, sorted(expected - actual), "HF51 gate coverage mismatch"
+    unresolved = [row["id"] for row in rows if row.get("status") != "met"]
+    return not unresolved, unresolved, None
+
+
+def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None,
+             require_gates: bool = False) -> dict:
     require(isinstance(raw, dict) and type(raw.get("schema")) is int
             and raw["schema"] == 1, "schema 1 required")
     url(raw.get("tracker"), "tracker")
@@ -178,7 +203,13 @@ def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None) -
         require(len(verdicts[key]) == 1,
                 f"{gate}: PASS/FAIL conflict at one source and binary digest "
                 "invalidates the gate; do not re-run to green")
-    closeable = not pending and completed_audit and raw["closure_requested"] is True and verify_git
+    gates_bound = None
+    gates_unresolved: list[str] = []
+    gates_error = None
+    if require_gates:
+        gates_bound, gates_unresolved, gates_error = gate_binding(repo)
+    closeable = (not pending and completed_audit and raw["closure_requested"] is True
+                 and verify_git and (gates_bound is True if require_gates else True))
     return {
         "result": "CLOSEOUT_ELIGIBLE_FOR_INDEPENDENT_REVIEW" if closeable else "TRACKER_MUST_REMAIN_OPEN",
         "merged": len(merged), "deferred": len(deferred), "verified": len(verified),
@@ -186,6 +217,9 @@ def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None) -
         "unresolved_ids": pending,
         "verified_local_git_ancestry": verify_git,
         "closure_requested": raw["closure_requested"],
+        "gates_bound": gates_bound,
+        "gates_unresolved": gates_unresolved,
+        "gates_error": gates_error,
         "limitations": [
             "The authored ledger is not a live status feed",
             "Git ancestry cannot attest a release decision or archival completeness",
@@ -207,7 +241,8 @@ def main() -> int:
     args = parser.parse_args()
     try:
         payload = json.loads(args.ledger.read_text(), object_pairs_hook=no_duplicates)
-        result = validate(payload, verify_git=args.verify_local_git, repo=args.repo)
+        result = validate(payload, verify_git=args.verify_local_git, repo=args.repo,
+                          require_gates=args.assert_closeable)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(json.dumps({"result": "INVALID_LEDGER", "reason": str(exc)}, sort_keys=True))
         return 2
