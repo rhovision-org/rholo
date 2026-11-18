@@ -171,6 +171,37 @@ fn reply_has(reply: &rchain_casper::runtime_manager::CapturedReply, token: &str)
     format!("{:?}", reply.data).contains(token)
 }
 
+/// Merge one block as the whole final scope, reading the caller's rejection map.
+async fn merge_final_scope(
+    rm: &RuntimeManager,
+    base: Blake2b256Hash,
+    block: &Played,
+    rejections: &RejectionsMap,
+) -> rchain_casper::merging::MergeOutcome {
+    let indexes: BTreeMap<BlockHash, std::sync::Arc<BlockIndex>> =
+        BTreeMap::from([(block.hash, std::sync::Arc::new(block.index.clone()))]);
+    let lookup = move |h: BlockHash| {
+        let found = indexes.get(&h).cloned();
+        async move { found.ok_or_else(|| format!("no index for {h:?}")) }
+    };
+    let scope = MergeScope {
+        fork_blocks: BTreeSet::new(),
+        final_scope: BTreeSet::from([block.hash]),
+        conflict_scope: BTreeSet::new(),
+        ancestry: BTreeMap::new(),
+    };
+    MergeScope::merge(
+        &scope,
+        base,
+        rejections,
+        rm.get_history_repo(),
+        &lookup,
+        |_| 0,
+    )
+    .await
+    .expect("the finalised block merges")
+}
+
 /// Merge one block onto its pre-state — the single-block scope the round-trip property is about.
 async fn merge_single_block(
     rm: &RuntimeManager,
@@ -468,6 +499,46 @@ async fn a_final_scope_system_deploy_chain_is_not_rejected() {
             .iter()
             .any(|(_, slot)| slot.1 == anchor_key),
         "the liveness anchor is a native slot the merge must not drop"
+    );
+}
+
+/// **M5-04's user-deploy half.** The merge reads the caller's rejection map and treats absence as
+/// "not rejected"; the system-deploy test beside this one is the inverse control. This is the
+/// falsifier that a user deploy named in the map *is* rejected and that the report names it — the
+/// producer derives that map from `block.rejected_deploys`, and the producer-side test is separate.
+#[tokio::test]
+async fn a_final_scope_user_deploy_named_in_the_rejection_map_is_rejected() {
+    let rm = build_runtime_manager_with_mode(EffectMode::Sequential).await;
+    let start = seed(&rm).await;
+    let block = play(&rm, 0x42, VALIDATORS[0], start, Some(DRAIN), &[]).await;
+    let id = block
+        .index
+        .deploy_chains
+        .iter()
+        .flat_map(|chain| chain.deploys_with_cost.iter())
+        .map(|deploy| deploy.id.clone())
+        .next()
+        .expect("the block carries one user deploy");
+
+    // Control: absence in the map is "not rejected".
+    let control = merge_final_scope(&rm, start, &block, &RejectionsMap::new()).await;
+    assert_eq!(
+        control.report.final_scope_rejected_chains, 0,
+        "the control block is finalised and nothing names it"
+    );
+    assert!(control.report.final_scope_rejected_deploys.is_empty());
+
+    // Falsifier: the same chain, named by the map, is a final-scope rejection.
+    let rejections: RejectionsMap = BTreeMap::from([(block.hash, BTreeSet::from([id.clone()]))]);
+    let outcome = merge_final_scope(&rm, start, &block, &rejections).await;
+    assert_eq!(
+        outcome.report.final_scope_rejected_chains, 1,
+        "a user id in the rejection map must name the chain it rode on"
+    );
+    assert_eq!(
+        outcome.report.final_scope_rejected_deploys,
+        vec![id],
+        "the report names the deploy, not only the chain"
     );
 }
 
