@@ -1942,7 +1942,9 @@ mod tests {
         async fn broadcast(&self, _peers: &[PeerNode], _msg: Protocol) -> Vec<CommErr<()>> {
             Vec::new()
         }
-        async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+        async fn stream(&self, peers: &[PeerNode], _blob: Blob) -> Vec<CommErr<()>> {
+            peers.iter().map(|_| Ok(())).collect()
+        }
     }
 
     /// A block store whose reads fail — the block walk's first store touch is a `contains`, so the

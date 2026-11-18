@@ -132,9 +132,7 @@ fn duplicate_shape(message: &str, suffix: &str) -> bool {
     message
         .strip_prefix("deploy ")
         .and_then(|rest| rest.strip_suffix(suffix))
-        .is_some_and(|id| {
-            !id.is_empty() && !id.bytes().any(|byte| byte.is_ascii_whitespace())
-        })
+        .is_some_and(|id| !id.is_empty() && !id.bytes().any(|byte| byte.is_ascii_whitespace()))
 }
 
 impl fmt::Display for PoolError {
@@ -273,17 +271,17 @@ mod tests {
         // Prose that merely starts with the phrase is not the bound.
         assert_eq!(classify("deploy pool is full of surprises"), None);
         assert_eq!(classify("deploy pool is full: soon"), None);
-        assert_eq!(classify("deploy pool is full: 5 or 10 term bytes in use"), None);
+        assert_eq!(
+            classify("deploy pool is full: 5 or 10 term bytes in use"),
+            None
+        );
         assert_eq!(classify("deploy pool is full: 5 of 10 term bytes"), None);
         // And the phrase inside another sentence is no longer a bound (the old `contains` bug).
         assert_eq!(
             classify("the deploy pool is full: 5 of 10 term bytes in use"),
             None
         );
-        assert_eq!(
-            classify("x holds its share of the deploy pool"),
-            None
-        );
+        assert_eq!(classify("x holds its share of the deploy pool"), None);
         assert_eq!(classify("a deploy rate limit exceeded"), None);
     }
 
@@ -298,7 +296,10 @@ mod tests {
             Some(PoolError::Duplicate)
         );
         assert_eq!(classify("deploy  is already in the pool"), None);
-        assert_eq!(classify("deploy ab12 is already in the pool for ever"), None);
+        assert_eq!(
+            classify("deploy ab12 is already in the pool for ever"),
+            None
+        );
         assert!(!PoolError::Duplicate.is_bounded());
     }
 

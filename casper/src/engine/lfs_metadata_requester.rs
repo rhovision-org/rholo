@@ -742,7 +742,9 @@ mod tests {
             Vec::new()
         }
 
-        async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+        async fn stream(&self, peers: &[PeerNode], _blob: Blob) -> Vec<CommErr<()>> {
+            peers.iter().map(|_| Ok(())).collect()
+        }
     }
 
     /// **A mature chain is fetched in height windows, not one generation per round.** The walk's
@@ -805,7 +807,9 @@ mod tests {
             async fn broadcast(&self, _peers: &[PeerNode], _msg: Protocol) -> Vec<CommErr<()>> {
                 Vec::new()
             }
-            async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+            async fn stream(&self, peers: &[PeerNode], _blob: Blob) -> Vec<CommErr<()>> {
+                peers.iter().map(|_| Ok(())).collect()
+            }
         }
 
         let local = peer("local");

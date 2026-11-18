@@ -1179,8 +1179,7 @@ mod tests {
     async fn a_pool_bound_is_resource_exhausted_and_a_malformed_refusal_is_a_message() {
         use rchain_casper::pool::PoolError;
         let (svc, _) = deploy_service(|stub| {
-            stub.deploy_refusal =
-                Some(PoolError::byte_full_message(10, 10));
+            stub.deploy_refusal = Some(PoolError::byte_full_message(10, 10));
         });
         let error = <DeployGrpcServiceV1 as DeployService>::do_deploy(
             &svc,

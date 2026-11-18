@@ -153,7 +153,7 @@ impl TransportLayer for GrpcTransportClient {
         sends.collect().await
     }
 
-    async fn stream(&self, peers: &[PeerNode], blob: Blob) {
+    async fn stream(&self, peers: &[PeerNode], blob: Blob) -> Vec<CommErr<()>> {
         let tasks: Vec<_> = peers
             .iter()
             .map(|peer| {
@@ -171,18 +171,26 @@ impl TransportLayer for GrpcTransportClient {
                     } else {
                         first
                     };
-                    if let Err(error) = result {
+                    if let Err(error) = &result {
                         eprintln!(
                             "gRPC stream {} to {peer} failed after bounded retry: {error:?}",
                             blob.packet.type_id
                         );
                     }
+                    result
                 })
             })
             .collect();
+        let mut outcomes = Vec::with_capacity(tasks.len());
         for task in tasks {
-            let _ = task.await;
+            outcomes.push(match task.await {
+                Ok(result) => result,
+                Err(join) => Err(CommError::UnknownCommError(format!(
+                    "stream task failed: {join}"
+                ))),
+            });
         }
+        outcomes
     }
 }
 
@@ -349,7 +357,13 @@ mod tests {
         };
 
         // One caller invocation, through actual mutually authenticated RPCs.
-        client.stream(&[remote], blob.clone()).await;
+        let outcomes = client.stream(&[remote], blob.clone()).await;
+        assert_eq!(outcomes.len(), 1, "one outcome per input peer");
+        assert_eq!(
+            outcomes[0].is_ok(),
+            failures < 2,
+            "the bounded retry reports completion after one failure and a failure after two"
+        );
         assert_eq!(
             attempts.load(Ordering::SeqCst),
             if failures == 0 { 1 } else { 2 }

@@ -792,7 +792,13 @@ mod stream_tests {
         ) -> Vec<rchain_comm::errors::CommErr<()>> {
             Vec::new()
         }
-        async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+        async fn stream(
+            &self,
+            peers: &[PeerNode],
+            _blob: Blob,
+        ) -> Vec<rchain_comm::errors::CommErr<()>> {
+            peers.iter().map(|_| Ok(())).collect()
+        }
     }
 
     /// A state with the path still **`Init`** — what `request_next` requests. (`get_next` selects
@@ -1234,7 +1240,13 @@ mod stream_tests {
             Vec::new()
         }
 
-        async fn stream(&self, _peers: &[PeerNode], _blob: Blob) {}
+        async fn stream(
+            &self,
+            peers: &[PeerNode],
+            _blob: Blob,
+        ) -> Vec<rchain_comm::errors::CommErr<()>> {
+            peers.iter().map(|_| Ok(())).collect()
+        }
     }
 
     /// Two pages of one walk: page `a` answers the root and names page `b`'s path as its `last_path`,

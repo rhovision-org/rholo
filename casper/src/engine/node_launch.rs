@@ -327,9 +327,17 @@ async fn create_store_broadcast_genesis(
     {
         log.warn(source, &format!("could not publish the genesis root: {e}"));
     }
-    comm_util
+    for outcome in comm_util
         .stream_to_peers(&FinalizedFringeSerde.mk_packet(&genesis_fringe), None)
-        .await;
+        .await
+    {
+        if let Err(error) = outcome {
+            log.warn(
+                source,
+                &format!("the genesis fringe stream failed: {error:?}"),
+            );
+        }
+    }
     Ok(genesis_block)
 }
 

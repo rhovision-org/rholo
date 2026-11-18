@@ -174,10 +174,7 @@ pub async fn serve_deploy(
         MAX_TRACKED_PEERS,
     ));
     let server = DeployServiceServer::new(deploy).max_decoding_message_size(max_message_size);
-    let service = InterceptedService::new(
-        server,
-        DeployIngressGuard { limiter },
-    );
+    let service = InterceptedService::new(server, DeployIngressGuard { limiter });
 
     // **Served from an accepted stream, so the peer address reaches the interceptor.** `serve` binds
     // its own listener and hands the service nothing but the request; `Connected::connect_info` is the
@@ -269,8 +266,13 @@ mod tests {
             request.extensions_mut().insert(PeerAddress(Some(alice)));
             request
         };
-        assert!(guard.call(request()).is_ok(), "the first call is within the allowance");
-        let error = guard.call(request()).expect_err("the second call is over it");
+        assert!(
+            guard.call(request()).is_ok(),
+            "the first call is within the allowance"
+        );
+        let error = guard
+            .call(request())
+            .expect_err("the second call is over it");
         assert_eq!(error.code(), ::tonic::Code::ResourceExhausted);
         assert_eq!(error.message(), rchain_casper::pool::RATE_LIMITED_MESSAGE);
     }

@@ -632,7 +632,13 @@ mod tests {
             self.broadcasts.lock().unwrap().push((peers.to_vec(), msg));
             peers.iter().map(|_| Ok(())).collect()
         }
-        async fn stream(&self, _peers: &[PeerNode], _blob: rchain_comm::transport::chunker::Blob) {}
+        async fn stream(
+            &self,
+            _peers: &[PeerNode],
+            _blob: rchain_comm::transport::chunker::Blob,
+        ) -> Vec<CommErr<()>> {
+            Vec::new()
+        }
     }
 
     fn conf(local: &PeerNode) -> RPConf {
