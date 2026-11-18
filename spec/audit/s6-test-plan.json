@@ -1,0 +1,258 @@
+{
+  "schema": 1,
+  "date": "20261118",
+  "entries": [
+    {
+      "batch": "A",
+      "gate_id": "S6-002725fa6a14a386",
+      "witness_ref": "block-storage/src/dag/liveness.rs::n8_proposer_outlier_cannot_set_the_staleness_clock",
+      "witness_kind": "rust-unit",
+      "package": "rchain-block-storage",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "block-storage/src/dag/liveness.rs",
+        "before": "                .is_some_and(|h| heights_behind(tip, *h) <= window)",
+        "after": "                .is_some_and(|h| heights_behind(tip, *h) <= i64::MAX)",
+        "description": "Let every bonded sender set the staleness clock; the live-weight-set witness must fail."
+      },
+      "scope_note": "The finality gate's partition is the live weight set; an outlier proposer outside the live weight must not set the staleness clock.",
+      "result_note": "The named test passes on the current build; the mutation makes the same test fail.",
+      "does_not_claim": "A current-build regression witness; not a historical replay or a coordinated rollout.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-0879bf292d995e9f",
+      "witness_ref": "casper/src/dag.rs::insert_rejects_equivocation_same_seq_num",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "casper/src/dag.rs",
+        "before": "            // enter the DAG nor stall finalization.\n            let equivocating = {",
+        "after": "            // enter the DAG nor stall finalization.\n            let equivocating = false; {",
+        "description": "Disable the H-1 insert check; the equivocation witness must fail."
+      },
+      "scope_note": "An equivocating block is refused at insert (H-1). The store-restore arm (H1c) is a sibling test, not this witness.",
+      "result_note": "The named test passes on the current build; the mutation admits the equivocating block and the same test fails.",
+      "does_not_claim": "A current-build regression witness for the insert arm; the restore arm and a live rollout remain separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-0f37971fba3a1c92",
+      "witness_ref": "casper/src/validate.rs::a_deploy_that_its_named_key_did_not_sign_is_refused",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "casper/src/validate.rs",
+        "before": "    if b.state.deploys.iter().all(|d| d.deploy.verify_signature()) {",
+        "after": "    if true || b.state.deploys.iter().all(|d| d.deploy.verify_signature()) {",
+        "description": "Accept every deploy signature; the forged-deploy witness must fail."
+      },
+      "scope_note": "The block path verifies every deploy's signature; a deploy not signed by its named key is refused.",
+      "result_note": "The named test passes on the current build; the mutation removes the check and the same test fails.",
+      "does_not_claim": "A current-build regression witness; no historical replay or client rollout is claimed.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-4a1606a2375f4e97",
+      "witness_ref": "casper/src/validate.rs::equivocation_evidence_is_proved_only_by_a_signed_conflict",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "casper/src/validate.rs",
+        "before": "    if !proved.is_signed_by(offender) {",
+        "after": "    if false && !proved.is_signed_by(offender) {",
+        "description": "Skip the offender's signature re-check; the signed-conflict witness must fail."
+      },
+      "scope_note": "Equivocation evidence is proved only by a signed conflict; an unsigned or wrongly signed proof is refused.",
+      "result_note": "The named test passes on the current build; the mutation accepts the unproved evidence and the same test fails.",
+      "does_not_claim": "A current-build regression witness for the proof check; wire carriage and a live restart remain separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-5896ceb7cf2b4804",
+      "witness_ref": "casper/src/validate.rs::a_failed_parent_still_sets_its_childs_height",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "casper/src/validate.rs",
+        "before": "        max_block_number = max_block_number.max(i64::from(meta.block_num));",
+        "after": "        if !meta.validation_failed {\n            max_block_number = max_block_number.max(i64::from(meta.block_num));\n        }",
+        "description": "Skip failed parents in the height maximum; the failed-parent witness must fail."
+      },
+      "scope_note": "The height maximum counts failed justifications; a failed parent still sets the child's bound.",
+      "result_note": "The named test passes on the current build; the mutation reintroduces the skip and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the historical fork-point rollout is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-83825d04fdb174bc",
+      "witness_ref": "casper/src/dag.rs::h1b_a_failed_parent_above_the_childs_height_is_refused",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "casper/src/validate.rs",
+        "before": "        if i64::from(meta.block_num) >= i64::from(b.block_number) {",
+        "after": "        if false && i64::from(meta.block_num) >= i64::from(b.block_number) {",
+        "description": "Disable the H1b descent bound; the failed-parent-above-child witness must fail."
+      },
+      "scope_note": "A resolved parent at or above the block's number is refused (H1b), failed parents included.",
+      "result_note": "The named test passes on the current build; the mutation admits the block and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the historical replay and rollout remain separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-a03b7b63647b8746",
+      "witness_ref": "casper/src/validate.rs::a_block_justifying_more_parents_than_the_network_allows_is_refused",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "casper/src/validate.rs",
+        "before": "    if max_number_of_parents <= 0 || b.justifications.len() as u128 <= max_number_of_parents as u128",
+        "after": "    if max_number_of_parents <= 0 || b.justifications.len() as u128 < max_number_of_parents as u128",
+        "description": "Change the parent bound from at-most to fewer-than; the over-limit witness must fail."
+      },
+      "scope_note": "A block's justification set is bounded by max-number-of-parents and refused on the receiving side.",
+      "result_note": "The named test passes on the current build; the mutation admits one extra parent and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the committed-bound rollout is a separate release obligation.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-aff8e713fee0981e",
+      "witness_ref": "block-storage/src/dag/finalizer.rs::check_min_messages_needs_all_bonded_senders",
+      "witness_kind": "rust-unit",
+      "package": "rchain-block-storage",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "block-storage/src/dag/finalizer.rs",
+        "before": "        min_msgs.len() == bonds_map.len() && minimum_senders == bonded_senders",
+        "after": "        min_msgs.len() == bonds_map.len() && minimum_senders.len() == bonded_senders.len()",
+        "description": "Compare counts instead of sender sets; the non-bonded-sender witness must fail."
+      },
+      "scope_note": "The minimum-message sender set must equal the bonded set, not merely match its size.",
+      "result_note": "The named test passes on the current build; the mutation accepts a non-bonded sender and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the live finality campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-de66e3b5b934584f",
+      "witness_ref": "block-storage/src/dag/finalizer.rs::the_seer_test_is_containment_of_the_partition",
+      "witness_kind": "rust-unit",
+      "package": "rchain-block-storage",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "block-storage/src/dag/finalizer.rs",
+        "before": "    !seen_by.is_empty() && seen_by.values().all(|v| must_be_seen.is_subset(v))",
+        "after": "    !seen_by.is_empty() && seen_by.values().all(|v| v == must_be_seen)",
+        "description": "Require equality instead of containment; the non-live-seer witness must fail."
+      },
+      "scope_note": "The full-partition filter is containment, not equality: a seer outside the partition does not invalidate support.",
+      "result_note": "The named test passes on the current build; the mutation rejects the containing seer set and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the partition campaign is separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-f4e50770cc349ad3",
+      "witness_ref": "node/tests/lean_stake_corpus.rs::the_node_agrees_with_the_model_on_every_supermajority_pair",
+      "witness_kind": "rust-integration",
+      "package": "rchain-node",
+      "cargo_target": "lean_stake_corpus",
+      "mutation": {
+        "file": "sdk/src/consensus.rs",
+        "before": "    stake * 3 > total_stake * 2",
+        "after": "    stake * 3 >= total_stake * 2",
+        "description": "Treat exactly two thirds as a supermajority; the boundary-corpus witness must fail."
+      },
+      "scope_note": "The supermajority predicate is the exact integer 3*stake > 2*total; equality is not a supermajority.",
+      "result_note": "The named corpus test passes on the current build; the mutation flips the exact-boundary case and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the live N=8 finality campaign is separate (TA-C1).",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-fb6f884e759d7af7",
+      "witness_ref": "casper/src/validate.rs::a_block_timestamp_is_never_a_validity_input",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "casper/src/validate.rs",
+        "before": "    if let Err(status) = justification_regressions(dag, block).await? {",
+        "after": "    if block.timestamp == 0 {\n        return Ok(Err(BlockStatus::InvalidBlockNumber));\n    }\n    if let Err(status) = justification_regressions(dag, block).await? {",
+        "description": "Make the header time a validity input; the timestamp-independence witness must fail."
+      },
+      "scope_note": "The parent-relative timestamp bound is retired; header time is informational and must not change a verdict.",
+      "result_note": "The named test passes on the current build; the injected stamp-0 refusal changes the verdict and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the old/new validator comparison and coordinated activation remain release obligations.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-7b9fe37e74b318db",
+      "witness_ref": "casper/src/genesis/mod.rs::the_validity_bounds_are_committed_in_the_genesis_params",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "casper/src/genesis/mod.rs",
+        "before": "        min_phlo_price: proof_of_stake.min_phlo_price,",
+        "after": "        min_phlo_price: NonNegI64::zero(),",
+        "description": "Drop the committed fee floor; the genesis-params witness must fail."
+      },
+      "scope_note": "The fee floor and parent bound are committed in the genesis params, not only in node config.",
+      "result_note": "The named test passes on the current build; the mutation makes the differing floors encode identically and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the genesis-hash/config/restore acceptance is a release obligation.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-c59c38eeab097a7b",
+      "witness_ref": "casper/src/genesis/mod.rs::the_multisig_keys_are_in_the_trusted_stakeholder_set",
+      "witness_kind": "rust-unit",
+      "package": "rchain-casper",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "casper/src/genesis/mod.rs",
+        "before": "            trusted.insert(validator);",
+        "after": "            let _ = validator;",
+        "description": "Stop inserting the configured multisig keys; the trusted-set witness must fail."
+      },
+      "scope_note": "The Coop multisig public keys are read into the genesis trusted stakeholder set alongside the bond holders.",
+      "result_note": "The named test passes on the current build; the mutation leaves the multisig key out and the same test fails.",
+      "does_not_claim": "A current-build regression witness; the governance ceremony and key custody are separate.",
+      "timeout_s": 600
+    },
+    {
+      "batch": "A",
+      "gate_id": "S6-d39645b95737497d",
+      "witness_ref": "models/src/block_metadata.rs::a_slashable_flag_survives_the_store_round_trip",
+      "witness_kind": "rust-unit",
+      "package": "rchain-models",
+      "cargo_target": "lib",
+      "mutation": {
+        "file": "models/src/block_metadata.rs",
+        "before": "            slashable: self.slashable,",
+        "after": "            slashable: false,",
+        "description": "Drop the slashable flag from the proto encoding; the round-trip witness must fail."
+      },
+      "scope_note": "The node's block metadata carries the slashable flag (proto field 22); it must survive the store round trip.",
+      "result_note": "The named test passes on the current build; the mutation loses the flag and the same test fails.",
+      "does_not_claim": "A current-build regression witness; it does not replay historical block metadata.",
+      "timeout_s": 600
+    }
+  ]
+}

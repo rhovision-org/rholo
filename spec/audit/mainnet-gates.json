@@ -283,14 +283,6 @@
         {
           "criterion": "the selected candidate is an M1 prerequisite",
           "id": "G428-M1"
-        },
-        {
-          "criterion": "the v3 statement is a selected-candidate prerequisite",
-          "id": "S6-PR600-CHECKPOINT-V3"
-        },
-        {
-          "criterion": "the trimmed rule is a selected-candidate prerequisite",
-          "id": "S6-PR600-MERGE-FORK"
         }
       ],
       "sole_evidence": "live-host",
@@ -1413,90 +1405,6 @@
       "witness_kind": null,
       "witness_ref": null,
       "witness_scope": null
-    },
-    {
-      "criteria_sha256": "3b8ad74fe5b6376159d7ecad7a322555e5145c5f14df6d34e47113433a18fb44",
-      "depends_on": [
-        "G584-G1"
-      ],
-      "docker_free": true,
-      "does_not_claim": "The prose correction is not an independent safety attestation.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
-      },
-      "fail_condition": "The rule remains prose-only with no row digest, per-candidate disposition or compatibility decision, or a v2/v3 cold join is mixed.",
-      "family": "S6",
-      "id": "S6-PR600-CHECKPOINT-V3",
-      "laws": [
-        "117"
-      ],
-      "locality": "integration",
-      "negative_control": "A v2/v3 cold-join mix must fail; a prose-only correction must not pass.",
-      "observable": "The checkpoint statement's fringeHeadersRoot, the joiner's verification, and the cold-join input set.",
-      "owner": "Jim / release coordination",
-      "pass_condition": "A source-pinned replay/compatibility acceptance for checkpoint v3: a v2 and v3 node are not mixed across a cold join; the join input set is the v3 set; an absent root is the legitimate v2 statement.",
-      "related": [
-        {
-          "criterion": "the v3 statement is a selected-candidate prerequisite",
-          "id": "G584-G1"
-        }
-      ],
-      "sole_evidence": "none",
-      "source_label": "passes.md:409-417 (2026-11-17 correction)",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "070989774347fc051909f261af4b9cf0738370c0135764d5217b77b443dcdb08",
-      "source_url": "https://github.com/rhovision-org/rholo/blob/dd6a25d69128375d83b7a7701c169ce672e57536/spec/audit/passes.md#L409-L417",
-      "status": "reviewable",
-      "status_reason": "Prose-only correction; not in the 94-row inventory or a per-candidate disposition.",
-      "title": "Checkpoint v3 (Law 117): fringeHeadersRoot sync-protocol rule",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": "integration"
-    },
-    {
-      "criteria_sha256": "aa548027f07c173dd5425f828a5338eea52a49a0a859e50de4aa2d5b05e13656",
-      "depends_on": [
-        "G584-G1"
-      ],
-      "docker_free": true,
-      "does_not_claim": "The prose correction is not an independent safety attestation.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
-      },
-      "fail_condition": "The widened-scope block is accepted by the trimmed rule without a compatibility decision, or the rule remains prose-only.",
-      "family": "S6",
-      "id": "S6-PR600-MERGE-FORK",
-      "laws": [
-        "115"
-      ],
-      "locality": "external",
-      "negative_control": "A widened-scope block must be rejected by the trimmed rule; a mixed-version node set must fail.",
-      "observable": "Block acceptance under the trimmed scope, the dependency closure, and the lockstep/continuation decision.",
-      "owner": "Jim / release coordination",
-      "pass_condition": "A source-pinned replay/compatibility acceptance for the trimmed conflict-scope rule; all validators upgrade in lockstep, or the owner records an accepted-history compatibility decision or coordinated new genesis.",
-      "related": [
-        {
-          "criterion": "the trimmed rule is a selected-candidate prerequisite",
-          "id": "G584-G1"
-        }
-      ],
-      "sole_evidence": "none",
-      "source_label": "passes.md:418-426 (2026-11-17 correction)",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "070989774347fc051909f261af4b9cf0738370c0135764d5217b77b443dcdb08",
-      "source_url": "https://github.com/rhovision-org/rholo/blob/dd6a25d69128375d83b7a7701c169ce672e57536/spec/audit/passes.md#L418-L426",
-      "status": "reviewable",
-      "status_reason": "Prose-only correction; not in the 94-row inventory or a per-candidate disposition.",
-      "title": "Merge fork rule (Law 115): trimmed conflict scope",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": "integration"
     },
     {
       "depends_on": [],

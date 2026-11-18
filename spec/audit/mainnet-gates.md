@@ -6,7 +6,7 @@ Do not edit by hand; the checker compares this file with the JSON.
 - register dev: `dd6a25d69128375d83b7a7701c169ce672e57536`
 - ledger source dev: `e33125f65a95cff4f12baf8139a7361c7d158e43`
 - generated: 2026-11-18
-- gates: 61
+- gates: 59
 - met: 5
 
 | gate | family | status | title | locality | owner |
@@ -49,8 +49,6 @@ Do not edit by hand; the checker compares this file with the JSON.
 | `S6-9297637b16a7e18c` | S6 | **reviewable** | **An epoch's reward for a key with delegators is split pro-rata, and a delegator's share is credited to `pos:delegated_r | unclassified | Jim / independent audit reviewer |
 | `S6-957351356597c77d` | S6 | **reviewable** | **`fundPot` adds REV to the validators' reward pot with no claim** — `rho:rchain:pos!("fundPot", deployerId, amount, ret | unclassified | Jim / independent audit reviewer |
 | `S6-9b7d0ce349e22aa8` | S6 | **reviewable** | Vaults are a **balance map keyed by REV address**; `transfer` takes the caller's `deployerId` rather than a minted purse | unclassified | Jim / independent audit reviewer |
-| `S6-PR600-CHECKPOINT-V3` | S6 | **reviewable** | Checkpoint v3 (Law 117): fringeHeadersRoot sync-protocol rule | integration | Jim / release coordination |
-| `S6-PR600-MERGE-FORK` | S6 | **reviewable** | Merge fork rule (Law 115): trimmed conflict scope | external | Jim / release coordination |
 | `S6-a03b7b63647b8746` | S6 | **reviewable** | **A block's justification set is bounded by `max-number-of-parents`, refused on the receiving side** (`casper/src/valida | unclassified | Jim / independent audit reviewer |
 | `S6-a2f660ef8d236b06` | S6 | **reviewable** | **`withdraw` refuses while delegations are outstanding, and `delegate` refuses while a withdrawal is pending** — so a va | unclassified | Jim / independent audit reviewer |
 | `S6-a641f6fa8cc3ce54` | S6 | **reviewable** | **A slash is graded by the offence** — `Malicious` takes everything the validator holds in the PoS system, `Misdemeanour | unclassified | Jim / independent audit reviewer |
@@ -76,5 +74,5 @@ Do not edit by hand; the checker compares this file with the JSON.
 Status is a disposition of the evidence, not a release claim. A gate is `met` only
 when its witness resolves, its negative control is recorded, its evidence is pinned,
 and every dependency is satisfied.
-The register records **5 of 61 gates `met`**; every other
+The register records **5 of 59 gates `met`**; every other
 gate is open with a stated reason.
