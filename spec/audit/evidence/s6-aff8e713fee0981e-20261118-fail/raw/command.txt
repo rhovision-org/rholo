@@ -1,0 +1,1 @@
+cargo test -p rchain-block-storage --lib check_min_messages_needs_all_bonded_senders

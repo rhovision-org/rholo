@@ -1,0 +1,1 @@
+cargo test -p rchain-rholang --lib the_producer_is_paid_a_share_of_what_the_deploy_burned

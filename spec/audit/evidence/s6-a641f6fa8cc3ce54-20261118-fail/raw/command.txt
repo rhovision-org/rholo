@@ -1,0 +1,1 @@
+cargo test -p rchain-rholang --lib a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier

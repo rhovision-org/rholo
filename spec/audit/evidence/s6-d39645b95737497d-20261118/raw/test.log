@@ -1,0 +1,8 @@
+
+running 1 test
+test block_metadata::tests::a_slashable_flag_survives_the_store_round_trip ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 192 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running unittests src/lib.rs (target/debug/deps/rchain_models-ba348ab9afbaf01c)

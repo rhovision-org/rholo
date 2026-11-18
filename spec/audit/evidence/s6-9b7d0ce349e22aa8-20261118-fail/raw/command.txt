@@ -1,0 +1,1 @@
+cargo test -p rchain-rholang --lib rev_vault_transfer_uses_deployer_capability_and_deposit_is_rejected

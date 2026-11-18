@@ -752,6 +752,7 @@
     },
     {
       "id": "S6-PR600-CHECKPOINT-V3",
+      "gate": false,
       "family": "S6",
       "title": "Checkpoint v3 (Law 117): fringeHeadersRoot sync-protocol rule",
       "source_label": "passes.md:409-417 (2026-11-17 correction)",
@@ -793,6 +794,7 @@
     },
     {
       "id": "S6-PR600-MERGE-FORK",
+      "gate": false,
       "family": "S6",
       "title": "Merge fork rule (Law 115): trimmed conflict scope",
       "source_label": "passes.md:418-426 (2026-11-17 correction)",

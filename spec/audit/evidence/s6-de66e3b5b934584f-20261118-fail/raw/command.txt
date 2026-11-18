@@ -1,0 +1,1 @@
+cargo test -p rchain-block-storage --lib the_seer_test_is_containment_of_the_partition

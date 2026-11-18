@@ -1,0 +1,1 @@
+cargo test -p rchain-casper --lib a_negative_cost_is_refused_before_it_becomes_a_pcost

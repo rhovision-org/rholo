@@ -1,0 +1,13 @@
+diff --git a/rholang/src/accounting.rs b/rholang/src/accounting.rs
+index f1d06a99d..eb824cdf3 100644
+--- a/rholang/src/accounting.rs
++++ b/rholang/src/accounting.rs
+@@ -208,7 +208,7 @@ impl Costs {
+     /// `bigSet`. Charging the sum is what makes the charge symmetric in the operands, which is the
+     /// property the Lean model states (`Rchain.unionCost_symmetric`).
+     pub fn union_cost(left: i64, right: i64) -> Cost {
+-        Self::canonicalization_cost(left.saturating_add(right))
++        Self::canonicalization_cost(right)
+     }
+     pub fn list_append_cost(size: i64) -> Cost {
+         Cost::new(size, "list append")

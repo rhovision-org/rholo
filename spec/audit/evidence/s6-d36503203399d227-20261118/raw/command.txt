@@ -1,0 +1,1 @@
+cargo test -p rchain-shared --lib non_neg_i64_accepts_non_negative_rejects_negative

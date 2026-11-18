@@ -1,0 +1,13 @@
+diff --git a/casper/src/genesis/mod.rs b/casper/src/genesis/mod.rs
+index 2a5315bc7..a8dda3a0b 100644
+--- a/casper/src/genesis/mod.rs
++++ b/casper/src/genesis/mod.rs
+@@ -66,7 +66,7 @@ pub fn build_pos_genesis(
+     let mut trusted: BTreeSet<ModelsValidator> = bonds.keys().copied().collect();
+     for key in &proof_of_stake.pos_multi_sig_public_keys {
+         if let Some(validator) = parse_validator_hex(key) {
+-            trusted.insert(validator);
++            let _ = validator;
+         }
+     }
+     let params = PosParams {

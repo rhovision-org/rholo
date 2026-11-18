@@ -1,0 +1,15 @@
+diff --git a/casper/src/runtime_manager.rs b/casper/src/runtime_manager.rs
+index 2f710baf2..c1d0a2832 100644
+--- a/casper/src/runtime_manager.rs
++++ b/casper/src/runtime_manager.rs
+@@ -2435,9 +2435,7 @@ impl RuntimeManager {
+ /// refused here rather than wrapping into a huge positive cost.
+ fn pcost_from_i64(value: i64) -> Result<PCost, RuntimeRunError> {
+     Ok(PCost {
+-        cost: u64::try_from(value).map_err(|_| {
+-            RuntimeRunError::Other(format!("deploy cost is negative: {value}"))
+-        })?,
++        cost: value as u64,
+     })
+ }
+ 

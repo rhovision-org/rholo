@@ -1,0 +1,1 @@
+cargo test -p rchain-rholang --lib collection_and_censure_charges_are_the_models

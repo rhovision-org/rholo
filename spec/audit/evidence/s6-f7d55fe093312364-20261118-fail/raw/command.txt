@@ -1,0 +1,1 @@
+cargo test -p rchain-casper --lib two_branch_blocks_writing_one_native_slot_do_not_panic_the_merge

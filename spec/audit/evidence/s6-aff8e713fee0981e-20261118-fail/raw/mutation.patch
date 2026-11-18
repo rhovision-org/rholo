@@ -1,0 +1,13 @@
+diff --git a/block-storage/src/dag/finalizer.rs b/block-storage/src/dag/finalizer.rs
+index 26cff7079..8ea71fb5a 100644
+--- a/block-storage/src/dag/finalizer.rs
++++ b/block-storage/src/dag/finalizer.rs
+@@ -158,7 +158,7 @@ where
+         let minimum_senders: BTreeSet<&S> =
+             min_msgs.iter().map(|message| &message.sender).collect();
+         let bonded_senders: BTreeSet<&S> = bonds_map.keys().collect();
+-        min_msgs.len() == bonds_map.len() && minimum_senders == bonded_senders
++        min_msgs.len() == bonds_map.len() && minimum_senders.len() == bonded_senders.len()
+     }
+ 
+     /// Find the top (most recent) message referenced from the minimum messages, per sender.

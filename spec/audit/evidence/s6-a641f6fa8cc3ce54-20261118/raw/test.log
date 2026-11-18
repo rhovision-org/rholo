@@ -1,0 +1,14 @@
+
+running 1 test
+test native_state::tests::a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 375 filtered out; finished in 0.01s
+
+   Compiling rchain-shared v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/shared)
+   Compiling rchain-crypto v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/crypto)
+   Compiling rchain-sdk v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/sdk)
+   Compiling rchain-models v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/models)
+   Compiling rchain-rspace v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rspace)
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.31s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rholang-a11f031a6ae27227)

@@ -1,0 +1,1 @@
+cargo test -p rchain-models --lib a_negative_bind_pattern_free_count_is_refused_at_the_proto_boundary

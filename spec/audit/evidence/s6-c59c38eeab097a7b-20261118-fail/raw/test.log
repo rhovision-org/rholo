@@ -1,0 +1,33 @@
+
+running 1 test
+test genesis::tests::the_multisig_keys_are_in_the_trusted_stakeholder_set ... FAILED
+
+failures:
+
+---- genesis::tests::the_multisig_keys_are_in_the_trusted_stakeholder_set stdout ----
+
+thread 'genesis::tests::the_multisig_keys_are_in_the_trusted_stakeholder_set' (1736986) panicked at casper/src/genesis/mod.rs:745:9:
+the configured multisig key is not in the trusted stakeholder set
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    genesis::tests::the_multisig_keys_are_in_the_trusted_stakeholder_set
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 747 filtered out; finished in 0.00s
+
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+warning: variable does not need to be mutable
+  --> casper/src/genesis/mod.rs:66:9
+   |
+66 |     let mut trusted: BTreeSet<ModelsValidator> = bonds.keys().copied().collect();
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rchain-casper` (lib test) generated 1 warning (run `cargo fix --lib -p rchain-casper --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.12s
+     Running unittests src/lib.rs (target/debug/deps/rchain_casper-64d507b1a93523ca)
+error: test failed, to rerun pass `-p rchain-casper --lib`

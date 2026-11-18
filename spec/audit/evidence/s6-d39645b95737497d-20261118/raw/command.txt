@@ -1,0 +1,1 @@
+cargo test -p rchain-models --lib a_slashable_flag_survives_the_store_round_trip

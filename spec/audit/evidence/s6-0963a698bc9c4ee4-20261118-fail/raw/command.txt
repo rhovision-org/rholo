@@ -1,0 +1,1 @@
+python3 tests/liveness-enforcement.py self-test

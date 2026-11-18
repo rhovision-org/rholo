@@ -1,0 +1,59 @@
+{
+  "arms": [],
+  "binary_sha256": "c787728dbf71993d5608d480a8abc5a0a4f1c2a27666977e8b567cdad373d07c",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 65,
+      "kind": "txt",
+      "path": "raw/binary-sha256.txt",
+      "sha256": "572828bcadafc6f450bda6c59f25586e210d88f342c825336122c811ee30a9e5"
+    },
+    {
+      "bytes": 90,
+      "kind": "txt",
+      "path": "raw/command.txt",
+      "sha256": "0664764e008978058695714892ee7a58285b9b7c9c985f4e05613b57bb7ac782"
+    },
+    {
+      "bytes": 468,
+      "kind": "patch",
+      "path": "raw/mutation.patch",
+      "sha256": "91b1ed5d36124aee085e9ad268a1cc00cb21b0409aa46172b54584810f024735"
+    },
+    {
+      "bytes": 19,
+      "kind": "json",
+      "path": "raw/result.json",
+      "sha256": "3dc2a48ac84df94b2fb1c6d82644f8c3f2010a74547b9449a62c7dbadc80ca40"
+    },
+    {
+      "bytes": 41,
+      "kind": "txt",
+      "path": "raw/source-sha.txt",
+      "sha256": "4ee044559734001a4417b96c766d75567d5296ca7a5addcc7c5058208cfef8b3"
+    },
+    {
+      "bytes": 2075,
+      "kind": "log",
+      "path": "raw/test.log",
+      "sha256": "43ea2cc60720c061ac212fc227d9a3c31701b59cfff5f46f9ede59d710656dff"
+    }
+  ],
+  "gate_id": "S6-0d97bafd93b8fda9",
+  "locality": "single-host",
+  "packer": {
+    "packaged_at": "2026-11-18T18:42:39+00:00",
+    "tool": "evidence-pack",
+    "version": 2
+  },
+  "redactions": [],
+  "reference": null,
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "714e5d9346ed554ea29fe7dba91d635b84c98268",
+  "verdict": "FAIL"
+}

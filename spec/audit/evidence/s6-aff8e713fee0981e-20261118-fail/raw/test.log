@@ -1,0 +1,23 @@
+
+running 1 test
+test dag::finalizer::tests::check_min_messages_needs_all_bonded_senders ... FAILED
+
+failures:
+
+---- dag::finalizer::tests::check_min_messages_needs_all_bonded_senders stdout ----
+
+thread 'dag::finalizer::tests::check_min_messages_needs_all_bonded_senders' (1715681) panicked at block-storage/src/dag/finalizer.rs:568:9:
+assertion failed: !finalizer.check_min_messages(&[msg(0, 0, 0, &[], &[]),
+                    msg(1, 1, 0, &[], &[]), msg(99, 99, 0, &[], &[])], &bonds)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dag::finalizer::tests::check_min_messages_needs_all_bonded_senders
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 97 filtered out; finished in 0.00s
+
+   Compiling rchain-block-storage v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/block-storage)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.72s
+     Running unittests src/lib.rs (target/debug/deps/rchain_block_storage-29bd045d5a9311b6)
+error: test failed, to rerun pass `-p rchain-block-storage --lib`

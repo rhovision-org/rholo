@@ -1,0 +1,13 @@
+diff --git a/rholang/src/native_state.rs b/rholang/src/native_state.rs
+index 316b8ebc3..40fe44a5f 100644
+--- a/rholang/src/native_state.rs
++++ b/rholang/src/native_state.rs
+@@ -7584,7 +7584,7 @@ impl NativeSystemState {
+         // Check both sides before either write: a failed credit must not consume the donor's REV.
+         let remaining = balance_plus(balance, -stake, "pot funding debit")?;
+         let funded = balance_plus(self.pos_vault_balance().await?, stake, "pot funding credit")?;
+-        self.set_vault_balance(&address, remaining);
++        self.set_vault_balance(&address, balance);
+         self.set_pos_vault_balance(funded);
+         Ok(Ok(()))
+     }

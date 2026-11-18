@@ -1,0 +1,24 @@
+
+running 1 test
+test storage::tests::a_matched_produce_refunds_its_storage_before_the_event_costs ... FAILED
+
+failures:
+
+---- storage::tests::a_matched_produce_refunds_its_storage_before_the_event_costs stdout ----
+
+thread 'storage::tests::a_matched_produce_refunds_its_storage_before_the_event_costs' (1804294) panicked at rholang/src/storage.rs:732:9:
+assertion `left == right` failed: a match refunds the consume storage and the removed datum's produce storage (consume 8, produce 8)
+  left: 200
+ right: 184
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    storage::tests::a_matched_produce_refunds_its_storage_before_the_event_costs
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 376 filtered out; finished in 0.00s
+
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.76s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rholang-a11f031a6ae27227)
+error: test failed, to rerun pass `-p rchain-rholang --lib`

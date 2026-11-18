@@ -1,0 +1,13 @@
+diff --git a/block-storage/src/dag/finalizer.rs b/block-storage/src/dag/finalizer.rs
+index 26cff7079..3f35c0e36 100644
+--- a/block-storage/src/dag/finalizer.rs
++++ b/block-storage/src/dag/finalizer.rs
+@@ -412,7 +412,7 @@ fn sees_the_whole_partition<S: Ord>(
+     seen_by: &BTreeMap<S, BTreeSet<S>>,
+     must_be_seen: &BTreeSet<S>,
+ ) -> bool {
+-    !seen_by.is_empty() && seen_by.values().all(|v| must_be_seen.is_subset(v))
++    !seen_by.is_empty() && seen_by.values().all(|v| v == must_be_seen)
+ }
+ 
+ #[cfg(test)]

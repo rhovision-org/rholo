@@ -1,0 +1,22 @@
+
+running 1 test
+test merger::event_log_index::tests::combining_refuses_a_diff_that_leaves_i64 ... FAILED
+
+failures:
+
+---- merger::event_log_index::tests::combining_refuses_a_diff_that_leaves_i64 stdout ----
+
+thread 'merger::event_log_index::tests::combining_refuses_a_diff_that_leaves_i64' (1791936) panicked at rspace/src/merger/event_log_index.rs:244:14:
+i64::MAX + 1 does not fit i64, so the accumulation must refuse: EventLogIndex { produces_linear: {}, produces_persistent: {}, produces_consumed: {}, produces_peeked: {}, produces_copied_by_peek: {}, produces_touching_base_joins: {}, consumes_linear_and_peeks: {}, consumes_persistent: {}, consumes_produced: {}, produces_mergeable: {}, consumes_mergeable: {}, number_channels_data: {Blake2b256Hash(Hash32([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])): 0} }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    merger::event_log_index::tests::combining_refuses_a_diff_that_leaves_i64
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 194 filtered out; finished in 0.00s
+
+   Compiling rchain-rspace v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rspace)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.29s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rspace-3e8cc9b76677a749)
+error: test failed, to rerun pass `-p rchain-rspace --lib`

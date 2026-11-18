@@ -1,0 +1,22 @@
+
+running 1 test
+test block_metadata::tests::a_slashable_flag_survives_the_store_round_trip ... FAILED
+
+failures:
+
+---- block_metadata::tests::a_slashable_flag_survives_the_store_round_trip stdout ----
+
+thread 'block_metadata::tests::a_slashable_flag_survives_the_store_round_trip' (1737378) panicked at models/src/block_metadata.rs:502:9:
+the slashable flag was not carried
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    block_metadata::tests::a_slashable_flag_survives_the_store_round_trip
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 192 filtered out; finished in 0.00s
+
+   Compiling rchain-models v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/models)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.22s
+     Running unittests src/lib.rs (target/debug/deps/rchain_models-ba348ab9afbaf01c)
+error: test failed, to rerun pass `-p rchain-models --lib`

@@ -1,0 +1,15 @@
+diff --git a/casper/src/validate.rs b/casper/src/validate.rs
+index cc3acc11f..504535bfa 100644
+--- a/casper/src/validate.rs
++++ b/casper/src/validate.rs
+@@ -331,7 +331,9 @@ pub async fn block_number(
+         }
+         // The maximum, over **every** resolved parent. A failed block still counts: skipping it made
+         // the failure hide the block, refusing its child for the parent's record alone (AUDIT C173).
+-        max_block_number = max_block_number.max(i64::from(meta.block_num));
++        if !meta.validation_failed {
++            max_block_number = max_block_number.max(i64::from(meta.block_num));
++        }
+     }
+     if max_block_number + 1 == i64::from(b.block_number) {
+         Ok(Ok(()))

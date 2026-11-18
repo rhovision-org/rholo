@@ -1,0 +1,13 @@
+diff --git a/rholang/src/normalizer.rs b/rholang/src/normalizer.rs
+index 8ce90405f..0261adbfa 100644
+--- a/rholang/src/normalizer.rs
++++ b/rholang/src/normalizer.rs
+@@ -1034,7 +1034,7 @@ fn normalize_if(
+     let target = normalize_proc(
+         value,
+         ProcVisitInputs {
+-            par: Par::default(),
++            par: input_par.clone(),
+             bound_map_chain: bound_map_chain.clone(),
+             free_map: input.free_map.clone(),
+             env: env.clone(),

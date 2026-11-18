@@ -1,0 +1,1 @@
+cargo test -p rchain-rspace --lib candidate_selection_is_sorted_by_content_hash_not_insertion_order

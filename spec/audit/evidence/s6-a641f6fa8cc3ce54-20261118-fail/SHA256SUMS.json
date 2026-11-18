@@ -1,0 +1,8 @@
+{
+  "raw/binary-sha256.txt": "e507fafb82323d5d750697384e80378cef5adc07f126eab5e823ab7ae78265dd",
+  "raw/command.txt": "4b2263920e18bcd16a33b36777abcfe2bb881841931c04e92c075fc2fe376f5a",
+  "raw/mutation.patch": "9b1d9cbb3e194a91815214b2f10db99ee75319e7efa496bddf73df4ec0abaca8",
+  "raw/result.json": "3dc2a48ac84df94b2fb1c6d82644f8c3f2010a74547b9449a62c7dbadc80ca40",
+  "raw/source-sha.txt": "e5b19e6448c83e6b28c1a5c8484840b7e2e633d089ee658ace33de311a6fd4bd",
+  "raw/test.log": "fe1c7dfd2178f39e4eeb2f0f98cae359beaa588a4c4b7ab730ab8a201891dbb6"
+}

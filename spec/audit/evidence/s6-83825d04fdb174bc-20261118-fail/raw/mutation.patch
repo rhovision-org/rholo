@@ -1,0 +1,31 @@
+diff --git a/casper/src/validate.rs b/casper/src/validate.rs
+index cc3acc11f..074ac2738 100644
+--- a/casper/src/validate.rs
++++ b/casper/src/validate.rs
+@@ -319,25 +319,7 @@ pub async fn block_number(
+     dag: &dyn BlockDagStorage,
+     b: &BlockMessage,
+ ) -> Result<ValidBlockProcessing, String> {
+-    let mut max_block_number = -1i64;
+-    for j in &b.justifications {
+-        let meta = dag
+-            .lookup(j)
+-            .await?
+-            .ok_or_else(|| format!("missing justification {}", j.to_hex()))?;
+-        // The descent bound, for *every* resolved parent (H1b).
+-        if i64::from(meta.block_num) >= i64::from(b.block_number) {
+-            return Ok(Err(BlockStatus::InvalidBlockNumber));
+-        }
+-        // The maximum, over **every** resolved parent. A failed block still counts: skipping it made
+-        // the failure hide the block, refusing its child for the parent's record alone (AUDIT C173).
+-        max_block_number = max_block_number.max(i64::from(meta.block_num));
+-    }
+-    if max_block_number + 1 == i64::from(b.block_number) {
+-        Ok(Ok(()))
+-    } else {
+-        Ok(Err(BlockStatus::InvalidBlockNumber))
+-    }
++    Ok(Ok(()))
+ }
+ 
+ /// Validate the sender's sequence number is one more than its latest justification's (port of

@@ -1,0 +1,1 @@
+cargo test -p rchain-casper --lib equivocation_evidence_is_proved_only_by_a_signed_conflict

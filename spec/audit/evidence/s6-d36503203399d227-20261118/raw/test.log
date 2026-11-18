@@ -1,0 +1,10 @@
+
+running 1 test
+test refined::tests::non_neg_i64_accepts_non_negative_rejects_negative ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 105 filtered out; finished in 0.00s
+
+   Compiling tokio v1.54.1
+   Compiling rchain-shared v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/shared)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.36s
+     Running unittests src/lib.rs (target/debug/deps/rchain_shared-6ba55e676870ee2a)

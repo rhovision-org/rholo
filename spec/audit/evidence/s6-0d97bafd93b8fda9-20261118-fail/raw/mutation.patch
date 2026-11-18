@@ -1,0 +1,13 @@
+diff --git a/rholang/src/native_state.rs b/rholang/src/native_state.rs
+index 316b8ebc3..4b36b1afd 100644
+--- a/rholang/src/native_state.rs
++++ b/rholang/src/native_state.rs
+@@ -1192,7 +1192,7 @@ fn participation_weight(behind: Option<i64>, grace: i64, knee: i64) -> i64 {
+     let Some(behind) = behind else {
+         return 0;
+     };
+-    if behind <= grace {
++    if behind <= i64::MAX {
+         10_000
+     } else if knee <= behind || knee <= grace {
+         0

@@ -1,0 +1,1 @@
+cargo test -p rchain-casper --test replay_trace_order -- --exact pending_peeks_replay_with_exact_cost_and_state

@@ -1,0 +1,1 @@
+cargo test -p rchain-rholang --lib a_slash_fans_out_to_each_delegators_own_vault_at_every_tier

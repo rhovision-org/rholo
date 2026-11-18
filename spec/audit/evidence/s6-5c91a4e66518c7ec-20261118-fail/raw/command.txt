@@ -1,0 +1,1 @@
+cargo test -p rchain-rholang --lib splitting_a_stake_across_keys_does_not_buy_slots

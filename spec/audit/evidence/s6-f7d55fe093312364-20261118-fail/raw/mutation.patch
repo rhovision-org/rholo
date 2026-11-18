@@ -1,0 +1,16 @@
+diff --git a/casper/src/merging.rs b/casper/src/merging.rs
+index c38f14c6c..8c197084a 100644
+--- a/casper/src/merging.rs
++++ b/casper/src/merging.rs
+@@ -717,10 +717,7 @@ impl DeployChainIndex {
+     /// Computed rather than stored: the chain's `native_effects` are the authority, and a second
+     /// field holding the same thing in another shape is a second thing to keep in step.
+     pub fn native_slots(&self) -> BTreeSet<(u8, Blake2b256Hash)> {
+-        self.native_effects
+-            .iter()
+-            .map(NativeStoreAction::slot)
+-            .collect()
++        BTreeSet::new()
+     }
+ 
+     /// The total cost of the deploy chain (port of `deployChainCost`).

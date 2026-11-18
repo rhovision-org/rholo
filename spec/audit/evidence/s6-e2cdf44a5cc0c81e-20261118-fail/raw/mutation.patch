@@ -1,0 +1,13 @@
+diff --git a/casper/src/merging.rs b/casper/src/merging.rs
+index c38f14c6c..c9d5b6cb9 100644
+--- a/casper/src/merging.rs
++++ b/casper/src/merging.rs
+@@ -1629,7 +1629,7 @@ async fn compose_cost_accounting(
+     // The moves are accumulated per slot first, because the *skip* decision is per (chain, slot):
+     // two chains can contribute to one slot with only one of them seen by the fold's winner.
+     let mut deltas: BTreeMap<(u8, Blake2b256Hash), (Option<String>, i64)> = BTreeMap::new();
+-    for chain in accepted {
++    for chain in accepted.iter().take(1) {
+         let host = chain.host_block;
+         for moves in chain.cost_moves.values() {
+             // `pay_executor`'s own arithmetic, kept identical to it: the product of two `i64`s does

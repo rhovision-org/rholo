@@ -1,0 +1,22 @@
+
+running 1 test
+test merger::state_change::diff_tests::a_consume_and_replace_diffs_its_channel_once ... FAILED
+
+failures:
+
+---- merger::state_change::diff_tests::a_consume_and_replace_diffs_its_channel_once stdout ----
+
+thread 'merger::state_change::diff_tests::a_consume_and_replace_diffs_its_channel_once' (1801417) panicked at rspace/src/merger/state_change.rs:586:14:
+apply: "State change compute logic error: empty channel change for produce."
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    merger::state_change::diff_tests::a_consume_and_replace_diffs_its_channel_once
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 194 filtered out; finished in 0.00s
+
+   Compiling rchain-rspace v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rspace)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.24s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rspace-3e8cc9b76677a749)
+error: test failed, to rerun pass `-p rchain-rspace --lib`

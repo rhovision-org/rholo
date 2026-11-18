@@ -1,0 +1,13 @@
+diff --git a/models/src/block_metadata.rs b/models/src/block_metadata.rs
+index be37a9a7a..4b61b83ac 100644
+--- a/models/src/block_metadata.rs
++++ b/models/src/block_metadata.rs
+@@ -366,7 +366,7 @@ impl BlockMetadata {
+                 .collect(),
+             validated: self.validated,
+             validation_failed: self.validation_failed,
+-            slashable: self.slashable,
++            slashable: false,
+             failure_cause: self.failure_cause.map(|c| c.to_code()).unwrap_or(0),
+             slash_severity: self.slash_severity.to_code(),
+             restore_attempts: self.restore_attempts,

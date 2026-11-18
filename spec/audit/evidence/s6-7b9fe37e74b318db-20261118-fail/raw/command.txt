@@ -1,0 +1,1 @@
+cargo test -p rchain-casper --lib the_validity_bounds_are_committed_in_the_genesis_params

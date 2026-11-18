@@ -1,0 +1,29 @@
+
+running 1 test
+test native_state::liveness_tests::a_sustained_absence_jails_without_touching_the_bond ... FAILED
+
+failures:
+
+---- native_state::liveness_tests::a_sustained_absence_jails_without_touching_the_bond stdout ----
+[pos] close_block 10 boundary=true epoch_length=10 max_active=0 bond=[1, 1000]
+[pos] participation lag at boundary 10: drawn=4 never_spoke=0 min=0 median=0 p90=0 max=0 (heights behind the last finalised fringe)
+[pos] close_block 20 boundary=true epoch_length=10 max_active=0 bond=[1, 1000]
+[pos] participation lag at boundary 20: drawn=4 never_spoke=1 min=0 median=0 p90=0 max=0 (heights behind the last finalised fringe)
+[pos] close_block 30 boundary=true epoch_length=10 max_active=0 bond=[1, 1000]
+[pos] participation lag at boundary 30: drawn=4 never_spoke=1 min=0 median=0 p90=0 max=0 (heights behind the last finalised fringe)
+
+thread 'native_state::liveness_tests::a_sustained_absence_jails_without_touching_the_bond' (1774954) panicked at rholang/src/native_state.rs:9196:9:
+assertion failed: record.is_jailed()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    native_state::liveness_tests::a_sustained_absence_jails_without_touching_the_bond
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 375 filtered out; finished in 0.01s
+
+test self_test ... FAILED
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.63s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rholang-a11f031a6ae27227)
+error: test failed, to rerun pass `-p rchain-rholang --lib`

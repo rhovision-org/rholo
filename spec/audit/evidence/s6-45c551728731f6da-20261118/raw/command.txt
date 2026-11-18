@@ -1,0 +1,1 @@
+cargo test -p rchain-rholang --lib slash_persists_the_pending_map_it_edits

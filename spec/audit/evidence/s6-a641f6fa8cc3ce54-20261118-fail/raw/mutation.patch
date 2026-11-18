@@ -1,0 +1,13 @@
+diff --git a/models/src/block_metadata.rs b/models/src/block_metadata.rs
+index be37a9a7a..35c111d31 100644
+--- a/models/src/block_metadata.rs
++++ b/models/src/block_metadata.rs
+@@ -90,7 +90,7 @@ impl SlashSeverity {
+     pub fn basis_points(self) -> i64 {
+         match self {
+             SlashSeverity::Malicious => 10_000,
+-            SlashSeverity::Misdemeanour => 2_500,
++            SlashSeverity::Misdemeanour => 10_000,
+             SlashSeverity::HonestMistake => 1_000,
+             // The pre-tier rule was the whole bond, and a legacy record has to replay to the state it
+             // was written in.

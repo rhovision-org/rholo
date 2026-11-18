@@ -1,0 +1,14 @@
+diff --git a/casper/src/validate.rs b/casper/src/validate.rs
+index cc3acc11f..0bf8078aa 100644
+--- a/casper/src/validate.rs
++++ b/casper/src/validate.rs
+@@ -620,6 +620,9 @@ pub async fn block_summary_from_state(
+     expiration_threshold: i64,
+     bounds: impl std::future::Future<Output = Result<(i64, i64), String>>,
+ ) -> Result<ValidBlockProcessing, String> {
++    if block.timestamp == 0 {
++        return Ok(Err(BlockStatus::InvalidBlockNumber));
++    }
+     if let Err(status) = justification_regressions(dag, block).await? {
+         return Ok(Err(status));
+     }

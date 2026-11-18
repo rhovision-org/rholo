@@ -1,0 +1,22 @@
+
+running 1 test
+test native_state::delegation_tests::a_validator_with_delegations_cannot_withdraw ... FAILED
+
+failures:
+
+---- native_state::delegation_tests::a_validator_with_delegations_cannot_withdraw stdout ----
+
+thread 'native_state::delegation_tests::a_validator_with_delegations_cannot_withdraw' (1767512) panicked at rholang/src/native_state.rs:8186:9:
+the aggregate is not all the operator's
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    native_state::delegation_tests::a_validator_with_delegations_cannot_withdraw
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 375 filtered out; finished in 0.00s
+
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.40s
+     Running unittests src/lib.rs (target/debug/deps/rchain_rholang-a11f031a6ae27227)
+error: test failed, to rerun pass `-p rchain-rholang --lib`

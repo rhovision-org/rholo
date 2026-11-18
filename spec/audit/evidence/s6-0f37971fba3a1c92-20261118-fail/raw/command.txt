@@ -1,0 +1,1 @@
+cargo test -p rchain-casper --lib a_deploy_that_its_named_key_did_not_sign_is_refused

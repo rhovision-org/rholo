@@ -1,0 +1,1 @@
+cargo test -p rchain-rholang --test if_par -- --exact if_not_first_in_a_par_holds_across_effect_modes

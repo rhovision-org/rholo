@@ -736,6 +736,26 @@ mod tests {
     }
 
     #[test]
+    fn the_multisig_keys_are_in_the_trusted_stakeholder_set() {
+        let mut proof_of_stake = pos();
+        proof_of_stake.pos_multi_sig_public_keys = vec![base16::encode(&[3u8; 65])];
+        let genesis = build_pos_genesis(&proof_of_stake, None);
+        let multisig = ModelsValidator::try_from(&[3u8; 65][..]).expect("a 65-byte validator key");
+        assert!(
+            genesis.trusted.contains(&multisig),
+            "the configured multisig key is not in the trusted stakeholder set"
+        );
+        for validator in &proof_of_stake.validators {
+            assert!(
+                genesis
+                    .trusted
+                    .contains(&ModelsValidator::from_slice(validator.pk.bytes())),
+                "a genesis bond holder is missing from the trusted set"
+            );
+        }
+    }
+
+    #[test]
     fn build_bonds_map_extracts_stakes() {
         let bonds = build_bonds_map(&pos());
         assert_eq!(bonds.len(), 2);

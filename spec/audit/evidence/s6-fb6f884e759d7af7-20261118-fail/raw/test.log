@@ -1,0 +1,24 @@
+
+running 1 test
+test validate::effectful_tests::a_block_timestamp_is_never_a_validity_input ... FAILED
+
+failures:
+
+---- validate::effectful_tests::a_block_timestamp_is_never_a_validity_input stdout ----
+
+thread 'validate::effectful_tests::a_block_timestamp_is_never_a_validity_input' (1734762) panicked at casper/src/validate.rs:1848:13:
+assertion `left == right` failed: timestamp 0 must not change the verdict
+  left: Err(InvalidBlockNumber)
+ right: Ok(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    validate::effectful_tests::a_block_timestamp_is_never_a_validity_input
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 747 filtered out; finished in 0.00s
+
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.07s
+     Running unittests src/lib.rs (target/debug/deps/rchain_casper-64d507b1a93523ca)
+error: test failed, to rerun pass `-p rchain-casper --lib`

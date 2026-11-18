@@ -1,0 +1,1 @@
+cargo test -p rchain-node --test lean_stake_corpus -- --exact the_node_agrees_with_the_model_on_every_supermajority_pair

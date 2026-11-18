@@ -1,0 +1,13 @@
+diff --git a/casper/src/genesis/mod.rs b/casper/src/genesis/mod.rs
+index 2a5315bc7..4e571661b 100644
+--- a/casper/src/genesis/mod.rs
++++ b/casper/src/genesis/mod.rs
+@@ -78,7 +78,7 @@ pub fn build_pos_genesis(
+         executor_share: proof_of_stake.executor_share,
+         absence_slack: proof_of_stake.absence_slack,
+         participation_grace: proof_of_stake.participation_grace,
+-        min_phlo_price: proof_of_stake.min_phlo_price,
++        min_phlo_price: NonNegI64::zero(),
+         max_number_of_parents: proof_of_stake.max_number_of_parents,
+         dev_tax_vesting_blocks: proof_of_stake.dev_tax_vesting_blocks,
+         liveness_absence_threshold: proof_of_stake.liveness_absence_threshold,

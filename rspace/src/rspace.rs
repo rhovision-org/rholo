@@ -867,6 +867,39 @@ mod tests {
         assert_eq!(data[0].a, "data");
     }
 
+    /// **Candidate selection is content-addressed, not insertion-ordered.** The sort is on the
+    /// produce hash, so the same set of datums is offered in the same order regardless of how they
+    /// arrived. The first assertion is the fixture control: an insertion order that happened to be
+    /// hash-sorted would make the second assertion vacuous.
+    #[tokio::test]
+    async fn candidate_selection_is_sorted_by_content_hash_not_insertion_order() {
+        let s = space().await;
+        let channel = "c".to_string();
+        for n in 0..8 {
+            s.produce(channel.clone(), format!("d{n}"), false)
+                .await
+                .unwrap();
+        }
+        let stored = s.get_data(&channel).await.unwrap();
+        let insertion: Vec<&_> = stored.iter().map(|d| &d.source).collect();
+        let mut sorted = insertion.clone();
+        sorted.sort();
+        assert_ne!(
+            insertion, sorted,
+            "the fixture's insertion order must not already be hash-sorted"
+        );
+        let indexed = s
+            .fetch_channel_to_index_data(&[channel.clone()])
+            .await
+            .unwrap();
+        let shown: Vec<&_> = indexed[&channel].iter().map(|(d, _)| &d.source).collect();
+        assert_eq!(
+            shown, sorted,
+            "candidate selection must be sorted by content hash"
+        );
+        assert_eq!(shown.len(), 8);
+    }
+
     #[tokio::test]
     async fn soft_checkpoint_revert_rolls_back_produces() {
         let s = space().await;

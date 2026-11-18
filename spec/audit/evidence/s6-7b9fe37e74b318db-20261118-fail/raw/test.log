@@ -1,0 +1,24 @@
+
+running 1 test
+test genesis::tests::the_validity_bounds_are_committed_in_the_genesis_params ... FAILED
+
+failures:
+
+---- genesis::tests::the_validity_bounds_are_committed_in_the_genesis_params stdout ----
+
+thread 'genesis::tests::the_validity_bounds_are_committed_in_the_genesis_params' (1735844) panicked at casper/src/genesis/mod.rs:718:9:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    genesis::tests::the_validity_bounds_are_committed_in_the_genesis_params
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 747 filtered out; finished in 0.00s
+
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.08s
+     Running unittests src/lib.rs (target/debug/deps/rchain_casper-64d507b1a93523ca)
+error: test failed, to rerun pass `-p rchain-casper --lib`
