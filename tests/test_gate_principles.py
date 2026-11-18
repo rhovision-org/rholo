@@ -189,7 +189,8 @@ class CriterionTests(unittest.TestCase):
                       "local-devnet", "live-host"}
         expected = {
             gate_id for gate_id, row in self.external.items()
-            if row.get("machine_check") is True or row.get("witness_kind") in executable
+            if row.get("gate", True)
+            and (row.get("machine_check") is True or row.get("witness_kind") in executable)
         }
         self.assertEqual(set(self.entries), expected)
 

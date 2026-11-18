@@ -182,33 +182,15 @@ class CloseoutTests(unittest.TestCase):
             self.assertEqual(self.inspect(verify_git=True)["result"],
                              "CLOSEOUT_ELIGIBLE_FOR_INDEPENDENT_REVIEW")
 
-    def test_gate_binding_blocks_an_otherwise_eligible_closeout(self):
-        for item in self.payload["items"]:
-            item.clear()
-            item.update(id="placeholder", title="Placeholder", status="deferred",
-                        decision_owner="@jimscarver",
-                        reason="Delay until a separately approved first-release fork design.")
-        for item, ident in zip(self.payload["items"], sorted(gate.REQUIRED)):
-            item["id"] = ident
-            if ident == gate.AUDIT_SIGNOFF_ID:
-                item.update(status="verified",
-                            evidence_url="https://github.com/rhovision-org/rholo/issues/51",
-                            approval_url="https://github.com/rhovision-org/rholo/issues/51",
-                            approved_by="Maintainer", evidence_sha256="a" * 64)
-        self.payload["closure_requested"] = True
-        with patch.object(gate, "is_ancestor", return_value=True):
-            result = self.inspect(verify_git=True, require_gates=True)
+    def test_the_ledger_is_the_hf51_tracker(self):
+        bound, unresolved, note = gate.gate_binding(ROOT)
+        self.assertTrue(bound)
+        self.assertEqual(unresolved, [])
+        self.assertIn("not the gate register", note)
+        result = self.inspect(require_gates=True)
+        self.assertTrue(result["gates_bound"])
+        self.assertEqual(result["gates_unresolved"], [])
         self.assertEqual(result["result"], "TRACKER_MUST_REMAIN_OPEN")
-        self.assertFalse(result["gates_bound"])
-        self.assertEqual(len(result["gates_unresolved"]), len(gate.REQUIRED))
-
-    def test_gate_binding_validates_the_register(self):
-        with patch.object(gate, "_gate_checker") as checker:
-            checker.return_value.validate.side_effect = ValueError("fabricated witness")
-            bound, unresolved, error = gate.gate_binding(ROOT)
-        self.assertFalse(bound)
-        self.assertEqual(len(unresolved), len(gate.REQUIRED))
-        self.assertIn("fabricated witness", error)
 
     def test_missing_gate_register_is_unbound_not_invalid(self):
         with tempfile.TemporaryDirectory() as tmp:

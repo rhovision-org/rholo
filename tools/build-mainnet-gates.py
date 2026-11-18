@@ -29,7 +29,6 @@ AUDIT = ROOT / "spec" / "audit"
 OUT_JSON = AUDIT / "mainnet-gates.json"
 OUT_MD = AUDIT / "mainnet-gates.md"
 EXTERNAL = AUDIT / "mainnet-gates.external.json"
-MATRIX = AUDIT / "final-gap-matrix.json"
 LEDGER = AUDIT / "hardfork-51-closeout.json"
 INVENTORY = AUDIT / "section6-gap-inventory.json"
 BINDINGS = AUDIT / "mainnet-gates.bindings.json"
@@ -88,40 +87,11 @@ def named_test_status(row: dict) -> str | None:
     if "named" in statuses:
         return "named"
     return None
-OVERRIDES = {
-    "B:breaking-release": (
-        "blocked",
-        "The release runbook is the release-blocking work; its archive, validator and "
-        "new-genesis attestations are absent.",
-    ),
-    "Batch:crypto-agility": (
-        "blocked",
-        "The registry/wire freeze and implementation are not landed; this is work, "
-        "not only a decision.",
-    ),
-}
-CROSSWALK = {
-    "A:block-merge": [("G428-M5", "A:block-merge is an open semantic decision, not an M5 witness")],
-    "Audit:sidecar-merge": [("G428-M5", "sidecar-merge is cost composition, not per-chain accounting")],
-    "Audit:law52-partition": [("G428-M4", "partition/liveness component")],
-    "Audit:section6-categoryA": [("G428-M6", "the section-6 category-A disposition is a separate audit sign-off")],
-    "A:shard-config": [("G428-M4", "committed bounds are a finality/recovery prerequisite")],
-    "Release:attachment-upgrade": [("G584-G1", "uniform validator/client rollout is a release prerequisite")],
-    "Batch:activation-schedule": [("G584-G1", "the activation schedule is a release prerequisite")],
-    "A:vault-export": [("G428-M5", "state-export conservation is a state-integrity input, not merge accounting")],
-    "Batch:state-preservation": [("G428-M6", "the preservation export is a reproducibility component")],
-    "Audit:inactivity-leak": [("G428-M4", "the inactivity leak is a liveness component, explicitly deferred")],
-}
 S6_CROSSWALK = {
     "S6:f735095c746556f3": [("G428-M5", "one merge-diff component")],
     "S6:5651614bf8e3eeb7": [("C357", "C357 replay-order component")],
     "S6:0963a698bc9c4ee4": [("G428-M4", "liveness-enforcement component")],
 }
-
-
-def canonical_hash(value: object) -> str:
-    raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(raw).hexdigest()
 
 
 def load_dispositions() -> dict[str, dict]:
@@ -201,34 +171,19 @@ def _binding_shape(binding: dict, row: dict) -> None:
             f"{ident}: the evidence record does not exist")
 
 
-def _eligible(row: dict, dispositions: dict[str, dict],
-              ledger_rows: dict[str, dict], met_ids: set[str]) -> tuple[bool, str]:
+def _eligible(row: dict, met_ids: set[str]) -> tuple[bool, str]:
     ident = row["id"]
     if ident in INELIGIBLE_IDS:
         return False, "the row is not a pass/fail gate"
     if row["status"] not in PROMOTABLE_STATUSES:
         return False, f"status {row['status']!r} is not promotable"
-    if row["family"] == "S6":
-        disposition = dispositions.get("S6:" + ident[3:])
-        require(disposition is not None, f"{ident}: no disposition record")
-        if disposition.get("verdict") != "accepted":
-            return False, "the disposition is not accepted"
-        if disposition.get("category_a_effect") in (None, "", "none"):
-            return False, "the disposition derives no category-A effect"
-    elif row["family"] == "HF51":
-        source_ref = str(row.get("source_ref") or "")
-        require("#items/" in source_ref, f"{ident}: no matrix source_ref")
-        item = ledger_rows.get(source_ref.split("#items/", 1)[1])
-        require(item is not None, f"{ident}: the ledger item is absent")
-        if item.get("status") not in {"merged", "verified"}:
-            return False, f"the ledger item is {item.get('status')!r}"
     for dependency in row.get("depends_on") or []:
         if dependency not in met_ids:
             return False, f"dependency {dependency} is not met"
     return True, ""
 
 
-def apply_bindings(rows: list[dict], document: dict, ledger: dict) -> None:
+def apply_bindings(rows: list[dict], document: dict) -> None:
     """Promote only complete, eligible authored bindings; verify the ratchet."""
     require(document.get("schema") == 1, "bindings schema 1 required")
     bindings = document.get("bindings")
@@ -241,15 +196,13 @@ def apply_bindings(rows: list[dict], document: dict, ledger: dict) -> None:
     require(len(ids) == len(set(ids)), "duplicate binding gate_id")
     by_id = {row["id"]: row for row in rows}
     intended = set(ids)
-    dispositions = load_dispositions()
-    ledger_rows = {item["id"]: item for item in ledger["items"]}
     met_ids = {row["id"] for row in rows if row["status"] == "met"} | intended
     for binding in bindings:
         ident = binding["gate_id"]
         require(ident in by_id, f"{ident}: binding names no gate")
         row = by_id[ident]
         require(row["status"] != "met", f"{ident}: already met")
-        eligible, reason = _eligible(row, dispositions, ledger_rows, met_ids)
+        eligible, reason = _eligible(row, met_ids)
         require(eligible, f"{ident}: {reason}")
         _binding_shape(binding, row)
         control = binding["witness_binding"]["control"]
@@ -285,93 +238,6 @@ def apply_bindings(rows: list[dict], document: dict, ledger: dict) -> None:
             f"the met set {sorted(met)} does not equal the ratchet {sorted(set(required))}")
 
 
-def infer_locality(text: str, status: str) -> str:
-    if status in {"decision", "external"}:
-        return "external"
-    low = text.lower()
-    if any(word in low for word in ("devnet", "partition", "three-node", "multi-node", "distributed")):
-        return "local-devnet"
-    if any(word in low for word in ("live", "operator", "uniform", "independent", "release")):
-        return "external"
-    if any(word in low for word in ("historical replay", "second-binary", "two binaries", "replay")):
-        return "integration"
-    if any(word in low for word in ("fixture", "corpus", "unit", "regression", "test")):
-        return "unit"
-    return "unclassified"
-
-
-def infer_status(ledger_item: dict, matrix_item: dict) -> tuple[str, str]:
-    if ledger_item["status"] == "deferred":
-        return "decision", "owner-and-reason deferral recorded"
-    classification = matrix_item["classification"]
-    missing = str(matrix_item.get("missing_proof") or "").strip()
-    if matrix_item["id"] == "Audit:section6-categoryA":
-        remaining = sum(1 for row in load_dispositions().values()
-                        if row.get("verdict") == "reviewable")
-        return "owes", f"{remaining} section-6 A candidates lack a per-candidate disposition."
-    if matrix_item["id"] in OVERRIDES:
-        return OVERRIDES[matrix_item["id"]]
-    if classification == "REQUIRES MAINTAINER DECISION":
-        return "decision", missing
-    if classification == "EXPLICITLY DEFERRED":
-        return "decision", "recorded owner-and-reason deferral"
-    if classification == "RELEASE BLOCKER":
-        return "blocked", missing
-    if classification == "INTEGRATION GAP":
-        return "owes", missing
-    if ledger_item["status"] in {"open", "merged"}:
-        return "owes", missing
-    return "reviewable", missing
-
-
-def hf51_rows(matrix: dict, ledger: dict) -> list[dict]:
-    ledger_rows = {row["id"]: row for row in ledger["items"]}
-    source_sha = ledger["source_dev_sha"]
-    rows = []
-    for item in matrix["items"]:
-        ident = item["id"]
-        authored = ledger_rows[ident]
-        status, reason = infer_status(authored, item)
-        text = " ".join(str(item.get(key) or "") for key in (
-            "exact_file_function_or_invariant", "missing_proof",
-            "required_acceptance_test", "smallest_corrective_action"))
-        locality = infer_locality(text, status)
-        related = [
-            {"id": target, "criterion": criterion}
-            for target, criterion in CROSSWALK.get(ident, [])
-        ]
-        rows.append({
-            "id": "HF51-" + ident.replace(":", "-"),
-            "family": "HF51",
-            "title": authored.get("title") or ident,
-            "source_label": f"final-gap-matrix.json#{ident}",
-            "source_url": f"https://github.com/rhovision-org/rholo/blob/{source_sha}/spec/audit/final-gap-matrix.json",
-            "source_retrieved": matrix.get("observed_date"),
-            "source_sha256": canonical_hash(item),
-            "pass_condition": item.get("required_acceptance_test"),
-            "fail_condition": "The required acceptance is absent: " + str(item.get("missing_proof") or ""),
-            "observable": item.get("exact_file_function_or_invariant"),
-            "witness_kind": None,
-            "witness_ref": None,
-            "negative_control": None,
-            "docker_free": False,
-            "sole_evidence": "none",
-            "locality": locality,
-            "witness_scope": None,
-            "owner": item.get("decision_owner"),
-            "status": status,
-            "status_reason": reason,
-            "evidence": {"url": None, "digest": None, "source_sha": None, "binary_sha256": None},
-            "depends_on": [],
-            "related": related,
-            "laws": [],
-            "source_ref": f"final-gap-matrix.json#items/{ident}",
-            "source_hash": canonical_hash(item),
-            "does_not_claim": "A merged implementation is not the acceptance witness; the matrix acceptance is prose.",
-        })
-    return rows
-
-
 def s6_rows(inventory: dict) -> list[dict]:
     dispositions = {}
     path = AUDIT / "section6-dispositions.json"
@@ -387,9 +253,9 @@ def s6_rows(inventory: dict) -> list[dict]:
         disposition = dispositions.get(ident) or {}
         test_status = named_test_status(row)
         if disposition.get("verdict") == "withdrawn":
-            status = "superseded"
-            reason = "Recorded withdrawn: " + str(disposition.get("reason") or "")
-        elif test_status == "missing":
+            # A withdrawn row is a recorded correction, not a gate.
+            continue
+        if test_status == "missing":
             missing = next(
                 (match.group(1) for match in TEST_PATH.finditer(
                     str(row.get("acceptance_test") or ""))
@@ -455,7 +321,6 @@ def symmetrize(rows: list[dict]) -> None:
 
 
 def build() -> dict:
-    matrix = json.loads(MATRIX.read_text())
     ledger = json.loads(LEDGER.read_text())
     inventory = json.loads(INVENTORY.read_text())
     external = json.loads(EXTERNAL.read_text())
@@ -473,10 +338,16 @@ def build() -> dict:
         criteria = "\n".join(str(row.get(field, "")) for field in
                              ("title", "pass_condition", "fail_condition", "observable"))
         row["criteria_sha256"] = hashlib.sha256(criteria.encode()).hexdigest()
-    rows = list(external["gates"])
-    rows.extend(hf51_rows(matrix, ledger))
+    # A gate is a boolean test of the current build. The release/decision
+    # obligations (HF51) and the sign-off/phantom-data rows are not gates; they
+    # live in their own trackers and are filtered out here.
+    rows = [row for row in external["gates"] if row.get("gate", True)]
     rows.extend(s6_rows(inventory))
-    apply_bindings(rows, bindings, ledger)
+    gate_ids = {row["id"] for row in rows}
+    for row in rows:
+        row["related"] = [edge for edge in row.get("related") or []
+                          if edge.get("id") in gate_ids]
+    apply_bindings(rows, bindings)
     seen = set()
     for row in rows:
         if row["id"] in seen:

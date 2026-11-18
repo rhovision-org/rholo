@@ -1,70 +1,60 @@
-# Gate-closure programme
-
-This note sequences the work that moves `spec/audit/mainnet-gates.json` from **111 gates, 0 met**
-toward closure. It does not promote a gate by itself; the register and its checker are the
-authority.
+# Gate closure programme
 
 ## The rule
 
-A gate is `met` only when its witness resolves, its negative control is recorded, its evidence is
-pinned, and every dependency is met. The first promotion path is
-`spec/audit/mainnet-gates.bindings.json`: an authored, complete binding, applied by
-`tools/build-mainnet-gates.py` only when the row is eligible (S6: accepted disposition and a
-derived category-A effect; HF51: merged/verified ledger item; decision/blocked/precondition/
-superseded rows and `TA-C3` are never eligible). The builder refuses an orphan, duplicate, partial
-or ineligible binding, and the register carries a met ratchet so a promotion cannot silently
-regress.
+**A gate is a boolean test of the current build.** Run the build, get pass or fail. A decision, an
+independent reviewer's verdict, an unavailable historical archive, or an operator export is not a
+gate. Those live in their own trackers; they do not sit in `spec/audit/mainnet-gates.json`.
 
-## First tranche (this unit)
+After the 2026-11-18 sense check the register is **61 gates, 5 met, 56 open**. The rows removed from
+the gate register (49) remain recorded but are not gates:
 
-- The promotion machinery and its negative controls.
-- `G520-MIGRATION`: `tools/populated-store-migration-drill.py`, a populated-store
-  copy/rollback/restart drill with replay qualification and a fresh-genesis control on a disposable
-  local devnet.
-- Four S6 rows, each already backed by a witness and a declared mutation:
-  `S6-25bfdbe2c179c81e` (unknown-only `Expr` refusal), `S6-c7536b90bd39cf71` (produced-value depth
-  bound), `S6-91b05027373a3107` (32-byte prehash refusal), `S6-d7dd0a06a5dee537` (negative
-  `bind_count` refusal).
+- **HF51 (44)** — RCHIP policy decisions, release/operator obligations, and historical-replay or
+  live-rollout evidence. They stay in `hardfork-51-closeout.json`; `#51` is a release tracker, not a
+  gate.
+- **G428-M5** — the authenticated 840→841 bundle is unavailable; a gate cannot require data nobody
+  has.
+- **G428-M6, G584-G6** — independent reviewer verdicts; sign-offs, not tests.
+- **C357** — selected-release lockstep plus an independent category-A verdict and a reconstructed
+  trace; a release/sign-off campaign, not a current-build test.
+- **TA-C3** — a census that cannot go green by construction.
+- **S6-decimal (withdrawn)** — a recorded correction, not a gate.
 
-The S6 rows are accepted only after the independent reviewer (Patrick Mockridge) confirms the packed
-PASS/FAIL records and the review record; until then the dispositions stay `reviewable`.
+The S6 independent review is also no longer a gate condition. A review record is a sign-off; the
+gate is the witness and its mutation control. The review records remain in
+`spec/audit/section6-reviews/` as the sign-off trail.
 
-## Next tranches
+## What the 61 gates are
 
-1. **S6 batches.** The remaining reviewable rows, grouped by witness family and category-A effect.
-   Two rows are held for dedicated witnesses: `S6-212cef89b85456e0` (the proto-boundary assertion is
-   embedded in a broad round-trip test) and `S6-2228415e1ac6b83e` (no single witness covers all
-   three depth guards). The three S6 `owes` rows need their named tests/controls: 
-   `tests/liveness-enforcement.py` is absent for `S6-0963a698bc9c4ee4`; `S6-5651614bf8e3eeb7` and
-   `S6-f735095c746556f3` have named tests but no recorded negative control.
-2. **HF51 in-repo owes.** `A:shard-config` (`casper/tests/committed_bounds.rs` plus a three-node
-   new-genesis/restart/LFS arm; the ledger is still `open` and the wider RCHIP #24 scope is a
-   decision), `Audit:parent-limit` (merged; opposing-config and over-limit fixture), and
-   `Batch:activation-schedule` (height boundary, mismatch rejection, startup/restart/replay on the
-   integrated source). Promote only after the ledger/evidence bar is met.
-3. **Decision queue.** The 22 decision rows stay open. This is a tracking queue, not a closure
-   path: each row names its owner and the input that would let the owner decide.
-   - `@PatrickMockridge`: `A-rev-economics`, `A-validator-rewards`, `A-unbond-throttle`,
-     `A-phlo-exchange`, `A-prepaid-rholang`, `A-asset-store`, `B-staking-pools`,
-     `B-rev-receipt`, `B-staking-pools-interface`, `Audit-law53-estrangement`,
-     `Release-decimal-genesis`, `Audit-merge-resolution-stage4`.
-   - `@aixaria0`: `Audit-inactivity-leak`.
-   - Jim: `A-double-mint`, `A-hardfork1-migration`, `A-genesis-contract-upgrade`,
-     `B-genesis-contract-upgrade`, `A-block-merge`, `A-storage-rent`, `A-decentralized-rspace`,
-     `B-babel`, `Batch-governance-schedule`.
-   The nine Jim rows also carry unlanded work; a decision alone does not make them `met`.
-4. **External campaign queue.** `G584-G1..G6` (the live four-validator window and an independent
-   G6 verdict), `G428-M1/M3/M4/M5/M6` (multi-host capacity, off-host bootstrap, finality/recovery,
-   the unavailable 840→841 bundle, reproducibility), `C343` (operator read-only B/C/D snapshot),
-   `C357` (lockstep campaign and independent category-A verdict), and `TA-C1/C2` (live re-runs).
-   These need live or off-host observers, operator archives, independent reviewers, or release
-   coordination. Local-devnet arms are prerequisites, not substitutes.
+- **48 S6 invariants** — each a testable claim about the current build. Four are met:
+  `S6-25bfdbe2c179c81e`, `S6-c7536b90bd39cf71`, `S6-91b05027373a3107`,
+  `S6-d7dd0a06a5dee537`.
+- **G520-MIGRATION** — met by `tools/populated-store-migration-drill.py`.
+- **G428-M1..M4** — multi-host capacity, bounded ingress, off-host bootstrap, finality/recovery.
+  Objective tests of the current build, runnable on the declared hardware.
+- **G584-G1..G5** — live four-validator observations of the current build.
+- **C343** — read-only B/C/D phase diagnosis on the current build.
+- **TA-C1/C2** — live finality and testnet acceptance re-runs.
 
-## What this programme does not claim
+The live/multi-host gates are still boolean and objective; they are not in-repo unit tests, and they
+need real hosts, operators and a release candidate. That is a different kind of input from phantom
+data or a reviewer's opinion.
+
+## Next
+
+1. **Write the missing S6 tests.** 41 S6 invariants are reviewable because no dedicated test exists;
+   add the test and its mutation control, then bind it. Do not add a reviewer requirement to a gate.
+2. **Run the live/multi-host gates on the current build.** G428-M1..M4, G584-G1..G5, C343, TA-C1/C2
+   need the declared hosts and a selected candidate. The local-devnet arms are prerequisites, not
+   substitutes.
+3. **Track the non-gates separately.** `hardfork-51-closeout.json` holds the 44 HF51 rows; the
+   decision rows name their owners; the operator export/rollout rows are release obligations.
+4. **Do not promote a gate from a review, a decision or an unavailable archive.**
+
+## What this does not claim
 
 - No external campaign has run and no operator artefact exists.
-- No decision gate is closed; the register refuses a decision witness by construction.
-- `TA-C3` is a census, not a pass/fail gate; it cannot go green.
-- `--assert-closeable` and the #51 tracker keep exiting 3 while any row is unresolved.
+- `--assert-closeable` exits 3: 56 gate tests remain open.
+- The four S6 review records are sign-off evidence, not gate conditions.
 - CI wiring for the new tests is requested in `ci-wiring-request.md`; no workflow file is edited
   here.

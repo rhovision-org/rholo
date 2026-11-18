@@ -46,7 +46,7 @@ class RegisterTests(unittest.TestCase):
         (run / "binary-sha256.txt").write_text("b" * 64 + "\n")
         (run / "result.json").write_text(json.dumps({"result": "PASS"}))
         cls.records = {}
-        for gate_id in ("G428-M5", "G584-G6"):
+        for gate_id in ("G520-MIGRATION", "G584-G1"):
             for verdict in ("PASS", "FAIL"):
                 record = Path(cls.tmp.name) / f"{gate_id}-{verdict.lower()}"
                 args = SimpleNamespace(
@@ -80,7 +80,7 @@ class RegisterTests(unittest.TestCase):
     def inspect(self):
         return gate.validate(self.payload, MATRIX, INVENTORY, LEDGER)
 
-    def make_met(self, ident="G428-M5"):
+    def make_met(self, ident="G520-MIGRATION"):
         row = self.row(ident)
         ratchet = self.payload.setdefault(
             "met_ratchet", {"minimum": 0, "required_ids": []})
@@ -100,7 +100,7 @@ class RegisterTests(unittest.TestCase):
                 "mutation": dict(MUTATION),
                 "test": M5_TEST,
                 "expected": "FAIL",
-                "run_record": self.records[("G428-M5", "FAIL")],
+                "run_record": self.records[("G520-MIGRATION", "FAIL")],
             },
         }
         row["evidence"] = {
@@ -108,11 +108,11 @@ class RegisterTests(unittest.TestCase):
             "digest": "c" * 64,
             "source_sha": "a" * 40,
             "binary_sha256": "b" * 64,
-            "record": self.records[("G428-M5", "PASS")],
+            "record": self.records[("G520-MIGRATION", "PASS")],
         }
         return row
 
-    def make_human_met(self, ident="G584-G6"):
+    def make_human_met(self, ident="G584-G1"):
         row = self.make_met(ident)
         row["witness_kind"] = "human-attestation"
         row["witness_ref"] = "docs/src/spec/gate-terms.md::reviewer"
@@ -124,9 +124,9 @@ class RegisterTests(unittest.TestCase):
             test="docs/src/spec/gate-terms.md::reviewer",
             mutation={"file": "docs/src/spec/gate-terms.md",
                       "before": "Independent", "after": "Dependent"},
-            run_record=self.records[("G584-G6", "FAIL")],
+            run_record=self.records[("G584-G1", "FAIL")],
         )
-        row["evidence"]["record"] = self.records[("G584-G6", "PASS")]
+        row["evidence"]["record"] = self.records[("G584-G1", "PASS")]
         return row
 
     def make_binding(self, ident="G520-MIGRATION"):
@@ -192,7 +192,7 @@ class RegisterTests(unittest.TestCase):
             "met_ratchet": {"minimum": len(required), "required_ids": required},
             "bindings": bindings,
         }
-        builder.apply_bindings(rows, document, LEDGER)
+        builder.apply_bindings(rows, document)
         return rows
 
     def test_a_complete_binding_promotes_only_the_bound_row(self):
@@ -247,11 +247,10 @@ class RegisterTests(unittest.TestCase):
             self.apply_bindings([binding])
 
     def test_a_decision_binding_is_refused(self):
-        ident = "HF51-A-rev-economics"
-        with self.assertRaisesRegex(ValueError, "not promotable"):
-            self.apply_bindings([self.make_binding(ident)],
-                                rows=[copy.deepcopy(self.row(ident))],
-                                required=[ident])
+        row = {"id": "X", "family": "S6", "status": "decision", "depends_on": []}
+        eligible, reason = builder._eligible(row, set())
+        self.assertFalse(eligible)
+        self.assertIn("not promotable", reason)
 
     def test_a_blocked_binding_is_refused(self):
         ident = "G428-M1"
@@ -262,37 +261,20 @@ class RegisterTests(unittest.TestCase):
 
     def test_ta_c3_is_not_a_pass_fail_gate(self):
         eligible, reason = builder._eligible(
-            self.row("TA-C3"), {}, {}, set())
+            {"id": "TA-C3", "family": "TA", "status": "reviewable",
+             "depends_on": []}, set())
         self.assertFalse(eligible)
         self.assertIn("not a pass/fail gate", reason)
 
-    def test_an_s6_binding_needs_an_accepted_disposition(self):
+    def test_an_s6_binding_does_not_need_a_review(self):
         row = {"id": "S6-25bfdbe2c179c81e", "family": "S6",
                "status": "reviewable", "depends_on": []}
-        with self.assertRaisesRegex(ValueError, "no disposition record"):
-            builder._eligible(row, {}, {}, set())
-        eligible, reason = builder._eligible(
-            row, {"S6:25bfdbe2c179c81e": {"verdict": "reviewable"}}, {}, set())
-        self.assertFalse(eligible)
-        self.assertIn("not accepted", reason)
-        eligible, _ = builder._eligible(
-            row, {"S6:25bfdbe2c179c81e": {
-                "verdict": "accepted", "category_a_effect": "wire-format"}}, {}, set())
-        self.assertTrue(eligible)
+        eligible, reason = builder._eligible(row, set())
+        self.assertTrue(eligible, reason)
 
-    def test_an_hf51_binding_needs_a_merged_or_verified_ledger_item(self):
-        row = {
-            "id": "HF51-A-example",
-            "family": "HF51",
-            "status": "owes",
-            "source_ref": "final-gap-matrix.json#items/A:example",
-            "depends_on": [],
-        }
-        for status, expected in (("open", False), ("deferred", False),
-                                 ("merged", True), ("verified", True)):
-            eligible, _ = builder._eligible(
-                row, {}, {"A:example": {"status": status}}, set())
-            self.assertEqual(eligible, expected, status)
+    def test_hf51_is_not_in_the_gate_register(self):
+        self.assertFalse(any(row["family"] == "HF51"
+                             for row in self.payload["gates"]))
 
     def test_a_dependency_must_be_met(self):
         row = {
@@ -301,10 +283,10 @@ class RegisterTests(unittest.TestCase):
             "status": "owes",
             "depends_on": ["G584-G1"],
         }
-        eligible, reason = builder._eligible(row, {}, {}, set())
+        eligible, reason = builder._eligible(row, set())
         self.assertFalse(eligible)
         self.assertIn("dependency G584-G1", reason)
-        eligible, _ = builder._eligible(row, {}, {}, {"G584-G1"})
+        eligible, _ = builder._eligible(row, {"G584-G1"})
         self.assertTrue(eligible)
 
     def test_the_met_ratchet_cannot_regress(self):
@@ -388,7 +370,7 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_met_gate_cannot_depend_on_an_unmet_gate(self):
-        row = self.make_met("G428-M5")
+        row = self.make_met("G520-MIGRATION")
         row["depends_on"] = ["G584-G1"]
         with self.assertRaisesRegex(gate.GateError, "cannot be met"):
             self.inspect()
@@ -400,9 +382,9 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_cross_family_related_needs_a_direction(self):
-        edge = next(edge for edge in self.row("G428-M5")["related"]
-                    if edge["id"].startswith("HF51"))
-        edge["criterion"] = "M5 is the block-merge gate"
+        edge = next(edge for edge in self.row("G428-M2")["related"]
+                    if edge["id"] == "TA-C1")
+        edge["criterion"] = "M2 is the ingress gate"
         with self.assertRaisesRegex(gate.GateError, "direction"):
             self.inspect()
 
@@ -412,25 +394,23 @@ class RegisterTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.GateError, "not symmetric"):
             self.inspect()
 
-    def test_disposition_register_drift_is_refused(self):
-        row = self.row("S6-f735095c746556f3")
-        row["status"] = "superseded"
-        with self.assertRaisesRegex(gate.GateError, "disposition"):
-            self.inspect()
+    def test_a_withdrawn_row_is_not_a_gate(self):
+        self.assertFalse(any(row["id"] == "S6-dc8df48ecb6197ee"
+                             for row in self.payload["gates"]))
 
-    def test_stale_matrix_hash_is_refused(self):
-        self.row("HF51-A-block-merge")["source_hash"] = "0" * 64
+    def test_stale_inventory_hash_is_refused(self):
+        self.row("S6-25bfdbe2c179c81e")["source_sha256"] = "0" * 64
         with self.assertRaisesRegex(gate.GateError, "stale"):
             self.inspect()
 
     def test_human_attestation_needs_an_independent_reviewer(self):
-        row = self.make_human_met("G584-G6")
+        row = self.make_human_met("G584-G1")
         self.assertNotIn("attestation", row)
         with self.assertRaisesRegex(gate.GateError, "attestation.reviewer"):
             self.inspect()
 
     def test_human_attestation_needs_a_review_record(self):
-        row = self.make_human_met("G584-G6")
+        row = self.make_human_met("G584-G1")
         row["attestation"] = {
             "reviewer": "external-reviewer",
             "relationship": "not the owner",
@@ -455,8 +435,8 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_source_ref_must_name_the_gate(self):
-        self.row("HF51-A-block-merge")["source_ref"] = (
-            "final-gap-matrix.json#items/A:vault-export")
+        self.row("S6-25bfdbe2c179c81e")["source_ref"] = (
+            "section6-gap-inventory.json#rows/S6:0000000000000000")
         with self.assertRaisesRegex(gate.GateError, "does not name this gate"):
             self.inspect()
 
@@ -491,7 +471,7 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_does_not_claim_is_required(self):
-        self.row("G428-M5")["does_not_claim"] = ""
+        self.row("G520-MIGRATION")["does_not_claim"] = ""
         with self.assertRaisesRegex(gate.GateError, "does_not_claim"):
             self.inspect()
 

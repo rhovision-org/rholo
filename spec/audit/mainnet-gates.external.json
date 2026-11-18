@@ -189,6 +189,7 @@
     },
     {
       "id": "G428-M5",
+      "gate": false,
       "family": "G428",
       "title": "Finalized state integrity and merge accounting",
       "source_label": "#428 M5",
@@ -234,6 +235,7 @@
     },
     {
       "id": "G428-M6",
+      "gate": false,
       "family": "G428",
       "title": "Reproducibility and independent sign-off",
       "source_label": "#428 M6",
@@ -473,6 +475,7 @@
     },
     {
       "id": "G584-G6",
+      "gate": false,
       "family": "G584",
       "title": "Independent verdict",
       "source_label": "#584 G6",
@@ -594,6 +597,7 @@
     },
     {
       "id": "TA-C3",
+      "gate": false,
       "family": "TA",
       "title": "Every attack vector is handled",
       "source_label": "testnet acceptance criterion 3",
@@ -661,6 +665,7 @@
     },
     {
       "id": "C357",
+      "gate": false,
       "family": "C357",
       "title": "Self-replay recovery and section-6 lockstep acceptance",
       "source_label": "C357 owes cell; closeout-phase-space-20261117.md",

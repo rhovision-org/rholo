@@ -3,6 +3,10 @@
 A gate is only as strong as its witness. This page is the standard every release gate in
 `spec/audit/mainnet-gates.json` is checked against; the terms are in [Gate terms](gate-terms.md).
 
+**A gate is a boolean test of the current build.** Run the build, get pass or fail. A decision, a
+reviewer's verdict, an unavailable historical archive, or an operator export is not a gate; those
+are tracked separately.
+
 ## What a gate record must name
 
 Every gate names:

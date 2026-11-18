@@ -1,5 +1,10 @@
 # Principle-level gate criteria — 2026-11-18
 
+> **Scope correction, 2026-11-18 (sense check).** The gate register now carries only boolean
+> current-build tests. M5, M6, G6, C357, TA-C3, the withdrawn S6 row and the 44 HF51 rows are not
+> gates; they are release/sign-off obligations in their own trackers. The M5 and C357 criteria below
+> remain method records but are no longer gate coverage.
+
 ## Scope and the problem
 
 The canonical register (`spec/audit/mainnet-gates.json`, 111 gates, 0 met) records each gate as

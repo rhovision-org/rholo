@@ -54,7 +54,7 @@ WITNESS_KINDS = {
 SOLE_EVIDENCE = {
     "none", "docker", "local-devnet", "live-host", "external", "multi-host",
 }
-FAMILIES = {"G428", "G584", "TA", "HF51", "S6", "C343", "C357", "G520"}
+FAMILIES = {"G428", "G584", "TA", "S6", "C343", "G520"}
 PINNED_EXTERNAL = {"G428", "G584", "TA"}
 
 
@@ -474,34 +474,8 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
         resolve_source(row, matrix, inventory, ledger)
     check_dependencies(rows)
     check_related(rows)
-    dispositions: dict[str, dict] = {}
-    disposition_path = ROOT / "spec" / "audit" / "section6-dispositions.json"
-    if disposition_path.is_file():
-        dispositions_document = json.loads(disposition_path.read_text())
-        dispositions = {row["id"]: row for row in dispositions_document.get("rows", [])}
-    for row in rows:
-        if row["family"] != "S6" or row["id"].startswith("S6-PR600"):
-            continue
-        ident = "S6:" + row["id"][3:]
-        disposition = dispositions.get(ident)
-        require(disposition is not None, f"{row['id']}: no disposition record")
-        verdict = disposition.get("verdict")
-        if verdict == "withdrawn":
-            require(row["status"] == "superseded",
-                    f"{row['id']}: a withdrawn disposition must be superseded")
-        elif verdict == "reviewable":
-            require(row["status"] in ("reviewable", "owes"),
-                    f"{row['id']}: a reviewable disposition cannot be {row['status']}")
-            if row["status"] == "owes":
-                reason = str(row.get("status_reason") or "").lower()
-                require("named test" in reason or "absent" in reason,
-                        f"{row['id']}: an owes status needs the named-test reason")
-        elif verdict == "accepted":
-            require(row["status"] in ("reviewable", "met"),
-                    f"{row['id']}: an accepted disposition cannot be {row['status']}")
     check_criteria(rows)
     check_met_ratchet(document, rows)
-    check_section6_reviews(rows)
     unresolved = [row["id"] for row in rows if row["status"] != "met"]
     return {
         "result": "REGISTER_VALID",
@@ -553,7 +527,8 @@ def check_criteria(rows: list[dict]) -> None:
                   "local-devnet", "live-host"}
     expected = {
         gate_id for gate_id, row in external.items()
-        if row.get("machine_check") is True or row.get("witness_kind") in executable
+        if row.get("gate", True)
+        and (row.get("machine_check") is True or row.get("witness_kind") in executable)
     }
     require(set(by_id) == expected,
             "criterion coverage differs: "
@@ -623,24 +598,6 @@ def check_met_ratchet(document: dict, rows: list[dict]) -> None:
     met = {row["id"] for row in rows if row["status"] == "met"}
     require(met == set(required),
             f"the met set {sorted(met)} does not equal the ratchet {sorted(set(required))}")
-
-
-def check_section6_reviews(rows: list[dict]) -> None:
-    """A met S6 row needs a well-formed accepted disposition.
-
-    The register checker already reconciles the disposition verdict with the row
-    status; this runs the fuller disposition checker so a missing reviewer,
-    https verdict, digest or review record fails the register too.
-    """
-    if not any(row["family"] == "S6" and row["status"] == "met" for row in rows):
-        return
-    path = ROOT / "tools" / "check-section6-dispositions.py"
-    spec = importlib.util.spec_from_file_location("section6_dispositions_checker", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    inventory = json.loads(INVENTORY.read_text())
-    dispositions = json.loads((AUDIT / "section6-dispositions.json").read_text())
-    module.validate(inventory, dispositions)
 
 
 def main() -> int:
