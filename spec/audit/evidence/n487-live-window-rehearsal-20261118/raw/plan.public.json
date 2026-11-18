@@ -1,0 +1,23 @@
+{
+  "deploy_id": "304402206d6247caa9e62a696843ac5e382d214161c6d537db3deedbd9d1459eab65bbe702201b843cb8057c748c86399947927879c6daee0ad5539f6889e68769ddb27eb9a1",
+  "schema": 1,
+  "tool": "live-gate",
+  "validators": [
+    {
+      "alias": "v1",
+      "endpoint_sha256": "9cd6fbee8a05874ecbfbbfdd4c0d87cbb00c0adf1db23b454fc6081ebc79857b"
+    },
+    {
+      "alias": "v2",
+      "endpoint_sha256": "53fd9f41fe174ea545f25c370fe83472b11e6bd6950f62d1562d8a8c76137c3b"
+    },
+    {
+      "alias": "v3",
+      "endpoint_sha256": "0450ca9a1ec05e43402e65bab563bb0434e9aa4eadee6f8dbe27d07be86d79e8"
+    },
+    {
+      "alias": "v4",
+      "endpoint_sha256": "770f5830d34fa1ba16f2a0e6d712a7f77739559576f94e7cfe45aa04e9d8d3cb"
+    }
+  ]
+}

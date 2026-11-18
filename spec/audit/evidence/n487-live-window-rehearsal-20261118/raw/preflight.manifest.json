@@ -1,0 +1,449 @@
+{
+  "checks": {
+    "all_observed_fields": true,
+    "all_operator_fields": true,
+    "binary_sha256_agreement": true,
+    "distinct_boot_ids": true,
+    "distinct_names": true,
+    "genesis_hash_agreement": true,
+    "genesis_raw_sha256_agreement": true,
+    "network_id_agreement": true,
+    "ok": true,
+    "operator_fields_typed": true,
+    "selected_candidate_matches_validators": true,
+    "shard_id_agreement": true,
+    "source_sha_agreement": true,
+    "validator_count": 4
+  },
+  "errors": [],
+  "generated_at_utc": "2026-11-18T21:23:29+00:00",
+  "operator_fields": {
+    "deploy_relay": {
+      "aliases": [
+        "v1",
+        "v2",
+        "v3",
+        "v4"
+      ],
+      "destination_port": 40401,
+      "mode": "relay",
+      "reachability_checked_utc": "2026-11-18T21:22:54+00:00",
+      "unreachable_aliases": []
+    },
+    "evidence_destination": "target/n487-rehearsal/preflight",
+    "independent_reviewer": "<redacted>",
+    "observers": "<redacted>",
+    "operator": "<redacted>",
+    "release_branch": "audit/pareto-gates-20261118",
+    "release_tag": "rehearsal",
+    "rollback": {
+      "previous": "none"
+    },
+    "rollback_owner": "<redacted>",
+    "selected_artifact_digest": "8c5b219081ba9ce43c23596354f61b03de95b7119876dae85626f6a20e8a3bec",
+    "selected_binary_sha256": "a353225ee1cb219b249f37d22fc66cccc31b5df2be8b2fcb4f0d1e3b75b3310f",
+    "selected_source_sha": "4e097cc8d776a2b52cd07aacdd7a09beb9620a1b",
+    "test_transfer": "<redacted>",
+    "window_end_utc": "2026-11-18T21:25:00Z",
+    "window_start_utc": "2026-11-18T21:15:00Z"
+  },
+  "schema": 1,
+  "source": {
+    "branch": "audit/pareto-gates-20261118",
+    "sha": "4e097cc8d776a2b52cd07aacdd7a09beb9620a1b",
+    "tag": "rehearsal"
+  },
+  "synthetic_boot_ids": true,
+  "unset_observed": [],
+  "unset_operator": [],
+  "validators": [
+    {
+      "accepts_deploys": true,
+      "address": "467fa3b75f9a21110b50b2117bab3475c0a8845b",
+      "admin": "<redacted>",
+      "api_version": "1",
+      "autopropose": false,
+      "binary_path": "/usr/local/bin/rnode",
+      "binary_sha256": "a353225ee1cb219b249f37d22fc66cccc31b5df2be8b2fcb4f0d1e3b75b3310f",
+      "bonds": [
+        {
+          "stake": 100,
+          "validator": "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0"
+        },
+        {
+          "stake": 100,
+          "validator": "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc"
+        },
+        {
+          "stake": 100,
+          "validator": "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e"
+        },
+        {
+          "stake": 100,
+          "validator": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+        }
+      ],
+      "bonds_sha256": "c74ca03d68ea8f03ac90241d81b4b8b632d97fb4d07696cfb585368469dbda5e",
+      "boot_id": "n487-rehearsal-instance-v1",
+      "boot_id_source": "rehearsal",
+      "clock_offset_ms": 755,
+      "degraded": "normal",
+      "dev_mode": true,
+      "errors": [],
+      "finalized_hash": "c619db83f3dddaa4fd9613345eb3349e2718b7a174804053a13a6d8a29a0ae6a",
+      "finalized_height": 5,
+      "finalized_height_error": null,
+      "finalized_lag": 3,
+      "genesis_hash": "4efa23c26185d09a8dee56b84bae47dc6924cfbd5fc8d264004f6164758a6f5b",
+      "genesis_raw_bytes": 502541,
+      "genesis_raw_sha256": "5b17b835d3b40d5104c0dbe30d4a30d92093f4ae7cb4ffa4d4e612c020965709",
+      "health_height": 9,
+      "height": 9,
+      "http": "<redacted>",
+      "last_block_age_ms": 176573,
+      "last_finality_age_ms": 176538,
+      "max_observed_height": 8,
+      "name": "v1",
+      "network_id": "testnet",
+      "observed_at_utc": "2026-11-18T21:22:54+00:00",
+      "operator": {
+        "finality_stalled": false,
+        "height": 9,
+        "orphan_bodies": 0,
+        "peers": 3,
+        "reset_marker": null,
+        "resources": {
+          "cgroupCurrentMb": 31,
+          "cgroupLimitMb": 2048,
+          "cgroupOomKills": 0,
+          "cgroupVersion": "v2",
+          "cpuQuota": null,
+          "criticalFloorMb": 256,
+          "dataDirFreeMb": 162504,
+          "executionPermits": 6,
+          "explorePermits": 2,
+          "fallbackReason": "headroom above the admission floor",
+          "fallbackSinceMs": 0,
+          "fallbackState": "normal",
+          "headroomMb": 2017,
+          "memAvailableMb": 24206,
+          "memTotalMb": 48142,
+          "recoveryFloorMb": 460,
+          "rnodeProcesses": 1,
+          "rssMb": 62,
+          "sampleAgeMs": 730,
+          "sampledAtMs": 1795036974057,
+          "source": "meminfo+cgroup+disk+proc-self",
+          "state": "normal",
+          "throttleFloorMb": 358
+        }
+      },
+      "pool": {
+        "bytes": 0,
+        "deploys": 0,
+        "maxBytes": 67108864,
+        "maxDeploys": 10000
+      },
+      "propose_on_deploy": false,
+      "ready": true,
+      "ready_reasons": [],
+      "shard_id": "/root",
+      "source_sha": "4e097cc8d776a2b52cd07aacdd7a09beb9620a1b",
+      "source_sha_source": "version-string",
+      "total_stake": 400,
+      "unset": [],
+      "version": "rholo node 0.1.0 (4e097cc8d776a2b52cd07aacdd7a09beb9620a1b)"
+    },
+    {
+      "accepts_deploys": true,
+      "address": "7e065d181f9c48c7912d5c702ab83283f1a0e10c",
+      "admin": "<redacted>",
+      "api_version": "1",
+      "autopropose": false,
+      "binary_path": "/usr/local/bin/rnode",
+      "binary_sha256": "a353225ee1cb219b249f37d22fc66cccc31b5df2be8b2fcb4f0d1e3b75b3310f",
+      "bonds": [
+        {
+          "stake": 100,
+          "validator": "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0"
+        },
+        {
+          "stake": 100,
+          "validator": "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc"
+        },
+        {
+          "stake": 100,
+          "validator": "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e"
+        },
+        {
+          "stake": 100,
+          "validator": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+        }
+      ],
+      "bonds_sha256": "c74ca03d68ea8f03ac90241d81b4b8b632d97fb4d07696cfb585368469dbda5e",
+      "boot_id": "n487-rehearsal-instance-v2",
+      "boot_id_source": "rehearsal",
+      "clock_offset_ms": 790,
+      "degraded": "normal",
+      "dev_mode": true,
+      "errors": [],
+      "finalized_hash": "c619db83f3dddaa4fd9613345eb3349e2718b7a174804053a13a6d8a29a0ae6a",
+      "finalized_height": 5,
+      "finalized_height_error": null,
+      "finalized_lag": 3,
+      "genesis_hash": "4efa23c26185d09a8dee56b84bae47dc6924cfbd5fc8d264004f6164758a6f5b",
+      "genesis_raw_bytes": 502541,
+      "genesis_raw_sha256": "5b17b835d3b40d5104c0dbe30d4a30d92093f4ae7cb4ffa4d4e612c020965709",
+      "health_height": 9,
+      "height": 9,
+      "http": "<redacted>",
+      "last_block_age_ms": 176857,
+      "last_finality_age_ms": 176237,
+      "max_observed_height": 8,
+      "name": "v2",
+      "network_id": "testnet",
+      "observed_at_utc": "2026-11-18T21:22:54+00:00",
+      "operator": {
+        "finality_stalled": false,
+        "height": 9,
+        "orphan_bodies": 0,
+        "peers": 1,
+        "reset_marker": null,
+        "resources": {
+          "cgroupCurrentMb": 22,
+          "cgroupLimitMb": 2048,
+          "cgroupOomKills": 0,
+          "cgroupVersion": "v2",
+          "cpuQuota": null,
+          "criticalFloorMb": 256,
+          "dataDirFreeMb": 162505,
+          "executionPermits": 6,
+          "explorePermits": 2,
+          "fallbackReason": "headroom above the admission floor",
+          "fallbackSinceMs": 0,
+          "fallbackState": "normal",
+          "headroomMb": 2026,
+          "memAvailableMb": 24354,
+          "memTotalMb": 48142,
+          "recoveryFloorMb": 460,
+          "rnodeProcesses": 1,
+          "rssMb": 52,
+          "sampleAgeMs": 4441,
+          "sampledAtMs": 1795036970393,
+          "source": "meminfo+cgroup+disk+proc-self",
+          "state": "normal",
+          "throttleFloorMb": 358
+        }
+      },
+      "pool": {
+        "bytes": 0,
+        "deploys": 0,
+        "maxBytes": 67108864,
+        "maxDeploys": 10000
+      },
+      "propose_on_deploy": false,
+      "ready": true,
+      "ready_reasons": [],
+      "shard_id": "/root",
+      "source_sha": "4e097cc8d776a2b52cd07aacdd7a09beb9620a1b",
+      "source_sha_source": "version-string",
+      "total_stake": 400,
+      "unset": [],
+      "version": "rholo node 0.1.0 (4e097cc8d776a2b52cd07aacdd7a09beb9620a1b)"
+    },
+    {
+      "accepts_deploys": true,
+      "address": "1b9be8fef51a3ebc9cedfdffff5550afeaeee99e",
+      "admin": "<redacted>",
+      "api_version": "1",
+      "autopropose": false,
+      "binary_path": "/usr/local/bin/rnode",
+      "binary_sha256": "a353225ee1cb219b249f37d22fc66cccc31b5df2be8b2fcb4f0d1e3b75b3310f",
+      "bonds": [
+        {
+          "stake": 100,
+          "validator": "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0"
+        },
+        {
+          "stake": 100,
+          "validator": "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc"
+        },
+        {
+          "stake": 100,
+          "validator": "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e"
+        },
+        {
+          "stake": 100,
+          "validator": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+        }
+      ],
+      "bonds_sha256": "c74ca03d68ea8f03ac90241d81b4b8b632d97fb4d07696cfb585368469dbda5e",
+      "boot_id": "n487-rehearsal-instance-v3",
+      "boot_id_source": "rehearsal",
+      "clock_offset_ms": 838,
+      "degraded": "normal",
+      "dev_mode": true,
+      "errors": [],
+      "finalized_hash": "c619db83f3dddaa4fd9613345eb3349e2718b7a174804053a13a6d8a29a0ae6a",
+      "finalized_height": 5,
+      "finalized_height_error": null,
+      "finalized_lag": 3,
+      "genesis_hash": "4efa23c26185d09a8dee56b84bae47dc6924cfbd5fc8d264004f6164758a6f5b",
+      "genesis_raw_bytes": 502541,
+      "genesis_raw_sha256": "5b17b835d3b40d5104c0dbe30d4a30d92093f4ae7cb4ffa4d4e612c020965709",
+      "health_height": 9,
+      "height": 9,
+      "http": "<redacted>",
+      "last_block_age_ms": 176896,
+      "last_finality_age_ms": 176361,
+      "max_observed_height": 8,
+      "name": "v3",
+      "network_id": "testnet",
+      "observed_at_utc": "2026-11-18T21:22:54+00:00",
+      "operator": {
+        "finality_stalled": false,
+        "height": 9,
+        "orphan_bodies": 0,
+        "peers": 1,
+        "reset_marker": null,
+        "resources": {
+          "cgroupCurrentMb": 23,
+          "cgroupLimitMb": 2048,
+          "cgroupOomKills": 0,
+          "cgroupVersion": "v2",
+          "cpuQuota": null,
+          "criticalFloorMb": 256,
+          "dataDirFreeMb": 162505,
+          "executionPermits": 6,
+          "explorePermits": 2,
+          "fallbackReason": "headroom above the admission floor",
+          "fallbackSinceMs": 0,
+          "fallbackState": "normal",
+          "headroomMb": 2025,
+          "memAvailableMb": 24300,
+          "memTotalMb": 48142,
+          "recoveryFloorMb": 460,
+          "rnodeProcesses": 1,
+          "rssMb": 53,
+          "sampleAgeMs": 3341,
+          "sampledAtMs": 1795036971543,
+          "source": "meminfo+cgroup+disk+proc-self",
+          "state": "normal",
+          "throttleFloorMb": 358
+        }
+      },
+      "pool": {
+        "bytes": 0,
+        "deploys": 0,
+        "maxBytes": 67108864,
+        "maxDeploys": 10000
+      },
+      "propose_on_deploy": false,
+      "ready": true,
+      "ready_reasons": [],
+      "shard_id": "/root",
+      "source_sha": "4e097cc8d776a2b52cd07aacdd7a09beb9620a1b",
+      "source_sha_source": "version-string",
+      "total_stake": 400,
+      "unset": [],
+      "version": "rholo node 0.1.0 (4e097cc8d776a2b52cd07aacdd7a09beb9620a1b)"
+    },
+    {
+      "accepts_deploys": true,
+      "address": "9d87a98e0ce3ea72ce59b345527f3e06662662d4",
+      "admin": "<redacted>",
+      "api_version": "1",
+      "autopropose": false,
+      "binary_path": "/usr/local/bin/rnode",
+      "binary_sha256": "a353225ee1cb219b249f37d22fc66cccc31b5df2be8b2fcb4f0d1e3b75b3310f",
+      "bonds": [
+        {
+          "stake": 100,
+          "validator": "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0"
+        },
+        {
+          "stake": 100,
+          "validator": "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc"
+        },
+        {
+          "stake": 100,
+          "validator": "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e"
+        },
+        {
+          "stake": 100,
+          "validator": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+        }
+      ],
+      "bonds_sha256": "c74ca03d68ea8f03ac90241d81b4b8b632d97fb4d07696cfb585368469dbda5e",
+      "boot_id": "n487-rehearsal-instance-v4",
+      "boot_id_source": "rehearsal",
+      "clock_offset_ms": 888,
+      "degraded": "normal",
+      "dev_mode": true,
+      "errors": [],
+      "finalized_hash": "c619db83f3dddaa4fd9613345eb3349e2718b7a174804053a13a6d8a29a0ae6a",
+      "finalized_height": 5,
+      "finalized_height_error": null,
+      "finalized_lag": 3,
+      "genesis_hash": "4efa23c26185d09a8dee56b84bae47dc6924cfbd5fc8d264004f6164758a6f5b",
+      "genesis_raw_bytes": 502541,
+      "genesis_raw_sha256": "5b17b835d3b40d5104c0dbe30d4a30d92093f4ae7cb4ffa4d4e612c020965709",
+      "health_height": 9,
+      "height": 9,
+      "http": "<redacted>",
+      "last_block_age_ms": 176912,
+      "last_finality_age_ms": 176430,
+      "max_observed_height": 8,
+      "name": "v4",
+      "network_id": "testnet",
+      "observed_at_utc": "2026-11-18T21:22:54+00:00",
+      "operator": {
+        "finality_stalled": false,
+        "height": 9,
+        "orphan_bodies": 0,
+        "peers": 1,
+        "reset_marker": null,
+        "resources": {
+          "cgroupCurrentMb": 22,
+          "cgroupLimitMb": 2048,
+          "cgroupOomKills": 0,
+          "cgroupVersion": "v2",
+          "cpuQuota": null,
+          "criticalFloorMb": 256,
+          "dataDirFreeMb": 162504,
+          "executionPermits": 6,
+          "explorePermits": 2,
+          "fallbackReason": "headroom above the admission floor",
+          "fallbackSinceMs": 0,
+          "fallbackState": "normal",
+          "headroomMb": 2026,
+          "memAvailableMb": 24268,
+          "memTotalMb": 48142,
+          "recoveryFloorMb": 460,
+          "rnodeProcesses": 1,
+          "rssMb": 52,
+          "sampleAgeMs": 2365,
+          "sampledAtMs": 1795036972566,
+          "source": "meminfo+cgroup+disk+proc-self",
+          "state": "normal",
+          "throttleFloorMb": 358
+        }
+      },
+      "pool": {
+        "bytes": 0,
+        "deploys": 0,
+        "maxBytes": 67108864,
+        "maxDeploys": 10000
+      },
+      "propose_on_deploy": false,
+      "ready": true,
+      "ready_reasons": [],
+      "shard_id": "/root",
+      "source_sha": "4e097cc8d776a2b52cd07aacdd7a09beb9620a1b",
+      "source_sha_source": "version-string",
+      "total_stake": 400,
+      "unset": [],
+      "version": "rholo node 0.1.0 (4e097cc8d776a2b52cd07aacdd7a09beb9620a1b)"
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "arms": [],
+  "binary_sha256": "a353225ee1cb219b249f37d22fc66cccc31b5df2be8b2fcb4f0d1e3b75b3310f",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 401,
+      "kind": "text",
+      "path": "raw/SHA256SUMS",
+      "sha256": "fa40138b559128ae888d797fb7890a0fcf11d4f3e693d5a9c108e06c0d86a265"
+    },
+    {
+      "bytes": 183,
+      "kind": "json",
+      "path": "raw/claims.json",
+      "sha256": "c06707c5821536cb7942fe9cfa000750bfc93328fb760e465ad8f0fa4b1877de"
+    },
+    {
+      "bytes": 1282,
+      "kind": "json",
+      "path": "raw/gate-report.json",
+      "sha256": "cac88edf9f46adfaf07538da1685e3f4204af58d1b38411eb41f3a087bd56c4b"
+    },
+    {
+      "bytes": 726,
+      "kind": "json",
+      "path": "raw/plan.public.json",
+      "sha256": "64cf2e7720d1813813cecfb6c17bdbbf88ff95fbfc83e2ceb45beb8b82175b90"
+    },
+    {
+      "bytes": 650,
+      "kind": "json",
+      "path": "raw/pooled-v1.json",
+      "sha256": "2a345806fbfc8bedf7dcb2d69ea7a1a21fda1c288aeee1e9d8d56b90875365b3"
+    },
+    {
+      "bytes": 650,
+      "kind": "json",
+      "path": "raw/pooled-v2.json",
+      "sha256": "2a345806fbfc8bedf7dcb2d69ea7a1a21fda1c288aeee1e9d8d56b90875365b3"
+    },
+    {
+      "bytes": 650,
+      "kind": "json",
+      "path": "raw/pooled-v3.json",
+      "sha256": "2a345806fbfc8bedf7dcb2d69ea7a1a21fda1c288aeee1e9d8d56b90875365b3"
+    },
+    {
+      "bytes": 650,
+      "kind": "json",
+      "path": "raw/pooled-v4.json",
+      "sha256": "2a345806fbfc8bedf7dcb2d69ea7a1a21fda1c288aeee1e9d8d56b90875365b3"
+    },
+    {
+      "bytes": 16145,
+      "kind": "json",
+      "path": "raw/preflight.manifest.json",
+      "sha256": "8fbfdd63094847d5f79dd341650d385ede0c6a2f218d78b53b2b18a53e6630fa"
+    },
+    {
+      "bytes": 299,
+      "kind": "txt",
+      "path": "raw/relay-metrics.txt",
+      "sha256": "8a73d6cb849a9ea3646338c114dc65287b58b2b2929461397c90d7eeb3c2f49f"
+    },
+    {
+      "bytes": 2789,
+      "kind": "json",
+      "path": "raw/run.json",
+      "sha256": "15aed25c3dd58951b95bc16c0a5894b3a332a49d71924108bd8e1fbf986dddac"
+    },
+    {
+      "bytes": 364107,
+      "kind": "gz",
+      "path": "raw/samples.jsonl.gz",
+      "sha256": "18df2cf998e817aef817732fe45eb30a928ee8e708e2ff43372b18875d609f43"
+    },
+    {
+      "bytes": 527,
+      "kind": "json",
+      "path": "raw/submission.json",
+      "sha256": "ef909eb5217178e89f5398cb6fbc42ad64c7a6248f0af09d5bab2deb45daa2a3"
+    }
+  ],
+  "gate_id": "n487-live-window-rehearsal",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-18T21:23:39+00:00",
+    "tool": "evidence-pack",
+    "version": 2
+  },
+  "redactions": [],
+  "reference": null,
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "4e097cc8d776a2b52cd07aacdd7a09beb9620a1b",
+  "verdict": "INCONCLUSIVE"
+}

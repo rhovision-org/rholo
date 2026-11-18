@@ -1,0 +1,8 @@
+{
+  "settled_claim": true,
+  "basis": "finalizedSuccess",
+  "inclusion_block": {
+    "hash": "bbee0145d03c411c8a1cdde0f618604a62222bb99466a222425ef056ae2b4a34",
+    "height": 1
+  }
+}

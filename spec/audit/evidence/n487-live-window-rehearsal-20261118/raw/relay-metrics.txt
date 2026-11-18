@@ -1,0 +1,6 @@
+# TYPE rchain_connection_relay_capacity_refusals_total gauge
+rchain_connection_relay_capacity_refusals_total 0.0
+# TYPE rchain_connection_relay_failures_total gauge
+rchain_connection_relay_failures_total 0.0
+# TYPE rchain_connection_relay_offers_total gauge
+rchain_connection_relay_offers_total 3.0
