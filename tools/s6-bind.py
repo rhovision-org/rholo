@@ -272,6 +272,9 @@ def run_batch(document: dict, batch: str, source: str, date: str,
                 fragment.append(binding_entry(entry, rows[ident], source, pass_record,
                                               fail_record, date))
                 continue
+        if pass_record.exists() or fail_record.exists():
+            shutil.rmtree(pass_record, ignore_errors=True)
+            shutil.rmtree(fail_record, ignore_errors=True)
         command = command_for(entry)
         timeout = float(entry.get("timeout_s", 600))
         run_dir = ROOT / "target" / "s6-runs" / batch / ident
@@ -282,7 +285,7 @@ def run_batch(document: dict, batch: str, source: str, date: str,
         require(completed.returncode == 0, f"{ident}: PASS exited {completed.returncode}\n{log[-2000:]}")
         require("running 1 test" in log and "1 passed" in log,
                 f"{ident}: the filter did not run exactly one test\n{log[-2000:]}")
-        symbol = entry["witness_ref"].partition("::")[2]
+        symbol = entry.get("inner_test") or entry["witness_ref"].partition("::")[2]
         require(re.search(rf"test\s+\S*{re.escape(symbol)}\S*\s+\.\.\.\s+ok", log),
                 f"{ident}: the named test is not in the PASS log")
         source_binary = binary_pin(log)

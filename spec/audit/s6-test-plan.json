@@ -101,9 +101,9 @@
       "cargo_target": "lib",
       "mutation": {
         "file": "casper/src/validate.rs",
-        "before": "        if i64::from(meta.block_num) >= i64::from(b.block_number) {",
-        "after": "        if false && i64::from(meta.block_num) >= i64::from(b.block_number) {",
-        "description": "Disable the H1b descent bound; the failed-parent-above-child witness must fail."
+        "before": "    let mut max_block_number = -1i64;\n    for j in &b.justifications {\n        let meta = dag\n            .lookup(j)\n            .await?\n            .ok_or_else(|| format!(\"missing justification {}\", j.to_hex()))?;\n        // The descent bound, for *every* resolved parent (H1b).\n        if i64::from(meta.block_num) >= i64::from(b.block_number) {\n            return Ok(Err(BlockStatus::InvalidBlockNumber));\n        }\n        // The maximum, over **every** resolved parent. A failed block still counts: skipping it made\n        // the failure hide the block, refusing its child for the parent's record alone (AUDIT C173).\n        max_block_number = max_block_number.max(i64::from(meta.block_num));\n    }\n    if max_block_number + 1 == i64::from(b.block_number) {\n        Ok(Ok(()))\n    } else {\n        Ok(Err(BlockStatus::InvalidBlockNumber))\n    }",
+        "after": "    Ok(Ok(()))",
+        "description": "Accept every block number (both the descent bound and the height maximum); the H1b witness must fail."
       },
       "scope_note": "A resolved parent at or above the block's number is refused (H1b), failed parents included.",
       "result_note": "The named test passes on the current build; the mutation admits the block and the same test fails.",
