@@ -555,8 +555,7 @@ async fn kept_effects_are_readable_from_the_produced_state() {
     let chain = block
         .index
         .deploy_chains
-        .iter()
-        .next()
+        .first()
         .expect("the block carries one chain");
     let expected: Vec<(Blake2b256Hash, Vec<Vec<u8>>)> = chain
         .state_changes
