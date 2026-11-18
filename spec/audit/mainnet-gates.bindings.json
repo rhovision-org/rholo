@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "generated": "2026-11-18",
+  "met_ratchet": {
+    "minimum": 0,
+    "required_ids": []
+  },
+  "bindings": []
+}

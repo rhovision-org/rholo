@@ -19,6 +19,10 @@ PACK_SPEC = importlib.util.spec_from_file_location(
     "evidence_pack", ROOT / "tools/evidence-pack.py")
 pack = importlib.util.module_from_spec(PACK_SPEC)
 PACK_SPEC.loader.exec_module(pack)
+BUILD_SPEC = importlib.util.spec_from_file_location(
+    "build_mainnet_gates", ROOT / "tools/build-mainnet-gates.py")
+builder = importlib.util.module_from_spec(BUILD_SPEC)
+BUILD_SPEC.loader.exec_module(builder)
 REGISTER = json.loads((ROOT / "spec/audit/mainnet-gates.json").read_text())
 MATRIX = json.loads((ROOT / "spec/audit/final-gap-matrix.json").read_text())
 INVENTORY = json.loads((ROOT / "spec/audit/section6-gap-inventory.json").read_text())
@@ -55,6 +59,13 @@ class RegisterTests(unittest.TestCase):
                 readme = record / "README.md"
                 readme.write_text(pack.PLACEHOLDER.sub("authored", readme.read_text()))
                 cls.records[(gate_id, verdict)] = str(record)
+        cls.binding_root = Path(cls.tmp.name) / "binding"
+        cls.binding_root.mkdir()
+        (cls.binding_root / "witness.py").write_text(
+            "def witness():\n    pass\n\ndef self_test():\n    pass\n")
+        (cls.binding_root / "mutation.py").write_text("before\n")
+        (cls.binding_root / "pass-record").mkdir()
+        (cls.binding_root / "fail-record").mkdir()
 
     @classmethod
     def tearDownClass(cls):
@@ -71,6 +82,11 @@ class RegisterTests(unittest.TestCase):
 
     def make_met(self, ident="G428-M5"):
         row = self.row(ident)
+        ratchet = self.payload.setdefault(
+            "met_ratchet", {"minimum": 0, "required_ids": []})
+        if ident not in ratchet["required_ids"]:
+            ratchet["required_ids"].append(ident)
+        ratchet["minimum"] = len(ratchet["required_ids"])
         row["status"] = "met"
         row["witness_kind"] = "rust-integration"
         row["witness_ref"] = M5_TEST
@@ -112,6 +128,177 @@ class RegisterTests(unittest.TestCase):
         )
         row["evidence"]["record"] = self.records[("G584-G6", "PASS")]
         return row
+
+    def make_binding(self, ident="G520-MIGRATION"):
+        row = next(row for row in REGISTER["gates"] if row["id"] == ident)
+        witness = self.binding_root / "witness.py"
+        ref = f"{witness}::witness"
+        mutation = self.binding_root / "mutation.py"
+        return {
+            "gate_id": ident,
+            "witness_kind": "python",
+            "witness_ref": ref,
+            "witness_scope": "integration",
+            "locality": "single-host",
+            "sole_evidence": "local-devnet",
+            "docker_free": False,
+            "does_not_claim": "A synthetic binding for the promotion test.",
+            "witness_binding": {
+                "asserts_sha256": hashlib.sha256(
+                    str(row["pass_condition"]).encode()).hexdigest(),
+                "control": {
+                    "description": "Apply the mutation; the control must fail.",
+                    "control_of": ref,
+                    "mutation": {"file": str(mutation),
+                                 "before": "before", "after": "after"},
+                    "test": f"{witness}::self_test",
+                    "expected": "FAIL",
+                    "run_record": str(self.binding_root / "fail-record"),
+                },
+            },
+            "evidence": {
+                "url": "https://example.invalid/evidence",
+                "digest": "c" * 64,
+                "source_sha": "a" * 40,
+                "binary_sha256": "b" * 64,
+                "record": str(self.binding_root / "pass-record"),
+            },
+        }
+
+    def apply_bindings(self, bindings, rows=None, required=None):
+        rows = rows if rows is not None else [
+            copy.deepcopy(self.row("G520-MIGRATION")),
+            copy.deepcopy(self.row("G428-M1"))]
+        required = required if required is not None else [
+            binding["gate_id"] for binding in bindings]
+        document = {
+            "schema": 1,
+            "met_ratchet": {"minimum": len(required), "required_ids": required},
+            "bindings": bindings,
+        }
+        builder.apply_bindings(rows, document, LEDGER)
+        return rows
+
+    def test_a_complete_binding_promotes_only_the_bound_row(self):
+        rows = self.apply_bindings([self.make_binding()])
+        self.assertEqual(rows[0]["status"], "met")
+        self.assertIsNone(rows[0]["status_reason"])
+        self.assertEqual(rows[0]["witness_kind"], "python")
+        self.assertEqual(rows[1]["status"], "blocked")
+        self.assertTrue(rows[1]["status_reason"])
+
+    def test_an_orphan_binding_is_refused(self):
+        rows = [copy.deepcopy(self.row("G520-MIGRATION"))]
+        with self.assertRaisesRegex(ValueError, "names no gate"):
+            self.apply_bindings([self.make_binding("G428-M1")], rows=rows)
+
+    def test_a_duplicate_binding_is_refused(self):
+        binding = self.make_binding()
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            self.apply_bindings([binding, copy.deepcopy(binding)],
+                                rows=[copy.deepcopy(self.row("G520-MIGRATION"))],
+                                required=["G520-MIGRATION"])
+
+    def test_a_partial_binding_is_refused(self):
+        binding = self.make_binding()
+        del binding["witness_scope"]
+        with self.assertRaisesRegex(ValueError, "binding.witness_scope"):
+            self.apply_bindings([binding])
+
+    def test_the_asserts_hash_must_match_the_pass_condition(self):
+        binding = self.make_binding()
+        binding["witness_binding"]["asserts_sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "asserts_sha256"):
+            self.apply_bindings([binding])
+
+    def test_the_control_must_be_of_the_witness(self):
+        binding = self.make_binding()
+        binding["witness_binding"]["control"]["control_of"] = "x.py::other"
+        with self.assertRaisesRegex(ValueError, "control must be of this witness"):
+            self.apply_bindings([binding])
+
+    def test_the_control_test_must_be_the_witness_or_self_test(self):
+        binding = self.make_binding()
+        binding["witness_binding"]["control"]["test"] = "x.py::other"
+        with self.assertRaisesRegex(ValueError, "witness or its self_test"):
+            self.apply_bindings([binding])
+
+    def test_a_binding_without_its_fail_record_is_refused(self):
+        binding = self.make_binding()
+        binding["witness_binding"]["control"]["run_record"] = str(
+            self.binding_root / "absent")
+        with self.assertRaisesRegex(ValueError, "run record does not exist"):
+            self.apply_bindings([binding])
+
+    def test_a_decision_binding_is_refused(self):
+        ident = "HF51-A-rev-economics"
+        with self.assertRaisesRegex(ValueError, "not promotable"):
+            self.apply_bindings([self.make_binding(ident)],
+                                rows=[copy.deepcopy(self.row(ident))],
+                                required=[ident])
+
+    def test_a_blocked_binding_is_refused(self):
+        ident = "G428-M1"
+        with self.assertRaisesRegex(ValueError, "not promotable"):
+            self.apply_bindings([self.make_binding(ident)],
+                                rows=[copy.deepcopy(self.row(ident))],
+                                required=[ident])
+
+    def test_ta_c3_is_not_a_pass_fail_gate(self):
+        eligible, reason = builder._eligible(
+            self.row("TA-C3"), {}, {}, set())
+        self.assertFalse(eligible)
+        self.assertIn("not a pass/fail gate", reason)
+
+    def test_an_s6_binding_needs_an_accepted_disposition(self):
+        row = copy.deepcopy(self.row("S6-25bfdbe2c179c81e"))
+        with self.assertRaisesRegex(ValueError, "no disposition record"):
+            builder._eligible(row, {}, {}, set())
+        eligible, reason = builder._eligible(
+            row, {"S6:25bfdbe2c179c81e": {"verdict": "reviewable"}}, {}, set())
+        self.assertFalse(eligible)
+        self.assertIn("not accepted", reason)
+        eligible, _ = builder._eligible(
+            row, {"S6:25bfdbe2c179c81e": {
+                "verdict": "accepted", "category_a_effect": "wire-format"}}, {}, set())
+        self.assertTrue(eligible)
+
+    def test_an_hf51_binding_needs_a_merged_or_verified_ledger_item(self):
+        row = {
+            "id": "HF51-A-example",
+            "family": "HF51",
+            "status": "owes",
+            "source_ref": "final-gap-matrix.json#items/A:example",
+            "depends_on": [],
+        }
+        for status, expected in (("open", False), ("deferred", False),
+                                 ("merged", True), ("verified", True)):
+            eligible, _ = builder._eligible(
+                row, {}, {"A:example": {"status": status}}, set())
+            self.assertEqual(eligible, expected, status)
+
+    def test_a_dependency_must_be_met(self):
+        row = {
+            "id": "G520-MIGRATION",
+            "family": "G520",
+            "status": "owes",
+            "depends_on": ["G584-G1"],
+        }
+        eligible, reason = builder._eligible(row, {}, {}, set())
+        self.assertFalse(eligible)
+        self.assertIn("dependency G584-G1", reason)
+        eligible, _ = builder._eligible(row, {}, {}, {"G584-G1"})
+        self.assertTrue(eligible)
+
+    def test_the_met_ratchet_cannot_regress(self):
+        with self.assertRaisesRegex(ValueError, "does not equal the ratchet"):
+            self.apply_bindings([self.make_binding()], required=[])
+
+    def test_an_unbound_row_keeps_its_status_and_reason(self):
+        rows = self.apply_bindings([], rows=[copy.deepcopy(self.row("G520-MIGRATION"))],
+                                   required=[])
+        self.assertEqual(rows[0]["status"], "owes")
+        self.assertTrue(rows[0]["status_reason"])
 
     def test_current_register_is_valid_and_not_closeable(self):
         out = self.inspect()

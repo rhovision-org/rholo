@@ -52,8 +52,8 @@ authored disposition, not a measurement. `superseded` → a recorded correction 
 `met` → the witness resolves, the negative control is recorded, the evidence is pinned and every
 dependency is `met`.
 
-The register ships no `met` gate until those conditions hold. `check-mainnet-gates.py
---assert-closeable` exits 3 while any gate is unresolved; that is the expected state today.
+A gate is `met` only when those conditions hold; the register records how many and every other row
+names its blocker. `check-mainnet-gates.py --assert-closeable` exits 3 while any gate is unresolved.
 
 ## Cross-family crosswalk
 

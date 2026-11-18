@@ -477,8 +477,8 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
     dispositions: dict[str, dict] = {}
     disposition_path = ROOT / "spec" / "audit" / "section6-dispositions.json"
     if disposition_path.is_file():
-        document = json.loads(disposition_path.read_text())
-        dispositions = {row["id"]: row for row in document.get("rows", [])}
+        dispositions_document = json.loads(disposition_path.read_text())
+        dispositions = {row["id"]: row for row in dispositions_document.get("rows", [])}
     for row in rows:
         if row["family"] != "S6" or row["id"].startswith("S6-PR600"):
             continue
@@ -500,6 +500,8 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
             require(row["status"] in ("reviewable", "met"),
                     f"{row['id']}: an accepted disposition cannot be {row['status']}")
     check_criteria(rows)
+    check_met_ratchet(document, rows)
+    check_section6_reviews(rows)
     unresolved = [row["id"] for row in rows if row["status"] != "met"]
     return {
         "result": "REGISTER_VALID",
@@ -591,6 +593,54 @@ def check_criteria(rows: list[dict]) -> None:
             expected_fail += control.get("expected") == "FAIL"
         require(expected_fail > 0, f"{gate_id}: no control expects FAIL")
         _resolve_adapter(entry.get("adapter"), gate_id)
+
+
+def check_met_ratchet(document: dict, rows: list[dict]) -> None:
+    """The met count is a ratchet: it cannot regress, and every met row is authored.
+
+    The ratchet is a floor plus the exact set of authored promotions, so a
+    hand-edited register that drops a binding or adds a `met` row without one is
+    refused even when `--check` is not passed.
+    """
+    ratchet = document.get("met_ratchet")
+    require(isinstance(ratchet, dict), "met_ratchet is required")
+    minimum = ratchet.get("minimum")
+    required = ratchet.get("required_ids")
+    require(type(minimum) is int and minimum >= 0,
+            "met_ratchet.minimum must be a non-negative integer")
+    require(isinstance(required, list)
+            and all(isinstance(ident, str) and ident for ident in required),
+            "met_ratchet.required_ids must be a list of gate ids")
+    require(len(required) == len(set(required)),
+            "met_ratchet.required_ids has duplicates")
+    require(minimum == len(required),
+            "met_ratchet.minimum must equal the required-id count")
+    by_id = {row["id"]: row for row in rows}
+    for ident in required:
+        require(ident in by_id, f"met_ratchet names unknown gate {ident}")
+        require(by_id[ident]["status"] == "met",
+                f"met_ratchet gate {ident} is {by_id[ident]['status']}")
+    met = {row["id"] for row in rows if row["status"] == "met"}
+    require(met == set(required),
+            f"the met set {sorted(met)} does not equal the ratchet {sorted(set(required))}")
+
+
+def check_section6_reviews(rows: list[dict]) -> None:
+    """A met S6 row needs a well-formed accepted disposition.
+
+    The register checker already reconciles the disposition verdict with the row
+    status; this runs the fuller disposition checker so a missing reviewer,
+    https verdict, digest or review record fails the register too.
+    """
+    if not any(row["family"] == "S6" and row["status"] == "met" for row in rows):
+        return
+    path = ROOT / "tools" / "check-section6-dispositions.py"
+    spec = importlib.util.spec_from_file_location("section6_dispositions_checker", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    inventory = json.loads(INVENTORY.read_text())
+    dispositions = json.loads((AUDIT / "section6-dispositions.json").read_text())
+    module.validate(inventory, dispositions)
 
 
 def main() -> int:

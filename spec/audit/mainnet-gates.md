@@ -7,6 +7,7 @@ Do not edit by hand; the checker compares this file with the JSON.
 - ledger source dev: `e33125f65a95cff4f12baf8139a7361c7d158e43`
 - generated: 2026-11-18
 - gates: 111
+- met: 0
 
 | gate | family | status | title | locality | owner |
 |---|---|---|---|---|---|
@@ -124,4 +125,6 @@ Do not edit by hand; the checker compares this file with the JSON.
 
 Status is a disposition of the evidence, not a release claim. A gate is `met` only
 when its witness resolves, its negative control is recorded, its evidence is pinned,
-and every dependency is satisfied. This register ships no `met` gate.
+and every dependency is satisfied.
+The register records **0 of 111 gates `met`**; every other
+gate is open with a stated reason.

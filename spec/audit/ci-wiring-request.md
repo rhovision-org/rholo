@@ -51,6 +51,28 @@ read-only operator tool; it is not run in CI.
 Add `spec/audit/gate-criteria.json` and `spec/audit/gate-principles-20261118.md` to the
 path-gated job's paths.
 
+## Gate-closure promotion and the G520 drill (2026-11-18)
+
+Add beside the runs above:
+
+```sh
+python3 -m unittest discover -s tests -p test_populated_store_migration_drill.py -v
+python3 tools/populated-store-migration-drill.py self-test
+python3 tools/check-mainnet-gates.py --run-controls
+```
+
+Add to the path-gated job:
+
+- `spec/audit/mainnet-gates.bindings.json`
+- `spec/audit/section6-reviews/`
+- `spec/audit/evidence/g520-migration-store-drill-*`
+- `spec/audit/evidence/s6-*-20261118*`
+
+`self_test` is hermetic; the full drill (`--gate`) needs Docker and a disposable devnet, so it is
+an operator run rather than a CI step. `check-mainnet-gates.py --run-controls` executes the G520
+control (`::self_test`) and reports the Rust witness controls as `SKIPPED`; the Rust FAIL records
+are committed evidence.
+
 ## Local equivalent
 
 The PR checklist runs the same commands; `check-mainnet-gates.py --assert-closeable` and

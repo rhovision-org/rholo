@@ -1582,7 +1582,7 @@
       "source_sha256": "200fa86de262781203863bb892e124368513e14834be168151150d38b72dadc0",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/final-gap-matrix.json",
       "status": "owes",
-      "status_reason": "47 section-6 A candidates lack a per-candidate disposition.",
+      "status_reason": "46 section-6 A candidates lack a per-candidate disposition.",
       "title": "Exhaustive \u00a76 category-A reverse inventory",
       "witness_kind": null,
       "witness_ref": null,
@@ -4041,6 +4041,10 @@
   ],
   "generated": "2026-11-18",
   "ledger_source_dev_sha": "e33125f65a95cff4f12baf8139a7361c7d158e43",
+  "met_ratchet": {
+    "minimum": 0,
+    "required_ids": []
+  },
   "register_dev_sha": "dd6a25d69128375d83b7a7701c169ce672e57536",
   "schema": 1,
   "sources": {
