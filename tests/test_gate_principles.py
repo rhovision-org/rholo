@@ -15,9 +15,18 @@ import json
 import unittest
 from pathlib import Path
 
-import gate_fixtures
-
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _fixtures():
+    spec = importlib.util.spec_from_file_location(
+        "gate_fixtures", ROOT / "tests" / "gate_fixtures.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+gate_fixtures = _fixtures()
 CRITERIA = ROOT / "spec" / "audit" / "gate-criteria.json"
 EXTERNAL = ROOT / "spec" / "audit" / "mainnet-gates.external.json"
 
