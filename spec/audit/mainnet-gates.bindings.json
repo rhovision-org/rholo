@@ -2,7 +2,7 @@
   "schema": 1,
   "generated": "2026-11-18",
   "met_ratchet": {
-    "minimum": 19,
+    "minimum": 34,
     "required_ids": [
       "G520-MIGRATION",
       "S6-25bfdbe2c179c81e",
@@ -22,7 +22,22 @@
       "S6-fb6f884e759d7af7",
       "S6-7b9fe37e74b318db",
       "S6-c59c38eeab097a7b",
-      "S6-d39645b95737497d"
+      "S6-d39645b95737497d",
+      "S6-0d97bafd93b8fda9",
+      "S6-1587e04b86742658",
+      "S6-3d5848fba9a91692",
+      "S6-423749eda11ee12d",
+      "S6-45c551728731f6da",
+      "S6-4cefbdfed1e1520b",
+      "S6-9297637b16a7e18c",
+      "S6-957351356597c77d",
+      "S6-9b7d0ce349e22aa8",
+      "S6-a2f660ef8d236b06",
+      "S6-d36503203399d227",
+      "S6-a641f6fa8cc3ce54",
+      "S6-5c91a4e66518c7ec",
+      "S6-47c941dac413cd3b",
+      "S6-0963a698bc9c4ee4"
     ]
   },
   "bindings": [
@@ -651,6 +666,501 @@
         "binary_sha256": "cdd9a5fb6a67e6bee576c2c28ee5e18a5087b376133ac02e23b68db6a4127857",
         "record": "spec/audit/evidence/s6-d39645b95737497d-20261118",
         "url": "https://github.com/rhovision-org/rholo/blob/e3da57ec4d4a8bb3bc037cfb05527b379d506b8c/spec/audit/evidence/s6-d39645b95737497d-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-0d97bafd93b8fda9",
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/runtime_manager.rs::a_boundarys_participation_reaches_play_and_replay_alike",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Treat every validator as inside the participation grace; the play/replay boundary witness must fail.",
+      "does_not_claim": "A current-build regression witness; the live boundary campaign is a release obligation.",
+      "witness_binding": {
+        "asserts_sha256": "956cada4b4b854c1196a1d31db38c0f0abbde74e98361495ec8407027c7a8ca8",
+        "control": {
+          "description": "Treat every validator as inside the participation grace; the play/replay boundary witness must fail.",
+          "control_of": "casper/src/runtime_manager.rs::a_boundarys_participation_reaches_play_and_replay_alike",
+          "mutation": {
+            "file": "rholang/src/native_state.rs",
+            "before": "    if behind <= grace {",
+            "after": "    if behind <= i64::MAX {"
+          },
+          "test": "casper/src/runtime_manager.rs::a_boundarys_participation_reaches_play_and_replay_alike",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-0d97bafd93b8fda9-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "d5905aa0fef0b1c740750d4e8727ec9dbb8ee6ab6bd7980511ec50d07c81267f",
+        "source_sha": "714e5d9346ed554ea29fe7dba91d635b84c98268",
+        "binary_sha256": "59478c363827879f9cf0a47d4b199c3fa1c8f9cba4185262752c23b2b34f17b0",
+        "record": "spec/audit/evidence/s6-0d97bafd93b8fda9-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-0d97bafd93b8fda9-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-1587e04b86742658",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::the_absence_rule_takes_income_only_and_releases_it_on_a_single_block",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Withhold the whole participation share; the absence-rule witness must fail.",
+      "does_not_claim": "A current-build regression witness; the historical replay and rollout are separate.",
+      "witness_binding": {
+        "asserts_sha256": "b1204f1d56662cce912117702c1ce5c70cec698ab712fd5d91bec4588b5a3a75",
+        "control": {
+          "description": "Withhold the whole participation share; the absence-rule witness must fail.",
+          "control_of": "rholang/src/native_state.rs::the_absence_rule_takes_income_only_and_releases_it_on_a_single_block",
+          "mutation": {
+            "file": "rholang/src/native_state.rs",
+            "before": "    if behind <= grace {\n        10_000",
+            "after": "    if behind <= grace {\n        0"
+          },
+          "test": "rholang/src/native_state.rs::the_absence_rule_takes_income_only_and_releases_it_on_a_single_block",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-1587e04b86742658-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "4c1cda0c9b5baf2b92913c5a4005029151dfd7dd49a1dc0116ba4655cd0b06e5",
+        "source_sha": "714e5d9346ed554ea29fe7dba91d635b84c98268",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-1587e04b86742658-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-1587e04b86742658-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-3d5848fba9a91692",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::the_producer_is_paid_a_share_of_what_the_deploy_burned",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Pay the producer nothing; the executor-share witness must fail.",
+      "does_not_claim": "A current-build regression witness; the live reward campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "b2993899e43e39eb2213119464c6a92c0520731f4aee9704de87d61c0c378954",
+        "control": {
+          "description": "Pay the producer nothing; the executor-share witness must fail.",
+          "control_of": "rholang/src/native_state.rs::the_producer_is_paid_a_share_of_what_the_deploy_burned",
+          "mutation": {
+            "file": "rholang/src/native_state.rs",
+            "before": "        let share = i64::from(self.params().await?.executor_share);",
+            "after": "        let share = 0i64;"
+          },
+          "test": "rholang/src/native_state.rs::the_producer_is_paid_a_share_of_what_the_deploy_burned",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-3d5848fba9a91692-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "b1f21edb4f9a4b2e1d5141e692dc208d089fa40608637acec47a3816167d2691",
+        "source_sha": "714e5d9346ed554ea29fe7dba91d635b84c98268",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-3d5848fba9a91692-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-3d5848fba9a91692-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-423749eda11ee12d",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::a_slash_fans_out_to_each_delegators_own_vault_at_every_tier",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Pay a delegator's remainder to the validator; the fan-out witness must fail.",
+      "does_not_claim": "A current-build regression witness; the live slashing campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "fb6d83dc8d6300326fa7b42bebbe7510e715641fee46e4a60cad3fbb27dfece2",
+        "control": {
+          "description": "Pay a delegator's remainder to the validator; the fan-out witness must fail.",
+          "control_of": "rholang/src/native_state.rs::a_slash_fans_out_to_each_delegators_own_vault_at_every_tier",
+          "mutation": {
+            "file": "rholang/src/native_state.rs",
+            "before": "            for (delegator, share) in delegators.iter().zip(shares.iter()) {\n                if *share <= 0 {\n                    continue;\n                }\n                let address = self.vault_address(delegator)?;",
+            "after": "            for (delegator, share) in delegators.iter().zip(shares.iter()) {\n                if *share <= 0 {\n                    continue;\n                }\n                let address = self.vault_address(validator)?;"
+          },
+          "test": "rholang/src/native_state.rs::a_slash_fans_out_to_each_delegators_own_vault_at_every_tier",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-423749eda11ee12d-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "a10e53a72ef77d0d29d359d47b5e137119290b6fbd290ae8a972a9f3c249e8a3",
+        "source_sha": "714e5d9346ed554ea29fe7dba91d635b84c98268",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-423749eda11ee12d-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-423749eda11ee12d-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-45c551728731f6da",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::slash_persists_the_pending_map_it_edits",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Leave a slashed validator in the pending-withdrawal map; the persistence witness must fail.",
+      "does_not_claim": "A current-build regression witness; the live slashing campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "b59d4f08bdda9660838866637d79f900404c2807dca2544a0ca1d97ed44ab799",
+        "control": {
+          "description": "Leave a slashed validator in the pending-withdrawal map; the persistence witness must fail.",
+          "control_of": "rholang/src/native_state.rs::slash_persists_the_pending_map_it_edits",
+          "mutation": {
+            "file": "rholang/src/native_state.rs",
+            "before": "        pending.remove(validator);\n        let accrued = committed.remove(validator)",
+            "after": "        let accrued = committed.remove(validator)"
+          },
+          "test": "rholang/src/native_state.rs::slash_persists_the_pending_map_it_edits",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-45c551728731f6da-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "eb215840676af9803f1b7a3634bb85a6a7fd2d36fb4ede410e28721759514d7f",
+        "source_sha": "714e5d9346ed554ea29fe7dba91d635b84c98268",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-45c551728731f6da-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-45c551728731f6da-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-4cefbdfed1e1520b",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::a_delegation_enlarges_the_pool_and_a_second_one_accumulates",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Replace instead of accumulate a second delegation; the aggregate-bond witness must fail.",
+      "does_not_claim": "A current-build regression witness; the live delegation campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "891594d60804f08eefbd94ac780d0d1dd8a1bff4f8293aa379310ef5b05252e9",
+        "control": {
+          "description": "Replace instead of accumulate a second delegation; the aggregate-bond witness must fail.",
+          "control_of": "rholang/src/native_state.rs::a_delegation_enlarges_the_pool_and_a_second_one_accumulates",
+          "mutation": {
+            "file": "rholang/src/native_state.rs",
+            "before": "        ledger.insert(key, balance_plus(held, stake, \"delegated principal\")?);",
+            "after": "        ledger.insert(key, balance_plus(NonNegI64::zero(), stake, \"delegated principal\")?);"
+          },
+          "test": "rholang/src/native_state.rs::a_delegation_enlarges_the_pool_and_a_second_one_accumulates",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-4cefbdfed1e1520b-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "1ce551fdf983141085bbccbf75bcc53ccdd99ee196e8d42f35210c2ba34b86ce",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-4cefbdfed1e1520b-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-4cefbdfed1e1520b-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-9297637b16a7e18c",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::a_boundary_splits_the_reward_across_the_delegations",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Pay the whole epoch reward to the operator; the delegated-reward witness must fail.",
+      "does_not_claim": "A current-build regression witness; the live reward campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "8a6ed96241e42c75b3566d347522e7b3356e0795eca19736dca876ce050715d2",
+        "control": {
+          "description": "Pay the whole epoch reward to the operator; the delegated-reward witness must fail.",
+          "control_of": "rholang/src/native_state.rs::a_boundary_splits_the_reward_across_the_delegations",
+          "mutation": {
+            "file": "rholang/src/native_state.rs",
+            "before": "            let (shares, operator_share) = split_reward(i64::from(*reward), own, &amounts)?;",
+            "after": "            let (shares, operator_share) = (Vec::new(), i64::from(*reward));"
+          },
+          "test": "rholang/src/native_state.rs::a_boundary_splits_the_reward_across_the_delegations",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-9297637b16a7e18c-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "3d987ff397163e99eb97683eebf383a5bd465c55139e2bd4021e07b5661dff4a",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-9297637b16a7e18c-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-9297637b16a7e18c-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-957351356597c77d",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/system_processes.rs::pos_fund_pot_moves_the_callers_rev_into_the_staking_vault",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Fund the pot without debiting the caller; the fundPot witness must fail.",
+      "does_not_claim": "A current-build regression witness; the live governance campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "8962fd1658158c22d582636f648c877c59c4e4b2f4424b68d6f26ba32c825ca6",
+        "control": {
+          "description": "Fund the pot without debiting the caller; the fundPot witness must fail.",
+          "control_of": "rholang/src/system_processes.rs::pos_fund_pot_moves_the_callers_rev_into_the_staking_vault",
+          "mutation": {
+            "file": "rholang/src/native_state.rs",
+            "before": "        self.set_vault_balance(&address, remaining);",
+            "after": "        self.set_vault_balance(&address, balance);"
+          },
+          "test": "rholang/src/system_processes.rs::pos_fund_pot_moves_the_callers_rev_into_the_staking_vault",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-957351356597c77d-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "bcc0702620ba959a2bf55f91debf764234ee5f2ce5e4cf11a8067397b911ee4d",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-957351356597c77d-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-957351356597c77d-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-9b7d0ce349e22aa8",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/system_processes.rs::rev_vault_transfer_uses_deployer_capability_and_deposit_is_rejected",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Make the vault deposit callable; the deployer-capability witness must fail.",
+      "does_not_claim": "A current-build regression witness; the wallet release campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "16d3c5ecdb289ca59ea375b71f29553c829a484474c5a317f287ea431d1bfd7b",
+        "control": {
+          "description": "Make the vault deposit callable; the deployer-capability witness must fail.",
+          "control_of": "rholang/src/system_processes.rs::rev_vault_transfer_uses_deployer_capability_and_deposit_is_rejected",
+          "mutation": {
+            "file": "rholang/src/system_processes.rs",
+            "before": "                        Err(illegal_arg(\n                            \"revVault: deposit is not callable (REV is minted at genesis only)\",\n                        ))",
+            "after": "                        Ok(())"
+          },
+          "test": "rholang/src/system_processes.rs::rev_vault_transfer_uses_deployer_capability_and_deposit_is_rejected",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-9b7d0ce349e22aa8-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "9f7083b5ac60d01607d337cb252adaad8e7a4ac8e924e3f4b669e8025d2fd85c",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-9b7d0ce349e22aa8-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-9b7d0ce349e22aa8-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-a2f660ef8d236b06",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::a_validator_with_delegations_cannot_withdraw",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Allow a withdrawal while delegations are outstanding; the mutual-exclusion witness must fail.",
+      "does_not_claim": "A current-build regression witness; the live staking campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "133580f80a90b5a8ee1c47114ce2ae13f01d53c5e8a469ef5d1664c140efc7e4",
+        "control": {
+          "description": "Allow a withdrawal while delegations are outstanding; the mutual-exclusion witness must fail.",
+          "control_of": "rholang/src/native_state.rs::a_validator_with_delegations_cannot_withdraw",
+          "mutation": {
+            "file": "rholang/src/native_state.rs",
+            "before": "        if ledger.keys().any(|key| key.operator == *validator) {",
+            "after": "        if false && ledger.keys().any(|key| key.operator == *validator) {"
+          },
+          "test": "rholang/src/native_state.rs::a_validator_with_delegations_cannot_withdraw",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-a2f660ef8d236b06-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "81799c14895ceee58bd85c3ee573d467dae0a3751cf4ee4d378dfff0cba16dbd",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-a2f660ef8d236b06-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-a2f660ef8d236b06-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-d36503203399d227",
+      "witness_kind": "rust-unit",
+      "witness_ref": "shared/src/refined.rs::non_neg_i64_accepts_non_negative_rejects_negative",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Accept a negative NonNegI64; the refinement witness must fail.",
+      "does_not_claim": "A current-build regression witness; the genesis-hash acceptance is separate.",
+      "witness_binding": {
+        "asserts_sha256": "76e87d45b226176eac7c7f769ba4f55f263d657cfb3fad30a58c12c84b200536",
+        "control": {
+          "description": "Accept a negative NonNegI64; the refinement witness must fail.",
+          "control_of": "shared/src/refined.rs::non_neg_i64_accepts_non_negative_rejects_negative",
+          "mutation": {
+            "file": "shared/src/refined.rs",
+            "before": "                if v >= 0 {",
+            "after": "                if true {"
+          },
+          "test": "shared/src/refined.rs::non_neg_i64_accepts_non_negative_rejects_negative",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-d36503203399d227-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "40024ad738a99ded66c7b883a5b48965eace65b07b8b16c920083305be10f815",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "binary_sha256": "acee082ea254c636f30927c71b73c71c24c02db18e6b32352caeb55da50a69a9",
+        "record": "spec/audit/evidence/s6-d36503203399d227-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-d36503203399d227-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-a641f6fa8cc3ce54",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Grade a Misdemeanour as Malicious; the tier witness must fail.",
+      "does_not_claim": "A current-build regression witness for the Misdemeanour tier; the other tier constants are the same table and the live campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "ce6215d8131405228c867c91bf8422105a9370d87ce2e2e6de848cb1dbee1757",
+        "control": {
+          "description": "Grade a Misdemeanour as Malicious; the tier witness must fail.",
+          "control_of": "rholang/src/native_state.rs::a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier",
+          "mutation": {
+            "file": "models/src/block_metadata.rs",
+            "before": "            SlashSeverity::Misdemeanour => 2_500,",
+            "after": "            SlashSeverity::Misdemeanour => 10_000,"
+          },
+          "test": "rholang/src/native_state.rs::a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-a641f6fa8cc3ce54-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "44bf4310a174d8093837cb3f512c2c13f41373f901167b473913a8f7195c68a8",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-a641f6fa8cc3ce54-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-a641f6fa8cc3ce54-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-5c91a4e66518c7ec",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::splitting_a_stake_across_keys_does_not_buy_slots",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Make the active-set draw uniform; the stake-weight witness must fail.",
+      "does_not_claim": "A current-build regression witness; the live active-set campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "f0fc1cc1dc4f54f84f02ae80e71b43551fb3964aee5d5286f4d29bb58564b15a",
+        "control": {
+          "description": "Make the active-set draw uniform; the stake-weight witness must fail.",
+          "control_of": "rholang/src/native_state.rs::splitting_a_stake_across_keys_does_not_buy_slots",
+          "mutation": {
+            "file": "rholang/src/native_state.rs",
+            "before": "        i128::from(i64::from(self.1))",
+            "after": "        1"
+          },
+          "test": "rholang/src/native_state.rs::splitting_a_stake_across_keys_does_not_buy_slots",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-5c91a4e66518c7ec-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "82b622fe0272d83d0ac2d5e50696ba0bceafc84a901f59c813d36dcf1340a225",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-5c91a4e66518c7ec-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-5c91a4e66518c7ec-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-47c941dac413cd3b",
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::an_epoch_length_of_zero_makes_every_block_a_boundary",
+      "witness_scope": "unit",
+      "locality": "unit",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Leave the zero epoch unnormalised; the every-block-boundary witness must fail.",
+      "does_not_claim": "A current-build regression witness; a live epoch campaign is separate.",
+      "witness_binding": {
+        "asserts_sha256": "4925c95a4ca341c6e9e13aec686e8912f4c51298e45fe15b3a2b78ef9009169e",
+        "control": {
+          "description": "Leave the zero epoch unnormalised; the every-block-boundary witness must fail.",
+          "control_of": "rholang/src/native_state.rs::an_epoch_length_of_zero_makes_every_block_a_boundary",
+          "mutation": {
+            "file": "rholang/src/native_state.rs",
+            "before": "fn epoch_divisor(params: &PosParams) -> i64 {\n    if params.epoch_length <= 0 {\n        1",
+            "after": "fn epoch_divisor(params: &PosParams) -> i64 {\n    if params.epoch_length <= 0 {\n        0"
+          },
+          "test": "rholang/src/native_state.rs::an_epoch_length_of_zero_makes_every_block_a_boundary",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-47c941dac413cd3b-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "b52f5021decd3a9353e15fa6a8bbf2c91b4493058f8299d9df289b96ab7e0c31",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-47c941dac413cd3b-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-47c941dac413cd3b-20261118/manifest.json"
+      }
+    },
+    {
+      "gate_id": "S6-0963a698bc9c4ee4",
+      "witness_kind": "python",
+      "witness_ref": "tests/liveness-enforcement.py::self_test",
+      "witness_scope": "integration",
+      "locality": "integration",
+      "sole_evidence": "none",
+      "docker_free": true,
+      "negative_control": "Disable the liveness jail; the in-process liveness witness must fail.",
+      "does_not_claim": "The in-process jail rule only. The devnet/partition arms of tools/liveness-enforcement-drill.py and the live G428-M4 campaign are release obligations.",
+      "witness_binding": {
+        "asserts_sha256": "b4ebe65f209b069240b2bde1c5a3a22a42628f1d142ce4caeb70597da9cd6499",
+        "control": {
+          "description": "Disable the liveness jail; the in-process liveness witness must fail.",
+          "control_of": "tests/liveness-enforcement.py::self_test",
+          "mutation": {
+            "file": "rholang/src/native_state.rs",
+            "before": "            if !record.is_jailed() && record.absent_boundaries >= jail_after {",
+            "after": "            if false && !record.is_jailed() && record.absent_boundaries >= jail_after {"
+          },
+          "test": "tests/liveness-enforcement.py::self_test",
+          "expected": "FAIL",
+          "run_record": "spec/audit/evidence/s6-0963a698bc9c4ee4-20261118-fail"
+        }
+      },
+      "evidence": {
+        "digest": "5ba9ddef8984f43a5bb0f779fef0aa6b0b87812036a895e96419d9929ab12270",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "record": "spec/audit/evidence/s6-0963a698bc9c4ee4-20261118",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-0963a698bc9c4ee4-20261118/manifest.json"
       }
     }
   ]

@@ -553,20 +553,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "The in-process jail rule only. The devnet/partition arms of tools/liveness-enforcement-drill.py and the live G428-M4 campaign are release obligations.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "5ba9ddef8984f43a5bb0f779fef0aa6b0b87812036a895e96419d9929ab12270",
+        "record": "spec/audit/evidence/s6-0963a698bc9c4ee4-20261118",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-0963a698bc9c4ee4-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: The source row did not exist at the ledger's pinned dev commit; the URL therefore shows the section without this row. Live testnet evidence for jail/vote and the partition arm is owed.",
       "family": "S6",
       "id": "S6-0963a698bc9c4ee4",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "integration",
+      "negative_control": "Disable the liveness jail; the in-process liveness witness must fail.",
       "observable": "**Liveness enforcement is a new PoS boundary rule (RCHIP #55, Law 89).**",
       "owner": "@PatrickMockridge",
       "pass_condition": "tests/liveness-enforcement.py plus the live artifact",
@@ -583,12 +584,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "0963a698bc9c4ee42a824fac97c352c637c7cff739bd022c8d34a4ec09d6a0e5",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "owes",
-      "status_reason": "The named test tests/liveness-enforcement.py is absent.",
+      "status": "met",
+      "status_reason": null,
       "title": "**Liveness enforcement is a new PoS boundary rule (RCHIP #55, Law 89).**",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "b4ebe65f209b069240b2bde1c5a3a22a42628f1d142ce4caeb70597da9cd6499",
+        "control": {
+          "control_of": "tests/liveness-enforcement.py::self_test",
+          "description": "Disable the liveness jail; the in-process liveness witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "            if false && !record.is_jailed() && record.absent_boundaries >= jail_after {",
+            "before": "            if !record.is_jailed() && record.absent_boundaries >= jail_after {",
+            "file": "rholang/src/native_state.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-0963a698bc9c4ee4-20261118-fail",
+          "test": "tests/liveness-enforcement.py::self_test"
+        }
+      },
+      "witness_kind": "python",
+      "witness_ref": "tests/liveness-enforcement.py::self_test",
+      "witness_scope": "integration"
     },
     {
       "depends_on": [],
@@ -626,20 +642,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; the live boundary campaign is a release obligation.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "59478c363827879f9cf0a47d4b199c3fa1c8f9cba4185262752c23b2b34f17b0",
+        "digest": "d5905aa0fef0b1c740750d4e8727ec9dbb8ee6ab6bd7980511ec50d07c81267f",
+        "record": "spec/audit/evidence/s6-0d97bafd93b8fda9-20261118",
+        "source_sha": "714e5d9346ed554ea29fe7dba91d635b84c98268",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-0d97bafd93b8fda9-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-0d97bafd93b8fda9",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Treat every validator as inside the participation grace; the play/replay boundary witness must fail.",
       "observable": "**A boundary's participation comes from the last finalised fringe** \u2014 the epoch's participation rule reads each drawn validator's latest *message* height as of the last finalised fringe, derived by every node from its own DAG (`multi_parent_casper::participation_for_block` \u2192 `NativeSystemDeployOp::CloseBlock` \u2192 `apply_weight`, `rholang/src/native_state.rs`)",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: **A boundary's participation comes from the last finalised fringe** \u2014 the epoch's participation rule reads each drawn validator's latest *message* height as of the last finalised fringe, derived by every node from its own DAG (`multi_parent_casper::participation_for_block` \u2192 `NativeSystemDeployOp::CloseBlock` \u2192 `apply_weight`, `rholang/src/native_state.rs`)",
@@ -651,12 +668,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "0d97bafd93b8fda984d811130d19dba22d1e60da88b92fb581bdef875948afd0",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "**A boundary's participation comes from the last finalised fringe** \u2014 the epoch's participation rule reads each drawn validator's latest *message* height as of ",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "956cada4b4b854c1196a1d31db38c0f0abbde74e98361495ec8407027c7a8ca8",
+        "control": {
+          "control_of": "casper/src/runtime_manager.rs::a_boundarys_participation_reaches_play_and_replay_alike",
+          "description": "Treat every validator as inside the participation grace; the play/replay boundary witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "    if behind <= i64::MAX {",
+            "before": "    if behind <= grace {",
+            "file": "rholang/src/native_state.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-0d97bafd93b8fda9-20261118-fail",
+          "test": "casper/src/runtime_manager.rs::a_boundarys_participation_reaches_play_and_replay_alike"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "casper/src/runtime_manager.rs::a_boundarys_participation_reaches_play_and_replay_alike",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
@@ -710,20 +742,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; the historical replay and rollout are separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "4c1cda0c9b5baf2b92913c5a4005029151dfd7dd49a1dc0116ba4655cd0b06e5",
+        "record": "spec/audit/evidence/s6-1587e04b86742658-20261118",
+        "source_sha": "714e5d9346ed554ea29fe7dba91d635b84c98268",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-1587e04b86742658-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-1587e04b86742658",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Withhold the whole participation share; the absence-rule witness must fail.",
       "observable": "**A validator's epoch reward is scaled by its participation** \u2014 `PosParams::absence_slack` is the *knee* (the lag at which the weight reaches zero) and `PosParams::participation_grace` the *flat part* before it, with a linear ramp between; inside the grace the share is whole, past the knee it is zero, and the withheld fraction stays in the staking vault for a later epoch (`apply_weight`, `rholang/src/native_state.rs`)",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: **A validator's epoch reward is scaled by its participation** \u2014 `PosParams::absence_slack` is the *knee* (the lag at which the weight reaches zero) and `PosParams::participation_grace` the *flat part* before it, with a linear ramp between; inside the grace the share is whole, past the knee it is zero, and the withheld fraction stays in the staking vault for a later epoch (`apply_weight`, `rholang/src/native_state.rs`)",
@@ -735,12 +768,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "1587e04b86742658dfb85cc755cc287ba0ac1769871944c7321e6a53ac47031f",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "**A validator's epoch reward is scaled by its participation** \u2014 `PosParams::absence_slack` is the *knee* (the lag at which the weight reaches zero) and `PosPara",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "b1204f1d56662cce912117702c1ce5c70cec698ab712fd5d91bec4588b5a3a75",
+        "control": {
+          "control_of": "rholang/src/native_state.rs::the_absence_rule_takes_income_only_and_releases_it_on_a_single_block",
+          "description": "Withhold the whole participation share; the absence-rule witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "    if behind <= grace {\n        0",
+            "before": "    if behind <= grace {\n        10_000",
+            "file": "rholang/src/native_state.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-1587e04b86742658-20261118-fail",
+          "test": "rholang/src/native_state.rs::the_absence_rule_takes_income_only_and_releases_it_on_a_single_block"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::the_absence_rule_takes_income_only_and_releases_it_on_a_single_block",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
@@ -896,20 +944,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; the live reward campaign is separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "b1f21edb4f9a4b2e1d5141e692dc208d089fa40608637acec47a3816167d2691",
+        "record": "spec/audit/evidence/s6-3d5848fba9a91692-20261118",
+        "source_sha": "714e5d9346ed554ea29fe7dba91d635b84c98268",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-3d5848fba9a91692-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-3d5848fba9a91692",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Pay the producer nothing; the executor-share witness must fail.",
       "observable": "**The block's producer is paid a share of what its deploys burned** \u2014 `PosParams::executor_share` basis points of a deploy's burned phlo, taken out of the staking vault at the end of the deploy's cost accounting (`SystemDeploy::pay_executor` \u2192 `NativeSystemState::pay_executor`) and paid to the block's own signed `sender`; the shipped default is 2 500, a quarter",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: **The block's producer is paid a share of what its deploys burned** \u2014 `PosParams::executor_share` basis points of a deploy's burned phlo, taken out of the staking vault at the end of the deploy's cost accounting (`SystemDeploy::pay_executor` \u2192 `NativeSystemState::pay_executor`) and paid to the block's own signed `sender`; the shipped default is 2 500, a quarter",
@@ -921,29 +970,45 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "3d5848fba9a91692426248400d223c0a6a06f222b67bf3d9c93c53a69d3f3f45",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "**The block's producer is paid a share of what its deploys burned** \u2014 `PosParams::executor_share` basis points of a deploy's burned phlo, taken out of the staki",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "b2993899e43e39eb2213119464c6a92c0520731f4aee9704de87d61c0c378954",
+        "control": {
+          "control_of": "rholang/src/native_state.rs::the_producer_is_paid_a_share_of_what_the_deploy_burned",
+          "description": "Pay the producer nothing; the executor-share witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "        let share = 0i64;",
+            "before": "        let share = i64::from(self.params().await?.executor_share);",
+            "file": "rholang/src/native_state.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-3d5848fba9a91692-20261118-fail",
+          "test": "rholang/src/native_state.rs::the_producer_is_paid_a_share_of_what_the_deploy_burned"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::the_producer_is_paid_a_share_of_what_the_deploy_burned",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; the live slashing campaign is separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "a10e53a72ef77d0d29d359d47b5e137119290b6fbd290ae8a972a9f3c249e8a3",
+        "record": "spec/audit/evidence/s6-423749eda11ee12d-20261118",
+        "source_sha": "714e5d9346ed554ea29fe7dba91d635b84c98268",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-423749eda11ee12d-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-423749eda11ee12d",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Pay a delegator's remainder to the validator; the fan-out witness must fail.",
       "observable": "**A slash fans the untaken remainder out to each delegator's own vault, and clears the delegation ledgers** \u2014 `atRisk` reads the operator's **aggregate** pool entry, so the tier applies to a delegator's principal exactly as to the operator's; `returned` is distributed pro-rata by each party's at-risk contribution \u2014 the operator's own part to its vault, each delegator's part to **its own** vault \u2014 with the dust to the operator, and the offender is removed from `pos:delegations`, `pos:pending_delegations`, `pos:delegation_claims` and `pos:delegated_rewards` together",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: **A slash fans the untaken remainder out to each delegator's own vault, and clears the delegation ledgers** \u2014 `atRisk` reads the operator's **aggregate** pool entry, so the tier applies to a delegator's principal exactly as to the operator's; `returned` is distributed pro-rata by each party's at-risk contribution \u2014 the operator's own part to its vault, each delegator's part to **its own** vault \u2014 with the dust to the operator, and the offender is removed from `pos:delegations`, `pos:pending_delegations`, `pos:delegation_claims` and `pos:delegated_rewards` together",
@@ -955,29 +1020,45 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "423749eda11ee12da5870a706746f3bbf59fbdaffb3d7b392ccf02f066678897",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "**A slash fans the untaken remainder out to each delegator's own vault, and clears the delegation ledgers** \u2014 `atRisk` reads the operator's **aggregate** pool e",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "fb6d83dc8d6300326fa7b42bebbe7510e715641fee46e4a60cad3fbb27dfece2",
+        "control": {
+          "control_of": "rholang/src/native_state.rs::a_slash_fans_out_to_each_delegators_own_vault_at_every_tier",
+          "description": "Pay a delegator's remainder to the validator; the fan-out witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "            for (delegator, share) in delegators.iter().zip(shares.iter()) {\n                if *share <= 0 {\n                    continue;\n                }\n                let address = self.vault_address(validator)?;",
+            "before": "            for (delegator, share) in delegators.iter().zip(shares.iter()) {\n                if *share <= 0 {\n                    continue;\n                }\n                let address = self.vault_address(delegator)?;",
+            "file": "rholang/src/native_state.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-423749eda11ee12d-20261118-fail",
+          "test": "rholang/src/native_state.rs::a_slash_fans_out_to_each_delegators_own_vault_at_every_tier"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::a_slash_fans_out_to_each_delegators_own_vault_at_every_tier",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; the live slashing campaign is separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "eb215840676af9803f1b7a3634bb85a6a7fd2d36fb4ede410e28721759514d7f",
+        "record": "spec/audit/evidence/s6-45c551728731f6da-20261118",
+        "source_sha": "714e5d9346ed554ea29fe7dba91d635b84c98268",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-45c551728731f6da-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-45c551728731f6da",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Leave a slashed validator in the pending-withdrawal map; the persistence witness must fail.",
       "observable": "A slashed validator that had a **staged withdrawal** is removed from the pending map",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: A slashed validator that had a **staged withdrawal** is removed from the pending map",
@@ -989,29 +1070,45 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "45c551728731f6da21c823e2e448634f48e3f0c5c051c0e246ed6b990b41f6cb",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "A slashed validator that had a **staged withdrawal** is removed from the pending map",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "b59d4f08bdda9660838866637d79f900404c2807dca2544a0ca1d97ed44ab799",
+        "control": {
+          "control_of": "rholang/src/native_state.rs::slash_persists_the_pending_map_it_edits",
+          "description": "Leave a slashed validator in the pending-withdrawal map; the persistence witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "        let accrued = committed.remove(validator)",
+            "before": "        pending.remove(validator);\n        let accrued = committed.remove(validator)",
+            "file": "rholang/src/native_state.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-45c551728731f6da-20261118-fail",
+          "test": "rholang/src/native_state.rs::slash_persists_the_pending_map_it_edits"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::slash_persists_the_pending_map_it_edits",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; a live epoch campaign is separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "b52f5021decd3a9353e15fa6a8bbf2c91b4493058f8299d9df289b96ab7e0c31",
+        "record": "spec/audit/evidence/s6-47c941dac413cd3b-20261118",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-47c941dac413cd3b-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-47c941dac413cd3b",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Leave the zero epoch unnormalised; the every-block-boundary witness must fail.",
       "observable": "Epoch length `0` (the port's permissive default) means **every block is a boundary**; the contract's `%`/`/` by it would fault",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: Epoch length `0` (the port's permissive default) means **every block is a boundary**; the contract's `%`/`/` by it would fault",
@@ -1023,12 +1120,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "47c941dac413cd3b411f0dcb0c916ee549e5d6ba0634397fb3cf1c78264a0eb3",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "Epoch length `0` (the port's permissive default) means **every block is a boundary**; the contract's `%`/`/` by it would fault",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "4925c95a4ca341c6e9e13aec686e8912f4c51298e45fe15b3a2b78ef9009169e",
+        "control": {
+          "control_of": "rholang/src/native_state.rs::an_epoch_length_of_zero_makes_every_block_a_boundary",
+          "description": "Leave the zero epoch unnormalised; the every-block-boundary witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "fn epoch_divisor(params: &PosParams) -> i64 {\n    if params.epoch_length <= 0 {\n        0",
+            "before": "fn epoch_divisor(params: &PosParams) -> i64 {\n    if params.epoch_length <= 0 {\n        1",
+            "file": "rholang/src/native_state.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-47c941dac413cd3b-20261118-fail",
+          "test": "rholang/src/native_state.rs::an_epoch_length_of_zero_makes_every_block_a_boundary"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::an_epoch_length_of_zero_makes_every_block_a_boundary",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
@@ -1082,20 +1194,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; the live delegation campaign is separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "1ce551fdf983141085bbccbf75bcc53ccdd99ee196e8d42f35210c2ba34b86ce",
+        "record": "spec/audit/evidence/s6-4cefbdfed1e1520b-20261118",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-4cefbdfed1e1520b-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-4cefbdfed1e1520b",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Replace instead of accumulate a second delegation; the aggregate-bond witness must fail.",
       "observable": "**A validator's bond may be other people's stake: `pos:bonds` carries the *aggregate*, and `pos:delegations` attributes it** \u2014 `rho:rchain:pos!(\"delegate\", \u2026)` moves a principal from the **delegator's own** vault into the staking vault and adds it to the operator's pool entry, so the entry a slash reaches and the weight `select_active` draws on are the operator's own stake **plus** every delegation to it; the ledger `pos:delegations` (`(operator, delegator) \u2192 amount`) records which part is whose, and `pos:pending_delegations`, `pos:delegation_claims` and `pos:delegated_rewards` carry the staged exit, its escrow and a delegator's accrued share",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: **A validator's bond may be other people's stake: `pos:bonds` carries the *aggregate*, and `pos:delegations` attributes it** \u2014 `rho:rchain:pos!(\"delegate\", \u2026)` moves a principal from the **delegator's own** vault into the staking vault and adds it to the operator's pool entry, so the entry a slash reaches and the weight `select_active` draws on are the operator's own stake **plus** every delegation to it; the ledger `pos:delegations` (`(operator, delegator) \u2192 amount`) records which part is whose, and `pos:pending_delegations`, `pos:delegation_claims` and `pos:delegated_rewards` carry the staged exit, its escrow and a delegator's accrued share",
@@ -1107,12 +1220,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "4cefbdfed1e1520b2912a7ce0aa14610188fd464ebb9954f06c99c5827031fcc",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "**A validator's bond may be other people's stake: `pos:bonds` carries the *aggregate*, and `pos:delegations` attributes it** \u2014 `rho:rchain:pos!(\"delegate\", \u2026)` ",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "891594d60804f08eefbd94ac780d0d1dd8a1bff4f8293aa379310ef5b05252e9",
+        "control": {
+          "control_of": "rholang/src/native_state.rs::a_delegation_enlarges_the_pool_and_a_second_one_accumulates",
+          "description": "Replace instead of accumulate a second delegation; the aggregate-bond witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "        ledger.insert(key, balance_plus(NonNegI64::zero(), stake, \"delegated principal\")?);",
+            "before": "        ledger.insert(key, balance_plus(held, stake, \"delegated principal\")?);",
+            "file": "rholang/src/native_state.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-4cefbdfed1e1520b-20261118-fail",
+          "test": "rholang/src/native_state.rs::a_delegation_enlarges_the_pool_and_a_second_one_accumulates"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::a_delegation_enlarges_the_pool_and_a_second_one_accumulates",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
@@ -1234,20 +1362,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; the live active-set campaign is separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "82b622fe0272d83d0ac2d5e50696ba0bceafc84a901f59c813d36dcf1340a225",
+        "record": "spec/audit/evidence/s6-5c91a4e66518c7ec-20261118",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-5c91a4e66518c7ec-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-5c91a4e66518c7ec",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Make the active-set draw uniform; the stake-weight witness must fail.",
       "observable": "Active validator set = a **stake-weighted draw without replacement** from the eligible pool, seeded one epoch ahead",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: Active validator set = a **stake-weighted draw without replacement** from the eligible pool, seeded one epoch ahead",
@@ -1259,12 +1388,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "5c91a4e66518c7ec8ac161fcec91e22a167f25a419a73b718e5208093ba6a7ad",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "Active validator set = a **stake-weighted draw without replacement** from the eligible pool, seeded one epoch ahead",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "f0fc1cc1dc4f54f84f02ae80e71b43551fb3964aee5d5286f4d29bb58564b15a",
+        "control": {
+          "control_of": "rholang/src/native_state.rs::splitting_a_stake_across_keys_does_not_buy_slots",
+          "description": "Make the active-set draw uniform; the stake-weight witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "        1",
+            "before": "        i128::from(i64::from(self.1))",
+            "file": "rholang/src/native_state.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-5c91a4e66518c7ec-20261118-fail",
+          "test": "rholang/src/native_state.rs::splitting_a_stake_across_keys_does_not_buy_slots"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::splitting_a_stake_across_keys_does_not_buy_slots",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
@@ -1418,20 +1562,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; the live reward campaign is separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "3d987ff397163e99eb97683eebf383a5bd465c55139e2bd4021e07b5661dff4a",
+        "record": "spec/audit/evidence/s6-9297637b16a7e18c-20261118",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-9297637b16a7e18c-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-9297637b16a7e18c",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Pay the whole epoch reward to the operator; the delegated-reward witness must fail.",
       "observable": "**An epoch's reward for a key with delegators is split pro-rata, and a delegator's share is credited to `pos:delegated_rewards` rather than to the operator's `pos:committed`** \u2014 after `epoch_rewards` and the participation weight, each drawn validator's reward is divided across its own stake and its delegations in canonical key order; the operator keeps the integer-division remainder, and `epoch_pot` subtracts **both** ledgers",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: **An epoch's reward for a key with delegators is split pro-rata, and a delegator's share is credited to `pos:delegated_rewards` rather than to the operator's `pos:committed`** \u2014 after `epoch_rewards` and the participation weight, each drawn validator's reward is divided across its own stake and its delegations in canonical key order; the operator keeps the integer-division remainder, and `epoch_pot` subtracts **both** ledgers",
@@ -1443,29 +1588,45 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "9297637b16a7e18cf66522f13263f21046d0ed5b2055f243908bc39c63337763",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "**An epoch's reward for a key with delegators is split pro-rata, and a delegator's share is credited to `pos:delegated_rewards` rather than to the operator's `p",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "8a6ed96241e42c75b3566d347522e7b3356e0795eca19736dca876ce050715d2",
+        "control": {
+          "control_of": "rholang/src/native_state.rs::a_boundary_splits_the_reward_across_the_delegations",
+          "description": "Pay the whole epoch reward to the operator; the delegated-reward witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "            let (shares, operator_share) = (Vec::new(), i64::from(*reward));",
+            "before": "            let (shares, operator_share) = split_reward(i64::from(*reward), own, &amounts)?;",
+            "file": "rholang/src/native_state.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-9297637b16a7e18c-20261118-fail",
+          "test": "rholang/src/native_state.rs::a_boundary_splits_the_reward_across_the_delegations"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::a_boundary_splits_the_reward_across_the_delegations",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; the live governance campaign is separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "bcc0702620ba959a2bf55f91debf764234ee5f2ce5e4cf11a8067397b911ee4d",
+        "record": "spec/audit/evidence/s6-957351356597c77d-20261118",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-957351356597c77d-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Native balance transition differs when used; independent conservation, refusal and replay acceptance are required.",
       "family": "S6",
       "id": "S6-957351356597c77d",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Fund the pot without debiting the caller; the fundPot witness must fail.",
       "observable": "**`fundPot` adds REV to the validators' reward pot with no claim** \u2014 `rho:rchain:pos!(\"fundPot\", deployerId, amount, ret)` debits the caller's own vault and credits the staking vault (`NativeSystemState::fund_pot`), recording nothing in `pos:bonds`, `pos:withdrawers`, `pos:committed` or `pos:delegated_rewards`, so the whole amount is pot at the next boundary",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Independently reproduce the relevant boundary/refusal or compatibility regression for: fundPot",
@@ -1477,29 +1638,45 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "957351356597c77d7fab3fa6ce132d0188bb7a75ad7f41d27f931616e92f2910",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "**`fundPot` adds REV to the validators' reward pot with no claim** \u2014 `rho:rchain:pos!(\"fundPot\", deployerId, amount, ret)` debits the caller's own vault and cre",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "8962fd1658158c22d582636f648c877c59c4e4b2f4424b68d6f26ba32c825ca6",
+        "control": {
+          "control_of": "rholang/src/system_processes.rs::pos_fund_pot_moves_the_callers_rev_into_the_staking_vault",
+          "description": "Fund the pot without debiting the caller; the fundPot witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "        self.set_vault_balance(&address, balance);",
+            "before": "        self.set_vault_balance(&address, remaining);",
+            "file": "rholang/src/native_state.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-957351356597c77d-20261118-fail",
+          "test": "rholang/src/system_processes.rs::pos_fund_pot_moves_the_callers_rev_into_the_staking_vault"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/system_processes.rs::pos_fund_pot_moves_the_callers_rev_into_the_staking_vault",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; the wallet release campaign is separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "9f7083b5ac60d01607d337cb252adaad8e7a4ac8e924e3f4b669e8025d2fd85c",
+        "record": "spec/audit/evidence/s6-9b7d0ce349e22aa8-20261118",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-9b7d0ce349e22aa8-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-9b7d0ce349e22aa8",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Make the vault deposit callable; the deployer-capability witness must fail.",
       "observable": "Vaults are a **balance map keyed by REV address**; `transfer` takes the caller's `deployerId` rather than a minted purse",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: Vaults are a **balance map keyed by REV address**; `transfer` takes the caller's `deployerId` rather than a minted purse",
@@ -1511,12 +1688,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "9b7d0ce349e22aa8e06359308ced0e5732e946bcf63819997b8f74e023bfe282",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "Vaults are a **balance map keyed by REV address**; `transfer` takes the caller's `deployerId` rather than a minted purse",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "16d3c5ecdb289ca59ea375b71f29553c829a484474c5a317f287ea431d1bfd7b",
+        "control": {
+          "control_of": "rholang/src/system_processes.rs::rev_vault_transfer_uses_deployer_capability_and_deposit_is_rejected",
+          "description": "Make the vault deposit callable; the deployer-capability witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "                        Ok(())",
+            "before": "                        Err(illegal_arg(\n                            \"revVault: deposit is not callable (REV is minted at genesis only)\",\n                        ))",
+            "file": "rholang/src/system_processes.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-9b7d0ce349e22aa8-20261118-fail",
+          "test": "rholang/src/system_processes.rs::rev_vault_transfer_uses_deployer_capability_and_deposit_is_rejected"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/system_processes.rs::rev_vault_transfer_uses_deployer_capability_and_deposit_is_rejected",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
@@ -1570,20 +1762,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; the live staking campaign is separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "81799c14895ceee58bd85c3ee573d467dae0a3751cf4ee4d378dfff0cba16dbd",
+        "record": "spec/audit/evidence/s6-a2f660ef8d236b06-20261118",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-a2f660ef8d236b06-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-a2f660ef8d236b06",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Allow a withdrawal while delegations are outstanding; the mutual-exclusion witness must fail.",
       "observable": "**`withdraw` refuses while delegations are outstanding, and `delegate` refuses while a withdrawal is pending** \u2014 so a validator is never simultaneously withdrawing and delegated-to",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: **`withdraw` refuses while delegations are outstanding, and `delegate` refuses while a withdrawal is pending** \u2014 so a validator is never simultaneously withdrawing and delegated-to",
@@ -1595,29 +1788,45 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "a2f660ef8d236b063ac0530504661133209a95421f36ccaa9925760c7a8df253",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "**`withdraw` refuses while delegations are outstanding, and `delegate` refuses while a withdrawal is pending** \u2014 so a validator is never simultaneously withdraw",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "133580f80a90b5a8ee1c47114ce2ae13f01d53c5e8a469ef5d1664c140efc7e4",
+        "control": {
+          "control_of": "rholang/src/native_state.rs::a_validator_with_delegations_cannot_withdraw",
+          "description": "Allow a withdrawal while delegations are outstanding; the mutual-exclusion witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "        if false && ledger.keys().any(|key| key.operator == *validator) {",
+            "before": "        if ledger.keys().any(|key| key.operator == *validator) {",
+            "file": "rholang/src/native_state.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-a2f660ef8d236b06-20261118-fail",
+          "test": "rholang/src/native_state.rs::a_validator_with_delegations_cannot_withdraw"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::a_validator_with_delegations_cannot_withdraw",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness for the Misdemeanour tier; the other tier constants are the same table and the live campaign is separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "98c62deb1fdaa588f7c1b369b0d26d9635508a9dca547120fb9b4169356e1f68",
+        "digest": "44bf4310a174d8093837cb3f512c2c13f41373f901167b473913a8f7195c68a8",
+        "record": "spec/audit/evidence/s6-a641f6fa8cc3ce54-20261118",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-a641f6fa8cc3ce54-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-a641f6fa8cc3ce54",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Grade a Misdemeanour as Malicious; the tier witness must fail.",
       "observable": "**A slash is graded by the offence** \u2014 `Malicious` takes everything the validator holds in the PoS system, `Misdemeanour` a quarter, `HonestMistake` a tenth, with the remainder **returned to its own vault** (`SlashSeverity` / `BlockStatus::slash_severity` / `NativeSystemState::slash`)",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: **A slash is graded by the offence** \u2014 `Malicious` takes everything the validator holds in the PoS system, `Misdemeanour` a quarter, `HonestMistake` a tenth, with the remainder **returned to its own vault** (`SlashSeverity` / `BlockStatus::slash_severity` / `NativeSystemState::slash`)",
@@ -1629,12 +1838,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "a641f6fa8cc3ce543734d7513368bcb6870b0628f4b5a081406820f1c2016205",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "**A slash is graded by the offence** \u2014 `Malicious` takes everything the validator holds in the PoS system, `Misdemeanour` a quarter, `HonestMistake` a tenth, wi",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "ce6215d8131405228c867c91bf8422105a9370d87ce2e2e6de848cb1dbee1757",
+        "control": {
+          "control_of": "rholang/src/native_state.rs::a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier",
+          "description": "Grade a Misdemeanour as Malicious; the tier witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "            SlashSeverity::Misdemeanour => 10_000,",
+            "before": "            SlashSeverity::Misdemeanour => 2_500,",
+            "file": "models/src/block_metadata.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-a641f6fa8cc3ce54-20261118-fail",
+          "test": "rholang/src/native_state.rs::a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "rholang/src/native_state.rs::a_slash_counts_the_escrowed_claim_and_takes_the_worst_tier",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
@@ -1856,20 +2080,21 @@
     },
     {
       "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Source-row coverage is not an independent safety check; the row is an A candidate, not a pass.",
+      "docker_free": true,
+      "does_not_claim": "A current-build regression witness; the genesis-hash acceptance is separate.",
       "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+        "binary_sha256": "acee082ea254c636f30927c71b73c71c24c02db18e6b32352caeb55da50a69a9",
+        "digest": "40024ad738a99ded66c7b883a5b48965eace65b07b8b16c920083305be10f815",
+        "record": "spec/audit/evidence/s6-d36503203399d227-20261118",
+        "source_sha": "0d4e1abf564cc3bc5044b7b8e862dbfd955c8e57",
+        "url": "https://github.com/rhovision-org/rholo/blob/3f58e7125685ca1f490bb1e22068dc74453327c8/spec/audit/evidence/s6-d36503203399d227-20261118/manifest.json"
       },
       "fail_condition": "The required acceptance is absent: Independent disposition and construct-specific historical replay/compatibility evidence",
       "family": "S6",
       "id": "S6-d36503203399d227",
       "laws": [],
-      "locality": "unclassified",
-      "negative_control": null,
+      "locality": "unit",
+      "negative_control": "Accept a negative NonNegI64; the refinement witness must fail.",
       "observable": "`bonds_map`/stake carried as `NonNegI64` (reject negative)",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: `bonds_map`/stake carried as `NonNegI64` (reject negative)",
@@ -1881,12 +2106,27 @@
       "source_retrieved": "2026-11-12",
       "source_sha256": "d36503203399d22745e69e9531f3ca7b12484ce45a5982977a5d7d33e6b8f226",
       "source_url": "https://github.com/rhovision-org/rholo/blob/e33125f65a95cff4f12baf8139a7361c7d158e43/spec/audit/passes.md",
-      "status": "reviewable",
-      "status_reason": "No per-candidate disposition; the acceptance text is templated, not a witness.",
+      "status": "met",
+      "status_reason": null,
       "title": "`bonds_map`/stake carried as `NonNegI64` (reject negative)",
-      "witness_kind": null,
-      "witness_ref": null,
-      "witness_scope": null
+      "witness_binding": {
+        "asserts_sha256": "76e87d45b226176eac7c7f769ba4f55f263d657cfb3fad30a58c12c84b200536",
+        "control": {
+          "control_of": "shared/src/refined.rs::non_neg_i64_accepts_non_negative_rejects_negative",
+          "description": "Accept a negative NonNegI64; the refinement witness must fail.",
+          "expected": "FAIL",
+          "mutation": {
+            "after": "                if true {",
+            "before": "                if v >= 0 {",
+            "file": "shared/src/refined.rs"
+          },
+          "run_record": "spec/audit/evidence/s6-d36503203399d227-20261118-fail",
+          "test": "shared/src/refined.rs::non_neg_i64_accepts_non_negative_rejects_negative"
+        }
+      },
+      "witness_kind": "rust-unit",
+      "witness_ref": "shared/src/refined.rs::non_neg_i64_accepts_non_negative_rejects_negative",
+      "witness_scope": "unit"
     },
     {
       "depends_on": [],
@@ -2400,7 +2640,7 @@
   "generated": "2026-11-18",
   "ledger_source_dev_sha": "e33125f65a95cff4f12baf8139a7361c7d158e43",
   "met_ratchet": {
-    "minimum": 19,
+    "minimum": 34,
     "required_ids": [
       "G520-MIGRATION",
       "S6-25bfdbe2c179c81e",
@@ -2420,7 +2660,22 @@
       "S6-fb6f884e759d7af7",
       "S6-7b9fe37e74b318db",
       "S6-c59c38eeab097a7b",
-      "S6-d39645b95737497d"
+      "S6-d39645b95737497d",
+      "S6-0d97bafd93b8fda9",
+      "S6-1587e04b86742658",
+      "S6-3d5848fba9a91692",
+      "S6-423749eda11ee12d",
+      "S6-45c551728731f6da",
+      "S6-4cefbdfed1e1520b",
+      "S6-9297637b16a7e18c",
+      "S6-957351356597c77d",
+      "S6-9b7d0ce349e22aa8",
+      "S6-a2f660ef8d236b06",
+      "S6-d36503203399d227",
+      "S6-a641f6fa8cc3ce54",
+      "S6-5c91a4e66518c7ec",
+      "S6-47c941dac413cd3b",
+      "S6-0963a698bc9c4ee4"
     ]
   },
   "register_dev_sha": "dd6a25d69128375d83b7a7701c169ce672e57536",
