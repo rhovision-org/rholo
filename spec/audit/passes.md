@@ -14154,3 +14154,44 @@ deployment, real key or transfer.
 **State.** 47 registered gates, all met, 0 unresolved; 12 open release campaigns;
 `check-mainnet-gates.py --assert-closeable` exits 0; `check-release-campaigns.py --assert-ready`
 exits 3; the #51 closeout still opens.
+
+## 187. The release claims replace the 12 campaigns — 2026-11-19
+
+**What changed.** The 12 release-campaign rows are **deleted**, not reworded. They mixed product
+claims, lab conditions, sizing guidance and evidence rules, so every row had its own setup and none
+was legible. Four reviewers and a challenger attacked them against the node's design; the verdicts
+and the seven-claim replacement are in `spec/audit/release-campaign-red-team-20261119.md`.
+
+- **Seven claims** in `spec/audit/release-claims.json`, emitted to `release-campaigns.json` and
+  `release-campaigns.md`: truthful settlement, safety, state agreement, recovery without loss,
+  overload refusal, join/audit, and conditional upgrade compatibility. Each has one claim, one
+  pass/fail observation, one observable, one control, a local and a public environment, a local and
+  a public re-run command, and a tool or a named missing observation.
+- **The 12 old ids are mapped**, not dropped: `C343` and `G428-M1` to a runbook and sizing
+  guidance; `G584-G1` to a setup precondition; `G584-G5` and the TA reviewer attestation to
+  evidence rules; the rest to the seven claims. The checker refuses an unmapped deletion.
+- **The checker no longer runs the old criteria self-test.** A release claim is not a gate; its
+  observation and tool are the criterion. `check-release-campaigns.py --check` validates the
+  tracker and the superseded mapping; `--assert-ready` exits 3 while any claim or sub-observation
+  is not closed.
+- **The check-1 record is corrected.** The raw record shows the marker present at finalised height
+  14 on all four validators and absent at height 34 on validator 0 (validators 1–3 were not probed
+  before the harness raised). The packaged README's height-46/all-four/`is-finalized` statements
+  are not in the raw record, and the `--local` harness is not in the source pin. The raw finding —
+  a write present at height 14 and absent at 34, with the deploy named as riding a final-scope
+  rejected chain in all four logs — stands and is recorded as the RC-1 retention defect.
+
+**Why believed.** The builder reports `gates: 47, claims: 7` and `--check` is CURRENT; the register
+reports 47/47/0; the claims checker validates the seven claims and the 12-row superseded mapping;
+`--assert-ready` exits 3; the rewritten suite covers an unmapped deletion, a reused old id, a
+missing environment, a missing re-run command, an owed observation without a missing description,
+and an open observation without a tool.
+
+**What it does not claim.** No claim is closed and no new evidence was produced. The seven claims
+are open or owed; the check-1 defect is recorded, not fixed. The clean set is a proposal, not a
+pass. No local run is a public-testnet result; no gate was promoted; no `.github/workflows/*` edit,
+public deployment, real key or transfer.
+
+**State.** 47 registered gates, all met, 0 unresolved; **seven release claims** (RC-1..RC-7), all
+open or owed; `check-mainnet-gates.py --assert-closeable` exits 0;
+`check-release-campaigns.py --assert-ready` exits 3; the #51 closeout still opens.

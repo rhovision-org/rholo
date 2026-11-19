@@ -1,4 +1,6 @@
 import importlib.util
+import json
+import tempfile
 from types import SimpleNamespace
 import unittest
 from pathlib import Path
@@ -713,6 +715,23 @@ class RecoveryStartupTests(unittest.TestCase):
              patch.object(anchor, "save"):
             with self.assertRaisesRegex(AssertionError, "SETUP_JOINER_STARTUP"):
                 anchor.reset_with_reply_loss("172.18.0.2", "node-id", "genesis")
+
+
+class LocalModeTests(unittest.TestCase):
+    """A single-host run is labelled `local-devnet` and is not multi-host evidence."""
+
+    def campaign(self, *, local):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = SimpleNamespace(out=Path(tmp))
+            args = SimpleNamespace(validators=4, local=local)
+            m.write_campaign(d, args, {"result": "PASS"}, "a" * 40, "b" * 64)
+            return json.loads((Path(tmp) / "campaign.json").read_text())
+
+    def test_a_local_campaign_is_labelled_local_devnet(self):
+        self.assertEqual(self.campaign(local=True)["locality"], "local-devnet")
+
+    def test_a_hosted_campaign_is_not_relabelled_local(self):
+        self.assertEqual(self.campaign(local=False)["locality"], "single-host")
 
 
 if __name__=="__main__":unittest.main()

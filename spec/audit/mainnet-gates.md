@@ -63,6 +63,6 @@ Status is a disposition of the evidence, not a release claim. A gate is `met` on
 when its witness resolves, its negative control is recorded, its evidence is pinned,
 and every dependency is satisfied.
 The register records **47 of 47 gates `met`**.
-It contains only current-build gates; host/live obligations are release campaigns in
+It contains only current-build gates; the observable release behaviours are claims in
 [`release-campaigns.md`](release-campaigns.md), and a closed register is not a release
 authorization.

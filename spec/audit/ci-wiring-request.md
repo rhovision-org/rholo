@@ -100,13 +100,16 @@ corpus at release time and record it. `tests/test_rust_controls.py` is reached t
 `tests/test_hardfork_51_closeout.py` discovery (the `RustControlTests` wrapper), so no additional
 workflow line is needed; its live case builds a dependency-free toy crate, not the corpus.
 
-## The release-campaign tracker (2026-11-19)
+## The release-claim tracker (2026-11-19)
 
-The 12 host/live obligations moved out of the gate register into
-`spec/audit/release-campaigns.json`. `tests/test_release_campaigns.py` is reached through the
-existing `tests/test_hardfork_51_closeout.py` discovery (`ReleaseCampaignTests`), so no workflow
-line is needed; its CI-reached `--check` validates the generated tracker and runs the criteria
-self-test. `check-release-campaigns.py --assert-ready` (exit 3) is the release checkpoint.
+The 12 old campaign rows were deleted and replaced by the seven claims in
+`spec/audit/release-claims.json`, emitted to `spec/audit/release-campaigns.json` and `.md`.
+`tests/test_release_campaigns.py` is reached through the existing
+`tests/test_hardfork_51_closeout.py` discovery (`ReleaseClaimTests`), so no workflow line is
+needed; its CI-reached `--check` validates the generated tracker and the superseded mapping.
+`check-release-campaigns.py --assert-ready` (exit 3) is the release checkpoint while any claim or
+sub-observation is not closed. The old criteria self-test is not run here: a release claim's
+observation and tool are its criterion.
 
 ## HF51 provenance (2026-11-19)
 
@@ -128,9 +131,9 @@ or `.github/workflows/*` edit is proposed.
 
 ## Local equivalent
 
-The PR checklist runs the same commands. Since the 2026-11-19 split the gate register is 47 gates,
-all met, so `check-mainnet-gates.py --assert-closeable` exits **0**; release is still blocked by
-`check-release-campaigns.py --assert-ready` (exit 3, 12 open campaigns) and by
+The PR checklist runs the same commands. The gate register is 47 gates, all met, so
+`check-mainnet-gates.py --assert-closeable` exits **0**; release is still blocked by
+`check-release-campaigns.py --assert-ready` (exit 3, seven claims open or owed) and by
 `check-hardfork-51-closeout.py --verify-local-git --assert-closeable` (exit 3).
 
 ## The M4 and M2 suites (2026-11-19)

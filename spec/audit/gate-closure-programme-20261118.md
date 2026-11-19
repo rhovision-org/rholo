@@ -1,5 +1,9 @@
 # Gate closure programme
 
+> **Superseded in part, 2026-11-19.** The 12 host/live rows discussed below were deleted and
+> replaced by the seven release claims in `spec/audit/release-claims.json` and `release-claims.md`;
+> see `release-campaign-red-team-20261119.md`. The gate-register rule below is unchanged.
+
 ## The rule
 
 **A gate is a boolean test of the current build.** Run the build, get pass or fail. A decision, an

@@ -609,8 +609,8 @@ class MainnetRegisterTests(unittest.TestCase):
 
     This file's discovery line is in `ci.yml`; `check-mainnet-gates.py --check` rebuilds the
     register and verifies every `met` row's witness/control/evidence/pins. The register holds
-    only current-build gates; the 12 host/live obligations are release campaigns, judged by
-    `check-release-campaigns.py` and reached through `ReleaseCampaignTests` below. Ancestry is
+    only current-build gates; the seven release claims are judged by
+    `check-release-campaigns.py` and reached through `ReleaseClaimTests` below. Ancestry is
     skipped in a shallow checkout (recorded as `unverified-shallow`), which is why this can run
     in CI without a `fetch-depth` edit.
     """
@@ -678,8 +678,8 @@ class FinalityCampaignTests(unittest.TestCase):
         self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
 
 
-class ReleaseCampaignTests(unittest.TestCase):
-    def test_the_campaign_suite_passes(self):
+class ReleaseClaimTests(unittest.TestCase):
+    def test_the_claim_suite_passes(self):
         suite = unittest.defaultTestLoader.discover(
             str(ROOT / "tests"), pattern="test_release_campaigns.py",
             top_level_dir=str(ROOT / "tests"))
