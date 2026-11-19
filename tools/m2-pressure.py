@@ -420,7 +420,12 @@ def check_binding(record: dict, base: Path) -> list[str]:
     sums_path = base / "SHA256SUMS.json"
     if not sums_path.is_file():
         sums_path = base / "raw" / "SHA256SUMS.json"
-    if sums_path.is_file():
+    if not sums_path.is_file():
+        # A named transcript that is not pinned is not evidence: the record can be edited after
+        # the run. The same rule the M3 record applies, for the same reason.
+        if named:
+            problems.append("the record has no SHA256SUMS.json to pin its raw files")
+    else:
         try:
             sums = json.loads(sums_path.read_text())
         except ValueError as error:

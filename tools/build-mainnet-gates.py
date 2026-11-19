@@ -22,6 +22,8 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,6 +103,28 @@ def load_dispositions() -> dict[str, dict]:
     return {row["id"]: row for row in json.loads(path.read_text()).get("rows", [])}
 
 
+def _verify_record(record: object, ident: str, label: str) -> Path:
+    """The binding's evidence records must be verifiable, not merely present.
+
+    This is the same rule `check-mainnet-gates.py::verify_record` applies. The builder runs it so
+    a `met` row is never emitted from an empty or unpinned directory.
+    """
+    require(isinstance(record, str) and record.strip(),
+            f"{ident}: the {label} record path is required")
+    path = Path(record)
+    if not path.is_absolute():
+        path = ROOT / path
+    require((path / "manifest.json").is_file() and (path / "SHA256SUMS.json").is_file(),
+            f"{ident}: the {label} record needs manifest.json and SHA256SUMS.json")
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "tools/evidence-pack.py"), "verify",
+         "--record", str(path), "--require-pins"],
+        capture_output=True, text=True, timeout=120, check=False)
+    require(proc.returncode == 0,
+            f"{ident}: the {label} record does not verify: {proc.stderr.strip()}")
+    return path
+
+
 def _binding_shape(binding: dict, row: dict) -> None:
     """Refuse a binding that cannot be a witness/control/evidence record.
 
@@ -147,13 +171,12 @@ def _binding_shape(binding: dict, row: dict) -> None:
     test = control.get("test")
     require(isinstance(test, str) and test.strip(),
             f"{ident}: the control test is required")
-    require(test == ref or test.endswith("::self_test"),
-            f"{ident}: the control test must be the witness or its self_test")
+    require(test in (ref, f"{path_text}::self_test"),
+            f"{ident}: the control test must be the witness or its self_test, "
+            "in the witness's own file")
     require(control.get("expected") == "FAIL",
             f"{ident}: the control must expect FAIL")
-    run_record = control.get("run_record")
-    require(isinstance(run_record, str) and (ROOT / run_record).is_dir(),
-            f"{ident}: the control run record does not exist")
+    _verify_record(control.get("run_record"), ident, "control run")
     evidence = binding.get("evidence")
     require(isinstance(evidence, dict), f"{ident}: evidence is required")
     require(isinstance(evidence.get("url"), str)
@@ -166,9 +189,10 @@ def _binding_shape(binding: dict, row: dict) -> None:
         require(isinstance(evidence.get(field), str)
                 and HEX64.fullmatch(evidence[field]),
                 f"{ident}: evidence.{field} must be a 64-hex digest")
-    record = evidence.get("record")
-    require(isinstance(record, str) and (ROOT / record).is_dir(),
-            f"{ident}: the evidence record does not exist")
+    record = _verify_record(evidence.get("record"), ident, "evidence")
+    require(hashlib.sha256((record / "manifest.json").read_bytes()).hexdigest()
+            == evidence["digest"],
+            f"{ident}: evidence.digest does not match the record's manifest")
 
 
 def _eligible(row: dict, met_ids: set[str]) -> tuple[bool, str]:

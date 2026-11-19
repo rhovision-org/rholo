@@ -91,7 +91,8 @@ endpoint; a `local-devnet` record is refused.
 
 `tools/m2-pressure-arm.py` produces the record on a disposable devnet (two lifetimes: the cap is
 read at listener startup), and the Rust gRPC arm binds the real `PeerAddressIo`/`DeployIngressGuard`
-stack. The local rehearsal is `spec/audit/evidence/m2-pressure-local-20261119/` (`INCONCLUSIVE`):
+stack. A record that names raw transcripts must carry `SHA256SUMS.json`; an absent pin set is a
+failure, not a skip. The local rehearsal is `spec/audit/evidence/m2-pressure-local-20261119/` (`INCONCLUSIVE`):
 the record passes its local policy and the criterion refuses it for locality. The default stays
 opt-in (decision, 2026-11-18); the unset run is the failing control. Still owed: the public-live
 campaign on the installed candidate, and the gate's `depends_on: G584-G1`.
@@ -107,6 +108,9 @@ hash-mismatched chain and composes the off-host locality check.
 - The responder now logs the requested anchor (stage 2), the served state hash (stage 3), and a
   `transport outcome delivered|failed` (stage 4); the joiner logs the sender key (stage 5), the
   completed page walk, and the served/accepted/restored hashes (stage 6).
+- The criterion and the record checker both require an off-host record to be digest-pinned,
+  whether it is supplied as a directory or as the inline `record.files` form; a missing
+  `SHA256SUMS.json` is a failure.
 - Run on a local devnet, the chain check passes (`--locality local-devnet`) while the M3 criterion
   correctly FAILs the record for locality.
 - Still owed: a two-host off-host run (the runbook is pre-registered at

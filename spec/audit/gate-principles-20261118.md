@@ -58,15 +58,15 @@ The layer is deliberately small:
 | `no_false_settlement` | no surface claims settlement before a finalized observation; finality agrees; heights are consistent | G584-G3 |
 | `recovery_no_loss` | at least one accepted deploy exists; a post-window `finalizedSuccess` is for an accepted deploy; the same subject finalizes after an observed recovery; no accepted work is lost; no own-key halt or self-replay | G584-G4 |
 | `independent_observations` | ≥N distinct endpoints/identities contribute; each alias covers the required routes; records are hash-covered; no duplicate endpoint | G584-G5 |
-| `human_attestation` | one typed reviewer record: relationship, independence, verdict enum, evidence digest, https URL, UTC time, and a cited record that exists; reviewer ≠ owner in either direction | M6, G6, TA-C1/C2 |
-| `healing_anchor` | a fixed finalized anchor survives a K-sample dwell and every validator finalizes it; moving-head equality is not the criterion | G428-M4 |
+| `human_attestation` | one typed reviewer record: relationship, independence, verdict enum, evidence digest (equal to the evidence record's manifest digest and present in the cited record), https URL, UTC time, and a cited record that exists; reviewer ≠ owner in either direction | M6, G6, TA-C1/C2 |
+| `healing_anchor` | a fixed finalized anchor survives a K-sample dwell and every validator finalizes it; moving-head equality is not the criterion; the evidence record verifies with pins and its declared digest is `sha256(manifest.json)` | G428-M4 |
 | `merge_accounting` | per-deploy effects; no unapplied kept write; no rejection without a conflict; kept effects read back from the produced state | G428-M5 |
 | `phase_diagnosis` | the observation declares the required locality (`live-host` for the gate); the host document carries the full 14/12-field health/operator contract and the verifier's per-host cells (height gap, readiness conjunction, fault latch, isolation, reset marker); an incomplete contract is `PRECONDITION`, never `FAIL`; the phase table's conditions hold; block-6 disposition is structural; a later orphan overrides an earlier accepted; 404/unparsed is `PRECONDITION` | C343 |
 | `lockstep_acceptance` | selected pins; derived/declared lockstep window; no mixed version; required shape; independent reviewer; accepted verdict; incident trace | C357 |
 | `bounded_admission` | every ingress queue is bounded by a named constant; no unbounded channel; a full queue refuses in the bounded class | G428-M2 (source half) |
-| `pressure_refusal` | the queues are bounded (composes `bounded_admission`), and a capped run refuses with 429/RESOURCE_EXHAUSTED and a retry signal, no 5xx, and a handler reachable after release, while the unset default refuses nothing; counts are recomputed from the named raw transcripts, the refusal message is bound to the source, the endpoint is non-local, and a local-devnet record is refused | G428-M2 |
+| `pressure_refusal` | the queues are bounded (composes `bounded_admission`), and a capped run refuses with 429/RESOURCE_EXHAUSTED and a retry signal, no 5xx, and a handler reachable after release, while the unset default refuses nothing; counts are recomputed from the named raw transcripts, a record that names raw files carries `SHA256SUMS.json`, the refusal message is bound to the source, the endpoint is non-local, and a local-devnet record is refused | G428-M2 |
 | `off_host_claim` | an off-host/live-host claim carries a routable peer; loopback/private/encoded addresses cannot satisfy it | G428-M3 (locality half) |
-| `join_chain` | the six-stage chain is typed, `complete: true` and complete: all stages keyed by peer + anchor, a transport outcome whose words match (not a send line), served = received = restored = walked hashes, and every quoted line present in the named raw logs; an off-host record is digest-pinned; the off-host policy composes `off_host_claim` | G428-M3 |
+| `join_chain` | the six-stage chain is typed, `complete: true` and complete: all stages keyed by peer + anchor, a transport outcome whose words match (not a send line), served = received = restored = walked hashes, and every quoted line present in the named raw logs; an off-host record is digest-pinned however it was supplied (`record.files` or `record.dir`); the off-host policy composes `off_host_claim` | G428-M3 |
 | `resource_attribution` | process accounting counts only the node's processes; the declared count is required and must equal the observed count; every entry carries a positive integer `pid`, each listed once | G428-M1 |
 
 `human_attestation` is the only principle that consumes a human record. The layer checks the
@@ -74,6 +74,13 @@ record's shape and independence; it never manufactures a verdict, names a review
 name as independence. `TA-C1` and `TA-C2` are now instantiated entries: the criterion checks the
 reviewer record, while the campaign verdict remains the reviewer's. Their `witness_kind` and
 `blocked`/`external` statuses are unchanged.
+
+**The promotion checker applies the same pins.** `check-mainnet-gates.py` requires a `.py` witness
+to define its symbol (a comment or docstring is not a witness), the control's `self_test` to live in
+the witness's own file, `evidence.digest` to equal `sha256(manifest.json)`, and a human attestation's
+`evidence_sha256` to equal that evidence digest and appear in the cited review record. The builder
+repeats the evidence verification before it emits a `met` row, so a register is never generated from
+an empty or unpinned record.
 
 ## What this is, and is not
 
