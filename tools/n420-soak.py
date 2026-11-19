@@ -30,6 +30,11 @@ import time
 import urllib.error
 import urllib.request
 
+TOOLS = os.path.dirname(os.path.abspath(__file__))
+if TOOLS not in sys.path:
+    sys.path.insert(0, TOOLS)
+from capacity_facts import container_runtime  # noqa: E402
+
 PREFIX = os.environ.get("DEVNET_PREFIX", "n420soak")
 SHARD = "/root"
 DEPLOYER_KEY = "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76"
@@ -140,6 +145,7 @@ def main():
         )
 
     ports = {c: http_port(c) for c in CONTAINERS}
+    runtime = {c: container_runtime(c) for c in CONTAINERS}
     initial = {c: container_facts(c) for c in CONTAINERS}
     first_status = {c: get(ports[c], "/api/status") for c in CONTAINERS}
     height = min(s["latestBlockNumber"] for s in first_status.values())
@@ -171,6 +177,12 @@ def main():
                     "fallback_state": resources.get("fallbackState"),
                     "fallback_reason": resources.get("fallbackReason"),
                     "mem_available_mb": resources.get("memAvailableMb"),
+                    "mem_total_mb": resources.get("memTotalMb"),
+                    "cgroup_limit_mb": resources.get("cgroupLimitMb"),
+                    "data_dir_free_mb": resources.get("dataDirFreeMb"),
+                    "cpu_quota": resources.get("cpuQuota"),
+                    "rss_mb": resources.get("rssMb"),
+                    "rnode_processes": resources.get("rnodeProcesses"),
                     "halted": operator.get("autoproposeTimerHalted"),
                     "height": status.get("latestBlockNumber"),
                 }
@@ -202,7 +214,8 @@ def main():
         except (urllib.error.URLError, KeyError, ConnectionError):
             finality_end[container] = None
     record = {
-        "boundary": "finite 1 GiB fault-injection arm; not supported-tier acceptance",
+        "boundary": "finite pressure arm; the collector classifies it against the declared tier",
+        "runtime": runtime,
         "seconds": args.seconds,
         "deploy_every_s": args.deploy_every,
         "deploys_attempted": index,
@@ -215,7 +228,8 @@ def main():
         "samples": samples,
         "non_claims": [
             "a finite devnet witness, not a universal safety theorem",
-            "1 GiB is below the advised validator minimum; a pass is not a supported-tier claim",
+            "the container limits and command lines are recorded; whether the run is a "
+            "supported-tier measurement is decided against the declared tier, not by this arm",
             "a transient throttled/critical interval is expected and recorded, not a failure",
         ],
     }
