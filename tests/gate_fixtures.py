@@ -231,6 +231,10 @@ def base_g428_m2() -> dict:
     )
     return {
         "source": {"text": (
+            "const MAX_PENDING_BLOCKS: usize = 1024;\n"
+            "const MAX_PROCESSOR_INPUT: usize = 1024;\n"
+            "const MAX_VALIDATED_BLOCKS: usize = 1024;\n"
+            "const MAX_TAP_VALIDATED_BLOCKS: usize = 1024;\n"
             "let (incoming_blocks_tx, incoming_blocks_rx) = mpsc::channel(MAX_PENDING_BLOCKS);\n"
             "let (processor_input_tx, processor_input_rx) = mpsc::channel(MAX_PROCESSOR_INPUT);\n"
             "let (validated_blocks_tx, validated_blocks_rx) = mpsc::channel(MAX_VALIDATED_BLOCKS);\n"

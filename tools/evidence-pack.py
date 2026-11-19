@@ -341,8 +341,33 @@ def cmd_verify(args) -> int:
     url = (manifest.get("run") or {}).get("url")
     if url and not RUN_URL.match(url):
         fail(f"the recorded run URL is not an {UPSTREAM} actions run: {url}")
-    sums = read_json(record / "SHA256SUMS.json")
-    listed = {entry["path"]: entry for entry in manifest.get("files", [])}
+    sums_path = record / "SHA256SUMS.json"
+    if not sums_path.is_file():
+        fail("no SHA256SUMS.json: a record without pins is not evidence")
+    sums = read_json(sums_path)
+    if not isinstance(sums, dict) or not sums:
+        fail("SHA256SUMS.json is empty or unreadable; an empty pin set verifies nothing")
+    files = manifest.get("files")
+    if not isinstance(files, list) or not files:
+        fail("manifest.json lists no files; an empty record cannot be evidence")
+    listed: dict[str, dict] = {}
+    for index, entry in enumerate(files):
+        if not isinstance(entry, dict):
+            fail(f"manifest file entry {index} is not an object")
+        relative = entry.get("path")
+        if not isinstance(relative, str) or not relative:
+            fail(f"manifest file entry {index} has no path")
+        if Path(relative).is_absolute() or ".." in Path(relative).parts:
+            fail(f"manifest file entry {index} escapes the record: {relative}")
+        if relative in listed:
+            fail(f"manifest lists {relative} more than once")
+        if not (isinstance(entry.get("sha256"), str) and HEX64.fullmatch(entry["sha256"])):
+            fail(f"manifest file entry {relative} has no 64-hex sha256")
+        if (not isinstance(entry.get("bytes"), int)
+                or isinstance(entry.get("bytes"), bool)
+                or entry["bytes"] < 0):
+            fail(f"manifest file entry {relative} has no byte count")
+        listed[relative] = entry
     if set(sums) != set(listed):
         fail("SHA256SUMS.json and manifest.json disagree on the file set")
     for relative, entry in listed.items():
