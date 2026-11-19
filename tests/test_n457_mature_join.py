@@ -37,6 +37,15 @@ class MatureJoinEvidence(unittest.TestCase):
         chain = module.build_join_chain(joiner, responder)
         self.assertTrue(chain["complete"], chain["incomplete_reasons"])
         self.assertEqual(module.chain_tool().check_chain(chain), [])
+        pinned = module.build_join_chain(
+            joiner, responder,
+            joiner_source="raw/passive.log", responder_source="raw/responder.log",
+        )
+        self.assertEqual(pinned["sources"], {
+            "joiner_log": "raw/passive.log", "responder_log": "raw/responder.log",
+        })
+        self.assertEqual(module.chain_tool().check_chain(pinned), [])
+
 
     def test_two_digit_sequences_stay_whole(self):
         # The 2026-11-13 defect: one capture group unpacked into `(_, seq)` splits "15" into "1"

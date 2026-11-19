@@ -23,6 +23,12 @@ Usage:
   tools/m3-join-chain.py build --joiner-log FILE --responder-log FILE --out FILE
                              [--locality local-devnet] [--joiner-container NAME]
                              [--responder-container NAME]
+                             [--joiner-source raw/observer.log]
+                             [--responder-source raw/bootstrap.log]
+
+Off-host admission requires both raw logs and chain.json pinned by
+manifest.json and SHA256SUMS.json. Correlation is not cryptographic
+delivery proof or gate promotion.
 
 Exit codes mirror `gate-check.py`: 0 PASS, 1 FAIL, 3 PRECONDITION (a chain is absent or a stage
 cannot be keyed).
@@ -31,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import importlib.util
 import json
 import re
@@ -85,11 +92,11 @@ RE3 = re.compile(
 )
 RE4_OK = re.compile(
     r"FinalizedFringe sent to (rnode://([0-9a-fA-F]+)@\S+?): "
-    r"transport outcome (delivered|failed) \(state ([0-9a-f]{64})\)"
+    r"transport outcome (delivered) \(state ([0-9a-f]{64})\)"
 )
 RE4_FAIL = re.compile(
     r"FinalizedFringe to (rnode://([0-9a-fA-F]+)@\S+?) was not sent: "
-    r"transport outcome (delivered|failed) \(state ([0-9a-f]{64})\)"
+    r"transport outcome (failed) \(state ([0-9a-f]{64})\)"
 )
 RE5 = re.compile(
     r"Received finalized fringe from bootstrap node \(([0-9a-f]{64})\) "
@@ -360,13 +367,17 @@ def check_chain(chain: object) -> list[str]:
         problems.append(f"gate_id {chain.get('gate_id')!r} is not 'G428-M3'")
     if chain.get("locality") not in RECORD_LABELS:
         problems.append(f"locality {chain.get('locality')!r} is not a record locality")
-    if chain.get("complete") is False:
-        reasons = chain.get("incomplete_reasons") or []
-        problems.append(
-            "the chain is incomplete: " + "; ".join(str(reason) for reason in reasons)
-            if reasons
-            else "the chain is incomplete"
-        )
+    # Neither an absent flag, null/false/string flag nor nonempty reasons
+    # can be an admissible complete witness (review #613: fail closed).
+    if chain.get("complete") is not True:
+        problems.append("complete must be the literal boolean true")
+    reasons = chain.get("incomplete_reasons")
+    if not isinstance(reasons, list) or not all(
+        isinstance(reason, str) and reason for reason in reasons
+    ):
+        problems.append("incomplete_reasons must be a list of nonempty strings")
+    elif reasons:
+        problems.append("the chain is incomplete: " + "; ".join(reasons))
     non_claims = chain.get("non_claims")
     if non_claims is not None and not isinstance(non_claims, list):
         problems.append("non_claims must be a list")
@@ -464,6 +475,8 @@ def build_chain(
     locality: str = "local-devnet",
     joiner_container: str | None = None,
     responder_container: str | None = None,
+    joiner_source_path: str | None = None,
+    responder_source_path: str | None = None,
 ) -> dict:
     """Correlate two captured logs into one chain.
 
@@ -473,6 +486,15 @@ def build_chain(
     joiner_lines = joiner_log.splitlines()
     responder_lines = responder_log.splitlines()
     reasons: list[str] = []
+    sources = None
+    if joiner_source_path is not None or responder_source_path is not None:
+        if not joiner_source_path or not responder_source_path:
+            reasons.append("both raw source paths must be supplied together")
+        else:
+            sources = {
+                "joiner_log": joiner_source_path,
+                "responder_log": responder_source_path,
+            }
 
     restores = [
         (index, match)
@@ -491,6 +513,7 @@ def build_chain(
             reasons=reasons,
             joiner_container=joiner_container,
             responder_container=responder_container,
+            sources=sources,
         )
     restore_index, restore = restores[-1]
     served, accepted_root, accepted_kind = restore.groups()
@@ -648,6 +671,7 @@ def build_chain(
         reasons=reasons,
         joiner_container=joiner_container,
         responder_container=responder_container,
+        sources=sources,
     )
 
 
@@ -659,6 +683,7 @@ def _chain(
     reasons: list[str],
     joiner_container: str | None,
     responder_container: str | None,
+    sources: dict[str, str] | None = None,
 ) -> dict:
     chain = {
         "schema": 1,
@@ -682,6 +707,8 @@ def _chain(
             "a local-devnet chain is not an off-host positive",
         ],
     }
+    if sources is not None:
+        chain["sources"] = sources
     return chain
 
 
@@ -707,6 +734,119 @@ def _record_chain(directory: Path) -> tuple[object | None, str | None]:
         return None, f"{path}: chain.json is not valid JSON: {error}"
 
 
+def check_pinned_sources(directory: Path, chain: object) -> list[str]:
+    """Off-host evidence boundary: two pinned raw logs with the quoted lines.
+
+    A checksum/line-inclusion witness is NOT a cryptographic transport receipt
+    or independent proof that either host produced the bytes. But it prevents a
+    hand-edited chain.json from passing without matching the source artefacts.
+    """
+    if not isinstance(chain, dict):
+        return ["off-host witness has no typed chain"]
+    sources = chain.get("sources")
+    if not isinstance(sources, dict):
+        return ["off-host witness requires sources.joiner_log and sources.responder_log"]
+
+    names = {}
+    for role in ("joiner", "responder"):
+        name = sources.get(role + "_log")
+        if not isinstance(name, str) or not name.startswith("raw/"):
+            return [f"sources.{role}_log must be a record-relative raw/ log path"]
+        pieces = Path(name).parts
+        if (Path(name).is_absolute() or any(x in ("..", ".") for x in pieces)
+                or len(pieces) < 2 or "\\" in name):
+            return [f"sources.{role}_log is an unsafe path"]
+        names[role] = name
+    if names["joiner"] == names["responder"]:
+        return ["off-host witness requires two distinct pinned source logs"]
+
+    manifest_path = directory / "manifest.json"
+    sums_path = directory / "SHA256SUMS.json"
+    if not manifest_path.is_file() or not sums_path.is_file():
+        return ["off-host source pins require manifest.json and SHA256SUMS.json"]
+    try:
+        if manifest_path.stat().st_size > 1_000_000 or sums_path.stat().st_size > 1_000_000:
+            return ["source pin manifests exceed size budget"]
+        manifest = json.loads(manifest_path.read_text())
+        sums = json.loads(sums_path.read_text())
+        if not isinstance(manifest, dict) or not isinstance(sums, dict):
+            return ["source pin manifests must be JSON objects"]
+        files = manifest.get("files")
+        if not isinstance(files, list):
+            return ["manifest.files must enumerate raw source logs"]
+        listed = {entry["path"]: entry for entry in files if isinstance(entry, dict)
+                  and isinstance(entry.get("path"), str)}
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return [f"cannot decode source-pin manifest: {error}"]
+
+    problems = []
+    contents = {}
+    root = directory.resolve()
+    # The chain itself must also be in the packed manifest and checksum set.
+    # Otherwise a valid log inclusion check could read an unpinned chain.
+    chain_file = chain_path(directory)
+    if chain_file is None:
+        problems.append("off-host chain.json is absent from the record")
+    else:
+        relative = chain_file.relative_to(directory).as_posix()
+        entry = listed.get(relative)
+        if not isinstance(entry, dict) or entry.get("kind") != "json":
+            problems.append("off-host chain.json is missing from manifest.files")
+        else:
+            raw = chain_file.read_bytes()
+            digest = hashlib.sha256(raw).hexdigest()
+            if (entry.get("sha256") != digest or sums.get(relative) != digest
+                    or entry.get("bytes") != len(raw)):
+                problems.append("off-host chain.json has a SHA-256/byte-count pin mismatch")
+    for role, name in names.items():
+        entry = listed.get(name)
+        if (not isinstance(entry, dict) or entry.get("kind") != "log"
+                or not isinstance(entry.get("sha256"), str)
+                or not HEX64.fullmatch(entry["sha256"])
+                or not isinstance(entry.get("bytes"), int)
+                or isinstance(entry.get("bytes"), bool) or entry["bytes"] < 0):
+            problems.append(f"sources.{role}_log is absent or malformed in manifest.files")
+            continue
+        path = directory / name
+        try:
+            resolved = path.resolve(strict=True)
+            if not resolved.is_relative_to(root) or not resolved.is_file():
+                raise ValueError("source log escapes the record")
+            raw = resolved.read_bytes()
+        except (OSError, ValueError) as error:
+            problems.append(f"sources.{role}_log unavailable: {error}")
+            continue
+        digest = hashlib.sha256(raw).hexdigest()
+        if (digest != entry["sha256"] or sums.get(name) != digest
+                or len(raw) != entry["bytes"]):
+            problems.append(f"sources.{role}_log has a SHA-256/byte-count pin mismatch")
+            continue
+        contents[role] = {line.strip() for line in raw.decode("utf-8", errors="replace").splitlines()}
+
+    stages = chain.get("stages")
+    if not isinstance(stages, dict):
+        problems.append("off-host chain stages absent")
+        return problems
+    expected_roles = {
+        "1_request": "joiner", "2_receipt": "responder",
+        "3_construction": "responder", "4_transport": "responder",
+        "5_receive": "joiner", "6_apply": "joiner",
+    }
+    for name, role in expected_roles.items():
+        if role not in contents:
+            continue  # the missing/unpinned raw file is already a hard failure
+        stage = stages.get(name)
+        line = stage.get("log_line") if isinstance(stage, dict) else None
+        if not isinstance(line, str) or line.strip() not in contents[role]:
+            problems.append(f"{name}: quoted line absent from pinned {role} raw log")
+    if "joiner" in contents:
+        apply = stages.get("6_apply")
+        walk_line = apply.get("walk_log_line") if isinstance(apply, dict) else None
+        if not isinstance(walk_line, str) or walk_line.strip() not in contents["joiner"]:
+            problems.append("6_apply: page-walk line absent from pinned joiner raw log")
+    return problems
+
+
 def check_record(directory: Path, policy: str) -> tuple[int, list[str]]:
     chain, error = _record_chain(directory)
     if error is not None:
@@ -715,6 +855,10 @@ def check_record(directory: Path, policy: str) -> tuple[int, list[str]]:
         return 3, [f"unknown locality policy {policy!r}"]
     problems = check_chain(chain)
     label = _locality.declared_locality(directory)
+    # An off-host-looking record cannot evade raw-log verification by using
+    # the broad --locality any mode. Other labels preserve diagnostic policy.
+    if policy == "off-host" or (policy == "any" and label == "off-host-claim"):
+        problems.extend(check_pinned_sources(directory, chain))
     if policy == "off-host":
         if label != "off-host-claim":
             problems.append(
@@ -762,6 +906,10 @@ def main(argv: list[str]) -> int:
     build.add_argument("--locality", default="local-devnet")
     build.add_argument("--joiner-container", default="")
     build.add_argument("--responder-container", default="")
+    build.add_argument("--joiner-source", default=None,
+                       help="record-relative pinned log path, e.g. raw/joiner.log")
+    build.add_argument("--responder-source", default=None,
+                       help="record-relative pinned log path, e.g. raw/responder.log")
 
     args = parser.parse_args(argv)
     if args.command == "check":
@@ -788,6 +936,8 @@ def main(argv: list[str]) -> int:
         locality=args.locality,
         joiner_container=args.joiner_container,
         responder_container=args.responder_container,
+        joiner_source_path=args.joiner_source,
+        responder_source_path=args.responder_source,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(chain, indent=2, sort_keys=True) + "\n")

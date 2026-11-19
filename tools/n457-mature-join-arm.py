@@ -78,13 +78,12 @@ def chain_tool():
     return module
 
 
-def build_join_chain(joiner_text, responder_text):
+def build_join_chain(joiner_text, responder_text, *, joiner_source=None, responder_source=None):
     return chain_tool().build_chain(
-        joiner_log=joiner_text,
-        responder_log=responder_text,
-        locality="local-devnet",
-        joiner_container=RESET_TARGET,
+        joiner_log=joiner_text, responder_log=responder_text,
+        locality="local-devnet", joiner_container=RESET_TARGET,
         responder_container=CONTAINERS[0],
+        joiner_source_path=joiner_source, responder_source_path=responder_source,
     )
 
 
@@ -376,8 +375,16 @@ def main():
     if responder_log.returncode != 0 or not responder_text.strip():
         responder_text = container_log(CONTAINERS[0])
         chain_log_method = "full"
+    # Preserve both exact inputs to the M3 correlation; responder-side raw
+    # log is necessary for independent stage 2-4 verification after packing.
     joiner_text = passive_text if args.supported_recovery and passive_text else combined
-    chain = build_join_chain(joiner_text, responder_text)
+    joiner_name = "passive.log" if args.supported_recovery and passive_text else "activated.log"
+    with open(os.path.join(args.out, "responder.log"), "w") as handle:
+        handle.write(responder_text)
+    chain = build_join_chain(
+        joiner_text, responder_text,
+        joiner_source=f"raw/{joiner_name}", responder_source="raw/responder.log",
+    )
     with open(os.path.join(args.out, "chain.json"), "w") as handle:
         json.dump(chain, handle, indent=2, sort_keys=True)
     container = run(
