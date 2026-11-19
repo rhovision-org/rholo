@@ -205,12 +205,15 @@ def base_g428_m2() -> dict:
         {"arm": "permissive", "code": 0, "message": "ok", "retry_after": None},
     ]
     source_sha, binary = "a" * 40, "b" * 64
+    endpoint = {"url": "http://203.0.113.7:40403", "proxy": "none"}
+    grpc_candidate = {"source_sha": source_sha, "binary_sha256": binary}
+    grpc_endpoint = {"url": "http://203.0.113.7:40404", "proxy": "none", "used": False}
     record = {
         "schema": 1,
         "gate_id": "G428-M2",
         "locality": "public-live",
-        "endpoint": {"url": "http://203.0.113.7:40403", "proxy": "none"},
-        "candidate": {"source_sha": source_sha, "binary_sha256": binary},
+        "endpoint": dict(endpoint),
+        "candidate": dict(grpc_candidate),
         "runs": {
             "capped": {
                 "env": {"RNODE_HTTP_MAX_INFLIGHT_DEPLOY": 2},
@@ -225,6 +228,7 @@ def base_g428_m2() -> dict:
         },
         "surfaces": {
             "http": {
+                "endpoint": dict(endpoint),
                 "capped": {
                     "cap": 2, "held": 2, "probe": 4, "admitted": 0, "refused": 4,
                     "server_errors": 0, "retry_after": 4,
@@ -241,12 +245,18 @@ def base_g428_m2() -> dict:
                 },
             },
             "direct_http": {
+                "endpoint": dict(endpoint),
                 "capped": {"status_line": "HTTP/1.1 429", "retry_after": 1,
                            "transcript": "raw/direct-capped.txt"},
                 "unset": {"status_line": "HTTP/1.1 400",
                           "transcript": "raw/direct-unset.txt"},
             },
             "grpc": {
+                "origin": "candidate-test",
+                "scope": "candidate-code",
+                "candidate": dict(grpc_candidate),
+                "endpoint": dict(grpc_endpoint),
+                "candidate_record": "raw/grpc-candidate.json",
                 "capped": {
                     "arms": {
                         "ingress_rate": {"admitted": 1, "refused": 1, "code": 8,
@@ -273,6 +283,14 @@ def base_g428_m2() -> dict:
         "raw/direct-unset.txt": unset_direct,
         "raw/grpc-capped.jsonl": _m2_jsonl(grpc_capped),
         "raw/grpc-permissive.jsonl": _m2_jsonl(grpc_permissive),
+        "raw/grpc-candidate.json": json.dumps({
+            "schema": 1,
+            "origin": "candidate-test",
+            "scope": "candidate-code",
+            "candidate": dict(grpc_candidate),
+            "endpoint": dict(grpc_endpoint),
+            "command": ["cargo", "test", "-p", "rchain-node", "--lib", "m2_grpc_pressure"],
+        }),
         "raw/capped-inspect.json": json.dumps(
             [{"Config": {"Env": ["RNODE_HTTP_MAX_INFLIGHT_DEPLOY=2"]}}]
         ),

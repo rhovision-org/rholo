@@ -6,6 +6,7 @@ gate: a complete local record passes the local policy and fails the public-live 
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import importlib.util
 import json
@@ -87,6 +88,20 @@ class PressureTests(unittest.TestCase):
         self.assertEqual(status, "FAIL")
         self.assertTrue(any("public-live" in problem for problem in problems), problems)
 
+    def test_a_grpc_candidate_record_that_disagrees_fails(self):
+        spec = fixtures.base_g428_m2()
+        files = spec["pressure"]["files"]
+        document = json.loads(files["raw/grpc-candidate.json"])
+        document["origin"] = "endpoint"
+        files["raw/grpc-candidate.json"] = json.dumps(document)
+        files["SHA256SUMS.json"] = json.dumps(
+            {name: hashlib.sha256(text.encode()).hexdigest()
+             for name, text in files.items() if name != "SHA256SUMS.json"})
+        status, problems = pressure.check_pressure(spec["pressure"], PARAMETERS)
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("candidate record disagrees" in problem
+                            for problem in problems), problems)
+
     def test_a_loopback_endpoint_is_refused_even_when_relabelled(self):
         spec = mutate("pressure/record/endpoint/url", "http://127.0.0.1:40403")
         spec["pressure"]["files"]["README.md"] = (
@@ -121,7 +136,7 @@ class PackedRecordTests(unittest.TestCase):
 
 
 class ArmTests(unittest.TestCase):
-    def phase(self, base: Path, mode: str, files: dict) -> Path:
+    def phase(self, base: Path, mode: str, files: dict, endpoint: str) -> Path:
         out = base / mode
         out.mkdir(parents=True)
         (out / f"http-{mode}.jsonl").write_text(files[f"raw/http-{mode}.jsonl"])
@@ -130,6 +145,7 @@ class ArmTests(unittest.TestCase):
         (out / f"{mode}-version.txt").write_text(files[f"raw/{mode}-version.txt"])
         summary = {
             "mode": mode,
+            "endpoint": endpoint,
             "cap": 2 if mode == "capped" else None,
             "held": 2 if mode == "capped" else 0,
             "probe": 4 if mode == "capped" else 6,
@@ -153,16 +169,15 @@ class ArmTests(unittest.TestCase):
         (out / "phase.json").write_text(json.dumps(summary))
         return out
 
-    def test_assemble_writes_a_record_that_passes_the_local_policy(self):
-        import argparse
-        base = Path(tempfile.mkdtemp())
-        files = fixtures.base_g428_m2()["pressure"]["files"]
-        capped = self.phase(base, "capped", files)
-        unset = self.phase(base, "unset", files)
+    def assemble(self, base: Path, files: dict, *, endpoint: str, locality):
+        capped = self.phase(base, "capped", files, endpoint)
+        unset = self.phase(base, "unset", files, endpoint)
         grpc_dir = base / "grpc"
         grpc_dir.mkdir()
         (grpc_dir / "grpc-capped.jsonl").write_text(files["raw/grpc-capped.jsonl"])
         (grpc_dir / "grpc-permissive.jsonl").write_text(files["raw/grpc-permissive.jsonl"])
+        (grpc_dir / "grpc-candidate.json").write_text(
+            files["raw/grpc-candidate.json"])
         (grpc_dir / "grpc-summary.json").write_text(json.dumps({
             "ingress_rate": {"admitted": 1, "refused": 1, "code": 8, "retry_after": None},
             "pool_full": {"admitted": 0, "refused": 1, "code": 8, "retry_after": 1},
@@ -171,9 +186,16 @@ class ArmTests(unittest.TestCase):
         out = base / "record"
         code = arm.assemble(argparse.Namespace(
             capped=str(capped), unset=str(unset), grpc=str(grpc_dir), out=str(out),
-            locality="local-devnet", port=40403, source_sha="a" * 40,
+            locality=locality, endpoint=endpoint, port=40403, source_sha="a" * 40,
             binary_sha256="",
         ))
+        return code, out
+
+    def test_assemble_writes_a_record_that_passes_the_local_policy(self):
+        base = Path(tempfile.mkdtemp())
+        files = fixtures.base_g428_m2()["pressure"]["files"]
+        code, out = self.assemble(base, files, endpoint="http://127.0.0.1:40403",
+                                  locality="local-devnet")
         self.assertEqual(code, 0)
         self.assertTrue((out / "observations.json").is_file())
         local = {"locality": "local-devnet", "rate_ceiling": 100}
@@ -183,6 +205,52 @@ class ArmTests(unittest.TestCase):
                                                    {"locality": "public-live",
                                                     "rate_ceiling": 100})
         self.assertEqual(status, "FAIL")
+
+    def test_assemble_writes_a_public_live_record(self):
+        base = Path(tempfile.mkdtemp())
+        files = fixtures.base_g428_m2()["pressure"]["files"]
+        code, out = self.assemble(base, files, endpoint="http://203.0.113.7:40403",
+                                  locality=None)
+        self.assertEqual(code, 0)
+        status, problems = pressure.check_pressure({"dir": str(out)}, PARAMETERS)
+        self.assertEqual(status, "PASS", problems)
+
+    def test_assemble_refuses_a_locality_contradiction(self):
+        base = Path(tempfile.mkdtemp())
+        files = fixtures.base_g428_m2()["pressure"]["files"]
+        with self.assertRaises(SystemExit):
+            self.assemble(base, files, endpoint="http://203.0.113.7:40403",
+                          locality="local-devnet")
+
+    def test_assemble_refuses_mismatched_phase_endpoints(self):
+        base = Path(tempfile.mkdtemp())
+        files = fixtures.base_g428_m2()["pressure"]["files"]
+        capped = self.phase(base, "capped", files, "http://203.0.113.7:40403")
+        unset = self.phase(base, "unset", files, "http://203.0.113.8:40403")
+        with self.assertRaises(SystemExit):
+            arm.assemble(argparse.Namespace(
+                capped=str(capped), unset=str(unset), grpc=str(base / "absent"),
+                out=str(base / "record"), locality=None,
+                endpoint="http://203.0.113.7:40403", port=40403,
+                source_sha="a" * 40, binary_sha256="b" * 64,
+            ))
+
+    def test_grpc_refuses_an_endpoint_origin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(SystemExit):
+                arm.grpc(argparse.Namespace(
+                    out=tmp, origin="endpoint", source_sha="a" * 40,
+                    binary_sha256="b" * 64, endpoint="http://203.0.113.7:40404",
+                    locality="public-live"))
+
+    def test_phase_refuses_a_remote_endpoint_without_captures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = argparse.Namespace(
+                out=tmp, mode="unset", endpoint="http://203.0.113.7:40403",
+                inspect="", version="", container="unsampled", port=40403,
+                cap=2, probe=1, spacing=0, settle=0)
+            with self.assertRaises(SystemExit):
+                arm.phase(args)
 
 
 class CliTests(unittest.TestCase):

@@ -319,6 +319,17 @@ class CapacityTierTests(unittest.TestCase):
         self.assertEqual(principles.evaluate_entry(entry, {"record": {}})["status"], "FAIL")
 
 
+class M2PressureArmTests(unittest.TestCase):
+    """The M2 endpoint/locality and gRPC-binding controls, reached where CI looks."""
+
+    def test_the_pressure_suite_passes(self):
+        suite = unittest.defaultTestLoader.discover(
+            str(ROOT / "tests"), pattern="test_m2_pressure.py",
+            top_level_dir=str(ROOT / "tests"))
+        result = unittest.TextTestRunner(stream=StringIO(), verbosity=0).run(suite)
+        self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+
+
 class FinalityCampaignTests(unittest.TestCase):
     """The M4 collector, reached where CI looks.
 
