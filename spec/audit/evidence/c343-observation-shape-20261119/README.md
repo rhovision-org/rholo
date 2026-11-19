@@ -20,7 +20,7 @@ the resulting local-devnet document for locality? It is **not** the live B/C/D s
 | tooling | the parent of this evidence commit (the collector bundle writer and locality parameter) |
 | run | none — local Docker devnet; no Actions URL |
 | reference | `tools/c343-live.py`; `tools/gate-principles.py::phase_diagnosis`; `spec/audit/phase-diagnosis.tsv` |
-| packaged | `2026-11-19T09:54:21+00:00` |
+| packaged | `2026-11-19T09:46:17+00:00` |
 | verdict | **INCONCLUSIVE** |
 
 Every file listed in `manifest.json` is hashed in `SHA256SUMS.json`. **`execution_proven` is
