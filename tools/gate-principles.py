@@ -777,6 +777,36 @@ def capacity_tier(observations: dict, parameters: dict) -> dict:
     })
 
 
+def finality_campaign(observations: dict, parameters: dict) -> dict:
+    """M4's N=4/N=8 campaign envelope over the anchor-retention predicate.
+
+    Each workload carries the capacity record M1 measures, so "adequate independent-host
+    capacity" is one predicate in both gates: a below-tier or override workload is unkeyable
+    here for the same reason it is unkeyable in M1. The campaign structure, the five arms and
+    the approved-root preservation are checked by `check_finality_campaign`; the evidence
+    record is the promotion layer's concern, not a self-referential digest in the record.
+    """
+    data = observations.get("record_data")
+    if not isinstance(data, dict):
+        return verdict("PRECONDITION", ["record_data is absent"])
+    workloads = data.get("workloads")
+    if isinstance(workloads, dict):
+        for key in ("n4", "n8"):
+            workload = workloads.get(key)
+            if not isinstance(workload, dict):
+                continue
+            capacity = workload.get("capacity")
+            if not isinstance(capacity, dict):
+                return verdict("PRECONDITION", [f"workloads.{key}.capacity is absent"])
+            report = capacity_tier({"record": capacity}, parameters)
+            if report["status"] != "PASS":
+                return verdict(
+                    report["status"],
+                    [f"workloads.{key}: {reason}" for reason in report["reasons"]],
+                    {"workload": key})
+    return _criterion_report(_criterion.check_finality_campaign(data, parameters))
+
+
 PRINCIPLES = {
     "identity_agreement": identity_agreement,
     "staged_lifecycle": staged_lifecycle,
@@ -785,6 +815,7 @@ PRINCIPLES = {
     "independent_observations": independent_observations,
     "human_attestation": human_attestation,
     "healing_anchor": healing_anchor,
+    "finality_campaign": finality_campaign,
     "merge_accounting": merge_accounting,
     "phase_diagnosis": phase_diagnosis,
     "lockstep_acceptance": lockstep_acceptance,
@@ -803,6 +834,12 @@ PARAMETER_SCHEMA = {
     "independent_observations": {"min_observers": int},
     "human_attestation": {"owner": str},
     "healing_anchor": {"floor": (int, float), "ceiling": (int, float), "min_dwell": int},
+    "finality_campaign": {
+        "floor": (int, float), "ceiling": (int, float), "min_dwell": int,
+        "min_hosts": int, "min_cycles": int,
+        "minimal_cores": int, "minimal_ram_gib": int, "minimal_disk_gib": int,
+        "comfortable_cores": int, "comfortable_ram_gib": int, "comfortable_disk_gib": int,
+    },
     "merge_accounting": {},
     "phase_diagnosis": {"table": str, "locality": str},
     "lockstep_acceptance": {"table": str, "require_original_trace": bool,

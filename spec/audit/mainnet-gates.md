@@ -13,7 +13,7 @@ Do not edit by hand; the checker compares this file with the JSON.
 |---|---|---|---|---|---|
 | `C343` | C343 | **precondition** | Private-chain surface: live B/C/D read-only phase diagnosis | live-host | Aria / operator |
 | `G428-M1` | G428 | **blocked** | Supported capacity and physical fault domains | multi-host | Jim / release coordination |
-| `G428-M2` | G428 | **owes** | Bounded public ingress and overload behavior | unit | Jim / release coordination |
+| `G428-M2` | G428 | **owes** | Bounded public ingress and overload behavior | live-host | Jim / release coordination |
 | `G428-M3` | G428 | **blocked** | Off-host bootstrap and fringe completion | off-host | Aria / evidence work |
 | `G428-M4` | G428 | **blocked** | Finality, liveness and autonomous recovery | multi-host | Jim / release coordination |
 | `G520-MIGRATION` | G520 | **met** | Populated-store migration and replay qualification | single-host | Jim / release coordination |

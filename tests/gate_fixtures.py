@@ -205,12 +205,15 @@ def base_g428_m2() -> dict:
         {"arm": "permissive", "code": 0, "message": "ok", "retry_after": None},
     ]
     source_sha, binary = "a" * 40, "b" * 64
+    endpoint = {"url": "http://203.0.113.7:40403", "proxy": "none"}
+    grpc_candidate = {"source_sha": source_sha, "binary_sha256": binary}
+    grpc_endpoint = {"url": "http://203.0.113.7:40404", "proxy": "none", "used": False}
     record = {
         "schema": 1,
         "gate_id": "G428-M2",
         "locality": "public-live",
-        "endpoint": {"url": "http://203.0.113.7:40403", "proxy": "none"},
-        "candidate": {"source_sha": source_sha, "binary_sha256": binary},
+        "endpoint": dict(endpoint),
+        "candidate": dict(grpc_candidate),
         "runs": {
             "capped": {
                 "env": {"RNODE_HTTP_MAX_INFLIGHT_DEPLOY": 2},
@@ -225,6 +228,7 @@ def base_g428_m2() -> dict:
         },
         "surfaces": {
             "http": {
+                "endpoint": dict(endpoint),
                 "capped": {
                     "cap": 2, "held": 2, "probe": 4, "admitted": 0, "refused": 4,
                     "server_errors": 0, "retry_after": 4,
@@ -241,12 +245,18 @@ def base_g428_m2() -> dict:
                 },
             },
             "direct_http": {
+                "endpoint": dict(endpoint),
                 "capped": {"status_line": "HTTP/1.1 429", "retry_after": 1,
                            "transcript": "raw/direct-capped.txt"},
                 "unset": {"status_line": "HTTP/1.1 400",
                           "transcript": "raw/direct-unset.txt"},
             },
             "grpc": {
+                "origin": "candidate-test",
+                "scope": "candidate-code",
+                "candidate": dict(grpc_candidate),
+                "endpoint": dict(grpc_endpoint),
+                "candidate_record": "raw/grpc-candidate.json",
                 "capped": {
                     "arms": {
                         "ingress_rate": {"admitted": 1, "refused": 1, "code": 8,
@@ -273,6 +283,14 @@ def base_g428_m2() -> dict:
         "raw/direct-unset.txt": unset_direct,
         "raw/grpc-capped.jsonl": _m2_jsonl(grpc_capped),
         "raw/grpc-permissive.jsonl": _m2_jsonl(grpc_permissive),
+        "raw/grpc-candidate.json": json.dumps({
+            "schema": 1,
+            "origin": "candidate-test",
+            "scope": "candidate-code",
+            "candidate": dict(grpc_candidate),
+            "endpoint": dict(grpc_endpoint),
+            "command": ["cargo", "test", "-p", "rchain-node", "--lib", "m2_grpc_pressure"],
+        }),
         "raw/capped-inspect.json": json.dumps(
             [{"Config": {"Env": ["RNODE_HTTP_MAX_INFLIGHT_DEPLOY=2"]}}]
         ),
@@ -475,19 +493,146 @@ def base_g428_m3() -> dict:
     }}
 
 
+def _m4_capacity(pairs: list[tuple[str, str]]) -> dict:
+    """The M1 record shape for one workload: adequate, one or two validators per host."""
+    validators = []
+    for ident, host in pairs:
+        validators.append({
+            "id": ident,
+            "host": host,
+            "container": f"n420-{ident}",
+            "stake": 100,
+            "measured": {
+                "rss_mb": 512,
+                "peak_rss_mb": 900,
+                "mem_total_mb": 32768,
+                "cgroup_limit_mb": 8192,
+                "cpu_cores": 2.0,
+                "host_cores": 8,
+                "data_dir_free_mb": 200000,
+                "rnode_processes": 1,
+                "chain_height": 5200,
+                "replay_seconds": 240,
+                "replay_peak_rss_mb": 1200,
+                "replay_height": 5000,
+                "oom_kills_delta": 0,
+                "restart_count_delta": 0,
+                "fallback_states": ["normal"],
+                "runtime_override": False,
+                "argv": ["rnode", "run", "--bootstrap", "rnode://host-a:40400"],
+                "container_config": {"cmd": ["run"]},
+            },
+        })
+    return {
+        "schema": 1,
+        "kind": "supported-tier",
+        "declared": {
+            "tier": "minimal",
+            "per_validator": {"cores": 2, "ram_gib": 8, "disk_gib": 100},
+            "max_peak_rss_mb": 6000,
+            "max_replay_seconds": 600,
+            "served_height": 5000,
+            "host_failure_tolerance": 1,
+            "validator_count": len(validators),
+            "total_stake": sum(entry["stake"] for entry in validators),
+        },
+        "validators": validators,
+    }
+
+
+def _m4_workload(pairs: list[tuple[str, str]], approved_root: str,
+                 victims: list[str], lost_host: str) -> dict:
+    ids = [ident for ident, _ in pairs]
+    host_of = dict(pairs)
+    survivors = [ident for ident in ids if host_of[ident] != lost_host]
+
+    def cycle(victim: str) -> dict:
+        return {
+            "victim": victim,
+            "anchor": {"hash": "c" * 64, "height": 5000},
+            "dwell": {"samples": 4, "stable": True},
+            "window": {"seconds": 300},
+            "validators": [{"id": ident, "finalized_anchor": True} for ident in ids],
+            "root_before": approved_root,
+            "root_after": approved_root,
+            "approved_root_finalized": [
+                {"id": ident, "finalized": True} for ident in ids
+            ],
+        }
+
+    return {
+        "validators": len(ids),
+        "approved_root": approved_root,
+        "candidate": {"source_sha": TOKEN_SOURCE, "binary_sha256": TOKEN_BINARY},
+        "capacity": _m4_capacity(pairs),
+        "arms": {
+            "deploy_finalization": {
+                "term": "m4-finality-term",
+                "finalized_on_all": True,
+                "approved_root_finalized_on_all": True,
+                "per_validator": [
+                    {"id": ident, "finalized": True, "height": 5200} for ident in ids
+                ],
+            },
+            "partition_rejoin": {"cycles": [cycle(victim) for victim in victims]},
+            "host_loss": {
+                "lost_hosts": [lost_host],
+                "survivors": survivors,
+                "per_validator": [
+                    {"id": ident, "finalized_anchor": True, "root": approved_root}
+                    for ident in survivors
+                ],
+                "root_before": approved_root,
+                "root_after": approved_root,
+                "retained": True,
+            },
+            "restart_replay": {
+                "validator": ids[0],
+                "replay_seconds": 240,
+                "replay_height": 5000,
+                "recovered_height": 5200,
+                "anchor_still_present": True,
+                "fallback_state": "normal",
+                "manual_restart": True,
+                "root_before": approved_root,
+                "root_after": approved_root,
+            },
+            "safe_recovery": {
+                "accepted_work_lost": 0,
+                "self_replay": False,
+                "own_key_halt": False,
+                "approved_root": approved_root,
+                "retained": True,
+                "per_validator": [
+                    {"id": ident, "root_after": approved_root} for ident in survivors
+                ],
+            },
+        },
+    }
+
+
 def base_g428_m4() -> dict:
-    anchor = "a" * 64
-    record = _pack_record("G428-M4", anchor)
+    """A complete N=4/N=8 campaign: four hosts, five arms, approved roots preserved."""
+    n4_pairs = [(f"v{index}", f"host-{'abcd'[index - 1]}") for index in range(1, 5)]
+    n8_pairs = [(f"v{index}", f"host-{'abcd'[(index - 1) // 2]}") for index in range(1, 9)]
     return {"record_data": {
-        "anchor": {"hash": anchor, "height": 100},
-        "dwell": {"samples": 3, "stable": True},
-        "window": {"seconds": 300},
-        "validators": [
-            {"id": "B", "finalized_anchor": True},
-            {"id": "C", "finalized_anchor": True},
-            {"id": "D", "finalized_anchor": True},
-        ],
-        "evidence": {"record": record, "digest": manifest_sha256(record)},
+        "schema": 1,
+        "gate_id": "G428-M4",
+        "campaign": {
+            "name": "n4-n8-finality-campaign",
+            "locality": "multi-host",
+            "bootstrap": "v1",
+            "selected": {"source_sha": TOKEN_SOURCE, "binary_sha256": TOKEN_BINARY},
+            "hosts": ["host-a", "host-b", "host-c", "host-d"],
+            "rerun": {
+                "n4": "python3 tests/consensus-partition-rejoin.py --validators 4 --out n4",
+                "n8": "python3 tests/consensus-partition-rejoin.py --validators 8 --out n8",
+            },
+        },
+        "workloads": {
+            "n4": _m4_workload(n4_pairs, "a" * 64, ["v2", "v3"], "host-d"),
+            "n8": _m4_workload(n8_pairs, "b" * 64, ["v2", "v3"], "host-d"),
+        },
     }}
 
 

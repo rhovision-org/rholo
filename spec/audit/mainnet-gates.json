@@ -92,7 +92,7 @@
       "fail_condition": "Silent accepted-write loss, unbounded work or queues, ambiguous acceptance, or uncontrolled memory pressure inside the accepted envelope.",
       "family": "G428",
       "id": "G428-M2",
-      "locality": "unit",
+      "locality": "live-host",
       "negative_control": "Remove a queue bound and require the source-shape gate to fail; a load arm must show an explicit rejection, not a silent drop; the default configuration (in-flight limit unset) must not pass; a new refusal class outside the closed vocabulary must not be reported as 400.",
       "observable": "Accepted/rejected counts and queue depth under HTTP/direct/gRPC load; a backpressure signal; no silent accepted-work loss.",
       "owner": "Jim / release coordination",
@@ -114,7 +114,7 @@
       "title": "Bounded public ingress and overload behavior",
       "witness_kind": "python",
       "witness_ref": "tools/m2-pressure.py::check_pressure",
-      "witness_scope": "unit"
+      "witness_scope": "integration"
     },
     {
       "criteria_sha256": "f6cfdecacbaaf05099fa56b712f39211f6c2a11c526f93fd6e094c71fc7e8919",
