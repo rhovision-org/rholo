@@ -183,18 +183,27 @@ class CriterionTests(unittest.TestCase):
                 {"record": {}})["status"],
             "FAIL")
 
-    def test_a_process_pid_is_listed_once_across_names(self):
-        document = {"record": {
-            "host_processes": [
-                {"pid": 101, "name": "rnode"},
-                {"pid": 101, "name": "rnode-watchdog"},
-            ],
-            "declared_count": 1,
-        }}
+    def test_the_tier_floor_comes_from_the_criterion_parameters(self):
+        """The floor is data, not a constant: raising it flips the same record to FAIL."""
+        parameters = self.entries["G428-M1"]["parameters"]
+        baseline = principles.evaluate("capacity_tier", gate_fixtures.base("G428-M1"),
+                                       parameters)
+        self.assertEqual(baseline["status"], "PASS", baseline)
+        raised = dict(parameters, minimal_ram_gib=16)
         self.assertEqual(
-            principles.evaluate("resource_attribution", document,
-                                {"process_name": "rnode"})["status"],
+            principles.evaluate("capacity_tier", gate_fixtures.base("G428-M1"),
+                                raised)["status"],
             "FAIL")
+
+    def test_the_fault_domain_arithmetic_uses_the_stake_map(self):
+        parameters = self.entries["G428-M1"]["parameters"]
+        two_hosts = gate_fixtures.apply_mutation(
+            gate_fixtures.base("G428-M1"),
+            ["set_where", "record/validators", {"id": "v2"}, {"host": "host-a"}])
+        result = principles.evaluate("capacity_tier", two_hosts, parameters)
+        self.assertEqual(result["status"], "FAIL", result)
+        self.assertTrue(any("supermajority" in reason for reason in result["reasons"]),
+                        result)
 
     def test_the_registry_covers_every_machine_checkable_external_gate(self):
         executable = {"python", "rust-unit", "rust-integration", "two-binary",

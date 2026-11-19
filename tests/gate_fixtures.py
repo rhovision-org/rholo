@@ -101,8 +101,54 @@ def _run_document() -> dict:
 
 
 def base_g428_m1() -> dict:
-    return {"record": {"host_processes": [{"pid": 101, "name": "rnode"}],
-                       "declared_count": 1}}
+    """A supported-tier record: four validators, one per host, equal stake.
+
+    The cgroup limit is present and equal to the declared 8 GiB share; the four-host layout is
+    the one that tolerates a one-host loss under the code's supermajority rule.
+    """
+    def validator(index: int) -> dict:
+        return {
+            "id": f"v{index}",
+            "host": f"host-{'abcd'[index - 1]}",
+            "container": f"n420-validator-{index}",
+            "stake": 100,
+            "measured": {
+                "rss_mb": 512,
+                "peak_rss_mb": 900,
+                "mem_total_mb": 32768,
+                "cgroup_limit_mb": 8192,
+                "cpu_cores": 2.0,
+                "host_cores": 8,
+                "data_dir_free_mb": 200000,
+                "rnode_processes": 1,
+                "chain_height": 5200,
+                "replay_seconds": 240,
+                "replay_peak_rss_mb": 1200,
+                "replay_height": 5000,
+                "oom_kills_delta": 0,
+                "restart_count_delta": 0,
+                "fallback_states": ["normal", "throttled"],
+                "runtime_override": False,
+                "argv": ["rnode", "run", "--bootstrap", "rnode://host-a:40400"],
+                "container_config": {"cmd": ["run", "--bootstrap", "rnode://host-a:40400"]},
+            },
+        }
+
+    return {"record": {
+        "schema": 1,
+        "kind": "supported-tier",
+        "declared": {
+            "tier": "minimal",
+            "per_validator": {"cores": 2, "ram_gib": 8, "disk_gib": 100},
+            "max_peak_rss_mb": 6000,
+            "max_replay_seconds": 600,
+            "served_height": 5000,
+            "host_failure_tolerance": 1,
+            "validator_count": 4,
+            "total_stake": 400,
+        },
+        "validators": [validator(index) for index in range(1, 5)],
+    }}
 
 
 def _m2_jsonl(records: list[dict]) -> str:
