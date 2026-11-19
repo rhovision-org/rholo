@@ -105,7 +105,8 @@ class EvidenceLocalityTests(unittest.TestCase):
         for host in (
             "10.0.0.1", "172.16.0.1", "192.168.1.1", "169.254.1.1",
             "fc00::1", "fe80::1", "2130706433", "0x7f000001", "017700000001",
-            "127.1", "[::ffff:192.168.1.1]",
+            "127.1", "[::ffff:192.168.1.1]", "::127.0.0.1", "::192.168.1.1",
+            "::10.0.0.1", "ff02::1",
         ):
             with self.subTest(host=host):
                 self.assertTrue(locality.local_address(host), host)
@@ -116,7 +117,9 @@ class EvidenceLocalityTests(unittest.TestCase):
     def test_only_loopback_satisfies_the_diagnostic_label(self):
         self.assertTrue(locality.loopback_address("127.0.0.1"))
         self.assertTrue(locality.loopback_address("2130706433"))
+        self.assertTrue(locality.loopback_address("::127.0.0.1"))
         self.assertFalse(locality.loopback_address("10.0.0.1"))
+        self.assertFalse(locality.loopback_address("::10.0.0.1"))
 
     def test_an_off_host_claim_with_a_private_captured_peer_fails(self):
         problems = self.check(
