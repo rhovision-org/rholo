@@ -14018,23 +14018,25 @@ a name, and nothing bound the digest to a review.
   `test_hardfork_51_closeout.py` CI seam; no workflow file is edited. `gate-principles` and the CI
   wiring request now name `--controls python` for CI and the full corpus as a release-time run.
 
-**Why believed.** The full corpus ran twice, serially, with a warm target:
+**Why believed.** The full corpus ran serially on a warm target:
 
 ```text
 python3 tools/check-mainnet-gates.py --run-controls
-controls_mode all; 46 CONTROLLED, 1 ERROR; exit 1
-unproven: S6-c7536b90bd39cf71 (rholang/tests/deep_value_bound.rs)
+controls_mode all; 47 CONTROLLED; exit 0
 ```
 
-The one ERROR is honest, not suppressed. That control's declared mutation raises
-`MAX_VALUE_DEPTH` 256→1024; the 400-deep fold then overflows the worker stack and the process aborts
-(SIGABRT) before libtest can print a `FAILED` line. The witness is sensitive to the mutation — the
-process dies — but its failure mode is an abort, not an assertion. Adding an "abort counts as
-CONTROLLED" exception would let any crash masquerade as a control, so the rule stays assertion-level
-and the row is reported. The control's committed FAIL record and the witness's own doc comment both
-document the abort, so this is not a defective declaration; a clean-assertion mutation plus a new
-FAIL record is a separate governance change. The register is unchanged: 59 gates, 47 met, 12
-unresolved.
+The 2026-11-18 control for `S6-c7536b90bd39cf71` raised `MAX_VALUE_DEPTH` 256→1024; the 400-deep
+fold overflowed the worker stack and the process aborted (SIGABRT) before libtest could print a
+`FAILED` line. The first live runs reported that as an ERROR — the witness was sensitive, but its
+failure mode was an abort, not an assertion. Rather than add an "abort counts as CONTROLLED"
+exception (which would let any crash masquerade as a control), the control was redefined: it now
+replaces the refusal message (`"a produced value is nested too deeply"` → `"a produced value was
+refused"`). The depth guard still fires, and the witness fails on its own "the refusal has to say
+what it refused" assertion with a clean libtest `FAILED` (exit 101, no abort). The run is recorded
+at `spec/audit/evidence/s6-c7536b90bd39cf71-20261119-fail` — source `de2d72fda`, the test-binary
+digest, the mutation patch and the log, digest-pinned and verified — and the 2026-11-18 SIGABRT
+record is retained as provenance. The bindings row now cites the new mutation and record; the gate
+status is unchanged. The register is unchanged: 59 gates, 47 met, 12 unresolved.
 
 **What it does not claim.** No gate is promoted. A control demonstrates sensitivity to one declared
 mutation, not that the test asserts the whole pass condition, and `execution_proven` stays false.
@@ -14047,4 +14049,4 @@ the pinned-blob check remains owed; the sign-off is unexecuted, so the tracker s
 `.github/workflows/*` edit, campaign, host, public deployment, real key or transfer ran.
 
 **State.** 59 registered gates, 47 met, 12 unresolved; `--assert-closeable` exits 3; the full
-control corpus is 46 CONTROLLED + 1 documented ERROR; `check-hardfork-51-closeout.py` still opens.
+control corpus is 47 CONTROLLED (exit 0); `check-hardfork-51-closeout.py` still opens.

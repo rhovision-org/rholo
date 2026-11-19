@@ -2072,7 +2072,7 @@
       "id": "S6-c7536b90bd39cf71",
       "laws": [],
       "locality": "integration",
-      "negative_control": "Raise the produced-value depth bound; the over-bound value reaches the space or aborts, and the witness must fail.",
+      "negative_control": "Replace the refusal message; the depth guard still fires, and the witness's reason assertion must fail.",
       "observable": "`MAX_VALUE_DEPTH = 256` on a **produced value** (`rholang/src/storage.rs`, both produce paths)",
       "owner": "Jim / independent audit reviewer",
       "pass_condition": "Replay a minimal fixture exercising: `MAX_VALUE_DEPTH = 256` on a **produced value** (`rholang/src/storage.rs`, both produce paths)",
@@ -2091,14 +2091,14 @@
         "asserts_sha256": "e985fb3a531f26d50d161505b86740919b337f0f021281d2cc3202dd9072c36d",
         "control": {
           "control_of": "rholang/tests/deep_value_bound.rs::a_value_built_at_runtime_is_refused_above_the_bound",
-          "description": "Raise MAX_VALUE_DEPTH from 256 to the parser ceiling; the over-bound fold must no longer be refused.",
+          "description": "Replace the refusal message; the depth guard still fires, and the witness must fail on its 'the refusal has to say what it refused' assertion.",
           "expected": "FAIL",
           "mutation": {
-            "after": "const MAX_VALUE_DEPTH: usize = if 1024 < crate::parser::MAX_AST_DEPTH {",
-            "before": "const MAX_VALUE_DEPTH: usize = if 256 < crate::parser::MAX_AST_DEPTH {",
+            "after": "\"a produced value was refused\".to_string(),",
+            "before": "\"a produced value is nested too deeply\".to_string(),",
             "file": "rholang/src/storage.rs"
           },
-          "run_record": "spec/audit/evidence/s6-c7536b90bd39cf71-20261118-fail",
+          "run_record": "spec/audit/evidence/s6-c7536b90bd39cf71-20261119-fail",
           "test": "rholang/tests/deep_value_bound.rs::a_value_built_at_runtime_is_refused_above_the_bound"
         }
       },
