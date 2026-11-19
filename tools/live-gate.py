@@ -979,13 +979,59 @@ def check_g5(run, events, run_dir: Path, expected_observers: int = 4) -> dict:
             finding.fail(f"manifest.json is unreadable: {error or 'not an object'}")
         elif document.get("execution_proven") is not False:
             finding.fail("manifest.json must record execution_proven=false")
-        sums_json = find_file(run_dir, "SHA256SUMS.json")
-        if sums_json is None:
-            finding.incomplete("the packed record has no SHA256SUMS.json")
         else:
-            problem = verify_sums_json(sums_json)
-            if problem:
-                finding.fail(problem)
+            listed = document.get("files")
+            names: dict[str, str] = {}
+            if not isinstance(listed, list) or not listed:
+                finding.incomplete(
+                    "the packed record lists no files; an empty record covers no artefact")
+            else:
+                for index, entry in enumerate(listed):
+                    if not isinstance(entry, dict):
+                        finding.fail(f"manifest file entry {index} is not an object")
+                        continue
+                    relative = entry.get("path")
+                    digest = entry.get("sha256")
+                    if not isinstance(relative, str) or not relative:
+                        finding.fail(f"manifest file entry {index} has no path")
+                    elif not isinstance(digest, str) or not DIGEST_RE.match(digest):
+                        finding.fail(f"manifest file entry {index} has no sha256")
+                    else:
+                        names[relative] = digest
+            sums_json = find_file(run_dir, "SHA256SUMS.json")
+            if sums_json is None:
+                finding.incomplete("the packed record has no SHA256SUMS.json")
+            else:
+                mapping, sums_error = read_json(sums_json)
+                if not isinstance(mapping, dict) or not mapping:
+                    finding.incomplete(
+                        f"SHA256SUMS.json is empty or unreadable: {sums_error or 'empty'}")
+                elif set(mapping) != set(names):
+                    finding.fail(
+                        "SHA256SUMS.json and manifest.json disagree on the file set")
+                else:
+                    problem = verify_sums_json(sums_json)
+                    if problem:
+                        finding.fail(problem)
+                    expected = {
+                        name
+                        for name in (
+                            "run.json",
+                            "plan.public.json",
+                            "samples.jsonl",
+                            "samples.jsonl.gz",
+                            "submission.json",
+                            "claims.json",
+                            "recovery.json",
+                        )
+                        if find_file(run_dir, name) is not None
+                    }
+                    covered = {Path(relative).name for relative in names}
+                    missing = expected - covered
+                    if missing:
+                        finding.incomplete(
+                            "evidence file(s) not covered by the manifest: "
+                            + ", ".join(sorted(missing)))
     else:
         sums = find_file(run_dir, "SHA256SUMS")
         if sums is None:

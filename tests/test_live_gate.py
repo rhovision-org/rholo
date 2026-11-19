@@ -346,7 +346,7 @@ class GoodBundleTests(LiveGateFixture):
 
 
 class PackedRecordTests(LiveGateFixture):
-    def test_a_packed_record_resolves_its_inputs_under_raw(self):
+    def packed_record(self):
         pack_spec = importlib.util.spec_from_file_location("evidence_pack", ROOT / "tools/evidence-pack.py")
         pack = importlib.util.module_from_spec(pack_spec)
         pack_spec.loader.exec_module(pack)
@@ -370,6 +370,22 @@ class PackedRecordTests(LiveGateFixture):
             ),
             0,
         )
+        return record
+
+    def manifest(self, record):
+        return json.loads((record / "manifest.json").read_text())
+
+    def write_manifest(self, record, manifest):
+        (record / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
+
+    def sums_json(self, record):
+        return json.loads((record / "SHA256SUMS.json").read_text())
+
+    def write_sums_json(self, record, sums):
+        (record / "SHA256SUMS.json").write_text(json.dumps(sums, indent=2, sort_keys=True))
+
+    def test_a_packed_record_resolves_its_inputs_under_raw(self):
+        record = self.packed_record()
         report = gate.evaluate(record, self.preflight_path)
         self.assert_status(report, "G5", "PASS")
         self.assertEqual(
@@ -377,6 +393,36 @@ class PackedRecordTests(LiveGateFixture):
                                            report=None, verdict=None)),
             0,
         )
+
+    def test_a_packed_record_with_no_file_list_is_incomplete(self):
+        record = self.packed_record()
+        manifest = self.manifest(record)
+        manifest["files"] = []
+        self.write_manifest(record, manifest)
+        self.write_sums_json(record, {})
+        report = gate.evaluate(record, self.preflight_path)
+        self.assert_status(report, "G5", "INCOMPLETE")
+
+    def test_a_packed_record_must_cover_the_run_artefacts(self):
+        record = self.packed_record()
+        manifest = self.manifest(record)
+        manifest["files"] = [
+            entry for entry in manifest["files"] if entry["path"] != "raw/run.json"
+        ]
+        self.write_manifest(record, manifest)
+        sums = self.sums_json(record)
+        sums.pop("raw/run.json")
+        self.write_sums_json(record, sums)
+        report = gate.evaluate(record, self.preflight_path)
+        self.assert_status(report, "G5", "INCOMPLETE")
+
+    def test_packed_manifest_and_sums_must_agree(self):
+        record = self.packed_record()
+        sums = self.sums_json(record)
+        sums.pop("raw/run.json")
+        self.write_sums_json(record, sums)
+        report = gate.evaluate(record, self.preflight_path)
+        self.assert_status(report, "G5", "FAIL")
 
 
 class G1Tests(LiveGateFixture):
