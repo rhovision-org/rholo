@@ -59,6 +59,7 @@ _criterion = _module("gate_principles_criterion", ROOT / "tools" / "check-gate-c
 _c343 = _module("gate_principles_c343", ROOT / "tools" / "c343-live.py")
 _c357 = _module("gate_principles_c357", ROOT / "tools" / "c357-acceptance.py")
 _locality = _module("gate_principles_locality", ROOT / "tools" / "check-evidence-locality.py")
+_m3chain = _module("gate_principles_m3_chain", ROOT / "tools" / "m3-join-chain.py")
 
 
 def _present(value: object) -> bool:
@@ -363,6 +364,98 @@ def off_host_claim(observations: dict, parameters: dict) -> dict:
             directory.cleanup()
 
 
+def join_chain(observations: dict, parameters: dict) -> dict:
+    """The M3 six-stage chain, plus the locality policy that record claims.
+
+    `record.chain` is the inline form the generic fixture mutates; a real record carries
+    `chain.json` beside its README. The chain checker refuses a send-log-only, missing-stage or
+    hash-mismatched chain; the locality half is the same `off_host_claim` invariant, so an
+    off-host policy cannot pass on a local-devnet chain.
+    """
+    record = observations.get("record")
+    if not isinstance(record, dict):
+        return verdict("PRECONDITION", ["record is absent"])
+    policy = parameters.get("locality")
+    if policy not in ("off-host", "local-devnet", "any"):
+        return verdict("FAIL", [f"unknown locality policy {policy!r}"])
+    chain = record.get("chain")
+    directory = None
+    packed = False
+    try:
+        if isinstance(record.get("files"), dict) and record["files"]:
+            directory = _materialise(record["files"])
+            path = Path(directory.name)
+        else:
+            claimed = record.get("dir")
+            if not isinstance(claimed, str) or not claimed:
+                if chain is None:
+                    return verdict("PRECONDITION", ["record.files, record.dir and record.chain are absent"])
+                path = None
+            else:
+                packed = True
+                path = Path(claimed)
+                if not path.is_absolute():
+                    path = ROOT / path
+        problems = []
+        label = None
+        if path is not None:
+            if not path.is_dir():
+                return verdict("PRECONDITION", [f"record {path} is absent"])
+            label = _locality.declared_locality(path)
+            if policy in ("off-host", "local-devnet"):
+                problems.extend(_locality.check(path))
+            if chain is None:
+                resolved = _m3chain.chain_path(path)
+                if resolved is None:
+                    return verdict(
+                        "PRECONDITION", [f"{path}: chain.json is absent (root or raw/)"])
+                try:
+                    chain = json.loads(resolved.read_text())
+                except ValueError as error:
+                    return verdict("FAIL", [f"{resolved} is not valid JSON: {error}"])
+        if chain is None:
+            return verdict("PRECONDITION", ["record.chain is absent"])
+        problems.extend(_m3chain.check_chain(chain))
+        if policy == "off-host":
+            if label != "off-host-claim":
+                problems.append(
+                    f"the record declares {label or 'no locality'}; an off-host criterion "
+                    "requires 'off-host-claim'")
+            host = _m3chain.declared_host(
+                (chain.get("correlation") or {}).get("advertised_peer")
+                if isinstance(chain, dict) else None)
+            if host is not None and _locality.local_address(host):
+                problems.append(f"the advertised peer {host!r} is local, not routable")
+        elif policy == "local-devnet" and label not in ("local-devnet", "single-host"):
+            problems.append(
+                f"the record declares {label or 'no locality'}; a local policy requires "
+                "'local-devnet' or 'single-host'")
+        if (
+            label is not None
+            and isinstance(chain, dict)
+            and chain.get("locality") not in (None, label)
+        ):
+            problems.append(
+                f"the chain declares {chain.get('locality')!r} but the record declares {label!r}")
+        # **The quoted lines must exist in the captured logs, not only inside the chain.** An
+        # off-host record must also be digest-pinned; a fixture or bare run directory is bound by
+        # inclusion and, when it carries sums, checked against them.
+        if (
+            path is not None
+            and isinstance(chain, dict)
+            and isinstance(chain.get("logs"), dict)
+        ):
+            problems.extend(_m3chain.raw_problems(path, chain))
+            if (policy == "off-host" and packed) or (path / "SHA256SUMS.json").is_file():
+                problems.extend(_m3chain.pin_problems(path, chain))
+        if problems:
+            return verdict("FAIL", problems)
+        return verdict("PASS", [], {"locality": label, "state_hash": chain.get("correlation", {}).get("state_hash")})
+    finally:
+        if directory is not None:
+            directory.cleanup()
+
+
 def resource_attribution(observations: dict, parameters: dict) -> dict:
     record = observations.get("record")
     if not isinstance(record, dict):
@@ -401,6 +494,7 @@ PRINCIPLES = {
     "lockstep_acceptance": lockstep_acceptance,
     "bounded_admission": bounded_admission,
     "off_host_claim": off_host_claim,
+    "join_chain": join_chain,
     "resource_attribution": resource_attribution,
 }
 
@@ -418,6 +512,7 @@ PARAMETER_SCHEMA = {
                             "max_window": (int, float)},
     "bounded_admission": {"queues": list},
     "off_host_claim": {},
+    "join_chain": {"locality": str},
     "resource_attribution": {"process_name": str},
 }
 

@@ -78,8 +78,8 @@ in CI; declares an honest locality.
 | F30 | M2's in-flight bound is opt-in/default-off and tests bypass the listener | `http.rs:135-146,2581-2631` | a real-listener pressure test with the default configuration | yes |
 | F31 | M2 has no direct-HTTP witness; the nginx rotation is explicitly not one | #428 body, provenance note 2 | a direct-to-40403 pressure arm | needs a routable path |
 | F32 | M2 refusal classification is a three-string prefix match | `block_api.rs:750-754`; `http.rs:750-758` | one closed refusal vocabulary; property test for 429 vs 400 | yes |
-| F33 | M3 transport completion is unwitnessed; `stream()` returns `()` and "sent" is unconditional | `transport_layer_syntax.rs:17,38-49`; `node_running.rs:641-648` | a responder-side delivery outcome and a stage-6 state equality | yes (unit) / run Docker |
-| F34 | M3's off-host lint is gameable by wording, and failover is absent | `check-evidence-locality.py:147-153`; `m3-m5-pareto` M3-11 | a real second-host negative arm; private/encoded address checks; implement failover | classifier yes; arm multi-host |
+| F33 | M3 transport completion was not correlated into a record; the per-peer outcome exists since `431305f67` | `transport_layer_syntax.rs:20-28,47-58`; `node_running.rs:644-670` | a typed transport-outcome line and a stage-6 served/restored/walk chain | yes (`tools/m3-join-chain.py`); Docker for the replay |
+| F34 | M3's off-host lint is gameable by wording, and failover is absent | `check-evidence-locality.py:158-200`; `m3-m5-pareto` M3-11 | a typed six-stage chain (`join_chain`), the real second-host negative arm, and failover | detector yes; arm multi-host |
 | F35 | M4's N=4/N=8 arms are single-host Docker at 1.5 GiB, below the 8 GiB floor; host loss is unmodeled | `consensus-quiet-finality.py:190-201` | multi-host N=4/N=8 on the selected candidate; a two-validator-per-host arm | no (multi-host) |
 | F36 | M4's anchor-retention cell is strong; equal moving heads is the superseded criterion | `consensus-quiet-finality.py:96-116`; `consensus-partition-rejoin.py:376-396` | keep anchor retention; do not regress to equal heads | yes (typed tests) |
 
@@ -112,10 +112,10 @@ with no concrete defect-passing scenario is a no-defect argument, not an omissio
 
 | sub-criterion | current measurement | can a defective build pass? | locality | narrowing |
 |---|---|---|---|---|
-| Off-host receive and apply | The retained M3 run is instrument PASS / join FAIL: one Docker host, `local-devnet`, `execution_proven:false`; state hydration itself does a put + read-back (`node_syncing.rs:651-679`) | **Yes.** `TransportLayer::stream` returns `()` (`transport_layer_syntax.rs:17,38-49`) and the responder logs "FinalizedFringe sent" unconditionally (`node_running.rs:641-648`), so a responder that drops the reply still produces the correlation lines. No in-tree record is an off-host positive | Docker, single host | A routable two-host observer and a responder-side delivery outcome signal; stage 6 must compare the restored state hash with the served state hash |
-| Loopback negative control | A runtime classifier (`handle_messages.rs:279-290`) with Docker-free unit tests, plus a document-level lint (`check-evidence-locality.py:147-153`) | **Yes.** The lint only forbids loopback strings and requires the word "dial-back"; an RFC1918 address, decimal `2130706433`, or a mis-schemed peer passes, and a single-host record with the right words passes. `n564-binary-qualification` self-labels off-host while sharing one disposable host | Docker-free classifier; end-to-end negative absent | A real second-host negative arm asserting the named refusal; extend the lint to private/encoded addresses |
+| Off-host receive and apply | The retained M3 run is instrument PASS / join FAIL: one Docker host, `local-devnet`, `execution_proven:false`. The per-peer stream outcome now drives the stage-4 line (`node_running.rs:644-670`), and `tools/m3-join-chain.py` requires all six stages, a `delivered` outcome, and the served/restored/walk hash equality | **Partly closed.** The typed chain refuses a send-log-only claim, but no in-tree record is an off-host positive; the joiner's walk root is content-addressed, not re-derived from a replay | Docker, single host | A routable two-host observer and a packed off-host `chain.json`; failover |
+| Loopback negative control | A runtime classifier (`handle_messages.rs:279-290`) with Docker-free unit tests, plus a document-level lint (`check-evidence-locality.py:158-200`) | **Partly closed.** `local_address` already refuses RFC1918, ULA, link-local, reserved and legacy-numeric forms, and `join_chain` refuses a local advertised peer for an off-host policy. The remaining gap is the real second-host refusal, not the string classifier | Docker-free classifier; end-to-end negative absent | A real second-host negative arm asserting the named refusal |
 | Alternative-peer failover | Absent; M3-11 never landed and is default-off | **Yes, trivially** — there is no test to fail | none | Implement M3-11 and an arm |
-| State hydration | Locally real (put + read-back, `node_syncing.rs:651-679`); the restored post-state equality is INCOMPLETE in the retained journal | **Yes.** The joiner's restored state is never compared with the bootstrap's served state in a retained record | Docker | Add the stage-6 equality check |
+| State hydration | Locally real (put + read-back, `node_syncing.rs:651-679`); the walk completion and the served/accepted/restored hashes are now named in the log and required by the chain | **Narrowed.** The chain records the served hash, the walked root and the read-back; for a certified fringe the accepted run root is a different root by design and is recorded separately | Docker | Pack the stage-6 chain from a real join; failover remains |
 
 ### M4 — finality, liveness and recovery
 
@@ -152,9 +152,9 @@ with no concrete defect-passing scenario is a no-defect argument, not an omissio
    `--allow-under-minimum` lets it run.
 2. **M1's failure-domain map is advisory and PID-namespace-blind.** The #420 topology (two
    validators per host) passes every current check; there is no host-loss arm.
-3. **M3 has no off-host positive.** Transport completion is unwitnessed by construction
-   (`stream()` returns `()` and "sent" is unconditional); failover (M3-11) is absent; the
-   loopback negative control is document-level and gameable.
+3. **M3 has no off-host positive.** The transport outcome is per-peer since `431305f67` and the
+   six-stage chain is now typed and checked (`tools/m3-join-chain.py`), but no in-tree record is an
+   off-host positive; failover (M3-11) is absent; the real second-host refusal is unrun.
 4. **M4's N=4/N=8 arms are single-host Docker at 1.5 GiB**, below the documented 8 GiB floor;
    partition is a bridge disconnect, and host loss is unmodeled. The anchor-retention cell is
    the strongest predicate in the tree and should not be replaced by equal heads.

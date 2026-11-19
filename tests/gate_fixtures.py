@@ -106,18 +106,181 @@ def base_g428_m2() -> dict:
     )}}
 
 
+def m3_chain(
+    joiner: str = "1" * 64,
+    responder: str = "2" * 64,
+    state: str = "a" * 64,
+    blocks: list[str] | None = None,
+    accepted_root: str = "c" * 64,
+    locality: str = "off-host-claim",
+    kind: str = "checkpoint",
+    advertised_host: str = "203.0.113.7",
+) -> dict:
+    """One complete, internally consistent six-stage chain.
+
+    The single source of the synthetic log lines the checker parses, so a fixture and the checker
+    cannot drift apart. `accepted_root` deliberately differs from `state` for a checkpoint anchor:
+    a certified join's accepted run root is the certificate's signed root, not the fringe hash.
+    """
+    if blocks is None:
+        blocks = ["b" * 64]
+    advertised = f"rnode://{joiner}@{advertised_host}?protocol=40400&discovery=40404"
+    return {
+        "schema": 1,
+        "gate_id": "G428-M3",
+        "tool": "tests/gate_fixtures.py",
+        "generated_utc": "2026-11-18T00:00:00Z",
+        "locality": locality,
+        "complete": True,
+        "incomplete_reasons": [],
+        "logs": {"joiner": "joiner.log", "responder": "responder.log"},
+        "correlation": {
+            "joiner_key": joiner,
+            "responder_key": responder,
+            "advertised_peer": advertised,
+            "anchor": "latest",
+            "state_hash": state,
+        },
+        "stages": {
+            "1_request": {
+                "event": "request_sent",
+                "peer": responder,
+                "anchor": "latest",
+                "attempt": "1/10",
+                "source": "casper/src/protocol/comm_util.rs::request_initial_fringe_with_policy",
+                "log_line": (
+                    f"LFS fringe request 1/10 sent to peer {responder} (anchor latest); "
+                    "awaiting admitted reply"
+                ),
+            },
+            "2_receipt": {
+                "event": "request_received",
+                "peer": advertised,
+                "peer_key": joiner,
+                "anchor": "latest",
+                "source": "casper/src/engine/node_running.rs::NodeRunning::handle",
+                "log_line": (
+                    f"Received FinalizedFringeRequest from {advertised} "
+                    "(requested anchor latest)"
+                ),
+            },
+            "3_construction": {
+                "event": "response_constructed",
+                "peer": advertised,
+                "peer_key": joiner,
+                "anchor": "latest",
+                "state_hash": state,
+                "block_count": len(blocks),
+                "first_block": blocks[0],
+                "last_block": blocks[-1],
+                "source": "casper/src/engine/node_running.rs::NodeRunning::handle",
+                "log_line": (
+                    f"Fringe response prepared for {advertised}: state {state}, requested anchor "
+                    f"latest, {len(blocks)} block(s) [{blocks[0]} .. {blocks[-1]}]"
+                ),
+            },
+            "4_transport": {
+                "event": "transport_outcome",
+                "outcome": "delivered",
+                "peer": advertised,
+                "peer_key": joiner,
+                "anchor": "latest",
+                "state_hash": state,
+                "source": "casper/src/engine/node_running.rs::handle_finalized_fringe_request",
+                "log_line": (
+                    f"FinalizedFringe sent to {advertised}: transport outcome delivered "
+                    f"(state {state})"
+                ),
+            },
+            "5_receive": {
+                "event": "response_received",
+                "peer": responder,
+                "anchor": "latest",
+                "state_hash": state,
+                "blocks": list(blocks),
+                "source": "casper/src/engine/node_syncing.rs::NodeSyncing::handle",
+                "log_line": (
+                    f"Received finalized fringe from bootstrap node ({state}) "
+                    f"{' '.join(blocks)} from peer {responder}."
+                ),
+            },
+            "6_apply": {
+                "event": "state_restored",
+                "peer": responder,
+                "anchor": "latest",
+                "served_state_hash": state,
+                "restored_state_hash": state,
+                "walk_completed": True,
+                "walk_state_hash": state,
+                "pages_finished": len(blocks),
+                "pages_total": len(blocks),
+                "checkpoint_readback": True,
+                "accepted_root": accepted_root,
+                "accepted_root_kind": kind,
+                "source": "casper/src/engine/node_syncing.rs::report_restored_checkpoint",
+                "log_line": (
+                    f"LFS state is successfully restored. Served state {state}, accepted run "
+                    f"root {accepted_root} ({kind}), approved checkpoint read back."
+                ),
+                "walk_log_line": (
+                    f"LFS tuple-space walk finished for served state {state}: "
+                    f"{len(blocks)} of {len(blocks)} page key(s) done."
+                ),
+            },
+        },
+        "non_claims": ["a fixture is not a run"],
+    }
+
+
+def m3_logs(chain: dict) -> tuple[str, str]:
+    """The joiner and responder logs a chain's quoted lines must appear in."""
+    stages = chain["stages"]
+    joiner = "\n".join(
+        [
+            stages["1_request"]["log_line"],
+            stages["5_receive"]["log_line"],
+            stages["6_apply"]["walk_log_line"],
+            stages["6_apply"]["log_line"],
+        ]
+    )
+    responder = "\n".join(
+        [
+            stages["2_receipt"]["log_line"],
+            stages["3_construction"]["log_line"],
+            stages["4_transport"]["log_line"],
+        ]
+    )
+    return joiner, responder
+
+
 def base_g428_m3() -> dict:
+    joiner, responder, state = "1" * 64, "2" * 64, "a" * 64
     readme = (
         "# M3 off-host witness\n\n"
         "**Evidence locality.** off-host-claim — the bootstrap dial-back from the second host.\n\n"
-        "The dial-back result is captured in raw/peer.txt.\n"
+        "The bootstrap's dial-back to 203.0.113.7:40400 succeeded; the captured peer is "
+        "raw/peer.txt.\n"
     )
     manifest = json.dumps({"locality": "off-host-claim", "execution_proven": False})
-    return {"record": {"files": {
-        "README.md": readme,
-        "raw/peer.txt": "rnode://abc@203.0.113.7\n",
-        "manifest.json": manifest,
-    }}}
+    chain = m3_chain(joiner=joiner, responder=responder, state=state)
+    joiner_log, responder_log = m3_logs(chain)
+    sums = json.dumps(
+        {
+            "joiner.log": hashlib.sha256(joiner_log.encode()).hexdigest(),
+            "responder.log": hashlib.sha256(responder_log.encode()).hexdigest(),
+        }
+    )
+    return {"record": {
+        "files": {
+            "README.md": readme,
+            "raw/peer.txt": f"rnode://{joiner}@203.0.113.7?protocol=40400&discovery=40404\n",
+            "manifest.json": manifest,
+            "joiner.log": joiner_log,
+            "responder.log": responder_log,
+            "SHA256SUMS.json": sums,
+        },
+        "chain": chain,
+    }}
 
 
 def base_g428_m4() -> dict:

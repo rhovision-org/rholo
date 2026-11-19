@@ -1,0 +1,50 @@
+{
+  "boundary": "finite local devnet witness; not a live-testnet join and not a certification",
+  "chain_height": {
+    "n457join-bootstrap": 17,
+    "n457join-validator-1": 16,
+    "n457join-validator-2": 16
+  },
+  "bootstrap_finalized": {
+    "number": 13,
+    "hash": "d2c7632dd374a70ce47e09c98d0243a8d63c3a75a93549030e9231f8a388ce8d"
+  },
+  "reset_target": "n457join-validator-3",
+  "recovery_shape": "passive-then-activate",
+  "passive_catch_up_seconds": 17.45066261291504,
+  "own_key_halt_in_log": false,
+  "proposals_after_halt": 0,
+  "late_proposals_after_halt": [],
+  "recovered": {
+    "latest_block_number": 19,
+    "restored_anchor_number": 14,
+    "restored_anchor_hash": "b56ec0be8cf23f867c8780b35b767441eecc4c1d9bc618913f3c04f73c628131",
+    "anchor_held_by_bootstrap": true,
+    "sync": null
+  },
+  "catch_up_seconds": 4.35429835319519,
+  "sync_failures_in_log": 0,
+  "give_ups_in_log": 0,
+  "reset_container_id_created": "91f55110b0c2f35e1768c486821b05fbbb712396d6a5d4e5c3e8686ebeb17352 2026-11-19T08:22:27.219025937Z",
+  "self_equivocations_in_log": 0,
+  "blocks_proposed_in_log": 2,
+  "proposed_sequences": [
+    16,
+    17
+  ],
+  "proposed_lines": [
+    "proposed and added block #17 (seq 16)",
+    "proposed and added block #19 (seq 17)"
+  ],
+  "manual_reset": true,
+  "chain": "chain.json",
+  "chain_complete": true,
+  "chain_log_method": "since",
+  "non_claims": [
+    "one local four-validator devnet; a finite witness, not a universal join theorem",
+    "the chain is a log correlation, not a cryptographic delivery receipt",
+    "a local-devnet chain is not an M3 off-host positive",
+    "the chain is this build's own; the live testnet replay is #421/#429's",
+    "the reset node is staged as a passive replicator and then activated, the supported recovery (#576)"
+  ]
+}

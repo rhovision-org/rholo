@@ -55,6 +55,16 @@ class EvidenceLocalityTests(unittest.TestCase):
         )
         self.assertEqual(problems, [])
 
+    def test_declared_locality_requires_exactly_one_label(self):
+        one = self.record("**Evidence locality.** local-devnet — one host.\n")
+        self.assertEqual(locality.declared_locality(one), "local-devnet")
+        self.assertIsNone(locality.declared_locality(self.record("No label here.\n")))
+        two = self.record(
+            "**Evidence locality.** local-devnet — one.\n"
+            "**Evidence locality.** single-host — two.\n"
+        )
+        self.assertIsNone(locality.declared_locality(two))
+
     def test_a_genuine_off_host_claim_with_dial_back_passes(self):
         problems = self.check(
             "M3 off-host positive.\n"

@@ -1,0 +1,44 @@
+2026-11-19T08:22:30.745Z INFO  [coop.rchain.node.runtime.NodeRuntime] trying to open ports using UPnP....
+2026-11-19T08:22:30.745Z INFO  [coop.rchain.node.runtime.NodeRuntime] INFO - No gateway devices found
+2026-11-19T08:22:30.745Z INFO  [coop.rchain.node.runtime.NodeRuntime] No need to open any port
+2026-11-19T08:22:30.750Z INFO  [operator-risk] validator operator risk notice: an invalid block or proven equivocation can cost a stated share of your bond; an absent validator is not currently slashed but forfeits income and can stall finality, and enough silence stops the >2/3 quorum. Read TERMS.md.
+2026-11-19T08:22:30.750Z INFO  [resource-preflight] host resources: 26503 MiB available, cgroup v2, data dir 127117 MiB free, 1 rnode process(es), 24 CPU(s), 71 persisted block(s)
+2026-11-19T08:22:30.750Z WARN  [resource-preflight] no CPU quota is set for the node's cgroup; a busy host can starve it
+replay complete — starting listeners; the API answers once they are up
+2026-11-19T08:22:30.758Z INFO  [casper.engine.NodeLaunch] Reconnecting to existing network...
+2026-11-19T08:22:30.759Z WARN  [casper.engine.NodeLaunch] boot: the accepted fringe (1 block(s)) is a validated descendant of the certificate's fringe (4 block(s)); adopting the certificate as the base and re-deriving the window
+2026-11-19T08:22:30.771Z INFO  [casper.engine.NodeLaunch] published CURRENT_ROOT from the accepted anchor
+2026-11-19T08:22:30.772Z INFO  [casper.blocks.BlockDisposition] start-up disposition audit: 0 unsettled block(s) re-offered, 0 skipped for missing parents, 0 already inserted, 0 quarantined, 0 unreadable
+2026-11-19T08:22:30.772Z INFO  [casper.engine.NodeLaunch] start-up disposition audit: 0 pre-ledger body/bodies adopted, 0 re-offered, 0 skipped for missing parents, 0 still pending when the drain closed
+2026-11-19T08:22:30.772Z INFO  [casper.engine.NodeLaunch] Making a transition to Running state.
+2026-11-19T08:22:30.784Z INFO  [coop.rchain.node.runtime.DeployerIndex] /root: deployer index backfilled from 71 stored blocks
+2026-11-19T08:22:30.816Z INFO  [casper.blocks.Proposer] attestation at tip 18: licensed — nothing_to_finalize=false new_state_transition=true quorum_reachable=true cadence_due=false paced=true round=[04d8b6c3 04dbe32c 04ea3ce0 04f700a4] blocked_attempts=0 escape=false
+No pooled deploys; injecting dummy deploy for block #17
+[deploy] deployer=04f700a417754b77 ok cost=3 
+[pos] close_block 17 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-19T08:22:30.908Z WARN  [casper.interpreter.validate] merge: 26 chains in scope (22 kept, 4 rejected; 2 rejected a cost-accounted chain); **2 chain(s) of the final scope rejected**: recorded final-scope rejection decisions retained in the merge base (C260); 4 chain(s) rejected as forks: their block did not see the whole final fringe (`Rchain.MergeScope.KeptRule`); 2 deploy(s) rode on a final-scope rejected chain (30440220651254329f7afe9b92dc3a5e711d8b7bb78881d37bbb6eb8527194777a927a3c02201186d49595768430f6b8e30614d6a50690ce820066f77ec155beec62bad7fc9b, 304402206ef3ca17b6b3a00b1e313419a4306bfe08f1cff4a549b0f6fc1edda40270e4e502205ead937714e18d608d4505c0407dd0670308ed1609e39e049b2cc6eb37c47ac4)
+[pos] close_block 17 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-19T08:22:31.021Z INFO  [casper.protocol.CommUtil] Block hash fff3f1c5ff2ff84dd0bb638e6401b0462f8422c10855650c5e7793587308facb: transport accepted 1 initial, 0 retry; 0 failed of 1 peers (transport acceptance is not remote DAG admission)
+2026-11-19T08:22:31.021Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #17 (seq 16)
+2026-11-19T08:22:31.064Z INFO  [casper.protocol.CommUtil] Requested fork tip from peers
+2026-11-19T08:22:31.108Z INFO  [casper.engine.NodeRunning] Received request for block fff3f1c5ff2ff84dd0bb638e6401b0462f8422c10855650c5e7793587308facb from rnode://4a795c24c5da37f59193d3c3a60eef3ece147990@n457join-bootstrap?protocol=40400&discovery=40404. Response sent.
+2026-11-19T08:22:31.724Z INFO  [casper.blocks.BlockRetriever] Adding 0915931f95b51994e9609a60823e096605e402b5d60612ee2ab110eb86b3d88a hash to RequestedBlocks because of HashBroadcastRecieved.
+2026-11-19T08:22:31.822Z INFO  [casper.blocks.BlockRetriever] Block 0915931f95b51994e9609a60823e096605e402b5d60612ee2ab110eb86b3d88a marked as received.
+2026-11-19T08:22:31.875Z WARN  [casper.blocks.BlockProcessor] Block #19 0915931f95b51994e9609a60823e096605e402b5d60612ee2ab110eb86b3d88a from 04f700a417754b77 failed validation: the block's pre-state is neither the accepted checkpoint root, nor a root in the certificate's validation window, nor a root this node derived from a validated post-anchor block, and its justifications are not all the anchor or blocks this node validated
+2026-11-19T08:22:32.588Z INFO  [casper.blocks.BlockRetriever] Adding e40c5bb92e67f2731a9d176c9295015975d085e1a56c7e997a7e5a5b031dc6d2 hash to RequestedBlocks because of HashBroadcastRecieved.
+2026-11-19T08:22:32.685Z INFO  [casper.blocks.BlockRetriever] Block e40c5bb92e67f2731a9d176c9295015975d085e1a56c7e997a7e5a5b031dc6d2 marked as received.
+2026-11-19T08:22:32.713Z WARN  [casper.blocks.BlockProcessor] Block #19 e40c5bb92e67f2731a9d176c9295015975d085e1a56c7e997a7e5a5b031dc6d2 from 04d8b6c325ae12e8 failed validation: the block's pre-state is neither the accepted checkpoint root, nor a root in the certificate's validation window, nor a root this node derived from a validated post-anchor block, and its justifications are not all the anchor or blocks this node validated
+2026-11-19T08:22:32.735Z INFO  [casper.blocks.BlockRetriever] Adding cd23ce4015e3ff55d9051333934e023afb859c299ea6646d5c190be4ba31a9b3 hash to RequestedBlocks because of HashBroadcastRecieved.
+2026-11-19T08:22:32.842Z INFO  [casper.blocks.BlockRetriever] Block cd23ce4015e3ff55d9051333934e023afb859c299ea6646d5c190be4ba31a9b3 marked as received.
+No pooled deploys; injecting dummy deploy for block #19
+[deploy] deployer=04f700a417754b77 ok cost=3 
+2026-11-19T08:22:32.949Z WARN  [casper.blocks.BlockProcessor] Block #19 cd23ce4015e3ff55d9051333934e023afb859c299ea6646d5c190be4ba31a9b3 from 04dbe32c2062240a failed validation: the block's pre-state is neither the accepted checkpoint root, nor a root in the certificate's validation window, nor a root this node derived from a validated post-anchor block, and its justifications are not all the anchor or blocks this node validated
+[pos] close_block 19 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-19T08:22:33.072Z WARN  [casper.interpreter.validate] merge: 32 chains in scope (28 kept, 4 rejected; 2 rejected a cost-accounted chain); **2 chain(s) of the final scope rejected**: recorded final-scope rejection decisions retained in the merge base (C260); 4 chain(s) rejected as forks: their block did not see the whole final fringe (`Rchain.MergeScope.KeptRule`); 2 deploy(s) rode on a final-scope rejected chain (30440220651254329f7afe9b92dc3a5e711d8b7bb78881d37bbb6eb8527194777a927a3c02201186d49595768430f6b8e30614d6a50690ce820066f77ec155beec62bad7fc9b, 3045022100db39c0dd0a845bbdd1f7a84d6a6855ba12ae9e5b3c18d91c10581f21d6091afc02200af706475961de56fe14b853bee1a639c59e843c4f597978d439c4d7ac896e68)
+[pos] close_block 19 boundary=false epoch_length=10000 max_active=100 bond=[1, 9223372036854775807]
+2026-11-19T08:22:33.195Z INFO  [casper.protocol.CommUtil] Block hash ff979becffcb9df5cc3e66d37658f3cc78a98c584ee56333eecc5f26cf0da034: transport accepted 1 initial, 0 retry; 0 failed of 1 peers (transport acceptance is not remote DAG admission)
+2026-11-19T08:22:33.195Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #19 (seq 17)
+2026-11-19T08:22:33.277Z INFO  [casper.engine.NodeRunning] Received request for block ff979becffcb9df5cc3e66d37658f3cc78a98c584ee56333eecc5f26cf0da034 from rnode://4a795c24c5da37f59193d3c3a60eef3ece147990@n457join-bootstrap?protocol=40400&discovery=40404. Response sent.
+2026-11-19T08:22:33.783Z INFO  [casper.blocks.BlockRetriever] Adding ca6e66bfdc922c27fe219896669956ca2398232667da66d1b4d4e9c863048b5f hash to RequestedBlocks because of HashBroadcastRecieved.
+2026-11-19T08:22:33.871Z INFO  [casper.blocks.BlockRetriever] Block ca6e66bfdc922c27fe219896669956ca2398232667da66d1b4d4e9c863048b5f marked as received.
+2026-11-19T08:22:33.907Z WARN  [casper.blocks.BlockProcessor] Block #20 ca6e66bfdc922c27fe219896669956ca2398232667da66d1b4d4e9c863048b5f from 04f700a417754b77 failed validation: the block's pre-state is neither the accepted checkpoint root, nor a root in the certificate's validation window, nor a root this node derived from a validated post-anchor block, and its justifications are not all the anchor or blocks this node validated

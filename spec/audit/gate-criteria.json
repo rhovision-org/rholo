@@ -96,13 +96,113 @@
   },
   {
    "gate_id": "G428-M3",
-   "principle": "off_host_claim",
-   "adapter": "tools/check-evidence-locality.py::check",
-   "parameters": {},
+   "principle": "join_chain",
+   "adapter": "tools/m3-join-chain.py::check_chain",
+   "parameters": {
+    "locality": "off-host"
+   },
    "requires": [
     "record"
    ],
    "negative_controls": [
+    {
+     "name": "no transport outcome",
+     "mutation": [
+      "delete",
+      "record/chain/stages/4_transport"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a send-log-only chain",
+     "mutation": [
+      "set",
+      "record/chain/stages/4_transport",
+      {
+       "event": "send_log",
+       "peer": "rnode://1111@203.0.113.7?protocol=40400&discovery=40404",
+       "anchor": "latest",
+       "log_line": "Sent fringe response (aaaa)."
+      }
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "restored state differs from served",
+     "mutation": [
+      "set",
+      "record/chain/stages/6_apply/restored_state_hash",
+      "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "genesis accepted root differs from served",
+     "mutation": [
+      "set",
+      "record/chain/stages/6_apply/accepted_root_kind",
+      "genesis"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an unkeyed receipt",
+     "mutation": [
+      "set",
+      "record/chain/stages/2_receipt",
+      {
+       "event": "send_log",
+       "log_line": "Sent fringe response (aaaa)."
+      }
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "completeness metadata removed",
+     "mutation": [
+      "delete",
+      "record/chain/complete"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "completeness metadata is not boolean",
+     "mutation": [
+      "set",
+      "record/chain/complete",
+      "true"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "complete with recorded incomplete reasons",
+     "mutation": [
+      "set",
+      "record/chain/incomplete_reasons",
+      [
+       "a missing transport outcome"
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a contradictory transport line",
+     "mutation": [
+      "set",
+      "record/chain/stages/4_transport/log_line",
+      "FinalizedFringe to rnode://1111@203.0.113.7?protocol=40400&discovery=40404 was not sent: transport outcome delivered (state aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a raw log that does not contain the quoted lines",
+     "mutation": [
+      "set",
+      "record/files/joiner.log",
+      "not the captured log\n"
+     ],
+     "expected": "FAIL"
+    },
     {
      "name": "loopback advertised on an off-host claim",
      "mutation": [
@@ -122,10 +222,18 @@
      "expected": "FAIL"
     },
     {
+     "name": "no typed chain",
+     "mutation": [
+      "delete",
+      "record/chain"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
      "name": "no record",
      "mutation": [
       "delete",
-      "record/files"
+      "record"
      ],
      "expected": "PRECONDITION"
     }
