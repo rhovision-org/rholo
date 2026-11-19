@@ -255,6 +255,53 @@
      "expected": "FAIL"
     },
     {
+     "name": "an unset transcript that refuses",
+     "mutation": [
+      [
+       "set",
+       "pressure/files/raw~1http-unset.jsonl",
+       "{\"kind\":\"probe\",\"status\":429,\"retry_after\":1,\"body\":\"HTTP in-flight capacity exhausted\",\"t_ms\":0}\n{\"kind\":\"probe\",\"status\":400,\"retry_after\":null,\"body\":\"invalid json\",\"t_ms\":120}\n{\"kind\":\"probe\",\"status\":400,\"retry_after\":null,\"body\":\"invalid json\",\"t_ms\":240}\n{\"kind\":\"probe\",\"status\":400,\"retry_after\":null,\"body\":\"invalid json\",\"t_ms\":360}\n{\"kind\":\"probe\",\"status\":400,\"retry_after\":null,\"body\":\"invalid json\",\"t_ms\":480}\n{\"kind\":\"probe\",\"status\":400,\"retry_after\":null,\"body\":\"invalid json\",\"t_ms\":600}\n"
+      ],
+      [
+       "set",
+       "pressure/record/surfaces/http/unset/refused",
+       1
+      ],
+      [
+       "set",
+       "pressure/record/surfaces/http/unset/admitted",
+       5
+      ],
+      [
+       "set",
+       "pressure/record/surfaces/http/unset/retry_after",
+       1
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a capped gRPC transcript that never refuses",
+     "mutation": [
+      [
+       "set",
+       "pressure/files/raw~1grpc-capped.jsonl",
+       "{\"arm\":\"ingress_rate\",\"code\":0,\"message\":\"ok\",\"retry_after\":null}\n{\"arm\":\"ingress_rate\",\"code\":0,\"message\":\"ok\",\"retry_after\":null}\n{\"arm\":\"pool_full\",\"code\":8,\"message\":\"pool full\",\"retry_after\":1}\n"
+      ],
+      [
+       "set",
+       "pressure/record/surfaces/grpc/capped/arms/ingress_rate/admitted",
+       2
+      ],
+      [
+       "set",
+       "pressure/record/surfaces/grpc/capped/arms/ingress_rate/refused",
+       0
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
      "name": "a gRPC status outside the closed classes",
      "mutation": [
       "set",
