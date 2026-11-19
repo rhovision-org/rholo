@@ -319,5 +319,21 @@ class CapacityTierTests(unittest.TestCase):
         self.assertEqual(principles.evaluate_entry(entry, {"record": {}})["status"], "FAIL")
 
 
+class FinalityCampaignTests(unittest.TestCase):
+    """The M4 collector, reached where CI looks.
+
+    `test_m4_campaign.py` has no discovery line in `ci.yml`; this file does, so the suite runs
+    from the same seam `CapacityTierTests` uses. The collector's own tests are the contract: the
+    record it writes is evaluated by the real M4 criterion.
+    """
+
+    def test_the_campaign_suite_passes(self):
+        suite = unittest.defaultTestLoader.discover(
+            str(ROOT / "tests"), pattern="test_m4_campaign.py",
+            top_level_dir=str(ROOT / "tests"))
+        result = unittest.TextTestRunner(stream=StringIO(), verbosity=0).run(suite)
+        self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+
+
 if __name__ == "__main__":
     unittest.main()
