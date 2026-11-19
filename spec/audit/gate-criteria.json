@@ -689,51 +689,416 @@
   },
   {
    "gate_id": "G428-M4",
-   "principle": "healing_anchor",
-   "adapter": "tools/check-gate-criterion.py::check_rejoin",
+   "principle": "finality_campaign",
+   "adapter": "tools/gate-principles.py::finality_campaign",
    "parameters": {
     "floor": 270,
     "ceiling": 600,
-    "min_dwell": 3
+    "min_dwell": 3,
+    "min_hosts": 2,
+    "min_cycles": 2,
+    "minimal_cores": 2,
+    "minimal_ram_gib": 8,
+    "minimal_disk_gib": 100,
+    "comfortable_cores": 8,
+    "comfortable_ram_gib": 16,
+    "comfortable_disk_gib": 1000
    },
    "requires": [
     "record_data"
    ],
    "negative_controls": [
     {
-     "name": "healing window below the floor",
+     "name": "N=4 only",
      "mutation": [
-      "set",
-      "record_data/window/seconds",
-      100
+      "delete",
+      "record_data/workloads/n8"
      ],
      "expected": "FAIL"
     },
     {
-     "name": "victim did not finalize the anchor",
+     "name": "an extra workload",
      "mutation": [
       "set",
-      "record_data/validators/0/finalized_anchor",
+      "record_data/workloads/n6",
+      {}
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "one arm missing",
+     "mutation": [
+      "delete",
+      "record_data/workloads/n4/arms/host_loss"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a candidate mismatch between the workloads",
+     "mutation": [
+      "set",
+      "record_data/workloads/n8/candidate/source_sha",
+      "cccccccccccccccccccccccccccccccccccccccc"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a missing selected pin",
+     "mutation": [
+      "delete",
+      "record_data/campaign/selected/binary_sha256"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "one declared host",
+     "mutation": [
+      [
+       "set",
+       "record_data/campaign/hosts",
+       [
+        "host-a"
+       ]
+      ],
+      [
+       "set_where",
+       "record_data/workloads/n4/capacity/validators",
+       {},
+       {
+        "host": "host-a"
+       }
+      ],
+      [
+       "set_where",
+       "record_data/workloads/n8/capacity/validators",
+       {},
+       {
+        "host": "host-a"
+       }
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a single-host locality",
+     "mutation": [
+      "set",
+      "record_data/campaign/locality",
+      "single-host"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a host count below the minimum",
+     "mutation": [
+      "set",
+      "record_data/campaign/hosts",
+      [
+       "host-a",
+       "host-b"
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an unknown capacity tier",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/capacity/declared/tier",
+      "enterprise"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "a fault-injection capacity record",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/capacity/kind",
+      "fault-injection"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "a below-tier declaration",
+     "mutation": [
+      [
+       "set",
+       "record_data/workloads/n4/capacity/declared/per_validator/ram_gib",
+       2
+      ],
+      [
+       "set",
+       "record_data/workloads/n4/capacity/declared/max_peak_rss_mb",
+       1500
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a cgroup share below the declaration",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/capacity/validators/0/measured/cgroup_limit_mb",
+      4096
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a capacity host absent from the campaign",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/capacity/validators/0/host",
+      "host-z"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "N=8 declared with four validators",
+     "mutation": [
+      "set",
+      "record_data/workloads/n8/validators",
+      4
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a rerun command for the wrong N",
+     "mutation": [
+      [
+       "set",
+       "record_data/campaign/rerun/n8",
+       "python3 tests/consensus-partition-rejoin.py --validators 4 --out n8"
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a rerun command absent",
+     "mutation": [
+      "delete",
+      "record_data/campaign/rerun/n4"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "an unknown bootstrap",
+     "mutation": [
+      "set",
+      "record_data/campaign/bootstrap",
+      "v99"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "the deploy did not finalize on all",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/deploy_finalization/finalized_on_all",
       false
      ],
      "expected": "FAIL"
     },
     {
-     "name": "missing evidence record",
+     "name": "the approved root was not finalized before the faults",
      "mutation": [
-      "delete",
-      "record_data/evidence"
+      [
+       "set",
+       "record_data/workloads/n4/arms/deploy_finalization/approved_root_finalized_on_all",
+       false
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a victim never finalizes the anchor",
+     "mutation": [
+      [
+       "set",
+       "record_data/workloads/n4/arms/partition_rejoin/cycles/0/validators/0/finalized_anchor",
+       false
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "equal moving heads without anchor finalization",
+     "mutation": [
+      [
+       "set",
+       "record_data/workloads/n4/arms/partition_rejoin/cycles/0/validators",
+       [
+        {
+         "id": "v1",
+         "finalized_anchor": false
+        },
+        {
+         "id": "v2",
+         "finalized_anchor": false
+        },
+        {
+         "id": "v3",
+         "finalized_anchor": false
+        },
+        {
+         "id": "v4",
+         "finalized_anchor": false
+        }
+       ]
+      ],
+      [
+       "set",
+       "record_data/workloads/n4/arms/partition_rejoin/cycles/0/moving_heads_equal",
+       true
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a healing window below the floor",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/partition_rejoin/cycles/0/window/seconds",
+      100
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a dwell that is too short",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/partition_rejoin/cycles/0/dwell/samples",
+      2
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a victim that was not rotated",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/partition_rejoin/cycles/1/victim",
+      "v2"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "the bootstrap as victim",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/partition_rejoin/cycles/0/victim",
+      "v1"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a partition cycle changed the approved root",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/partition_rejoin/cycles/0/root_after",
+      "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "host loss changed the approved root",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/host_loss/root_after",
+      "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an incomplete survivor set",
+     "mutation": [
+      "remove_where",
+      "record_data/workloads/n4/arms/host_loss/per_validator",
+      {
+       "id": "v2"
+      }
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "more lost hosts than the declared tolerance",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/host_loss/lost_hosts",
+      [
+       "host-c",
+       "host-d"
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an anchor not retained after the restart",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/restart_replay/anchor_still_present",
+      false
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a restart recovered below the replay height",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/restart_replay/recovered_height",
+      4999
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an unreadable replay time",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/restart_replay/replay_seconds",
+      0
      ],
      "expected": "PRECONDITION"
     },
     {
-     "name": "one validator listed twice",
+     "name": "recovery lost accepted work",
      "mutation": [
       "set",
-      "record_data/validators/1/id",
-      "B"
+      "record_data/workloads/n4/arms/safe_recovery/accepted_work_lost",
+      1
      ],
      "expected": "FAIL"
+    },
+    {
+     "name": "a spurious self-replay",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/safe_recovery/self_replay",
+      true
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a safe-recovery root change",
+     "mutation": [
+      "set",
+      "record_data/workloads/n4/arms/safe_recovery/per_validator/0/root_after",
+      "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a missing approved root",
+     "mutation": [
+      "delete",
+      "record_data/workloads/n4/approved_root"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "a missing campaign",
+     "mutation": [
+      "delete",
+      "record_data/campaign"
+     ],
+     "expected": "PRECONDITION"
     }
    ],
    "pass_condition_sha256": "e6daf0b8e87077cab97821c329bab4110431ef2fcb89d76c37753bff9af1b17d"
