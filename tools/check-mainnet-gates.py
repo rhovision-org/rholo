@@ -212,8 +212,12 @@ def resolve_witness(row: dict) -> None:
     elif kind == "python":
         require(path.suffix in {".py", ".sh"},
                 f"{row['id']}: a python witness must be .py or .sh")
-        require(re.search(rf"\bdef\s+{re.escape(symbol)}\b", text) or symbol in text,
-                f"{row['id']}: witness {symbol} not found in {path_text}")
+        if path.suffix == ".py":
+            require(re.search(rf"\bdef\s+{re.escape(symbol)}\b", text),
+                    f"{row['id']}: witness {symbol} is not defined in {path_text}")
+        else:
+            require(symbol in text,
+                    f"{row['id']}: witness {symbol} not found in {path_text}")
     elif kind == "lean":
         require(path.suffix == ".lean"
                 and re.search(rf"\btheorem\s+{re.escape(symbol)}\b", text),
@@ -223,6 +227,15 @@ def resolve_witness(row: dict) -> None:
                 f"{row['id']}: a human attestation must be a markdown record")
     elif kind == "decision":
         require(False, f"{row['id']}: a decision gate has no executable witness")
+    else:
+        # local-devnet / two-binary / live-host: the content check is the file's language, not
+        # the witness_kind label. A comment or a docstring is not a witness.
+        if path.suffix == ".py":
+            require(re.search(rf"\bdef\s+{re.escape(symbol)}\b", text),
+                    f"{row['id']}: witness {symbol} is not defined in {path_text}")
+        else:
+            require(symbol in text,
+                    f"{row['id']}: witness {symbol} not found in {path_text}")
     binding = row.get("witness_binding")
     require(isinstance(binding, dict),
             f"{row['id']}: a met gate needs witness_binding")
@@ -249,8 +262,9 @@ def resolve_witness(row: dict) -> None:
     require(isinstance(control.get("test"), str) and control["test"].strip(),
             f"{row['id']}: the control test is required")
     resolve_test_ref(control["test"])
-    require(control["test"] == ref or control["test"].endswith("::self_test"),
-            f"{row['id']}: the control test must be the witness or its self-test")
+    require(control["test"] in (ref, f"{path_text}::self_test"),
+            f"{row['id']}: the control test must be the witness or its self_test, "
+            "in the witness's own file")
     require(control.get("expected") == "FAIL",
             f"{row['id']}: the control's expected result must be FAIL")
     verify_record(control.get("run_record"), row["id"], "FAIL")
@@ -273,15 +287,25 @@ def resolve_witness(row: dict) -> None:
     if manifest.get("source_sha") is not None:
         require(manifest["source_sha"] == source,
                 f"{row['id']}: the evidence source does not match the record")
+    # **The declared digest is the record's manifest digest.** A format-only 64-hex value binds
+    # nothing; the convention (also used by `s6-bind.py`) is sha256(manifest.json).
+    manifest_path = record_path(evidence.get("record"))
+    require(hashlib.sha256((manifest_path / "manifest.json").read_bytes()).hexdigest() == digest,
+            f"{row['id']}: evidence.digest does not match the record's manifest")
     if kind == "human-attestation":
         attestation = row.get("attestation") or {}
         for field in ("reviewer", "relationship", "independent", "signed_at",
-                      "verdict", "review_record"):
+                      "verdict", "review_record", "evidence_sha256"):
             require(field in attestation, f"{row['id']}: attestation.{field} is required")
         require(attestation.get("independent") is True,
                 f"{row['id']}: the reviewer must be independent")
         require(attestation.get("verdict") in ("PASS", "category-A-accepted"),
                 f"{row['id']}: the attestation verdict must be PASS or category-A-accepted")
+        signed_digest = attestation.get("evidence_sha256")
+        require(isinstance(signed_digest, str) and HEX64.fullmatch(signed_digest),
+                f"{row['id']}: attestation.evidence_sha256 must be a 64-hex digest")
+        require(signed_digest == digest,
+                f"{row['id']}: the reviewer-signed digest is not the evidence digest")
         owner = str(row.get("owner") or "").casefold()
         reviewer = str(attestation.get("reviewer") or "").casefold()
         require(reviewer and reviewer not in owner and owner not in reviewer,
@@ -299,7 +323,7 @@ def resolve_witness(row: dict) -> None:
                 f"{row['id']}: the review record does not name the reviewer")
         require(str(attestation["verdict"]) in review_text,
                 f"{row['id']}: the review record does not carry the verdict")
-        require(str(attestation.get("evidence_sha256") or "") in review_text,
+        require(signed_digest in review_text,
                 f"{row['id']}: the review record does not carry the evidence digest")
 
 
