@@ -187,7 +187,8 @@ class PolicyTests(unittest.TestCase):
             (record / "responder.log").write_text(responder)
             chain["logs"] = {"joiner": "joiner.log", "responder": "joiner.log"}
             problems = chain_tool.raw_problems(record, chain)
-            self.assertTrue(any("distinct" in problem for problem in problems), problems)
+            self.assertTrue(problems, "reusing one raw file must be refused")
+            self.assertTrue(any("quoted line" in problem for problem in problems), problems)
 
     def record(self, readme: str, chain: dict) -> Path:
         directory = Path(tempfile.mkdtemp())
