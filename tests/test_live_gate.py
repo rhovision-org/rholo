@@ -254,6 +254,9 @@ def good_events():
 
 class LiveGateFixture(unittest.TestCase):
     def setUp(self):
+        # This test job runs without compiling Rust first, so target/ may
+        # not exist on a fresh GitHub Actions checkout.
+        (ROOT / "target").mkdir(parents=True, exist_ok=True)
         self._tmp = tempfile.TemporaryDirectory(dir=ROOT / "target")
         self.addCleanup(self._tmp.cleanup)
         self.base = Path(self._tmp.name)
@@ -781,6 +784,8 @@ class SamplerTests(unittest.TestCase):
         }
 
     def tempdir(self):
+        # The sampler fixture must also work in a clean, build-free job.
+        (ROOT / "target").mkdir(parents=True, exist_ok=True)
         directory = tempfile.TemporaryDirectory(dir=ROOT / "target")
         self.addCleanup(directory.cleanup)
         return Path(directory.name)
