@@ -13981,3 +13981,70 @@ and a host stop are operator facts; `execution_proven` is false.
 
 **State.** 59 registered gates, 47 met, 12 unresolved; `--assert-closeable` exits 3;
 `check-hardfork-51-closeout.py` still opens.
+
+## 184. The evidence layer stops trusting shape: the Rust controls execute, HF51 binds to bytes (2026-11-19)
+
+**What this pass found.** Two evidence-trust gaps survived the criteria work. F14: 45 of the 47
+`met` rows rest on Rust witnesses, every one declares a mutation, a control test, `expected: FAIL`
+and a committed FAIL record — and `--run-controls` returned `SKIPPED` for all 45. The register
+proved a test ran on 2026-11-18; it did not prove the test still asserts the gate's invariant. HF51:
+`acceptance_records` checked field shape only, so a fabricated PASS with a 40-hex source, a 64-hex
+binary and any artifact string passed; the §6 sign-off accepted a bare 64-hex digest, two URLs and
+a name, and nothing bound the digest to a review.
+
+**What changed.**
+
+- **The Rust controls execute.** `run_control` derives the package from the witness path's nearest
+  `Cargo.toml`, the cargo target from `--lib`/`--test`, applies the declared mutation, runs the
+  witness by name, and classifies from libtest's own line: exactly one line naming the symbol,
+  `FAILED` is CONTROLLED, `ok` is UNPROVEN, and `ignored`, no line, a build error or a second match
+  is ERROR. A nonzero exit alone is not a control. `--controls {python,rust,all}` defaults to all;
+  `--controls` implies `--run-controls`; in all mode a SKIPPED is a failure. The mutation is
+  restored in `finally` and a non-identical restore is a register error. The runner refuses a path
+  outside the root and a mutation target with uncommitted changes in a git worktree, runs cargo
+  with `--locked`, and writes one log directory per invocation under `target/rust-controls/`.
+- **HF51 binds to bytes.** An acceptance record's `artifact` must be an in-repo path (no URL,
+  absolute path, `..` or symlink) that exists, and `artifact_sha256` must be the digest of its
+  bytes — or of `manifest.json` for a record directory, whose `source_sha`, `binary_sha256` and
+  `verdict` must equal the record's fields (an omitted field is not agreement). A `verified` §6
+  sign-off must name an in-repo evidence record whose manifest digest is `evidence_sha256`, and a
+  review record (file or README directory) whose text names `approved_by` and carries that digest
+  — the register's human-attestation convention.
+- **Tests and documentation.** `tests/test_rust_controls.py` covers the classifier's six negative
+  cases, derivation for all 45 registered witnesses and the four cross-crate controls, and a live
+  dependency-free toy crate (asserted mutation CONTROLLED, unasserted UNPROVEN, syntax error ERROR,
+  byte-identical restore, dirty target refused). `tests/test_hardfork_51_closeout.py` covers the
+  artifact path/digest/manifest and sign-off negatives. Both suites are reached through the
+  `test_hardfork_51_closeout.py` CI seam; no workflow file is edited. `gate-principles` and the CI
+  wiring request now name `--controls python` for CI and the full corpus as a release-time run.
+
+**Why believed.** The full corpus ran twice, serially, with a warm target:
+
+```text
+python3 tools/check-mainnet-gates.py --run-controls
+controls_mode all; 46 CONTROLLED, 1 ERROR; exit 1
+unproven: S6-c7536b90bd39cf71 (rholang/tests/deep_value_bound.rs)
+```
+
+The one ERROR is honest, not suppressed. That control's declared mutation raises
+`MAX_VALUE_DEPTH` 256→1024; the 400-deep fold then overflows the worker stack and the process aborts
+(SIGABRT) before libtest can print a `FAILED` line. The witness is sensitive to the mutation — the
+process dies — but its failure mode is an abort, not an assertion. Adding an "abort counts as
+CONTROLLED" exception would let any crash masquerade as a control, so the rule stays assertion-level
+and the row is reported. The control's committed FAIL record and the witness's own doc comment both
+document the abort, so this is not a defective declaration; a clean-assertion mutation plus a new
+FAIL record is a separate governance change. The register is unchanged: 59 gates, 47 met, 12
+unresolved.
+
+**What it does not claim.** No gate is promoted. A control demonstrates sensitivity to one declared
+mutation, not that the test asserts the whole pass condition, and `execution_proven` stays false.
+The Python controls remain exit-code-only: `--controls python` proves a self-test exits nonzero, not
+that its assertion fired. An acceptance record binds its artifact's bytes to the entry; it does not
+prove the manifest is truthful — only the sign-off binds a digest to an independent review, and a
+consistently fabricated acceptance record can still pass the shape unless a reviewer attests it
+elsewhere. HF51's 13 `merged` rows remain ancestry-only (the test-running acceptance checker) and
+the pinned-blob check remains owed; the sign-off is unexecuted, so the tracker stays open. No
+`.github/workflows/*` edit, campaign, host, public deployment, real key or transfer ran.
+
+**State.** 59 registered gates, 47 met, 12 unresolved; `--assert-closeable` exits 3; the full
+control corpus is 46 CONTROLLED + 1 documented ERROR; `check-hardfork-51-closeout.py` still opens.

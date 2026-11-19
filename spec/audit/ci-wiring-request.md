@@ -66,7 +66,7 @@ Add beside the runs above:
 ```sh
 python3 -m unittest discover -s tests -p test_populated_store_migration_drill.py -v
 python3 tools/populated-store-migration-drill.py self-test
-python3 tools/check-mainnet-gates.py --run-controls
+python3 tools/check-mainnet-gates.py --run-controls --controls python
 ```
 
 Add to the path-gated job:
@@ -88,9 +88,17 @@ python3 -m unittest discover -s tests -p test_s6_bind.py -v
 release obligations. `tools/s6-bind.py` is an operator tool and is not run in CI.
 
 `self_test` is hermetic; the full drill (`--gate`) needs Docker and a disposable devnet, so it is
-an operator run rather than a CI step. `check-mainnet-gates.py --run-controls` executes the G520
-control (`::self_test`) and reports the Rust witness controls as `SKIPPED`; the Rust FAIL records
-are committed evidence.
+an operator run rather than a CI step. `check-mainnet-gates.py --run-controls --controls python`
+executes the two `::self_test` controls and reports the 45 Rust witness controls as `SKIPPED` by
+selection.
+
+**The Rust corpus (2026-11-19).** `--run-controls` now defaults to `--controls all`: each Rust
+control applies its declared mutation, runs the witness by name through cargo, and requires the
+symbol's own libtest line to fail. That recompiles one crate per control (a warm target makes it
+minutes, not the old `SKIPPED`). CI keeps the fast `--controls python` line above; run the full
+corpus at release time and record it. `tests/test_rust_controls.py` is reached through the existing
+`tests/test_hardfork_51_closeout.py` discovery (the `RustControlTests` wrapper), so no additional
+workflow line is needed; its live case builds a dependency-free toy crate, not the corpus.
 
 ## Local equivalent
 
