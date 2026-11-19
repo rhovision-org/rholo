@@ -916,11 +916,25 @@ def check_g4(recovery, events) -> dict:
     return finding.report()
 
 
+def safe_relative(relative: object) -> bool:
+    """A record may name only a path inside itself.
+
+    `evidence-pack verify` refuses an absolute or `..` entry; the criterion is a separate reader
+    and must refuse the same record, or it can hash an arbitrary file on the host.
+    """
+    if not isinstance(relative, str) or not relative:
+        return False
+    path = Path(relative)
+    return not path.is_absolute() and ".." not in path.parts
+
+
 def verify_sums_json(path: Path) -> str | None:
     mapping, error = read_json(path)
     if not isinstance(mapping, dict):
         return f"{path.name} is unreadable: {error or 'not an object'}"
     for relative, digest in mapping.items():
+        if not safe_relative(relative):
+            return f"unsafe file path in {path.name}: {relative!r}"
         target = path.parent / relative
         if not target.is_file():
             return f"missing file listed in {path.name}: {relative}"
@@ -944,6 +958,8 @@ def verify_sums_text(path: Path):
         if len(parts) != 2 or not DIGEST_RE.match(parts[0]):
             return listed, f"malformed line in {path.name}: {line!r}"
         relative = parts[1].lstrip("*")
+        if not safe_relative(relative):
+            return listed, f"unsafe file path in {path.name}: {relative!r}"
         listed.add(relative)
         target = path.parent / relative
         if not target.is_file():
@@ -975,6 +991,23 @@ def check_g5(run, events, run_dir: Path, expected_observers: int = 4) -> dict:
     if not events:
         finding.incomplete("there are no samples")
         return finding.report()
+    # **The observation's events are the retained samples, not a second copy of them.** Without
+    # this, an `observations.json` can carry a good bundle while `samples.jsonl` says `[]`.
+    retained, samples_error = load_samples(run_dir)
+    if samples_error:
+        finding.incomplete(samples_error)
+    else:
+        def fingerprint(collection):
+            # The alias is a label, not evidence: `test_the_verdict_does_not_depend_on_actor_names`
+            # renames actors without rewriting the retained bytes. The sample's route, tick and
+            # body digest are what the record actually says happened.
+            return sorted(
+                tuple(str(event.get(field)) for field in
+                      ("route", "tick", "body_sha256"))
+                for event in collection if isinstance(event, dict)
+            )
+        if fingerprint(events) != fingerprint(retained):
+            finding.fail("the observation's events do not match the retained samples")
     for alias in aliases:
         if not any(event.get("alias") == alias for event in events):
             finding.incomplete(f"{alias} contributed no observation")
@@ -1020,6 +1053,9 @@ def check_g5(run, events, run_dir: Path, expected_observers: int = 4) -> dict:
                     digest = entry.get("sha256")
                     if not isinstance(relative, str) or not relative:
                         finding.fail(f"manifest file entry {index} has no path")
+                    elif not safe_relative(relative):
+                        finding.fail(
+                            f"manifest file entry {index} escapes the record: {relative!r}")
                     elif not isinstance(digest, str) or not DIGEST_RE.match(digest):
                         finding.fail(f"manifest file entry {index} has no sha256")
                     else:
@@ -1052,7 +1088,11 @@ def check_g5(run, events, run_dir: Path, expected_observers: int = 4) -> dict:
                         )
                         if find_file(run_dir, name) is not None
                     }
-                    covered = {Path(relative).name for relative in names}
+                    # A name is covered only at its own path: `raw/sub/run.json` is not `run.json`.
+                    covered = {
+                        name for name in expected
+                        if name in names or f"raw/{name}" in names
+                    }
                     missing = expected - covered
                     if missing:
                         finding.incomplete(

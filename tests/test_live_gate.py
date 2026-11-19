@@ -781,6 +781,38 @@ class G5Tests(LiveGateFixture):
         report, _ = self.check()
         self.assert_status(report, "G5", "FAIL")
 
+    def test_events_must_match_the_retained_samples(self):
+        """The criterion is handed `events` separately from the record; they must be the same run.
+
+        This is the criteria-layer path (`gate-collect` writes observations.json, the sampler
+        writes samples.jsonl). A good event bundle beside an empty retained stream is a false
+        pass unless the two are compared.
+        """
+        events = self.events()
+        (self.run_dir / "samples.jsonl").write_text("\n")
+        run = json.loads((self.run_dir / "run.json").read_text())
+        report = gate.check_g5(run, events, self.run_dir)
+        self.assertEqual(report["status"], "FAIL", report["reasons"])
+        self.assertTrue(any("retained samples" in reason for reason in report["reasons"]),
+                        report["reasons"])
+
+    def test_a_sums_entry_outside_the_record_fails(self):
+        outside = self.run_dir.parent / "outside.json"
+        outside.write_text("{}")
+        digest = hashlib.sha256(outside.read_bytes()).hexdigest()
+        (self.run_dir / "SHA256SUMS").write_text(f"{digest}  ../outside.json\n")
+        report, _ = self.check()
+        self.assert_status(report, "G5", "FAIL")
+
+    def test_a_manifest_entry_outside_the_record_fails(self):
+        (self.run_dir / "manifest.json").write_text(json.dumps({
+            "schema": 1,
+            "execution_proven": False,
+            "files": [{"path": "../outside.json", "sha256": "a" * 64, "bytes": 2}],
+        }))
+        report, _ = self.check()
+        self.assert_status(report, "G5", "FAIL")
+
 
 class G6Tests(LiveGateFixture):
     def verdict(self, **overrides):
