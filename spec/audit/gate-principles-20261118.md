@@ -61,7 +61,7 @@ The layer is deliberately small:
 | `human_attestation` | one typed reviewer record: relationship, independence, verdict enum, evidence digest, https URL, UTC time, cited record; reviewer ≠ owner | M6, G6, TA-C1/C2 |
 | `healing_anchor` | a fixed finalized anchor survives a K-sample dwell and every validator finalizes it; moving-head equality is not the criterion | G428-M4 |
 | `merge_accounting` | per-deploy effects; no unapplied kept write; no rejection without a conflict; kept effects read back from the produced state | G428-M5 |
-| `phase_diagnosis` | the phase table's conditions hold; block-6 disposition is structural; a later orphan overrides an earlier accepted; 404/unparsed is `PRECONDITION` | C343 |
+| `phase_diagnosis` | the observation declares the required locality (`live-host` for the gate); the phase table's conditions hold; block-6 disposition is structural; a later orphan overrides an earlier accepted; 404/unparsed is `PRECONDITION` | C343 |
 | `lockstep_acceptance` | selected pins; derived/declared lockstep window; no mixed version; required shape; independent reviewer; accepted verdict; incident trace | C357 |
 | `bounded_admission` | every ingress queue is bounded by a named constant; no unbounded channel; a full queue refuses in the bounded class | G428-M2 (source half) |
 | `pressure_refusal` | the queues are bounded (composes `bounded_admission`), and a capped run refuses with 429/RESOURCE_EXHAUSTED and a retry signal, no 5xx, and a handler reachable after release, while the unset default refuses nothing; counts are recomputed from the named raw transcripts, the refusal message is bound to the source, the endpoint is non-local, and a local-devnet record is refused | G428-M2 |
