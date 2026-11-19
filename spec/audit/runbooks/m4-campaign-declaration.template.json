@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "campaign": {
+    "name": "",
+    "locality": "multi-host",
+    "bootstrap": "",
+    "selected": {
+      "source_sha": "",
+      "binary_sha256": ""
+    },
+    "hosts": [],
+    "rerun": {
+      "n4": "python3 tests/consensus-partition-rejoin.py --validators 4 --out n4",
+      "n8": "python3 tests/consensus-partition-rejoin.py --validators 8 --out n8"
+    }
+  },
+  "workloads": {
+    "n4": {
+      "dir": "n4",
+      "capacity": "n4/capacity/observations.json",
+      "restart": "n4/restart/restart.json",
+      "root_before": "n4/root-before.json",
+      "root_after": "n4/root-after.json",
+      "host_loss": "n4/host-loss.json",
+      "recovery": "n4/recovery.json",
+      "approved_root": "",
+      "nodes": ["", "", "", ""]
+    },
+    "n8": {
+      "dir": "n8",
+      "capacity": "n8/capacity/observations.json",
+      "restart": "n8/restart/restart.json",
+      "root_before": "n8/root-before.json",
+      "root_after": "n8/root-after.json",
+      "host_loss": "n8/host-loss.json",
+      "recovery": "n8/recovery.json",
+      "approved_root": "",
+      "nodes": ["", "", "", "", "", "", "", ""]
+    }
+  }
+}

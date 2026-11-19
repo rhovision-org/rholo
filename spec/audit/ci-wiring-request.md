@@ -96,3 +96,10 @@ are committed evidence.
 
 The PR checklist runs the same commands; `check-mainnet-gates.py --assert-closeable` and
 `check-hardfork-51-closeout.py --verify-local-git --assert-closeable` both exit 3 by design.
+
+## The M4 and M2 suites (2026-11-19)
+
+`tests/test_m4_campaign.py` and `tests/test_m2_pressure.py` are reached from
+`tests/test_hardfork_51_closeout.py` (`FinalityCampaignTests`, `M2PressureArmTests`), the same
+discovered seam the register check and the M1 collector use. No workflow file changes: the
+discovery line for `test_hardfork_51_closeout.py` already exists.

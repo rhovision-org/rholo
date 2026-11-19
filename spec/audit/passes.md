@@ -13930,3 +13930,54 @@ high-water mark.
 
 **State.** 59 registered gates, 47 met, 12 unresolved; `--assert-closeable` exits 3;
 `check-hardfork-51-closeout.py` still opens.
+
+## 183. M4 and M2 become judgeable: the last two campaign-shaped gaps (2026-11-19)
+
+**What this pass found.** Two of the twelve open gates would have wasted a completed campaign.
+G428-M4's criterion checked anchor retention on a three-validator list; its pass condition names
+N=4 and N=8 workloads on independent hosts, five arms, host loss, restart/replay and an unchanged
+approved root, and nothing in the tree emitted the criterion's `record_data`. G428-M2's arm
+connected only to `127.0.0.1` and wrote a hardcoded loopback endpoint while its criterion requires
+a non-local `public-live` endpoint; its gRPC half was a local `cargo test` whose transcript was
+not bound to the record's endpoint at all.
+
+**What changed.**
+
+- **`finality_campaign` wraps the anchor predicate.** The M4 record is exactly n4 and n8, a
+  declared multi-host topology with a host floor, each workload's M1 capacity record re-evaluated
+  by `capacity_tier`, deploy finalization, partition/rejoin with rotated non-bootstrap victims,
+  host loss within the declared tolerance, restart/replay and safe recovery, with the approved
+  root preserved. A missing arm is a FAIL, an unreadable field a PRECONDITION. Thirty-seven
+  declared controls cover the rules, including the single-host refusal the gate's own negative
+  control demanded.
+- **`tools/m4-campaign.py` is the producer.** `collect` reads the harness aggregate and raw
+  rounds, the typed cycles, the capacity record, the root/host-loss observations, the restart arm
+  and the chosen recovery arm, and refuses a missing or disagreeing artefact; `observe-root` and
+  `observe-host-loss` are GET-only and refuse a lost endpoint that answers. The partition/rejoin
+  harness writes `partition-rejoin.json` from the values it already measures. The evidence record
+  is the promotion layer's check, not a self-referential digest inside the record.
+- **The M2 arm takes an endpoint.** `phase` accepts `--endpoint` plus host-captured
+  `--inspect`/`--version`, `assemble` derives the locality from the endpoint and refuses a
+  contradiction or mismatched phase endpoints, and `grpc` writes `grpc-candidate.json` declaring
+  `origin`, `scope` and `endpoint.used`. The criterion binds the HTTP and direct surfaces to the
+  measured listener and requires the gRPC surface's origin, candidate pins, non-local endpoint on
+  the same host and digest-pinned candidate record. A `candidate-test` surface is candidate-code
+  and cannot claim endpoint transport. Twelve new controls (thirty-four total).
+- **Four protocols are pre-registered**: M2 public-live, M4 multi-host, C343 live read-only, and
+  the TA attestation with its template. All are DRAFT / NOT EXECUTED.
+- **CI reaches both suites** through `test_hardfork_51_closeout.py`; no workflow file is edited.
+
+**Why believed.** The self-test runs every entry's base and every declared control with its
+declared verdict; each new M2 control was inspected to fail for its named rule. The M4 collector
+suite builds a synthetic N=4/N=8 campaign, runs the real collector and evaluates the emitted
+record with the real criterion; the refusal paths leave no output. The observer tests run against
+a local HTTP server. The register stays 59 gates, 47 met, 12 unresolved.
+
+**What it does not claim.** No gate is promoted. The M4 multi-host driver is deferred: the existing
+harness is single-runner, and the criterion/collator make a submitted multi-host campaign
+judgeable, not runnable. The M2 gRPC surface is candidate-code unless a real endpoint client is
+built. No campaign, public deployment, real key, transfer or second host ran. Host independence
+and a host stop are operator facts; `execution_proven` is false.
+
+**State.** 59 registered gates, 47 met, 12 unresolved; `--assert-closeable` exits 3;
+`check-hardfork-51-closeout.py` still opens.

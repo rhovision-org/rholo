@@ -90,12 +90,34 @@ bound to the source and the files digest-pinned. A public-live record must name 
 endpoint; a `local-devnet` record is refused.
 
 `tools/m2-pressure-arm.py` produces the record on a disposable devnet (two lifetimes: the cap is
-read at listener startup), and the Rust gRPC arm binds the real `PeerAddressIo`/`DeployIngressGuard`
-stack. A record that names raw transcripts must carry `SHA256SUMS.json`; an absent pin set is a
-failure, not a skip. The local rehearsal is `spec/audit/evidence/m2-pressure-local-20261119/` (`INCONCLUSIVE`):
-the record passes its local policy and the criterion refuses it for locality. The default stays
-opt-in (decision, 2026-11-18); the unset run is the failing control. Still owed: the public-live
-campaign on the installed candidate, and the gate's `depends_on: G584-G1`.
+read at listener startup). It now takes `--endpoint` (with `--inspect`/`--version` captured on a
+remote host), derives the locality from the endpoint and refuses a contradiction, and its gRPC
+half writes `grpc-candidate.json` declaring `origin: candidate-test`, `scope: candidate-code` and
+`endpoint.used: false`. The criterion binds every public-live surface to the measured listener and
+refuses a candidate-test surface that claims endpoint transport. A record that names raw
+transcripts must carry `SHA256SUMS.json`; an absent pin set is a failure, not a skip. The local
+rehearsal is `spec/audit/evidence/m2-pressure-local-20261119/` (`INCONCLUSIVE`): the record passes
+its local policy and the criterion refuses it for locality. The default stays opt-in (decision,
+2026-11-18); the unset run is the failing control. Still owed: the public-live campaign on the
+installed candidate, and the gate's `depends_on: G584-G1`. The protocol is pre-registered at
+`spec/audit/runbooks/m2-public-live-20261119.md`.
+
+## M4: the campaign is judged; the multi-host driver is still owed
+
+G428-M4's pass condition names N=4 and N=8 workloads, independent hosts, five arms and an
+unchanged approved root; the old criterion checked anchor retention on a three-validator list.
+`finality_campaign` keeps `check_rejoin` and adds the envelope: exactly n4 and n8, a declared
+multi-host topology, each workload's M1 capacity record re-evaluated by `capacity_tier`, deploy
+finalization, partition/rejoin with rotated non-bootstrap victims, host loss within the declared
+tolerance, restart/replay, and safe recovery. `tools/m4-campaign.py collect` assembles it from the
+harness, capacity, root, host-loss, restart and recovery artefacts and refuses a summary that
+disagrees with the raw rounds; `observe-root` and `observe-host-loss` are GET-only. The harness
+now writes the typed `partition-rejoin.json`.
+
+Still owed: the multi-host driver. The existing `tests/consensus-partition-rejoin.py` is guarded
+to a disposable GitHub-hosted runner and one Docker network; the criterion and collator make a
+submitted multi-host campaign judgeable, but the operator must supply the topology. The protocol
+is pre-registered at `spec/audit/runbooks/m4-multi-host-campaign-20261119.md`.
 
 ## M3: the chain is checkable; the positive is still owed
 
@@ -164,6 +186,10 @@ packing: a non-durable path fails the CI re-check by design.
 - M1's typed tier record now exists (`capacity_tier`, `tools/capacity-tier.py`): the declaration,
   the measured RAM/CPU/disk/RSS/replay record and the supermajority check are executable. What
   remains is the declared tier and stake/host map, a measured campaign, and the multi-host
-  host-kill arm. M4's cross-host arm is still a code-and-campaign gap. M3's transport/stage-6
+  host-kill arm. M4's typed campaign record and collator now exist (`finality_campaign`,
+  `tools/m4-campaign.py`); its multi-host driver and campaign remain. M2's arm now takes an
+  endpoint and binds its gRPC surface; its public-live campaign remains. M3's transport/stage-6
   witness is typed and checkable; its off-host arm and failover remain. They are not host-only
   tasks.
+- The M2, M4, C343 and TA protocols are pre-registered and **not executed**; a runbook is a
+  protocol, not evidence.
