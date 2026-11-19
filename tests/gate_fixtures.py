@@ -133,6 +133,7 @@ def m3_chain(
         "locality": locality,
         "complete": True,
         "incomplete_reasons": [],
+        "logs": {"joiner": "joiner.log", "responder": "responder.log"},
         "correlation": {
             "joiner_key": joiner,
             "responder_key": responder,
@@ -231,6 +232,27 @@ def m3_chain(
     }
 
 
+def m3_logs(chain: dict) -> tuple[str, str]:
+    """The joiner and responder logs a chain's quoted lines must appear in."""
+    stages = chain["stages"]
+    joiner = "\n".join(
+        [
+            stages["1_request"]["log_line"],
+            stages["5_receive"]["log_line"],
+            stages["6_apply"]["walk_log_line"],
+            stages["6_apply"]["log_line"],
+        ]
+    )
+    responder = "\n".join(
+        [
+            stages["2_receipt"]["log_line"],
+            stages["3_construction"]["log_line"],
+            stages["4_transport"]["log_line"],
+        ]
+    )
+    return joiner, responder
+
+
 def base_g428_m3() -> dict:
     joiner, responder, state = "1" * 64, "2" * 64, "a" * 64
     readme = (
@@ -240,13 +262,24 @@ def base_g428_m3() -> dict:
         "raw/peer.txt.\n"
     )
     manifest = json.dumps({"locality": "off-host-claim", "execution_proven": False})
+    chain = m3_chain(joiner=joiner, responder=responder, state=state)
+    joiner_log, responder_log = m3_logs(chain)
+    sums = json.dumps(
+        {
+            "joiner.log": hashlib.sha256(joiner_log.encode()).hexdigest(),
+            "responder.log": hashlib.sha256(responder_log.encode()).hexdigest(),
+        }
+    )
     return {"record": {
         "files": {
             "README.md": readme,
             "raw/peer.txt": f"rnode://{joiner}@203.0.113.7?protocol=40400&discovery=40404\n",
             "manifest.json": manifest,
+            "joiner.log": joiner_log,
+            "responder.log": responder_log,
+            "SHA256SUMS.json": sums,
         },
-        "chain": m3_chain(joiner=joiner, responder=responder, state=state),
+        "chain": chain,
     }}
 
 

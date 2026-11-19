@@ -377,6 +377,12 @@ def main():
         responder_text = container_log(CONTAINERS[0])
         chain_log_method = "full"
     joiner_text = passive_text if args.supported_recovery and passive_text else combined
+    # **The chain names these files and the checker binds every quoted line to them.** The
+    # responder segment is otherwise lost when the container is recreated.
+    with open(os.path.join(args.out, "joiner.log"), "w") as handle:
+        handle.write(joiner_text)
+    with open(os.path.join(args.out, "responder.log"), "w") as handle:
+        handle.write(responder_text)
     chain = build_join_chain(joiner_text, responder_text)
     with open(os.path.join(args.out, "chain.json"), "w") as handle:
         json.dump(chain, handle, indent=2, sort_keys=True)

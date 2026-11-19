@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import importlib.util
 import json
 import re
@@ -85,11 +86,11 @@ RE3 = re.compile(
 )
 RE4_OK = re.compile(
     r"FinalizedFringe sent to (rnode://([0-9a-fA-F]+)@\S+?): "
-    r"transport outcome (delivered|failed) \(state ([0-9a-f]{64})\)"
+    r"transport outcome delivered \(state ([0-9a-f]{64})\)"
 )
 RE4_FAIL = re.compile(
     r"FinalizedFringe to (rnode://([0-9a-fA-F]+)@\S+?) was not sent: "
-    r"transport outcome (delivered|failed) \(state ([0-9a-f]{64})\)"
+    r"transport outcome failed \(state ([0-9a-f]{64})\)"
 )
 RE5 = re.compile(
     r"Received finalized fringe from bootstrap node \(([0-9a-f]{64})\) "
@@ -251,13 +252,21 @@ def _stage3(problems: list[str], stage: dict) -> dict | None:
 def _stage4(problems: list[str], stage: dict) -> dict | None:
     if not _stage_problem(problems, "4_transport", stage):
         return None
-    match = RE4_OK.search(stage["log_line"]) or RE4_FAIL.search(stage["log_line"])
-    if not match:
+    # **The words and the outcome are one fact.** `sent to` may only carry `delivered`, and
+    # `was not sent` may only carry `failed`; a contradictory pair is rejected even when every
+    # structured field was edited to agree with it.
+    match = RE4_OK.search(stage["log_line"])
+    outcome = "delivered"
+    if match is None:
+        match = RE4_FAIL.search(stage["log_line"])
+        outcome = "failed"
+    if match is None:
         problems.append(
-            "4_transport: the line carries no 'transport outcome delivered|failed' result"
+            "4_transport: the line carries neither 'sent to … transport outcome delivered' nor "
+            "'was not sent: transport outcome failed'"
         )
         return None
-    advertised, key, outcome, state = match.groups()
+    advertised, key, state = match.groups()
     if not _same(stage.get("peer"), advertised):
         problems.append(f"4_transport: peer {stage.get('peer')!r} != line's {advertised!r}")
     if not _same(stage.get("peer_key"), key):
@@ -360,12 +369,17 @@ def check_chain(chain: object) -> list[str]:
         problems.append(f"gate_id {chain.get('gate_id')!r} is not 'G428-M3'")
     if chain.get("locality") not in RECORD_LABELS:
         problems.append(f"locality {chain.get('locality')!r} is not a record locality")
-    if chain.get("complete") is False:
-        reasons = chain.get("incomplete_reasons") or []
+    # **Completeness is mandatory, not absence-of-false.** A missing flag, a string, or a true
+    # flag beside recorded reasons must not read as a complete chain.
+    if chain.get("complete") is not True:
+        problems.append(f"complete must be true (got {chain.get('complete')!r})")
+    reasons = chain.get("incomplete_reasons")
+    if not isinstance(reasons, list):
+        problems.append("incomplete_reasons must be a list")
+    elif reasons:
         problems.append(
-            "the chain is incomplete: " + "; ".join(str(reason) for reason in reasons)
-            if reasons
-            else "the chain is incomplete"
+            "incomplete_reasons must be empty when complete is true: "
+            + "; ".join(str(reason) for reason in reasons)
         )
     non_claims = chain.get("non_claims")
     if non_claims is not None and not isinstance(non_claims, list):
@@ -386,6 +400,15 @@ def check_chain(chain: object) -> list[str]:
         problems.append("correlation.anchor is neither 'latest' nor 64-hex")
     if not _hex64(correlation.get("state_hash")):
         problems.append("correlation.state_hash is not 64-hex")
+
+    logs = chain.get("logs")
+    if not isinstance(logs, dict):
+        problems.append("logs is absent; the chain does not name its raw logs")
+    else:
+        for role in ("joiner", "responder"):
+            name = logs.get(role)
+            if not _nonempty(name) or "/" in name or name in (".", ".."):
+                problems.append(f"logs.{role} is not a bare log file name")
 
     stages = chain.get("stages")
     if not isinstance(stages, dict):
@@ -464,6 +487,8 @@ def build_chain(
     locality: str = "local-devnet",
     joiner_container: str | None = None,
     responder_container: str | None = None,
+    joiner_log_name: str = "joiner.log",
+    responder_log_name: str = "responder.log",
 ) -> dict:
     """Correlate two captured logs into one chain.
 
@@ -491,6 +516,8 @@ def build_chain(
             reasons=reasons,
             joiner_container=joiner_container,
             responder_container=responder_container,
+            joiner_log_name=joiner_log_name,
+            responder_log_name=responder_log_name,
         )
     restore_index, restore = restores[-1]
     served, accepted_root, accepted_kind = restore.groups()
@@ -590,18 +617,20 @@ def build_chain(
 
         transport = None
         for later in range(index + 1, len(responder_lines)):
-            match = RE4_OK.search(responder_lines[later]) or RE4_FAIL.search(
-                responder_lines[later]
-            )
-            if match and match.group(4) == served and match.group(2).lower() == joiner_key:
-                transport = (later, match)
+            match = RE4_OK.search(responder_lines[later])
+            outcome = "delivered"
+            if match is None:
+                match = RE4_FAIL.search(responder_lines[later])
+                outcome = "failed"
+            if match and match.group(3) == served and match.group(2).lower() == joiner_key:
+                transport = (later, match, outcome)
         if transport is None:
             reasons.append("the responder log has no transport outcome for the served state")
         else:
-            later, sent = transport
+            later, sent, outcome = transport
             stages["4_transport"] = {
                 "event": EVENTS["4_transport"],
-                "outcome": sent.group(3),
+                "outcome": outcome,
                 "peer": sent.group(1),
                 "peer_key": joiner_key,
                 "anchor": prepared.group(4),
@@ -648,6 +677,8 @@ def build_chain(
         reasons=reasons,
         joiner_container=joiner_container,
         responder_container=responder_container,
+        joiner_log_name=joiner_log_name,
+        responder_log_name=responder_log_name,
     )
 
 
@@ -659,6 +690,8 @@ def _chain(
     reasons: list[str],
     joiner_container: str | None,
     responder_container: str | None,
+    joiner_log_name: str,
+    responder_log_name: str,
 ) -> dict:
     chain = {
         "schema": 1,
@@ -670,6 +703,7 @@ def _chain(
         "locality": locality,
         "complete": not reasons,
         "incomplete_reasons": reasons,
+        "logs": {"joiner": joiner_log_name, "responder": responder_log_name},
         "containers": {
             "joiner": joiner_container or "",
             "responder": responder_container or "",
@@ -683,6 +717,99 @@ def _chain(
         ],
     }
     return chain
+
+
+# --------------------------------------------------------------------------------------------------
+# raw-log binding
+
+STAGE_ROLE = {
+    "1_request": "joiner",
+    "2_receipt": "responder",
+    "3_construction": "responder",
+    "4_transport": "responder",
+    "5_receive": "joiner",
+    "6_apply": "joiner",
+}
+
+
+def resolve_log(directory: Path, name: str) -> Path | None:
+    """The named log at the record root or under `raw/` (the packer's layout)."""
+    for candidate in (directory / "raw" / name, directory / name):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def raw_problems(directory: Path, chain: object) -> list[str]:
+    """Every quoted line must be present verbatim in the raw log it names.
+
+    `check_chain` is schema-consistency only: it reparses the embedded string. This is the binding
+    that stops a coordinated edit of the structured fields *and* the quoted line from validating
+    in isolation.
+    """
+    if not isinstance(chain, dict):
+        return ["the chain is not an object"]
+    logs = chain.get("logs")
+    if not isinstance(logs, dict):
+        return ["the chain does not name its raw logs"]
+    problems: list[str] = []
+    texts: dict[str, str] = {}
+    for role in ("joiner", "responder"):
+        name = logs.get(role)
+        if not _nonempty(name):
+            problems.append(f"logs.{role} is absent")
+            continue
+        path = resolve_log(directory, name)
+        if path is None:
+            problems.append(f"the {role} log {name!r} is absent from the record (root or raw/)")
+            continue
+        texts[role] = path.read_text(errors="replace")
+    stages = chain.get("stages")
+    if not isinstance(stages, dict):
+        return problems + ["the chain has no stages"]
+    for stage_name, role in STAGE_ROLE.items():
+        stage = stages.get(stage_name)
+        if not isinstance(stage, dict) or role not in texts:
+            continue
+        line = stage.get("log_line")
+        if _nonempty(line) and line.strip() not in texts[role]:
+            problems.append(f"{stage_name}: the quoted line is not in the {role} log")
+        if stage_name == "6_apply":
+            walk = stage.get("walk_log_line")
+            if _nonempty(walk) and walk.strip() not in texts[role]:
+                problems.append("6_apply: the quoted walk line is not in the joiner log")
+    return problems
+
+
+def pin_problems(directory: Path, chain: object) -> list[str]:
+    """The named raw logs must be covered by the record's `SHA256SUMS.json`."""
+    sums_path = directory / "SHA256SUMS.json"
+    if not sums_path.is_file():
+        return [f"{sums_path}: the record has no SHA256SUMS.json"]
+    try:
+        sums = json.loads(sums_path.read_text())
+    except ValueError as error:
+        return [f"{sums_path}: not valid JSON: {error}"]
+    if not isinstance(sums, dict):
+        return [f"{sums_path}: not an object"]
+    logs = chain.get("logs") if isinstance(chain, dict) else None
+    if not isinstance(logs, dict):
+        return ["the chain does not name its raw logs"]
+    problems: list[str] = []
+    for role in ("joiner", "responder"):
+        name = logs.get(role)
+        if not _nonempty(name):
+            continue
+        path = resolve_log(directory, name)
+        if path is None:
+            continue  # raw_problems reports the absence
+        relative = path.relative_to(directory).as_posix()
+        digest = sums.get(relative, sums.get(name))
+        if digest is None:
+            problems.append(f"{relative} is not digest-pinned")
+        elif digest != hashlib.sha256(path.read_bytes()).hexdigest():
+            problems.append(f"{relative} digest does not match SHA256SUMS.json")
+    return problems
 
 
 # --------------------------------------------------------------------------------------------------
@@ -741,6 +868,13 @@ def check_record(directory: Path, policy: str) -> tuple[int, list[str]]:
             problems.append(
                 f"the chain declares {chain.get('locality')!r} but the record declares {label!r}"
             )
+    # **Bind the chain to the captured bytes, not only to itself.** The raw logs must contain the
+    # quoted lines; an off-host record must also be digest-pinned. A bare local run directory has
+    # no sums and gets inclusion only.
+    if isinstance(chain, dict) and isinstance(chain.get("logs"), dict):
+        problems.extend(raw_problems(directory, chain))
+        if policy == "off-host" or (directory / "SHA256SUMS.json").is_file():
+            problems.extend(pin_problems(directory, chain))
     return (1 if problems else 0), problems
 
 
@@ -788,6 +922,8 @@ def main(argv: list[str]) -> int:
         locality=args.locality,
         joiner_container=args.joiner_container,
         responder_container=args.responder_container,
+        joiner_log_name=args.joiner_log.name,
+        responder_log_name=args.responder_log.name,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(chain, indent=2, sort_keys=True) + "\n")

@@ -380,6 +380,7 @@ def join_chain(observations: dict, parameters: dict) -> dict:
         return verdict("FAIL", [f"unknown locality policy {policy!r}"])
     chain = record.get("chain")
     directory = None
+    packed = False
     try:
         if isinstance(record.get("files"), dict) and record["files"]:
             directory = _materialise(record["files"])
@@ -391,6 +392,7 @@ def join_chain(observations: dict, parameters: dict) -> dict:
                     return verdict("PRECONDITION", ["record.files, record.dir and record.chain are absent"])
                 path = None
             else:
+                packed = True
                 path = Path(claimed)
                 if not path.is_absolute():
                     path = ROOT / path
@@ -435,6 +437,17 @@ def join_chain(observations: dict, parameters: dict) -> dict:
         ):
             problems.append(
                 f"the chain declares {chain.get('locality')!r} but the record declares {label!r}")
+        # **The quoted lines must exist in the captured logs, not only inside the chain.** An
+        # off-host record must also be digest-pinned; a fixture or bare run directory is bound by
+        # inclusion and, when it carries sums, checked against them.
+        if (
+            path is not None
+            and isinstance(chain, dict)
+            and isinstance(chain.get("logs"), dict)
+        ):
+            problems.extend(_m3chain.raw_problems(path, chain))
+            if (policy == "off-host" and packed) or (path / "SHA256SUMS.json").is_file():
+                problems.extend(_m3chain.pin_problems(path, chain))
         if problems:
             return verdict("FAIL", problems)
         return verdict("PASS", [], {"locality": label, "state_hash": chain.get("correlation", {}).get("state_hash")})

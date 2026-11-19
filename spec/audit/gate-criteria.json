@@ -158,6 +158,52 @@
      "expected": "FAIL"
     },
     {
+     "name": "completeness metadata removed",
+     "mutation": [
+      "delete",
+      "record/chain/complete"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "completeness metadata is not boolean",
+     "mutation": [
+      "set",
+      "record/chain/complete",
+      "true"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "complete with recorded incomplete reasons",
+     "mutation": [
+      "set",
+      "record/chain/incomplete_reasons",
+      [
+       "a missing transport outcome"
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a contradictory transport line",
+     "mutation": [
+      "set",
+      "record/chain/stages/4_transport/log_line",
+      "FinalizedFringe to rnode://1111@203.0.113.7?protocol=40400&discovery=40404 was not sent: transport outcome delivered (state aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a raw log that does not contain the quoted lines",
+     "mutation": [
+      "set",
+      "record/files/joiner.log",
+      "not the captured log\n"
+     ],
+     "expected": "FAIL"
+    },
+    {
      "name": "loopback advertised on an off-host claim",
      "mutation": [
       "set",

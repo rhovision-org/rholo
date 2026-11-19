@@ -65,7 +65,7 @@ The layer is deliberately small:
 | `lockstep_acceptance` | selected pins; derived/declared lockstep window; no mixed version; required shape; independent reviewer; accepted verdict; incident trace | C357 |
 | `bounded_admission` | every ingress queue is bounded by a named constant; no unbounded channel; a full queue refuses in the bounded class | G428-M2 |
 | `off_host_claim` | an off-host/live-host claim carries a routable peer; loopback/private/encoded addresses cannot satisfy it | G428-M3 (locality half) |
-| `join_chain` | the six-stage chain is typed and complete: all stages keyed by peer + anchor, a transport outcome (not a send line), and served = received = restored = walked hashes; the off-host policy composes `off_host_claim` | G428-M3 |
+| `join_chain` | the six-stage chain is typed, `complete: true` and complete: all stages keyed by peer + anchor, a transport outcome whose words match (not a send line), served = received = restored = walked hashes, and every quoted line present in the named raw logs; an off-host record is digest-pinned; the off-host policy composes `off_host_claim` | G428-M3 |
 | `resource_attribution` | process accounting counts only the node's processes; unrelated processes cannot inflate or hide the count | G428-M1 |
 
 `human_attestation` is the only principle that consumes a human record. The layer checks the
