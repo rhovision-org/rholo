@@ -81,6 +81,18 @@
       "record/host_processes"
      ],
      "expected": "PRECONDITION"
+    },
+    {
+     "name": "one pid listed under two names",
+     "mutation": [
+      "append",
+      "record/host_processes",
+      {
+       "pid": 101,
+       "name": "rnode-watchdog"
+      }
+     ],
+     "expected": "FAIL"
     }
    ],
    "pass_condition_sha256": "8090b5de08f923f19998a33a51efd622da8e1ea5a50bfd7aff0ce1ec35b2adef"

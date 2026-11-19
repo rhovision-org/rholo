@@ -201,6 +201,25 @@ class CriterionTests(unittest.TestCase):
             principles.evaluate("human_attestation", {}, parameters)["status"],
             "PRECONDITION")
 
+    def test_a_materialised_map_cannot_escape_its_directory(self):
+        result = principles.evaluate(
+            "off_host_claim", {"record": {"files": {"../escape.log": "x"}}}, {})
+        self.assertEqual(result["status"], "FAIL", result)
+        self.assertFalse((ROOT / "target" / "escape.log").exists())
+
+    def test_a_process_pid_is_listed_once_across_names(self):
+        document = {"record": {
+            "host_processes": [
+                {"pid": 101, "name": "rnode"},
+                {"pid": 101, "name": "rnode-watchdog"},
+            ],
+            "declared_count": 1,
+        }}
+        self.assertEqual(
+            principles.evaluate("resource_attribution", document,
+                                {"process_name": "rnode"})["status"],
+            "FAIL")
+
     def test_the_registry_covers_every_machine_checkable_external_gate(self):
         executable = {"python", "rust-unit", "rust-integration", "two-binary",
                       "local-devnet", "live-host"}

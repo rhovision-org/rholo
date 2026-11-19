@@ -447,6 +447,14 @@ def check_binding(record: dict, base: Path) -> list[str]:
 
 def check_pressure(spec: dict, parameters: dict, source: str = "") -> tuple[str, list[str]]:
     """The typed-record half. Returns (PASS|FAIL|PRECONDITION, problems)."""
+    files = spec.get("files") if isinstance(spec, dict) else None
+    if isinstance(files, dict):
+        unsafe = [
+            key for key in files
+            if not isinstance(key, str) or Path(key).is_absolute() or ".." in Path(key).parts
+        ]
+        if unsafe:
+            return "FAIL", [f"pressure.files path escapes its directory: {unsafe[0]!r}"]
     base, cleanup = materialise(spec)
     try:
         if base is None:

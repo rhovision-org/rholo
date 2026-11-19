@@ -118,9 +118,16 @@ def _criterion_report(result: tuple) -> dict:
 
 
 def _materialise(files: dict) -> tempfile.TemporaryDirectory:
+    # A Python-only job on a fresh checkout has no target/; a criterion must not depend on a
+    # build artefact. A key that escapes the directory would write outside it.
+    (ROOT / "target").mkdir(parents=True, exist_ok=True)
     directory = tempfile.TemporaryDirectory(dir=ROOT / "target")
     base = Path(directory.name)
     for relative, text in files.items():
+        candidate = Path(str(relative))
+        if candidate.is_absolute() or ".." in candidate.parts:
+            directory.cleanup()
+            raise ValueError(f"a materialised file path escapes its directory: {relative!r}")
         path = base / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(text, bytes):
@@ -372,7 +379,7 @@ def bounded_admission(observations: dict, parameters: dict) -> dict:
         if isinstance(queues, list) and queues:
             command.extend(["--queues", ",".join(str(queue) for queue in queues)])
         proc = subprocess.run(command, capture_output=True, text=True, timeout=120,
-                              check=False)
+                              check=False, cwd=str(ROOT))
         if proc.returncode == 0:
             return verdict("PASS", [], {"source": str(path)})
         return verdict("FAIL", [line for line in (proc.stderr or proc.stdout).splitlines() if line][-4:])
@@ -538,18 +545,22 @@ def resource_attribution(observations: dict, parameters: dict) -> dict:
         return verdict("FAIL", ["record.declared_count must be a non-negative integer"])
     name = str(parameters.get("process_name") or "rnode")
     counted: list[int] = []
+    seen: set[int] = set()
     for entry in processes:
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             return verdict("FAIL", ["every process entry must be an object with a name"])
         pid = entry.get("pid")
         if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
             return verdict("FAIL", ["every process entry must carry a positive integer pid"])
+        if pid in seen:
+            # A host's process table has one entry per pid; a repeat is a malformed observation,
+            # not a second process, whatever name it carries.
+            return verdict("FAIL", ["a process pid is listed more than once"])
+        seen.add(pid)
         if entry["name"] == name:
             counted.append(pid)
     if not counted:
         return verdict("PRECONDITION", [f"no process named {name!r} was observed"])
-    if len(set(counted)) != len(counted):
-        return verdict("FAIL", [f"a {name} process pid is listed more than once"])
     if declared != len(counted):
         return verdict(
             "FAIL", [f"declared count {declared} != observed {len(counted)} {name} process(es)"])
