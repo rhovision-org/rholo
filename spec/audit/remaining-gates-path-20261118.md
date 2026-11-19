@@ -193,3 +193,7 @@ packing: a non-durable path fails the CI re-check by design.
   tasks.
 - The M2, M4, C343 and TA protocols are pre-registered and **not executed**; a runbook is a
   protocol, not evidence.
+- The external rows carry the **pre-binding** status; the generated `mainnet-gates.json` is
+  authoritative. `G520-MIGRATION` is `met` in the register through its authored binding while its
+  external row still reads `owes`; the split is intentional (the binding is the promotion proof),
+  not a stale claim.
