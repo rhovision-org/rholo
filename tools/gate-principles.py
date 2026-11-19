@@ -261,6 +261,8 @@ def phase_diagnosis(observations: dict, parameters: dict) -> dict:
     wanted = parameters.get("locality")
     if wanted:
         declared = observations.get("locality")
+        if not _present(declared):
+            return verdict("PRECONDITION", ["the observation declares no locality"])
         if declared != wanted:
             return verdict("FAIL", [
                 f"the observation declares {declared!r}; the criterion requires {wanted!r}"
@@ -271,19 +273,19 @@ def phase_diagnosis(observations: dict, parameters: dict) -> dict:
     if not table_path.is_file():
         return verdict("PRECONDITION", [f"phase table {table_path} is absent"])
     table = _c343.load_table(table_path)
-    observed = _c343.observation(health, operator)
-    if not _c343.consistent(observed):
-        return verdict("FAIL", ["the readiness/fault/isolation fields contradict each other"])
-    diagnosis = _c343.diagnose(table, observed)
-    if diagnosis == "unmodelled":
-        return verdict("PRECONDITION", ["the phase table names no diagnosis for this observation"])
-    block_text = str(observations.get("block6") or "")
-    block_status, block_detail = _c343.block6_disposition(block_text)
-    if block_status == "FAIL":
-        return verdict("FAIL", [f"block 6: {block_detail}"])
-    if block_status != "PASS":
-        return verdict("PRECONDITION", [f"block 6: {block_detail}"])
-    return verdict("PASS", [], {"diagnosis": diagnosis, "block6": block_detail})
+    block_text = observations.get("block6")
+    evaluation = _c343.host_evaluation(
+        health, operator, block_text if isinstance(block_text, str) else "", table)
+    if evaluation["verdict"] == "PASS":
+        return verdict("PASS", [], {
+            "diagnosis": evaluation["diagnosis"],
+            "block6": evaluation["cells"]["block6-disposition"]["detail"],
+        })
+    reasons = [
+        f"{name}: {value['detail']}"
+        for name, value in evaluation["cells"].items() if value["verdict"] != "PASS"
+    ]
+    return verdict(evaluation["verdict"], reasons)
 
 
 def lockstep_acceptance(observations: dict, parameters: dict) -> dict:

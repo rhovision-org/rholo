@@ -685,7 +685,7 @@
   {
    "gate_id": "C343",
    "principle": "phase_diagnosis",
-   "adapter": "tools/c343-live.py::verify_run",
+   "adapter": "tools/c343-live.py::host_evaluation",
    "parameters": {
     "table": "spec/audit/phase-diagnosis.tsv",
     "locality": "live-host"
@@ -693,7 +693,8 @@
    "requires": [
     "health",
     "operator",
-    "block6"
+    "block6",
+    "locality"
    ],
    "negative_controls": [
     {
@@ -745,6 +746,31 @@
       "set",
       "locality",
       "local-devnet"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a health document missing a contract field",
+     "mutation": [
+      "delete",
+      "health/blockPipeline"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "an operator document missing a contract field",
+     "mutation": [
+      "delete",
+      "operator/shards"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "a height gap that contradicts the reported lag",
+     "mutation": [
+      "set",
+      "health/finalizedLag",
+      2
      ],
      "expected": "FAIL"
     }
