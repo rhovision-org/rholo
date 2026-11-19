@@ -14050,3 +14050,51 @@ the pinned-blob check remains owed; the sign-off is unexecuted, so the tracker s
 
 **State.** 59 registered gates, 47 met, 12 unresolved; `--assert-closeable` exits 3; the full
 control corpus is 47 CONTROLLED (exit 0); `check-hardfork-51-closeout.py` still opens.
+
+## 186. The gate register holds only gates: the 12 host/live rows become release campaigns (2026-11-19)
+
+**What this pass found.** The register's own rule is that **a gate is a boolean test of the current
+build.** The 12 rows that had stayed open since before #628 (G428-M1..M4, G584-G1..G5, TA-C1/C2,
+C343) could not be closed by any amount of in-tree work: each needs independently provisioned
+hosts, a selected release candidate, an operator window or a live deployment. Counting them as
+gates made the headline metric ("12 unresolved") unreachable by construction and invited
+instrument-building in place of closures. The same page already excludes HF51, M5, M6, C357 and
+TA-C3 for exactly this reason.
+
+**What changed.**
+
+- **Classification, in the authored source.** `mainnet-gates.external.json` marks the 12
+  `gate: false` and `release_campaign: true`. The builder already excluded non-gates; the gate
+  register is now **47 gates, 47 met, 0 unresolved**.
+- **A real tracker, not a silent drop.** `release-campaigns.json` and `release-campaigns.md` are
+  generated from the same authored rows (floor of 12). Each campaign keeps its pass/fail condition,
+  owner, source pin, dependencies, related edges and executable criterion.
+- **A separate judge.** `check-release-campaigns.py` validates the tracker against the external
+  source and the gate register (a campaign can never be both), checks dependencies and related
+  edges, requires one criterion per campaign, hashes each campaign's pass condition, resolves the
+  adapter, and runs the criteria self-test. `--assert-ready` exits 3 while any campaign is open;
+  `--check` re-derives the tracker.
+- **The register stopped judging criteria.** `check-mainnet-gates.py` no longer loads
+  `gate-criteria.json` or runs the criteria self-test; that is the campaign judge's job. A gate
+  row that depends on a campaign is refused as an unknown dependency.
+- **The closeability flag now means what it says.** `check-mainnet-gates.py --assert-closeable`
+  exits 0 (the register is closed). Release is still blocked by
+  `check-release-campaigns.py --assert-ready` (exit 3) and the #51 closeout (exit 3).
+
+**Why believed.** The builder reports `gates: 47, campaigns: 12` and `--check` is CURRENT; the
+register check reports `gates 47, met 47, unresolved 0` and `--assert-closeable` exits 0; the
+campaign checker reports 12 open and `--assert-ready` exits 3; its tests cover a campaign gated
+back in, an orphan criterion, a dependency cycle, a directionless cross-family edge, a broken
+symmetry, a stale source excerpt, a changed pass-condition hash and a failing criteria self-test.
+The 47 met rows, their witnesses, controls and evidence are unchanged.
+
+**What it does not claim.** No campaign was closed and no new evidence was produced. The 12 remain
+release blockers; a closed gate register is not a release authorization. No gate was promoted —
+the count changed by reclassification. A Docker or local-devnet run may exercise a campaign's
+mechanism, but it is recorded as `local-devnet`, never relabelled as off-host, multi-host or live,
+and Docker is never the sole evidence for a `met` gate. No `.github/workflows/*` edit, public
+deployment, real key or transfer.
+
+**State.** 47 registered gates, all met, 0 unresolved; 12 open release campaigns;
+`check-mainnet-gates.py --assert-closeable` exits 0; `check-release-campaigns.py --assert-ready`
+exits 3; the #51 closeout still opens.
