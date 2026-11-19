@@ -476,6 +476,15 @@
       "record_data/evidence"
      ],
      "expected": "PRECONDITION"
+    },
+    {
+     "name": "one validator listed twice",
+     "mutation": [
+      "set",
+      "record_data/validators/1/id",
+      "B"
+     ],
+     "expected": "FAIL"
     }
    ],
    "pass_condition_sha256": "e6daf0b8e87077cab97821c329bab4110431ef2fcb89d76c37753bff9af1b17d"

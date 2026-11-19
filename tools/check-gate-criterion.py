@@ -90,11 +90,20 @@ def check_rejoin(data: dict, floor: float = FLOOR, ceiling: float = CEILING,
     if not isinstance(validators, list) or not validators:
         errors.append("validators must be a non-empty list")
         validators = []
+    seen_ids: set[str] = set()
     for validator in validators:
         if not isinstance(validator, dict):
             errors.append("every validator must be an object")
-        elif validator.get("finalized_anchor") is not True:
-            errors.append(f"validator {validator.get('id')!r} did not finalize the fixed anchor")
+            continue
+        ident = validator.get("id")
+        if not (isinstance(ident, str) and ident.strip()):
+            errors.append("every validator must carry a non-empty id")
+        elif ident in seen_ids:
+            errors.append(f"validator id {ident!r} is listed more than once")
+        else:
+            seen_ids.add(ident)
+        if validator.get("finalized_anchor") is not True:
+            errors.append(f"validator {ident!r} did not finalize the fixed anchor")
     return ("FAIL" if errors else "PASS"), errors, {"validators": len(validators)}
 
 
