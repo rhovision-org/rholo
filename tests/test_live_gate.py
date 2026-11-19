@@ -254,6 +254,8 @@ def good_events():
 
 class LiveGateFixture(unittest.TestCase):
     def setUp(self):
+        # This unit-test job may run in a clean checkout without a Rust build.
+        (ROOT / "target").mkdir(parents=True, exist_ok=True)
         self._tmp = tempfile.TemporaryDirectory(dir=ROOT / "target")
         self.addCleanup(self._tmp.cleanup)
         self.base = Path(self._tmp.name)
