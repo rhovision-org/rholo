@@ -171,9 +171,10 @@ class CriterionTests(unittest.TestCase):
             "independent": True,
             "signed_at": "2026-11-18T12:00:00Z",
             "verdict": "PASS",
-            "evidence_sha256": "a" * 64,
+            "evidence_sha256": gate_fixtures.manifest_sha256(
+                ROOT / gate_fixtures.ATTESTATION_RECORD),
             "verdict_url": "https://example.invalid/verdict",
-            "evidence_record": "spec/audit/evidence/c343-observation-shape-20261119",
+            "evidence_record": gate_fixtures.ATTESTATION_RECORD,
         }
         parameters = {"owner": "Owner / release coordination"}
         self.assertEqual(

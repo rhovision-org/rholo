@@ -244,8 +244,20 @@ def human_attestation(observations: dict, parameters: dict) -> dict:
         path = Path(str(record))
         if not path.is_absolute():
             path = ROOT / path
-        if not path.exists():
-            errors.append("attestation.evidence_record does not exist")
+        path = path.resolve()
+        if not path.is_dir():
+            errors.append("attestation.evidence_record is not a record directory")
+        elif not path.is_relative_to(ROOT.resolve()):
+            errors.append("attestation.evidence_record is outside the repository")
+        elif not (path / "manifest.json").is_file():
+            errors.append("attestation.evidence_record has no manifest.json")
+        elif (isinstance(digest, str) and HEX64.fullmatch(digest)
+              and hashlib.sha256((path / "manifest.json").read_bytes()).hexdigest() != digest):
+            # **The signed digest answers "which bytes did the reviewer see?"** A 64-hex value
+            # that matches nothing is the same as no digest at all; the promotion checker already
+            # binds it to the evidence record's manifest.
+            errors.append(
+                "attestation.evidence_sha256 does not match the cited record's manifest")
     if errors:
         return verdict("FAIL", errors)
     recorded = attestation.get("verdict")

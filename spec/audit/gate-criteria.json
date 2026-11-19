@@ -916,6 +916,24 @@
      "expected": "FAIL"
     },
     {
+     "name": "a signed digest that matches no record",
+     "mutation": [
+      "set",
+      "attestation/evidence_sha256",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an evidence record outside the repository",
+     "mutation": [
+      "set",
+      "attestation/evidence_record",
+      "../../../.."
+     ],
+     "expected": "FAIL"
+    },
+    {
      "name": "an inconclusive verdict",
      "mutation": [
       "set",
@@ -969,6 +987,24 @@
       "set",
       "attestation/evidence_record",
       "spec/audit/evidence/does-not-exist"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a signed digest that matches no record",
+     "mutation": [
+      "set",
+      "attestation/evidence_sha256",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an evidence record outside the repository",
+     "mutation": [
+      "set",
+      "attestation/evidence_record",
+      "../../../.."
      ],
      "expected": "FAIL"
     },
