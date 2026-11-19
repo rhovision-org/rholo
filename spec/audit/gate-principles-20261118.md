@@ -7,8 +7,8 @@
 
 ## Scope and the problem
 
-The canonical register (`spec/audit/mainnet-gates.json`, 111 gates, 0 met) records each gate as
-prose plus an owner. The executable checks that support the external gates are bespoke: each
+The canonical register (`spec/audit/mainnet-gates.json`, 59 gates, 47 met, 12 unresolved) records
+each gate as prose plus an owner. The executable checks that support the external gates are bespoke: each
 knows one instance, and several hardcode the instance in code rather than data.
 
 | checker | instance in the code |
@@ -58,7 +58,7 @@ The layer is deliberately small:
 | `no_false_settlement` | no surface claims settlement before a finalized observation; finality agrees; heights are consistent | G584-G3 |
 | `recovery_no_loss` | at least one accepted deploy exists; a post-window `finalizedSuccess` is for an accepted deploy; the same subject finalizes after an observed recovery; no accepted work is lost; no own-key halt or self-replay | G584-G4 |
 | `independent_observations` | ≥N distinct endpoints/identities contribute; each alias covers the required routes; records are hash-covered; no duplicate endpoint | G584-G5 |
-| `human_attestation` | one typed reviewer record: relationship, independence, verdict enum, evidence digest (equal to the evidence record's manifest digest and present in the cited record), https URL, UTC time, and a cited record that exists; reviewer ≠ owner in either direction | M6, G6, TA-C1/C2 |
+| `human_attestation` | one typed reviewer record: relationship, independence, verdict enum, evidence digest (equal to the evidence record's manifest digest and present in the cited record), https URL, UTC time, and a cited record inside the repository with a `manifest.json` whose digest the reviewer signed; reviewer ≠ owner in either direction | TA-C1, TA-C2 |
 | `healing_anchor` | a fixed finalized anchor survives a K-sample dwell and every validator finalizes it; moving-head equality is not the criterion; the evidence record verifies with pins and its declared digest is `sha256(manifest.json)` | G428-M4 |
 | `merge_accounting` | per-deploy effects; no unapplied kept write; no rejection without a conflict; kept effects read back from the produced state | G428-M5 |
 | `phase_diagnosis` | the observation declares the required locality (`live-host` for the gate); the host document carries the full 14/12-field health/operator contract and the verifier's per-host cells (height gap, readiness conjunction, fault latch, isolation, reset marker); an incomplete contract is `PRECONDITION`, never `FAIL`; the phase table's conditions hold; block-6 disposition is structural; a later orphan overrides an earlier accepted; 404/unparsed is `PRECONDITION` | C343 |
@@ -82,22 +82,48 @@ the witness's own file, `evidence.digest` to equal `sha256(manifest.json)`, and 
 repeats the evidence verification before it emits a `met` row, so a register is never generated from
 an empty or unpinned record.
 
+**The criterion is a promotion precondition, not a note.** A binding for a gate with a
+`gate-criteria.json` entry carries
+`criterion: {observations, sha256, verdict: "PASS"}`. The observation must be a file inside the
+binding's verified evidence record, listed in its manifest, with the declared bytes, and
+`evaluate_entry` must return `PASS`. The builder and the checker call one function
+(`criterion_binding_problem`), so a row the builder emits is a row the checker accepts. Only when
+the gate has an entry is the block required; a block on any other gate is refused as dead data.
+
+**The witness rule is one implementation.** `tools/gate-witness.py` answers "is this path::symbol a
+`#[test]`/`def`/`theorem`/`.md`/flag of this kind?"; `_binding_shape` and `resolve_witness` both call
+it, so the builder cannot emit a `met` row the judge would refuse.
+
+**The criteria self-test and the register check run in CI.** `tools/gate-selftest.py` builds one
+satisfying observation per entry, applies every declared control, deletes every required input
+(both through `evaluate_entry` and directly on the principle), and requires at least one `FAIL`
+control. `check-mainnet-gates.py::check_criteria` calls it (memoised), and the CI-run
+`tests/test_hardfork_51_closeout.py` executes `check-mainnet-gates.py --check`, which rebuilds the
+register, verifies all 47 `met` rows' witnesses/evidence/pins and runs the self-test. In a depth-1
+checkout the `register_dev_sha` ancestry check is recorded as `unverified-shallow` instead of
+failing; a full checkout still enforces it. `--run-controls` now exits non-zero on an `UNPROVEN` or
+`ERROR` control (`SKIPPED` Rust controls remain non-fatal), and the met ratchet has an independent
+floor (`MINIMUM_MET = 47` in the builder).
+
 ## What this is, and is not
 
 It is a **record measurement**: a `PASS` says an observation document satisfies the principle.
-It is not a promotion. The register still refuses a `met` gate without the existing
-witness/control/evidence/pin binding, and the register stays at 0 met.
+It is also a **promotion precondition** for the 12 executable-criterion gates. It is not a
+promotion by itself: the register still refuses a `met` gate without the witness/control/evidence/
+pin binding, and the register stays at 47 met / 12 unresolved.
 
 It does not replace the campaign. A multi-host host-loss arm, a measured soak and a signed
 transfer still need operators and hardware. What changes is that their output is a standard
 observation document that any reviewer or CI job can evaluate; the owner is accountable for the
-evidence, not for the test logic.
+evidence, not for the test logic. For the live G584 gates, `tools/gate-collect.py` writes
+`observations.json` and `evidence-pack pack` copies it to `raw/observations.json`; the observation's
+`record.dir` names the committed evidence record (a scratch `target/` run fails the CI re-run).
 
 `G584-G2/G3/G5` keep their `human-attestation` register rows. The executable criterion is an
-additional measurement binding cited by the evidence record; changing a `witness_kind` is a
-separate governance decision. `G428-M3`'s declared witness is now `tools/m3-join-chain.py::check_chain` and
-`G428-M5`'s is the `MergeReport` struct; both are `blocked`, so `resolve_witness` never runs.
-The layer records the real adapters and does not silently rewrite those rows.
+additional, now mandatory, measurement binding; changing a `witness_kind` is a separate governance
+decision. `G428-M3`'s declared witness is `tools/m3-join-chain.py::check_chain`; it is `blocked`, so
+`resolve_witness` never runs. (`G428-M5` is not a gate row.) The layer records the real adapters and
+does not silently rewrite those rows.
 
 ## Verification
 
@@ -106,11 +132,15 @@ python3 -m unittest discover -s tests -p test_gate_principles.py -v
 python3 -m unittest discover -s tests -p test_gate_collect.py -v
 python3 -m unittest discover -s tests -p test_gate_criterion.py -v
 python3 -m unittest discover -s tests -p test_live_gate.py -v
+python3 -m unittest discover -s tests -p test_c343_live.py -v
 python3 -m unittest discover -s tests -p test_mainnet_gates.py -v
+python3 -m unittest discover -s tests -p test_hardfork_51_closeout.py -v
 python3 -m unittest discover -s tests -p test_m3_join_chain.py -v
 python3 -m unittest discover -s tests -p test_m2_pressure.py -v
+python3 tools/gate-selftest.py
 python3 tools/gate-check.py --list
 python3 tools/check-mainnet-gates.py --check        # 59 gates, 47 met, 12 unresolved
+python3 tools/check-mainnet-gates.py --run-controls # 2 CONTROLLED, 45 SKIPPED
 python3 tools/check-mainnet-gates.py --assert-closeable   # exits 3
 ```
 

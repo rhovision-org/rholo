@@ -13829,3 +13829,45 @@ The old negative-control suites stay in place and must stay green.
 met, no row is flipped, no campaign ran, no evidence is invented. The multi-host campaigns, the
 measured soak, the M5 historical bundle and the live G1–G6 run remain external. The register
 stays 111 gates / 0 met; `--assert-closeable` and the #51 tracker still exit 3.
+
+## 181. The criteria layer becomes load-bearing and CI-visible (2026-11-19)
+
+The principle layer was broad but decorative. Three read-only audits found: promotion never ran
+the gate's executable criterion (the builder and checker validated witness/control/evidence/pins
+and stopped); the builder's witness check was weaker than the checker's, so it could emit a `met`
+row the judge refuses; no CI job validated `mainnet-gates.json` or the criteria (the hardfork
+step's `gate_binding` returns before `validate`, and the default command never calls it);
+`--run-controls` reported an unproven control and exited 0; and the met ratchet's floor was a copy
+of the document it guarded. Six residual false passes were confirmed by running criteria on crafted
+records.
+
+**Landed.** A binding for a gate with a `gate-criteria.json` entry carries
+`criterion: {observations, sha256, verdict: "PASS"}`; the observation is a file inside the verified
+evidence record, listed in its manifest, and `evaluate_entry` must return PASS. The builder and
+checker share `criterion_binding_problem`. `tools/gate-witness.py` is the one kind-specific witness
+resolver for both. `tools/gate-selftest.py` (base PASS, every declared control, every required
+input, direct-principle load-bearing) runs from `check_criteria`; the CI-run
+`test_hardfork_51_closeout.py` executes `check-mainnet-gates.py --check`, and a depth-1 checkout
+records ancestry as `unverified-shallow` instead of failing. `--run-controls` exits 1 on
+`UNPROVEN`/`ERROR` (baseline 2 CONTROLLED, 45 SKIPPED), and `MINIMUM_MET = 47` is an independent
+floor. `evidence-pack verify` refuses symlinks. Residual fixes: G3 requires four finality
+observers; M4 requires non-empty unique validator ids; G5 binds `events` to the retained
+`samples.jsonl`, refuses escaping paths, and covers exact paths; TA attests the cited record's
+manifest digest and an in-repo record; C343 type-checks its contract; two M2 controls mutate the
+transcripts; pids are unique across the process table and materialised maps cannot escape.
+
+**Why believed.** Each new control is declared in `gate-criteria.json` and run by the self-test;
+the synthetic promotion tests cover a missing criterion, a wrong digest, a non-passing observation
+and a promoting one on G584-G1; the hook test feeds `check_criteria` a failing self-test and
+requires the check to fail; and the builder/checker now share the witness and criterion code
+rather than re-deriving it. The register remains byte-identical: 59 gates, 47 met, 12 unresolved.
+
+**What it does not claim.** No gate is promoted; no campaign, public deployment, real key,
+transfer or second host ran; no `.github/workflows/*` file is edited. A criterion PASS is still a
+record measurement, now also a promotion precondition. Rust controls remain `SKIPPED` under
+`--run-controls`; their committed FAIL records are provenance, not a re-run. F14 (assertion-level
+Rust witnesses), HF51 acceptance-record shape trust, M1's typed tier record, M3-11 failover and the
+remaining CI wiring are owed, not waived.
+
+**State.** 59 registered gates, 47 met, 12 unresolved; `--assert-closeable` exits 3;
+`check-hardfork-51-closeout.py` still opens.

@@ -10,9 +10,12 @@ ledger edit that is not reflected here is a drift failure.
 This builder is not an oracle. It records what the ledgers say and applies the
 authored measurement bindings in `mainnet-gates.bindings.json`. A gate is
 promoted to `met` only when a complete binding exists and the row is eligible:
-a decision/blocked/precondition/superseded row is never eligible, an S6 row
-needs an accepted disposition with a category-A effect, an HF51 row needs a
-merged or verified ledger item, and every dependency must already be met. The
+a decision/blocked/precondition/superseded row is never eligible, an HF51 row
+needs a merged or verified ledger item, and every dependency must already be
+met. The section-6 review is tracked in `section6-dispositions.json`; since
+2026-11-18 it is not a gate condition. An executable-criterion gate also needs
+a `criterion` block whose pinned observation the gate's own evaluator passes.
+The
 builder never invents a witness, a control or evidence; the checker
 `tools/check-mainnet-gates.py` is the judge of the resulting `met` row.
 """
