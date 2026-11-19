@@ -493,8 +493,8 @@ def base_g584_g5() -> dict:
 
 
 def base_c343() -> dict:
-    return {"health": c343._base_health(), "operator": c343._base_operator(),
-            "block6": "block 6 accepted"}
+    return {"locality": "live-host", "health": c343._base_health(),
+            "operator": c343._base_operator(), "block6": "block 6 accepted"}
 
 
 def base_c357() -> dict:

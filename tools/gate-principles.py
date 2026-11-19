@@ -258,6 +258,13 @@ def phase_diagnosis(observations: dict, parameters: dict) -> dict:
     operator = observations.get("operator")
     if not isinstance(health, dict) or not isinstance(operator, dict):
         return verdict("PRECONDITION", ["health and operator observations are required"])
+    wanted = parameters.get("locality")
+    if wanted:
+        declared = observations.get("locality")
+        if declared != wanted:
+            return verdict("FAIL", [
+                f"the observation declares {declared!r}; the criterion requires {wanted!r}"
+            ])
     table_path = Path(parameters.get("table") or _c343.DEFAULT_TABLE)
     if not table_path.is_absolute():
         table_path = ROOT / table_path
@@ -527,7 +534,7 @@ PARAMETER_SCHEMA = {
     "human_attestation": {"owner": str},
     "healing_anchor": {"floor": (int, float), "ceiling": (int, float), "min_dwell": int},
     "merge_accounting": {},
-    "phase_diagnosis": {"table": str},
+    "phase_diagnosis": {"table": str, "locality": str},
     "lockstep_acceptance": {"table": str, "require_original_trace": bool,
                             "max_window": (int, float)},
     "bounded_admission": {"queues": list},

@@ -687,7 +687,8 @@
    "principle": "phase_diagnosis",
    "adapter": "tools/c343-live.py::verify_run",
    "parameters": {
-    "table": "spec/audit/phase-diagnosis.tsv"
+    "table": "spec/audit/phase-diagnosis.tsv",
+    "locality": "live-host"
    },
    "requires": [
     "health",
@@ -737,6 +738,15 @@
       ]
      ],
      "expected": "PRECONDITION"
+    },
+    {
+     "name": "a local-devnet observation claiming the live locality",
+     "mutation": [
+      "set",
+      "locality",
+      "local-devnet"
+     ],
+     "expected": "FAIL"
     }
    ],
    "pass_condition_sha256": "27995ccfcd55dee8e44806cb04d6904e223c8ed97a9c0e5fe728d98be80a6a25"
