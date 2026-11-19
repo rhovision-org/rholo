@@ -25,6 +25,7 @@ def _load(name: str, path: Path):
 
 fixtures = _load("gate_fixtures", ROOT / "tests" / "gate_fixtures.py")
 pressure = _load("m2_pressure", ROOT / "tools" / "m2-pressure.py")
+arm = _load("m2_pressure_arm", ROOT / "tools" / "m2-pressure-arm.py")
 
 PARAMETERS = {"locality": "public-live", "rate_ceiling": 100}
 
@@ -87,6 +88,73 @@ class PressureTests(unittest.TestCase):
         status, problems = pressure.check_pressure(spec["pressure"], PARAMETERS)
         self.assertEqual(status, "FAIL")
         self.assertTrue(any("local" in problem for problem in problems), problems)
+
+
+class ArmTests(unittest.TestCase):
+    def phase(self, base: Path, mode: str, files: dict) -> Path:
+        out = base / mode
+        (out / "raw").mkdir(parents=True)
+        (out / "raw" / f"http-{mode}.jsonl").write_text(files[f"raw/http-{mode}.jsonl"])
+        (out / "raw" / f"direct-{mode}.txt").write_text(files[f"raw/direct-{mode}.txt"])
+        (out / "raw" / f"{mode}-inspect.json").write_text(
+            files[f"raw/{mode}-inspect.json"]
+        )
+        (out / "raw" / f"{mode}-version.txt").write_text(files[f"raw/{mode}-version.txt"])
+        summary = {
+            "mode": mode,
+            "cap": 2 if mode == "capped" else None,
+            "held": 2 if mode == "capped" else 0,
+            "probe": 4 if mode == "capped" else 6,
+            "admitted": 0 if mode == "capped" else 6,
+            "refused": 4 if mode == "capped" else 0,
+            "server_errors": 0,
+            "retry_after": 4 if mode == "capped" else 0,
+            "handler_reached_after_release": True,
+            "requests_per_second": 20.0 if mode == "capped" else 8.3,
+            "refusal": {"class": "429" if mode == "capped" else "none",
+                        "message": "HTTP in-flight capacity exhausted" if mode == "capped"
+                        else ""},
+            "transcript": f"raw/http-{mode}.jsonl",
+            "direct": {
+                "status_line": "HTTP/1.1 429" if mode == "capped" else "HTTP/1.1 400",
+                "retry_after": 1 if mode == "capped" else None,
+                "transcript": f"raw/direct-{mode}.txt",
+            },
+            "binary_sha256": "b" * 64,
+        }
+        (out / "phase.json").write_text(json.dumps(summary))
+        return out
+
+    def test_assemble_writes_a_record_that_passes_the_local_policy(self):
+        import argparse
+        base = Path(tempfile.mkdtemp())
+        files = fixtures.base_g428_m2()["pressure"]["files"]
+        capped = self.phase(base, "capped", files)
+        unset = self.phase(base, "unset", files)
+        grpc_dir = base / "grpc"
+        grpc_dir.mkdir()
+        (grpc_dir / "grpc-capped.jsonl").write_text(files["raw/grpc-capped.jsonl"])
+        (grpc_dir / "grpc-permissive.jsonl").write_text(files["raw/grpc-permissive.jsonl"])
+        (grpc_dir / "grpc-summary.json").write_text(json.dumps({
+            "ingress_rate": {"admitted": 1, "refused": 1, "code": 8, "retry_after": None},
+            "pool_full": {"admitted": 0, "refused": 1, "code": 8, "retry_after": 1},
+            "permissive": {"admitted": 2, "refused": 0},
+        }))
+        out = base / "record"
+        code = arm.assemble(argparse.Namespace(
+            capped=str(capped), unset=str(unset), grpc=str(grpc_dir), out=str(out),
+            locality="local-devnet", port=40403, source_sha="a" * 40,
+            binary_sha256="",
+        ))
+        self.assertEqual(code, 0)
+        self.assertTrue((out / "observations.json").is_file())
+        local = {"locality": "local-devnet", "rate_ceiling": 100}
+        status, problems = pressure.check_pressure({"dir": str(out)}, local)
+        self.assertEqual(status, "PASS", problems)
+        status, problems = pressure.check_pressure({"dir": str(out)},
+                                                   {"locality": "public-live",
+                                                    "rate_ceiling": 100})
+        self.assertEqual(status, "FAIL")
 
 
 class CliTests(unittest.TestCase):
