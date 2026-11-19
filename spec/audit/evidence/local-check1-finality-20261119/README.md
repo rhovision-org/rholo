@@ -2,6 +2,16 @@
 
 **Evidence locality.** `local-devnet`
 
+> **Correction, 2026-11-19 (red-team review).** The Result section below overstates the raw record.
+> The raw record supports: marker `42` at finalised height 14 (`c6f8f074`) on all four validators;
+> marker `[]` at finalised height 34 (`be511bec`) on **validator 0 only** (validators 1–3 were not
+> probed before the harness raised). The height-46 / `9b6f8b58` / all-four late-head statements are
+> not in the record; the `--local` harness is not in the source pin. See
+> `spec/audit/release-campaign-red-team-20261119.md`. The raw finding still stands — a write present
+> at height 14 and absent at height 34 on the one validator probed, with the deploy named as riding
+> a final-scope rejected chain in all four logs. A re-run with committed tooling, all-validator
+> probes at a fixed `(height, hash)`, and a settlement-endpoint sample is required.
+
 ## Scope
 
 Local release check 1 on the standard `local-4` profile: one host, Docker, four validators, 4 GiB
