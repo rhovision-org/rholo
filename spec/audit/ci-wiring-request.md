@@ -100,6 +100,14 @@ corpus at release time and record it. `tests/test_rust_controls.py` is reached t
 `tests/test_hardfork_51_closeout.py` discovery (the `RustControlTests` wrapper), so no additional
 workflow line is needed; its live case builds a dependency-free toy crate, not the corpus.
 
+## The release-campaign tracker (2026-11-19)
+
+The 12 host/live obligations moved out of the gate register into
+`spec/audit/release-campaigns.json`. `tests/test_release_campaigns.py` is reached through the
+existing `tests/test_hardfork_51_closeout.py` discovery (`ReleaseCampaignTests`), so no workflow
+line is needed; its CI-reached `--check` validates the generated tracker and runs the criteria
+self-test. `check-release-campaigns.py --assert-ready` (exit 3) is the release checkpoint.
+
 ## HF51 provenance (2026-11-19)
 
 `tests/test_hardfork_51_closeout.py` and `tests/test_section6_inventory.py` already run in the
@@ -120,8 +128,10 @@ or `.github/workflows/*` edit is proposed.
 
 ## Local equivalent
 
-The PR checklist runs the same commands; `check-mainnet-gates.py --assert-closeable` and
-`check-hardfork-51-closeout.py --verify-local-git --assert-closeable` both exit 3 by design.
+The PR checklist runs the same commands. Since the 2026-11-19 split the gate register is 47 gates,
+all met, so `check-mainnet-gates.py --assert-closeable` exits **0**; release is still blocked by
+`check-release-campaigns.py --assert-ready` (exit 3, 12 open campaigns) and by
+`check-hardfork-51-closeout.py --verify-local-git --assert-closeable` (exit 3).
 
 ## The M4 and M2 suites (2026-11-19)
 

@@ -6,22 +6,12 @@ Do not edit by hand; the checker compares this file with the JSON.
 - register dev: `dd6a25d69128375d83b7a7701c169ce672e57536`
 - ledger source dev: `e33125f65a95cff4f12baf8139a7361c7d158e43`
 - generated: 2026-11-18
-- gates: 59
+- gates: 47
 - met: 47
 
 | gate | family | status | title | locality | owner |
 |---|---|---|---|---|---|
-| `C343` | C343 | **precondition** | Private-chain surface: live B/C/D read-only phase diagnosis | live-host | Aria / operator |
-| `G428-M1` | G428 | **blocked** | Supported capacity and physical fault domains | multi-host | Jim / release coordination |
-| `G428-M2` | G428 | **owes** | Bounded public ingress and overload behavior | live-host | Jim / release coordination |
-| `G428-M3` | G428 | **blocked** | Off-host bootstrap and fringe completion | off-host | Aria / evidence work |
-| `G428-M4` | G428 | **blocked** | Finality, liveness and autonomous recovery | multi-host | Jim / release coordination |
 | `G520-MIGRATION` | G520 | **met** | Populated-store migration and replay qualification | single-host | Jim / release coordination |
-| `G584-G1` | G584 | **external** | Installed pins | live-host | Aria / operator |
-| `G584-G2` | G584 | **external** | Signed deploy lifecycle | live-host | Aria / operator |
-| `G584-G3` | G584 | **external** | No false settlement | live-host | Aria / operator |
-| `G584-G4` | G584 | **external** | Recovery without loss | live-host | Aria / operator |
-| `G584-G5` | G584 | **external** | Independent observations | live-host | Aria / operator |
 | `S6-002725fa6a14a386` | S6 | **met** | **The finality gate's partition is the *live weight set***: `calculate_fringe` takes the set a candidate must have been  | unit | Jim / independent audit reviewer |
 | `S6-0879bf292d995e9f` | S6 | **met** | **Equivocating blocks are refused** — at `insert` (H-1) and at restore (H1c) — where the oracle has no such gate | unit | Jim / independent audit reviewer |
 | `S6-0963a698bc9c4ee4` | S6 | **met** | **Liveness enforcement is a new PoS boundary rule (RCHIP #55, Law 89).** | integration | @PatrickMockridge |
@@ -68,11 +58,11 @@ Do not edit by hand; the checker compares this file with the JSON.
 | `S6-f7d55fe093312364` | S6 | **met** | **Native writes join the merge's conflict relation** (issue #83): two chains of different blocks that wrote a common nat | unit | Jim / independent audit reviewer |
 | `S6-fb6f884e759d7af7` | S6 | **met** | **The parent-relative timestamp validity bound is retired; header time is informational** (`casper/src/validate.rs::bloc | unit | Jim / independent audit reviewer |
 | `S6-fbcd04455372e58c` | S6 | **met** | Storage is **refunded** when a produce/consume matches (the gas a matched op costs) | unit | Jim / independent audit reviewer |
-| `TA-C1` | TA | **blocked** | Anyone can propose, and production is bounded | live-host | Jim / release coordination |
-| `TA-C2` | TA | **external** | Validators can be dropped and joined without risk | live-host | Aria / evidence work |
 
 Status is a disposition of the evidence, not a release claim. A gate is `met` only
 when its witness resolves, its negative control is recorded, its evidence is pinned,
 and every dependency is satisfied.
-The register records **47 of 59 gates `met`**; every other
-gate is open with a stated reason.
+The register records **47 of 47 gates `met`**.
+It contains only current-build gates; host/live obligations are release campaigns in
+[`release-campaigns.md`](release-campaigns.md), and a closed register is not a release
+authorization.

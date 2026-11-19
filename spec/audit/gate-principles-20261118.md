@@ -1,15 +1,18 @@
 # Principle-level gate criteria — 2026-11-18
 
-> **Scope correction, 2026-11-18 (sense check).** The gate register now carries only boolean
-> current-build tests. M5, M6, G6, C357, TA-C3, the withdrawn S6 row and the 44 HF51 rows are not
-> gates; they are release/sign-off obligations in their own trackers. The M5 and C357 criteria below
-> remain method records but are no longer gate coverage.
+> **Scope correction, 2026-11-18 (sense check); extended 2026-11-19.** The gate register carries
+> only boolean current-build tests. M5, M6, G6, C357, TA-C3, the withdrawn S6 row, the 44 HF51 rows
+> and — since 2026-11-19 — the 12 host/live rows (G428-M1..M4, G584-G1..G5, TA-C1/C2, C343) are not
+> gates; they are release/sign-off obligations in their own trackers. The criteria below remain the
+> executable judges for those campaigns, but they are no longer gate coverage.
 
 ## Scope and the problem
 
-The canonical register (`spec/audit/mainnet-gates.json`, 59 gates, 47 met, 12 unresolved) records
-each gate as prose plus an owner. The executable checks that support the external gates are bespoke: each
-knows one instance, and several hardcode the instance in code rather than data.
+The canonical register (`spec/audit/mainnet-gates.json`, **47 gates, all met**) records each gate
+as prose plus an owner. Since 2026-11-19 the 12 host/live obligations are release campaigns
+(`release-campaigns.json`), not gates; their executable criteria remain in `gate-criteria.json`
+and are judged by `check-release-campaigns.py`. The executable checks are bespoke: each knows one
+instance, and several hardcode the instance in code rather than data.
 
 | checker | instance in the code |
 |---|---|
@@ -130,9 +133,10 @@ ratchet has an independent floor (`MINIMUM_MET = 47` in the builder).
 ## What this is, and is not
 
 It is a **record measurement**: a `PASS` says an observation document satisfies the principle.
-It is also a **promotion precondition** for the 12 executable-criterion gates. It is not a
-promotion by itself: the register still refuses a `met` gate without the witness/control/evidence/
-pin binding, and the register stays at 47 met / 12 unresolved.
+It also judges each release campaign's record. It is not a gate promotion by itself: a gate still
+needs the witness/control/evidence/pin binding, and the 12 campaigns need their operator evidence
+and criterion PASS. The gate register is 47 current-build gates, all met; the campaign tracker is
+12 open campaigns.
 
 It does not replace the campaign. A multi-host host-loss arm, a measured soak and a signed
 transfer still need operators and hardware. What changes is that their output is a standard
@@ -141,11 +145,11 @@ evidence, not for the test logic. For the live G584 gates, `tools/gate-collect.p
 `observations.json` and `evidence-pack pack` copies it to `raw/observations.json`; the observation's
 `record.dir` names the committed evidence record (a scratch `target/` run fails the CI re-run).
 
-`G584-G2/G3/G5` keep their `human-attestation` register rows. The executable criterion is an
-additional, now mandatory, measurement binding; changing a `witness_kind` is a separate governance
-decision. `G428-M3`'s declared witness is `tools/m3-join-chain.py::check_chain`; it is `blocked`, so
-`resolve_witness` never runs. (`G428-M5` is not a gate row.) The layer records the real adapters and
-does not silently rewrite those rows.
+`G584-G2/G3/G5` keep their `human-attestation` campaign rows. The executable criterion is the
+campaign's measurement binding; changing a `witness_kind` is a separate governance decision.
+`G428-M3`'s declared witness is `tools/m3-join-chain.py::check_chain`; the campaign stays open until
+its off-host record exists. (`G428-M5` is neither a gate nor a campaign.) The layer records the real
+adapters and does not silently rewrite those rows.
 
 ## Verification
 
@@ -161,10 +165,12 @@ python3 -m unittest discover -s tests -p test_m3_join_chain.py -v
 python3 -m unittest discover -s tests -p test_m2_pressure.py -v
 python3 tools/gate-selftest.py
 python3 tools/gate-check.py --list
-python3 tools/check-mainnet-gates.py --check        # 59 gates, 47 met, 12 unresolved
+python3 tools/check-mainnet-gates.py --check        # 47 gates, all met, 0 unresolved
 python3 tools/check-mainnet-gates.py --run-controls --controls python  # 2 CONTROLLED, 45 SKIPPED
 python3 tools/check-mainnet-gates.py --run-controls                    # 47 CONTROLLED
-python3 tools/check-mainnet-gates.py --assert-closeable   # exits 3
+python3 tools/check-mainnet-gates.py --assert-closeable   # exits 0 (register closed)
+python3 tools/check-release-campaigns.py --assert-ready   # exits 3 (12 campaigns open)
 ```
 
-Expected unchanged by this layer: 59 gates, 47 met, 12 unresolved; closeout exits 3.
+Expected after the 2026-11-19 split: 47 current-build gates, all met; 12 open release campaigns;
+the gate register closes and release remains blocked.

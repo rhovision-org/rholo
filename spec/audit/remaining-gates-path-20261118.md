@@ -1,5 +1,12 @@
 # The last 12 gates — path and measurements, 2026-11-18
 
+> **Correction, 2026-11-19.** These 12 rows are **release campaigns, not gates**: each needs hosts,
+> a selected candidate or an operator window, so none is a boolean test of the current build. The
+> gate register is now 47 gates, all met (`mainnet-gates.json`); the 12 obligations, their paths and
+> measurements below remain authoritative in `release-campaigns.json`, where
+> `check-release-campaigns.py --assert-ready` still exits 3. Nothing below is waived; “gate” in this
+> page means “campaign”.
+
 ## The dependency fact
 
 Nine of the twelve open gates declare `depends_on: G584-G1`:
@@ -179,7 +186,9 @@ packing: a non-durable path fails the CI re-check by design.
 
 ## What this does not establish
 
-- No gate was promoted. The register is still 59 gates, 47 met, 12 open.
+- No gate was promoted. At the time of this measurement the register was 59 gates, 47 met, 12
+  open; the 2026-11-19 correction above classifies the 12 as release campaigns, so the gate
+  register is now 47 gates, all met.
 - The A1.3 record is `local-devnet`, not the live TA-C1 witness; the rehearsal's preflight is
   synthetic and is not #584 evidence.
 - No public deployment, real key, transfer or disruptive public-network arm ran.
