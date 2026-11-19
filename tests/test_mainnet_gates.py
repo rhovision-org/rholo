@@ -36,6 +36,11 @@ MUTATION = {
 }
 
 
+def record_digest(record: str) -> str:
+    """The digest a binding's `evidence.digest` must carry: sha256(manifest.json)."""
+    return hashlib.sha256((Path(record) / "manifest.json").read_bytes()).hexdigest()
+
+
 class RegisterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -64,8 +69,6 @@ class RegisterTests(unittest.TestCase):
         (cls.binding_root / "witness.py").write_text(
             "def witness():\n    pass\n\ndef self_test():\n    pass\n")
         (cls.binding_root / "mutation.py").write_text("before\n")
-        (cls.binding_root / "pass-record").mkdir()
-        (cls.binding_root / "fail-record").mkdir()
 
     @classmethod
     def tearDownClass(cls):
@@ -105,7 +108,7 @@ class RegisterTests(unittest.TestCase):
         }
         row["evidence"] = {
             "url": "https://github.com/rhovision-org/rholo/actions/runs/1",
-            "digest": "c" * 64,
+            "digest": record_digest(self.records[("G520-MIGRATION", "PASS")]),
             "source_sha": "a" * 40,
             "binary_sha256": "b" * 64,
             "record": self.records[("G520-MIGRATION", "PASS")],
@@ -127,7 +130,14 @@ class RegisterTests(unittest.TestCase):
             run_record=self.records[("G584-G1", "FAIL")],
         )
         row["evidence"]["record"] = self.records[("G584-G1", "PASS")]
+        row["evidence"]["digest"] = record_digest(row["evidence"]["record"])
         return row
+
+    def write_review(self, reviewer: str, verdict: str, digest: str) -> Path:
+        path = Path(self.tmp.name) / "review.md"
+        path.write_text(f"# Review\n\nReviewer: {reviewer}\nVerdict: {verdict}\n"
+                        f"Evidence: {digest}\n")
+        return path
 
     def make_binding(self, ident="G520-MIGRATION"):
         row = next(row for row in REGISTER["gates"] if row["id"] == ident)
@@ -153,15 +163,15 @@ class RegisterTests(unittest.TestCase):
                                  "before": "before", "after": "after"},
                     "test": f"{witness}::self_test",
                     "expected": "FAIL",
-                    "run_record": str(self.binding_root / "fail-record"),
+                    "run_record": self.records[("G520-MIGRATION", "FAIL")],
                 },
             },
             "evidence": {
                 "url": "https://example.invalid/evidence",
-                "digest": "c" * 64,
+                "digest": record_digest(self.records[("G520-MIGRATION", "PASS")]),
                 "source_sha": "a" * 40,
                 "binary_sha256": "b" * 64,
-                "record": str(self.binding_root / "pass-record"),
+                "record": self.records[("G520-MIGRATION", "PASS")],
             },
         }
 
@@ -243,7 +253,7 @@ class RegisterTests(unittest.TestCase):
         binding = self.make_binding()
         binding["witness_binding"]["control"]["run_record"] = str(
             self.binding_root / "absent")
-        with self.assertRaisesRegex(ValueError, "run record does not exist"):
+        with self.assertRaisesRegex(ValueError, "control run record"):
             self.apply_bindings([binding])
 
     def test_a_decision_binding_is_refused(self):
@@ -417,10 +427,71 @@ class RegisterTests(unittest.TestCase):
             "independent": True,
             "verdict": "PASS",
             "signed_at": "2026-11-18T12:00:00Z",
-            "evidence_sha256": "c" * 64,
+            "evidence_sha256": row["evidence"]["digest"],
         }
         with self.assertRaisesRegex(gate.GateError, "attestation.review_record"):
             self.inspect()
+
+    def test_human_attestation_needs_the_evidence_digest(self):
+        row = self.make_human_met("G584-G1")
+        digest = row["evidence"]["digest"]
+        review = self.write_review("external-reviewer", "PASS", digest)
+        row["attestation"] = {
+            "reviewer": "external-reviewer",
+            "relationship": "not the owner",
+            "independent": True,
+            "verdict": "PASS",
+            "signed_at": "2026-11-18T12:00:00Z",
+            "review_record": str(review),
+        }
+        with self.assertRaisesRegex(gate.GateError, "evidence_sha256"):
+            self.inspect()
+
+    def test_the_signed_digest_must_be_the_evidence_digest(self):
+        row = self.make_human_met("G584-G1")
+        review = self.write_review("external-reviewer", "PASS", "c" * 64)
+        row["attestation"] = {
+            "reviewer": "external-reviewer",
+            "relationship": "not the owner",
+            "independent": True,
+            "verdict": "PASS",
+            "signed_at": "2026-11-18T12:00:00Z",
+            "review_record": str(review),
+            "evidence_sha256": "c" * 64,
+        }
+        with self.assertRaisesRegex(gate.GateError, "not the evidence digest"):
+            self.inspect()
+
+    def test_the_review_record_must_carry_the_digest(self):
+        row = self.make_human_met("G584-G1")
+        digest = row["evidence"]["digest"]
+        review = self.write_review("external-reviewer", "PASS", "d" * 64)
+        row["attestation"] = {
+            "reviewer": "external-reviewer",
+            "relationship": "not the owner",
+            "independent": True,
+            "verdict": "PASS",
+            "signed_at": "2026-11-18T12:00:00Z",
+            "review_record": str(review),
+            "evidence_sha256": digest,
+        }
+        with self.assertRaisesRegex(gate.GateError, "carry the evidence digest"):
+            self.inspect()
+
+    def test_a_complete_attestation_is_accepted(self):
+        row = self.make_human_met("G584-G1")
+        digest = row["evidence"]["digest"]
+        review = self.write_review("external-reviewer", "PASS", digest)
+        row["attestation"] = {
+            "reviewer": "external-reviewer",
+            "relationship": "not the owner",
+            "independent": True,
+            "verdict": "PASS",
+            "signed_at": "2026-11-18T12:00:00Z",
+            "review_record": str(review),
+            "evidence_sha256": digest,
+        }
+        self.assertIsInstance(self.inspect(), dict)
 
     def test_bare_path_witness_is_refused(self):
         row = self.make_met()
@@ -432,6 +503,28 @@ class RegisterTests(unittest.TestCase):
         row = self.make_met()
         row["witness_ref"] = "casper/src/merging.rs::MergeReport"
         with self.assertRaisesRegex(gate.GateError, "#\\[test\\]"):
+            self.inspect()
+
+    def test_python_witness_must_be_a_definition(self):
+        row = self.make_met()
+        path = self.binding_root / "comment-only.py"
+        path.write_text("# the witness is mentioned here only\n")
+        row["witness_kind"] = "python"
+        row["witness_ref"] = f"{path}::witness"
+        with self.assertRaisesRegex(gate.GateError, "not defined"):
+            self.inspect()
+
+    def test_the_control_self_test_must_be_in_the_witness_file(self):
+        row = self.make_met()
+        row["witness_binding"]["control"]["test"] = (
+            f"{self.binding_root / 'witness.py'}::self_test")
+        with self.assertRaisesRegex(gate.GateError, "own file"):
+            self.inspect()
+
+    def test_evidence_digest_must_match_the_manifest(self):
+        row = self.make_met()
+        row["evidence"]["digest"] = "c" * 64
+        with self.assertRaisesRegex(gate.GateError, "manifest"):
             self.inspect()
 
     def test_source_ref_must_name_the_gate(self):

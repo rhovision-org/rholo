@@ -36,10 +36,10 @@
 //! silent corruption. [`crate::framed`] is not reused: it frames with netstrings, and its own doc
 //! already says a transport with different framing writes its own module.
 //!
-//! **`peer_address` is reported**, unlike [`crate::unix`]. This is TCP underneath, so the dial policy
-//! *can* judge a peer of this transport and Law 62's origin rule applies to it in full — a remote
-//! Noise peer may not aim this node at one of the node's own local addresses. That the channel is
-//! encrypted says nothing about where the peer is or what it may reach.
+//! **`peer_address` is reported**, unlike the `unix` transport. This is TCP underneath, so the dial
+//! policy *can* judge a peer of this transport and Law 62's origin rule applies to it in full — a
+//! remote Noise peer may not aim this node at one of the node's own local addresses. That the
+//! channel is encrypted says nothing about where the peer is or what it may reach.
 
 use std::io;
 use std::net::SocketAddr;

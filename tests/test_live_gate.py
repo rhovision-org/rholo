@@ -254,7 +254,8 @@ def good_events():
 
 class LiveGateFixture(unittest.TestCase):
     def setUp(self):
-        # This unit-test job may run in a clean checkout without a Rust build.
+        # The test job runs without compiling Rust first, so target/ may not exist on a
+        # fresh checkout; the temporary directory must not depend on a build artefact.
         (ROOT / "target").mkdir(parents=True, exist_ok=True)
         self._tmp = tempfile.TemporaryDirectory(dir=ROOT / "target")
         self.addCleanup(self._tmp.cleanup)
@@ -345,7 +346,7 @@ class GoodBundleTests(LiveGateFixture):
 
 
 class PackedRecordTests(LiveGateFixture):
-    def test_a_packed_record_resolves_its_inputs_under_raw(self):
+    def packed_record(self):
         pack_spec = importlib.util.spec_from_file_location("evidence_pack", ROOT / "tools/evidence-pack.py")
         pack = importlib.util.module_from_spec(pack_spec)
         pack_spec.loader.exec_module(pack)
@@ -369,6 +370,22 @@ class PackedRecordTests(LiveGateFixture):
             ),
             0,
         )
+        return record
+
+    def manifest(self, record):
+        return json.loads((record / "manifest.json").read_text())
+
+    def write_manifest(self, record, manifest):
+        (record / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
+
+    def sums_json(self, record):
+        return json.loads((record / "SHA256SUMS.json").read_text())
+
+    def write_sums_json(self, record, sums):
+        (record / "SHA256SUMS.json").write_text(json.dumps(sums, indent=2, sort_keys=True))
+
+    def test_a_packed_record_resolves_its_inputs_under_raw(self):
+        record = self.packed_record()
         report = gate.evaluate(record, self.preflight_path)
         self.assert_status(report, "G5", "PASS")
         self.assertEqual(
@@ -376,6 +393,36 @@ class PackedRecordTests(LiveGateFixture):
                                            report=None, verdict=None)),
             0,
         )
+
+    def test_a_packed_record_with_no_file_list_is_incomplete(self):
+        record = self.packed_record()
+        manifest = self.manifest(record)
+        manifest["files"] = []
+        self.write_manifest(record, manifest)
+        self.write_sums_json(record, {})
+        report = gate.evaluate(record, self.preflight_path)
+        self.assert_status(report, "G5", "INCOMPLETE")
+
+    def test_a_packed_record_must_cover_the_run_artefacts(self):
+        record = self.packed_record()
+        manifest = self.manifest(record)
+        manifest["files"] = [
+            entry for entry in manifest["files"] if entry["path"] != "raw/run.json"
+        ]
+        self.write_manifest(record, manifest)
+        sums = self.sums_json(record)
+        sums.pop("raw/run.json")
+        self.write_sums_json(record, sums)
+        report = gate.evaluate(record, self.preflight_path)
+        self.assert_status(report, "G5", "INCOMPLETE")
+
+    def test_packed_manifest_and_sums_must_agree(self):
+        record = self.packed_record()
+        sums = self.sums_json(record)
+        sums.pop("raw/run.json")
+        self.write_sums_json(record, sums)
+        report = gate.evaluate(record, self.preflight_path)
+        self.assert_status(report, "G5", "FAIL")
 
 
 class G1Tests(LiveGateFixture):
@@ -466,6 +513,18 @@ class G1Tests(LiveGateFixture):
         self.assert_status(report, "G1", "INCOMPLETE")
         self.assertEqual(code, 3)
 
+    def test_a_non_numeric_stake_is_a_failure(self):
+        document = preflight()
+        # All four agree on the string, so the agreement rule cannot be what fails.
+        for validator in document["validators"]:
+            validator["total_stake"] = "0"
+        self.write_bundle(preflight_doc=document)
+        report, code = self.check()
+        self.assert_status(report, "G1", "FAIL")
+        self.assertTrue(any("positive integer" in reason
+                            for reason in report["criteria"]["G1"]["reasons"]))
+        self.assertEqual(code, 1)
+
 
 class G2Tests(LiveGateFixture):
     def test_a_missed_pooled_stage_is_incomplete_not_a_pass(self):
@@ -515,6 +574,14 @@ class G2Tests(LiveGateFixture):
         self.rewrite_events(events)
         report, _ = self.check()
         self.assert_status(report, "G2", "FAIL")
+
+    def test_one_alias_cannot_satisfy_the_lifecycle(self):
+        # Every stage is complete for v1; the gate still needs four observers.
+        events = [event for event in good_events() if event.get("alias") == "v1"]
+        self.write_bundle(events=events)
+        report, code = self.check()
+        self.assert_status(report, "G2", "INCOMPLETE")
+        self.assertEqual(code, 3)
 
 
 class G3Tests(LiveGateFixture):
@@ -629,6 +696,30 @@ class G4Tests(LiveGateFixture):
         document.pop("post_recovery_settlement")
         (self.run_dir / "recovery.json").write_text(json.dumps(document))
         self.write_sums()
+        report, _ = self.check()
+        self.assert_status(report, "G4", "FAIL")
+
+    def test_a_recovery_with_nothing_accepted_is_incomplete(self):
+        document = recovery()
+        document["accepted_deploys_before"] = []
+        document["accepted_deploys_after"] = []
+        document["final_stages"] = {}
+        (self.run_dir / "recovery.json").write_text(json.dumps(document))
+        self.write_sums()
+        report, code = self.check()
+        self.assert_status(report, "G4", "INCOMPLETE")
+        self.assertEqual(code, 3)
+
+    def test_the_post_window_settlement_must_be_an_accepted_deploy(self):
+        events = self.events()
+        for event in events:
+            if (event["route"] == "deploy_settlement"
+                    and event["body"].get("stage") == "finalizedSuccess"):
+                event["body"]["deployId"] = "some-unaccepted-deploy"
+                event["body_raw"] = json.dumps(event["body"], sort_keys=True)
+                event["body_sha256"] = hashlib.sha256(
+                    event["body_raw"].encode()).hexdigest()
+        self.rewrite_events(events)
         report, _ = self.check()
         self.assert_status(report, "G4", "FAIL")
 
@@ -783,6 +874,7 @@ class SamplerTests(unittest.TestCase):
         }
 
     def tempdir(self):
+        (ROOT / "target").mkdir(parents=True, exist_ok=True)
         directory = tempfile.TemporaryDirectory(dir=ROOT / "target")
         self.addCleanup(directory.cleanup)
         return Path(directory.name)

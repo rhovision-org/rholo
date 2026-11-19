@@ -79,7 +79,7 @@
       "fail_condition": "Silent accepted-write loss, unbounded work or queues, ambiguous acceptance, or uncontrolled memory pressure inside the accepted envelope.",
       "observable": "Accepted/rejected counts and queue depth under HTTP/direct/gRPC load; a backpressure signal; no silent accepted-work loss.",
       "witness_kind": "python",
-      "witness_ref": "tools/check-bounded-ingress-queues.sh::--gate",
+      "witness_ref": "tools/m2-pressure.py::check_pressure",
       "negative_control": "Remove a queue bound and require the source-shape gate to fail; a load arm must show an explicit rejection, not a silent drop; the default configuration (in-flight limit unset) must not pass; a new refusal class outside the closed vocabulary must not be reported as 400.",
       "docker_free": true,
       "sole_evidence": "none",
@@ -87,7 +87,7 @@
       "witness_scope": "unit",
       "owner": "Jim / release coordination",
       "status": "owes",
-      "status_reason": "Source-shape queue bounds and the C105 backpressure work exist; no installed-candidate pressure acceptance across HTTP, direct HTTP and gRPC.",
+      "status_reason": "Source-shape queue bounds and the C105 backpressure work exist, and the criterion now evaluates a typed pressure record across HTTP, direct HTTP and gRPC; no installed-candidate pressure acceptance has run. The criterion refuses a local-devnet record for locality.",
       "evidence": {
         "url": null,
         "digest": null,
@@ -515,6 +515,7 @@
     },
     {
       "id": "TA-C1",
+      "machine_check": true,
       "family": "TA",
       "title": "Anyone can propose, and production is bounded",
       "source_label": "testnet acceptance criterion 1",
@@ -558,6 +559,7 @@
     },
     {
       "id": "TA-C2",
+      "machine_check": true,
       "family": "TA",
       "title": "Validators can be dropped and joined without risk",
       "source_label": "testnet acceptance criterion 2",

@@ -110,10 +110,10 @@
       "source_sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
       "source_url": "https://github.com/rhovision-org/rholo/issues/428",
       "status": "owes",
-      "status_reason": "Source-shape queue bounds and the C105 backpressure work exist; no installed-candidate pressure acceptance across HTTP, direct HTTP and gRPC.",
+      "status_reason": "Source-shape queue bounds and the C105 backpressure work exist, and the criterion now evaluates a typed pressure record across HTTP, direct HTTP and gRPC; no installed-candidate pressure acceptance has run. The criterion refuses a local-devnet record for locality.",
       "title": "Bounded public ingress and overload behavior",
       "witness_kind": "python",
-      "witness_ref": "tools/check-bounded-ingress-queues.sh::--gate",
+      "witness_ref": "tools/m2-pressure.py::check_pressure",
       "witness_scope": "unit"
     },
     {
@@ -2773,6 +2773,7 @@
       "family": "TA",
       "id": "TA-C1",
       "locality": "live-host",
+      "machine_check": true,
       "negative_control": "A moving tip alone must not pass; finality is the witness.",
       "observable": "Finalized height >= the deploy height; the A1.1/A1.2/A1.4/A1.5 arms; A1.3 is the N=8 counterexample.",
       "owner": "Jim / release coordination",
@@ -2821,6 +2822,7 @@
       "family": "TA",
       "id": "TA-C2",
       "locality": "live-host",
+      "machine_check": true,
       "negative_control": "A send-log or a single-route observation must not pass.",
       "observable": "A post-kill deploy finalizes; the rejoiner resumes with start only; a new validator bonds and produces; the leave path pays out.",
       "owner": "Aria / evidence work",

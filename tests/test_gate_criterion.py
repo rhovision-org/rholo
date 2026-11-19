@@ -1,7 +1,9 @@
 """Negative controls for the M4 rejoin and M5 merge-accounting criteria."""
 import copy
+import hashlib
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -53,6 +55,10 @@ class CriterionTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
+    def manifest_digest(self, gate_id):
+        return hashlib.sha256(
+            (Path(self.records[gate_id]) / "manifest.json").read_bytes()).hexdigest()
+
     def base_rejoin(self):
         return {
             "anchor": {"hash": ANCHOR, "height": 100},
@@ -63,7 +69,8 @@ class CriterionTests(unittest.TestCase):
                 {"id": "C", "finalized_anchor": True},
                 {"id": "D", "finalized_anchor": True},
             ],
-            "evidence": {"record": self.records["G428-M4"], "digest": "d" * 64},
+            "evidence": {"record": self.records["G428-M4"],
+                         "digest": self.manifest_digest("G428-M4")},
         }
 
     def base_merge(self):
@@ -77,7 +84,8 @@ class CriterionTests(unittest.TestCase):
                 {"deploy_id": "d2", "verdict": "final_rejected"},
             ],
             "kept_readback": True,
-            "evidence": {"record": self.records["G428-M5"], "digest": "d" * 64},
+            "evidence": {"record": self.records["G428-M5"],
+                         "digest": self.manifest_digest("G428-M5")},
         }
 
     def test_valid_records_pass(self):
@@ -121,6 +129,30 @@ class CriterionTests(unittest.TestCase):
         wrong = self.base_rejoin()
         wrong["evidence"]["record"] = self.records["G428-M5"]
         self.assertEqual(gate.check_rejoin(wrong)[0], "FAIL")
+
+    def test_the_evidence_record_must_be_pinned(self):
+        record = Path(self.tmp.name) / "unpinned"
+        shutil.copytree(self.records["G428-M4"], record)
+        manifest = json.loads((record / "manifest.json").read_text())
+        manifest.pop("source_sha", None)
+        manifest.pop("binary_sha256", None)
+        (record / "manifest.json").write_text(json.dumps(manifest))
+        data = self.base_rejoin()
+        data["evidence"] = {
+            "record": str(record),
+            "digest": hashlib.sha256(
+                (record / "manifest.json").read_bytes()).hexdigest(),
+        }
+        status, errors, _ = gate.check_rejoin(data)
+        self.assertEqual(status, "FAIL", errors)
+        self.assertTrue(any("pins" in error for error in errors), errors)
+
+    def test_the_evidence_digest_binds_the_manifest(self):
+        wrong = self.base_rejoin()
+        wrong["evidence"]["digest"] = "d" * 64
+        status, errors, _ = gate.check_rejoin(wrong)
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("manifest" in error for error in errors), errors)
 
     def test_merge_unavailable_bundle_is_precondition(self):
         unavailable = self.base_merge()

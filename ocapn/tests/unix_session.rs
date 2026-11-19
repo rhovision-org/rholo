@@ -6,6 +6,9 @@
 //! a test rather than a doc comment: the two transports share only `crate::framed` and the trait, so
 //! this is where a divergence would show.
 
+// The transport itself is compiled only on Unix (issue #615), so this target exists only there.
+#![cfg(unix)]
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

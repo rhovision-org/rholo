@@ -1,0 +1,77 @@
+{
+  "arms": [],
+  "binary_sha256": "d98c9a133dd4be551ea6d04ad9e20f16b6a2709eb63da1f37b5273260eac09d5",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 694,
+      "kind": "text",
+      "path": "raw/SHA256SUMS",
+      "sha256": "d0b48ffa3bf5a1aeb43f90ee5f822f63d64260e1ed7609cb8af9b53a4cb95012"
+    },
+    {
+      "bytes": 913,
+      "kind": "json",
+      "path": "raw/bootstrap-health.json",
+      "sha256": "33d7134d421a42f37302a06afbc3a069677073f66a41a048582ac54e5064ab71"
+    },
+    {
+      "bytes": 13616,
+      "kind": "log",
+      "path": "raw/bootstrap-journal.log",
+      "sha256": "8572dd0aed128eac0cdf426091cc7659c6c94215b0f32e642b6224b7324f1744"
+    },
+    {
+      "bytes": 3464,
+      "kind": "json",
+      "path": "raw/bootstrap-operator.json",
+      "sha256": "24d468854ced2dced7359fe736c6d8723fef5be03854e6dc62c33c358c6c6fa0"
+    },
+    {
+      "bytes": 18572,
+      "kind": "json",
+      "path": "raw/host-bootstrap.observation.json",
+      "sha256": "651d62ab2c779cdc062c9ca2866335356b8c1dc555f6c47e7b5bf1e6590746e1"
+    },
+    {
+      "bytes": 86,
+      "kind": "json",
+      "path": "raw/observations.hosts.json",
+      "sha256": "7e962b149f2313d394395f63d6a7bc6787341c7d6a941d81a9531fd6cec66889"
+    },
+    {
+      "bytes": 343,
+      "kind": "json",
+      "path": "raw/plan.public.json",
+      "sha256": "4dd266992d26c6c2f6e6a3ff537f228598dbeb8ce58e08d288e130ad85d0be7e"
+    },
+    {
+      "bytes": 748,
+      "kind": "json",
+      "path": "raw/run.json",
+      "sha256": "8db694138cd3dcf269f3835d3a0d04e01d4c5fbf0f39427088bf32ea6e1ac0fc"
+    },
+    {
+      "bytes": 362,
+      "kind": "jsonl",
+      "path": "raw/snapshots.jsonl",
+      "sha256": "ce5cbacaed24c90289ae2c8db720ea85c4fe51433ac06072a9be5db67a7a8926"
+    }
+  ],
+  "gate_id": "C343",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-19T09:46:17+00:00",
+    "tool": "evidence-pack",
+    "version": 2
+  },
+  "redactions": [],
+  "reference": null,
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "46c98b67b3dae3c22104ab737ad7bf4851862b0b",
+  "verdict": "INCONCLUSIVE"
+}

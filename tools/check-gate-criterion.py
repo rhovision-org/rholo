@@ -10,6 +10,7 @@ never PASS. A missing record is PRECONDITION.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -41,10 +42,10 @@ def check_evidence(data: dict, gate_id: str, token: object) -> tuple[str, list[s
         return "FAIL", ["evidence.record needs manifest.json and SHA256SUMS.json"]
     proc = subprocess.run(
         [sys.executable, str(ROOT / "tools/evidence-pack.py"), "verify",
-         "--record", str(path)],
+         "--record", str(path), "--require-pins"],
         capture_output=True, text=True, timeout=120, check=False)
     if proc.returncode != 0:
-        return "FAIL", ["evidence.record does not verify"]
+        return "FAIL", [f"evidence.record does not verify with pins: {proc.stderr.strip()}"]
     manifest = json.loads((path / "manifest.json").read_text())
     errors: list[str] = []
     if manifest.get("gate_id") != gate_id:
@@ -55,9 +56,11 @@ def check_evidence(data: dict, gate_id: str, token: object) -> tuple[str, list[s
     text = readme.read_text(errors="ignore") if readme.is_file() else ""
     if not isinstance(token, str) or not token or token not in text:
         errors.append("the criterion token is not in the evidence record")
-    if not (isinstance(evidence.get("digest"), str)
-            and HEX64.fullmatch(evidence["digest"])):
+    digest = evidence.get("digest")
+    if not (isinstance(digest, str) and HEX64.fullmatch(digest)):
         errors.append("evidence.digest must be a 64-hex digest")
+    elif digest != hashlib.sha256((path / "manifest.json").read_bytes()).hexdigest():
+        errors.append("evidence.digest does not match the record's manifest")
     return ("FAIL" if errors else "PASS"), errors
 
 

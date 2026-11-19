@@ -128,6 +128,10 @@ class ChainTests(unittest.TestCase):
         path = fixtures.m3_chain()
         path["logs"]["joiner"] = "../joiner.log"
         self.assertTrue(chain_tool.check_chain(path))
+        reused = fixtures.m3_chain()
+        reused["logs"]["joiner"] = reused["logs"]["responder"]
+        problems = chain_tool.check_chain(reused)
+        self.assertTrue(any("distinct" in problem for problem in problems), problems)
 
     def test_the_transport_words_must_agree_with_the_outcome(self):
         peer = fixtures.m3_chain()["stages"]["4_transport"]["peer"]
@@ -147,71 +151,27 @@ class ChainTests(unittest.TestCase):
 
 
 class PolicyTests(unittest.TestCase):
-    def test_chain_document_is_bound_to_manifest_and_sums(self):
-        chain = fixtures.m3_chain()
-        with tempfile.TemporaryDirectory() as tmp:
-            record = Path(tmp)
-            joiner, responder = fixtures.m3_logs(chain)
-            (record / "joiner.log").write_text(joiner)
-            (record / "responder.log").write_text(responder)
-            chain_bytes = (json.dumps(chain, indent=2, sort_keys=True) + "\n").encode()
-            (record / "chain.json").write_bytes(chain_bytes)
-            files = []
-            sums = {}
-            for name in ("chain.json", "joiner.log", "responder.log"):
-                raw = (record / name).read_bytes()
-                digest = hashlib.sha256(raw).hexdigest()
-                files.append({"path": name, "sha256": digest, "bytes": len(raw)})
-                sums[name] = digest
-            (record / "manifest.json").write_text(json.dumps({"files": files}))
-            (record / "SHA256SUMS.json").write_text(json.dumps(sums))
-            self.assertEqual(chain_tool.check_record(record, "any"), (0, []))
-
-            # Update chain + sums but leave manifest stale: the record must fail.
-            edited = json.loads((record / "chain.json").read_text())
-            edited["non_claims"].append("edited after packaging")
-            edited_bytes = (json.dumps(edited, indent=2, sort_keys=True) + "\n").encode()
-            (record / "chain.json").write_bytes(edited_bytes)
-            sums["chain.json"] = hashlib.sha256(edited_bytes).hexdigest()
-            (record / "SHA256SUMS.json").write_text(json.dumps(sums))
-            code, problems = chain_tool.check_record(record, "any")
-            self.assertEqual(code, 1)
-            self.assertTrue(any("manifest.json" in problem for problem in problems), problems)
-
-    def test_joiner_and_responder_must_use_distinct_files(self):
-        chain = fixtures.m3_chain()
-        joiner, responder = fixtures.m3_logs(chain)
-        with tempfile.TemporaryDirectory() as tmp:
-            record = Path(tmp)
-            (record / "joiner.log").write_text(joiner)
-            (record / "responder.log").write_text(responder)
-            chain["logs"] = {"joiner": "joiner.log", "responder": "joiner.log"}
-            problems = chain_tool.raw_problems(record, chain)
-            self.assertTrue(problems, "reusing one raw file must be refused")
-            self.assertTrue(any("quoted line" in problem for problem in problems), problems)
-
     def record(self, readme: str, chain: dict) -> Path:
         directory = Path(tempfile.mkdtemp())
         (directory / "README.md").write_text(readme)
-        joiner_log, responder_log = fixtures.m3_logs(chain)
-        (directory / "joiner.log").write_text(joiner_log)
-        (directory / "responder.log").write_text(responder_log)
-        chain_bytes = (json.dumps(chain, indent=2, sort_keys=True) + "\n").encode()
-        (directory / "chain.json").write_bytes(chain_bytes)
-        files = []
-        sums = {}
-        for name in ("chain.json", "joiner.log", "responder.log"):
-            raw = (directory / name).read_bytes()
-            digest = hashlib.sha256(raw).hexdigest()
-            files.append({"path": name, "sha256": digest, "bytes": len(raw)})
-            sums[name] = digest
-        (directory / "manifest.json").write_text(json.dumps({
-            "locality": chain["locality"], "execution_proven": False, "files": files
-        }))
-        (directory / "SHA256SUMS.json").write_text(json.dumps(sums))
+        (directory / "manifest.json").write_text(
+            json.dumps({"locality": chain["locality"], "execution_proven": False})
+        )
+        (directory / "chain.json").write_text(json.dumps(chain))
         (directory / "raw").mkdir()
         (directory / "raw" / "peer.txt").write_text(
             f"{chain['correlation']['advertised_peer']}\n"
+        )
+        joiner_log, responder_log = fixtures.m3_logs(chain)
+        (directory / "joiner.log").write_text(joiner_log)
+        (directory / "responder.log").write_text(responder_log)
+        (directory / "SHA256SUMS.json").write_text(
+            json.dumps(
+                {
+                    "joiner.log": hashlib.sha256(joiner_log.encode()).hexdigest(),
+                    "responder.log": hashlib.sha256(responder_log.encode()).hexdigest(),
+                }
+            )
         )
         return directory
 
@@ -283,6 +243,55 @@ class PolicyTests(unittest.TestCase):
             {"record": {"dir": str(directory)}}, {"locality": "local-devnet"}
         )
         self.assertEqual(result["status"], "PRECONDITION")
+
+
+class PinTests(unittest.TestCase):
+    def packed_record(self) -> tuple[Path, dict]:
+        chain = fixtures.m3_chain()
+        directory = Path(tempfile.mkdtemp())
+        (directory / "raw").mkdir()
+        joiner, responder = fixtures.m3_logs(chain)
+        files = {
+            "raw/chain.json": json.dumps(chain).encode(),
+            "raw/joiner.log": joiner.encode(),
+            "raw/responder.log": responder.encode(),
+        }
+        entries, sums = [], {}
+        for name, raw in files.items():
+            (directory / name).write_bytes(raw)
+            digest = hashlib.sha256(raw).hexdigest()
+            sums[name] = digest
+            entries.append({
+                "path": name,
+                "kind": "json" if name.endswith(".json") else "log",
+                "sha256": digest,
+                "bytes": len(raw),
+            })
+        (directory / "manifest.json").write_text(json.dumps({"files": entries}))
+        (directory / "SHA256SUMS.json").write_text(json.dumps(sums))
+        return directory, chain
+
+    def test_the_packed_chain_document_is_itself_pinned(self):
+        directory, chain = self.packed_record()
+        self.assertEqual(chain_tool.pin_problems(directory, chain), [])
+        (directory / "raw" / "chain.json").write_text(json.dumps(chain, indent=2))
+        problems = chain_tool.pin_problems(directory, chain)
+        self.assertTrue(any("chain.json" in problem for problem in problems), problems)
+
+    def test_an_unlisted_chain_document_is_refused(self):
+        directory, chain = self.packed_record()
+        manifest = json.loads((directory / "manifest.json").read_text())
+        manifest["files"] = [
+            entry for entry in manifest["files"] if entry["path"] != "raw/chain.json"
+        ]
+        (directory / "manifest.json").write_text(json.dumps(manifest))
+        problems = chain_tool.pin_problems(directory, chain)
+        self.assertTrue(any("not listed" in problem for problem in problems), problems)
+
+    def test_a_manifest_without_a_file_list_is_not_a_packed_record(self):
+        directory, chain = self.packed_record()
+        (directory / "manifest.json").write_text(json.dumps({"locality": "local-devnet"}))
+        self.assertEqual(chain_tool.pin_problems(directory, chain), [])
 
 
 class BuildTests(unittest.TestCase):

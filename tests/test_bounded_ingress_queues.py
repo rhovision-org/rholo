@@ -19,11 +19,22 @@ BOUND = {
     "tap_tx": "mpsc::channel(MAX_VALIDATED_BLOCKS)",
 }
 
+CONSTANTS = {
+    "MAX_PENDING_BLOCKS": "1024",
+    "MAX_VALIDATED_BLOCKS": "1024",
+}
 
-def source(overrides: dict[str, str] | None = None, omit: str | None = None) -> str:
+
+def source(overrides: dict[str, str] | None = None, omit: str | None = None,
+           constants: dict[str, str | None] | None = None) -> str:
     statements = dict(BOUND)
     statements.update(overrides or {})
+    declared = dict(CONSTANTS)
+    declared.update(constants or {})
     lines = ["//! a fixture runtime"]
+    for name, value in declared.items():
+        if value is not None:
+            lines.append(f"const {name}: usize = {value};")
     for name, statement in statements.items():
         if name == omit:
             continue
@@ -97,6 +108,54 @@ class QueueGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("unpinned", result.stdout)
 
+    def test_a_named_usize_max_is_unpinned(self):
+        result = self.run_gate(
+            source(constants={"MAX_VALIDATED_BLOCKS": "usize::MAX"}), "--gate"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("unpinned", result.stdout)
+        self.assertIn("MAX_VALIDATED_BLOCKS", result.stdout)
+
+    def test_a_named_zero_is_unpinned(self):
+        result = self.run_gate(
+            source(constants={"MAX_VALIDATED_BLOCKS": "0"}), "--gate"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("unpinned", result.stdout)
+
+    def test_an_unresolved_name_is_unpinned(self):
+        result = self.run_gate(
+            source({"validated_blocks_tx": "mpsc::channel(MAX_NOT_A_CONSTANT)"}), "--gate"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("unpinned", result.stdout)
+        self.assertIn("MAX_NOT_A_CONSTANT", result.stdout)
+
+    def test_a_named_expression_is_unpinned(self):
+        result = self.run_gate(
+            source(constants={"MAX_VALIDATED_BLOCKS": "64 * 16"}), "--gate"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("unpinned", result.stdout)
+
+    def test_a_named_alias_is_unpinned(self):
+        result = self.run_gate(
+            source(constants={"MAX_VALIDATED_BLOCKS": "MAX_PENDING_BLOCKS"}), "--gate"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("unpinned", result.stdout)
+
+    def test_a_qualified_constant_resolves_workspace_wide(self):
+        result = self.run_gate(
+            source({
+                "incoming_blocks_tx":
+                    "mpsc::channel(rchain_casper::engine::node_running::MAX_PENDING_BLOCKS)",
+            }),
+            "--gate",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("MAX_PENDING_BLOCKS = 1024", result.stdout)
+
     def test_no_constructor_is_unknown(self):
         result = self.run_gate(
             source({"incoming_blocks_tx": "channel_from_somewhere()"}), "--gate"
@@ -110,7 +169,7 @@ class QueueGateTests(unittest.TestCase):
         self.assertIn("absent", result.stdout)
 
     def test_a_custom_queue_set_is_honoured(self):
-        bounded = "let (other_tx, other_rx) = mpsc::channel(MAX_OTHER);\n"
+        bounded = "const MAX_OTHER: usize = 8;\nlet (other_tx, other_rx) = mpsc::channel(MAX_OTHER);\n"
         result = self.run_gate(
             bounded, "--queues", "other|let (other_tx", "--gate"
         )
