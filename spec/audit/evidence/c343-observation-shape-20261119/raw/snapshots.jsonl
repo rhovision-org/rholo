@@ -1,0 +1,2 @@
+{"alias": "bootstrap", "body_sha256": "5884223107408d393b1043afb9b29006a4cbd3cb270237f668e2457c8870650f", "error": null, "method": "GET", "route": "/health", "status": 200}
+{"alias": "bootstrap", "body_sha256": "bf5ddad254200e8e9c6e15dc9eff6aa7cb0ddec10366753ec66cc48ed60ae837", "error": null, "method": "GET", "route": "/api/v1/status/operator", "status": 200}

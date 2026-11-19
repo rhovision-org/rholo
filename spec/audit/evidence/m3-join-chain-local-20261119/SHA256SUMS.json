@@ -1,0 +1,8 @@
+{
+  "raw/activated.log": "abe3e0e49ba9700940172d1e9ab574f7c7b5ae6489c883cb0efd30992ff3235f",
+  "raw/chain.json": "670888c1051e16f4ff6446de20cf82f39f2432753fc4c5790b004a62fa8b279d",
+  "raw/joiner.log": "944b69d70b4df22ae1ccd7c587c654b01d2028ff3cf8bb31c8b34a88a11510a4",
+  "raw/mature-join.json": "e7414fc9a814a1b35a300400e41d7d204b9f0648d253839169ef166d4009fa78",
+  "raw/passive.log": "944b69d70b4df22ae1ccd7c587c654b01d2028ff3cf8bb31c8b34a88a11510a4",
+  "raw/responder.log": "3f0aead0b315339b07c05129f89aafe571f32575230c6fb4176f16f4400a8079"
+}

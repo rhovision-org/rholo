@@ -60,6 +60,7 @@ _c343 = _module("gate_principles_c343", ROOT / "tools" / "c343-live.py")
 _c357 = _module("gate_principles_c357", ROOT / "tools" / "c357-acceptance.py")
 _locality = _module("gate_principles_locality", ROOT / "tools" / "check-evidence-locality.py")
 _m3chain = _module("gate_principles_m3_chain", ROOT / "tools" / "m3-join-chain.py")
+_m2pressure = _module("gate_principles_m2_pressure", ROOT / "tools" / "m2-pressure.py")
 
 
 def _present(value: object) -> bool:
@@ -153,6 +154,17 @@ def staged_lifecycle(observations: dict, parameters: dict) -> dict:
                                 f"asserts {sorted(required)}"])
     if parameters.get("per_observer") is False:
         return verdict("FAIL", ["the staged lifecycle is per-observer by definition"])
+    subject = observations.get("subject")
+    declared = subject.get("deploy_id") if isinstance(subject, dict) else None
+    if not isinstance(declared, str) or not declared:
+        return verdict("PRECONDITION", ["subject.deploy_id is absent"])
+    run = observations.get("run")
+    sampled = run.get("deploy_id") if isinstance(run, dict) else None
+    if not isinstance(sampled, str) or not sampled:
+        return verdict("PRECONDITION", ["run.deploy_id is absent"])
+    if declared != sampled:
+        return verdict(
+            "FAIL", [f"the declared subject {declared!r} is not the sampled deploy {sampled!r}"])
     events = _events(observations)
     minimum = parameters.get("min_observers")
     if isinstance(minimum, int):
@@ -161,7 +173,8 @@ def staged_lifecycle(observations: dict, parameters: dict) -> dict:
             return verdict("PRECONDITION",
                            [f"{len(aliases)} observer(s) contributed; at least {minimum} required"])
     report = _live.check_g2(
-        observations.get("submission"), observations.get("run"), _events(observations))
+        observations.get("submission"), run, _events(observations),
+        minimum if isinstance(minimum, int) else 4)
     return _live_report(report)
 
 
@@ -206,7 +219,8 @@ def human_attestation(observations: dict, parameters: dict) -> dict:
     owner = str(parameters.get("owner") or "").strip()
     if not reviewer:
         errors.append("attestation.reviewer is required")
-    if owner and reviewer.casefold() in owner.casefold():
+    if owner and (reviewer.casefold() in owner.casefold()
+                  or owner.casefold() in reviewer.casefold()):
         errors.append("the reviewer must not be the gate owner")
     try:
         signed = dt.datetime.fromisoformat(
@@ -221,8 +235,15 @@ def human_attestation(observations: dict, parameters: dict) -> dict:
     url = attestation.get("verdict_url")
     if not (isinstance(url, str) and url.startswith("https://")):
         errors.append("attestation.verdict_url must be https")
-    if not _present(attestation.get("evidence_record")):
+    record = attestation.get("evidence_record")
+    if not _present(record):
         errors.append("attestation.evidence_record is required")
+    else:
+        path = Path(str(record))
+        if not path.is_absolute():
+            path = ROOT / path
+        if not path.exists():
+            errors.append("attestation.evidence_record does not exist")
     if errors:
         return verdict("FAIL", errors)
     recorded = attestation.get("verdict")
@@ -257,25 +278,34 @@ def phase_diagnosis(observations: dict, parameters: dict) -> dict:
     operator = observations.get("operator")
     if not isinstance(health, dict) or not isinstance(operator, dict):
         return verdict("PRECONDITION", ["health and operator observations are required"])
+    wanted = parameters.get("locality")
+    if wanted:
+        declared = observations.get("locality")
+        if not _present(declared):
+            return verdict("PRECONDITION", ["the observation declares no locality"])
+        if declared != wanted:
+            return verdict("FAIL", [
+                f"the observation declares {declared!r}; the criterion requires {wanted!r}"
+            ])
     table_path = Path(parameters.get("table") or _c343.DEFAULT_TABLE)
     if not table_path.is_absolute():
         table_path = ROOT / table_path
     if not table_path.is_file():
         return verdict("PRECONDITION", [f"phase table {table_path} is absent"])
     table = _c343.load_table(table_path)
-    observed = _c343.observation(health, operator)
-    if not _c343.consistent(observed):
-        return verdict("FAIL", ["the readiness/fault/isolation fields contradict each other"])
-    diagnosis = _c343.diagnose(table, observed)
-    if diagnosis == "unmodelled":
-        return verdict("PRECONDITION", ["the phase table names no diagnosis for this observation"])
-    block_text = str(observations.get("block6") or "")
-    block_status, block_detail = _c343.block6_disposition(block_text)
-    if block_status == "FAIL":
-        return verdict("FAIL", [f"block 6: {block_detail}"])
-    if block_status != "PASS":
-        return verdict("PRECONDITION", [f"block 6: {block_detail}"])
-    return verdict("PASS", [], {"diagnosis": diagnosis, "block6": block_detail})
+    block_text = observations.get("block6")
+    evaluation = _c343.host_evaluation(
+        health, operator, block_text if isinstance(block_text, str) else "", table)
+    if evaluation["verdict"] == "PASS":
+        return verdict("PASS", [], {
+            "diagnosis": evaluation["diagnosis"],
+            "block6": evaluation["cells"]["block6-disposition"]["detail"],
+        })
+    reasons = [
+        f"{name}: {value['detail']}"
+        for name, value in evaluation["cells"].items() if value["verdict"] != "PASS"
+    ]
+    return verdict(evaluation["verdict"], reasons)
 
 
 def lockstep_acceptance(observations: dict, parameters: dict) -> dict:
@@ -335,6 +365,24 @@ def bounded_admission(observations: dict, parameters: dict) -> dict:
     finally:
         if directory is not None:
             directory.cleanup()
+
+
+def pressure_refusal(observations: dict, parameters: dict) -> dict:
+    """M2's two halves: bounded queues (source) and deterministic overload refusal (record).
+
+    The source half stays `bounded_admission`; this principle composes it and then measures the
+    typed pressure record. An unset-default run that refuses, a 5xx, a refusal without a retry
+    signal or a summary that disagrees with its transcripts are all failures; a missing surface or
+    record is a precondition, never a pass.
+    """
+    source = bounded_admission(observations, {"queues": parameters.get("queues", [])})
+    if source["status"] != "PASS":
+        return source
+    pressure = observations.get("pressure")
+    if not isinstance(pressure, dict):
+        return verdict("PRECONDITION", ["pressure is absent"])
+    status, problems = _m2pressure.check_pressure(pressure, parameters)
+    return verdict(status, problems)
 
 
 def off_host_claim(observations: dict, parameters: dict) -> dict:
@@ -435,6 +483,18 @@ def join_chain(observations: dict, parameters: dict) -> dict:
         ):
             problems.append(
                 f"the chain declares {chain.get('locality')!r} but the record declares {label!r}")
+        # **The quoted lines must exist in the captured logs, not only inside the chain.** An
+        # off-host record must also be digest-pinned, however it was supplied (`files` or `dir`);
+        # a local fixture or bare run directory is bound by inclusion and, when it carries sums,
+        # checked against them.
+        if (
+            path is not None
+            and isinstance(chain, dict)
+            and isinstance(chain.get("logs"), dict)
+        ):
+            problems.extend(_m3chain.raw_problems(path, chain))
+            if policy == "off-host" or (path / "SHA256SUMS.json").is_file():
+                problems.extend(_m3chain.pin_problems(path, chain))
         if problems:
             return verdict("FAIL", problems)
         return verdict("PASS", [], {"locality": label, "state_hash": chain.get("correlation", {}).get("state_hash")})
@@ -444,28 +504,42 @@ def join_chain(observations: dict, parameters: dict) -> dict:
 
 
 def resource_attribution(observations: dict, parameters: dict) -> dict:
+    """The observed process table, counted by name.
+
+    `declared_count` is the record's own claim, so this is a self-consistency check, not
+    independent evidence. It is still required: without it the declared-versus-measured rule has
+    nothing to compare, and a record could omit the number it is supposed to prove. A pid must be a
+    positive integer and appear once; the Rust witness counts numeric `/proc/<pid>` entries only.
+    """
     record = observations.get("record")
     if not isinstance(record, dict):
         return verdict("PRECONDITION", ["record is absent"])
     processes = record.get("host_processes")
     if not isinstance(processes, list) or not processes:
         return verdict("PRECONDITION", ["record.host_processes is absent or empty"])
+    declared = record.get("declared_count")
+    if declared is None:
+        return verdict("PRECONDITION", ["record.declared_count is absent"])
+    if not isinstance(declared, int) or isinstance(declared, bool) or declared < 0:
+        return verdict("FAIL", ["record.declared_count must be a non-negative integer"])
     name = str(parameters.get("process_name") or "rnode")
-    names = []
+    counted: list[int] = []
     for entry in processes:
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             return verdict("FAIL", ["every process entry must be an object with a name"])
-        names.append(entry["name"])
-    count = sum(1 for candidate in names if candidate == name)
-    if count == 0:
+        pid = entry.get("pid")
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            return verdict("FAIL", ["every process entry must carry a positive integer pid"])
+        if entry["name"] == name:
+            counted.append(pid)
+    if not counted:
         return verdict("PRECONDITION", [f"no process named {name!r} was observed"])
-    declared = record.get("declared_count")
-    if declared is not None:
-        if not isinstance(declared, int) or isinstance(declared, bool) or declared < 0:
-            return verdict("FAIL", ["record.declared_count must be a non-negative integer"])
-        if declared != count:
-            return verdict("FAIL", [f"declared count {declared} != observed {count} {name} process(es)"])
-    return verdict("PASS", [], {"count": count, "process_name": name})
+    if len(set(counted)) != len(counted):
+        return verdict("FAIL", [f"a {name} process pid is listed more than once"])
+    if declared != len(counted):
+        return verdict(
+            "FAIL", [f"declared count {declared} != observed {len(counted)} {name} process(es)"])
+    return verdict("PASS", [], {"count": len(counted), "process_name": name})
 
 
 PRINCIPLES = {
@@ -480,6 +554,7 @@ PRINCIPLES = {
     "phase_diagnosis": phase_diagnosis,
     "lockstep_acceptance": lockstep_acceptance,
     "bounded_admission": bounded_admission,
+    "pressure_refusal": pressure_refusal,
     "off_host_claim": off_host_claim,
     "join_chain": join_chain,
     "resource_attribution": resource_attribution,
@@ -494,10 +569,11 @@ PARAMETER_SCHEMA = {
     "human_attestation": {"owner": str},
     "healing_anchor": {"floor": (int, float), "ceiling": (int, float), "min_dwell": int},
     "merge_accounting": {},
-    "phase_diagnosis": {"table": str},
+    "phase_diagnosis": {"table": str, "locality": str},
     "lockstep_acceptance": {"table": str, "require_original_trace": bool,
                             "max_window": (int, float)},
     "bounded_admission": {"queues": list},
+    "pressure_refusal": {"queues": list, "locality": str, "rate_ceiling": int},
     "off_host_claim": {},
     "join_chain": {"locality": str},
     "resource_attribution": {"process_name": str},

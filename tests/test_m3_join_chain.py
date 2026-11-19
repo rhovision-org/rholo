@@ -7,6 +7,7 @@ local-devnet chain passes the chain policy and fails the off-host criterion.
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -105,6 +106,49 @@ class ChainTests(unittest.TestCase):
         self.assertTrue(any("walk_completed" in problem for problem in problems), problems)
         self.assertTrue(any("checkpoint_readback" in problem for problem in problems), problems)
 
+    def test_completeness_metadata_is_required(self):
+        missing = fixtures.m3_chain()
+        del missing["complete"]
+        self.assertTrue(chain_tool.check_chain(missing))
+        string = fixtures.m3_chain()
+        string["complete"] = "true"
+        self.assertTrue(chain_tool.check_chain(string))
+        reasons = fixtures.m3_chain()
+        reasons["incomplete_reasons"] = ["a missing stage"]
+        self.assertTrue(chain_tool.check_chain(reasons))
+        untyped = fixtures.m3_chain()
+        untyped["incomplete_reasons"] = None
+        self.assertTrue(chain_tool.check_chain(untyped))
+        self.assertEqual(chain_tool.check_chain(fixtures.m3_chain()), [])
+
+    def test_the_chain_must_name_its_raw_logs(self):
+        missing = fixtures.m3_chain()
+        del missing["logs"]
+        self.assertTrue(chain_tool.check_chain(missing))
+        path = fixtures.m3_chain()
+        path["logs"]["joiner"] = "../joiner.log"
+        self.assertTrue(chain_tool.check_chain(path))
+        reused = fixtures.m3_chain()
+        reused["logs"]["joiner"] = reused["logs"]["responder"]
+        problems = chain_tool.check_chain(reused)
+        self.assertTrue(any("distinct" in problem for problem in problems), problems)
+
+    def test_the_transport_words_must_agree_with_the_outcome(self):
+        peer = fixtures.m3_chain()["stages"]["4_transport"]["peer"]
+        state = "a" * 64
+        sent_failed = fixtures.m3_chain()
+        sent_failed["stages"]["4_transport"]["outcome"] = "failed"
+        sent_failed["stages"]["4_transport"]["log_line"] = (
+            f"FinalizedFringe sent to {peer}: transport outcome failed (state {state})"
+        )
+        self.assertTrue(chain_tool.check_chain(sent_failed))
+        not_sent_delivered = fixtures.m3_chain()
+        not_sent_delivered["stages"]["4_transport"]["log_line"] = (
+            f"FinalizedFringe to {peer} was not sent: transport outcome delivered "
+            f"(state {state})"
+        )
+        self.assertTrue(chain_tool.check_chain(not_sent_delivered))
+
 
 class PolicyTests(unittest.TestCase):
     def record(self, readme: str, chain: dict) -> Path:
@@ -117,6 +161,17 @@ class PolicyTests(unittest.TestCase):
         (directory / "raw").mkdir()
         (directory / "raw" / "peer.txt").write_text(
             f"{chain['correlation']['advertised_peer']}\n"
+        )
+        joiner_log, responder_log = fixtures.m3_logs(chain)
+        (directory / "joiner.log").write_text(joiner_log)
+        (directory / "responder.log").write_text(responder_log)
+        (directory / "SHA256SUMS.json").write_text(
+            json.dumps(
+                {
+                    "joiner.log": hashlib.sha256(joiner_log.encode()).hexdigest(),
+                    "responder.log": hashlib.sha256(responder_log.encode()).hexdigest(),
+                }
+            )
         )
         return directory
 
@@ -150,6 +205,35 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(result["status"], "FAIL")
         self.assertTrue(any("local" in reason for reason in result["reasons"]))
 
+    def test_the_record_check_binds_the_quoted_lines_to_the_raw_logs(self):
+        chain = fixtures.m3_chain(locality="local-devnet", advertised_host="172.20.0.2")
+        directory = self.record(
+            "# M3 local chain rehearsal\n\n"
+            "**Evidence locality.** local-devnet — one Docker host.\n\n"
+            "This is **not** an M3 off-host positive.\n",
+            chain,
+        )
+        self.assertEqual(chain_tool.check_record(directory, "local-devnet"), (0, []))
+        (directory / "joiner.log").write_text("not the captured log\n")
+        code, problems = chain_tool.check_record(directory, "local-devnet")
+        self.assertEqual(code, 1)
+        self.assertTrue(any("quoted line" in problem for problem in problems), problems)
+
+    def test_an_off_host_record_must_be_digest_pinned(self):
+        chain = fixtures.m3_chain(advertised_host="203.0.113.7")
+        directory = self.record(
+            "# M3 off-host witness\n\n"
+            "**Evidence locality.** off-host-claim — the bootstrap dial-back.\n\n"
+            "The dial-back result is captured in raw/peer.txt.\n",
+            chain,
+        )
+        (directory / "SHA256SUMS.json").unlink()
+        result = principles.join_chain(
+            {"record": {"dir": str(directory)}}, {"locality": "off-host"}
+        )
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("SHA256SUMS" in reason for reason in result["reasons"]), result)
+
     def test_a_missing_chain_is_a_precondition(self):
         directory = Path(tempfile.mkdtemp())
         (directory / "README.md").write_text(
@@ -161,26 +245,58 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(result["status"], "PRECONDITION")
 
 
+class PinTests(unittest.TestCase):
+    def packed_record(self) -> tuple[Path, dict]:
+        chain = fixtures.m3_chain()
+        directory = Path(tempfile.mkdtemp())
+        (directory / "raw").mkdir()
+        joiner, responder = fixtures.m3_logs(chain)
+        files = {
+            "raw/chain.json": json.dumps(chain).encode(),
+            "raw/joiner.log": joiner.encode(),
+            "raw/responder.log": responder.encode(),
+        }
+        entries, sums = [], {}
+        for name, raw in files.items():
+            (directory / name).write_bytes(raw)
+            digest = hashlib.sha256(raw).hexdigest()
+            sums[name] = digest
+            entries.append({
+                "path": name,
+                "kind": "json" if name.endswith(".json") else "log",
+                "sha256": digest,
+                "bytes": len(raw),
+            })
+        (directory / "manifest.json").write_text(json.dumps({"files": entries}))
+        (directory / "SHA256SUMS.json").write_text(json.dumps(sums))
+        return directory, chain
+
+    def test_the_packed_chain_document_is_itself_pinned(self):
+        directory, chain = self.packed_record()
+        self.assertEqual(chain_tool.pin_problems(directory, chain), [])
+        (directory / "raw" / "chain.json").write_text(json.dumps(chain, indent=2))
+        problems = chain_tool.pin_problems(directory, chain)
+        self.assertTrue(any("chain.json" in problem for problem in problems), problems)
+
+    def test_an_unlisted_chain_document_is_refused(self):
+        directory, chain = self.packed_record()
+        manifest = json.loads((directory / "manifest.json").read_text())
+        manifest["files"] = [
+            entry for entry in manifest["files"] if entry["path"] != "raw/chain.json"
+        ]
+        (directory / "manifest.json").write_text(json.dumps(manifest))
+        problems = chain_tool.pin_problems(directory, chain)
+        self.assertTrue(any("not listed" in problem for problem in problems), problems)
+
+    def test_a_manifest_without_a_file_list_is_not_a_packed_record(self):
+        directory, chain = self.packed_record()
+        (directory / "manifest.json").write_text(json.dumps({"locality": "local-devnet"}))
+        self.assertEqual(chain_tool.pin_problems(directory, chain), [])
+
+
 class BuildTests(unittest.TestCase):
     def logs(self) -> tuple[str, str]:
-        chain = fixtures.m3_chain()
-        stages = chain["stages"]
-        joiner = "\n".join(
-            [
-                "[info] " + stages["1_request"]["log_line"],
-                "[info] " + stages["5_receive"]["log_line"],
-                "[info] " + stages["6_apply"]["walk_log_line"],
-                "[info] " + stages["6_apply"]["log_line"],
-            ]
-        )
-        responder = "\n".join(
-            [
-                "[info] " + stages["2_receipt"]["log_line"],
-                "[info] " + stages["3_construction"]["log_line"],
-                "[info] " + stages["4_transport"]["log_line"],
-            ]
-        )
-        return joiner, responder
+        return fixtures.m3_logs(fixtures.m3_chain())
 
     def test_build_chain_correlates_two_logs(self):
         joiner, responder = self.logs()

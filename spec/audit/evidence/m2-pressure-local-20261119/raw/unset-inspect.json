@@ -1,0 +1,378 @@
+[
+    {
+        "Id": "6feba449c78d0c128da122bd1778d969037a7204667d12ad5e28f6bdbfceb9f1",
+        "Created": "2026-11-19T09:42:21.59919915Z",
+        "Path": "rnode",
+        "Args": [
+            "run",
+            "--host",
+            "m2cap-bootstrap",
+            "--api-host",
+            "0.0.0.0",
+            "--data-dir",
+            "/var/lib/rnode",
+            "--protocol-port",
+            "40400",
+            "--discovery-port",
+            "40404",
+            "--api-port-grpc-external",
+            "40401",
+            "--api-port-grpc-internal",
+            "40402",
+            "--api-port-http",
+            "40403",
+            "--api-port-admin-http",
+            "40405",
+            "--autopropose",
+            "--propose-on-deploy",
+            "--api-enable-devnet-cors",
+            "--api-enable-devnet-admin-public",
+            "--dev-mode",
+            "--deployer-private-key",
+            "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76",
+            "-s",
+            "--bonds-file",
+            "/genesis/bonds.txt",
+            "--wallets-file",
+            "/genesis/wallets.txt",
+            "--validator-private-key-path",
+            "/var/lib/rnode/validator.hex"
+        ],
+        "State": {
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 3660367,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2026-11-19T09:42:21.927359256Z",
+            "FinishedAt": "0001-01-01T00:00:00Z",
+            "Health": {
+                "Status": "healthy",
+                "FailingStreak": 0,
+                "Log": [
+                    {
+                        "Start": "2026-11-19T09:42:27.198069222Z",
+                        "End": "2026-11-19T09:42:27.263163961Z",
+                        "ExitCode": 0,
+                        "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (46c98b67b3dae3c22104ab737ad7bf4851862b0b)\"},\"address\":\"9ddddfa441c77e54014760e4cb7a238598a9a0ae\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":0,\"nodes\":0,\"minPhloPrice\":1,\"latestBlockNumber\":1,\"autopropose\":true,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"starting\",\"checkpoint\":{\"kind\":\"genesis\",\"digest\":null,\"anchor\":\"bb62bd80bd549ffa4e7393f9061fb204585928a426b4ec6d84eeaa1d5b98593b\",\"anchorHeight\":0,\"ageBlocks\":null,\"validationWindowHeights\":14,\"validationWindowCommitted\":false,\"metadataCommitted\":false},\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+                    }
+                ]
+            }
+        },
+        "Image": "sha256:60379e78c020dae18749f497386f00a2d12fa1ebc162fd7273b0cfcf5ae5f428",
+        "ResolvConfPath": "/var/lib/docker/containers/6feba449c78d0c128da122bd1778d969037a7204667d12ad5e28f6bdbfceb9f1/resolv.conf",
+        "HostnamePath": "/var/lib/docker/containers/6feba449c78d0c128da122bd1778d969037a7204667d12ad5e28f6bdbfceb9f1/hostname",
+        "HostsPath": "/var/lib/docker/containers/6feba449c78d0c128da122bd1778d969037a7204667d12ad5e28f6bdbfceb9f1/hosts",
+        "LogPath": "/var/lib/docker/containers/6feba449c78d0c128da122bd1778d969037a7204667d12ad5e28f6bdbfceb9f1/6feba449c78d0c128da122bd1778d969037a7204667d12ad5e28f6bdbfceb9f1-json.log",
+        "Name": "/m2cap-bootstrap",
+        "RestartCount": 0,
+        "Driver": "overlay2",
+        "Platform": "linux",
+        "MountLabel": "",
+        "ProcessLabel": "",
+        "AppArmorProfile": "docker-default",
+        "ExecIDs": null,
+        "HostConfig": {
+            "Binds": [
+                "m2cap-bootstrap-data:/var/lib/rnode",
+                "/home/patrick/RNodeRust/.claude/worktrees/pr-567/examples:/contracts:ro",
+                "/tmp/tmp.VMl1Ey0GmW:/genesis:ro"
+            ],
+            "ContainerIDFile": "",
+            "LogConfig": {
+                "Type": "json-file",
+                "Config": {}
+            },
+            "NetworkMode": "m2net",
+            "PortBindings": {
+                "40401/tcp": [
+                    {
+                        "HostIp": "",
+                        "HostPort": "56402"
+                    }
+                ],
+                "40403/tcp": [
+                    {
+                        "HostIp": "",
+                        "HostPort": "56403"
+                    }
+                ],
+                "40405/tcp": [
+                    {
+                        "HostIp": "",
+                        "HostPort": "56405"
+                    }
+                ]
+            },
+            "RestartPolicy": {
+                "Name": "no",
+                "MaximumRetryCount": 0
+            },
+            "AutoRemove": false,
+            "VolumeDriver": "",
+            "VolumesFrom": null,
+            "ConsoleSize": [
+                0,
+                0
+            ],
+            "CapAdd": null,
+            "CapDrop": null,
+            "CgroupnsMode": "private",
+            "Dns": [],
+            "DnsOptions": [],
+            "DnsSearch": [],
+            "ExtraHosts": null,
+            "GroupAdd": null,
+            "IpcMode": "private",
+            "Cgroup": "",
+            "Links": null,
+            "OomScoreAdj": 0,
+            "PidMode": "",
+            "Privileged": false,
+            "PublishAllPorts": false,
+            "ReadonlyRootfs": false,
+            "SecurityOpt": null,
+            "UTSMode": "",
+            "UsernsMode": "",
+            "ShmSize": 67108864,
+            "Sysctls": {
+                "net.ipv4.ip_local_reserved_ports": "40400-40405"
+            },
+            "Runtime": "runc",
+            "Isolation": "",
+            "CpuShares": 0,
+            "Memory": 2147483648,
+            "NanoCpus": 0,
+            "CgroupParent": "",
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": [],
+            "BlkioDeviceReadBps": [],
+            "BlkioDeviceWriteBps": [],
+            "BlkioDeviceReadIOps": [],
+            "BlkioDeviceWriteIOps": [],
+            "CpuPeriod": 0,
+            "CpuQuota": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "CpusetCpus": "",
+            "CpusetMems": "",
+            "Devices": [],
+            "DeviceCgroupRules": null,
+            "DeviceRequests": null,
+            "MemoryReservation": 0,
+            "MemorySwap": 2147483648,
+            "MemorySwappiness": null,
+            "OomKillDisable": null,
+            "PidsLimit": null,
+            "Ulimits": [],
+            "CpuCount": 0,
+            "CpuPercent": 0,
+            "IOMaximumIOps": 0,
+            "IOMaximumBandwidth": 0,
+            "MaskedPaths": [
+                "/proc/asound",
+                "/proc/acpi",
+                "/proc/kcore",
+                "/proc/keys",
+                "/proc/latency_stats",
+                "/proc/timer_list",
+                "/proc/timer_stats",
+                "/proc/sched_debug",
+                "/proc/scsi",
+                "/sys/firmware",
+                "/sys/devices/virtual/powercap"
+            ],
+            "ReadonlyPaths": [
+                "/proc/bus",
+                "/proc/fs",
+                "/proc/irq",
+                "/proc/sys",
+                "/proc/sysrq-trigger"
+            ]
+        },
+        "GraphDriver": {
+            "Data": {
+                "LowerDir": "/var/lib/docker/overlay2/6964778c3a6702a9ba01886085cfff36c1db286e47b55fe6cf18b5dd0a976c03-init/diff:/var/lib/docker/overlay2/7d42vop66f7ezoulu20xom0cr/diff:/var/lib/docker/overlay2/sttoqtb9zt828bobf2vv0h5ao/diff:/var/lib/docker/overlay2/ox2emmfpbnj48l72zgx08ox5a/diff:/var/lib/docker/overlay2/mtedgvp6g4w5l49my3p752qlm/diff:/var/lib/docker/overlay2/9a6f1652285d81dfa405f4c85398934d68189de03eb7acf432fea9c610ea5731/diff",
+                "MergedDir": "/var/lib/docker/overlay2/6964778c3a6702a9ba01886085cfff36c1db286e47b55fe6cf18b5dd0a976c03/merged",
+                "UpperDir": "/var/lib/docker/overlay2/6964778c3a6702a9ba01886085cfff36c1db286e47b55fe6cf18b5dd0a976c03/diff",
+                "WorkDir": "/var/lib/docker/overlay2/6964778c3a6702a9ba01886085cfff36c1db286e47b55fe6cf18b5dd0a976c03/work"
+            },
+            "Name": "overlay2"
+        },
+        "Mounts": [
+            {
+                "Type": "volume",
+                "Name": "m2cap-bootstrap-data",
+                "Source": "/var/lib/docker/volumes/m2cap-bootstrap-data/_data",
+                "Destination": "/var/lib/rnode",
+                "Driver": "local",
+                "Mode": "z",
+                "RW": true,
+                "Propagation": ""
+            },
+            {
+                "Type": "bind",
+                "Source": "/home/patrick/RNodeRust/.claude/worktrees/pr-567/examples",
+                "Destination": "/contracts",
+                "Mode": "ro",
+                "RW": false,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/tmp/tmp.VMl1Ey0GmW",
+                "Destination": "/genesis",
+                "Mode": "ro",
+                "RW": false,
+                "Propagation": "rprivate"
+            }
+        ],
+        "Config": {
+            "Hostname": "6feba449c78d",
+            "Domainname": "",
+            "User": "rnode",
+            "AttachStdin": false,
+            "AttachStdout": false,
+            "AttachStderr": false,
+            "ExposedPorts": {
+                "40401/tcp": {},
+                "40403/tcp": {},
+                "40405/tcp": {}
+            },
+            "Tty": false,
+            "OpenStdin": false,
+            "StdinOnce": false,
+            "Env": [
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            ],
+            "Cmd": [
+                "run",
+                "--host",
+                "m2cap-bootstrap",
+                "--api-host",
+                "0.0.0.0",
+                "--data-dir",
+                "/var/lib/rnode",
+                "--protocol-port",
+                "40400",
+                "--discovery-port",
+                "40404",
+                "--api-port-grpc-external",
+                "40401",
+                "--api-port-grpc-internal",
+                "40402",
+                "--api-port-http",
+                "40403",
+                "--api-port-admin-http",
+                "40405",
+                "--autopropose",
+                "--propose-on-deploy",
+                "--api-enable-devnet-cors",
+                "--api-enable-devnet-admin-public",
+                "--dev-mode",
+                "--deployer-private-key",
+                "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76",
+                "-s",
+                "--bonds-file",
+                "/genesis/bonds.txt",
+                "--wallets-file",
+                "/genesis/wallets.txt",
+                "--validator-private-key-path",
+                "/var/lib/rnode/validator.hex"
+            ],
+            "Healthcheck": {
+                "Test": [
+                    "CMD-SHELL",
+                    "curl -fsS http://localhost:40403/api/status || exit 1"
+                ],
+                "Interval": 10000000000,
+                "Timeout": 3000000000,
+                "StartPeriod": 30000000000,
+                "Retries": 5
+            },
+            "Image": "rnode:local",
+            "Volumes": null,
+            "WorkingDir": "/var/lib/rnode",
+            "Entrypoint": [
+                "rnode"
+            ],
+            "OnBuild": null,
+            "Labels": {}
+        },
+        "NetworkSettings": {
+            "Bridge": "",
+            "SandboxID": "4e023d2e7d1282dbf93990ec777690c58050957fc57c6fc912839767db32e206",
+            "SandboxKey": "/var/run/docker/netns/4e023d2e7d12",
+            "Ports": {
+                "40401/tcp": [
+                    {
+                        "HostIp": "0.0.0.0",
+                        "HostPort": "56402"
+                    },
+                    {
+                        "HostIp": "::",
+                        "HostPort": "56402"
+                    }
+                ],
+                "40403/tcp": [
+                    {
+                        "HostIp": "0.0.0.0",
+                        "HostPort": "56403"
+                    },
+                    {
+                        "HostIp": "::",
+                        "HostPort": "56403"
+                    }
+                ],
+                "40405/tcp": [
+                    {
+                        "HostIp": "0.0.0.0",
+                        "HostPort": "56405"
+                    },
+                    {
+                        "HostIp": "::",
+                        "HostPort": "56405"
+                    }
+                ]
+            },
+            "HairpinMode": false,
+            "LinkLocalIPv6Address": "",
+            "LinkLocalIPv6PrefixLen": 0,
+            "SecondaryIPAddresses": null,
+            "SecondaryIPv6Addresses": null,
+            "EndpointID": "",
+            "Gateway": "",
+            "GlobalIPv6Address": "",
+            "GlobalIPv6PrefixLen": 0,
+            "IPAddress": "",
+            "IPPrefixLen": 0,
+            "IPv6Gateway": "",
+            "MacAddress": "",
+            "Networks": {
+                "m2net": {
+                    "IPAMConfig": null,
+                    "Links": null,
+                    "Aliases": null,
+                    "MacAddress": "02:42:ac:13:00:02",
+                    "DriverOpts": null,
+                    "NetworkID": "48316b175db7ef31a889417dfebaa4a0419626aa8f681337ad21f27cc57561da",
+                    "EndpointID": "f084c4800aa4abeea14489320c820f1a929f3683fdaa5f8f18e7cc5c4de57509",
+                    "Gateway": "172.19.0.1",
+                    "IPAddress": "172.19.0.2",
+                    "IPPrefixLen": 16,
+                    "IPv6Gateway": "",
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "DNSNames": [
+                        "m2cap-bootstrap",
+                        "6feba449c78d"
+                    ]
+                }
+            }
+        }
+    }
+]

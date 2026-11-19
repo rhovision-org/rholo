@@ -378,7 +378,12 @@ def main():
     # Preserve both exact inputs to the M3 correlation; responder-side raw
     # log is necessary for independent stage 2-4 verification after packing.
     joiner_text = passive_text if args.supported_recovery and passive_text else combined
+    # **The chain names these files and the checker binds every quoted line to them.** The
+    # responder segment is otherwise lost when the container is recreated, and the joiner's own
+    # name distinguishes the supported-recovery replay from the ordinary activation log.
     joiner_name = "passive.log" if args.supported_recovery and passive_text else "activated.log"
+    with open(os.path.join(args.out, joiner_name), "w") as handle:
+        handle.write(joiner_text)
     with open(os.path.join(args.out, "responder.log"), "w") as handle:
         handle.write(responder_text)
     chain = build_join_chain(

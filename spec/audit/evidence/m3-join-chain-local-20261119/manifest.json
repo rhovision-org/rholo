@@ -1,0 +1,59 @@
+{
+  "arms": [],
+  "binary_sha256": "d98c9a133dd4be551ea6d04ad9e20f16b6a2709eb63da1f37b5273260eac09d5",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 8794,
+      "kind": "log",
+      "path": "raw/activated.log",
+      "sha256": "abe3e0e49ba9700940172d1e9ab574f7c7b5ae6489c883cb0efd30992ff3235f"
+    },
+    {
+      "bytes": 6515,
+      "kind": "json",
+      "path": "raw/chain.json",
+      "sha256": "670888c1051e16f4ff6446de20cf82f39f2432753fc4c5790b004a62fa8b279d"
+    },
+    {
+      "bytes": 65636,
+      "kind": "log",
+      "path": "raw/joiner.log",
+      "sha256": "944b69d70b4df22ae1ccd7c587c654b01d2028ff3cf8bb31c8b34a88a11510a4"
+    },
+    {
+      "bytes": 1797,
+      "kind": "json",
+      "path": "raw/mature-join.json",
+      "sha256": "e7414fc9a814a1b35a300400e41d7d204b9f0648d253839169ef166d4009fa78"
+    },
+    {
+      "bytes": 65636,
+      "kind": "log",
+      "path": "raw/passive.log",
+      "sha256": "944b69d70b4df22ae1ccd7c587c654b01d2028ff3cf8bb31c8b34a88a11510a4"
+    },
+    {
+      "bytes": 75447,
+      "kind": "log",
+      "path": "raw/responder.log",
+      "sha256": "3f0aead0b315339b07c05129f89aafe571f32575230c6fb4176f16f4400a8079"
+    }
+  ],
+  "gate_id": "G428-M3",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-19T08:23:21+00:00",
+    "tool": "evidence-pack",
+    "version": 2
+  },
+  "redactions": [],
+  "reference": null,
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "46c98b67b3dae3c22104ab737ad7bf4851862b0b",
+  "verdict": "INCONCLUSIVE"
+}

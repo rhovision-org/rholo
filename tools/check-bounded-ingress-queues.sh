@@ -48,6 +48,44 @@ report() {
   [[ "$2" != "bounded" ]] && violations=$((violations + 1))
 }
 
+# Resolve a named bound to a value. A name is a bound only when exactly one Rust definition gives it
+# a single-line positive decimal literal. An unresolved name, a duplicate definition, `0`,
+# `usize::MAX`, an expression or an alias is not a bound: the gate exists to pin a number, not a
+# spelling. Unqualified names are looked up in the checked source first (a fixture may be
+# self-contained), then across the tracked workspace; qualified paths are looked up workspace-wide,
+# which is how `rchain_casper::engine::node_running::MAX_PENDING_BLOCKS` resolves.
+resolve_bound() {
+  local name="$1" last="${1##*::}" file line match value
+  local -a files=() matches=()
+  if [[ "$name" != *"::"* ]]; then
+    if grep -qE "^[[:space:]]*(pub([[:space:]]*\([^)]*\))?[[:space:]]+)?(const|static)[[:space:]]+${last}[[:space:]]*:" "$SRC" 2>/dev/null; then
+      files=("$SRC")
+    fi
+  fi
+  if (( ${#files[@]} == 0 )); then
+    while IFS= read -r file; do
+      [[ -n "$file" ]] && files+=("$file")
+    done < <(git grep -lE "^[[:space:]]*(pub([[:space:]]*\([^)]*\))?[[:space:]]+)?(const|static)[[:space:]]+${last}[[:space:]]*:" -- '*.rs' 2>/dev/null)
+  fi
+  (( ${#files[@]} )) || return 1
+  for file in "${files[@]}"; do
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && matches+=("$file:$line")
+    done < <(grep -nE "^[[:space:]]*(pub([[:space:]]*\([^)]*\))?[[:space:]]+)?(const|static)[[:space:]]+${last}[[:space:]]*:" "$file" 2>/dev/null)
+  done
+  (( ${#matches[@]} == 1 )) || return 1
+  match="${matches[0]}"
+  file="${match%%:*}"
+  line="${match#*:}"
+  line="${line#*:}"
+  value="$(printf '%s\n' "$line" | sed -nE "s/.*(const|static)[[:space:]]+${last}[[:space:]]*:[^=]*=[[:space:]]*([^;]*);.*/\2/p")"
+  value="${value//[[:space:]]/}"
+  [[ "$value" =~ ^[0-9][0-9_]*$ ]] || return 1
+  value="${value//_/}"
+  (( value > 0 )) || return 1
+  printf '%s\n' "$value"
+}
+
 echo "check-bounded-ingress-queues: queues on the ingress -> validate -> process path in $SRC"
 echo
 printf '  %-28s %-14s %s\n' QUEUE BOUND SITE
@@ -82,10 +120,10 @@ while IFS='|' read -r name binding; do
     report "$name" "unbounded" "${SRC}:${line}"
   elif [[ "$statement" =~ mpsc::channel[[:space:]]*\([[:space:]]*([A-Za-z_][A-Za-z0-9_:]*)[[:space:]]*\) ]]; then
     bound="${BASH_REMATCH[1]}"
-    if [[ "$bound" == "usize::MAX" ]]; then
-      report "$name" "unpinned" "${SRC}:${line} (channel(usize::MAX))"
+    if value="$(resolve_bound "$bound")"; then
+      report "$name" "bounded" "${SRC}:${line} ($bound = $value)"
     else
-      report "$name" "bounded" "${SRC}:${line} ($bound)"
+      report "$name" "unpinned" "${SRC}:${line} (channel($bound) has no resolved positive bound)"
     fi
   elif [[ "$statement" == *"mpsc::channel"* ]]; then
     report "$name" "unpinned" "${SRC}:${line} (channel argument is not a named constant)"

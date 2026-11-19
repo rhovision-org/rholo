@@ -7,10 +7,10 @@
 //! protocol above sees only a queue of messages.
 //!
 //! A message on the channel is one CapTP operation, carried as one Syrup value. The netlayers
-//! implemented here are [`crate::tcp_testing_only`] — the conformance suite's transport —
-//! [`crate::unix`], a domain socket authenticated by the socket's file mode but local to the host, and
-//! [`crate::noise`], which is the one a remote peer can use, with [`crate::multi`] dispatching a dial
-//! by the locator's transport name.
+//! implemented here are [`crate::tcp_testing_only`] — the conformance suite's transport — the `unix`
+//! transport (compiled on Unix only), a domain socket authenticated by the socket's file mode but
+//! local to the host, and [`crate::noise`], which is the one a remote peer can use, with
+//! [`crate::multi`] dispatching a dial by the locator's transport name.
 //!
 //! **Noise was once deliberately not built, and the reason it is now is worth keeping.** It is the
 //! transport OCapN names for a real deployment, and a layer that only this repository speaks would

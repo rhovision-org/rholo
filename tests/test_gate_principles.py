@@ -108,6 +108,22 @@ class CriterionTests(unittest.TestCase):
                     result = self.evaluate(gate_id, observations)
                     self.assertEqual(result["status"], "PRECONDITION", result)
 
+    def test_every_declared_input_is_load_bearing(self):
+        """A `requires` path is a claim that the principle reads it.
+
+        `evaluate_entry` short-circuits on a missing required path, so the earlier test cannot
+        see a principle that declares an input and then ignores it. Call the principle directly:
+        deleting a declared input must never leave a PASS.
+        """
+        for gate_id, entry in self.entries.items():
+            for path in entry["requires"]:
+                with self.subTest(gate=gate_id, path=path):
+                    observations = _delete(gate_fixtures.base(gate_id), path)
+                    result = principles.evaluate(
+                        entry["principle"], observations, entry.get("parameters") or {})
+                    self.assertNotEqual(result["status"], "PASS",
+                                        (gate_id, path, result))
+
     def test_malformed_observations_produce_a_verdict_not_an_exception(self):
         corruptions = [
             {},
@@ -157,7 +173,7 @@ class CriterionTests(unittest.TestCase):
             "verdict": "PASS",
             "evidence_sha256": "a" * 64,
             "verdict_url": "https://example.invalid/verdict",
-            "evidence_record": "spec/audit/evidence/example",
+            "evidence_record": "spec/audit/evidence/c343-observation-shape-20261119",
         }
         parameters = {"owner": "Owner / release coordination"}
         self.assertEqual(
@@ -209,7 +225,14 @@ class CriterionTests(unittest.TestCase):
                 path_text, _, symbol = reference.partition("::")
                 path = ROOT / path_text
                 self.assertTrue(path.is_file(), path)
-                self.assertIn(symbol, path.read_text(errors="ignore"), reference)
+                module = _load(f"adapter_{gate_id.replace('-', '_').lower()}", path)
+                self.assertTrue(callable(getattr(module, symbol, None)),
+                                f"{reference} does not name a callable")
+                if path_text == "tools/gate-principles.py" and symbol == entry["principle"]:
+                    continue
+                self.assertIn(
+                    symbol, principles.PRINCIPLES[entry["principle"]].__code__.co_names,
+                    f"{reference} is not called by {entry['principle']}")
 
 
 if __name__ == "__main__":

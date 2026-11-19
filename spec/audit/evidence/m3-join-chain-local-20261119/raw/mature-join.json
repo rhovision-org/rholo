@@ -1,40 +1,40 @@
 {
   "boundary": "finite local devnet witness; not a live-testnet join and not a certification",
   "chain_height": {
-    "n457join-bootstrap": 16,
+    "n457join-bootstrap": 17,
     "n457join-validator-1": 16,
     "n457join-validator-2": 16
   },
   "bootstrap_finalized": {
-    "number": 12,
-    "hash": "bdebabd560e064f4e2a5b68d5309da8e50d23fbd57305f838a88fe27298feb58"
+    "number": 13,
+    "hash": "d2c7632dd374a70ce47e09c98d0243a8d63c3a75a93549030e9231f8a388ce8d"
   },
   "reset_target": "n457join-validator-3",
   "recovery_shape": "passive-then-activate",
-  "passive_catch_up_seconds": 19.73270297050476,
+  "passive_catch_up_seconds": 17.45066261291504,
   "own_key_halt_in_log": false,
   "proposals_after_halt": 0,
   "late_proposals_after_halt": [],
   "recovered": {
-    "latest_block_number": 18,
-    "restored_anchor_number": 13,
-    "restored_anchor_hash": "de7afc38e50a444cb77cd8e523843cfd3cdb6458db11d4c615f222f90e757904",
+    "latest_block_number": 19,
+    "restored_anchor_number": 14,
+    "restored_anchor_hash": "b56ec0be8cf23f867c8780b35b767441eecc4c1d9bc618913f3c04f73c628131",
     "anchor_held_by_bootstrap": true,
     "sync": null
   },
-  "catch_up_seconds": 4.368478775024414,
+  "catch_up_seconds": 4.35429835319519,
   "sync_failures_in_log": 0,
   "give_ups_in_log": 0,
-  "reset_container_id_created": "b6ca8ddd075b51e460d363f88094eaae68d27c2ae99fcdf37a2b069506693d66 2026-11-18T22:43:46.626661603Z",
+  "reset_container_id_created": "91f55110b0c2f35e1768c486821b05fbbb712396d6a5d4e5c3e8686ebeb17352 2026-11-19T08:22:27.219025937Z",
   "self_equivocations_in_log": 0,
   "blocks_proposed_in_log": 2,
   "proposed_sequences": [
-    15,
-    16
+    16,
+    17
   ],
   "proposed_lines": [
-    "proposed and added block #16 (seq 15)",
-    "proposed and added block #18 (seq 16)"
+    "proposed and added block #17 (seq 16)",
+    "proposed and added block #19 (seq 17)"
   ],
   "manual_reset": true,
   "chain": "chain.json",

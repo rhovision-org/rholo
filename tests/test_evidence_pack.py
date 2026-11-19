@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -206,6 +207,46 @@ class EvidencePackTests(unittest.TestCase):
         self.assertEqual(self.verify(), 0)
         with self.assertRaises(SystemExit):
             self.verify(require_pins=True)
+
+    def test_an_empty_file_list_cannot_verify_green(self):
+        self.packed()
+        manifest = self.manifest()
+        manifest["files"] = []
+        self.write_manifest(manifest)
+        (self.record / "SHA256SUMS.json").write_text("{}\n")
+        shutil.rmtree(self.record / "raw")
+        with self.assertRaises(SystemExit):
+            self.verify()
+
+    def test_an_absent_file_list_cannot_verify_green(self):
+        self.packed()
+        manifest = self.manifest()
+        manifest.pop("files")
+        self.write_manifest(manifest)
+        with self.assertRaises(SystemExit):
+            self.verify()
+
+    def test_an_absent_sums_file_cannot_verify_green(self):
+        self.packed()
+        (self.record / "SHA256SUMS.json").unlink()
+        with self.assertRaises(SystemExit):
+            self.verify()
+
+    def test_a_duplicate_file_entry_is_refused(self):
+        self.packed()
+        manifest = self.manifest()
+        manifest["files"].append(dict(manifest["files"][0]))
+        self.write_manifest(manifest)
+        with self.assertRaises(SystemExit):
+            self.verify()
+
+    def test_a_traversing_path_is_refused(self):
+        self.packed()
+        manifest = self.manifest()
+        manifest["files"][0]["path"] = "../outside"
+        self.write_manifest(manifest)
+        with self.assertRaises(SystemExit):
+            self.verify()
 
 
 if __name__ == "__main__":

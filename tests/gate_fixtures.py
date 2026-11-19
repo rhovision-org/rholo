@@ -40,6 +40,9 @@ TOKEN_BINARY = "b" * 64
 
 
 def tempdir(under_target: bool = True) -> Path:
+    # A Python-only CI job may run without compiling Rust first, so target/ need not exist.
+    if under_target:
+        (ROOT / "target").mkdir(parents=True, exist_ok=True)
     directory = (tempfile.TemporaryDirectory(dir=ROOT / "target") if under_target
                  else tempfile.TemporaryDirectory())
     _TEMPDIRS.append(directory)
@@ -72,6 +75,11 @@ def _pack_record(gate_id: str, token: str) -> str:
     return str(record)
 
 
+def manifest_sha256(record: str | Path) -> str:
+    """The digest a criterion's `evidence.digest` must carry: sha256(manifest.json)."""
+    return hashlib.sha256((Path(record) / "manifest.json").read_bytes()).hexdigest()
+
+
 # --------------------------------------------------------------------------------------------------
 # per-gate base observations
 
@@ -97,13 +105,151 @@ def base_g428_m1() -> dict:
                        "declared_count": 1}}
 
 
+def _m2_jsonl(records: list[dict]) -> str:
+    return "".join(json.dumps(record) + "\n" for record in records)
+
+
 def base_g428_m2() -> dict:
-    return {"source": {"text": (
-        "let (incoming_blocks_tx, incoming_blocks_rx) = mpsc::channel(MAX_PENDING_BLOCKS);\n"
-        "let (processor_input_tx, processor_input_rx) = mpsc::channel(MAX_PROCESSOR_INPUT);\n"
-        "let (validated_blocks_tx, validated_blocks_rx) = mpsc::channel(MAX_VALIDATED_BLOCKS);\n"
-        "let (tap_tx, tap_rx) = mpsc::channel(MAX_TAP_VALIDATED_BLOCKS);\n"
-    )}}
+    """One complete pressure record: capped, unset, direct-socket and gRPC.
+
+    The single source of the synthetic transcripts, so a fixture and the checker cannot drift
+    apart. The record is inline under `pressure.record` so the criterion's declared controls can
+    mutate its fields; the raw files stay separate so editing a transcript without editing the
+    summary is the failure the checker recomputes.
+    """
+    message = "HTTP in-flight capacity exhausted"
+    capped_http = (
+        [
+            {"kind": "held", "status": None, "retry_after": None, "body": "", "t_ms": 0},
+            {"kind": "held", "status": None, "retry_after": None, "body": "", "t_ms": 100},
+        ]
+        + [
+            {"kind": "probe", "status": 429, "retry_after": 1, "body": message,
+             "t_ms": 200 + 50 * index}
+            for index in range(4)
+        ]
+        + [
+            {"kind": "after", "status": 400, "retry_after": None, "body": "invalid json",
+             "t_ms": 500},
+        ]
+    )
+    unset_http = [
+        {"kind": "probe", "status": 400, "retry_after": None, "body": "invalid json",
+         "t_ms": 120 * index}
+        for index in range(6)
+    ]
+    capped_direct = (
+        "POST /api/v1/deploy HTTP/1.1\n"
+        "Content-Length: 64\n\n"
+        "HTTP/1.1 429 Too Many Requests\n"
+        "retry-after: 1\n"
+        "content-type: application/json\n\n"
+        '{"error":"HTTP in-flight capacity exhausted"}\n'
+        "-- release --\n"
+        "HTTP/1.1 400 Bad Request\n"
+    )
+    unset_direct = "HTTP/1.1 400 Bad Request\n"
+    grpc_capped = [
+        {"arm": "ingress_rate", "code": 0, "message": "ok", "retry_after": None},
+        {"arm": "ingress_rate", "code": 8, "message": "rate limited", "retry_after": None},
+        {"arm": "pool_full", "code": 8, "message": "pool full", "retry_after": 1},
+    ]
+    grpc_permissive = [
+        {"arm": "permissive", "code": 0, "message": "ok", "retry_after": None},
+        {"arm": "permissive", "code": 0, "message": "ok", "retry_after": None},
+    ]
+    source_sha, binary = "a" * 40, "b" * 64
+    record = {
+        "schema": 1,
+        "gate_id": "G428-M2",
+        "locality": "public-live",
+        "endpoint": {"url": "http://203.0.113.7:40403", "proxy": "none"},
+        "candidate": {"source_sha": source_sha, "binary_sha256": binary},
+        "runs": {
+            "capped": {
+                "env": {"RNODE_HTTP_MAX_INFLIGHT_DEPLOY": 2},
+                "inspect": "raw/capped-inspect.json",
+                "version": "raw/capped-version.txt",
+            },
+            "unset": {
+                "env": {},
+                "inspect": "raw/unset-inspect.json",
+                "version": "raw/unset-version.txt",
+            },
+        },
+        "surfaces": {
+            "http": {
+                "capped": {
+                    "cap": 2, "held": 2, "probe": 4, "admitted": 0, "refused": 4,
+                    "server_errors": 0, "retry_after": 4,
+                    "refusal": {"class": "429", "message": message},
+                    "handler_reached_after_release": True,
+                    "transcript": "raw/http-capped.jsonl",
+                    "requests_per_second": 20.0,
+                },
+                "unset": {
+                    "probe": 6, "admitted": 6, "refused": 0, "server_errors": 0,
+                    "retry_after": 0, "handler_reached_after_release": True,
+                    "transcript": "raw/http-unset.jsonl",
+                    "requests_per_second": 8.3,
+                },
+            },
+            "direct_http": {
+                "capped": {"status_line": "HTTP/1.1 429", "retry_after": 1,
+                           "transcript": "raw/direct-capped.txt"},
+                "unset": {"status_line": "HTTP/1.1 400",
+                          "transcript": "raw/direct-unset.txt"},
+            },
+            "grpc": {
+                "capped": {
+                    "arms": {
+                        "ingress_rate": {"admitted": 1, "refused": 1, "code": 8,
+                                         "retry_after": None},
+                        "pool_full": {"admitted": 0, "refused": 1, "code": 8,
+                                      "retry_after": 1},
+                    },
+                    "server_errors": 0,
+                    "transcript": "raw/grpc-capped.jsonl",
+                },
+                "permissive": {"admitted": 2, "refused": 0,
+                               "transcript": "raw/grpc-permissive.jsonl"},
+            },
+        },
+    }
+    files = {
+        "README.md": (
+            "# M2 pressure witness\n\n"
+            "**Evidence locality.** public-live — four independent hosts.\n"
+        ),
+        "raw/http-capped.jsonl": _m2_jsonl(capped_http),
+        "raw/http-unset.jsonl": _m2_jsonl(unset_http),
+        "raw/direct-capped.txt": capped_direct,
+        "raw/direct-unset.txt": unset_direct,
+        "raw/grpc-capped.jsonl": _m2_jsonl(grpc_capped),
+        "raw/grpc-permissive.jsonl": _m2_jsonl(grpc_permissive),
+        "raw/capped-inspect.json": json.dumps(
+            [{"Config": {"Env": ["RNODE_HTTP_MAX_INFLIGHT_DEPLOY=2"]}}]
+        ),
+        "raw/unset-inspect.json": json.dumps([{"Config": {"Env": []}}]),
+        "raw/capped-version.txt": f"commit {source_sha}\n",
+        "raw/unset-version.txt": f"commit {source_sha}\n",
+    }
+    files["SHA256SUMS.json"] = json.dumps(
+        {name: hashlib.sha256(text.encode()).hexdigest() for name, text in files.items()}
+    )
+    return {
+        "source": {"text": (
+            "const MAX_PENDING_BLOCKS: usize = 1024;\n"
+            "const MAX_PROCESSOR_INPUT: usize = 1024;\n"
+            "const MAX_VALIDATED_BLOCKS: usize = 1024;\n"
+            "const MAX_TAP_VALIDATED_BLOCKS: usize = 1024;\n"
+            "let (incoming_blocks_tx, incoming_blocks_rx) = mpsc::channel(MAX_PENDING_BLOCKS);\n"
+            "let (processor_input_tx, processor_input_rx) = mpsc::channel(MAX_PROCESSOR_INPUT);\n"
+            "let (validated_blocks_tx, validated_blocks_rx) = mpsc::channel(MAX_VALIDATED_BLOCKS);\n"
+            "let (tap_tx, tap_rx) = mpsc::channel(MAX_TAP_VALIDATED_BLOCKS);\n"
+        )},
+        "pressure": {"record": record, "files": files},
+    }
 
 
 def m3_chain(
@@ -133,6 +279,7 @@ def m3_chain(
         "locality": locality,
         "complete": True,
         "incomplete_reasons": [],
+        "logs": {"joiner": "joiner.log", "responder": "responder.log"},
         "correlation": {
             "joiner_key": joiner,
             "responder_key": responder,
@@ -231,6 +378,27 @@ def m3_chain(
     }
 
 
+def m3_logs(chain: dict) -> tuple[str, str]:
+    """The joiner and responder logs a chain's quoted lines must appear in."""
+    stages = chain["stages"]
+    joiner = "\n".join(
+        [
+            stages["1_request"]["log_line"],
+            stages["5_receive"]["log_line"],
+            stages["6_apply"]["walk_log_line"],
+            stages["6_apply"]["log_line"],
+        ]
+    )
+    responder = "\n".join(
+        [
+            stages["2_receipt"]["log_line"],
+            stages["3_construction"]["log_line"],
+            stages["4_transport"]["log_line"],
+        ]
+    )
+    return joiner, responder
+
+
 def base_g428_m3() -> dict:
     joiner, responder, state = "1" * 64, "2" * 64, "a" * 64
     readme = (
@@ -240,13 +408,24 @@ def base_g428_m3() -> dict:
         "raw/peer.txt.\n"
     )
     manifest = json.dumps({"locality": "off-host-claim", "execution_proven": False})
+    chain = m3_chain(joiner=joiner, responder=responder, state=state)
+    joiner_log, responder_log = m3_logs(chain)
+    sums = json.dumps(
+        {
+            "joiner.log": hashlib.sha256(joiner_log.encode()).hexdigest(),
+            "responder.log": hashlib.sha256(responder_log.encode()).hexdigest(),
+        }
+    )
     return {"record": {
         "files": {
             "README.md": readme,
             "raw/peer.txt": f"rnode://{joiner}@203.0.113.7?protocol=40400&discovery=40404\n",
             "manifest.json": manifest,
+            "joiner.log": joiner_log,
+            "responder.log": responder_log,
+            "SHA256SUMS.json": sums,
         },
-        "chain": m3_chain(joiner=joiner, responder=responder, state=state),
+        "chain": chain,
     }}
 
 
@@ -262,7 +441,7 @@ def base_g428_m4() -> dict:
             {"id": "C", "finalized_anchor": True},
             {"id": "D", "finalized_anchor": True},
         ],
-        "evidence": {"record": record, "digest": "d" * 64},
+        "evidence": {"record": record, "digest": manifest_sha256(record)},
     }}
 
 
@@ -282,7 +461,7 @@ def base_g428_m5() -> dict:
             {"deploy_id": "d2", "verdict": "final_rejected"},
         ],
         "kept_readback": True,
-        "evidence": {"record": record, "digest": "d" * 64},
+        "evidence": {"record": record, "digest": manifest_sha256(record)},
     }}
 
 
@@ -326,12 +505,33 @@ def base_g584_g5() -> dict:
 
 
 def base_c343() -> dict:
-    return {"health": c343._base_health(), "operator": c343._base_operator(),
-            "block6": "block 6 accepted"}
+    return {"locality": "live-host", "health": c343._base_health(),
+            "operator": c343._base_operator(), "block6": "block 6 accepted"}
 
 
 def base_c357() -> dict:
     return {"record_data": c357._base_record("coordinated-new-genesis")}
+
+
+def _attestation(url: str) -> dict:
+    return {"attestation": {
+        "reviewer": "independent-reviewer",
+        "relationship": "not the gate owner, operator or author",
+        "independent": True,
+        "signed_at": "2026-11-18T12:00:00Z",
+        "verdict": "PASS",
+        "evidence_sha256": "a" * 64,
+        "verdict_url": url,
+        "evidence_record": "spec/audit/evidence/c343-observation-shape-20261119",
+    }}
+
+
+def base_ta_c1() -> dict:
+    return _attestation("https://example.invalid/ta-c1-verdict")
+
+
+def base_ta_c2() -> dict:
+    return _attestation("https://example.invalid/ta-c2-verdict")
 
 
 BUILDERS = {
@@ -347,6 +547,8 @@ BUILDERS = {
     "G584-G5": base_g584_g5,
     "C343": base_c343,
     "C357": base_c357,
+    "TA-C1": base_ta_c1,
+    "TA-C2": base_ta_c2,
 }
 
 

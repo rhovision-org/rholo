@@ -564,8 +564,9 @@ def check_g1(preflight, expected_observers: int = 4) -> dict:
         if isinstance(unset, list) and unset:
             finding.incomplete(f"{label} lists unset fields: {', '.join(map(str, unset))}")
         stake = record.get("total_stake")
-        if isinstance(stake, int) and stake <= 0:
-            finding.fail(f"{label} carries no bonded stake")
+        if present(stake) and (not isinstance(stake, int) or isinstance(stake, bool)
+                               or stake <= 0):
+            finding.fail(f"{label}.total_stake must be a positive integer")
 
     for field in AGREEMENT_FIELDS:
         values = [v.get(field) for v in validators if isinstance(v, dict) and present(v.get(field))]
@@ -631,8 +632,10 @@ def check_g1(preflight, expected_observers: int = 4) -> dict:
     return finding.report()
 
 
-def check_g2(submission, run, events) -> dict:
+def check_g2(submission, run, events, expected_observers: int | None = 4) -> dict:
     finding = Finding()
+    if not isinstance(run, dict) or not present(run.get("deploy_id")):
+        finding.incomplete("run.json (the sampled run) is absent or carries no deploy id")
     if not isinstance(submission, dict):
         finding.incomplete("submission.json (the operator's accepted-deploy receipt) is absent")
     else:
@@ -653,6 +656,11 @@ def check_g2(submission, run, events) -> dict:
         finding.incomplete("there are no samples")
         return finding.report()
     aliases = sorted({event.get("alias") for event in events if event.get("alias")})
+    expected = (expected_observers if isinstance(expected_observers, int)
+                and not isinstance(expected_observers, bool) and expected_observers > 0 else None)
+    if expected is not None and len(aliases) < expected:
+        finding.incomplete(
+            f"{len(aliases)} observer(s) contributed; the gate requires at least {expected}")
     for alias in aliases:
         routes = {(event.get("route"), event.get("http_status")) for event in events if event.get("alias") == alias}
         if not any(route == "deploy_status" and status == 200 for route, status in routes):
@@ -842,6 +850,9 @@ def check_g4(recovery, events) -> dict:
         finding.fail("the recovery window does not end after it starts")
     if not isinstance(recovery.get("accepted_deploys_before"), list):
         finding.incomplete("accepted_deploys_before is not a list")
+    elif not recovery["accepted_deploys_before"]:
+        # "Nothing was lost" is vacuous when nothing was accepted; recovery must exercise work.
+        finding.incomplete("recovery.json records no accepted deploy to recover")
     if not isinstance(recovery.get("accepted_deploys_after"), list):
         finding.incomplete("accepted_deploys_after is not a list")
     if not isinstance(recovery.get("final_stages"), dict):
@@ -878,6 +889,10 @@ def check_g4(recovery, events) -> dict:
     ]
     if not finalized_after:
         finding.incomplete("no finalizedSuccess sample after the recovery window")
+    elif before and not any(
+        event["body"].get("deployId") in before for event in finalized_after
+    ):
+        finding.fail("no sampled finalizedSuccess after recovery is for an accepted deploy")
     post = recovery.get("post_recovery_settlement")
     if isinstance(post, dict):
         reason = controls.settlement_verdict(
@@ -979,13 +994,59 @@ def check_g5(run, events, run_dir: Path, expected_observers: int = 4) -> dict:
             finding.fail(f"manifest.json is unreadable: {error or 'not an object'}")
         elif document.get("execution_proven") is not False:
             finding.fail("manifest.json must record execution_proven=false")
-        sums_json = find_file(run_dir, "SHA256SUMS.json")
-        if sums_json is None:
-            finding.incomplete("the packed record has no SHA256SUMS.json")
         else:
-            problem = verify_sums_json(sums_json)
-            if problem:
-                finding.fail(problem)
+            listed = document.get("files")
+            names: dict[str, str] = {}
+            if not isinstance(listed, list) or not listed:
+                finding.incomplete(
+                    "the packed record lists no files; an empty record covers no artefact")
+            else:
+                for index, entry in enumerate(listed):
+                    if not isinstance(entry, dict):
+                        finding.fail(f"manifest file entry {index} is not an object")
+                        continue
+                    relative = entry.get("path")
+                    digest = entry.get("sha256")
+                    if not isinstance(relative, str) or not relative:
+                        finding.fail(f"manifest file entry {index} has no path")
+                    elif not isinstance(digest, str) or not DIGEST_RE.match(digest):
+                        finding.fail(f"manifest file entry {index} has no sha256")
+                    else:
+                        names[relative] = digest
+            sums_json = find_file(run_dir, "SHA256SUMS.json")
+            if sums_json is None:
+                finding.incomplete("the packed record has no SHA256SUMS.json")
+            else:
+                mapping, sums_error = read_json(sums_json)
+                if not isinstance(mapping, dict) or not mapping:
+                    finding.incomplete(
+                        f"SHA256SUMS.json is empty or unreadable: {sums_error or 'empty'}")
+                elif set(mapping) != set(names):
+                    finding.fail(
+                        "SHA256SUMS.json and manifest.json disagree on the file set")
+                else:
+                    problem = verify_sums_json(sums_json)
+                    if problem:
+                        finding.fail(problem)
+                    expected = {
+                        name
+                        for name in (
+                            "run.json",
+                            "plan.public.json",
+                            "samples.jsonl",
+                            "samples.jsonl.gz",
+                            "submission.json",
+                            "claims.json",
+                            "recovery.json",
+                        )
+                        if find_file(run_dir, name) is not None
+                    }
+                    covered = {Path(relative).name for relative in names}
+                    missing = expected - covered
+                    if missing:
+                        finding.incomplete(
+                            "evidence file(s) not covered by the manifest: "
+                            + ", ".join(sorted(missing)))
     else:
         sums = find_file(run_dir, "SHA256SUMS")
         if sums is None:
@@ -1093,7 +1154,7 @@ def evaluate(run_dir: Path, preflight_path: Path, verdict_path: Path | None = No
 
     criteria = {
         "G1": check_g1(preflight, expected_observers),
-        "G2": check_g2(submission, run, events),
+        "G2": check_g2(submission, run, events, expected_observers),
         "G3": check_g3(claims, events),
         "G4": check_g4(recovery, events),
         "G5": check_g5(run, events, run_dir, expected_observers),
