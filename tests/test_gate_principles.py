@@ -173,7 +173,7 @@ class CriterionTests(unittest.TestCase):
             "verdict": "PASS",
             "evidence_sha256": "a" * 64,
             "verdict_url": "https://example.invalid/verdict",
-            "evidence_record": "spec/audit/evidence/example",
+            "evidence_record": "spec/audit/evidence/c343-observation-shape-20261119",
         }
         parameters = {"owner": "Owner / release coordination"}
         self.assertEqual(
