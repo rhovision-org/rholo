@@ -110,11 +110,21 @@ def read_pressure(base: Path) -> tuple[dict | None, str | None]:
     return None, f"{base}: pressure.json is absent (root or raw/)"
 
 
+def resolve(base: Path, name: object) -> Path | None:
+    """A named file at the record root or under `raw/` (the packer's layout)."""
+    if not _nonempty(name):
+        return None
+    for candidate in (base / name, base / "raw" / name):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _lines(base: Path, name: object) -> tuple[list[str] | None, str | None]:
     if not _nonempty(name):
         return None, "transcript path is absent"
-    path = base / name
-    if not path.is_file():
+    path = resolve(base, name)
+    if path is None:
         return None, f"{name} is absent from the record"
     return path.read_text(errors="replace").splitlines(), None
 
@@ -137,19 +147,13 @@ def _jsonl(lines: list[str], name: str, problems: list[str]) -> list[dict]:
 
 
 def _read_version(base: Path, run: dict) -> str | None:
-    name = run.get("version")
-    if not _nonempty(name):
-        return None
-    path = base / name
-    return path.read_text(errors="replace") if path.is_file() else None
+    path = resolve(base, run.get("version"))
+    return path.read_text(errors="replace") if path is not None else None
 
 
 def _read_inspect(base: Path, run: dict) -> list[str] | None:
-    name = run.get("inspect")
-    if not _nonempty(name):
-        return None
-    path = base / name
-    if not path.is_file():
+    path = resolve(base, run.get("inspect"))
+    if path is None:
         return None
     try:
         document = json.loads(path.read_text())
@@ -408,9 +412,11 @@ def check_binding(record: dict, base: Path) -> list[str]:
             named.add(candidate)
             break
     for name in sorted(named):
-        if not (base / name).is_file():
+        if resolve(base, name) is None:
             problems.append(f"{name} is absent from the record")
     sums_path = base / "SHA256SUMS.json"
+    if not sums_path.is_file():
+        sums_path = base / "raw" / "SHA256SUMS.json"
     if sums_path.is_file():
         try:
             sums = json.loads(sums_path.read_text())
@@ -419,10 +425,11 @@ def check_binding(record: dict, base: Path) -> list[str]:
         if not isinstance(sums, dict):
             return problems + [f"{sums_path}: not an object"]
         for name in sorted(named):
-            path = base / name
-            if not path.is_file():
+            path = resolve(base, name)
+            if path is None:
                 continue
-            digest = sums.get(name)
+            relative = path.relative_to(base).as_posix()
+            digest = sums.get(relative, sums.get(name))
             if digest is None:
                 problems.append(f"{name} is not digest-pinned")
             elif digest != hashlib.sha256(path.read_bytes()).hexdigest():

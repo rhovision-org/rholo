@@ -90,16 +90,37 @@ class PressureTests(unittest.TestCase):
         self.assertTrue(any("local" in problem for problem in problems), problems)
 
 
+class PackedRecordTests(unittest.TestCase):
+    def test_a_packed_record_resolves_its_files_under_raw(self):
+        base = Path(tempfile.mkdtemp())
+        pressure_spec = fixtures.base_g428_m2()["pressure"]
+        (base / "raw").mkdir()
+        (base / "README.md").write_text(pressure_spec["files"]["README.md"])
+        (base / "raw" / "README.md").write_text(pressure_spec["files"]["README.md"])
+        (base / "raw" / "pressure.json").write_text(json.dumps(pressure_spec["record"]))
+        sums = {}
+        for name, text in pressure_spec["files"].items():
+            if name in ("README.md", "SHA256SUMS.json"):
+                continue
+            relative = "raw/" + name.split("raw/", 1)[-1]
+            (base / relative).write_text(text)
+            sums[relative] = hashlib.sha256(text.encode()).hexdigest()
+        chain = json.dumps(pressure_spec["record"])
+        (base / "raw" / "pressure.json").write_text(chain)
+        sums["raw/pressure.json"] = hashlib.sha256(chain.encode()).hexdigest()
+        (base / "SHA256SUMS.json").write_text(json.dumps(sums))
+        status, problems = pressure.check_pressure({"dir": str(base)}, PARAMETERS)
+        self.assertEqual(status, "PASS", problems)
+
+
 class ArmTests(unittest.TestCase):
     def phase(self, base: Path, mode: str, files: dict) -> Path:
         out = base / mode
-        (out / "raw").mkdir(parents=True)
-        (out / "raw" / f"http-{mode}.jsonl").write_text(files[f"raw/http-{mode}.jsonl"])
-        (out / "raw" / f"direct-{mode}.txt").write_text(files[f"raw/direct-{mode}.txt"])
-        (out / "raw" / f"{mode}-inspect.json").write_text(
-            files[f"raw/{mode}-inspect.json"]
-        )
-        (out / "raw" / f"{mode}-version.txt").write_text(files[f"raw/{mode}-version.txt"])
+        out.mkdir(parents=True)
+        (out / f"http-{mode}.jsonl").write_text(files[f"raw/http-{mode}.jsonl"])
+        (out / f"direct-{mode}.txt").write_text(files[f"raw/direct-{mode}.txt"])
+        (out / f"{mode}-inspect.json").write_text(files[f"raw/{mode}-inspect.json"])
+        (out / f"{mode}-version.txt").write_text(files[f"raw/{mode}-version.txt"])
         summary = {
             "mode": mode,
             "cap": 2 if mode == "capped" else None,

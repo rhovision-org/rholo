@@ -46,7 +46,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CAP_KEY = "RNODE_HTTP_MAX_INFLIGHT_DEPLOY"
-INVALID = b'{"not":"a deploy"}\n'
+INVALID = b"invalid json\n"
 REFUSAL_MESSAGE = "HTTP in-flight capacity exhausted"
 HEX40 = re.compile(r"\b[0-9a-f]{40}\b")
 HEX64 = re.compile(r"\b[0-9a-f]{64}\b")
@@ -107,8 +107,12 @@ def after(port: int) -> dict:
     return record
 
 
-def raw_exchange(port: int, length: int = 64) -> str:
-    """One raw-socket request, with its status line and headers read verbatim."""
+def raw_exchange(port: int) -> str:
+    """One raw-socket request, with its status line and headers read verbatim.
+
+    The body is complete: an admitted request must reach the extractor and answer, while the
+    admission refusal happens before the body is read.
+    """
     connection = socket.create_connection(("127.0.0.1", port), timeout=10)
     try:
         connection.sendall(
@@ -116,7 +120,7 @@ def raw_exchange(port: int, length: int = 64) -> str:
                 "POST /api/v1/deploy HTTP/1.1\r\n"
                 "Host: 127.0.0.1\r\n"
                 "Content-Type: application/json\r\n"
-                f"Content-Length: {length}\r\n\r\n"
+                f"Content-Length: {len(INVALID)}\r\n\r\n"
             ).encode()
             + INVALID
         )
@@ -138,11 +142,12 @@ def capture(path: Path, process: subprocess.CompletedProcess) -> None:
 def phase(args: argparse.Namespace) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    raw = out / "raw"
-    raw.mkdir(exist_ok=True)
     capped = args.mode == "capped"
     cap = args.cap if capped else 0
     held = [hold(args.port) for _ in range(cap)]
+    # The permits are acquired when the server parses the held request heads; give the accepts a
+    # moment, or the first probe races them and is admitted.
+    time.sleep(args.settle)
     records: list[dict] = [{"kind": "held", "status": None, "retry_after": None,
                             "body": "", "t_ms": 0} for _ in range(cap)]
     try:
@@ -155,7 +160,7 @@ def phase(args: argparse.Namespace) -> int:
     finally:
         for connection in held:
             connection.close()
-    time.sleep(0.05)
+    time.sleep(args.settle)
     released = after(args.port)
     records.append(released)
     direct_after = raw_exchange(args.port)
@@ -185,18 +190,18 @@ def phase(args: argparse.Namespace) -> int:
             "class": "429" if refused else "none",
             "message": refused[0]["body"] if refused else "",
         },
-        "transcript": f"raw/http-{args.mode}.jsonl",
+        "transcript": f"http-{args.mode}.jsonl",
         "direct": {
             "status_line": "HTTP/1.1 429" if "HTTP/1.1 429" in direct_refused else "HTTP/1.1 400",
             "retry_after": 1 if re.search(r"(?im)^retry-after:\s*1\s*$", direct_refused) else None,
-            "transcript": f"raw/direct-{args.mode}.txt",
+            "transcript": f"direct-{args.mode}.txt",
             "after_status_line": "HTTP/1.1 400" if "HTTP/1.1 400" in direct_after else "other",
         },
     }
     inspect = docker(["inspect", args.container])
-    capture(raw / f"{args.mode}-inspect.json", inspect)
+    capture(out / f"{args.mode}-inspect.json", inspect)
     version = docker(["exec", args.container, "rnode", "--version"])
-    capture(raw / f"{args.mode}-version.txt", version)
+    capture(out / f"{args.mode}-version.txt", version)
     digest = docker(["exec", args.container, "sha256sum", "/usr/local/bin/rnode"])
     if digest.returncode == 0:
         match = HEX64.search(digest.stdout)
@@ -260,29 +265,28 @@ def assemble(args: argparse.Namespace) -> int:
         raise SystemExit("the capped and unset phases were not run on the same binary")
     source = args.source_sha
     if not source:
-        text = (Path(args.capped) / "raw" / "capped-version.txt").read_text(errors="replace")
+        text = (Path(args.capped) / "capped-version.txt").read_text(errors="replace")
         match = HEX40.search(text)
         source = match.group(0) if match else ""
     binary = args.binary_sha256 or capped.get("binary_sha256") or ""
     out = Path(args.out)
-    raw = out / "raw"
-    raw.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
     copies = {
-        "http-capped.jsonl": Path(args.capped) / "raw" / "http-capped.jsonl",
-        "http-unset.jsonl": Path(args.unset) / "raw" / "http-unset.jsonl",
-        "direct-capped.txt": Path(args.capped) / "raw" / "direct-capped.txt",
-        "direct-unset.txt": Path(args.unset) / "raw" / "direct-unset.txt",
+        "http-capped.jsonl": Path(args.capped) / "http-capped.jsonl",
+        "http-unset.jsonl": Path(args.unset) / "http-unset.jsonl",
+        "direct-capped.txt": Path(args.capped) / "direct-capped.txt",
+        "direct-unset.txt": Path(args.unset) / "direct-unset.txt",
         "grpc-capped.jsonl": grpc_dir / "grpc-capped.jsonl",
         "grpc-permissive.jsonl": grpc_dir / "grpc-permissive.jsonl",
-        "capped-inspect.json": Path(args.capped) / "raw" / "capped-inspect.json",
-        "unset-inspect.json": Path(args.unset) / "raw" / "unset-inspect.json",
-        "capped-version.txt": Path(args.capped) / "raw" / "capped-version.txt",
-        "unset-version.txt": Path(args.unset) / "raw" / "unset-version.txt",
+        "capped-inspect.json": Path(args.capped) / "capped-inspect.json",
+        "unset-inspect.json": Path(args.unset) / "unset-inspect.json",
+        "capped-version.txt": Path(args.capped) / "capped-version.txt",
+        "unset-version.txt": Path(args.unset) / "unset-version.txt",
     }
     for name, path in copies.items():
         if not path.is_file():
             raise SystemExit(f"{path}: absent")
-        (raw / name).write_bytes(path.read_bytes())
+        (out / name).write_bytes(path.read_bytes())
     record = {
         "schema": 1,
         "gate_id": "G428-M2",
@@ -292,13 +296,13 @@ def assemble(args: argparse.Namespace) -> int:
         "runs": {
             "capped": {
                 "env": {CAP_KEY: capped["cap"]},
-                "inspect": "raw/capped-inspect.json",
-                "version": "raw/capped-version.txt",
+                "inspect": "capped-inspect.json",
+                "version": "capped-version.txt",
             },
             "unset": {
                 "env": {},
-                "inspect": "raw/unset-inspect.json",
-                "version": "raw/unset-version.txt",
+                "inspect": "unset-inspect.json",
+                "version": "unset-version.txt",
             },
         },
         "surfaces": {
@@ -310,7 +314,7 @@ def assemble(args: argparse.Namespace) -> int:
                     "retry_after": capped["retry_after"], "refusal": capped["refusal"],
                     "handler_reached_after_release":
                         capped["handler_reached_after_release"],
-                    "transcript": "raw/http-capped.jsonl",
+                    "transcript": "http-capped.jsonl",
                     "requests_per_second": capped["requests_per_second"],
                 },
                 "unset": {
@@ -318,7 +322,7 @@ def assemble(args: argparse.Namespace) -> int:
                     "refused": unset["refused"], "server_errors": unset["server_errors"],
                     "retry_after": unset["retry_after"],
                     "handler_reached_after_release": unset["handler_reached_after_release"],
-                    "transcript": "raw/http-unset.jsonl",
+                    "transcript": "http-unset.jsonl",
                     "requests_per_second": unset["requests_per_second"],
                 },
             },
@@ -326,11 +330,11 @@ def assemble(args: argparse.Namespace) -> int:
                 "capped": {
                     "status_line": capped["direct"]["status_line"],
                     "retry_after": capped["direct"]["retry_after"],
-                    "transcript": "raw/direct-capped.txt",
+                    "transcript": "direct-capped.txt",
                 },
                 "unset": {
                     "status_line": unset["direct"]["status_line"],
-                    "transcript": "raw/direct-unset.txt",
+                    "transcript": "direct-unset.txt",
                 },
             },
             "grpc": {
@@ -340,12 +344,12 @@ def assemble(args: argparse.Namespace) -> int:
                         "pool_full": grpc_summary["pool_full"],
                     },
                     "server_errors": 0,
-                    "transcript": "raw/grpc-capped.jsonl",
+                    "transcript": "grpc-capped.jsonl",
                 },
                 "permissive": {
                     "admitted": grpc_summary["permissive"]["admitted"],
                     "refused": grpc_summary["permissive"]["refused"],
-                    "transcript": "raw/grpc-permissive.jsonl",
+                    "transcript": "grpc-permissive.jsonl",
                 },
             },
         },
@@ -393,6 +397,7 @@ def main(argv: list[str]) -> int:
     phase_cmd.add_argument("--cap", type=int, default=2)
     phase_cmd.add_argument("--probe", type=int, default=4)
     phase_cmd.add_argument("--spacing", type=float, default=0.15)
+    phase_cmd.add_argument("--settle", type=float, default=0.3)
     grpc_cmd = sub.add_parser("grpc", help="run the Rust real-listener observation")
     grpc_cmd.add_argument("--out", required=True)
     assemble_cmd = sub.add_parser("assemble", help="merge the phases into a record")
