@@ -202,6 +202,14 @@
      "expected": "FAIL"
     },
     {
+     "name": "a pressure record with no pin set at all",
+     "mutation": [
+      "delete",
+      "pressure/files/SHA256SUMS.json"
+     ],
+     "expected": "FAIL"
+    },
+    {
      "name": "a local endpoint on a public-live claim",
      "mutation": [
       "set",
@@ -382,6 +390,14 @@
       "set",
       "record/files/joiner.log",
       "not the captured log\n"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an off-host record without digest pins",
+     "mutation": [
+      "delete",
+      "record/files/SHA256SUMS.json"
      ],
      "expected": "FAIL"
     },

@@ -75,6 +75,11 @@ def _pack_record(gate_id: str, token: str) -> str:
     return str(record)
 
 
+def manifest_sha256(record: str | Path) -> str:
+    """The digest a criterion's `evidence.digest` must carry: sha256(manifest.json)."""
+    return hashlib.sha256((Path(record) / "manifest.json").read_bytes()).hexdigest()
+
+
 # --------------------------------------------------------------------------------------------------
 # per-gate base observations
 
@@ -436,7 +441,7 @@ def base_g428_m4() -> dict:
             {"id": "C", "finalized_anchor": True},
             {"id": "D", "finalized_anchor": True},
         ],
-        "evidence": {"record": record, "digest": "d" * 64},
+        "evidence": {"record": record, "digest": manifest_sha256(record)},
     }}
 
 
@@ -456,7 +461,7 @@ def base_g428_m5() -> dict:
             {"deploy_id": "d2", "verdict": "final_rejected"},
         ],
         "kept_readback": True,
-        "evidence": {"record": record, "digest": "d" * 64},
+        "evidence": {"record": record, "digest": manifest_sha256(record)},
     }}
 
 
