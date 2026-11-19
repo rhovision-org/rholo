@@ -34,6 +34,8 @@ ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "spec" / "audit"
 OUT_JSON = AUDIT / "mainnet-gates.json"
 OUT_MD = AUDIT / "mainnet-gates.md"
+OUT_CAMPAIGNS_JSON = AUDIT / "release-campaigns.json"
+OUT_CAMPAIGNS_MD = AUDIT / "release-campaigns.md"
 EXTERNAL = AUDIT / "mainnet-gates.external.json"
 LEDGER = AUDIT / "hardfork-51-closeout.json"
 INVENTORY = AUDIT / "section6-gap-inventory.json"
@@ -56,6 +58,9 @@ INELIGIBLE_IDS = {"TA-C3"}
 # satisfied by lowering both; a promotion raises this constant in the same commit, and a demotion
 # is then an explicit two-file change.
 MINIMUM_MET = 47
+# **The 12 host/live obligations are campaigns, not gates.** They cannot be closed
+# by a boolean test of the current build; the tracker must not shrink silently.
+CAMPAIGN_MINIMUM = 12
 
 
 def require(condition: bool, message: str) -> None:
@@ -441,13 +446,8 @@ def symmetrize(rows: list[dict]) -> None:
                 )
 
 
-def build() -> dict:
-    ledger = json.loads(LEDGER.read_text())
-    inventory = json.loads(INVENTORY.read_text())
-    external = json.loads(EXTERNAL.read_text())
-    bindings = (json.loads(BINDINGS.read_text()) if BINDINGS.exists() else
-                {"schema": 1, "met_ratchet": {"minimum": 0, "required_ids": []},
-                 "bindings": []})
+def _prepare_external(external: dict) -> None:
+    """Pin the source excerpts and hash each row's authored criteria."""
     for source in external["sources"].values():
         excerpt = source.get("excerpt")
         if excerpt:
@@ -459,6 +459,16 @@ def build() -> dict:
         criteria = "\n".join(str(row.get(field, "")) for field in
                              ("title", "pass_condition", "fail_condition", "observable"))
         row["criteria_sha256"] = hashlib.sha256(criteria.encode()).hexdigest()
+
+
+def build() -> dict:
+    ledger = json.loads(LEDGER.read_text())
+    inventory = json.loads(INVENTORY.read_text())
+    external = json.loads(EXTERNAL.read_text())
+    bindings = (json.loads(BINDINGS.read_text()) if BINDINGS.exists() else
+                {"schema": 1, "met_ratchet": {"minimum": 0, "required_ids": []},
+                 "bindings": []})
+    _prepare_external(external)
     # A gate is a boolean test of the current build. The release/decision
     # obligations (HF51) and the sign-off/phantom-data rows are not gates; they
     # live in their own trackers and are filtered out here.
@@ -485,6 +495,81 @@ def build() -> dict:
         "sources": external["sources"],
         "gates": rows,
     }
+
+
+def campaigns() -> dict:
+    """The release campaigns: host/live obligations that are not current-build gates.
+
+    A gate must be a boolean test of the current build. These 12 need hosts, a
+    release candidate or an operator window, so they stay release blockers in
+    their own tracker and are excluded from the gate register.
+    """
+    external = json.loads(EXTERNAL.read_text())
+    _prepare_external(external)
+    rows = sorted((row for row in external["gates"] if row.get("release_campaign")),
+                  key=lambda row: (row["family"], row["id"]))
+    if len(rows) < CAMPAIGN_MINIMUM:
+        raise ValueError(
+            f"only {len(rows)} release campaigns remain; the floor is {CAMPAIGN_MINIMUM}")
+    if any(row.get("gate", True) for row in rows):
+        raise ValueError("a release campaign cannot also be a gate")
+    # Symmetrise campaign-to-campaign edges only. A campaign may also reference a
+    # row that is neither a gate nor a campaign (an M6 sign-off, say); that edge is
+    # one-way context and is kept as authored.
+    by_id = {row["id"]: row for row in rows}
+    for row in rows:
+        for edge in list(row.get("related") or []):
+            target = by_id.get(edge["id"])
+            if target is not None and not any(
+                    back.get("id") == row["id"] for back in target.get("related") or []):
+                target.setdefault("related", []).append(
+                    {"id": row["id"], "criterion": edge["criterion"]})
+    return {
+        "schema": 1,
+        "generated": "2026-11-19",
+        "source": "spec/audit/mainnet-gates.external.json",
+        "register": "spec/audit/mainnet-gates.json",
+        "sources": external["sources"],
+        "campaigns": rows,
+    }
+
+
+def render_campaigns_md(document: dict) -> str:
+    lines = [
+        "# Mainnet release campaigns",
+        "",
+        "Emitted from `spec/audit/mainnet-gates.external.json` by "
+        "`tools/build-mainnet-gates.py`.",
+        "",
+        "**These are not gates.** A gate is a boolean test of the current build. Each campaign",
+        "needs hosts, a release candidate or an operator window and an evidence record, so it",
+        "stays a release blocker in this tracker and is not counted in `mainnet-gates.json`.",
+        "Closing one is an operator campaign judged by its executable criterion, not a code edit.",
+        "",
+        f"- generated: {document['generated']}",
+        f"- campaigns: {len(document['campaigns'])}",
+        "",
+        "| campaign | family | status | title | locality | owner |",
+        "|---|---|---|---|---|---|",
+    ]
+
+    def cell(value: object) -> str:
+        text = "" if value is None else str(value)
+        return text.replace("|", "\\|").replace("\n", " ")
+
+    for row in document["campaigns"]:
+        lines.append(
+            f"| `{cell(row['id'])}` | {cell(row['family'])} | "
+            f"**{cell(row.get('status'))}** | {cell(row['title'])[:120]} | "
+            f"{cell(row.get('locality'))} | {cell(row.get('owner'))[:60]} |"
+        )
+    lines.extend([
+        "",
+        "`check-release-campaigns.py --assert-ready` exits 3 while any campaign is open, so a",
+        "closed gate register is never a release authorization.",
+        "",
+    ])
+    return "\n".join(lines)
 
 
 def render_md(document: dict) -> str:
@@ -517,8 +602,10 @@ def render_md(document: dict) -> str:
         "Status is a disposition of the evidence, not a release claim. A gate is `met` only",
         "when its witness resolves, its negative control is recorded, its evidence is pinned,",
         "and every dependency is satisfied.",
-        f"The register records **{met} of {len(document['gates'])} gates `met`**; every other",
-        "gate is open with a stated reason.",
+        f"The register records **{met} of {len(document['gates'])} gates `met`**.",
+        "It contains only current-build gates; host/live obligations are release campaigns in",
+        "[`release-campaigns.md`](release-campaigns.md), and a closed register is not a release",
+        "authorization.",
         "",
     ])
     return "\n".join(lines)
@@ -533,23 +620,31 @@ def main() -> int:
     document = build()
     payload = json.dumps(document, indent=2, sort_keys=True) + "\n"
     md = render_md(document)
+    campaign_doc = campaigns()
+    campaign_payload = json.dumps(campaign_doc, indent=2, sort_keys=True) + "\n"
+    campaign_md = render_campaigns_md(campaign_doc)
     if args.stdout:
         print(payload, end="")
         return 0
     if args.check:
         stale = []
-        if not OUT_JSON.exists() or OUT_JSON.read_text() != payload:
-            stale.append(str(OUT_JSON.relative_to(ROOT)))
-        if not OUT_MD.exists() or OUT_MD.read_text() != md:
-            stale.append(str(OUT_MD.relative_to(ROOT)))
+        for path, expected in ((OUT_JSON, payload), (OUT_MD, md),
+                               (OUT_CAMPAIGNS_JSON, campaign_payload),
+                               (OUT_CAMPAIGNS_MD, campaign_md)):
+            if not path.exists() or path.read_text() != expected:
+                stale.append(str(path.relative_to(ROOT)))
         if stale:
             print(json.dumps({"result": "STALE", "files": stale}, sort_keys=True))
             return 1
-        print(json.dumps({"result": "CURRENT", "gates": len(document["gates"])}, sort_keys=True))
+        print(json.dumps({"result": "CURRENT", "gates": len(document["gates"]),
+                          "campaigns": len(campaign_doc["campaigns"])}, sort_keys=True))
         return 0
     OUT_JSON.write_text(payload)
     OUT_MD.write_text(md)
-    print(json.dumps({"result": "WROTE", "gates": len(document["gates"])}, sort_keys=True))
+    OUT_CAMPAIGNS_JSON.write_text(campaign_payload)
+    OUT_CAMPAIGNS_MD.write_text(campaign_md)
+    print(json.dumps({"result": "WROTE", "gates": len(document["gates"]),
+                      "campaigns": len(campaign_doc["campaigns"])}, sort_keys=True))
     return 0
 
 

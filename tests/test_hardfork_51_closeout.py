@@ -413,12 +413,14 @@ class CloseoutTests(unittest.TestCase):
 
 
 class MainnetRegisterTests(unittest.TestCase):
-    """The wired path for the mainnet register and the executable criteria.
+    """The wired path for the mainnet gate register.
 
     This file's discovery line is in `ci.yml`; `check-mainnet-gates.py --check` rebuilds the
-    register, verifies every `met` row's witness/control/evidence/pins and runs the criteria
-    self-test through `check_criteria`. Ancestry is skipped in a shallow checkout (recorded as
-    `unverified-shallow`), which is why this can run in CI without a `fetch-depth` edit.
+    register and verifies every `met` row's witness/control/evidence/pins. The register holds
+    only current-build gates; the 12 host/live obligations are release campaigns, judged by
+    `check-release-campaigns.py` and reached through `ReleaseCampaignTests` below. Ancestry is
+    skipped in a shallow checkout (recorded as `unverified-shallow`), which is why this can run
+    in CI without a `fetch-depth` edit.
     """
 
     def test_the_committed_register_validates_and_is_current(self):
@@ -429,7 +431,7 @@ class MainnetRegisterTests(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertEqual(report["result"], "REGISTER_VALID", report)
         self.assertEqual(
-            (report["gates"], report["met"], report["unresolved"]), (59, 47, 12), report)
+            (report["gates"], report["met"], report["unresolved"]), (47, 47, 0), report)
 
 
 class CapacityTierTests(unittest.TestCase):
@@ -482,6 +484,16 @@ class FinalityCampaignTests(unittest.TestCase):
             top_level_dir=str(ROOT / "tests"))
         result = unittest.TextTestRunner(stream=StringIO(), verbosity=0).run(suite)
         self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+
+
+class ReleaseCampaignTests(unittest.TestCase):
+    def test_the_campaign_suite_passes(self):
+        suite = unittest.defaultTestLoader.discover(
+            str(ROOT / "tests"), pattern="test_release_campaigns.py",
+            top_level_dir=str(ROOT / "tests"))
+        result = unittest.TextTestRunner(stream=StringIO(), verbosity=0).run(suite)
+        self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+        self.assertGreater(result.testsRun, 0)
 
 
 class RustControlTests(unittest.TestCase):

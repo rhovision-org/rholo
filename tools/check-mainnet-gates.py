@@ -34,7 +34,6 @@ MATRIX = AUDIT / "final-gap-matrix.json"
 INVENTORY = AUDIT / "section6-gap-inventory.json"
 LEDGER = AUDIT / "hardfork-51-closeout.json"
 EXTERNAL = AUDIT / "mainnet-gates.external.json"
-CRITERIA = AUDIT / "gate-criteria.json"
 BUILDER = ROOT / "tools" / "build-mainnet-gates.py"
 
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
@@ -572,8 +571,12 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
     require(isinstance(rows, list) and rows, "gates must be a non-empty list")
     ids = [row.get("id") for row in rows]
     require(len(ids) == len(set(ids)), "duplicate gate id")
-    require({row.get("family") for row in rows} == FAMILIES,
-            "every gate family must be represented")
+    # **Families with no gate are campaigns, not missing rows.** The register now
+    # holds only current-build gates; G428/G584/TA/C343 live in the release
+    # campaign tracker. An unknown family is still refused.
+    present = {row.get("family") for row in rows}
+    require(present <= FAMILIES,
+            f"unknown gate family: {sorted(present - FAMILIES)}")
     sources = document.get("sources") or {}
     for family, key in (("G428", "G428"), ("G584", "G584"), ("TA", "TA")):
         require(key in sources and HEX64.fullmatch(str(sources[key].get("sha256"))),
@@ -643,7 +646,8 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
         resolve_source(row, matrix, inventory, ledger)
     check_dependencies(rows)
     check_related(rows)
-    check_criteria(rows)
+    # The executable criteria now judge the release campaigns, not the register;
+    # `check-release-campaigns.py` validates them and runs their self-test.
     check_met_ratchet(document, rows)
     unresolved = [row["id"] for row in rows if row["status"] != "met"]
     return {
@@ -654,113 +658,6 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
         "unresolved_ids": unresolved,
         "ancestry": ancestry,
     }
-
-
-def _resolve_adapter(reference: object, gate_id: str) -> None:
-    require(isinstance(reference, str) and "::" in reference,
-            f"{gate_id}: the criterion adapter must be path::symbol")
-    path_text, symbol = reference.split("::", 1)
-    path = ROOT / path_text
-    require(path.is_file(), f"{gate_id}: adapter path {path_text} does not exist")
-    text = path.read_text(errors="ignore")
-    if symbol.startswith("--"):
-        require(symbol in text, f"{gate_id}: adapter flag {symbol} not found")
-        return
-    require(re.search(rf"\b(?:def|fn|struct)\s+{re.escape(symbol)}\b", text)
-            or f"function {symbol}" in text or f"module {symbol}" in text,
-            f"{gate_id}: adapter symbol {symbol} not found in {path_text}")
-
-
-_SELFTEST_CACHE: dict = {"key": None, "errors": []}
-
-
-def _selftest_errors(entries: dict, principles) -> list[str]:
-    """The criteria self-test, memoised by the bytes that define it and the entries fed in."""
-    digest = hashlib.sha256()
-    for path in (CRITERIA, ROOT / "tools" / "gate-principles.py",
-                 ROOT / "tools" / "gate-selftest.py", ROOT / "tests" / "gate_fixtures.py"):
-        digest.update(path.read_bytes())
-    digest.update(json.dumps(entries, sort_keys=True).encode())
-    key = digest.hexdigest()
-    if _SELFTEST_CACHE["key"] != key:
-        module = _load_tool("gate_selftest", "gate-selftest.py")
-        _SELFTEST_CACHE["key"] = key
-        _SELFTEST_CACHE["errors"] = module.run(entries, principles=principles)
-    return list(_SELFTEST_CACHE["errors"])
-
-
-def check_criteria(rows: list[dict]) -> None:
-    """Validate the executable criterion beside each machine-checkable external gate.
-
-    The prose `pass_condition` stays authoritative: the entry must hash it. Coverage is an
-    equality over the external rows that declare an executable witness (or `machine_check`),
-    so a new checkable gate cannot arrive without a criterion and a criterion cannot outlive
-    its row.
-    """
-    if not CRITERIA.is_file():
-        raise GateError("spec/audit/gate-criteria.json is absent")
-    document = json.loads(CRITERIA.read_text())
-    require(document.get("schema") == 1, "gate-criteria schema 1 required")
-    entries = document.get("criteria")
-    require(isinstance(entries, list) and entries, "gate-criteria has no criteria")
-    by_id: dict[str, dict] = {}
-    for entry in entries:
-        require(isinstance(entry, dict), "every criterion must be an object")
-        gate_id = entry.get("gate_id")
-        require(isinstance(gate_id, str) and gate_id, "every criterion needs a gate_id")
-        require(gate_id not in by_id, f"{gate_id}: duplicate criterion")
-        by_id[gate_id] = entry
-    external = {row["id"]: row for row in json.loads(EXTERNAL.read_text())["gates"]}
-    executable = {"python", "rust-unit", "rust-integration", "two-binary",
-                  "local-devnet", "live-host"}
-    expected = {
-        gate_id for gate_id, row in external.items()
-        if row.get("gate", True)
-        and (row.get("machine_check") is True or row.get("witness_kind") in executable)
-    }
-    require(set(by_id) == expected,
-            "criterion coverage differs: "
-            f"extra={sorted(set(by_id) - expected)} missing={sorted(expected - set(by_id))}")
-    rows_by_id = {row["id"]: row for row in rows}
-    principle_path = ROOT / "tools" / "gate-principles.py"
-    spec = importlib.util.spec_from_file_location("gate_principles_for_register", principle_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    for gate_id, entry in by_id.items():
-        require(gate_id in external, f"{gate_id}: criterion names no external gate")
-        require(gate_id in rows_by_id, f"{gate_id}: criterion gate is not in the register")
-        row = rows_by_id[gate_id]
-        expected_hash = hashlib.sha256(str(row["pass_condition"]).encode()).hexdigest()
-        require(entry.get("pass_condition_sha256") == expected_hash,
-                f"{gate_id}: the criterion does not hash the gate's pass_condition")
-        principle = entry.get("principle")
-        require(principle in module.PRINCIPLES, f"{gate_id}: unknown principle {principle!r}")
-        for error in module.validate_parameters(principle, entry.get("parameters")):
-            require(False, f"{gate_id}: {error}")
-        requires = entry.get("requires")
-        require(isinstance(requires, list) and requires
-                and all(isinstance(item, str) and item for item in requires),
-                f"{gate_id}: requires must be a non-empty list of observation paths")
-        controls = entry.get("negative_controls")
-        require(isinstance(controls, list) and controls,
-                f"{gate_id}: at least one negative control is required")
-        expected_fail = 0
-        for control in controls:
-            require(isinstance(control, dict), f"{gate_id}: every control must be an object")
-            require(isinstance(control.get("name"), str) and control["name"],
-                    f"{gate_id}: every control needs a name")
-            require(isinstance(control.get("mutation"), (list, str)),
-                    f"{gate_id}: every control needs a mutation")
-            require(control.get("expected") in ("FAIL", "PRECONDITION"),
-                    f"{gate_id}: a control must expect FAIL or PRECONDITION")
-            expected_fail += control.get("expected") == "FAIL"
-        require(expected_fail > 0, f"{gate_id}: no control expects FAIL")
-        _resolve_adapter(entry.get("adapter"), gate_id)
-    # **A criterion that has never been shown to fail is not a criterion.** The shape checks
-    # above cannot see a principle that passes a control it declares; the behavioural self-test
-    # can, and it runs here so the CI-wired register check executes it.
-    errors = _selftest_errors(by_id, module)
-    require(not errors, "the criteria self-test failed: " + "; ".join(errors[:5]))
 
 
 def check_met_ratchet(document: dict, rows: list[dict]) -> None:

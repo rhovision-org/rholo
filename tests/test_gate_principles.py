@@ -205,14 +205,10 @@ class CriterionTests(unittest.TestCase):
         self.assertTrue(any("supermajority" in reason for reason in result["reasons"]),
                         result)
 
-    def test_the_registry_covers_every_machine_checkable_external_gate(self):
-        executable = {"python", "rust-unit", "rust-integration", "two-binary",
-                      "local-devnet", "live-host"}
-        expected = {
-            gate_id for gate_id, row in self.external.items()
-            if row.get("gate", True)
-            and (row.get("machine_check") is True or row.get("witness_kind") in executable)
-        }
+    def test_the_registry_covers_every_release_campaign(self):
+        # Since 2026-11-19 the criteria judge the release campaigns, not gate rows.
+        expected = {gate_id for gate_id, row in self.external.items()
+                    if row.get("release_campaign") is True}
         self.assertEqual(set(self.entries), expected)
 
     def test_every_entry_is_bound_to_its_prose_bar_and_adapter(self):
