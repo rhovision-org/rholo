@@ -571,9 +571,9 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
     require(isinstance(rows, list) and rows, "gates must be a non-empty list")
     ids = [row.get("id") for row in rows]
     require(len(ids) == len(set(ids)), "duplicate gate id")
-    # **Families with no gate are campaigns, not missing rows.** The register now
-    # holds only current-build gates; G428/G584/TA/C343 live in the release
-    # campaign tracker. An unknown family is still refused.
+    # **Families with no gate are release claims, not missing rows.** The register
+    # holds only current-build gates; the observable release behaviours live in
+    # the release-claims tracker. An unknown family is still refused.
     present = {row.get("family") for row in rows}
     require(present <= FAMILIES,
             f"unknown gate family: {sorted(present - FAMILIES)}")
@@ -646,8 +646,8 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
         resolve_source(row, matrix, inventory, ledger)
     check_dependencies(rows)
     check_related(rows)
-    # The executable criteria now judge the release campaigns, not the register;
-    # `check-release-campaigns.py` validates them and runs their self-test.
+    # Release claims are validated by `check-release-campaigns.py`; they are not
+    # register gates and carry no criterion entry here.
     check_met_ratchet(document, rows)
     unresolved = [row["id"] for row in rows if row["status"] != "met"]
     return {

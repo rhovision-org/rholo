@@ -29,8 +29,27 @@ FIXTURE_SPEC = importlib.util.spec_from_file_location(
 fixtures = importlib.util.module_from_spec(FIXTURE_SPEC)
 FIXTURE_SPEC.loader.exec_module(fixtures)
 REGISTER = json.loads((ROOT / "spec/audit/mainnet-gates.json").read_text())
-CAMPAIGNS = json.loads((ROOT / "spec/audit/release-campaigns.json").read_text())
 MATRIX = json.loads((ROOT / "spec/audit/final-gap-matrix.json").read_text())
+
+# **Synthetic rows for the binding tests.** The two ids below are deleted campaign
+# rows; their criterion entries remain in `gate-criteria.json`, so the binding tests
+# can still exercise a criterion-bearing id without restoring a release row.
+SYNTHETIC_ROWS = {
+    "G584-G1": {
+        "id": "G584-G1", "family": "G584", "gate": False,
+        "pass_condition": "One selected source commit / artifact / executable SHA-256 "
+                          "installed on all four validators, with four distinct validator "
+                          "identities, and the genesis/bond set pinned. Pins collected per "
+                          "host by #572 and checked independently of the collector's own ok flag.",
+    },
+    "G428-M1": {
+        "id": "G428-M1", "family": "G428", "gate": False,
+        "pass_condition": "Declare and measure per-validator minimum RAM/CPU, peak RSS, "
+                          "replay headroom, and a stake/failure-domain mapping on "
+                          "independently provisioned hosts; demonstrate the claimed "
+                          "host-failure tolerance.",
+    },
+}
 INVENTORY = json.loads((ROOT / "spec/audit/section6-gap-inventory.json").read_text())
 LEDGER = json.loads((ROOT / "spec/audit/hardfork-51-closeout.json").read_text())
 M5_TEST = ("casper/tests/n420_boundary_merge.rs"
@@ -88,16 +107,13 @@ class RegisterTests(unittest.TestCase):
         self.payload = copy.deepcopy(REGISTER)
 
     def row(self, ident):
-        """A register row, or a campaign row used only as a synthetic input.
-
-        The G428/G584/TA/C343 obligations are release campaigns now; the builder
-        tests still need their authored fields, so the lookup falls back to the
-        campaign tracker. A campaign row is never *validated* as a gate here.
-        """
+        """A register row, or a synthetic criterion-bearing row for the binding tests."""
         try:
             return next(row for row in self.payload["gates"] if row["id"] == ident)
         except StopIteration:
-            return next(row for row in CAMPAIGNS["campaigns"] if row["id"] == ident)
+            if ident in SYNTHETIC_ROWS:
+                return copy.deepcopy(SYNTHETIC_ROWS[ident])
+            raise
 
     def inspect(self):
         return gate.validate(self.payload, MATRIX, INVENTORY, LEDGER)
@@ -209,8 +225,12 @@ class RegisterTests(unittest.TestCase):
         }
 
     def unmet(self, ident="G520-MIGRATION"):
-        """A pre-promotion copy: the real register now carries the met rows."""
-        row = copy.deepcopy(self.row(ident))
+        """A pre-promotion copy. A deleted campaign id is synthesised, never looked up."""
+        try:
+            row = copy.deepcopy(self.row(ident))
+        except StopIteration:
+            row = {"id": ident, "family": ident.split("-")[0],
+                   "gate": False, "depends_on": []}
         row.update({
             "status": "owes",
             "status_reason": "synthetic unmet row for the binding tests",
@@ -227,7 +247,7 @@ class RegisterTests(unittest.TestCase):
     def apply_bindings(self, bindings, rows=None, required=None, floor=0):
         rows = rows if rows is not None else [
             self.unmet("G520-MIGRATION"),
-            copy.deepcopy(self.row("G428-M1"))]
+            self.unmet("S6-25bfdbe2c179c81e")]
         required = required if required is not None else [
             binding["gate_id"] for binding in bindings]
         document = {
@@ -243,7 +263,7 @@ class RegisterTests(unittest.TestCase):
         self.assertEqual(rows[0]["status"], "met")
         self.assertIsNone(rows[0]["status_reason"])
         self.assertEqual(rows[0]["witness_kind"], "python")
-        self.assertEqual(rows[1]["status"], "blocked")
+        self.assertNotEqual(rows[1]["status"], "met")
         self.assertTrue(rows[1]["status_reason"])
 
     def test_an_orphan_binding_is_refused(self):
@@ -358,9 +378,9 @@ class RegisterTests(unittest.TestCase):
 
     def test_a_blocked_binding_is_refused(self):
         ident = "G428-M1"
+        row = {"id": ident, "family": "G428", "status": "blocked", "depends_on": []}
         with self.assertRaisesRegex(ValueError, "not promotable"):
-            self.apply_bindings([self.make_binding(ident)],
-                                rows=[copy.deepcopy(self.row(ident))],
+            self.apply_bindings([self.make_binding(ident)], rows=[row],
                                 required=[ident])
 
     def test_ta_c3_is_not_a_pass_fail_gate(self):
@@ -499,9 +519,9 @@ class RegisterTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.GateError, "cannot be met"):
             self.inspect()
 
-    def test_a_gate_cannot_depend_on_a_release_campaign(self):
+    def test_a_gate_cannot_depend_on_a_release_claim(self):
         row = self.make_met("G520-MIGRATION")
-        row["depends_on"] = ["G584-G1"]
+        row["depends_on"] = ["RC-1"]
         with self.assertRaisesRegex(gate.GateError, "unknown dependency"):
             self.inspect()
 

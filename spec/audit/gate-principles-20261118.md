@@ -5,6 +5,10 @@
 > and — since 2026-11-19 — the 12 host/live rows (G428-M1..M4, G584-G1..G5, TA-C1/C2, C343) are not
 > gates; they are release/sign-off obligations in their own trackers. The criteria below remain the
 > executable judges for those campaigns, but they are no longer gate coverage.
+>
+> **Superseded, 2026-11-19.** The 12 campaign rows were deleted and replaced by the seven claims in
+> `spec/audit/release-claims.json` and `release-claims.md`. The criteria below are retained as
+> historical adapters; they are not the new tracker. See `release-campaign-red-team-20261119.md`.
 
 ## Scope and the problem
 

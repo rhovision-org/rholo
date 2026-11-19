@@ -1,8 +1,9 @@
-"""The 12 host/live obligations are release campaigns, not gates.
+"""The release claims are observable behaviours, not gates and not campaigns.
 
-A gate is a boolean test of the current build; these need hosts, a release
-candidate or an operator window. The checker keeps them blocking, validates
-their executable criteria, and refuses to let one appear as a gate.
+A gate is a boolean test of the current build. A release claim is one observable
+node behaviour with one falsifier and one control, re-runnable on the standard
+local devnet or on public testnet-4. The 12 old campaign rows were deleted; their
+fate is mapped in `release-claims.json`'s `superseded` table.
 """
 import copy
 import importlib.util
@@ -11,111 +12,114 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKER_SPEC = importlib.util.spec_from_file_location(
-    "release_campaigns", ROOT / "tools/check-release-campaigns.py")
+    "release_claims", ROOT / "tools/check-release-campaigns.py")
 checker = importlib.util.module_from_spec(CHECKER_SPEC)
 CHECKER_SPEC.loader.exec_module(checker)
+SOURCE = json.loads((ROOT / "spec/audit/release-claims.json").read_text())
 TRACKER = json.loads((ROOT / "spec/audit/release-campaigns.json").read_text())
 REGISTER = json.loads((ROOT / "spec/audit/mainnet-gates.json").read_text())
 
 
-class CampaignTests(unittest.TestCase):
-    def setUp(self):
-        self.payload = copy.deepcopy(TRACKER)
+class FakeBuilder:
+    """The generated view of the mutated claims, so `validate` can be unit-tested."""
 
-    def campaign(self, ident="G428-M1"):
-        return next(row for row in self.payload["campaigns"] if row["id"] == ident)
+    def __init__(self, rows):
+        self.rows = rows
+
+    def campaigns(self):
+        return {"campaigns": self.rows}
+
+
+class ClaimTests(unittest.TestCase):
+    def setUp(self):
+        self.payload = copy.deepcopy(SOURCE)
+
+    def claim(self, ident="RC-1"):
+        return next(row for row in self.payload["claims"] if row["id"] == ident)
 
     def inspect(self):
-        return checker.validate(self.payload)
+        return checker.validate(self.payload, FakeBuilder(self.payload["claims"]))
 
-    def test_the_tracker_validates_and_every_campaign_is_open(self):
+    def test_the_tracker_validates_and_no_claim_is_closed(self):
         out = self.inspect()
-        self.assertEqual(out["result"], "RELEASE_CAMPAIGNS_OPEN")
-        self.assertEqual(out["campaigns"], 12)
-        self.assertEqual(out["open"], 12)
-        self.assertEqual(len(out["open_ids"]), 12)
+        self.assertEqual(out["claims"], 7)
+        self.assertEqual(out["old"], 12)
+        self.assertFalse(any(status == "closed" for status in out["statuses"].values()))
 
     def test_the_tracker_is_current(self):
         result = subprocess.run(
             [sys.executable, str(ROOT / "tools/check-release-campaigns.py"), "--check"],
-            capture_output=True, text=True, timeout=300,
-            cwd=ROOT,
-        )
+            capture_output=True, text=True, timeout=300, cwd=ROOT)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("RELEASE_CAMPAIGNS_OPEN", result.stdout)
+        self.assertIn("RELEASE_CLAIMS_OPEN", result.stdout)
 
     def test_assert_ready_exits_three(self):
         result = subprocess.run(
             [sys.executable, str(ROOT / "tools/check-release-campaigns.py"),
              "--assert-ready"],
-            capture_output=True, text=True, timeout=300, cwd=ROOT,
-        )
+            capture_output=True, text=True, timeout=300, cwd=ROOT)
         self.assertEqual(result.returncode, 3)
-        self.assertIn("RELEASE_CAMPAIGNS_OPEN", result.stdout)
+        self.assertIn("RELEASE_CLAIMS_OPEN", result.stdout)
 
-    def test_no_campaign_is_in_the_gate_register(self):
+    def test_no_claim_is_in_the_gate_register(self):
         register_ids = {row["id"] for row in REGISTER["gates"]}
         self.assertFalse(register_ids & {row["id"] for row in TRACKER["campaigns"]})
 
-    def test_a_campaign_cannot_be_gated_back_in(self):
-        self.campaign()["gate"] = True
-        with self.assertRaisesRegex(checker.CampaignError, "gate: false"):
+    def test_every_deleted_row_is_mapped(self):
+        mapped = {entry["id"] for entry in self.payload["superseded"]}
+        self.assertEqual(mapped, checker.OLD_IDS)
+        for row in self.payload["claims"]:
+            self.assertTrue(set(row.get("supersedes") or []) <= checker.OLD_IDS)
+
+    def test_an_unmapped_deleted_row_is_refused(self):
+        self.payload["superseded"] = [
+            entry for entry in self.payload["superseded"] if entry["id"] != "C343"]
+        with self.assertRaisesRegex(checker.ClaimError, "every deleted row"):
             self.inspect()
 
-    def test_the_campaign_floor_holds(self):
-        self.assertEqual(checker.CAMPAIGN_MINIMUM, 12)
-        self.assertEqual(len(self.payload["campaigns"]), 12)
-
-    def test_a_removed_campaign_is_refused_by_the_floor(self):
-        self.payload["campaigns"].pop()
-        with self.assertRaisesRegex(checker.CampaignError, "floor"):
+    def test_a_claim_may_not_reuse_a_deleted_id(self):
+        self.claim()["id"] = "G428-M1"
+        with self.assertRaisesRegex(checker.ClaimError, "deleted campaign id"):
             self.inspect()
 
-    def test_dependency_cycle_is_refused(self):
-        self.campaign("G428-M1")["depends_on"] = ["G428-M2"]
-        self.campaign("G428-M2")["depends_on"] = ["G428-M1"]
-        with self.assertRaisesRegex(checker.CampaignError, "cycle"):
+    def test_both_environments_are_required(self):
+        self.claim()["environment"]["public"] = ""
+        with self.assertRaisesRegex(checker.ClaimError, "both environments"):
             self.inspect()
 
-    def test_cross_family_related_needs_a_direction(self):
-        edge = next(edge for edge in self.campaign("G428-M2")["related"]
-                    if edge["id"] == "TA-C1")
-        edge["criterion"] = "M2 is the ingress campaign"
-        with self.assertRaisesRegex(checker.CampaignError, "direction"):
+    def test_both_rerun_commands_are_required(self):
+        self.claim()["rerun"]["local"] = ""
+        with self.assertRaisesRegex(checker.ClaimError, "re-run commands"):
             self.inspect()
 
-    def test_related_edges_must_be_symmetric(self):
-        target = self.campaign("G584-G1")
-        target["related"] = [edge for edge in target["related"]
-                             if edge["id"] != "G428-M1"]
-        with self.assertRaisesRegex(checker.CampaignError, "not symmetric"):
+    def test_an_owed_observation_must_name_what_is_missing(self):
+        sub = next(s for s in self.claim()["sub_observations"] if s["status"] == "owed")
+        sub.pop("missing")
+        with self.assertRaisesRegex(checker.ClaimError, "missing description"):
             self.inspect()
 
-    def test_source_phrase_must_be_in_the_excerpt(self):
-        self.campaign()["source_phrase"] = "a tautology"
-        with self.assertRaisesRegex(checker.CampaignError, "source phrase"):
+    def test_an_open_observation_must_name_a_tool(self):
+        sub = next(s for s in self.claim()["sub_observations"] if s["status"] == "open")
+        sub.pop("tool")
+        with self.assertRaisesRegex(checker.ClaimError, "needs a tool"):
             self.inspect()
 
-    def test_criteria_hash_must_match_the_campaign_text(self):
-        self.campaign()["pass_condition"] = "Trivially met"
-        with self.assertRaisesRegex(checker.CampaignError, "criteria hash"):
+    def test_the_floor_holds(self):
+        self.assertEqual(checker.CLAIM_MINIMUM, 7)
+        self.assertEqual(len(self.payload["claims"]), 7)
+
+    def test_a_removed_claim_is_refused(self):
+        self.payload["claims"].pop()
+        with self.assertRaisesRegex(checker.ClaimError, "floor"):
             self.inspect()
 
-    def test_a_stale_source_excerpt_is_refused(self):
-        self.payload["sources"]["G428"]["excerpt_sha256"] = "0" * 64
-        with self.assertRaisesRegex(checker.CampaignError, "excerpt hash"):
-            self.inspect()
-
-    def test_the_checker_runs_the_criteria_self_test(self):
-        with mock.patch.object(
-                checker, "_selftest",
-                return_value=["boom: a vacuous control"]):
-            with self.assertRaisesRegex(checker.CampaignError, "criteria self-test"):
-                self.inspect()
+    def test_the_generated_tracker_carries_the_authored_claims(self):
+        generated = {row["id"] for row in TRACKER["campaigns"]}
+        authored = {row["id"] for row in SOURCE["claims"]}
+        self.assertEqual(generated, authored)
 
 
 if __name__ == "__main__":

@@ -36,6 +36,7 @@ OUT_JSON = AUDIT / "mainnet-gates.json"
 OUT_MD = AUDIT / "mainnet-gates.md"
 OUT_CAMPAIGNS_JSON = AUDIT / "release-campaigns.json"
 OUT_CAMPAIGNS_MD = AUDIT / "release-campaigns.md"
+CLAIMS = AUDIT / "release-claims.json"
 EXTERNAL = AUDIT / "mainnet-gates.external.json"
 LEDGER = AUDIT / "hardfork-51-closeout.json"
 INVENTORY = AUDIT / "section6-gap-inventory.json"
@@ -58,9 +59,9 @@ INELIGIBLE_IDS = {"TA-C3"}
 # satisfied by lowering both; a promotion raises this constant in the same commit, and a demotion
 # is then an explicit two-file change.
 MINIMUM_MET = 47
-# **The 12 host/live obligations are campaigns, not gates.** They cannot be closed
-# by a boolean test of the current build; the tracker must not shrink silently.
-CAMPAIGN_MINIMUM = 12
+# **The release claims are not gates.** They cannot be closed by a boolean test
+# of the current build; the tracker must not shrink silently.
+CLAIM_MINIMUM = 7
 
 
 def require(condition: bool, message: str) -> None:
@@ -497,76 +498,151 @@ def build() -> dict:
     }
 
 
-def campaigns() -> dict:
-    """The release campaigns: host/live obligations that are not current-build gates.
+def claim_status(row: dict) -> str:
+    """A claim is closed only when every sub-observation is closed; owed beats open."""
+    statuses = [sub.get("status") for sub in row.get("sub_observations") or []]
+    if statuses and all(status == "closed" for status in statuses):
+        return "closed"
+    if "owed" in statuses:
+        return "owed"
+    return "open"
 
-    A gate must be a boolean test of the current build. These 12 need hosts, a
-    release candidate or an operator window, so they stay release blockers in
-    their own tracker and are excluded from the gate register.
+
+def campaigns() -> dict:
+    """The release claims: observable node behaviours with one falsifier and one control.
+
+    A gate is a boolean test of the current build. A release claim is a product
+    behaviour that is re-runnable on the standard local devnet or on public
+    testnet-4. The 12 old campaign rows are deleted; their fate is in
+    `release-claims.json`'s `superseded` table.
     """
-    external = json.loads(EXTERNAL.read_text())
-    _prepare_external(external)
-    rows = sorted((row for row in external["gates"] if row.get("release_campaign")),
-                  key=lambda row: (row["family"], row["id"]))
-    if len(rows) < CAMPAIGN_MINIMUM:
-        raise ValueError(
-            f"only {len(rows)} release campaigns remain; the floor is {CAMPAIGN_MINIMUM}")
-    if any(row.get("gate", True) for row in rows):
-        raise ValueError("a release campaign cannot also be a gate")
-    # Symmetrise campaign-to-campaign edges only. A campaign may also reference a
-    # row that is neither a gate nor a campaign (an M6 sign-off, say); that edge is
-    # one-way context and is kept as authored.
-    by_id = {row["id"]: row for row in rows}
+    document = json.loads(CLAIMS.read_text())
+    require(document.get("schema") == 1, "release-claims schema must be 1")
+    rows = document.get("claims")
+    require(isinstance(rows, list) and len(rows) >= CLAIM_MINIMUM,
+            f"only {len(rows) if isinstance(rows, list) else 0} release claims; "
+            f"floor {CLAIM_MINIMUM}")
+    ids = [row.get("id") for row in rows]
+    require(len(ids) == len(set(ids)), "release claim ids must be unique")
+    required = ("title", "claim", "pass_condition", "fail_condition", "observable",
+                "negative_control", "environment", "rerun", "tool",
+                "sub_observations", "owner")
     for row in rows:
-        for edge in list(row.get("related") or []):
-            target = by_id.get(edge["id"])
-            if target is not None and not any(
-                    back.get("id") == row["id"] for back in target.get("related") or []):
-                target.setdefault("related", []).append(
-                    {"id": row["id"], "criterion": edge["criterion"]})
+        ident = row.get("id")
+        for field in required:
+            require(row.get(field), f"{ident}: {field} is required")
+        require(row["environment"].get("local") and row["environment"].get("public"),
+                f"{ident}: both environments are required")
+        require(row["rerun"].get("local") and row["rerun"].get("public"),
+                f"{ident}: both re-run commands are required")
+        subs = row["sub_observations"]
+        require(isinstance(subs, list) and subs,
+                f"{ident}: at least one sub-observation is required")
+        for sub in subs:
+            require(sub.get("id") and sub.get("name"),
+                    f"{ident}: every sub-observation needs an id and a name")
+            require(sub.get("status") in ("open", "owed", "closed"),
+                    f"{ident}/{sub.get('id')}: bad status")
+            if sub["status"] == "open":
+                require(sub.get("tool"),
+                        f"{ident}/{sub.get('id')}: an open observation needs a tool")
+            if sub["status"] == "owed":
+                require(sub.get("missing"),
+                        f"{ident}/{sub.get('id')}: an owed observation needs a missing description")
+    superseded = document.get("superseded")
+    require(isinstance(superseded, list) and superseded,
+            "the superseded list must map the old rows")
     return {
         "schema": 1,
         "generated": "2026-11-19",
-        "source": "spec/audit/mainnet-gates.external.json",
-        "register": "spec/audit/mainnet-gates.json",
-        "sources": external["sources"],
+        "source": "spec/audit/release-claims.json",
+        "review": document.get("source_review"),
+        "rule": document.get("rule"),
         "campaigns": rows,
+        "superseded": superseded,
+        "missing": document.get("missing") or [],
     }
 
 
 def render_campaigns_md(document: dict) -> str:
-    lines = [
-        "# Mainnet release campaigns",
-        "",
-        "Emitted from `spec/audit/mainnet-gates.external.json` by "
-        "`tools/build-mainnet-gates.py`.",
-        "",
-        "**These are not gates.** A gate is a boolean test of the current build. Each campaign",
-        "needs hosts, a release candidate or an operator window and an evidence record, so it",
-        "stays a release blocker in this tracker and is not counted in `mainnet-gates.json`.",
-        "Closing one is an operator campaign judged by its executable criterion, not a code edit.",
-        "",
-        f"- generated: {document['generated']}",
-        f"- campaigns: {len(document['campaigns'])}",
-        "",
-        "| campaign | family | status | title | locality | owner |",
-        "|---|---|---|---|---|---|",
-    ]
-
     def cell(value: object) -> str:
         text = "" if value is None else str(value)
         return text.replace("|", "\\|").replace("\n", " ")
 
+    lines = [
+        "# Release claims",
+        "",
+        "Emitted from `spec/audit/release-claims.json` by `tools/build-mainnet-gates.py`.",
+        "",
+        "**These are not gates.** A gate is a boolean test of the current build. A release claim",
+        "is one observable node behaviour with one falsifier and one control, re-runnable on the",
+        "standard local devnet or on `testnet-4`. The 12 old campaign rows are deleted; their fate",
+        "is in the `superseded` table at the end.",
+        "",
+        f"- generated: {document['generated']}",
+        f"- claims: {len(document['campaigns'])}",
+        f"- review: `{document.get('review')}`",
+        "",
+        "| claim | status | local | public | owner |",
+        "|---|---|---|---|---|",
+    ]
     for row in document["campaigns"]:
+        env = row["environment"]
         lines.append(
-            f"| `{cell(row['id'])}` | {cell(row['family'])} | "
-            f"**{cell(row.get('status'))}** | {cell(row['title'])[:120]} | "
-            f"{cell(row.get('locality'))} | {cell(row.get('owner'))[:60]} |"
-        )
+            f"| `{cell(row['id'])}` — {cell(row['title'])} | **{claim_status(row)}** | "
+            f"{cell(env['local'])[:70]} | {cell(env['public'])[:70]} | "
+            f"{cell(row['owner'])[:40]} |")
+    lines.extend(["", "---", ""])
+    for row in document["campaigns"]:
+        lines.extend([
+            f"## {row['id']} — {row['title']}",
+            "",
+            f"**Claim.** {row['claim']}",
+            "",
+            f"**Pass.** {row['pass_condition']}",
+            "",
+            f"**Fail.** {row['fail_condition']}",
+            "",
+            f"**Observe.** {row['observable']}",
+            "",
+            f"**Control.** {row['negative_control']}",
+            "",
+            f"**Local.** {row['environment']['local']}",
+            "",
+            f"**Public.** {row['environment']['public']}",
+            "",
+            f"**Re-run (local).** `{row['rerun']['local']}`",
+            "",
+            f"**Re-run (public).** `{row['rerun']['public']}`",
+            "",
+            f"**Tool.** {row['tool']}",
+            "",
+        ])
+        for sub in row["sub_observations"]:
+            detail = sub.get("tool") if sub["status"] == "open" else sub.get("missing") or ""
+            lines.append(f"- `{sub['id']}` {sub['name']} — **{sub['status']}** — {detail}")
+        if row.get("supersedes"):
+            lines.extend(["", f"**Supersedes.** {', '.join(row['supersedes'])}"])
+        if row.get("does_not_claim"):
+            lines.extend(["", f"**Does not claim.** {row['does_not_claim']}"])
+        lines.extend(["", "---", ""])
+    lines.extend([
+        "## Superseded rows",
+        "",
+        "| old id | fate | home |",
+        "|---|---|---|",
+    ])
+    for entry in document["superseded"]:
+        lines.append(
+            f"| `{cell(entry.get('id'))}` | {cell(entry.get('fate'))} | "
+            f"{cell(entry.get('home'))} |")
+    lines.extend(["", "## Missing observations", ""])
+    for item in document.get("missing") or []:
+        lines.append(f"- {item}")
     lines.extend([
         "",
-        "`check-release-campaigns.py --assert-ready` exits 3 while any campaign is open, so a",
-        "closed gate register is never a release authorization.",
+        "`check-release-campaigns.py --assert-ready` exits 3 while any claim or sub-observation",
+        "is not closed, so a closed gate register is never a release authorization.",
         "",
     ])
     return "\n".join(lines)
@@ -603,7 +679,7 @@ def render_md(document: dict) -> str:
         "when its witness resolves, its negative control is recorded, its evidence is pinned,",
         "and every dependency is satisfied.",
         f"The register records **{met} of {len(document['gates'])} gates `met`**.",
-        "It contains only current-build gates; host/live obligations are release campaigns in",
+        "It contains only current-build gates; the observable release behaviours are claims in",
         "[`release-campaigns.md`](release-campaigns.md), and a closed register is not a release",
         "authorization.",
         "",
@@ -637,14 +713,14 @@ def main() -> int:
             print(json.dumps({"result": "STALE", "files": stale}, sort_keys=True))
             return 1
         print(json.dumps({"result": "CURRENT", "gates": len(document["gates"]),
-                          "campaigns": len(campaign_doc["campaigns"])}, sort_keys=True))
+                          "claims": len(campaign_doc["campaigns"])}, sort_keys=True))
         return 0
     OUT_JSON.write_text(payload)
     OUT_MD.write_text(md)
     OUT_CAMPAIGNS_JSON.write_text(campaign_payload)
     OUT_CAMPAIGNS_MD.write_text(campaign_md)
     print(json.dumps({"result": "WROTE", "gates": len(document["gates"]),
-                      "campaigns": len(campaign_doc["campaigns"])}, sort_keys=True))
+                      "claims": len(campaign_doc["campaigns"])}, sort_keys=True))
     return 0
 
 

@@ -6,6 +6,11 @@
 > measurements below remain authoritative in `release-campaigns.json`, where
 > `check-release-campaigns.py --assert-ready` still exits 3. Nothing below is waived; “gate” in this
 > page means “campaign”.
+>
+> **Superseded, 2026-11-19.** The 12 campaign rows were deleted and replaced by the seven release
+> claims in `spec/audit/release-claims.json` and `release-claims.md`; see
+> `release-campaign-red-team-20261119.md` for the verdicts. The dependency graph, owners and
+> external-input table below are historical.
 
 ## The dependency fact
 

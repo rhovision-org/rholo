@@ -1,547 +1,324 @@
 {
   "campaigns": [
     {
-      "criteria_sha256": "cf7d48477fe882edaf75a423f0dbb21dcafde298ea8e61afe3e96c1271e4157a",
-      "depends_on": [],
-      "docker_free": true,
-      "does_not_claim": "The collector has not run live; the old build is not a current-build gate.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+      "claim": "If the settlement endpoint reports finalizedSuccess and settlementConfirmed for a deploy, that deploy's effect is present at the finalised head on every validator and remains present through two further epoch boundaries.",
+      "does_not_claim": "A local pass is a mechanism check; the public claim needs testnet-4.",
+      "environment": {
+        "local": "local-4 and local-8 (tools/devnet.sh; 4 GiB / 2 GiB per validator, below the documented tier)",
+        "public": "testnet-4: four independent hosts on the selected release"
       },
-      "fail_condition": "A contradictory observation; an unmodelled diagnosis; an orphan body; a missing field treated as PASS.",
-      "family": "C343",
-      "gate": false,
-      "id": "C343",
-      "laws": [
-        "88a",
-        "88b"
-      ],
-      "locality": "live-host",
-      "negative_control": "A pre-fix host lacking a field is PRECONDITION; 'block 6 unknown', a JSON 'unaccepted'/'unfinalized' disposition, and an 'issue #6 accepted' line must not be a PASS; a later orphan must override an earlier accepted; a contradictory ready/reason pair must FAIL.",
-      "observable": "The phase-diagnosis table classification, the operator gate keys, the block-6 disposition, the height gap, and the readiness/fault/isolation consistencies.",
+      "fail_condition": "A confirmed settlement whose effect is absent at the finalised head on any validator; validators disagree on the finalised hash; or the inclusion block appears in a later rejectedDeploys.",
+      "id": "RC-1",
+      "negative_control": "A marker absent before the write; a fixture where the effect is absent at the finalised head; a fixture where the inclusion block is final-scope rejected.",
+      "observable": "The settlement response, each validator's finalised (height, hash), the marker read at that block, and the per-block rejectedDeploys.",
       "owner": "Aria / operator",
-      "pass_condition": "A read-only B/C/D GET /health and GET /api/v1/status/operator snapshot with the phase discriminator, block-6 disposition, height gap, fault latch and isolation, each PASS/FAIL/PRECONDITION.",
-      "related": [],
-      "release_campaign": true,
-      "sole_evidence": "live-host",
-      "source_label": "C343 owes cell; closeout-phase-space-20261117.md",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": null,
-      "source_url": "https://github.com/rhovision-org/rholo/blob/dd6a25d69128375d83b7a7701c169ce672e57536/spec/audit/closeout-phase-space-20261117.md",
-      "status": "precondition",
-      "status_reason": "Aria's 16 Nov read-only observation reaches four instances on two SSH hosts, but the installed build returns 404 for /api/v1/status/operator and the file logs are not a structured block-6 disposition. The collector must be run by the operator with a local plan.",
-      "title": "Private-chain surface: live B/C/D read-only phase diagnosis",
-      "witness_kind": "python",
-      "witness_ref": "tools/c343-live.py::verify",
-      "witness_scope": "integration"
-    },
-    {
-      "criteria_sha256": "525ddb82e4857479544663c4a7716604c209f1f2c728d6033d9e737b574b6dd1",
-      "depends_on": [
-        "G584-G1"
-      ],
-      "docker_free": false,
-      "does_not_claim": "A 1 GiB fault injection is a diagnosability probe, not supported-tier acceptance.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+      "pass_condition": "For one deploy id: the settlement response is finalizedSuccess with settlementConfirmed true; every validator reports the same finalised (height, hash); a marker written by the deploy reads back at that finalised block and at every later finalised head sampled; the inclusion block never appears in a later block's rejectedDeploys.",
+      "rerun": {
+        "local": "tools/devnet.sh up --validators 4 --fresh; tools/consensus-acceptance-drill.py --local; settlement endpoint sample; finalised-head marker read on all validators",
+        "public": "same observation on testnet-4 with the selected pins and the operator endpoints"
       },
-      "fail_condition": "An OOM/restart loop within the claimed supported tier, or one-host loss defeating the stated quorum fault model.",
-      "family": "G428",
-      "gate": false,
-      "id": "G428-M1",
-      "locality": "multi-host",
-      "negative_control": "One-host loss must defeat the claimed quorum; a below-minimum 1 GiB injection is not supported-tier acceptance; a declared tier contradicted by a 24 GB replay must fail, and --allow-under-minimum is not a pass.",
-      "observable": "Measured per-validator RAM/CPU/peak RSS/replay headroom; stake per independent failure domain; the one-host-loss quorum calculation.",
-      "owner": "Jim / release coordination",
-      "pass_condition": "Declare and measure per-validator minimum RAM/CPU, peak RSS, replay headroom, and a stake/failure-domain mapping on independently provisioned hosts; demonstrate the claimed host-failure tolerance.",
-      "related": [
+      "sub_observations": [
         {
-          "criterion": "the installed candidate pins are a prerequisite for measuring its tier",
-          "id": "G584-G1"
-        }
-      ],
-      "release_campaign": true,
-      "sole_evidence": "none",
-      "source_label": "#428 M1",
-      "source_phrase": "per-validator minimum RAM/CPU",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
-      "source_url": "https://github.com/rhovision-org/rholo/issues/428",
-      "status": "blocked",
-      "status_reason": "No declared supported tier or independently provisioned host/stake map. The resource-safety witness counts rnode processes only; it does not measure capacity or fault domains.",
-      "title": "Supported capacity and physical fault domains",
-      "witness_kind": "rust-unit",
-      "witness_ref": "node/src/resources/colocation.rs::counts_only_processes_named_rnode",
-      "witness_scope": "unit"
-    },
-    {
-      "criteria_sha256": "c4a3539b1c784cf88794e1507f94c6a9b21725a57921a4ea18b30e46a6b0eb22",
-      "depends_on": [
-        "G584-G1"
-      ],
-      "docker_free": true,
-      "does_not_claim": "A source-shape queue bound is not a pressure test.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
-      },
-      "fail_condition": "Silent accepted-write loss, unbounded work or queues, ambiguous acceptance, or uncontrolled memory pressure inside the accepted envelope.",
-      "family": "G428",
-      "gate": false,
-      "id": "G428-M2",
-      "locality": "live-host",
-      "negative_control": "Remove a queue bound and require the source-shape gate to fail; a load arm must show an explicit rejection, not a silent drop; the default configuration (in-flight limit unset) must not pass; a new refusal class outside the closed vocabulary must not be reported as 400.",
-      "observable": "Accepted/rejected counts and queue depth under HTTP/direct/gRPC load; a backpressure signal; no silent accepted-work loss.",
-      "owner": "Jim / release coordination",
-      "pass_condition": "Verify independently, at HTTP, direct HTTP and gRPC: concurrent requests, memory/byte/term budgets, bounded queues, explicit backpressure, and deterministic acceptance/rejection.",
-      "related": [
-        {
-          "criterion": "bounded production is a prerequisite for the deploy-finalises witness",
-          "id": "TA-C1"
-        }
-      ],
-      "release_campaign": true,
-      "sole_evidence": "none",
-      "source_label": "#428 M2",
-      "source_phrase": "bounded queues",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
-      "source_url": "https://github.com/rhovision-org/rholo/issues/428",
-      "status": "owes",
-      "status_reason": "Source-shape queue bounds and the C105 backpressure work exist, and the criterion now evaluates a typed pressure record across HTTP, direct HTTP and gRPC; no installed-candidate pressure acceptance has run. The criterion refuses a local-devnet record for locality.",
-      "title": "Bounded public ingress and overload behavior",
-      "witness_kind": "python",
-      "witness_ref": "tools/m2-pressure.py::check_pressure",
-      "witness_scope": "integration"
-    },
-    {
-      "criteria_sha256": "f6cfdecacbaaf05099fa56b712f39211f6c2a11c526f93fd6e094c71fc7e8919",
-      "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "Instrument or send-log PASS is not state application.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
-      },
-      "fail_condition": "A claim based on a send log alone; an invalid observer address treated as a handler defect; a missing transport-delivery witness.",
-      "family": "G428",
-      "gate": false,
-      "id": "G428-M3",
-      "locality": "off-host",
-      "negative_control": "A loopback address advertised from another host must fail clearly; a send-log-only claim must not pass; the responder's stream completion must be observable, and a 'sent' log alone must fail.",
-      "observable": "The correlation request -> receipt -> response construction -> transport completion -> requester receive -> state application, with peer address and identity; the loopback negative control.",
-      "owner": "Aria / evidence work",
-      "pass_condition": "An external observer advertises a routable peer address, authenticates and joins, receives and applies the approved fringe, and hydrates state. Negative control: 127.0.0.1 advertised from another host must fail clearly. Test alternative-peer failover separately.",
-      "related": [
-        {
-          "criterion": "the join subset (A2.2/A2.4) is a different criterion from off-host fringe delivery",
-          "id": "TA-C2"
-        }
-      ],
-      "release_campaign": true,
-      "sole_evidence": "live-host",
-      "source_label": "#428 M3",
-      "source_phrase": "receives and applies",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
-      "source_url": "https://github.com/rhovision-org/rholo/issues/428",
-      "status": "blocked",
-      "status_reason": "The historical #575 result is instrument PASS / join FAIL, retained; no fresh routable off-host receive/apply witness or failover.",
-      "title": "Off-host bootstrap and fringe completion",
-      "witness_kind": "python",
-      "witness_ref": "tools/m3-join-chain.py::check_chain",
-      "witness_scope": "integration"
-    },
-    {
-      "criteria_sha256": "2555b281effd86d01e7afad4a2aa71b5d644b7f9d00bc02d2ef23c59a9ff57c8",
-      "depends_on": [
-        "G584-G1",
-        "G520-MIGRATION"
-      ],
-      "docker_free": false,
-      "does_not_claim": "A local partition drill or a green CI badge is not the N=4/N=8 release envelope.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
-      },
-      "fail_condition": "A permanent wedge within the declared fault model, inability to rejoin, or a safety-invariant violation.",
-      "family": "G428",
-      "gate": false,
-      "id": "G428-M4",
-      "locality": "multi-host",
-      "negative_control": "Equal moving heads must not count as the criterion; a victim that never finalizes the fixed anchor must fail; a single-host bridge run below the supported tier must not pass.",
-      "observable": "A deploy finalizes; a fixed finalized anchor is retained by every validator on a K-sample dwell; partition/rejoin, host loss, restart/replay, and the approved root unchanged.",
-      "owner": "Jim / release coordination",
-      "pass_condition": "Named, independently rerunnable N=4 and N=8 workloads under adequate independent-host capacity: deploy finalization, partition/rejoin, host loss, restart/replay, and safe recovery without changing the approved root.",
-      "related": [
-        {
-          "criterion": "G4 is the restart/recovery arm only, not the full N=4/N=8 envelope",
-          "id": "G584-G4"
+          "id": "RC-1a",
+          "name": "no false settlement",
+          "status": "open",
+          "tool": "tools/live-gate.py::check_g3"
         },
         {
-          "criterion": "A1.3's N=8 finality failure is a finality/supermajority observation, not a separate campaign",
-          "id": "TA-C1"
+          "id": "RC-1b",
+          "missing": "The settlement route trusts block finality; a per-validator finalised-head read and the rejectedDeploys invariant are not implemented. This is the check-1 defect.",
+          "name": "finalised effect retained",
+          "status": "owed"
         }
       ],
-      "release_campaign": true,
-      "sole_evidence": "local-devnet",
-      "source_label": "#428 M4",
-      "source_phrase": "N=4 and N=8",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
-      "source_url": "https://github.com/rhovision-org/rholo/issues/428",
-      "status": "blocked",
-      "status_reason": "N=4/N=8 has not run on the selected candidate. The historical 69bf868f pass is under the superseded equal-heads criterion; the standing criterion is anchor retention.",
-      "title": "Finality, liveness and autonomous recovery",
-      "witness_kind": "python",
-      "witness_ref": "tests/consensus-partition-rejoin.py::establish_healing_anchor",
-      "witness_scope": "integration"
+      "supersedes": [
+        "G584-G2",
+        "G584-G3",
+        "TA-C1"
+      ],
+      "title": "Truthful settlement",
+      "tool": "tools/live-gate.py::check_g3 (settlement half) + settlement-retention observation (owed)"
     },
     {
-      "criteria_sha256": "5e8e287334f0a6c327a4e7b8b55b0b0b1639c0c33e76de779e3d5d0c87325942",
-      "depends_on": [],
-      "docker_free": false,
-      "does_not_claim": "The collector's ok flag is not an operational GO.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+      "claim": "No two conflicting finalised histories: every finalised block held by one validator is finalised by every validator at or above its height, and no finalised (height, hash) regresses across restart, replay or partition.",
+      "does_not_claim": "The claim assumes the <=1/3 Byzantine/equivocation bound; without it an equivocator can back two quorums.",
+      "environment": {
+        "local": "local-4 and local-8 (tools/devnet.sh) with a producing victim",
+        "public": "testnet-4 with a real partition and the operator window"
       },
-      "fail_condition": "A mixed or unverified installed set, a reused identity, an unpinned genesis/bond set, or a collector's own ok flag treated as independent evidence.",
-      "family": "G584",
-      "gate": false,
-      "id": "G584-G1",
-      "locality": "live-host",
-      "negative_control": "A collector ok flag alone must not pass; a mismatched host digest must fail; four agreeing records that pin a non-selected binary must fail.",
-      "observable": "Per-host source/artifact/executable digests; four distinct validator identities; the pinned genesis/bond set.",
-      "owner": "Aria / operator",
-      "pass_condition": "One selected source commit / artifact / executable SHA-256 installed on all four validators, with four distinct validator identities, and the genesis/bond set pinned. Pins collected per host by #572 and checked independently of the collector's own ok flag.",
-      "related": [
+      "fail_condition": "A finalised block not finalised by another validator at or above its height; a finalised regression; or two conflicting finalised histories.",
+      "id": "RC-2",
+      "negative_control": "A producing split (the current harness victim is non-producing); an equivocation injection under the allowed Byzantine bound.",
+      "observable": "Per-validator finalised heads at each sample, the cross-node containment answers, and the finalised history over the window.",
+      "owner": "Jim / release coordination",
+      "pass_condition": "For every sampled finalised block, every validator at or above its height reports it finalised; no finalised (height, hash) regresses; no two conflicting finalised histories are observed.",
+      "rerun": {
+        "local": "tools/devnet.sh up --validators 4 --fresh; tests/consensus-partition-rejoin.py --local",
+        "public": "same observation on testnet-4 with independent hosts"
+      },
+      "sub_observations": [
         {
-          "criterion": "the selected candidate is an M1 prerequisite",
-          "id": "G428-M1"
+          "id": "RC-2a",
+          "missing": "The harness asserts cross-node containment; the campaign criterion reads only finalized_anchor booleans. The criterion must consume the containment evidence, and the victim must be producing.",
+          "name": "containment and no regression",
+          "status": "owed"
         }
       ],
-      "release_campaign": true,
-      "sole_evidence": "live-host",
-      "source_label": "#584 G1",
-      "source_phrase": "installed pins",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
-      "source_url": "https://github.com/rhovision-org/rholo/issues/584",
-      "status": "external",
-      "status_reason": "The installed candidate and preflight inputs are unfilled; #559 is a draft and #584 has not executed.",
-      "title": "Installed pins",
-      "witness_kind": "python",
-      "witness_ref": "tools/live-gate.py::check",
-      "witness_scope": "integration"
+      "supersedes": [
+        "G428-M4",
+        "TA-C1"
+      ],
+      "title": "Safety",
+      "tool": "tests/consensus-partition-rejoin.py (containment assertion) + a criterion that consumes it (owed)"
     },
     {
-      "criteria_sha256": "53379d6e03cece2fd317eddb178e2527284081a50ca2c8b6d07380e7feb37344",
-      "depends_on": [
-        "G584-G1"
-      ],
-      "docker_free": false,
-      "does_not_claim": "A local devnet transfer is not the live lifecycle.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+      "claim": "For the same accepted block on the same binary, every validator derives the same preStateHash and postStateHash and the same kept/rejected ledger; kept tuple-space effects are present and rejected effects absent.",
+      "does_not_claim": "The claim is conditional on the same binary and conflict scope; block-merge.md records that two binaries can reject different chains at a merge.",
+      "environment": {
+        "local": "local-4 and local-8 (tools/devnet.sh)",
+        "public": "testnet-4 on the selected release"
       },
-      "fail_condition": "A stage is missing, an observation is not timestamped, or a single route substitutes for the four observations.",
-      "family": "G584",
-      "gate": false,
-      "id": "G584-G2",
-      "locality": "live-host",
-      "machine_check": true,
-      "negative_control": "A transfer that is accepted but never finalized must not pass.",
-      "observable": "The four-stage transfer with per-validator and endpoint observations and UTC timestamps.",
-      "owner": "Aria / operator",
-      "pass_condition": "One signed native-REV transfer sampled at accepted -> pooled -> included -> finalized, with timestamped observations from each of the four validators and from the finality/settlement endpoints.",
-      "related": [],
-      "release_campaign": true,
-      "sole_evidence": "live-host",
-      "source_label": "#584 G2",
-      "source_phrase": "signed deploy lifecycle",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
-      "source_url": "https://github.com/rhovision-org/rholo/issues/584",
-      "status": "external",
-      "status_reason": "The live run has not executed.",
-      "title": "Signed deploy lifecycle",
-      "witness_kind": "human-attestation",
-      "witness_ref": null,
-      "witness_scope": null
-    },
-    {
-      "criteria_sha256": "12b0833556603e286affef6fe9fec175a0cfc8e371d795d325b486d576ca717b",
-      "depends_on": [
-        "G584-G1"
-      ],
-      "docker_free": false,
-      "does_not_claim": "Acceptance and inclusion are not settlement.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+      "fail_condition": "Any preStateHash, postStateHash or rejectedDeploys disagreement for the same block; a same-block marker present on one validator and absent on another.",
+      "id": "RC-3",
+      "negative_control": "A fixture where the ledger differs; a native-write case (native absolute writes are excluded from FinalizedMerge.lean's unqualified law).",
+      "observable": "The per-block preStateHash, postStateHash and rejectedDeploys from every validator, plus a same-block marker read.",
+      "owner": "Jim / release coordination",
+      "pass_condition": "Across a defined window, every validator reports the same preStateHash, postStateHash and rejectedDeploys for every accepted block, and a kept marker is readable at the same block on every validator.",
+      "rerun": {
+        "local": "compare every validator's preStateHash/postStateHash/rejectedDeploys for the same accepted block over a window",
+        "public": "same comparison on testnet-4"
       },
-      "fail_condition": "A pre-finality surface reads finalized, acceptsDeploys is reported as settlement, or the endpoint disagrees with the four observations.",
-      "family": "G584",
-      "gate": false,
-      "id": "G584-G3",
-      "locality": "live-host",
-      "machine_check": true,
-      "negative_control": "A deploy that is accepted but not finalized must read not-finalized everywhere.",
-      "observable": "Per-surface pre-finality status; acceptsDeploys semantics; endpoint agreement with the four observations.",
-      "owner": "Aria / operator",
-      "pass_condition": "Before finality the transfer reads not-finalized at every surface; acceptsDeploys is never reported as settlement; the finality endpoint agrees with the four observations.",
-      "related": [
+      "sub_observations": [
         {
-          "criterion": "finality is the criterion-1 witness; admission is not finality",
-          "id": "TA-C1"
+          "id": "RC-3a",
+          "missing": "No cross-validator live checker exists. The passing merge_determinism tests are fixtures and arrival orders, not a cross-validator run.",
+          "name": "same state and ledger",
+          "status": "owed"
         }
       ],
-      "release_campaign": true,
-      "sole_evidence": "live-host",
-      "source_label": "#584 G3",
-      "source_phrase": "no false settlement",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
-      "source_url": "https://github.com/rhovision-org/rholo/issues/584",
-      "status": "external",
-      "status_reason": "The live run has not executed.",
-      "title": "No false settlement",
-      "witness_kind": "human-attestation",
-      "witness_ref": null,
-      "witness_scope": null
+      "supersedes": [
+        "G428-M4"
+      ],
+      "title": "State agreement across a merge",
+      "tool": "state-agreement observation (owed)"
     },
     {
-      "criteria_sha256": "e2139c103ad8a29bbab1e5a6ec24c0bb8bc37a744754c2e24c8cfe4dfc5852c6",
-      "depends_on": [
-        "G584-G1"
-      ],
-      "docker_free": false,
-      "does_not_claim": "G4 recovery does not discharge the M4 partition/rejoin or host-loss criteria.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+      "claim": "After one validator is stopped and restarted, or a partition heals, the survivors keep finalising; every deploy accepted by a survivor is resolved and its effect is in the post-recovery finalised state; the victim rejoins the same finalised head; no spurious self-replay or own-key halt fires.",
+      "does_not_claim": "A store loss needs a fresh data dir and a checkpoint join; 'no operator action' covers a verified restart, not a lost store.",
+      "environment": {
+        "local": "local-4 (tools/devnet.sh; tests/consensus-restart-under-load.py)",
+        "public": "testnet-4 with a real host stop"
       },
-      "fail_condition": "Accepted work is lost, or a spurious self-replay/own-key halt fires on a healthy key.",
-      "family": "G584",
-      "gate": false,
-      "id": "G584-G4",
-      "locality": "live-host",
-      "negative_control": "A restart that loses the accepted deploy must fail; a healthy-key spurious halt must fail.",
-      "observable": "The same deploy finalized after the restart/recovery arm; no lost accepted work; no spurious halt.",
-      "owner": "Aria / operator",
-      "pass_condition": "A restart (or the runbook's chosen recovery arm) finalizes the same deploy with no accepted work lost, and no spurious self-replay or own-key halt fires on a healthy key (post-#577/#578 behaviour).",
-      "related": [
+      "fail_condition": "Finality stalls; accepted work is lost; the rejoiner needs manual surgery; a finalised height regresses; or a spurious halt fires.",
+      "id": "RC-4",
+      "negative_control": "The wrong-genesis and interrupted-restart arms; a deploy accepted only by the killed validator is not recoverable by design and must be declared, not counted.",
+      "observable": "The survivors' finalised heads, every accepted deploy's resolution and effect at the post-recovery finalised head, the victim's boot ID and finalised head, and the own-key/self-replay counters.",
+      "owner": "Jim / release coordination",
+      "pass_condition": "With one validator stopped, the survivors finalise past the kill; every deploy submitted to a survivor resolves and its effect is present at the post-recovery finalised head; after restart the victim reports the same finalised (height, hash) at least three heights above the baseline; no finalised height regresses and no fixed height changes hash; no own-key halt or self-replay is observed.",
+      "rerun": {
+        "local": "tools/devnet.sh up --validators 4 --fresh; tests/consensus-restart-under-load.py --validators 4",
+        "public": "same observation on testnet-4 with an operator-approved host stop"
+      },
+      "sub_observations": [
         {
-          "criterion": "G4 is the restart/recovery arm only; M4 is the full N=4/N=8 envelope",
-          "id": "G428-M4"
+          "id": "RC-4a",
+          "name": "finality and agreement after restart",
+          "status": "open",
+          "tool": "tests/consensus-restart-under-load.py"
+        },
+        {
+          "id": "RC-4b",
+          "missing": "The harness checks ProcessedWithSuccess, which admission.md says is not settlement. A marker at the post-recovery finalised head on every survivor and the victim is not read.",
+          "name": "accepted deploy effect at the post-recovery finalised head",
+          "status": "owed"
         }
       ],
-      "release_campaign": true,
-      "sole_evidence": "live-host",
-      "source_label": "#584 G4",
-      "source_phrase": "recovery without loss",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
-      "source_url": "https://github.com/rhovision-org/rholo/issues/584",
-      "status": "external",
-      "status_reason": "The planned single-validator restart arm has not executed.",
+      "supersedes": [
+        "G584-G4",
+        "TA-C2",
+        "G428-M4"
+      ],
       "title": "Recovery without loss",
-      "witness_kind": "python",
-      "witness_ref": "tools/live-gate.py::check",
-      "witness_scope": "integration"
+      "tool": "tests/consensus-restart-under-load.py + a finalised-effect read (owed)"
     },
     {
-      "criteria_sha256": "4ccfcf472fb8b6a4ac7317e5cb66c2160b985d2539d429135ae4175a8c296707",
-      "depends_on": [
-        "G584-G1"
-      ],
-      "docker_free": true,
-      "does_not_claim": "A public-route snapshot is not four independent observations.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+      "claim": "At the configured admission/pool bound, the node refuses new work with HTTP 429 and Retry-After: 1, or gRPC RESOURCE_EXHAUSTED (ingress-rate and pool-bound classes stated separately), returns no 5xx, stays alive, and loses no deploy it accepted.",
+      "does_not_claim": "The opt-in in-flight cap is not the shipping default; the pool's count/byte/term/share/rate bounds are the intended throttle. Transport correctness across HTTP, direct HTTP, gRPC and a proxy is a separate owed observation.",
+      "environment": {
+        "local": "local-4 (one node, direct listener and in-process gRPC)",
+        "public": "testnet-4 public endpoint and proxy"
       },
-      "fail_condition": "One route or one validator substitutes for the four; the raw observations or digests are not retained; SHA256SUMS does not verify.",
-      "family": "G584",
-      "gate": false,
-      "id": "G584-G5",
-      "locality": "live-host",
-      "machine_check": true,
-      "negative_control": "A single-route snapshot must not pass; a self-consistent fabricated run dir with arbitrary pin strings must fail.",
-      "observable": "Four validator observations plus endpoints; raw responses, commands, digests, UTC times; a verifying SHA256SUMS.",
-      "owner": "Aria / operator",
-      "pass_condition": "The verdict rests on four validator observations plus the endpoints, not on one public route. Raw responses, commands, digests and UTC times are retained under spec/audit/evidence/ with a SHA256SUMS file that verifies from a git archive.",
-      "related": [
-        {
-          "criterion": "G5 is the live-observation subset of the M6 reproducibility record",
-          "id": "G428-M6"
-        }
-      ],
-      "release_campaign": true,
-      "sole_evidence": "live-host",
-      "source_label": "#584 G5",
-      "source_phrase": "independent observations",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
-      "source_url": "https://github.com/rhovision-org/rholo/issues/584",
-      "status": "external",
-      "status_reason": "The live run and retained evidence bundle do not exist.",
-      "title": "Independent observations",
-      "witness_kind": "human-attestation",
-      "witness_ref": null,
-      "witness_scope": null
-    },
-    {
-      "criteria_sha256": "d99b1b9feab033d7206b2849d9a82787817de027fc8b92e7ff92c8c423a10953",
-      "depends_on": [
-        "G584-G1"
-      ],
-      "docker_free": false,
-      "does_not_claim": "A height trace or acceptsDeploys is not criterion 1.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
-      },
-      "fail_condition": "A deploy that is accepted or included but never finalizes under the declared conditions.",
-      "family": "TA",
-      "gate": false,
-      "id": "TA-C1",
-      "locality": "live-host",
-      "machine_check": true,
-      "negative_control": "A moving tip alone must not pass; finality is the witness.",
-      "observable": "Finalized height >= the deploy height; the A1.1/A1.2/A1.4/A1.5 arms; A1.3 is the N=8 counterexample.",
+      "fail_condition": "A 5xx under pressure; an accepted deploy that later disappears; an unbounded queue; an unset default that refuses; or a refusal class outside the vocabulary.",
+      "id": "RC-5",
+      "negative_control": "The unset-default arm must admit; the four named queue bounds; a refusal class outside the vocabulary.",
+      "observable": "Accepted/refused counts, refusal class and retry signal, handler reachability after release, and the status of every accepted deploy id.",
       "owner": "Jim / release coordination",
-      "pass_condition": "A deploy finalises (last-finalized-block >= its height), never 'the height stopped moving'.",
-      "related": [
+      "pass_condition": "With the bound configured: every permit is held, further probes are refused with the named class and retry signal, no 5xx is returned, the unset/default control admits, the handler is reachable after release, and every accepted deploy id is still readable or explicitly failed.",
+      "rerun": {
+        "local": "tools/m2-pressure-arm.py phase --mode capped/--mode unset; tools/m2-pressure.py check --locality local-devnet",
+        "public": "same observation on testnet-4 with a public endpoint and no proxy"
+      },
+      "sub_observations": [
         {
-          "criterion": "A1.3 is a finality/supermajority component of the M4 envelope",
-          "id": "G428-M4"
-        },
-        {
-          "criterion": "finality is the settlement witness; admission is not settlement",
-          "id": "G584-G3"
-        },
-        {
-          "criterion": "bounded production is a prerequisite for the deploy-finalises witness",
-          "id": "G428-M2"
+          "id": "RC-5a",
+          "name": "configured bound refuses explicitly, no 5xx, no accepted loss",
+          "status": "open",
+          "tool": "tools/m2-pressure.py::check_pressure"
         }
       ],
-      "release_campaign": true,
-      "sole_evidence": "live-host",
-      "source_label": "testnet acceptance criterion 1",
-      "source_phrase": "deploy finalises",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "5457d7cdd53bf4985b91e96b078d41c13361fe999a4807444ad8863c25623f0a",
-      "source_url": "https://github.com/rhovision-org/rholo/blob/dd6a25d69128375d83b7a7701c169ce672e57536/docs/src/spec/testnet-acceptance.md#L64-L68",
-      "status": "blocked",
-      "status_reason": "A1.3 (N=8) fails: the supporting stake is 400 of 800, not a supermajority. A1.2 (N=5) passes; A1.1/A1.4/A1.5 pass on the older tree.",
-      "title": "Anyone can propose, and production is bounded",
-      "witness_kind": "human-attestation",
-      "witness_ref": null,
-      "witness_scope": null
+      "supersedes": [
+        "G428-M2"
+      ],
+      "title": "Overload refusal",
+      "tool": "tools/m2-pressure.py::check_pressure"
     },
     {
-      "criteria_sha256": "58687379142da79f932bf2171732bc8725826929464abf15885faed5af3dcbd7",
-      "depends_on": [
-        "G584-G1"
-      ],
-      "docker_free": false,
-      "does_not_claim": "The join subset is not the whole criterion.",
-      "evidence": {
-        "binary_sha256": null,
-        "digest": null,
-        "source_sha": null,
-        "url": null
+      "claim": "A fresh node joining from a bootstrap receives the certified anchor, applies and hydrates it, and reaches the same finalised head and state; rnode audit reproduces the checkpoint claim from genesis.",
+      "does_not_claim": "A routable address is setup, not the claim; off-host transport and the loopback refusal are separate owed observations. Alternative-peer failover (M3-11) is separate and never landed.",
+      "environment": {
+        "local": "local-4 (checkpoint join and genesis-only audit)",
+        "public": "testnet-4 with a public join"
       },
-      "fail_condition": "The survivors stall at the kill, the rejoiner needs an operator action, or a new validator cannot bond and produce.",
-      "family": "TA",
-      "gate": false,
-      "id": "TA-C2",
-      "locality": "live-host",
-      "machine_check": true,
-      "negative_control": "A send-log or a single-route observation must not pass.",
-      "observable": "A post-kill deploy finalizes; the rejoiner resumes with start only; a new validator bonds and produces; the leave path pays out.",
+      "fail_condition": "The joiner receives but never applies; the restored state differs from the certified anchor; a certificate with no commitments is accepted; audit returns DISAGREE, a different digest, or a derivation over a different checkpoint.",
+      "id": "RC-6",
+      "negative_control": "A send-log-only chain; a served/restored hash mismatch; a legacy certificate with no commitments.",
+      "observable": "The six-stage join chain, the certified anchor's post-state root and fringeState, and the audit verdict and digest.",
       "owner": "Aria / evidence work",
-      "pass_condition": "The survivors finalise past the kill; the rejoiner resumes with no operator action; a new validator bonds onto a running net and produces.",
-      "related": [
+      "pass_condition": "The joiner's served, received, restored and walked hashes agree for the certified anchor (equality with the served root is required only for a genesis anchor); a legacy certificate with no commitments is refused; rnode audit returns AGREE, its audited digest equals the accepted digest, and its derived root equals the checkpoint claim.",
+      "rerun": {
+        "local": "tools/devnet.sh up --validators 4 --fresh; tools/m3-join-chain.py build/check; rnode audit",
+        "public": "same observation on testnet-4"
+      },
+      "sub_observations": [
         {
-          "criterion": "the join subset (A2.2/A2.4) is not off-host fringe delivery",
-          "id": "G428-M3"
+          "id": "RC-6a",
+          "name": "join, apply and hydrate",
+          "status": "open",
+          "tool": "tools/m3-join-chain.py::check_chain"
+        },
+        {
+          "id": "RC-6b",
+          "missing": "rnode audit exists; a criterion binding AGREE and the digest equality to the joiner's accepted digest is not written.",
+          "name": "audit reproduces the checkpoint",
+          "status": "owed"
         }
       ],
-      "release_campaign": true,
-      "sole_evidence": "live-host",
-      "source_label": "testnet acceptance criterion 2",
-      "source_phrase": "finalise past the kill",
-      "source_retrieved": "2026-11-18",
-      "source_sha256": "5457d7cdd53bf4985b91e96b078d41c13361fe999a4807444ad8863c25623f0a",
-      "source_url": "https://github.com/rhovision-org/rholo/blob/dd6a25d69128375d83b7a7701c169ce672e57536/docs/src/spec/testnet-acceptance.md#L64-L68",
-      "status": "external",
-      "status_reason": "The 5/5 arms are recorded on the older tree; the live re-run on the selected candidate has not happened.",
-      "title": "Validators can be dropped and joined without risk",
-      "witness_kind": "human-attestation",
-      "witness_ref": null,
-      "witness_scope": null
+      "supersedes": [
+        "G428-M3"
+      ],
+      "title": "Join and audit",
+      "tool": "tools/m3-join-chain.py::check_chain + rnode audit (wrapper owed)"
+    },
+    {
+      "claim": "A mixed-version fleet either keeps one finalised chain and one state for a block produced during the window, or refuses on the consensus path; a populated store migrates; a downgrade is refused.",
+      "does_not_claim": "For a fresh-genesis launch this is post-launch; it becomes a launch blocker only over a populated store or a mixed fleet.",
+      "environment": {
+        "local": "local-4 (N and N+1 binaries); the G520 populated-store drill",
+        "public": "testnet-4 fleet"
+      },
+      "fail_condition": "Two versions finalise different blocks or derive different post-state hashes; the old binary runs on a newer store; or the populated-store drill fails.",
+      "id": "RC-7",
+      "negative_control": "A fresh-genesis run must not substitute for the populated-store arm; a legacy/no-commitment certificate must be refused.",
+      "observable": "The mixed-version block's hashes and rejection ledger on both binaries, the store-marker refusal, and the populated-store drill verdict.",
+      "owner": "Jim / release coordination",
+      "pass_condition": "During a mixed-version window, a block is produced and finalised with both binaries deriving the same postStateHash and rejectedDeploys, or the new binary refuses the old peer; a populated-store copy/rollback/restart drill passes; an old binary refuses a newer store marker.",
+      "rerun": {
+        "local": "tools/populated-store-migration-drill.py --gate; mixed-version devnet run",
+        "public": "same observation on testnet-4"
+      },
+      "sub_observations": [
+        {
+          "id": "RC-7a",
+          "name": "populated-store migration and downgrade refusal",
+          "status": "open",
+          "tool": "tools/populated-store-migration-drill.py::run_gate"
+        },
+        {
+          "id": "RC-7b",
+          "missing": "No mixed-version devnet run or criterion exists; block-merge.md records that two binaries can reject different chains at a merge.",
+          "name": "mixed-version fork boundary",
+          "status": "owed"
+        }
+      ],
+      "supersedes": [],
+      "title": "Upgrade compatibility",
+      "tool": "tools/populated-store-migration-drill.py::run_gate (migration half) + mixed-version observation (owed)"
     }
   ],
   "generated": "2026-11-19",
-  "register": "spec/audit/mainnet-gates.json",
+  "missing": [
+    "Off-host routable transport and the loopback refusal (M3).",
+    "Alternative-peer failover (M3-11).",
+    "Host loss and the multi-host N=4/N=8 envelope (M4).",
+    "Bond and leave (TA-C2).",
+    "Transport correctness across HTTP, direct HTTP, gRPC and a proxy.",
+    "Finalised block body and state availability on every validator.",
+    "Equivocation injection under a validator key."
+  ],
+  "review": "spec/audit/release-campaign-red-team-20261119.md",
+  "rule": "A release claim is one observable, one falsifier, one control, one local environment and one public environment. A claim is 'open' only when its observation is implemented and re-runnable; otherwise it is 'owed' and names the missing observation.",
   "schema": 1,
-  "source": "spec/audit/mainnet-gates.external.json",
-  "sources": {
-    "G428": {
-      "excerpt": "spec/audit/sources/g428-m1-m6.md",
-      "excerpt_sha256": "32cd366b7c690de4909833c712809da68255e656e8053fd4dfb768621acc30d7",
-      "retrieved": "2026-11-18",
-      "sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
-      "url": "https://github.com/rhovision-org/rholo/issues/428"
+  "source": "spec/audit/release-claims.json",
+  "superseded": [
+    {
+      "fate": "runbook",
+      "home": "spec/audit/runbooks/c343-live-readonly-20261119.md",
+      "id": "C343"
     },
-    "G428-decision": {
-      "excerpt": "spec/audit/sources/g428-decision.md",
-      "excerpt_sha256": "b05d3597a86de40eb7972c894bf45dd6fecd35850a3522ca36c36fdcf0ce7d82",
-      "retrieved": "2026-11-18",
-      "sha256": null,
-      "url": "https://github.com/rhovision-org/rholo/issues/428#issuecomment-6892934659"
+    {
+      "fate": "sizing guidance",
+      "home": "docs/src/node/validator-requirements.md and the M1 runbook",
+      "id": "G428-M1"
     },
-    "G584": {
-      "excerpt": "spec/audit/sources/g584-g1-g6.md",
-      "excerpt_sha256": "c72afd923a3398fa2b0dcfc28a39249ac46aeac70a601ccc3e3a007c65db4b0e",
-      "retrieved": "2026-11-18",
-      "sha256": "24a4ba26caf22add60522df4689f76fd40db89133cbd21d81994b0c65b5c9610",
-      "url": "https://github.com/rhovision-org/rholo/issues/584"
+    {
+      "fate": "claim RC-5",
+      "home": "release-claims.json RC-5",
+      "id": "G428-M2"
     },
-    "TA": {
-      "excerpt": "spec/audit/sources/testnet-criteria.md",
-      "excerpt_sha256": "9d7f12c8858087c84266e520f9359eb331135d7f346b64f62aa75a9a8f9e8a72",
-      "retrieved": "2026-11-18",
-      "sha256": "5457d7cdd53bf4985b91e96b078d41c13361fe999a4807444ad8863c25623f0a",
-      "url": "https://github.com/rhovision-org/rholo/blob/dd6a25d69128375d83b7a7701c169ce672e57536/docs/src/spec/testnet-acceptance.md#L64-L68"
+    {
+      "fate": "claim RC-6",
+      "home": "release-claims.json RC-6",
+      "id": "G428-M3"
+    },
+    {
+      "fate": "claims RC-2, RC-3, RC-4",
+      "home": "release-claims.json RC-2/RC-3/RC-4",
+      "id": "G428-M4"
+    },
+    {
+      "fate": "setup precondition",
+      "home": "the preflight before every live claim",
+      "id": "G584-G1"
+    },
+    {
+      "fate": "claim RC-1",
+      "home": "release-claims.json RC-1",
+      "id": "G584-G2"
+    },
+    {
+      "fate": "claim RC-1",
+      "home": "release-claims.json RC-1",
+      "id": "G584-G3"
+    },
+    {
+      "fate": "claim RC-4",
+      "home": "release-claims.json RC-4",
+      "id": "G584-G4"
+    },
+    {
+      "fate": "evidence rule",
+      "home": "tools/evidence-pack.py and docs/src/spec/gate-measurement.md",
+      "id": "G584-G5"
+    },
+    {
+      "fate": "claims RC-1 and RC-2; attestation is an evidence rule",
+      "home": "release-claims.json RC-1/RC-2",
+      "id": "TA-C1"
+    },
+    {
+      "fate": "claim RC-4; bond/leave are separate owed observations",
+      "home": "release-claims.json RC-4",
+      "id": "TA-C2"
     }
-  }
+  ]
 }
