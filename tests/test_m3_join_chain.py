@@ -154,7 +154,7 @@ class PolicyTests(unittest.TestCase):
             joiner, responder = fixtures.m3_logs(chain)
             (record / "joiner.log").write_text(joiner)
             (record / "responder.log").write_text(responder)
-            chain_bytes = (json.dumps(chain, indent=2, sort_keys=True) + "\\n").encode()
+            chain_bytes = (json.dumps(chain, indent=2, sort_keys=True) + "\n").encode()
             (record / "chain.json").write_bytes(chain_bytes)
             files = []
             sums = {}
@@ -170,7 +170,7 @@ class PolicyTests(unittest.TestCase):
             # Update chain + sums but leave manifest stale: the record must fail.
             edited = json.loads((record / "chain.json").read_text())
             edited["non_claims"].append("edited after packaging")
-            edited_bytes = (json.dumps(edited, indent=2, sort_keys=True) + "\\n").encode()
+            edited_bytes = (json.dumps(edited, indent=2, sort_keys=True) + "\n").encode()
             (record / "chain.json").write_bytes(edited_bytes)
             sums["chain.json"] = hashlib.sha256(edited_bytes).hexdigest()
             (record / "SHA256SUMS.json").write_text(json.dumps(sums))
