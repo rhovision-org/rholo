@@ -209,7 +209,14 @@ class CriterionTests(unittest.TestCase):
                 path_text, _, symbol = reference.partition("::")
                 path = ROOT / path_text
                 self.assertTrue(path.is_file(), path)
-                self.assertIn(symbol, path.read_text(errors="ignore"), reference)
+                module = _load(f"adapter_{gate_id.replace('-', '_').lower()}", path)
+                self.assertTrue(callable(getattr(module, symbol, None)),
+                                f"{reference} does not name a callable")
+                if path_text == "tools/gate-principles.py" and symbol == entry["principle"]:
+                    continue
+                self.assertIn(
+                    symbol, principles.PRINCIPLES[entry["principle"]].__code__.co_names,
+                    f"{reference} is not called by {entry['principle']}")
 
 
 if __name__ == "__main__":

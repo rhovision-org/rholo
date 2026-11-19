@@ -46,5 +46,59 @@ class C343LiveToolTest(unittest.TestCase):
         self.assertEqual(document["block6"], "block 6 accepted")
 
 
+class HostEvaluationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.module = _load("c343_live_eval", ROOT / "tools/c343-live.py")
+        cls.table = cls.module.load_table(cls.module.DEFAULT_TABLE)
+
+    def evaluate(self, health=None, operator=None, block6="block 6 accepted"):
+        health = self.module._base_health() if health is None else health
+        operator = self.module._base_operator() if operator is None else operator
+        return self.module.host_evaluation(health, operator, block6, self.table)
+
+    def test_the_base_host_passes_every_cell(self):
+        result = self.evaluate()
+        self.assertEqual(result["verdict"], "PASS", result)
+        self.assertEqual(result["diagnosis"], "healthy")
+        self.assertTrue(all(cell["verdict"] == "PASS"
+                            for cell in result["cells"].values()), result)
+
+    def test_a_missing_health_field_is_a_precondition(self):
+        health = self.module._base_health()
+        health.pop("blockPipeline")
+        result = self.evaluate(health=health)
+        self.assertEqual(result["verdict"], "PRECONDITION", result)
+        self.assertEqual(result["cells"]["health-route"]["verdict"], "PRECONDITION")
+        self.assertIn("blockPipeline", result["cells"]["health-route"]["detail"])
+
+    def test_a_missing_operator_field_is_a_precondition(self):
+        operator = self.module._base_operator()
+        operator.pop("shards")
+        result = self.evaluate(operator=operator)
+        self.assertEqual(result["verdict"], "PRECONDITION", result)
+        self.assertEqual(result["cells"]["operator-route"]["verdict"], "PRECONDITION")
+
+    def test_a_height_gap_contradiction_is_a_failure(self):
+        result = self.evaluate(health=self.module._base_health(finalizedLag=2))
+        self.assertEqual(result["verdict"], "FAIL", result)
+        self.assertEqual(result["cells"]["height-gap"]["verdict"], "FAIL")
+
+    def test_a_non_numeric_height_is_a_precondition_not_an_exception(self):
+        result = self.evaluate(health=self.module._base_health(maxObservedHeight="five"))
+        self.assertEqual(result["verdict"], "PRECONDITION", result)
+        self.assertEqual(result["cells"]["height-gap"]["verdict"], "PRECONDITION")
+
+    def test_a_missing_journal_is_a_precondition(self):
+        result = self.evaluate(block6="")
+        self.assertEqual(result["verdict"], "PRECONDITION", result)
+        self.assertEqual(result["cells"]["block6-disposition"]["verdict"], "PRECONDITION")
+
+    def test_an_orphan_block_is_a_failure(self):
+        result = self.evaluate(block6="block 6 orphan")
+        self.assertEqual(result["verdict"], "FAIL", result)
+        self.assertEqual(result["cells"]["block6-disposition"]["verdict"], "FAIL")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -378,6 +378,114 @@ def block6_disposition(text: str) -> tuple[str, str]:
     return min(findings, key=lambda result: BLOCK6_RANK[result[0]])
 
 
+def _integer(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def host_evaluation(health: dict[str, Any], operator: dict[str, Any],
+                    block6_text: str, table: list[dict[str, Any]]) -> dict[str, Any]:
+    """One host's complete worksheet, shared by the criterion and `verify_run`.
+
+    The incomplete-contract rule is PRECONDITION, never FAIL: a missing field is a missing
+    observation, not a contradiction. Dependent cells are computed only when the 14/12-field
+    contract is complete, so field defaults cannot manufacture a contradiction.
+    """
+    cells: dict[str, dict[str, str]] = {}
+    missing = ([field for field in HEALTH_FIELDS if field not in health]
+               if isinstance(health, dict) else list(HEALTH_FIELDS))
+    op_missing = ([field for field in OPERATOR_FIELDS if field not in operator]
+                  if isinstance(operator, dict) else list(OPERATOR_FIELDS))
+    cells["health-route"] = (
+        cell("PASS", "the 14-field contract is present") if not missing
+        else cell("PRECONDITION", f"missing {missing}"))
+    cells["operator-route"] = (
+        cell("PASS", "the gates and C343 fields are present") if not op_missing
+        else cell("PRECONDITION", f"missing {op_missing}"))
+    complete = not missing and not op_missing
+    diagnosis = "unmodelled"
+    observed: dict[str, Any] = {}
+    is_consistent = False
+    unreadable = False
+    if complete:
+        try:
+            observed = observation(health, operator)
+            is_consistent = consistent(observed)
+            diagnosis = diagnose(table, observed)
+        except (TypeError, ValueError):
+            complete = False
+            unreadable = True
+    if complete:
+        if not is_consistent:
+            cells["phase-discriminator"] = cell("FAIL", "the observation is inconsistent")
+        elif diagnosis == "unmodelled":
+            cells["phase-discriminator"] = cell(
+                "PRECONDITION", "the observation matches no named shape")
+        else:
+            cells["phase-discriminator"] = cell("PASS", f"diagnosis {diagnosis}")
+        height = _integer(health.get("maxObservedHeight"))
+        finalized = _integer(health.get("finalizedHeight"))
+        lag = _integer(health.get("finalizedLag"))
+        if height is None or finalized is None or lag is None:
+            cells["height-gap"] = cell(
+                "PRECONDITION",
+                "maxObservedHeight/finalizedHeight/finalizedLag are not integers")
+        else:
+            expected = max(0, height - finalized)
+            cells["height-gap"] = (
+                cell("PASS", f"lag {expected}") if expected == lag
+                else cell("FAIL",
+                          f"maxObservedHeight-finalizedHeight={expected} "
+                          f"but finalizedLag={lag}"))
+        if observed["ready"] != (observed["readyReasons"] == []):
+            cells["readiness-conjunction"] = cell("FAIL", "ready/reasons disagree")
+        else:
+            cells["readiness-conjunction"] = cell("PASS", "ready agrees with its reasons")
+        if observed["pipelineFaultsOutstanding"] > 0:
+            ok = (observed["healthPhase"] == "blocked" and not observed["ready"]
+                  and "pipeline_fault_outstanding" in observed["readyReasons"])
+            cells["fault-latch"] = cell(
+                "PASS" if ok else "FAIL",
+                "the fault reports blocked" if ok else
+                "an outstanding fault is not fail-closed")
+        else:
+            cells["fault-latch"] = cell("PASS", "no outstanding fault")
+        if observed["proposalHalted"]:
+            reason = observed.get("proposalHaltReason") or ""
+            ok = (not observed["ready"] and "proposal_isolated" in observed["readyReasons"]
+                  and ("bound" in reason or "height" in reason))
+            cells["isolation"] = cell(
+                "PASS" if ok else "FAIL",
+                "the isolation names its bound" if ok else
+                "the isolation is not named on both surfaces")
+        else:
+            cells["isolation"] = cell("PASS", "not isolated")
+        if observed["resetMarker"]:
+            cells["reset-marker"] = cell(
+                "PASS" if diagnosis == "syncing-recovery" else "FAIL",
+                "the marker reads as recovery" if diagnosis == "syncing-recovery" else
+                "a reset marker is not syncing recovery")
+        else:
+            cells["reset-marker"] = cell("PASS", "no reset marker")
+    else:
+        detail = ("the observation fields are not readable" if unreadable
+                  else "the observation cannot be completed")
+        for name in ("phase-discriminator", "height-gap", "readiness-conjunction",
+                     "fault-latch", "isolation", "reset-marker"):
+            cells[name] = cell("PRECONDITION", detail)
+    if not isinstance(block6_text, str) or not block6_text:
+        cells["block6-disposition"] = cell("PRECONDITION", "no journal line")
+    else:
+        block_status, block_detail = block6_disposition(block6_text)
+        cells["block6-disposition"] = cell(block_status, block_detail)
+    verdicts = [value["verdict"] for value in cells.values()]
+    result = ("FAIL" if "FAIL" in verdicts
+              else "PRECONDITION" if "PRECONDITION" in verdicts else "PASS")
+    return {"cells": cells, "verdict": result, "diagnosis": diagnosis,
+            "consistent": is_consistent, "observation": observed}
+
+
 def verify_run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     run_dir = Path(args.run_dir)
     raw = run_dir / "raw"
@@ -425,81 +533,28 @@ def verify_run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                 operator = json.loads((raw / f"{alias}-operator.json").read_text())
             except Exception:  # noqa: BLE001
                 operator = {}
-        missing = [f for f in HEALTH_FIELDS if f not in health]
-        op_missing = [f for f in OPERATOR_FIELDS if f not in operator]
-        cells: dict[str, dict[str, str]] = {}
-        cells["health-route"] = (cell("PASS", "the 14-field contract is present")
-                                 if not missing else
-                                 cell("PRECONDITION", f"missing {missing}"))
-        cells["operator-route"] = (cell("PASS", "the gates and C343 fields are present")
-                                   if not op_missing else
-                                   cell("PRECONDITION", f"missing {op_missing}"))
-        o = observation(health, operator)
-        is_consistent = consistent(o)
-        diagnosis = diagnose(table, o) if not missing and not op_missing else "unmodelled"
-        if missing or op_missing:
-            cells["phase-discriminator"] = cell(
-                "PRECONDITION", "the observation cannot be completed")
-        elif not is_consistent:
-            cells["phase-discriminator"] = cell("FAIL", "the observation is inconsistent")
-        elif diagnosis == "unmodelled":
-            cells["phase-discriminator"] = cell(
-                "PRECONDITION", "the observation matches no named shape")
-        else:
-            cells["phase-discriminator"] = cell("PASS", f"diagnosis {diagnosis}")
         journal = (run.get("journals") or {}).get(alias)
+        journal_text = ""
+        journal_problem: tuple[str, str] | None = None
         if not journal or "error" in journal:
-            cells["block6-disposition"] = cell("PRECONDITION", "no journal line")
+            journal_problem = ("PRECONDITION", "no journal line")
         else:
             journal_path = raw / Path(journal["path"]).name
             text = journal_path.read_text(errors="replace")
             recorded = journal.get("sha256")
             actual = hashlib.sha256(journal_path.read_bytes()).hexdigest()
             if recorded and recorded != actual:
-                cells["block6-disposition"] = cell(
+                journal_problem = (
                     "FAIL", "the journal digest does not match the collected file")
             else:
-                verdict, detail = block6_disposition(text)
-                cells["block6-disposition"] = cell(verdict, detail)
-        if "maxObservedHeight" in health and "finalizedHeight" in health:
-            expected = max(0, int(health["maxObservedHeight"]) - int(health["finalizedHeight"]))
-            if expected != int(health.get("finalizedLag", -1)):
-                cells["height-gap"] = cell(
-                    "FAIL", f"maxObservedHeight-finalizedHeight={expected} "
-                            f"but finalizedLag={health.get('finalizedLag')}")
-            else:
-                cells["height-gap"] = cell("PASS", f"lag {expected}")
-        else:
-            cells["height-gap"] = cell("PRECONDITION", "maxObservedHeight/finalizedHeight absent")
-        if o["ready"] != (o["readyReasons"] == []):
-            cells["readiness-conjunction"] = cell(
-                "FAIL", "ready/reasons disagree")
-        else:
-            cells["readiness-conjunction"] = cell("PASS", "ready agrees with its reasons")
-        if o["pipelineFaultsOutstanding"] > 0:
-            ok = (o["healthPhase"] == "blocked" and not o["ready"]
-                  and "pipeline_fault_outstanding" in o["readyReasons"])
-            cells["fault-latch"] = cell("PASS" if ok else "FAIL",
-                                        "the fault reports blocked" if ok else
-                                        "an outstanding fault is not fail-closed")
-        else:
-            cells["fault-latch"] = cell("PASS", "no outstanding fault")
-        if o["proposalHalted"]:
-            reason = o.get("proposalHaltReason") or ""
-            ok = (not o["ready"] and "proposal_isolated" in o["readyReasons"]
-                  and ("bound" in reason or "height" in reason))
-            cells["isolation"] = cell("PASS" if ok else "FAIL",
-                                      "the isolation names its bound" if ok else
-                                      "the isolation is not named on both surfaces")
-        else:
-            cells["isolation"] = cell("PASS", "not isolated")
-        if o["resetMarker"]:
-            cells["reset-marker"] = cell(
-                "PASS" if diagnosis == "syncing-recovery" else "FAIL",
-                "the marker reads as recovery" if diagnosis == "syncing-recovery" else
-                "a reset marker is not syncing recovery")
-        else:
-            cells["reset-marker"] = cell("PASS", "no reset marker")
+                journal_text = text
+        evaluation = host_evaluation(health, operator, journal_text, table)
+        cells = evaluation["cells"]
+        if journal_problem is not None:
+            cells["block6-disposition"] = cell(*journal_problem)
+        o = evaluation["observation"]
+        is_consistent = evaluation["consistent"]
+        diagnosis = evaluation["diagnosis"]
         if args.purpose == "current-build":
             pins_ok = (args.expected_source_sha in (None, run.get("source_sha"))
                        and args.expected_binary_sha256 in (None, run.get("binary_sha256")))

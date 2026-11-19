@@ -40,6 +40,9 @@ TOKEN_BINARY = "b" * 64
 
 
 def tempdir(under_target: bool = True) -> Path:
+    # A Python-only CI job may run without compiling Rust first, so target/ need not exist.
+    if under_target:
+        (ROOT / "target").mkdir(parents=True, exist_ok=True)
     directory = (tempfile.TemporaryDirectory(dir=ROOT / "target") if under_target
                  else tempfile.TemporaryDirectory())
     _TEMPDIRS.append(directory)

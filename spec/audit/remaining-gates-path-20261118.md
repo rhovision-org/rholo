@@ -118,10 +118,13 @@ hash-mismatched chain and composes the off-host locality check.
 `tools/c343-live.py collect` now writes `raw/host-<alias>.observation.json` for each host — the
 `{health, operator, block6}` document `phase_diagnosis` consumes, with `block6` as journal text
 rather than a verdict — plus an index, and carries the run's locality. The criterion requires
-`live-host`, so a local rehearsal cannot be read as the operator snapshot. The local rehearsal is
-`spec/audit/evidence/c343-observation-shape-20261119/` (`INCONCLUSIVE`): the shape is emitted, the
-verifier is `PRECONDITION` because a fresh devnet's journal has no block-6 disposition, and the
-criterion refuses the document for locality. The live B/C/D snapshot remains owed.
+`live-host`, so a local rehearsal cannot be read as the operator snapshot. The criterion and the
+verifier now share one `host_evaluation`: the 14/12-field health/operator contract, consistency, the
+named diagnosis, block-6 disposition, the height gap, readiness, the fault latch, isolation and the
+reset marker. An incomplete document is `PRECONDITION`; a contradictory one is `FAIL`. The local
+rehearsal is `spec/audit/evidence/c343-observation-shape-20261119/` (`INCONCLUSIVE`): the shape is
+emitted, the verifier is `PRECONDITION` because a fresh devnet's journal has no block-6 disposition,
+and the criterion refuses the document for locality. The live B/C/D snapshot remains owed.
 
 ## External inputs
 
