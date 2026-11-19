@@ -409,6 +409,9 @@ def check_chain(chain: object) -> list[str]:
             name = logs.get(role)
             if not _nonempty(name) or "/" in name or name in (".", ".."):
                 problems.append(f"logs.{role} is not a bare log file name")
+        if (_nonempty(logs.get("joiner"))
+                and logs.get("joiner") == logs.get("responder")):
+            problems.append("logs.joiner and logs.responder must name distinct files")
 
     stages = chain.get("stages")
     if not isinstance(stages, dict):
@@ -809,6 +812,39 @@ def pin_problems(directory: Path, chain: object) -> list[str]:
             problems.append(f"{relative} is not digest-pinned")
         elif digest != hashlib.sha256(path.read_bytes()).hexdigest():
             problems.append(f"{relative} digest does not match SHA256SUMS.json")
+    # **The chain document is pinned too.** A packed record can otherwise be edited by rewriting
+    # chain.json alone: the raw logs still match their sums, but the document the checker read is
+    # no longer the one that was packed. The manifest's byte count catches a truncation the digest
+    # already would; it is checked because the omission of the entry is itself the defect.
+    manifest_path = directory / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except ValueError as error:
+            return problems + [f"{manifest_path}: not valid JSON: {error}"]
+        files = manifest.get("files") if isinstance(manifest, dict) else None
+        if not isinstance(files, list):
+            # A bare run directory (or a synthetic helper manifest) has no packed file list; the
+            # self-pin applies only to a record that claims to be packed.
+            return problems
+        chain_file = chain_path(directory)
+        if chain_file is None:
+            return problems + ["chain.json is absent from the record"]
+        relative = chain_file.relative_to(directory).as_posix()
+        entry = next((item for item in files
+                      if isinstance(item, dict) and item.get("path") == relative), None)
+        if entry is None:
+            problems.append(f"{relative} is not listed in manifest.json")
+        elif entry.get("kind") != "json":
+            problems.append(f"{relative} is not declared as json in manifest.json")
+        else:
+            raw = chain_file.read_bytes()
+            digest = hashlib.sha256(raw).hexdigest()
+            sums_digest = sums.get(relative, sums.get(chain_file.name))
+            if entry.get("sha256") != digest or sums_digest != digest:
+                problems.append(f"{relative} digest does not match its pins")
+            elif entry.get("bytes") != len(raw):
+                problems.append(f"{relative} byte count does not match manifest.json")
     return problems
 
 
