@@ -67,7 +67,16 @@ The layer is deliberately small:
 | `pressure_refusal` | the queues are bounded (composes `bounded_admission`), and a capped run refuses with 429/RESOURCE_EXHAUSTED and a retry signal, no 5xx, and a handler reachable after release, while the unset default refuses nothing; counts are recomputed from the named raw transcripts, a record that names raw files carries `SHA256SUMS.json`, the refusal message is bound to the source, the endpoint is non-local, and a local-devnet record is refused | G428-M2 |
 | `off_host_claim` | an off-host/live-host claim carries a routable peer; loopback/private/encoded addresses cannot satisfy it | G428-M3 (locality half) |
 | `join_chain` | the six-stage chain is typed, `complete: true` and complete: all stages keyed by peer + anchor, a transport outcome whose words match (not a send line), served = received = restored = walked hashes, and every quoted line present in the named raw logs; an off-host record is digest-pinned however it was supplied (`record.files` or `record.dir`); the off-host policy composes `off_host_claim` | G428-M3 |
-| `resource_attribution` | process accounting counts only the node's processes; the declared count is required and must equal the observed count; every entry carries a positive integer `pid`, each listed once | G428-M1 |
+| `capacity_tier` | a declared tier is checked against measured per-validator RAM/CPU/disk, peak and replay RSS, replay time at the served height, OOM/restart deltas, and a stake/host map whose top-`k` host loss must leave a supermajority (`stake * 3 > total * 2`); a shared host without a per-validator cgroup share fails; a missing measurement is `PRECONDITION`, a contradiction `FAIL`; a fault-injection record or an override run is not a supported-tier measurement | G428-M1 |
+
+`capacity_tier` is the M1 record's judge, and `tools/capacity-tier.py collect` is its producer.
+The collector reads the declaration and the two arms' JSON, never Docker, and refuses rather than
+filling a missing measurement. It classifies a run `fault-injection` when it used
+`--allow-under-minimum` or ran below the declared share; the criterion treats that as unkeyable
+evidence. The record's distinct host ids are a declaration: independent provisioning and the
+host-kill arm are campaign facts, not properties this layer can verify. The tier floors are
+criterion parameters (minimal 2 cores / 8 GiB / 100 GiB; comfortable 8 / 16 / 1000), so a policy
+change is a data edit the self-test reads.
 
 `human_attestation` is the only principle that consumes a human record. The layer checks the
 record's shape and independence; it never manufactures a verdict, names a reviewer, or treats a
