@@ -192,24 +192,25 @@ class PolicyTests(unittest.TestCase):
     def record(self, readme: str, chain: dict) -> Path:
         directory = Path(tempfile.mkdtemp())
         (directory / "README.md").write_text(readme)
-        (directory / "manifest.json").write_text(
-            json.dumps({"locality": chain["locality"], "execution_proven": False})
-        )
-        (directory / "chain.json").write_text(json.dumps(chain))
-        (directory / "raw").mkdir()
-        (directory / "raw" / "peer.txt").write_text(
-            f"{chain['correlation']['advertised_peer']}\n"
-        )
         joiner_log, responder_log = fixtures.m3_logs(chain)
         (directory / "joiner.log").write_text(joiner_log)
         (directory / "responder.log").write_text(responder_log)
-        (directory / "SHA256SUMS.json").write_text(
-            json.dumps(
-                {
-                    "joiner.log": hashlib.sha256(joiner_log.encode()).hexdigest(),
-                    "responder.log": hashlib.sha256(responder_log.encode()).hexdigest(),
-                }
-            )
+        chain_bytes = (json.dumps(chain, indent=2, sort_keys=True) + "\n").encode()
+        (directory / "chain.json").write_bytes(chain_bytes)
+        files = []
+        sums = {}
+        for name in ("chain.json", "joiner.log", "responder.log"):
+            raw = (directory / name).read_bytes()
+            digest = hashlib.sha256(raw).hexdigest()
+            files.append({"path": name, "sha256": digest, "bytes": len(raw)})
+            sums[name] = digest
+        (directory / "manifest.json").write_text(json.dumps({
+            "locality": chain["locality"], "execution_proven": False, "files": files
+        }))
+        (directory / "SHA256SUMS.json").write_text(json.dumps(sums))
+        (directory / "raw").mkdir()
+        (directory / "raw" / "peer.txt").write_text(
+            f"{chain['correlation']['advertised_peer']}\n"
         )
         return directory
 
