@@ -42,6 +42,18 @@ mod tests {
 """
 
 
+def toy_crate(root: Path) -> None:
+    """A dependency-free crate with one passing lib test and one untouched function.
+
+    Shared with `tests/test_hardfork_51_closeout.py`, whose acceptance runner must
+    be shown to execute a test, not only classify a fabricated log.
+    """
+    (root / "src").mkdir(exist_ok=True)
+    (root / "Cargo.toml").write_text(
+        '[package]\nname = "toy-control"\nversion = "0.1.0"\nedition = "2021"\n')
+    (root / "src" / "lib.rs").write_text(TOY_LIB)
+
+
 def control_row(before: str, after: str, symbol: str = "the_boundary_is_zero") -> dict:
     return {
         "id": "toy-control",
@@ -147,10 +159,7 @@ class LiveToyControlTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        (self.root / "src").mkdir()
-        (self.root / "Cargo.toml").write_text(
-            '[package]\nname = "toy-control"\nversion = "0.1.0"\nedition = "2021"\n')
-        (self.root / "src" / "lib.rs").write_text(TOY_LIB)
+        toy_crate(self.root)
         patcher = mock.patch.dict(
             os.environ,
             {"CARGO_TARGET_DIR": str(ROOT / "target" / "rust-control-toy")})

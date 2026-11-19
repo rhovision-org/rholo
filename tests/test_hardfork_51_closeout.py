@@ -3,6 +3,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,11 @@ SPEC.loader.exec_module(gate)
 LEDGER = json.loads((ROOT / "spec/audit/hardfork-51-closeout.json").read_text())
 ARTIFACT = "spec/audit/hardfork-51-closeout.json"
 
+_RUST_SPEC = importlib.util.spec_from_file_location(
+    "rust_controls", ROOT / "tests/test_rust_controls.py")
+rust_controls = importlib.util.module_from_spec(_RUST_SPEC)
+_RUST_SPEC.loader.exec_module(rust_controls)
+
 
 def artifact_sha() -> str:
     return hashlib.sha256((ROOT / ARTIFACT).read_bytes()).hexdigest()
@@ -29,9 +35,16 @@ class CloseoutTests(unittest.TestCase):
     def setUp(self):
         self.payload = copy.deepcopy(LEDGER)
 
-    def inspect(self, verify_git=False, require_gates=False):
+    def inspect(self, verify_git=False, require_gates=False, **kwargs):
         return gate.validate(self.payload, verify_git=verify_git, repo=ROOT,
-                             require_gates=require_gates)
+                             require_gates=require_gates, **kwargs)
+
+    def merged_row(self, ident="A:block-timestamp"):
+        return next(x for x in self.payload["items"] if x["id"] == ident)
+
+    def merged_runs(self, verdict="ACCEPTED"):
+        return {x["id"]: verdict for x in self.payload["items"]
+                if x["status"] == "merged"}
 
     def test_current_tracker_is_not_closeable(self):
         out = self.inspect()
@@ -197,8 +210,11 @@ class CloseoutTests(unittest.TestCase):
             self.assertEqual(gate.validate(self.payload, repo=root)["result"],
                              "TRACKER_MUST_REMAIN_OPEN")
             with patch.object(gate, "is_ancestor", return_value=True):
+                # The synthetic ledger has no merged row, so an empty run map is the
+                # complete acceptance record for it.
                 self.assertEqual(
-                    gate.validate(self.payload, repo=root, verify_git=True)["result"],
+                    gate.validate(self.payload, repo=root, verify_git=True,
+                                  merged_tests={})["result"],
                     "CLOSEOUT_ELIGIBLE_FOR_INDEPENDENT_REVIEW")
 
     def test_the_ledger_is_the_hf51_tracker(self):
@@ -410,6 +426,182 @@ class CloseoutTests(unittest.TestCase):
             (root / "review.md").write_text("Maintainer verified\n")
             with self.assertRaisesRegex(gate.LedgerError, "digest"):
                 gate.validate(self.payload, repo=root)
+
+
+    def test_every_merged_row_binds_a_current_tree_test(self):
+        out = self.inspect()
+        self.assertEqual(out["merged"], 13)
+        self.assertEqual(out["merged_with_tests"], 13)
+        self.assertEqual(out["merged_absent"], 0)
+
+    def test_a_merged_row_without_acceptance_is_rejected(self):
+        self.merged_row().pop("acceptance")
+        with self.assertRaisesRegex(gate.LedgerError, "acceptance binding missing"):
+            self.inspect()
+
+    def test_acceptance_is_tests_or_an_explicit_absence(self):
+        row = self.merged_row()
+        row["acceptance"]["absent_reason"] = "No current-build test exercises this landing."
+        with self.assertRaisesRegex(gate.LedgerError, "exactly one"):
+            self.inspect()
+
+    def test_an_absent_reason_is_a_specific_line(self):
+        row = self.merged_row()
+        row["acceptance"] = {"absent_reason": "TBD"}
+        with self.assertRaisesRegex(gate.LedgerError, "absent_reason"):
+            self.inspect()
+
+    def test_a_binding_to_a_missing_symbol_is_rejected(self):
+        row = self.merged_row()
+        row["acceptance"]["tests"] = [
+            "casper/tests/finalization.rs::no_such_witness_exists"]
+        with self.assertRaisesRegex(gate.LedgerError, "one fn"):
+            self.inspect()
+
+    def test_a_binding_outside_the_repo_is_rejected(self):
+        row = self.merged_row()
+        row["acceptance"]["tests"] = ["../outside.rs::something"]
+        with self.assertRaisesRegex(gate.LedgerError, "repo-relative"):
+            self.inspect()
+
+    def test_a_non_merged_row_cannot_claim_acceptance(self):
+        item = next(x for x in self.payload["items"] if x["status"] == "open")
+        item["acceptance"] = {"absent_reason": "not a merged row"}
+        with self.assertRaisesRegex(gate.LedgerError, "only a merged row"):
+            self.inspect()
+
+    def test_duplicate_bindings_are_rejected(self):
+        row = self.merged_row()
+        row["acceptance"]["tests"] = [row["acceptance"]["tests"][0]] * 2
+        with self.assertRaisesRegex(gate.LedgerError, "duplicate"):
+            self.inspect()
+
+    def test_the_acceptance_observation_date_is_required(self):
+        self.payload.pop("acceptance_observed_date")
+        with self.assertRaisesRegex(gate.LedgerError, "acceptance_observed_date"):
+            self.inspect()
+
+    def test_the_merged_classifier_reads_the_test_line(self):
+        self.assertEqual(gate.merged_test_verdict(
+            "running 1 test\ntest x::y ... ok\n\ntest result: ok. 1 passed",
+            "y"), "ACCEPTED")
+        self.assertEqual(gate.merged_test_verdict(
+            "running 1 test\ntest x::y ... FAILED\n\ntest result: FAILED",
+            "y"), "REJECTED")
+        self.assertEqual(gate.merged_test_verdict(
+            "running 1 test\ntest x::y ... ignored\n\ntest result: ok. 0 passed",
+            "y"), "ERROR")
+        self.assertEqual(gate.merged_test_verdict(
+            "error[E0425]: cannot find value\n", "y"), "ERROR")
+        # A filter that runs a second test cannot say which `ok` is the witness.
+        self.assertEqual(gate.merged_test_verdict(
+            "running 2 tests\ntest x::y ... ok\ntest x::y_again ... ok\n", "y"),
+            "ERROR")
+
+    def test_merged_rows_are_not_closeable_without_a_run(self):
+        self.assertFalse(self.inspect()["merged_tests_ok"])
+
+    def test_a_rejected_merged_test_is_not_closeable(self):
+        runs = self.merged_runs()
+        runs["A:block-timestamp"] = "REJECTED"
+        self.assertFalse(self.inspect(merged_tests=runs)["merged_tests_ok"])
+
+    def test_a_dirty_run_is_not_closeable(self):
+        out = self.inspect(merged_tests=self.merged_runs(), merged_dirty=True)
+        self.assertFalse(out["merged_tests_ok"])
+
+    def test_all_accepted_and_clean_satisfies_the_acceptance_conjunct(self):
+        out = self.inspect(merged_tests=self.merged_runs())
+        self.assertTrue(out["merged_tests_ok"])
+        self.assertEqual(out["result"], "TRACKER_MUST_REMAIN_OPEN")
+
+    def test_a_run_map_must_cover_every_merged_row(self):
+        with self.assertRaisesRegex(gate.LedgerError, "key exactly"):
+            self.inspect(merged_tests={})
+
+    def test_an_unverified_pin_is_reported_and_not_closeable(self):
+        class Stub:
+            def validate_pinned(self, root, inventory, matrix, raw):
+                return {"blob_status": "unverified-shallow",
+                        "result": "SOURCE_BLOB_UNVERIFIED"}
+
+        with patch.object(gate, "_inventory_checker", return_value=Stub()):
+            out = gate.validate(self.payload, repo=ROOT, verify_blob=True)
+        self.assertEqual(out["pinned_blob"], "unverified-shallow")
+        self.assertEqual(out["result"], "TRACKER_MUST_REMAIN_OPEN")
+
+    def test_a_missing_pinned_commit_is_not_verified(self):
+        status = gate.git_blob(ROOT, "0" * 40, gate.PASSES_PATH)[0]
+        self.assertIn(status, ("unavailable", "unverified-shallow"))
+
+    def test_assert_closeable_runs_the_pinned_blob_check(self):
+        calls = []
+
+        class Stub:
+            def validate_pinned(self, root, inventory, matrix, raw):
+                calls.append(raw["source_dev_sha"])
+                return {"blob_status": "unverified-shallow"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.json"
+            path.write_text(json.dumps(self.payload))
+            with patch.object(gate, "_inventory_checker", return_value=Stub()), \
+                    patch("sys.argv", ["check-hardfork-51-closeout.py", str(path),
+                                       "--assert-closeable"]), \
+                    redirect_stdout(StringIO()):
+                self.assertEqual(gate.main(), 3)
+        self.assertTrue(calls)
+
+
+class MergedAcceptanceRunnerTests(unittest.TestCase):
+    """One real cargo run per verdict: the checker must execute, not read a claim."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        rust_controls.toy_crate(self.root)
+        patcher = patch.dict(os.environ, {
+            "CARGO_TARGET_DIR": str(ROOT / "target" / "hf51-merged-toy")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self.temp.cleanup)
+
+    def payload(self, symbol="the_boundary_is_zero"):
+        return {"acceptance_observed_date": "2026-11-19",
+                "items": [{"id": "X:toy", "status": "merged",
+                           "acceptance": {"tests": [f"src/lib.rs::{symbol}"]}}]}
+
+    def run_toy(self, symbol="the_boundary_is_zero"):
+        return gate.run_merged_tests(
+            self.payload(symbol), repo=self.root, cargo_flags=("--offline",),
+            log_dir=self.root / "logs")
+
+    def source(self):
+        return (self.root / "src" / "lib.rs").read_text()
+
+    def test_a_passing_binding_is_accepted(self):
+        before = self.source()
+        self.assertEqual(self.run_toy()["rows"]["X:toy"]["verdict"], "ACCEPTED")
+        self.assertEqual(self.source(), before)
+
+    def test_a_failing_binding_is_rejected(self):
+        lib = self.root / "src" / "lib.rs"
+        lib.write_text(self.source().replace(
+            "assert_eq!(boundary(), 0);", "assert_eq!(boundary(), 1);"))
+        self.assertEqual(self.run_toy()["rows"]["X:toy"]["verdict"], "REJECTED")
+
+    def test_a_build_error_is_not_an_acceptance(self):
+        lib = self.root / "src" / "lib.rs"
+        lib.write_text(self.source() + "\nfn broken(\n")
+        self.assertEqual(self.run_toy()["rows"]["X:toy"]["verdict"], "ERROR")
+
+    def test_a_filter_collision_is_an_error(self):
+        lib = self.root / "src" / "lib.rs"
+        lib.write_text(self.source().replace(
+            "#[cfg(test)]\nmod tests {",
+            "#[cfg(test)]\nmod tests {\n    #[test]\n"
+            "    fn the_boundary_is_zero_again() {}"))
+        self.assertEqual(self.run_toy()["rows"]["X:toy"]["verdict"], "ERROR")
 
 
 class MainnetRegisterTests(unittest.TestCase):

@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SOURCE_PATH = "spec/audit/passes.md"
 _SPEC = importlib.util.spec_from_file_location("hardfork_51_gate", ROOT / "tools/check-hardfork-51-closeout.py")
 _GATE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_GATE)
@@ -29,8 +30,9 @@ def source_rows(document):
         raise ValueError("empty section 6 inventory")
     return rows
 
-def validate(document, inventory, matrix, ledger):
-    _GATE.validate(ledger)
+def validate(document, inventory, matrix, ledger, *, repo=None):
+    root = (repo or ROOT).resolve()
+    _GATE.validate(ledger, repo=root, acceptance_root=root)
     expected = source_rows(document)
     ledger_rows = {row["id"]: row for row in ledger["items"]}
     source_lines = {raw: number for number, raw in enumerate(document.splitlines(), 1)}
@@ -94,16 +96,45 @@ def validate(document, inventory, matrix, ledger):
             "section6_rows":len(rows), "category_a_candidates":sum(x["fork_class"]=="A_CANDIDATE" for x in rows),
             "tracker_obligations":len(entries), "independent_signoff":False, "release_authorized":False}
 
+
+def validate_pinned(repo, inventory, matrix, ledger):
+    """Validate the inventory against passes.md **as committed** at source_dev_sha.
+
+    The local register is not the evidence: a §6 row can be edited in the worktree
+    while the pinned blob stays unchanged. A shallow or absent pin is reported, not
+    turned into a malformed inventory; the caller decides whether that is fatal.
+    """
+    status, text, reason = _GATE.git_blob(Path(repo), ledger["source_dev_sha"], SOURCE_PATH)
+    if status != "verified":
+        return {"result": "SOURCE_BLOB_UNVERIFIED", "blob_status": status,
+                "source": SOURCE_PATH, "source_dev_sha": ledger["source_dev_sha"],
+                "reason": reason, "independent_signoff": False,
+                "release_authorized": False}
+    result = validate(text, inventory, matrix, ledger, repo=repo)
+    result.update({"blob_status": "verified", "source": SOURCE_PATH,
+                   "source_dev_sha": ledger["source_dev_sha"]})
+    return result
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--register",type=Path,default=ROOT/"spec/audit/passes.md")
+    parser.add_argument("--repo", type=Path, default=ROOT)
+    mode=parser.add_mutually_exclusive_group()
+    mode.add_argument("--register", type=Path, default=None)
+    mode.add_argument("--verify-pinned-blob", action="store_true")
     args=parser.parse_args()
     try:
-        audit=ROOT/"spec/audit"
-        result=validate(args.register.read_text(),
-            json.loads((audit/"section6-gap-inventory.json").read_text()),
-            json.loads((audit/"final-gap-matrix.json").read_text()),
-            json.loads((audit/"hardfork-51-closeout.json").read_text()))
+        audit=args.repo/"spec/audit"
+        inventory=json.loads((audit/"section6-gap-inventory.json").read_text())
+        matrix=json.loads((audit/"final-gap-matrix.json").read_text())
+        ledger=json.loads((audit/"hardfork-51-closeout.json").read_text())
+        if args.verify_pinned_blob:
+            result=validate_pinned(args.repo, inventory, matrix, ledger)
+            print(json.dumps(result,sort_keys=True))
+            return 0 if result.get("blob_status")=="verified" else 4
+        document=(args.register or (args.repo/SOURCE_PATH)).read_text()
+        result=validate(document, inventory, matrix, ledger, repo=args.repo)
+        result["blob_status"]="local"
     except (OSError,ValueError,KeyError,TypeError) as exc:
         print(json.dumps({"result":"INVALID_INVENTORY","reason":str(exc)}))
         return 2
