@@ -515,6 +515,7 @@
     },
     {
       "id": "TA-C1",
+      "machine_check": true,
       "family": "TA",
       "title": "Anyone can propose, and production is bounded",
       "source_label": "testnet acceptance criterion 1",
@@ -558,6 +559,7 @@
     },
     {
       "id": "TA-C2",
+      "machine_check": true,
       "family": "TA",
       "title": "Validators can be dropped and joined without risk",
       "source_label": "testnet acceptance criterion 2",

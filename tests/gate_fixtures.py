@@ -508,6 +508,27 @@ def base_c357() -> dict:
     return {"record_data": c357._base_record("coordinated-new-genesis")}
 
 
+def _attestation(url: str) -> dict:
+    return {"attestation": {
+        "reviewer": "independent-reviewer",
+        "relationship": "not the gate owner, operator or author",
+        "independent": True,
+        "signed_at": "2026-11-18T12:00:00Z",
+        "verdict": "PASS",
+        "evidence_sha256": "a" * 64,
+        "verdict_url": url,
+        "evidence_record": "spec/audit/evidence/c343-observation-shape-20261119",
+    }}
+
+
+def base_ta_c1() -> dict:
+    return _attestation("https://example.invalid/ta-c1-verdict")
+
+
+def base_ta_c2() -> dict:
+    return _attestation("https://example.invalid/ta-c2-verdict")
+
+
 BUILDERS = {
     "G428-M1": base_g428_m1,
     "G428-M2": base_g428_m2,
@@ -521,6 +542,8 @@ BUILDERS = {
     "G584-G5": base_g584_g5,
     "C343": base_c343,
     "C357": base_c357,
+    "TA-C1": base_ta_c1,
+    "TA-C2": base_ta_c2,
 }
 
 

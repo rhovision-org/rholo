@@ -207,7 +207,8 @@ def human_attestation(observations: dict, parameters: dict) -> dict:
     owner = str(parameters.get("owner") or "").strip()
     if not reviewer:
         errors.append("attestation.reviewer is required")
-    if owner and reviewer.casefold() in owner.casefold():
+    if owner and (reviewer.casefold() in owner.casefold()
+                  or owner.casefold() in reviewer.casefold()):
         errors.append("the reviewer must not be the gate owner")
     try:
         signed = dt.datetime.fromisoformat(
@@ -222,8 +223,15 @@ def human_attestation(observations: dict, parameters: dict) -> dict:
     url = attestation.get("verdict_url")
     if not (isinstance(url, str) and url.startswith("https://")):
         errors.append("attestation.verdict_url must be https")
-    if not _present(attestation.get("evidence_record")):
+    record = attestation.get("evidence_record")
+    if not _present(record):
         errors.append("attestation.evidence_record is required")
+    else:
+        path = Path(str(record))
+        if not path.is_absolute():
+            path = ROOT / path
+        if not path.exists():
+            errors.append("attestation.evidence_record does not exist")
     if errors:
         return verdict("FAIL", errors)
     recorded = attestation.get("verdict")

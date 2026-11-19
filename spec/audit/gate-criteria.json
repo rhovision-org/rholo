@@ -776,6 +776,120 @@
     }
    ],
    "pass_condition_sha256": "27995ccfcd55dee8e44806cb04d6904e223c8ed97a9c0e5fe728d98be80a6a25"
+  },
+  {
+   "gate_id": "TA-C1",
+   "principle": "human_attestation",
+   "adapter": "tools/gate-principles.py::human_attestation",
+   "parameters": {
+    "owner": "Jim / release coordination"
+   },
+   "requires": [
+    "attestation"
+   ],
+   "negative_controls": [
+    {
+     "name": "the owner signs their own gate",
+     "mutation": [
+      "set",
+      "attestation/reviewer",
+      "Jim / release coordination"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "no signed evidence digest",
+     "mutation": [
+      "delete",
+      "attestation/evidence_sha256"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an evidence record that does not exist",
+     "mutation": [
+      "set",
+      "attestation/evidence_record",
+      "spec/audit/evidence/does-not-exist"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an inconclusive verdict",
+     "mutation": [
+      "set",
+      "attestation/verdict",
+      "INCONCLUSIVE"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "no attestation record",
+     "mutation": [
+      "delete",
+      "attestation"
+     ],
+     "expected": "PRECONDITION"
+    }
+   ],
+   "pass_condition_sha256": "4a25f4a93f6a455f0257866839414a92e86c6d9dd6e9b37ed70b93af23c6b6a6"
+  },
+  {
+   "gate_id": "TA-C2",
+   "principle": "human_attestation",
+   "adapter": "tools/gate-principles.py::human_attestation",
+   "parameters": {
+    "owner": "Aria / evidence work"
+   },
+   "requires": [
+    "attestation"
+   ],
+   "negative_controls": [
+    {
+     "name": "the owner signs their own gate",
+     "mutation": [
+      "set",
+      "attestation/reviewer",
+      "Aria / evidence work"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "no signed evidence digest",
+     "mutation": [
+      "delete",
+      "attestation/evidence_sha256"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an evidence record that does not exist",
+     "mutation": [
+      "set",
+      "attestation/evidence_record",
+      "spec/audit/evidence/does-not-exist"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an inconclusive verdict",
+     "mutation": [
+      "set",
+      "attestation/verdict",
+      "INCONCLUSIVE"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "no attestation record",
+     "mutation": [
+      "delete",
+      "attestation"
+     ],
+     "expected": "PRECONDITION"
+    }
+   ],
+   "pass_condition_sha256": "2d944b9af2f1ca622b017d0c119ae79bff90a24371d0198048c098651d7ef275"
   }
  ]
 }
