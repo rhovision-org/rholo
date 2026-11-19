@@ -1,0 +1,6 @@
+{
+ "hosts": {
+  "bootstrap": "raw/host-bootstrap.observation.json"
+ },
+ "schema": 1
+}

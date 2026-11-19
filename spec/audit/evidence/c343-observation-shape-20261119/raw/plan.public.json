@@ -1,0 +1,13 @@
+{
+ "campaign": "c343-observation-shape-20261119",
+ "hosts": [
+  {
+   "alias": "bootstrap",
+   "base_sha256": "4d818c7b6d856787a445201a6fc9e46066a3c1b6ea3584935adfc9d934deed1e",
+   "binary_sha256": null,
+   "operator_base_sha256": "48cd8142b3dd16f4cd03816fed7af91fcb02bbec9395388425a6e818fa4e4cd4",
+   "source_sha": null
+  }
+ ],
+ "schema": 1
+}

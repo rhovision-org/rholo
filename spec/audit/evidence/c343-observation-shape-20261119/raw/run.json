@@ -1,0 +1,28 @@
+{
+ "answers": {
+  "bootstrap": {
+   "health": {
+    "body_sha256": "5884223107408d393b1043afb9b29006a4cbd3cb270237f668e2457c8870650f",
+    "error": null,
+    "status": 200
+   },
+   "operator": {
+    "body_sha256": "bf5ddad254200e8e9c6e15dc9eff6aa7cb0ddec10366753ec66cc48ed60ae837",
+    "error": null,
+    "status": 200
+   }
+  }
+ },
+ "binary_sha256": "d98c9a133dd4be551ea6d04ad9e20f16b6a2709eb63da1f37b5273260eac09d5",
+ "campaign": "c343-observation-shape-20261119",
+ "execution_proven": false,
+ "journals": {
+  "bootstrap": {
+   "path": "raw/bootstrap-journal.log",
+   "sha256": "8572dd0aed128eac0cdf426091cc7659c6c94215b0f32e642b6224b7324f1744"
+  }
+ },
+ "read_only": true,
+ "schema": 1,
+ "source_sha": "46c98b67b3dae3c22104ab737ad7bf4851862b0b"
+}

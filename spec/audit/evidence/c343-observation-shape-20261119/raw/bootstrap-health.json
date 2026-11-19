@@ -1,0 +1,45 @@
+{
+ "acceptsDeploys": true,
+ "blockPipeline": {
+  "capacity": 1024,
+  "incomingQueue": 0,
+  "pending": 0,
+  "sampledPeak": 0,
+  "validatedQueue": 0
+ },
+ "bootId": "1-1795081557332",
+ "degraded": "normal",
+ "diagVersion": 2,
+ "finalityStallEpisodes": 1,
+ "finalityStalled": false,
+ "finalizedHeight": 5,
+ "finalizedHeightError": null,
+ "finalizedLag": 3,
+ "height": 9,
+ "lastBlockAgeMs": null,
+ "lastFinalityAgeMs": 388,
+ "lastPeerAgeMs": null,
+ "lastPipelineFault": null,
+ "maxObservedHeight": 8,
+ "nodePhase": "running",
+ "ok": true,
+ "orphanBodies": 0,
+ "orphanDetections": 0,
+ "phase": "running",
+ "pipelineFaults": 0,
+ "pipelineFaultsOutstanding": 0,
+ "pool": {
+  "bytes": 0,
+  "deploys": 0,
+  "maxBytes": 67108864,
+  "maxDeploys": 10000
+ },
+ "proposalHaltReason": null,
+ "proposalHalted": false,
+ "ready": true,
+ "readyReasons": [],
+ "selfValidationRefusal": null,
+ "shardPhases": {
+  "/root": "running"
+ }
+}
