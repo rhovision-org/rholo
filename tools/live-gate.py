@@ -741,7 +741,7 @@ def check_g2(submission, run, events, expected_observers: int | None = 4) -> dic
     return finding.report()
 
 
-def check_g3(claims, events) -> dict:
+def check_g3(claims, events, expected_observers: int = 4) -> dict:
     finding = Finding()
     if not isinstance(claims, dict):
         finding.incomplete("claims.json (the record's own settlement claim) is absent")
@@ -769,6 +769,17 @@ def check_g3(claims, events) -> dict:
         finding.incomplete("no pre-finality not-finalized settlement sample")
 
     observations = finality_events(events)
+    # **The prose bar is "the finality endpoint agrees with the four observations."** One observer's
+    # self-consistent events must not pass for the endpoint-plus-four comparison; the count is a
+    # precondition (the campaign has not run), not a failure of agreement.
+    observers = {
+        event.get("alias") for event in observations
+        if isinstance(event.get("alias"), str) and event["alias"]
+    }
+    if len(observers) < expected_observers:
+        finding.incomplete(
+            f"{len(observers)} observer(s) report finality; the gate requires at least "
+            f"{expected_observers}")
     for event in observations:
         reason = controls.finality_observation_verdict(event.get("http_status"), event.get("body"))
         if reason:
@@ -1155,7 +1166,7 @@ def evaluate(run_dir: Path, preflight_path: Path, verdict_path: Path | None = No
     criteria = {
         "G1": check_g1(preflight, expected_observers),
         "G2": check_g2(submission, run, events, expected_observers),
-        "G3": check_g3(claims, events),
+        "G3": check_g3(claims, events, expected_observers),
         "G4": check_g4(recovery, events),
         "G5": check_g5(run, events, run_dir, expected_observers),
         "G6": check_g6(verdict, preflight),

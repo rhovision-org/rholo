@@ -650,6 +650,17 @@ class G3Tests(LiveGateFixture):
         self.assert_status(report, "G3", "INCOMPLETE")
         self.assertEqual(code, 3)
 
+    def test_fewer_than_four_finality_observers_is_incomplete(self):
+        """The prose bar compares the endpoint with **four** observations.
+
+        One alias's self-consistent events are not the comparison; the missing observers are a
+        precondition (the live window has not run), not an agreement failure.
+        """
+        self.rewrite_events([event for event in self.events() if event["alias"] == "v1"])
+        report, code = self.check()
+        self.assert_status(report, "G3", "INCOMPLETE")
+        self.assertEqual(code, 3)
+
 
 class G4Tests(LiveGateFixture):
     def test_no_recovery_arm_is_incomplete(self):

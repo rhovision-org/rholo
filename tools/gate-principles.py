@@ -179,7 +179,9 @@ def staged_lifecycle(observations: dict, parameters: dict) -> dict:
 
 
 def no_false_settlement(observations: dict, parameters: dict) -> dict:
-    report = _live.check_g3(observations.get("claims"), _events(observations))
+    report = _live.check_g3(
+        observations.get("claims"), _events(observations),
+        parameters.get("min_observers", 4))
     return _live_report(report)
 
 
@@ -563,7 +565,7 @@ PRINCIPLES = {
 PARAMETER_SCHEMA = {
     "identity_agreement": {"min_observers": int},
     "staged_lifecycle": {"stages": list, "per_observer": bool, "min_observers": int},
-    "no_false_settlement": {},
+    "no_false_settlement": {"min_observers": int},
     "recovery_no_loss": {},
     "independent_observations": {"min_observers": int},
     "human_attestation": {"owner": str},

@@ -606,7 +606,9 @@
    "gate_id": "G584-G3",
    "principle": "no_false_settlement",
    "adapter": "tools/live-gate.py::check_g3",
-   "parameters": {},
+   "parameters": {
+    "min_observers": 4
+   },
    "requires": [
     "claims",
     "events"
@@ -660,6 +662,33 @@
       }
      ],
      "expected": "FAIL"
+    },
+    {
+     "name": "only one observer reports finality",
+     "mutation": [
+      [
+       "remove_where",
+       "events",
+       {
+        "alias": "v2"
+       }
+      ],
+      [
+       "remove_where",
+       "events",
+       {
+        "alias": "v3"
+       }
+      ],
+      [
+       "remove_where",
+       "events",
+       {
+        "alias": "v4"
+       }
+      ]
+     ],
+     "expected": "PRECONDITION"
     }
    ],
    "pass_condition_sha256": "2f0b7bfcebd3ce75df8e9003bd2723a5fd937e7740e06dc39e6fa521a6bc93b7"
