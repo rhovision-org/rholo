@@ -14051,6 +14051,62 @@ the pinned-blob check remains owed; the sign-off is unexecuted, so the tracker s
 **State.** 59 registered gates, 47 met, 12 unresolved; `--assert-closeable` exits 3; the full
 control corpus is 47 CONTROLLED (exit 0); `check-hardfork-51-closeout.py` still opens.
 
+## 185. HF51 provenance: the landed references run, and the §6 source is its pinned blob (2026-11-19)
+
+**What this pass found.** Two claims still rested on the wrong evidence. The 13 `merged` rows of
+`hardfork-51-closeout.json` prove only that their merge commit is an ancestor of
+`source_dev_sha`; a later commit that reverts the landing is also an ancestor, and no test was
+named or run. And `check-section6-inventory.py` hashed the **local** `spec/audit/passes.md` while
+each §6 row's URL pointed at the blob at `source_dev_sha`; the pin was string-compared across three
+JSONs, never resolved. `A:block-timestamp`'s `validation_follow_up` object, including its `ci_run`
+URL, was present but never read.
+
+**What changed.**
+
+- **Every merged row names its current-tree test.** The 13 rows carry `acceptance.tests` (14
+  bindings): a timestamp round-trip and the retired validity bound; attachment signature and
+  round-trip; character-counting `S.length`; BigInt promotion; the activation schedule; the live
+  weight-set partition; the state-drawn active set; the committed parent bound; the sidecar
+  write; genesis developer allocation; and the C345/C346 and C353/C354 charge models. Validation
+  runs on every check: the path must stay in-repo, exist, be Rust, define exactly one `fn`, and
+  derive its workspace package; `tests` and an explicit `absent_reason` are exclusive, and a
+  non-merged row may not claim acceptance. `acceptance_observed_date` records that these bindings
+  observe the checkout, not the 2026-11-12 ledger snapshot.
+- **The checker runs them.** `--run-merged-tests` invokes cargo by name (serially, `--locked`, logs
+  under `target/hf51-merged/run-*/`) and classifies from libtest's own line: exactly one matching
+  test with `running 1 test`, `ok` = ACCEPTED, `FAILED` = REJECTED, and a collision, `ignored`, no
+  line or a build error = ERROR. A nonzero exit alone is not an acceptance. `--assert-closeable`
+  requires the run, all ACCEPTED, and a clean tree.
+- **The §6 source is the pinned blob.** `git_blob` reads `spec/audit/passes.md` from
+  `source_dev_sha` via `git show`, never the worktree. `check-section6-inventory.py
+  --verify-pinned-blob` validates the inventory against those bytes; `--assert-closeable` implies
+  the check. A shallow checkout records `unverified-shallow` and is not closeable; an explicitly
+  requested check that cannot be established exits 4, and a changed row at the pin is
+  `INVALID_INVENTORY` (exit 2). `--register` cannot replace the pinned source.
+
+**Why believed.** The full run is 13 rows / 14 tests, all ACCEPTED, exit 0. The negative controls
+are live or synthetic: a missing symbol is refused before cargo; a removed or duplicated binding,
+a non-merged row claiming acceptance, and an `absent_reason` that is a placeholder are refused; the
+toy crate shows a passing symbol ACCEPTED, a failing assertion REJECTED, a build error ERROR, a
+substring collision ERROR, and the source byte-identical after every run. The pinned-blob check is
+falsified against a temporary git repository: `git_blob` returns the committed bytes after the
+worktree is changed, a doctored blob fails the row digest, a missing commit is `unavailable`, and a
+`--depth 1` clone is `unverified-shallow`. The real inventory validates at
+`e33125f65a95cff4f12baf8139a7361c7d158e43` (94 rows, `blob_status: verified`).
+
+**What it does not claim.** No gate is promoted; the register stays 59 gates, 47 met, 12
+unresolved. A named test passing today proves that behaviour is not reverted; it does not prove the
+merge commit's CI ran (the `ci_run` link is shape-checked, not fetched), historical replay,
+coordinated rollout, or that the test asserts the whole landed feature. The pinned-blob check
+proves the inventory matches the bytes at the pin; it does not prove the snapshot was independently
+reviewed. The §6 sign-off remains unexecuted and the review record's own digest is still not
+pinned; the tracker remains open and `--assert-closeable` exits 3. No `.github/workflows/*` edit, no
+committed run record, campaign, host, public deployment, real key or transfer.
+
+**State.** 59 registered gates, 47 met, 12 unresolved; `check-section6-inventory.py
+--verify-pinned-blob` is verified at the pin (exit 0); `--run-merged-tests` is 13/13 ACCEPTED (exit
+0); `--assert-closeable` exits 3; the tracker still opens.
+
 ## 186. The gate register holds only gates: the 12 host/live rows become release campaigns (2026-11-19)
 
 **What this pass found.** The register's own rule is that **a gate is a boolean test of the current

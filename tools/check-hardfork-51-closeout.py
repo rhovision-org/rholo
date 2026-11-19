@@ -14,6 +14,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -38,6 +39,10 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 AUDIT_SIGNOFF_ID = "Audit:section6-categoryA"
 PLACEHOLDER = re.compile(r"\b(tbd|unknown|unspecified|unnamed|someday|later|future|unassigned)\b", re.I)
 OWNER = re.compile(r"^@[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$")
+PASSES_PATH = "spec/audit/passes.md"
+DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+CI_RUN = re.compile(r"^https://github\.com/rhovision-org/rholo/actions/runs/\d+$")
+TEST_BINDING = re.compile(r"^(?P<path>[^:\s]+\.rs)::(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)$")
 
 
 class LedgerError(ValueError):
@@ -123,6 +128,37 @@ def is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
     return p.returncode == 0
 
 
+def git_blob(repo: Path, rev: str, path: str) -> tuple[str, str | None, str | None]:
+    """Read `path` at `rev` from git, never from the worktree.
+
+    Returns `(status, text, reason)`: `verified` is the blob at the pinned commit;
+    `unverified-shallow` and `unavailable` are recorded rather than raised, because
+    a depth-1 checkout cannot prove the pin — the same boundary `is_ancestor`
+    records. A full checkout whose pinned commit or path is absent is an error: the
+    pin itself is malformed, not merely unprovable.
+    """
+    require(isinstance(rev, str) and HEXSHA.fullmatch(rev),
+            "the pinned revision must be a commit")
+    raw = Path(path)
+    require(not raw.is_absolute() and ".." not in raw.parts and "://" not in path,
+            "the pinned path must be repo-relative")
+    shallow = subprocess.run(["git", "-C", str(repo), "rev-parse",
+                              "--is-shallow-repository"], capture_output=True,
+                             text=True, timeout=30, check=False)
+    if shallow.returncode != 0:
+        return "unavailable", None, "Git history unavailable"
+    if shallow.stdout.strip() != "false":
+        return "unverified-shallow", None, "a shallow checkout cannot prove the pinned blob"
+    present = subprocess.run(["git", "-C", str(repo), "cat-file", "-e", f"{rev}^{{commit}}"],
+                             capture_output=True, text=True, timeout=30, check=False)
+    if present.returncode != 0:
+        return "unavailable", None, "the pinned commit is not in this checkout"
+    proc = subprocess.run(["git", "-C", str(repo), "show", f"{rev}:{path}"],
+                          capture_output=True, text=True, timeout=120, check=False)
+    require(proc.returncode == 0, f"the pinned blob {path} is absent at {rev}")
+    return "verified", proc.stdout, None
+
+
 def _gate_checker():
     path = Path(__file__).resolve().parent / "check-mainnet-gates.py"
     spec = importlib.util.spec_from_file_location("mainnet_gate_checker", path)
@@ -131,6 +167,180 @@ def _gate_checker():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+_INVENTORY_CHECKER = None
+
+
+def _inventory_checker():
+    """Load the §6 checker lazily; it imports this module at load time."""
+    global _INVENTORY_CHECKER
+    if _INVENTORY_CHECKER is None:
+        path = Path(__file__).resolve().parent / "check-section6-inventory.py"
+        spec = importlib.util.spec_from_file_location("section6_inventory", path)
+        if spec is None or spec.loader is None:
+            raise ValueError("cannot load check-section6-inventory.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _INVENTORY_CHECKER = module
+    return _INVENTORY_CHECKER
+
+
+def _pinned_blob(raw: dict, root: Path) -> dict:
+    """Validate the §6 inventory against the register's blob at `source_dev_sha`."""
+    section6 = _inventory_checker()
+    audit = root / "spec" / "audit"
+    inventory = json.loads((audit / "section6-gap-inventory.json").read_text())
+    matrix = json.loads((audit / "final-gap-matrix.json").read_text())
+    return section6.validate_pinned(root, inventory, matrix, raw)
+
+
+def merged_bindings(raw: dict, root: Path) -> dict[str, list[str]]:
+    """Validate each merged row's current-tree acceptance binding.
+
+    A merged row proves only that its merge commit is an ancestor; a later revert is
+    also an ancestor. The binding names the test that must still pass, so the claim
+    is falsifiable on the checkout under test. `tests` and `absent_reason` are
+    exclusive: a row without a current-tree witness says so rather than inventing
+    one.
+    """
+    gate = _gate_checker()
+    out: dict[str, list[str]] = {}
+    for item in raw["items"]:
+        ident = item["id"]
+        merged = item.get("status") == "merged"
+        acceptance = item.get("acceptance")
+        if not merged:
+            require("acceptance" not in item,
+                    f"{ident}: only a merged row can claim current-build acceptance")
+            continue
+        require(isinstance(acceptance, dict),
+                f"{ident}: merged acceptance binding missing")
+        has_tests = "tests" in acceptance
+        has_absent = "absent_reason" in acceptance
+        require(has_tests != has_absent,
+                f"{ident}: acceptance needs exactly one of tests or absent_reason")
+        if has_absent:
+            reason = good_text(acceptance["absent_reason"],
+                               ident + ".absent_reason", 10)
+            require(not PLACEHOLDER.search(reason)
+                    and not re.search(r"[\r\n\v\f\x1c-\x1e\x85  ]", reason)
+                    and "\\n" not in reason and "\\r" not in reason
+                    and len(reason) <= 256,
+                    f"{ident}: absent_reason must be one specific, non-placeholder line")
+            out[ident] = []
+            continue
+        tests = acceptance["tests"]
+        require(isinstance(tests, list) and bool(tests),
+                f"{ident}: acceptance tests must be a non-empty list")
+        bindings: list[str] = []
+        for entry in tests:
+            require(isinstance(entry, str),
+                    f"{ident}: each acceptance test must be a string")
+            match = TEST_BINDING.fullmatch(entry.strip())
+            require(match is not None,
+                    f"{ident}: acceptance test must be <path.rs>::<symbol>")
+            path_text, symbol = match.group("path"), match.group("symbol")
+            test_path = repo_path(path_text, ident + ".acceptance", root)
+            require(test_path.suffix == ".rs",
+                    f"{ident}: an acceptance test must be Rust")
+            text = test_path.read_text(errors="ignore")
+            definitions = re.findall(
+                rf"^\s*(?:pub\s+)?(?:async\s+)?fn\s+{re.escape(symbol)}\s*\(",
+                text, re.MULTILINE)
+            require(len(definitions) == 1,
+                    f"{ident}: the acceptance symbol must be one fn in its file")
+            crate = gate.cargo_crate_root(test_path, root)
+            package = None if crate is None else gate._package_name(crate / "Cargo.toml")
+            require(crate is not None and package is not None,
+                    f"{ident}: the acceptance test must derive a workspace package")
+            bindings.append(f"{path_text}::{symbol}")
+        require(len(set(bindings)) == len(bindings),
+                f"{ident}: duplicate acceptance test")
+        out[ident] = bindings
+    if out:
+        observed = raw.get("acceptance_observed_date")
+        require(isinstance(observed, str) and DATE.fullmatch(observed),
+                "acceptance_observed_date must be an ISO date when merged rows are bound")
+    return out
+
+
+def merged_test_verdict(output: str, symbol: str) -> str:
+    """Classify an acceptance run by the test's own libtest line.
+
+    A nonzero exit is not a verdict: a build error exits nonzero producing no test
+    line. Exactly one test may run — a filter that also selects a longer name cannot
+    say which test the `ok` belongs to, so a collision is an ERROR, not a pick.
+    """
+    running = re.search(r"^running (\d+) tests?$", output, re.MULTILINE)
+    matches = re.findall(
+        rf"^test (?:\S+::)?{re.escape(symbol)} \.\.\. (\S+)$", output, re.MULTILINE)
+    if running is None or running.group(1) != "1" or len(matches) != 1:
+        return "ERROR"
+    return {"ok": "ACCEPTED", "FAILED": "REJECTED"}.get(matches[0], "ERROR")
+
+
+def run_merged_tests(raw: dict, *, repo: Path, timeout: int = 1800,
+                     cargo_flags: tuple[str, ...] = ("--locked",),
+                     log_dir: Path | None = None) -> dict:
+    """Run every merged acceptance bound to a current-tree test, serially.
+
+    Static binding validation runs first, so a missing symbol never reaches cargo.
+    One log per test, under `target/hf51-merged/`; no source is mutated.
+    """
+    bindings = merged_bindings(raw, repo)
+    gate = _gate_checker()
+    base = repo / "target" / "hf51-merged"
+    base.mkdir(parents=True, exist_ok=True)
+    directory = log_dir or Path(tempfile.mkdtemp(prefix="run-", dir=base))
+    directory.mkdir(parents=True, exist_ok=True)
+    rows: dict[str, dict] = {}
+    for item in raw["items"]:
+        if item.get("status") != "merged":
+            continue
+        ident = item["id"]
+        entries = bindings.get(ident, [])
+        if "absent_reason" in item["acceptance"]:
+            rows[ident] = {"verdict": "ABSENT", "tests": []}
+            continue
+        results = []
+        for entry in entries:
+            path_text, symbol = entry.split("::", 1)
+            test_path = repo_path(path_text, ident + ".acceptance", repo)
+            crate = gate.cargo_crate_root(test_path, repo)
+            package = gate._package_name(crate / "Cargo.toml")
+            target = gate.cargo_target(test_path, crate)
+            try:
+                proc = subprocess.run(
+                    ["cargo", "test", *cargo_flags, "-p", package, *target, symbol],
+                    cwd=repo, capture_output=True, text=True, timeout=timeout,
+                    check=False)
+                output = (proc.stdout or "") + (proc.stderr or "")
+            except subprocess.TimeoutExpired as exc:
+                output = (((exc.stdout or "") if isinstance(exc.stdout, str) else "")
+                          + ((exc.stderr or "") if isinstance(exc.stderr, str) else ""))
+            verdict = merged_test_verdict(output, symbol)
+            safe = re.sub(r"[^A-Za-z0-9_.-]", "_", ident)
+            log_path = directory / f"{safe}--{test_path.stem}--{symbol}.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(output)
+            if verdict != "ACCEPTED":
+                print(f"{ident}: {verdict} (cargo log {log_path})", file=sys.stderr)
+            results.append({"test": entry, "verdict": verdict, "log": str(log_path)})
+        verdict = ("ERROR" if any(r["verdict"] == "ERROR" for r in results)
+                   else "REJECTED" if any(r["verdict"] == "REJECTED" for r in results)
+                   else "ACCEPTED")
+        rows[ident] = {"verdict": verdict, "tests": results}
+    head = None
+    dirty = False
+    if (repo / ".git").exists():
+        top = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=30, check=False)
+        head = top.stdout.strip() if top.returncode == 0 else None
+        status = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                                capture_output=True, text=True, timeout=60, check=False)
+        dirty = status.returncode == 0 and bool(status.stdout.strip())
+    return {"head": head, "dirty": dirty, "log_dir": str(directory), "rows": rows}
 
 
 def gate_binding(repo: Path | None) -> tuple[bool, list[str], str | None]:
@@ -174,7 +384,10 @@ def gate_binding(repo: Path | None) -> tuple[bool, list[str], str | None]:
 
 
 def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None,
-             require_gates: bool = False) -> dict:
+             require_gates: bool = False, verify_blob: bool = False,
+             merged_tests: dict[str, str] | None = None,
+             merged_dirty: bool = False,
+             acceptance_root: Path | None = None) -> dict:
     root = (repo or ROOT).resolve()
     require(isinstance(raw, dict) and type(raw.get("schema")) is int
             and raw["schema"] == 1, "schema 1 required")
@@ -264,6 +477,24 @@ def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None,
             good_text(item.get("blocker"), ident + ".blocker", 15)
             pending.append(ident)
     completed_audit = AUDIT_SIGNOFF_ID in verified
+    # **A merged row is an ancestry claim until a test is named.** The binding check
+    # runs on every validation; the live run is the caller's explicit choice.
+    # Acceptance paths name the checkout under test, which is `ROOT` unless the
+    # caller says otherwise; `repo` may be a fixture root that hosts only records.
+    bindings = merged_bindings(raw, (acceptance_root or ROOT).resolve())
+    merged_ids = {item["id"] for item in items if item.get("status") == "merged"}
+    if merged_tests is not None:
+        require(isinstance(merged_tests, dict), "merged_tests must be a map")
+        require(set(merged_tests) == merged_ids,
+                "merged_tests must key exactly the merged rows")
+        require(all(verdict in ("ACCEPTED", "REJECTED", "ERROR", "ABSENT")
+                    for verdict in merged_tests.values()),
+                "merged_tests verdicts must be ACCEPTED, REJECTED, ERROR or ABSENT")
+    merged_acceptance_ok = (merged_tests is not None
+                            and set(merged_tests) == merged_ids
+                            and all(verdict == "ACCEPTED"
+                                    for verdict in merged_tests.values())
+                            and not merged_dirty)
     # **A pass must name an artifact, and one digest cannot both pass and fail.**
     # The campaign writer in tests/consensus-partition-rejoin.py emits this shape
     # (campaign.json); a green arm quoted beside a red one is a gate invalidation,
@@ -310,8 +541,14 @@ def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None,
     gates_error = None
     if require_gates:
         gates_bound, gates_unresolved, gates_error = gate_binding(repo)
+    # **The §6 inventory is bound to the bytes at the pinned commit.** A shallow
+    # checkout records the pin as unverified rather than reading the worktree.
+    pinned = _pinned_blob(raw, root) if verify_blob else None
+    pinned_status = None if pinned is None else pinned.get("blob_status")
     closeable = (not pending and completed_audit and raw["closure_requested"] is True
-                 and verify_git and (gates_bound is True if require_gates else True))
+                 and verify_git and (gates_bound is True if require_gates else True)
+                 and merged_acceptance_ok
+                 and (pinned_status == "verified" if verify_blob else True))
     return {
         "result": "CLOSEOUT_ELIGIBLE_FOR_INDEPENDENT_REVIEW" if closeable else "TRACKER_MUST_REMAIN_OPEN",
         "merged": len(merged), "deferred": len(deferred), "verified": len(verified),
@@ -322,6 +559,13 @@ def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None,
         "gates_bound": gates_bound,
         "gates_unresolved": gates_unresolved,
         "gates_error": gates_error,
+        "acceptance_bindings": {ident: len(entries) for ident, entries in bindings.items()},
+        "merged_with_tests": sum(1 for entries in bindings.values() if entries),
+        "merged_absent": sum(1 for entries in bindings.values() if not entries),
+        "merged_tests": merged_tests,
+        "merged_tests_ok": merged_acceptance_ok,
+        "merged_tests_dirty": merged_dirty,
+        "pinned_blob": pinned_status,
         "limitations": [
             "The authored ledger is not a live status feed",
             "Git ancestry cannot attest a release decision or archival completeness",
@@ -338,18 +582,49 @@ def main() -> int:
                         help="exit 3 unless all rows are resolved and git provenance verified")
     parser.add_argument("--verify-local-git", action="store_true",
                         help="cross-check merged commits against pinned dev commit (full history required)")
+    parser.add_argument("--verify-pinned-blob", action="store_true",
+                        help="validate the §6 inventory against passes.md at source_dev_sha")
+    parser.add_argument("--run-merged-tests", action="store_true",
+                        help="run each merged row's acceptance test and classify its own line")
+    parser.add_argument("--merged-test-timeout", type=int, default=1800)
+    parser.add_argument("--merged-test-log-dir", type=Path, default=None)
     parser.add_argument("--repo", type=Path, default=ROOT)
     args = parser.parse_args()
+    if args.assert_closeable:
+        # A closeable claim must not rest on an unverified pin. The blob is local
+        # and cheap; a shallow checkout records it as unverified and stays open.
+        args.verify_pinned_blob = True
     try:
         payload = json.loads(args.ledger.read_text(), object_pairs_hook=no_duplicates)
+        detail = None
+        merged_tests = None
+        merged_dirty = False
+        if args.run_merged_tests:
+            detail = run_merged_tests(payload, repo=args.repo.resolve(),
+                                      timeout=args.merged_test_timeout,
+                                      log_dir=args.merged_test_log_dir)
+            merged_tests = {ident: row["verdict"]
+                            for ident, row in detail["rows"].items()}
+            merged_dirty = detail["dirty"]
         result = validate(payload, verify_git=args.verify_local_git, repo=args.repo,
-                          require_gates=args.assert_closeable)
+                          require_gates=args.assert_closeable,
+                          verify_blob=args.verify_pinned_blob,
+                          merged_tests=merged_tests, merged_dirty=merged_dirty,
+                          acceptance_root=args.repo)
+        if detail is not None:
+            result["merged_tests_detail"] = detail
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(json.dumps({"result": "INVALID_LEDGER", "reason": str(exc)}, sort_keys=True))
         return 2
     print(json.dumps(result, indent=2, sort_keys=True))
     if args.assert_closeable and result["result"] != "CLOSEOUT_ELIGIBLE_FOR_INDEPENDENT_REVIEW":
         return 3
+    if args.verify_pinned_blob and result.get("pinned_blob") != "verified":
+        # An explicitly requested provenance check that could not be established is
+        # not a pass: a shallow clone reports UNVERIFIED, never green.
+        return 4
+    if args.run_merged_tests and any(v != "ACCEPTED" for v in (merged_tests or {}).values()):
+        return 1
     return 0
 
 

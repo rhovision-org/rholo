@@ -23,6 +23,38 @@ This packet follows the [close-clause decision of 21 October 2026](https://githu
 
 #404, #373, #391, #392 and #402 are all in the pinned dev ancestry. The checker verifies every ledger merge reference against that source when `--verify-local-git` is supplied. #379 remains a proposer timing correction outside category A.
 
+## Current-build acceptance of the landed references
+
+Ancestry alone cannot see a revert: a later commit that undoes a landing is also an ancestor. Each
+`merged` row therefore names the current-tree test that still exercises the landed behaviour, and
+`--run-merged-tests` runs it (serially, `--locked`) and classifies libtest's own line —
+`ok` = ACCEPTED, `FAILED` = REJECTED, and a collision, `ignored`, no line or a build error = ERROR.
+A row with no current-tree witness must say so in `absent_reason`; that is reported, never green.
+`acceptance_observed_date` records that these bindings observe the checkout, not the 2026-11-12
+ledger snapshot.
+
+| row | current-tree test(s) |
+|---|---|
+| `A:block-timestamp` | `models/src/casper/protocol/casper_message.rs::block_message_round_trip_preserves_timestamp`; `casper/src/validate.rs::a_block_timestamp_is_never_a_validity_input` |
+| `A:binary-attachments` | `models/src/casper/protocol/casper_message.rs::attachments_are_part_of_the_signature` |
+| `B:binary-attachments` | `models/src/casper/protocol/casper_message.rs::attachments_round_trip_proto_and_json` |
+| `B:string-functions` | `rholang/src/reduce.rs::string_methods_from_rchip_37` |
+| `A:bigint-decimal` | `rholang/src/reduce.rs::division_and_modulo_overflow_promote_to_bigint` |
+| `Batch:activation-schedule` | `casper/src/validate.rs::scheduled_block_versions_are_required_at_and_after_activation_and_history_replays` |
+| `Audit:law52-partition` | `casper/tests/finalization.rs::a_silent_bonded_validator_does_not_cap_the_fringe` |
+| `Audit:active-set-draw` | `casper/tests/consensus.rs::the_drawn_active_set_is_the_states_and_not_the_boundary_blocks` |
+| `Audit:parent-limit` | `casper/tests/committed_bounds.rs::committed_bounds_control_the_block_path_with_opposing_local_configs` |
+| `Audit:sidecar-merge` | `casper/tests/deploy_native_write.rs::the_sidecar_a_block_saves_carries_the_user_deploys_write_not_only_the_systems` |
+| `Decision:developer-allocation` | `casper/tests/determinism.rs::genesis_with_a_developer_allocation_creates_and_replays_the_same_state` |
+| `Audit:cost-tracks-work` | `rholang/src/accounting.rs::collection_and_censure_charges_are_the_models` |
+| `Audit:cost-insert-and-tally` | `rholang/src/accounting.rs::the_tally_charges_are_the_models` |
+
+The §6 source is also bound to bytes: `check-section6-inventory.py --verify-pinned-blob` reads
+`spec/audit/passes.md` from the ledger's `source_dev_sha` via `git show` and validates the inventory
+against that blob, not the worktree. A shallow checkout reports `unverified-shallow` and is never a
+pass; an unverifiable pin requested explicitly exits 4, and a changed row at the pin is
+`INVALID_INVENTORY`.
+
 ## Complete source inventory
 
 [section6-gap-inventory.json](section6-gap-inventory.json) covers **all 94 current §6 rows**, with 47 conservative category-A candidates. The timestamp row retains its conservative A-candidate classification after #529; retirement is not an execution or release sign-off. The refresh accounts for C334, the #527 decimal removal, the inert height schedule, committed bounds, fundPot and C335. C334/C335 are node-local recovery changes and the shipped `(1, 0)` schedule is inert; they are recorded as non-A. Committed bounds and fundPot are A candidates. These classifications remain reviewable dispositions, not an independent safety attestation.
@@ -51,9 +83,12 @@ The two newly explicit technical proposals and the separate allocation-track cho
 ```sh
 python3 -m unittest discover -s tests -p test_hardfork_51_closeout.py -v
 python3 -m unittest discover -s tests -p test_section6_inventory.py -v
-python3 tools/check-section6-inventory.py
+python3 tools/check-section6-inventory.py                       # local coverage, blob_status local
+python3 tools/check-section6-inventory.py --verify-pinned-blob  # validated at source_dev_sha
 python3 tools/check-hardfork-51-closeout.py --verify-local-git
-python3 tools/check-hardfork-51-closeout.py --verify-local-git --assert-closeable
+python3 tools/check-hardfork-51-closeout.py --run-merged-tests  # 13 rows / 14 tests, ACCEPTED
+python3 tools/check-hardfork-51-closeout.py --verify-local-git --verify-pinned-blob \
+        --run-merged-tests --assert-closeable
 # expected final exit: 3, TRACKER_MUST_REMAIN_OPEN
 ```
 
