@@ -642,6 +642,49 @@ mod tests {
         );
     }
 
+    /// **An install is not a checkpoint action.** `changes()` is exactly what
+    /// `RSpace::create_checkpoint` folds into the next history root, and it reads `continuations`,
+    /// `data` and `joins` — not `installed_continuations`/`installed_joins`. That is why a system
+    /// process's definition can be installed without moving any block's post-state hash, and why a
+    /// `reset` has to re-install them. Pinned because a future tidy-up that folded the install maps
+    /// into `changes()` would silently turn every new system process into a state-hash change, and
+    /// with it a replay divergence for every historical block.
+    #[tokio::test]
+    async fn an_install_is_not_a_checkpoint_action() {
+        let store = test_store(1).await;
+        let channels = vec!["a".to_string()];
+        store
+            .install_continuation(&channels, continuation(&["a"]))
+            .await
+            .expect("the install lands");
+        store
+            .install_join(&"a".to_string(), &["a".to_string()])
+            .await;
+
+        assert!(
+            store.changes().await.is_empty(),
+            "an install is in-memory only: it must not appear in the actions a checkpoint folds"
+        );
+
+        // The installs are still readable — they are omitted from `changes()`, not dropped.
+        assert_eq!(
+            store
+                .get_continuations(&channels)
+                .await
+                .expect("read the installed continuation")
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .get_joins(&"a".to_string())
+                .await
+                .expect("read the installed join")
+                .len(),
+            1
+        );
+    }
+
     /// A scripted sequence covering every mutation, run against both stores. `f` awaits one op.
     async fn run_script(store: &InMemHotStore<String, String, String, String>) {
         store
