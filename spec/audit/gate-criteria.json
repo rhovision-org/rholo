@@ -11,7 +11,8 @@
     "process_name": "rnode"
    },
    "requires": [
-    "record/host_processes"
+    "record/host_processes",
+    "record/declared_count"
    ],
    "negative_controls": [
     {
@@ -20,6 +21,42 @@
       "set",
       "record/declared_count",
       2
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "declared count omitted",
+     "mutation": [
+      "delete",
+      "record/declared_count"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "a process without a numeric pid",
+     "mutation": [
+      "set",
+      "record/host_processes/0/pid",
+      "not-a-pid"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a duplicated process pid",
+     "mutation": [
+      [
+       "append",
+       "record/host_processes",
+       {
+        "pid": 101,
+        "name": "rnode"
+       }
+      ],
+      [
+       "set",
+       "record/declared_count",
+       2
+      ]
      ],
      "expected": "FAIL"
     },
@@ -491,6 +528,7 @@
    "requires": [
     "subject/deploy_id",
     "run",
+    "submission",
     "events"
    ],
    "negative_controls": [
@@ -533,6 +571,15 @@
         }
        }
       }
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "the lifecycle of a different deploy",
+     "mutation": [
+      "set",
+      "subject/deploy_id",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
      ],
      "expected": "FAIL"
     }

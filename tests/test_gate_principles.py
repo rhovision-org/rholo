@@ -108,6 +108,22 @@ class CriterionTests(unittest.TestCase):
                     result = self.evaluate(gate_id, observations)
                     self.assertEqual(result["status"], "PRECONDITION", result)
 
+    def test_every_declared_input_is_load_bearing(self):
+        """A `requires` path is a claim that the principle reads it.
+
+        `evaluate_entry` short-circuits on a missing required path, so the earlier test cannot
+        see a principle that declares an input and then ignores it. Call the principle directly:
+        deleting a declared input must never leave a PASS.
+        """
+        for gate_id, entry in self.entries.items():
+            for path in entry["requires"]:
+                with self.subTest(gate=gate_id, path=path):
+                    observations = _delete(gate_fixtures.base(gate_id), path)
+                    result = principles.evaluate(
+                        entry["principle"], observations, entry.get("parameters") or {})
+                    self.assertNotEqual(result["status"], "PASS",
+                                        (gate_id, path, result))
+
     def test_malformed_observations_produce_a_verdict_not_an_exception(self):
         corruptions = [
             {},

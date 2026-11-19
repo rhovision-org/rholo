@@ -143,15 +143,36 @@ def advertised_peers(directory: Path) -> list[str]:
     return found
 
 
+def normalized_address(
+    host: str,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The literal as an address, with IPv4-mapped and IPv4-compatible IPv6 reduced to IPv4.
+
+    `::ffff:127.0.0.1` is `ipv4_mapped`; the IPv4-compatible form `::127.0.0.1` is not, and
+    Python parses it as the ordinary IPv6 literal `::7f00:1`, so it escaped the loopback and
+    private classifiers. One normaliser keeps `loopback_address` and `local_address` agreeing.
+    """
+    address = parsed_address(host)
+    if not isinstance(address, ipaddress.IPv6Address):
+        return address
+    mapped = address.ipv4_mapped
+    if mapped is not None:
+        return mapped
+    packed = address.packed
+    if (packed[:12] == b"\x00" * 12
+            and address not in (ipaddress.IPv6Address("::"), ipaddress.IPv6Address("::1"))):
+        return ipaddress.IPv4Address(packed[12:])
+    return address
+
+
 def loopback_address(host: str) -> bool:
     """Whether the literal is loopback specifically (the `loopback-diagnostic` label)."""
     host = host.strip("[]").lower().rstrip(".")
     if host == "localhost" or host.endswith(".localhost"):
         return True
-    address = parsed_address(host)
+    address = normalized_address(host)
     if address is None:
         return False
-    address = getattr(address, "ipv4_mapped", None) or address
     return address.is_loopback
 
 
@@ -166,10 +187,9 @@ def local_address(host: str) -> bool:
     host = host.strip("[]").lower().rstrip(".")
     if host == "localhost" or host.endswith(".localhost"):
         return True
-    address = parsed_address(host)
+    address = normalized_address(host)
     if address is None:
         return False
-    address = getattr(address, "ipv4_mapped", None) or address
     if address.version == 4:
         return (
             address.is_loopback
@@ -183,6 +203,8 @@ def local_address(host: str) -> bool:
         address.is_loopback
         or address.is_unspecified
         or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
         or any(address in network for network in PRIVATE_V6)
     )
 

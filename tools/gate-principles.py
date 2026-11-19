@@ -154,6 +154,17 @@ def staged_lifecycle(observations: dict, parameters: dict) -> dict:
                                 f"asserts {sorted(required)}"])
     if parameters.get("per_observer") is False:
         return verdict("FAIL", ["the staged lifecycle is per-observer by definition"])
+    subject = observations.get("subject")
+    declared = subject.get("deploy_id") if isinstance(subject, dict) else None
+    if not isinstance(declared, str) or not declared:
+        return verdict("PRECONDITION", ["subject.deploy_id is absent"])
+    run = observations.get("run")
+    sampled = run.get("deploy_id") if isinstance(run, dict) else None
+    if not isinstance(sampled, str) or not sampled:
+        return verdict("PRECONDITION", ["run.deploy_id is absent"])
+    if declared != sampled:
+        return verdict(
+            "FAIL", [f"the declared subject {declared!r} is not the sampled deploy {sampled!r}"])
     events = _events(observations)
     minimum = parameters.get("min_observers")
     if isinstance(minimum, int):
@@ -162,7 +173,8 @@ def staged_lifecycle(observations: dict, parameters: dict) -> dict:
             return verdict("PRECONDITION",
                            [f"{len(aliases)} observer(s) contributed; at least {minimum} required"])
     report = _live.check_g2(
-        observations.get("submission"), observations.get("run"), _events(observations))
+        observations.get("submission"), run, _events(observations),
+        minimum if isinstance(minimum, int) else 4)
     return _live_report(report)
 
 
@@ -485,28 +497,42 @@ def join_chain(observations: dict, parameters: dict) -> dict:
 
 
 def resource_attribution(observations: dict, parameters: dict) -> dict:
+    """The observed process table, counted by name.
+
+    `declared_count` is the record's own claim, so this is a self-consistency check, not
+    independent evidence. It is still required: without it the declared-versus-measured rule has
+    nothing to compare, and a record could omit the number it is supposed to prove. A pid must be a
+    positive integer and appear once; the Rust witness counts numeric `/proc/<pid>` entries only.
+    """
     record = observations.get("record")
     if not isinstance(record, dict):
         return verdict("PRECONDITION", ["record is absent"])
     processes = record.get("host_processes")
     if not isinstance(processes, list) or not processes:
         return verdict("PRECONDITION", ["record.host_processes is absent or empty"])
+    declared = record.get("declared_count")
+    if declared is None:
+        return verdict("PRECONDITION", ["record.declared_count is absent"])
+    if not isinstance(declared, int) or isinstance(declared, bool) or declared < 0:
+        return verdict("FAIL", ["record.declared_count must be a non-negative integer"])
     name = str(parameters.get("process_name") or "rnode")
-    names = []
+    counted: list[int] = []
     for entry in processes:
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             return verdict("FAIL", ["every process entry must be an object with a name"])
-        names.append(entry["name"])
-    count = sum(1 for candidate in names if candidate == name)
-    if count == 0:
+        pid = entry.get("pid")
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            return verdict("FAIL", ["every process entry must carry a positive integer pid"])
+        if entry["name"] == name:
+            counted.append(pid)
+    if not counted:
         return verdict("PRECONDITION", [f"no process named {name!r} was observed"])
-    declared = record.get("declared_count")
-    if declared is not None:
-        if not isinstance(declared, int) or isinstance(declared, bool) or declared < 0:
-            return verdict("FAIL", ["record.declared_count must be a non-negative integer"])
-        if declared != count:
-            return verdict("FAIL", [f"declared count {declared} != observed {count} {name} process(es)"])
-    return verdict("PASS", [], {"count": count, "process_name": name})
+    if len(set(counted)) != len(counted):
+        return verdict("FAIL", [f"a {name} process pid is listed more than once"])
+    if declared != len(counted):
+        return verdict(
+            "FAIL", [f"declared count {declared} != observed {len(counted)} {name} process(es)"])
+    return verdict("PASS", [], {"count": len(counted), "process_name": name})
 
 
 PRINCIPLES = {

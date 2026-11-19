@@ -513,6 +513,18 @@ class G1Tests(LiveGateFixture):
         self.assert_status(report, "G1", "INCOMPLETE")
         self.assertEqual(code, 3)
 
+    def test_a_non_numeric_stake_is_a_failure(self):
+        document = preflight()
+        # All four agree on the string, so the agreement rule cannot be what fails.
+        for validator in document["validators"]:
+            validator["total_stake"] = "0"
+        self.write_bundle(preflight_doc=document)
+        report, code = self.check()
+        self.assert_status(report, "G1", "FAIL")
+        self.assertTrue(any("positive integer" in reason
+                            for reason in report["criteria"]["G1"]["reasons"]))
+        self.assertEqual(code, 1)
+
 
 class G2Tests(LiveGateFixture):
     def test_a_missed_pooled_stage_is_incomplete_not_a_pass(self):
@@ -562,6 +574,14 @@ class G2Tests(LiveGateFixture):
         self.rewrite_events(events)
         report, _ = self.check()
         self.assert_status(report, "G2", "FAIL")
+
+    def test_one_alias_cannot_satisfy_the_lifecycle(self):
+        # Every stage is complete for v1; the gate still needs four observers.
+        events = [event for event in good_events() if event.get("alias") == "v1"]
+        self.write_bundle(events=events)
+        report, code = self.check()
+        self.assert_status(report, "G2", "INCOMPLETE")
+        self.assertEqual(code, 3)
 
 
 class G3Tests(LiveGateFixture):
@@ -676,6 +696,30 @@ class G4Tests(LiveGateFixture):
         document.pop("post_recovery_settlement")
         (self.run_dir / "recovery.json").write_text(json.dumps(document))
         self.write_sums()
+        report, _ = self.check()
+        self.assert_status(report, "G4", "FAIL")
+
+    def test_a_recovery_with_nothing_accepted_is_incomplete(self):
+        document = recovery()
+        document["accepted_deploys_before"] = []
+        document["accepted_deploys_after"] = []
+        document["final_stages"] = {}
+        (self.run_dir / "recovery.json").write_text(json.dumps(document))
+        self.write_sums()
+        report, code = self.check()
+        self.assert_status(report, "G4", "INCOMPLETE")
+        self.assertEqual(code, 3)
+
+    def test_the_post_window_settlement_must_be_an_accepted_deploy(self):
+        events = self.events()
+        for event in events:
+            if (event["route"] == "deploy_settlement"
+                    and event["body"].get("stage") == "finalizedSuccess"):
+                event["body"]["deployId"] = "some-unaccepted-deploy"
+                event["body_raw"] = json.dumps(event["body"], sort_keys=True)
+                event["body_sha256"] = hashlib.sha256(
+                    event["body_raw"].encode()).hexdigest()
+        self.rewrite_events(events)
         report, _ = self.check()
         self.assert_status(report, "G4", "FAIL")
 
