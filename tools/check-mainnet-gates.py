@@ -145,13 +145,18 @@ def verify_record(value: object, gate_id: str, verdict: str) -> dict:
     return manifest
 
 
+_BUILDER = None
+
+
 def load_builder():
-    spec = importlib.util.spec_from_file_location("build_mainnet_gates", BUILDER)
-    if spec is None or spec.loader is None:
-        raise GateError("cannot load the register builder")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    global _BUILDER
+    if _BUILDER is None:
+        spec = importlib.util.spec_from_file_location("build_mainnet_gates", BUILDER)
+        if spec is None or spec.loader is None:
+            raise GateError("cannot load the register builder")
+        _BUILDER = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_BUILDER)
+    return _BUILDER
 
 
 def resolve_source(row: dict, matrix: dict, inventory: dict, ledger: dict) -> None:
@@ -382,12 +387,22 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
     require(document.get("schema") == 1, "schema 1 required")
     require(HEX40.fullmatch(str(document.get("register_dev_sha"))),
             "register_dev_sha must be a commit")
-    ancestry = subprocess.run(
-        ["git", "-C", str(ROOT), "merge-base", "--is-ancestor",
-         str(document["register_dev_sha"]), "HEAD"],
-        capture_output=True, timeout=30, check=False)
-    require(ancestry.returncode == 0,
-            "register_dev_sha must be an ancestor of HEAD")
+    # **Ancestry is unprovable in a shallow checkout.** CI checks out at depth 1, where the
+    # pinned dev commit is absent; failing there would make the register uncheckable in CI. The
+    # report records the degradation, and a full checkout still enforces the ancestor rule.
+    shallow = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "--is-shallow-repository"],
+        capture_output=True, text=True, timeout=30, check=False)
+    if shallow.returncode == 0 and shallow.stdout.strip() == "true":
+        ancestry = "unverified-shallow"
+    else:
+        ancestor = subprocess.run(
+            ["git", "-C", str(ROOT), "merge-base", "--is-ancestor",
+             str(document["register_dev_sha"]), "HEAD"],
+            capture_output=True, timeout=30, check=False)
+        require(ancestor.returncode == 0,
+                "register_dev_sha must be an ancestor of HEAD")
+        ancestry = "verified"
     require(document.get("ledger_source_dev_sha") == ledger.get("source_dev_sha"),
             "the register must pin the ledger's source commit")
     rows = document.get("gates")
@@ -474,6 +489,7 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
         "met": len(rows) - len(unresolved),
         "unresolved": len(unresolved),
         "unresolved_ids": unresolved,
+        "ancestry": ancestry,
     }
 
 
@@ -490,6 +506,24 @@ def _resolve_adapter(reference: object, gate_id: str) -> None:
     require(re.search(rf"\b(?:def|fn|struct)\s+{re.escape(symbol)}\b", text)
             or f"function {symbol}" in text or f"module {symbol}" in text,
             f"{gate_id}: adapter symbol {symbol} not found in {path_text}")
+
+
+_SELFTEST_CACHE: dict = {"key": None, "errors": []}
+
+
+def _selftest_errors(entries: dict, principles) -> list[str]:
+    """The criteria self-test, memoised by the bytes that define it and the entries fed in."""
+    digest = hashlib.sha256()
+    for path in (CRITERIA, ROOT / "tools" / "gate-principles.py",
+                 ROOT / "tools" / "gate-selftest.py", ROOT / "tests" / "gate_fixtures.py"):
+        digest.update(path.read_bytes())
+    digest.update(json.dumps(entries, sort_keys=True).encode())
+    key = digest.hexdigest()
+    if _SELFTEST_CACHE["key"] != key:
+        module = _load_tool("gate_selftest", "gate-selftest.py")
+        _SELFTEST_CACHE["key"] = key
+        _SELFTEST_CACHE["errors"] = module.run(entries, principles=principles)
+    return list(_SELFTEST_CACHE["errors"])
 
 
 def check_criteria(rows: list[dict]) -> None:
@@ -559,6 +593,11 @@ def check_criteria(rows: list[dict]) -> None:
             expected_fail += control.get("expected") == "FAIL"
         require(expected_fail > 0, f"{gate_id}: no control expects FAIL")
         _resolve_adapter(entry.get("adapter"), gate_id)
+    # **A criterion that has never been shown to fail is not a criterion.** The shape checks
+    # above cannot see a principle that passes a control it declares; the behavioural self-test
+    # can, and it runs here so the CI-wired register check executes it.
+    errors = _selftest_errors(by_id, module)
+    require(not errors, "the criteria self-test failed: " + "; ".join(errors[:5]))
 
 
 def check_met_ratchet(document: dict, rows: list[dict]) -> None:
@@ -589,6 +628,14 @@ def check_met_ratchet(document: dict, rows: list[dict]) -> None:
     met = {row["id"] for row in rows if row["status"] == "met"}
     require(met == set(required),
             f"the met set {sorted(met)} does not equal the ratchet {sorted(set(required))}")
+
+
+def unproven_controls(controls: dict) -> dict:
+    """The controls that did not demonstrate their failure; SKIPPED (a Rust control) is not one."""
+    return {
+        ident: result for ident, result in controls.items()
+        if result in ("UNPROVEN", "ERROR")
+    }
 
 
 def main() -> int:
@@ -635,6 +682,13 @@ def main() -> int:
         report["result"] = "TRACKER_MUST_REMAIN_OPEN"
         print(json.dumps(report, sort_keys=True))
         return 3
+    if args.run_controls:
+        unproven = unproven_controls(report["controls"])
+        if unproven:
+            report["result"] = "UNPROVEN_CONTROL"
+            report["unproven"] = unproven
+            print(json.dumps(report, sort_keys=True))
+            return 1
     print(json.dumps(report, sort_keys=True))
     return 0
 

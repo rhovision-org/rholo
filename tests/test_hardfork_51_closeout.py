@@ -2,6 +2,8 @@
 import copy
 import importlib.util
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -270,6 +272,26 @@ class CloseoutTests(unittest.TestCase):
                                               {**base, "aggregate": "FAIL"}]
         with self.assertRaisesRegex(gate.LedgerError, "PASS/FAIL conflict"):
             self.inspect()
+
+
+class MainnetRegisterTests(unittest.TestCase):
+    """The wired path for the mainnet register and the executable criteria.
+
+    This file's discovery line is in `ci.yml`; `check-mainnet-gates.py --check` rebuilds the
+    register, verifies every `met` row's witness/control/evidence/pins and runs the criteria
+    self-test through `check_criteria`. Ancestry is skipped in a shallow checkout (recorded as
+    `unverified-shallow`), which is why this can run in CI without a `fetch-depth` edit.
+    """
+
+    def test_the_committed_register_validates_and_is_current(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tools/check-mainnet-gates.py"), "--check"],
+            capture_output=True, text=True, cwd=ROOT, timeout=600, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["result"], "REGISTER_VALID", report)
+        self.assertEqual(
+            (report["gates"], report["met"], report["unresolved"]), (59, 47, 12), report)
 
 
 if __name__ == "__main__":

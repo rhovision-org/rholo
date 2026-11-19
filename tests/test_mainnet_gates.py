@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools/check-mainnet-gates.py"
@@ -565,6 +566,26 @@ class RegisterTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.GateError, "ancestor"):
             self.inspect()
 
+    def test_a_shallow_checkout_records_unverified_ancestry(self):
+        """CI checks out at depth 1, where the pinned dev commit is absent.
+
+        The register must stay checkable there; the report records the degradation, and a full
+        checkout still enforces the ancestor rule.
+        """
+        real = gate.subprocess.run
+
+        def fake(command, *args, **kwargs):
+            if isinstance(command, list) and command[:3] == ["git", "-C", str(gate.ROOT)]:
+                if "rev-parse" in command:
+                    return SimpleNamespace(returncode=0, stdout="true\n")
+                if "merge-base" in command:
+                    raise AssertionError("ancestry was checked in a shallow checkout")
+            return real(command, *args, **kwargs)
+
+        with mock.patch.object(gate.subprocess, "run", side_effect=fake):
+            out = self.inspect()
+        self.assertEqual(out["ancestry"], "unverified-shallow")
+
     def test_source_block_must_match(self):
         self.payload["sources"]["G428"]["sha256"] = "0" * 64
         with self.assertRaisesRegex(gate.GateError, "source hash"):
@@ -574,6 +595,26 @@ class RegisterTests(unittest.TestCase):
         self.row("G428-M1")["source_phrase"] = "a tautology"
         with self.assertRaisesRegex(gate.GateError, "source phrase"):
             self.inspect()
+
+    def test_an_unproven_control_is_a_failure_not_a_note(self):
+        self.assertEqual(
+            gate.unproven_controls({"a": "CONTROLLED", "b": "SKIPPED"}), {})
+        self.assertEqual(
+            gate.unproven_controls(
+                {"a": "UNPROVEN", "b": "ERROR", "c": "SKIPPED", "d": "CONTROLLED"}),
+            {"a": "UNPROVEN", "b": "ERROR"})
+
+    def test_the_register_check_runs_the_criteria_self_test(self):
+        """The CI-reached hook: a failing self-test must fail `check_criteria`, not be ignored."""
+        fake = SimpleNamespace(run=lambda entries, principles=None: ["boom: a vacuous control"])
+        saved = dict(gate._SELFTEST_CACHE)
+        try:
+            gate._SELFTEST_CACHE.update({"key": None, "errors": []})
+            with mock.patch.object(gate, "_load_tool", return_value=fake):
+                with self.assertRaisesRegex(gate.GateError, "criteria self-test failed"):
+                    gate.check_criteria(REGISTER["gates"])
+        finally:
+            gate._SELFTEST_CACHE.update(saved)
 
     def test_criteria_hash_must_match_the_gate_text(self):
         self.row("G428-M1")["pass_condition"] = "Trivially met"
