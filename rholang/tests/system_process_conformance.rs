@@ -707,3 +707,40 @@ async fn txn_recover_unknown_returns_nil() {
         "recover on an unknown transaction must return Nil"
     );
 }
+
+/// **`rho:crypto:p256Verify` from a deploy, by urn** (issue #560). The unit test in
+/// `system_processes.rs` checks the definition and its handler; this one resolves the urn through
+/// the runtime a deploy actually gets, and pins both verdicts. The fixture is a real
+/// WebCrypto-generated raw `r || s` over the 59-byte message whose hex is passed here — the same
+/// fixture as `crypto/src/signatures/p256.rs`.
+#[tokio::test]
+async fn p256_verify_checks_a_webcrypto_signature_by_urn() {
+    const MESSAGE: &str = "42594f49442044494420637265617465206576656e743a207b22736571223a312c2274797065223a22637265617465227d";
+    const SIGNATURE: &str = "8e4492b9c343eac74a0b3c973e0e1a0f418256dcf1bad4f7481a6f66da500db38774f4c9159debb82a5f125107ca9e24beb7cdbd6042e9cbe13f2e208bc3a5e4";
+    const PUBKEY: &str = "04e5afd086093b7e48b087683b8e1d3416d3dc8fc80c2a9fbf6080ed223602b49b9d0cc80f98afc9b1e738944a49517c322cce297f9c5c2072b7942143425684e3";
+    let (rt, _replay) = build_runtime_pair().await;
+    let env = BTreeMap::new();
+
+    let term = |out: &str, message: &str| {
+        format!(
+            r#"new verify(`rho:crypto:p256Verify`), ack in {{
+                 verify!("{message}".hexToBytes(), "{SIGNATURE}".hexToBytes(), "{PUBKEY}".hexToBytes(), *ack) |
+                 for (@res <- ack) {{ @"{out}"!(res) }}
+               }}"#
+        )
+    };
+
+    let ok = eval_out(&rt, &term("out", MESSAGE), &env, "out").await;
+    assert_eq!(
+        RhoBoolean::unapply(&ok[0]),
+        Some(true),
+        "a WebCrypto P-256 signature must verify through the urn a deploy resolves"
+    );
+
+    let bad = eval_out(&rt, &term("out2", "00"), &env, "out2").await;
+    assert_eq!(
+        RhoBoolean::unapply(&bad[0]),
+        Some(false),
+        "and a different message must not"
+    );
+}
