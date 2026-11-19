@@ -147,6 +147,48 @@ class ChainTests(unittest.TestCase):
 
 
 class PolicyTests(unittest.TestCase):
+    def test_chain_document_is_bound_to_manifest_and_sums(self):
+        chain = fixtures.m3_chain()
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp)
+            joiner, responder = fixtures.m3_logs(chain)
+            (record / "joiner.log").write_text(joiner)
+            (record / "responder.log").write_text(responder)
+            chain_bytes = (json.dumps(chain, indent=2, sort_keys=True) + "\\n").encode()
+            (record / "chain.json").write_bytes(chain_bytes)
+            files = []
+            sums = {}
+            for name in ("chain.json", "joiner.log", "responder.log"):
+                raw = (record / name).read_bytes()
+                digest = hashlib.sha256(raw).hexdigest()
+                files.append({"path": name, "sha256": digest, "bytes": len(raw)})
+                sums[name] = digest
+            (record / "manifest.json").write_text(json.dumps({"files": files}))
+            (record / "SHA256SUMS.json").write_text(json.dumps(sums))
+            self.assertEqual(chain_tool.check_record(record, "any"), (0, []))
+
+            # Update chain + sums but leave manifest stale: the record must fail.
+            edited = json.loads((record / "chain.json").read_text())
+            edited["non_claims"].append("edited after packaging")
+            edited_bytes = (json.dumps(edited, indent=2, sort_keys=True) + "\\n").encode()
+            (record / "chain.json").write_bytes(edited_bytes)
+            sums["chain.json"] = hashlib.sha256(edited_bytes).hexdigest()
+            (record / "SHA256SUMS.json").write_text(json.dumps(sums))
+            code, problems = chain_tool.check_record(record, "any")
+            self.assertEqual(code, 1)
+            self.assertTrue(any("manifest.json" in problem for problem in problems), problems)
+
+    def test_joiner_and_responder_must_use_distinct_files(self):
+        chain = fixtures.m3_chain()
+        joiner, responder = fixtures.m3_logs(chain)
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp)
+            (record / "joiner.log").write_text(joiner)
+            (record / "responder.log").write_text(responder)
+            chain["logs"] = {"joiner": "joiner.log", "responder": "joiner.log"}
+            problems = chain_tool.raw_problems(record, chain)
+            self.assertTrue(any("distinct" in problem for problem in problems), problems)
+
     def record(self, readme: str, chain: dict) -> Path:
         directory = Path(tempfile.mkdtemp())
         (directory / "README.md").write_text(readme)
