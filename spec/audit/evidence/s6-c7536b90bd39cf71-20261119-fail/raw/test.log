@@ -1,0 +1,28 @@
+
+running 1 test
+test a_value_built_at_runtime_is_refused_above_the_bound has been running for over 60 seconds
+test a_value_built_at_runtime_is_refused_above_the_bound ... FAILED
+
+failures:
+
+---- a_value_built_at_runtime_is_refused_above_the_bound stdout ----
+fold 20 -> Ok(20)
+fold 400 -> Err("ReduceError(\"a produced value was refused\")")
+
+thread '<unnamed>' (737873) panicked at rholang/tests/deep_value_bound.rs:97:21:
+the refusal has to say what it refused: ReduceError("a produced value was refused")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'a_value_built_at_runtime_is_refused_above_the_bound' (737872) panicked at rholang/tests/deep_value_bound.rs:105:10:
+the probe thread must not abort — that is the whole point: Any { .. }
+
+
+failures:
+    a_value_built_at_runtime_is_refused_above_the_bound
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 109.90s
+
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.20s
+     Running tests/deep_value_bound.rs (target/debug/deps/deep_value_bound-6b71737a146a265e)
+error: test failed, to rerun pass `-p rchain-rholang --test deep_value_bound`

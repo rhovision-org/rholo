@@ -1,0 +1,13 @@
+diff --git a/rholang/src/storage.rs b/rholang/src/storage.rs
+index c3c7e8686..e07262657 100644
+--- a/rholang/src/storage.rs
++++ b/rholang/src/storage.rs
+@@ -238,7 +238,7 @@ impl ChargingRSpace {
+         for p in &data.pars {
+             if rchain_models::types::exceeds_value_depth(p.as_par(), MAX_VALUE_DEPTH) {
+                 return Err(RholangError::ReduceError(
+-                    "a produced value is nested too deeply".to_string(),
++                    "a produced value was refused".to_string(),
+                 ));
+             }
+         }

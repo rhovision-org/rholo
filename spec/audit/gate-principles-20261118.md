@@ -120,9 +120,12 @@ control. `check-mainnet-gates.py::check_criteria` calls it (memoised), and the C
 `tests/test_hardfork_51_closeout.py` executes `check-mainnet-gates.py --check`, which rebuilds the
 register, verifies all 47 `met` rows' witnesses/evidence/pins and runs the self-test. In a depth-1
 checkout the `register_dev_sha` ancestry check is recorded as `unverified-shallow` instead of
-failing; a full checkout still enforces it. `--run-controls` now exits non-zero on an `UNPROVEN` or
-`ERROR` control (`SKIPPED` Rust controls remain non-fatal), and the met ratchet has an independent
-floor (`MINIMUM_MET = 47` in the builder).
+failing; a full checkout still enforces it. `--run-controls` exits non-zero on an `UNPROVEN` or
+`ERROR` control. Rust controls execute against their declared mutations: the package is derived
+from the path's nearest `Cargo.toml`, the target from `--lib`/`--test`, and the verdict from the
+witness symbol's own libtest line — a nonzero exit alone is not a control. `--controls
+{python,rust,all}` (default `all`) selects the kinds; `SKIPPED` is only "not selected". The met
+ratchet has an independent floor (`MINIMUM_MET = 47` in the builder).
 
 ## What this is, and is not
 
@@ -159,7 +162,8 @@ python3 -m unittest discover -s tests -p test_m2_pressure.py -v
 python3 tools/gate-selftest.py
 python3 tools/gate-check.py --list
 python3 tools/check-mainnet-gates.py --check        # 59 gates, 47 met, 12 unresolved
-python3 tools/check-mainnet-gates.py --run-controls # 2 CONTROLLED, 45 SKIPPED
+python3 tools/check-mainnet-gates.py --run-controls --controls python  # 2 CONTROLLED, 45 SKIPPED
+python3 tools/check-mainnet-gates.py --run-controls                    # 47 CONTROLLED
 python3 tools/check-mainnet-gates.py --assert-closeable   # exits 3
 ```
 

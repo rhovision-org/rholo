@@ -22,6 +22,8 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -304,17 +306,135 @@ def resolve_witness(row: dict) -> None:
                 f"{row['id']}: the review record does not carry the evidence digest")
 
 
-def run_control(row: dict) -> str:
-    """Apply a Python/tool control's mutation and run the control test.
+def _package_name(manifest: Path) -> str | None:
+    """The `[package].name` of a manifest, or None when it is not a package manifest."""
+    try:
+        data = tomllib.loads(manifest.read_text(errors="ignore"))
+    except tomllib.TOMLDecodeError:
+        return None
+    name = (data.get("package") or {}).get("name")
+    return str(name) if isinstance(name, str) and name else None
+
+
+def cargo_crate_root(test_path: Path, root: Path) -> Path | None:
+    """The directory whose `Cargo.toml` names the package that compiles `test_path`."""
+    directory = test_path.parent
+    while True:
+        manifest = directory / "Cargo.toml"
+        if manifest.is_file() and _package_name(manifest) is not None:
+            return directory
+        if directory == root or directory.parent == directory:
+            return None
+        directory = directory.parent
+
+
+def cargo_package(test_path: Path, root: Path) -> str | None:
+    """The workspace package that compiles `test_path`, from its nearest `Cargo.toml`.
+
+    Derived rather than mapped: `tools/check-rust-witnesses.sh` already answers the
+    same question with a hand-maintained crate table, and a second copy in Python
+    would be a second thing to drift. The workspace is one package per sbt module,
+    so the path's nearest manifest is its package.
+    """
+    crate = cargo_crate_root(test_path, root)
+    return None if crate is None else _package_name(crate / "Cargo.toml")
+
+
+def cargo_target(test_path: Path, crate_root: Path) -> list[str]:
+    """`--test <stem>` under the crate's `tests/`, `--lib` otherwise.
+
+    The split is relative to the crate root, not the file's immediate parent, and it
+    mirrors the shell witness runner: `--lib` keeps cargo out of the integration
+    targets' build.
+    """
+    if test_path.relative_to(crate_root).parts[:1] == ("tests",) and \
+            test_path.suffix == ".rs":
+        return ["--test", test_path.stem]
+    return ["--lib"]
+
+
+def rust_control_verdict(output: str, symbol: str) -> str:
+    """Classify a cargo run by libtest's own line for `symbol`.
+
+    A nonzero exit is **not** a control: a compile error exits nonzero with no test
+    line, and reading that as CONTROLLED would let a broken build masquerade as a
+    failing witness. `ignored` is not a verdict either — the same trap the shell
+    witness runner records (AUDIT C128): a filtered-in `#[ignore]` test prints
+    `ignored` and `cargo test` exits 0.
+
+    Exactly one line may name the symbol: a filter that matches two tests cannot say
+    which one the mutation controlled, so a second match is an ERROR, not a pick.
+    """
+    name = re.escape(symbol)
+    matches = re.findall(
+        rf"^test (?:\S+::)?{name} \.\.\. (\S+)$", output, re.MULTILINE)
+    if len(matches) != 1:
+        return "ERROR"
+    return {"FAILED": "CONTROLLED", "ok": "UNPROVEN"}.get(matches[0], "ERROR")
+
+
+def _in_root(root: Path, value: object) -> Path | None:
+    """A relative path under `root`; absolute, `..` or a resolving escape is refused."""
+    text = str(value or "")
+    raw = Path(text)
+    if not text or raw.is_absolute() or ".." in raw.parts:
+        return None
+    lexical = root / raw
+    try:
+        lexical.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None
+    return lexical
+
+
+def _clean_target(root: Path, path: Path) -> bool:
+    """Refuse to mutate a file with uncommitted changes in a git worktree.
+
+    A leftover mutation from a killed run, or an operator's work in progress, must be
+    a refusal rather than a silent clobber. A non-git root (the toy test) is clean by
+    construction.
+    """
+    if not (root / ".git").exists():
+        return True
+    relative = path.relative_to(root)
+    for args in (("diff", "--quiet", "--", str(relative)),
+                 ("diff", "--cached", "--quiet", "--", str(relative))):
+        proc = subprocess.run(["git", "-C", str(root), *args],
+                              capture_output=True, text=True, timeout=30, check=False)
+        if proc.returncode != 0:
+            return False
+    return True
+
+
+def run_control(row: dict, *, mode: str = "all", root: Path = ROOT,
+                timeout: int = 1800, cargo_flags: tuple[str, ...] = ("--locked",),
+                log_dir: Path | None = None) -> str:
+    """Apply a control's declared mutation and run its control test.
 
     Returns CONTROLLED (the test failed as required), UNPROVEN (it passed),
-    SKIPPED (a Rust control; recorded for the PR checklist), or ERROR.
+    SKIPPED (not selected by `mode`), or ERROR (the control could not be run).
+
+    A Rust control is run by name through cargo, and the verdict comes from the
+    witness symbol's own libtest line — not from the process exit code. The
+    mutation is restored in `finally`, and a restore that is not byte-identical
+    is a register error, not a silent dirty tree.
     """
     binding = row.get("witness_binding") or {}
     control = binding.get("control") or {}
     mutation = control.get("mutation") or {}
-    path = ROOT / str(mutation.get("file") or "")
-    if not path.is_file():
+    test = str(control.get("test") or "")
+    path_text, symbol = test.split("::", 1) if "::" in test else (test, "")
+    if path_text.endswith(".rs"):
+        kind = "rust"
+    elif symbol == "self_test" or (
+            path_text.startswith("tests/") and path_text.endswith(".py")):
+        kind = "python"
+    else:
+        return "ERROR"
+    if mode != "all" and mode != kind:
+        return "SKIPPED"
+    path = _in_root(root, mutation.get("file"))
+    if path is None or not path.is_file() or not _clean_target(root, path):
         return "ERROR"
     original = path.read_text()
     before = str(mutation.get("before") or "")
@@ -323,22 +443,60 @@ def run_control(row: dict) -> str:
         return "ERROR"
     path.write_text(original.replace(before, after, 1))
     try:
-        test = str(control.get("test") or "")
-        path_text, symbol = test.split("::", 1) if "::" in test else (test, "")
+        return _run_selected_control(row, path_text, symbol, kind, root, timeout,
+                                     cargo_flags, log_dir)
+    finally:
+        path.write_text(original)
+        if path.read_text() != original:
+            raise GateError(
+                f"{row.get('id')}: the control mutation could not be restored")
+
+
+def _run_selected_control(row: dict, path_text: str, symbol: str, kind: str,
+                          root: Path, timeout: int, cargo_flags: tuple[str, ...],
+                          log_dir: Path | None) -> str:
+    """Run one selected control and classify it.
+
+    The Python/tool branches are unchanged. The Rust branch runs the witness by
+    name after the mutation; its output is logged under `target/`, never `/tmp`.
+    """
+    if kind == "python":
         if symbol == "self_test":
             proc = subprocess.run(
-                [sys.executable, str(ROOT / path_text), "self-test"],
+                [sys.executable, str(root / path_text), "self-test"],
                 capture_output=True, text=True, timeout=600, check=False)
-        elif path_text.startswith("tests/") and path_text.endswith(".py"):
+        else:
             module = path_text[:-3].replace("/", ".")
             proc = subprocess.run(
                 [sys.executable, "-m", "unittest", module, "-q"],
                 capture_output=True, text=True, timeout=600, check=False)
-        else:
-            return "SKIPPED"
         return "CONTROLLED" if proc.returncode != 0 else "UNPROVEN"
-    finally:
-        path.write_text(original)
+    test_path = _in_root(root, path_text)
+    if test_path is None:
+        return "ERROR"
+    crate = cargo_crate_root(test_path, root)
+    package = None if crate is None else _package_name(crate / "Cargo.toml")
+    if crate is None or package is None:
+        return "ERROR"
+    verdict = "ERROR"
+    try:
+        proc = subprocess.run(
+            ["cargo", "test", *cargo_flags, "-p", package,
+             *cargo_target(test_path, crate), symbol],
+            cwd=root, capture_output=True, text=True, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired as exc:
+        output = ((exc.stdout or "") if isinstance(exc.stdout, str) else "") + \
+                 ((exc.stderr or "") if isinstance(exc.stderr, str) else "")
+    else:
+        output = (proc.stdout or "") + (proc.stderr or "")
+        verdict = rust_control_verdict(output, symbol)
+    directory = log_dir or (root / "target" / "rust-controls")
+    log_path = directory / f"{row.get('id')}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(output)
+    if verdict != "CONTROLLED":
+        print(f"{row.get('id')}: {verdict} (cargo log {log_path})", file=sys.stderr)
+    return verdict
 
 
 def check_dependencies(rows: list[dict]) -> None:
@@ -639,7 +797,11 @@ def check_met_ratchet(document: dict, rows: list[dict]) -> None:
 
 
 def unproven_controls(controls: dict) -> dict:
-    """The controls that did not demonstrate their failure; SKIPPED (a Rust control) is not one."""
+    """The controls that did not demonstrate their failure.
+
+    SKIPPED is not one, but it is only honest when it means "not selected by
+    `--controls`"; the default mode is `all`, so the full run has no SKIPPED rows.
+    """
     return {
         ident: result for ident, result in controls.items()
         if result in ("UNPROVEN", "ERROR")
@@ -654,8 +816,16 @@ def main() -> int:
     parser.add_argument("--assert-closeable", action="store_true",
                         help="exit 3 unless every gate is met (implies --check)")
     parser.add_argument("--run-controls", action="store_true",
-                        help="apply the Python/tool control mutations and run their tests")
+                        help="apply each met gate's mutation and run its control test")
+    parser.add_argument("--controls", choices=("python", "rust", "all"), default=None,
+                        help="which control kinds to execute (implies --run-controls; "
+                             "default: all)")
+    parser.add_argument("--control-timeout", type=int, default=1800,
+                        help="seconds one Rust control may take (default: 1800)")
     args = parser.parse_args()
+    if args.controls is not None:
+        args.run_controls = True
+    args.controls = args.controls or "all"
     if args.assert_closeable:
         # Closeability must not trust a hand-edited register: compare it to the build.
         args.check = True
@@ -679,8 +849,16 @@ def main() -> int:
                 return 1
         report = validate(document, matrix, inventory, ledger)
         if args.run_controls:
+            # One log directory per invocation: a fixed per-gate path is shared state,
+            # the same concurrency hazard `check-rust-witnesses.sh` records.
+            base = ROOT / "target" / "rust-controls"
+            base.mkdir(parents=True, exist_ok=True)
+            log_dir = Path(tempfile.mkdtemp(prefix="run-", dir=base))
+            report["controls_mode"] = args.controls
             report["controls"] = {
-                row["id"]: run_control(row)
+                row["id"]: run_control(row, mode=args.controls,
+                                       timeout=args.control_timeout,
+                                       log_dir=log_dir)
                 for row in document["gates"] if row.get("status") == "met"
             }
     except (OSError, ValueError, KeyError, TypeError, GateError) as exc:
@@ -692,6 +870,12 @@ def main() -> int:
         return 3
     if args.run_controls:
         unproven = unproven_controls(report["controls"])
+        if args.controls == "all":
+            # In the default mode nothing may be unrun: a control the runner could not
+            # classify is not a pass, and "all" must not hide a SKIPPED.
+            unproven.update({ident: "SKIPPED"
+                             for ident, result in report["controls"].items()
+                             if result == "SKIPPED"})
         if unproven:
             report["result"] = "UNPROVEN_CONTROL"
             report["unproven"] = unproven

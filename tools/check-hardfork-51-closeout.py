@@ -8,12 +8,15 @@ verify current GitHub state and archived data before formally closing #51.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
 
 REQUIRED = frozenset("""
 A:block-timestamp A:binary-attachments B:binary-attachments B:string-functions
@@ -64,6 +67,48 @@ def url(value: object, label: str) -> str:
     require(value.startswith("https://github.com/") and " " not in value,
             f"{label}: GitHub evidence URL required")
     return value
+
+
+def repo_path(value: object, label: str, root: Path) -> Path:
+    """Resolve an in-repo artifact path; a URL, an escape or a symlink is refused.
+
+    Shape-only records were the fog: `artifact` was any non-empty string, so a
+    fabricated acceptance record passed. The path must name real bytes, and a
+    symlink is not a pinned artifact (the same rule `evidence-pack.py verify`
+    applies to a record).
+    """
+    text = good_text(value, label)
+    raw = Path(text)
+    require(not raw.is_absolute() and ".." not in raw.parts and "://" not in text,
+            f"{label}: a repo-relative path is required, not a URL")
+    lexical = root / raw
+    cursor = lexical
+    while True:
+        require(not cursor.is_symlink(), f"{label}: a symlink is not a pinned artifact")
+        if cursor == root or cursor.parent == cursor:
+            break
+        cursor = cursor.parent
+    resolved = lexical.resolve()
+    require(resolved != root.resolve() and root.resolve() in resolved.parents,
+            f"{label}: the path escapes the repo")
+    require(resolved.exists(), f"{label}: {text} does not exist")
+    return resolved
+
+
+def artifact_digest(path: Path, label: str) -> str:
+    """sha256 of the artifact's bytes, or of its manifest for an evidence record."""
+    if path.is_dir():
+        manifest = path / "manifest.json"
+        require(manifest.is_file(), f"{label}: an evidence record needs manifest.json")
+        return hashlib.sha256(manifest.read_bytes()).hexdigest()
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def record_digest(path: Path, label: str) -> str:
+    """sha256 of an evidence record's manifest; a bare file is not a record."""
+    require(path.is_dir() and (path / "manifest.json").is_file(),
+            f"{label}: an evidence record directory with manifest.json is required")
+    return hashlib.sha256((path / "manifest.json").read_bytes()).hexdigest()
 
 
 def is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
@@ -130,6 +175,7 @@ def gate_binding(repo: Path | None) -> tuple[bool, list[str], str | None]:
 
 def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None,
              require_gates: bool = False) -> dict:
+    root = (repo or ROOT).resolve()
     require(isinstance(raw, dict) and type(raw.get("schema")) is int
             and raw["schema"] == 1, "schema 1 required")
     url(raw.get("tracker"), "tracker")
@@ -191,10 +237,23 @@ def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None,
                     f"{ident}: verified status cannot replace landed-or-deferred disposition")
             url(item.get("evidence_url"), ident + ".evidence_url")
             url(item.get("approval_url"), ident + ".approval_url")
-            good_text(item.get("approved_by"), ident + ".approved_by")
+            approved_by = good_text(item.get("approved_by"), ident + ".approved_by")
             digest = item.get("evidence_sha256")
+            # Format first: a placeholder digest is refused before the record is read.
             require(isinstance(digest, str) and SHA256.fullmatch(digest),
                     f"{ident}: evidence SHA-256 required")
+            # **The signed digest is the record's digest, and the review carries it.**
+            # A bare 64-hex string, two URLs and a name were the forgeable sign-off.
+            evidence = repo_path(item.get("evidence_record"), ident + ".evidence_record", root)
+            require(digest == record_digest(evidence, ident + ".evidence_record"),
+                    f"{ident}: evidence_sha256 is not the evidence record's digest")
+            review = repo_path(item.get("review_record"), ident + ".review_record", root)
+            review_text = ((review / "README.md").read_text(errors="ignore")
+                           if review.is_dir() else review.read_text(errors="ignore"))
+            require(approved_by in review_text,
+                    f"{ident}: the review record does not name the approver")
+            require(digest in review_text,
+                    f"{ident}: the review record does not carry the evidence digest")
             verified.append(ident)
         else:
             good_text(item.get("decision_owner"), ident + ".decision_owner")
@@ -225,6 +284,22 @@ def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None,
         require(aggregate in ("PASS", "FAIL"),
                 f"{gate}: aggregate must be PASS or FAIL")
         good_text(record.get("artifact"), f"{gate}.artifact")
+        # **The artifact is bytes, not a string.** Shape-only records let a
+        # fabricated PASS skip every witness; the path must exist and the digest
+        # must pin it (a directory is digested by its manifest).
+        artifact = repo_path(record.get("artifact"), f"{gate}.artifact", root)
+        artifact_sha = record.get("artifact_sha256")
+        require(isinstance(artifact_sha, str) and SHA256.fullmatch(artifact_sha),
+                f"{gate}: artifact_sha256 must be a digest")
+        require(artifact_sha == artifact_digest(artifact, f"{gate}.artifact"),
+                f"{gate}: artifact_sha256 does not match the artifact")
+        if artifact.is_dir():
+            manifest = json.loads((artifact / "manifest.json").read_text())
+            for field, expected in (("source_sha", source),
+                                    ("binary_sha256", binary),
+                                    ("verdict", aggregate)):
+                require(manifest.get(field) == expected,
+                        f"{gate}: the artifact manifest's {field} does not match the record")
         key = (gate, source, binary)
         verdicts.setdefault(key, set()).add(aggregate)
         require(len(verdicts[key]) == 1,
@@ -258,13 +333,12 @@ def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None,
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("ledger", type=Path,
-                        nargs="?", default=Path(__file__).resolve().parent.parent /
-                        "spec/audit/hardfork-51-closeout.json")
+                        nargs="?", default=ROOT / "spec/audit/hardfork-51-closeout.json")
     parser.add_argument("--assert-closeable", action="store_true",
                         help="exit 3 unless all rows are resolved and git provenance verified")
     parser.add_argument("--verify-local-git", action="store_true",
                         help="cross-check merged commits against pinned dev commit (full history required)")
-    parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent.parent)
+    parser.add_argument("--repo", type=Path, default=ROOT)
     args = parser.parse_args()
     try:
         payload = json.loads(args.ledger.read_text(), object_pairs_hook=no_duplicates)
