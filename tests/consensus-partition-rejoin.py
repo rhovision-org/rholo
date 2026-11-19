@@ -589,6 +589,33 @@ def record_attestations(d, anchor):
     d.record(phase="finality_attestation", nonce=nonce, anchor=anchor, rows=rows)
 
 
+def typed_partition_record(validators, rounds):
+    """The M4 criterion's cycle shape, from values the rounds already measured.
+
+    Node indices are the harness's; the collator maps them to the declared validator ids.
+    A cycle without a retention row is not dropped: the whole record is refused.
+    """
+    cycles = []
+    for record in rounds:
+        anchor = record.get("healing_anchor") or {}
+        retention = record.get("anchor_retention")
+        if not isinstance(retention, list) or not retention:
+            raise RuntimeError("FAIL_ANCHOR_RETENTION: a cycle recorded no retention rows")
+        cycles.append({
+            "cycle": record.get("cycle"),
+            "victim_index": record.get("victim_index"),
+            "anchor": {"hash": anchor.get("hash"), "height": anchor.get("height")},
+            "dwell": {"samples": record.get("anchor_dwell_samples"),
+                      "stable": record.get("rejoined") is not None},
+            "window": {"seconds": record.get("healing_window_seconds")},
+            "validators": retention,
+            "rejoined": record.get("rejoined") is not None,
+            "epoch_boundary_crossed": record.get("epoch_boundary_crossed"),
+        })
+    return {"schema": 1, "gate_id": "G428-M4", "validators": validators,
+            "cycles": cycles}
+
+
 def write_campaign(d, args, result, source_sha, binary_sha256):
     """One aggregate record, so a green arm cannot be quoted beside a red one."""
     rounds = result.get("rounds", [])
@@ -637,7 +664,8 @@ def main():
             victim_index = victims[cycle]
             victim=a.node_name(victim_index)
             online = online_validator_indices(args.validators, victim_index)
-            record={"cycle":cycle+1,"isolated_validator":victim,"phase":"partition-install"}
+            record={"cycle":cycle+1,"victim_index":victim_index,
+                    "isolated_validator":victim,"phase":"partition-install"}
             with record_cycle(d.out,rounds,record,capture_phase):
                 d.health_precondition("partition-install")
                 volume_before=durable_state_volume(json.loads(cmd("docker","inspect",victim))[0])
@@ -740,6 +768,15 @@ def main():
                         healing_class if isinstance(healing_class,str) else failure_class(error))
                     raise
                 record["rejoined"]=recovered
+                # The typed cycle the M4 collator reads: the dwell, and the anchor retention
+                # of *every* validator (the victim included), not only the online side.
+                record["anchor_dwell_samples"]=getattr(d,"anchor_true_samples",0)
+                record["anchor_retention"]=[
+                    {"node":i,"finalized_anchor":d.is_finalized(i,anchor["hash"]) is True}
+                    for i in range(args.validators)]
+                if not all(row["finalized_anchor"] for row in record["anchor_retention"]):
+                    raise RuntimeError(
+                        "FAIL_ANCHOR_RETENTION: a validator did not retain the anchor")
                 record["healing_failure_class"]=getattr(d,"healing_failure_class",None)
                 # The victim's missing range must cross an epoch boundary, or two runs at
                 # different production rates are not the same code path (D-CH-8).
@@ -772,6 +809,8 @@ def main():
             except (OSError,subprocess.TimeoutExpired) as cleanup_error:
                 (d.out/"partition-cleanup-error.txt").write_text(str(cleanup_error)+"\n")
         (d.out/"partition-observations.json").write_text(json.dumps(rounds,indent=2)+"\n")
+    (d.out/"partition-rejoin.json").write_text(
+        json.dumps(typed_partition_record(args.validators, rounds), indent=2)+"\n")
     memory=cmd("docker","stats","--no-stream","--format","{{.Name}} {{.MemUsage}}")
     result={"result":"PASS_BOUNDED_WORKLOAD_PARTITION_REJOIN","source_sha":cmd("git","rev-parse","HEAD"),
         "validators":args.validators,"partition_cycles":len(rounds),"rounds":rounds,
