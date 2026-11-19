@@ -782,20 +782,51 @@ def raw_problems(directory: Path, chain: object) -> list[str]:
 
 
 def pin_problems(directory: Path, chain: object) -> list[str]:
-    """The named raw logs must be covered by the record's `SHA256SUMS.json`."""
+    """The chain document and both named raw logs must be covered by the record pins."""
     sums_path = directory / "SHA256SUMS.json"
+    manifest_path = directory / "manifest.json"
     if not sums_path.is_file():
         return [f"{sums_path}: the record has no SHA256SUMS.json"]
+    if not manifest_path.is_file():
+        return [f"{manifest_path}: the record has no manifest.json"]
     try:
         sums = json.loads(sums_path.read_text())
+        manifest = json.loads(manifest_path.read_text())
     except ValueError as error:
-        return [f"{sums_path}: not valid JSON: {error}"]
+        return [f"record pin metadata is not valid JSON: {error}"]
     if not isinstance(sums, dict):
         return [f"{sums_path}: not an object"]
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), list):
+        return [f"{manifest_path}: files must be a list"]
+    files = {
+        item.get("path"): item
+        for item in manifest["files"]
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    }
+    problems: list[str] = []
+
+    # Bind exactly the selected chain file (record root or evidence-pack raw/ layout).
+    selected_chain = chain_path(directory)
+    if selected_chain is None:
+        problems.append("chain.json is absent")
+    else:
+        relative = selected_chain.relative_to(directory).as_posix()
+        entry = files.get(relative)
+        raw = selected_chain.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        if entry is None:
+            problems.append(f"{relative} is not listed in manifest.json")
+        else:
+            if entry.get("sha256") != digest:
+                problems.append(f"{relative} digest does not match manifest.json")
+            if entry.get("bytes") != len(raw):
+                problems.append(f"{relative} byte count does not match manifest.json")
+        if sums.get(relative) != digest:
+            problems.append(f"{relative} digest does not match SHA256SUMS.json")
+
     logs = chain.get("logs") if isinstance(chain, dict) else None
     if not isinstance(logs, dict):
-        return ["the chain does not name its raw logs"]
-    problems: list[str] = []
+        return problems + ["the chain does not name its raw logs"]
     for role in ("joiner", "responder"):
         name = logs.get(role)
         if not _nonempty(name):
@@ -804,11 +835,21 @@ def pin_problems(directory: Path, chain: object) -> list[str]:
         if path is None:
             continue  # raw_problems reports the absence
         relative = path.relative_to(directory).as_posix()
-        digest = sums.get(relative, sums.get(name))
-        if digest is None:
+        raw = path.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        listed_digest = sums.get(relative, sums.get(name))
+        if listed_digest is None:
             problems.append(f"{relative} is not digest-pinned")
-        elif digest != hashlib.sha256(path.read_bytes()).hexdigest():
+        elif listed_digest != digest:
             problems.append(f"{relative} digest does not match SHA256SUMS.json")
+        entry = files.get(relative)
+        if entry is None:
+            problems.append(f"{relative} is not listed in manifest.json")
+        else:
+            if entry.get("sha256") != digest:
+                problems.append(f"{relative} digest does not match manifest.json")
+            if entry.get("bytes") != len(raw):
+                problems.append(f"{relative} byte count does not match manifest.json")
     return problems
 
 
