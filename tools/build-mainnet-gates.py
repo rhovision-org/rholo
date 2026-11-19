@@ -68,6 +68,68 @@ def _load_tool(name: str, filename: str):
 
 
 witness = _load_tool("gate_witness", "gate-witness.py")
+_CRITERIA = None
+
+
+def criteria_entries():
+    """The executable criteria and the evaluator, loaded once."""
+    global _CRITERIA
+    if _CRITERIA is None:
+        principles = _load_tool("gate_principles_for_builder", "gate-principles.py")
+        _CRITERIA = (principles, principles.criteria_by_gate())
+    return _CRITERIA
+
+
+def criterion_binding_problem(ident: str, block: object, record: Path) -> str | None:
+    """Why this binding's criterion observation is not a PASS over pinned bytes, or None.
+
+    The observation must be a file inside the verified evidence record, listed in its manifest,
+    with the declared digest, and the gate's own criterion must return PASS on those bytes. The
+    builder and the checker both call this; a `met` row for an executable-criterion gate cannot
+    exist without it.
+    """
+    principles, entries = criteria_entries()
+    entry = entries.get(ident)
+    if entry is None:
+        if block is not None:
+            return "a criterion binding is present for a gate with no criterion entry"
+        return None
+    if not isinstance(block, dict):
+        return "a criterion binding is required for this gate"
+    relative = block.get("observations")
+    if not isinstance(relative, str) or not relative:
+        return "criterion.observations is required"
+    candidate = Path(relative)
+    record = Path(record).resolve()
+    path = (record / relative).resolve()
+    if candidate.is_absolute() or ".." in candidate.parts or not path.is_relative_to(record):
+        return "criterion.observations escapes the evidence record"
+    if not path.is_file():
+        return f"criterion.observations {relative!r} does not exist in the record"
+    try:
+        manifest = json.loads((record / "manifest.json").read_text())
+    except (OSError, ValueError) as error:
+        return f"the evidence record manifest is unreadable: {error}"
+    listed = {
+        item.get("path"): item for item in manifest.get("files") or []
+        if isinstance(item, dict)
+    }.get(relative)
+    if not isinstance(listed, dict):
+        return "criterion.observations is not listed in the evidence record manifest"
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if block.get("sha256") != actual or listed.get("sha256") != actual:
+        return "criterion.sha256 does not match the observation's bytes"
+    if block.get("verdict") != "PASS":
+        return "criterion.verdict must be PASS"
+    try:
+        observations = json.loads(path.read_text())
+    except ValueError as error:
+        return f"criterion.observations is not valid JSON: {error}"
+    result = principles.evaluate_entry(entry, observations)
+    if result.get("status") != "PASS":
+        return (f"the criterion is {result.get('status')}, not PASS: "
+                f"{result.get('reasons')}")
+    return None
 
 
 def _is_test(path: Path, symbol: str) -> bool:
@@ -212,6 +274,10 @@ def _binding_shape(binding: dict, row: dict) -> None:
     require(hashlib.sha256((record / "manifest.json").read_bytes()).hexdigest()
             == evidence["digest"],
             f"{ident}: evidence.digest does not match the record's manifest")
+    # **A criterion that is not run at promotion is decoration.** The observation is pinned in
+    # the same verified record and the gate's own evaluator must return PASS on it.
+    criterion_problem = criterion_binding_problem(ident, binding.get("criterion"), record)
+    require(criterion_problem is None, f"{ident}: {criterion_problem}")
 
 
 def _eligible(row: dict, met_ids: set[str]) -> tuple[bool, str]:
@@ -266,6 +332,10 @@ def apply_bindings(rows: list[dict], document: dict, floor: int = 0) -> None:
             "status": "met",
             "status_reason": None,
         })
+        # Only when present: a `criterion: null` on the 47 existing rows would make the
+        # rebuilt register differ from the committed bytes for no reason.
+        if "criterion" in binding:
+            row["criterion"] = binding["criterion"]
     ratchet = document.get("met_ratchet")
     require(isinstance(ratchet, dict), "met_ratchet is required")
     minimum = ratchet.get("minimum")

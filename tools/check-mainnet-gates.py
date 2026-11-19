@@ -264,6 +264,11 @@ def resolve_witness(row: dict) -> None:
     manifest_path = record_path(evidence.get("record"))
     require(hashlib.sha256((manifest_path / "manifest.json").read_bytes()).hexdigest() == digest,
             f"{row['id']}: evidence.digest does not match the record's manifest")
+    # The executable criterion is a promotion precondition, not a parallel note: the same
+    # observation must still PASS, from the same verified record, on every check.
+    criterion_problem = load_builder().criterion_binding_problem(
+        row["id"], row.get("criterion"), manifest_path)
+    require(criterion_problem is None, f"{row['id']}: {criterion_problem}")
     if kind == "human-attestation":
         attestation = row.get("attestation") or {}
         for field in ("reviewer", "relationship", "independent", "signed_at",

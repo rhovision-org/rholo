@@ -24,6 +24,10 @@ BUILD_SPEC = importlib.util.spec_from_file_location(
     "build_mainnet_gates", ROOT / "tools/build-mainnet-gates.py")
 builder = importlib.util.module_from_spec(BUILD_SPEC)
 BUILD_SPEC.loader.exec_module(builder)
+FIXTURE_SPEC = importlib.util.spec_from_file_location(
+    "gate_fixtures", ROOT / "tests/gate_fixtures.py")
+fixtures = importlib.util.module_from_spec(FIXTURE_SPEC)
+FIXTURE_SPEC.loader.exec_module(fixtures)
 REGISTER = json.loads((ROOT / "spec/audit/mainnet-gates.json").read_text())
 MATRIX = json.loads((ROOT / "spec/audit/final-gap-matrix.json").read_text())
 INVENTORY = json.loads((ROOT / "spec/audit/section6-gap-inventory.json").read_text())
@@ -51,6 +55,10 @@ class RegisterTests(unittest.TestCase):
         (run / "source-sha.txt").write_text("a" * 40 + "\n")
         (run / "binary-sha256.txt").write_text("b" * 64 + "\n")
         (run / "result.json").write_text(json.dumps({"result": "PASS"}))
+        # The executable criterion for G584-G1 is the preflight observation. Pack it into the
+        # record so a binding can name it and a later check can re-evaluate the same bytes.
+        (run / "observations.json").write_text(json.dumps(fixtures.base_g584_g1()))
+        (run / "observations-bad.json").write_text(json.dumps({"preflight": {}}))
         cls.records = {}
         for gate_id in ("G520-MIGRATION", "G584-G1"):
             for verdict in ("PASS", "FAIL"):
@@ -104,19 +112,19 @@ class RegisterTests(unittest.TestCase):
                 "mutation": dict(MUTATION),
                 "test": M5_TEST,
                 "expected": "FAIL",
-                "run_record": self.records[("G520-MIGRATION", "FAIL")],
+                "run_record": self.records[(ident, "FAIL")],
             },
         }
         row["evidence"] = {
             "url": "https://github.com/rhovision-org/rholo/actions/runs/1",
-            "digest": record_digest(self.records[("G520-MIGRATION", "PASS")]),
+            "digest": record_digest(self.records[(ident, "PASS")]),
             "source_sha": "a" * 40,
             "binary_sha256": "b" * 64,
-            "record": self.records[("G520-MIGRATION", "PASS")],
+            "record": self.records[(ident, "PASS")],
         }
         return row
 
-    def make_human_met(self, ident="G584-G1"):
+    def make_human_met(self, ident="G520-MIGRATION"):
         row = self.make_met(ident)
         row["witness_kind"] = "human-attestation"
         row["witness_ref"] = "docs/src/spec/gate-terms.md::reviewer"
@@ -128,9 +136,9 @@ class RegisterTests(unittest.TestCase):
             test="docs/src/spec/gate-terms.md::reviewer",
             mutation={"file": "docs/src/spec/gate-terms.md",
                       "before": "Independent", "after": "Dependent"},
-            run_record=self.records[("G584-G1", "FAIL")],
+            run_record=self.records[(ident, "FAIL")],
         )
-        row["evidence"]["record"] = self.records[("G584-G1", "PASS")]
+        row["evidence"]["record"] = self.records[(ident, "PASS")]
         row["evidence"]["digest"] = record_digest(row["evidence"]["record"])
         return row
 
@@ -145,6 +153,12 @@ class RegisterTests(unittest.TestCase):
         witness = self.binding_root / "witness.py"
         ref = f"{witness}::witness"
         mutation = self.binding_root / "mutation.py"
+        # A binding for a gate with no packed records (the eligibility tests) reuses G520's;
+        # those tests are refused before record verification.
+        run_record = self.records.get((ident, "FAIL")) or \
+            self.records[("G520-MIGRATION", "FAIL")]
+        pass_record = self.records.get((ident, "PASS")) or \
+            self.records[("G520-MIGRATION", "PASS")]
         return {
             "gate_id": ident,
             "witness_kind": "python",
@@ -164,16 +178,24 @@ class RegisterTests(unittest.TestCase):
                                  "before": "before", "after": "after"},
                     "test": f"{witness}::self_test",
                     "expected": "FAIL",
-                    "run_record": self.records[("G520-MIGRATION", "FAIL")],
+                    "run_record": run_record,
                 },
             },
             "evidence": {
                 "url": "https://example.invalid/evidence",
-                "digest": record_digest(self.records[("G520-MIGRATION", "PASS")]),
+                "digest": record_digest(pass_record),
                 "source_sha": "a" * 40,
                 "binary_sha256": "b" * 64,
-                "record": self.records[("G520-MIGRATION", "PASS")],
+                "record": pass_record,
             },
+        }
+
+    def criterion_block(self, record, name="raw/observations.json", verdict="PASS"):
+        path = Path(record) / name
+        return {
+            "observations": name,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "verdict": verdict,
         }
 
     def unmet(self, ident="G520-MIGRATION"):
@@ -271,6 +293,45 @@ class RegisterTests(unittest.TestCase):
         control.update(control_of=binding["witness_ref"], test=f"{path}::self_test")
         with self.assertRaisesRegex(ValueError, "not defined"):
             self.apply_bindings([binding])
+
+    def test_a_criteria_binding_without_a_criterion_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "criterion binding is required"):
+            self.apply_bindings([self.make_binding("G584-G1")],
+                                rows=[self.unmet("G584-G1")],
+                                required=["G584-G1"])
+
+    def test_a_criterion_on_a_gate_without_an_entry_is_refused(self):
+        binding = self.make_binding()
+        binding["criterion"] = self.criterion_block(
+            self.records[("G520-MIGRATION", "PASS")])
+        with self.assertRaisesRegex(ValueError, "no criterion entry"):
+            self.apply_bindings([binding])
+
+    def test_a_criteria_binding_with_a_wrong_observation_digest_is_refused(self):
+        binding = self.make_binding("G584-G1")
+        binding["criterion"] = self.criterion_block(
+            self.records[("G584-G1", "PASS")])
+        binding["criterion"]["sha256"] = "c" * 64
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            self.apply_bindings([binding], rows=[self.unmet("G584-G1")],
+                                required=["G584-G1"])
+
+    def test_a_criteria_binding_with_a_nonpassing_observation_is_refused(self):
+        binding = self.make_binding("G584-G1")
+        binding["criterion"] = self.criterion_block(
+            self.records[("G584-G1", "PASS")], name="raw/observations-bad.json")
+        with self.assertRaisesRegex(ValueError, "not PASS"):
+            self.apply_bindings([binding], rows=[self.unmet("G584-G1")],
+                                required=["G584-G1"])
+
+    def test_a_criteria_binding_with_a_passing_criterion_promotes_and_is_copied(self):
+        binding = self.make_binding("G584-G1")
+        binding["criterion"] = self.criterion_block(
+            self.records[("G584-G1", "PASS")])
+        rows = self.apply_bindings([binding], rows=[self.unmet("G584-G1")],
+                                   required=["G584-G1"])
+        self.assertEqual(rows[0]["status"], "met")
+        self.assertEqual(rows[0]["criterion"], binding["criterion"])
 
     def test_a_binding_without_its_fail_record_is_refused(self):
         binding = self.make_binding()
@@ -453,13 +514,13 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_human_attestation_needs_an_independent_reviewer(self):
-        row = self.make_human_met("G584-G1")
+        row = self.make_human_met("G520-MIGRATION")
         self.assertNotIn("attestation", row)
         with self.assertRaisesRegex(gate.GateError, "attestation.reviewer"):
             self.inspect()
 
     def test_human_attestation_needs_a_review_record(self):
-        row = self.make_human_met("G584-G1")
+        row = self.make_human_met("G520-MIGRATION")
         row["attestation"] = {
             "reviewer": "external-reviewer",
             "relationship": "not the owner",
@@ -472,7 +533,7 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_human_attestation_needs_the_evidence_digest(self):
-        row = self.make_human_met("G584-G1")
+        row = self.make_human_met("G520-MIGRATION")
         digest = row["evidence"]["digest"]
         review = self.write_review("external-reviewer", "PASS", digest)
         row["attestation"] = {
@@ -487,7 +548,7 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_the_signed_digest_must_be_the_evidence_digest(self):
-        row = self.make_human_met("G584-G1")
+        row = self.make_human_met("G520-MIGRATION")
         review = self.write_review("external-reviewer", "PASS", "c" * 64)
         row["attestation"] = {
             "reviewer": "external-reviewer",
@@ -502,7 +563,7 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_the_review_record_must_carry_the_digest(self):
-        row = self.make_human_met("G584-G1")
+        row = self.make_human_met("G520-MIGRATION")
         digest = row["evidence"]["digest"]
         review = self.write_review("external-reviewer", "PASS", "d" * 64)
         row["attestation"] = {
@@ -518,7 +579,7 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_a_complete_attestation_is_accepted(self):
-        row = self.make_human_met("G584-G1")
+        row = self.make_human_met("G520-MIGRATION")
         digest = row["evidence"]["digest"]
         review = self.write_review("external-reviewer", "PASS", digest)
         row["attestation"] = {
@@ -531,6 +592,25 @@ class RegisterTests(unittest.TestCase):
             "evidence_sha256": digest,
         }
         self.assertIsInstance(self.inspect(), dict)
+
+    def test_a_criteria_met_row_without_a_criterion_is_refused(self):
+        self.make_met("G584-G1")
+        with self.assertRaisesRegex(gate.GateError, "criterion binding is required"):
+            self.inspect()
+
+    def test_a_criteria_met_row_with_a_nonpassing_observation_is_refused(self):
+        row = self.make_met("G584-G1")
+        row["criterion"] = self.criterion_block(
+            self.records[("G584-G1", "PASS")], name="raw/observations-bad.json")
+        with self.assertRaisesRegex(gate.GateError, "not PASS"):
+            self.inspect()
+
+    def test_a_criteria_met_row_with_a_passing_criterion_is_accepted(self):
+        row = self.make_met("G584-G1")
+        row["criterion"] = self.criterion_block(
+            self.records[("G584-G1", "PASS")])
+        result = self.inspect()
+        self.assertEqual(result["result"], "REGISTER_VALID")
 
     def test_bare_path_witness_is_refused(self):
         row = self.make_met()
