@@ -346,5 +346,21 @@ class FinalityCampaignTests(unittest.TestCase):
         self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
 
 
+class RustControlTests(unittest.TestCase):
+    """The Rust control runner, reached where CI looks.
+
+    `test_rust_controls.py` has no discovery line in `ci.yml`; this file does. The live
+    case builds a dependency-free toy crate, so this adds a cargo invocation but not the
+    45-witness corpus (that is `--run-controls --controls all`, a release-time run).
+    """
+
+    def test_the_control_runner_suite_passes(self):
+        suite = unittest.defaultTestLoader.discover(
+            str(ROOT / "tests"), pattern="test_rust_controls.py",
+            top_level_dir=str(ROOT / "tests"))
+        result = unittest.TextTestRunner(stream=StringIO(), verbosity=0).run(suite)
+        self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+
+
 if __name__ == "__main__":
     unittest.main()
