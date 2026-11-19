@@ -100,6 +100,24 @@ corpus at release time and record it. `tests/test_rust_controls.py` is reached t
 `tests/test_hardfork_51_closeout.py` discovery (the `RustControlTests` wrapper), so no additional
 workflow line is needed; its live case builds a dependency-free toy crate, not the corpus.
 
+## HF51 provenance (2026-11-19)
+
+`tests/test_hardfork_51_closeout.py` and `tests/test_section6_inventory.py` already run in the
+static-gates job; their new cases are reached there, including a live dependency-free toy crate for
+the merged-row acceptance runner. Two checks are **release-time**, not CI steps:
+
+```sh
+python3 tools/check-section6-inventory.py --verify-pinned-blob
+python3 tools/check-hardfork-51-closeout.py --verify-local-git --verify-pinned-blob \
+        --run-merged-tests --assert-closeable
+```
+
+`--verify-pinned-blob` reads `spec/audit/passes.md` from the ledger's `source_dev_sha`; the test
+checkouts are depth 1, so the check records `unverified-shallow` there (exit 4 when requested
+explicitly, and never closeable). The full-history job, or an operator checkout, establishes it.
+`--run-merged-tests` is 14 cargo invocations (13 rows) and is run at release time; no workflow line
+or `.github/workflows/*` edit is proposed.
+
 ## Local equivalent
 
 The PR checklist runs the same commands; `check-mainnet-gates.py --assert-closeable` and
