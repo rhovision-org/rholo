@@ -294,5 +294,30 @@ class MainnetRegisterTests(unittest.TestCase):
             (report["gates"], report["met"], report["unresolved"]), (59, 47, 12), report)
 
 
+class CapacityTierTests(unittest.TestCase):
+    """The collector and the evaluate-path parameter check, reached where CI looks.
+
+    `test_capacity_tier.py` has no discovery line in `ci.yml`; this file does, so the suite runs
+    from the same seam `MainnetRegisterTests` uses for the register check. The collector's own
+    tests are the contract: a record it writes is evaluated by the real M1 criterion.
+    """
+
+    def test_the_collector_suite_passes(self):
+        suite = unittest.defaultTestLoader.discover(
+            str(ROOT / "tests"), pattern="test_capacity_tier.py",
+            top_level_dir=str(ROOT / "tests"))
+        result = unittest.TextTestRunner(stream=StringIO(), verbosity=0).run(suite)
+        self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+
+    def test_the_evaluate_path_refuses_a_malformed_parameter(self):
+        spec = importlib.util.spec_from_file_location(
+            "capacity_tier_principles", ROOT / "tools/gate-principles.py")
+        principles = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(principles)
+        entry = {"principle": "no_false_settlement",
+                 "parameters": {"min_observers": "4"}, "requires": ["record"]}
+        self.assertEqual(principles.evaluate_entry(entry, {"record": {}})["status"], "FAIL")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -612,7 +612,7 @@ def capacity_tier(observations: dict, parameters: dict) -> dict:
 
     measured_ints = ("rss_mb", "peak_rss_mb", "mem_total_mb", "host_cores",
                      "data_dir_free_mb", "rnode_processes", "chain_height",
-                     "replay_seconds", "replay_peak_rss_mb", "replay_height",
+                     "replay_peak_rss_mb", "replay_height",
                      "oom_kills_delta", "restart_count_delta")
     seen_ids: set[str] = set()
     host_stakes: dict[str, int] = {}
@@ -652,6 +652,10 @@ def capacity_tier(observations: dict, parameters: dict) -> dict:
         if not _is_number(cpu) or cpu <= 0:
             return verdict("PRECONDITION",
                            [f"{where}.measured.cpu_cores is not a positive number"])
+        replay_seconds = measured.get("replay_seconds")
+        if not _is_number(replay_seconds) or replay_seconds <= 0:
+            return verdict("PRECONDITION",
+                           [f"{where}.measured.replay_seconds is unreadable"])
         states = measured.get("fallback_states")
         if not isinstance(states, list) or not all(isinstance(state, str) for state in states):
             return verdict("PRECONDITION",
@@ -672,7 +676,7 @@ def capacity_tier(observations: dict, parameters: dict) -> dict:
                 [f"{where}.measured.container_config.cmd is not a command line"])
 
         unreadable = [field for field in
-                      ("rss_mb", "peak_rss_mb", "replay_peak_rss_mb", "replay_seconds",
+                      ("rss_mb", "peak_rss_mb", "replay_peak_rss_mb",
                        "host_cores", "rnode_processes") if measured[field] <= 0]
         if unreadable:
             return verdict("PRECONDITION",

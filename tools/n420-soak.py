@@ -184,7 +184,7 @@ def main():
                     "rss_mb": resources.get("rssMb"),
                     "rnode_processes": resources.get("rnodeProcesses"),
                     "halted": operator.get("autoproposeTimerHalted"),
-                    "height": status.get("latestBlockNumber"),
+                    "chain_height": status.get("latestBlockNumber"),
                 }
             except (urllib.error.URLError, KeyError, ConnectionError) as error:
                 sample["nodes"][container] = {"error": str(error)}
