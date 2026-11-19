@@ -118,9 +118,16 @@ def _criterion_report(result: tuple) -> dict:
 
 
 def _materialise(files: dict) -> tempfile.TemporaryDirectory:
+    # A Python-only job on a fresh checkout has no target/; a criterion must not depend on a
+    # build artefact. A key that escapes the directory would write outside it.
+    (ROOT / "target").mkdir(parents=True, exist_ok=True)
     directory = tempfile.TemporaryDirectory(dir=ROOT / "target")
     base = Path(directory.name)
     for relative, text in files.items():
+        candidate = Path(str(relative))
+        if candidate.is_absolute() or ".." in candidate.parts:
+            directory.cleanup()
+            raise ValueError(f"a materialised file path escapes its directory: {relative!r}")
         path = base / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(text, bytes):
@@ -179,7 +186,9 @@ def staged_lifecycle(observations: dict, parameters: dict) -> dict:
 
 
 def no_false_settlement(observations: dict, parameters: dict) -> dict:
-    report = _live.check_g3(observations.get("claims"), _events(observations))
+    report = _live.check_g3(
+        observations.get("claims"), _events(observations),
+        parameters.get("min_observers", 4))
     return _live_report(report)
 
 
@@ -242,8 +251,20 @@ def human_attestation(observations: dict, parameters: dict) -> dict:
         path = Path(str(record))
         if not path.is_absolute():
             path = ROOT / path
-        if not path.exists():
-            errors.append("attestation.evidence_record does not exist")
+        path = path.resolve()
+        if not path.is_dir():
+            errors.append("attestation.evidence_record is not a record directory")
+        elif not path.is_relative_to(ROOT.resolve()):
+            errors.append("attestation.evidence_record is outside the repository")
+        elif not (path / "manifest.json").is_file():
+            errors.append("attestation.evidence_record has no manifest.json")
+        elif (isinstance(digest, str) and HEX64.fullmatch(digest)
+              and hashlib.sha256((path / "manifest.json").read_bytes()).hexdigest() != digest):
+            # **The signed digest answers "which bytes did the reviewer see?"** A 64-hex value
+            # that matches nothing is the same as no digest at all; the promotion checker already
+            # binds it to the evidence record's manifest.
+            errors.append(
+                "attestation.evidence_sha256 does not match the cited record's manifest")
     if errors:
         return verdict("FAIL", errors)
     recorded = attestation.get("verdict")
@@ -358,7 +379,7 @@ def bounded_admission(observations: dict, parameters: dict) -> dict:
         if isinstance(queues, list) and queues:
             command.extend(["--queues", ",".join(str(queue) for queue in queues)])
         proc = subprocess.run(command, capture_output=True, text=True, timeout=120,
-                              check=False)
+                              check=False, cwd=str(ROOT))
         if proc.returncode == 0:
             return verdict("PASS", [], {"source": str(path)})
         return verdict("FAIL", [line for line in (proc.stderr or proc.stdout).splitlines() if line][-4:])
@@ -524,18 +545,22 @@ def resource_attribution(observations: dict, parameters: dict) -> dict:
         return verdict("FAIL", ["record.declared_count must be a non-negative integer"])
     name = str(parameters.get("process_name") or "rnode")
     counted: list[int] = []
+    seen: set[int] = set()
     for entry in processes:
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             return verdict("FAIL", ["every process entry must be an object with a name"])
         pid = entry.get("pid")
         if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
             return verdict("FAIL", ["every process entry must carry a positive integer pid"])
+        if pid in seen:
+            # A host's process table has one entry per pid; a repeat is a malformed observation,
+            # not a second process, whatever name it carries.
+            return verdict("FAIL", ["a process pid is listed more than once"])
+        seen.add(pid)
         if entry["name"] == name:
             counted.append(pid)
     if not counted:
         return verdict("PRECONDITION", [f"no process named {name!r} was observed"])
-    if len(set(counted)) != len(counted):
-        return verdict("FAIL", [f"a {name} process pid is listed more than once"])
     if declared != len(counted):
         return verdict(
             "FAIL", [f"declared count {declared} != observed {len(counted)} {name} process(es)"])
@@ -563,7 +588,7 @@ PRINCIPLES = {
 PARAMETER_SCHEMA = {
     "identity_agreement": {"min_observers": int},
     "staged_lifecycle": {"stages": list, "per_observer": bool, "min_observers": int},
-    "no_false_settlement": {},
+    "no_false_settlement": {"min_observers": int},
     "recovery_no_loss": {},
     "independent_observations": {"min_observers": int},
     "human_attestation": {"owner": str},

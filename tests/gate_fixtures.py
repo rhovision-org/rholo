@@ -513,6 +513,9 @@ def base_c357() -> dict:
     return {"record_data": c357._base_record("coordinated-new-genesis")}
 
 
+ATTESTATION_RECORD = "spec/audit/evidence/c343-observation-shape-20261119"
+
+
 def _attestation(url: str) -> dict:
     return {"attestation": {
         "reviewer": "independent-reviewer",
@@ -520,9 +523,10 @@ def _attestation(url: str) -> dict:
         "independent": True,
         "signed_at": "2026-11-18T12:00:00Z",
         "verdict": "PASS",
-        "evidence_sha256": "a" * 64,
+        # The signed digest is the cited record's manifest, not a format-valid placeholder.
+        "evidence_sha256": manifest_sha256(ROOT / ATTESTATION_RECORD),
         "verdict_url": url,
-        "evidence_record": "spec/audit/evidence/c343-observation-shape-20261119",
+        "evidence_record": ATTESTATION_RECORD,
     }}
 
 

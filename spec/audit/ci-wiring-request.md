@@ -15,9 +15,12 @@ python3 -m unittest discover -s tests -p test_section6_dispositions.py -v
 python3 -m unittest discover -s tests -p test_bounded_ingress_queues.py -v
 python3 -m unittest discover -s tests -p test_gate_contracts.py -v
 python3 -m unittest discover -s tests -p test_gate_criterion.py -v
-python3 tools/check-mainnet-gates.py --check
 python3 tools/check-section6-dispositions.py
 ```
+
+`tools/check-mainnet-gates.py --check` is now reached by the already-wired
+`tests/test_hardfork_51_closeout.py` (see below), so this line is a direct invocation rather than
+the only guard.
 
 Add the register and table paths to any path-gated job that should run on a change:
 
@@ -41,12 +44,17 @@ python3 tools/gate-check.py --list
 ```
 
 `test_gate_principles.py` is the generic suite over every entry in
-`spec/audit/gate-criteria.json`: a satisfying observation, each declared negative control, each
-missing required observation, malformed input, non-vacuity, actor-name independence and coverage
-against the external register. `check-mainnet-gates.py::validate` already validates the registry,
-and that function runs inside `check-hardfork-51-closeout.py` (which is wired), so a drift in
-the criteria coverage fails today even before this test is added. `gate-collect.py` is a
-read-only operator tool; it is not run in CI.
+`spec/audit/gate-criteria.json`: malformed input, actor-name independence, coverage against the
+external register and adapter binding. The behavioural assertions (a satisfying observation, every
+declared control, every missing required input) now live in `tools/gate-selftest.py`, which
+`check-mainnet-gates.py::check_criteria` runs. **Correction, 2026-11-19:** the earlier claim that
+`validate` runs inside `check-hardfork-51-closeout.py` was false — `gate_binding` returns before
+`validate` when the register has no HF51 rows. The wired path is now
+`tests/test_hardfork_51_closeout.py::MainnetRegisterTests`, which runs
+`check-mainnet-gates.py --check`; that check includes the self-test, the 47 met rows' evidence and
+the build comparison. A depth-1 checkout records `register_dev_sha` ancestry as
+`unverified-shallow` (a full checkout still enforces it). `gate-collect.py` is a read-only operator
+tool; it is not run in CI.
 
 Add `spec/audit/gate-criteria.json` and `spec/audit/gate-principles-20261118.md` to the
 path-gated job's paths.

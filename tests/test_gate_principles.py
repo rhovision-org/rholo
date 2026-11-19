@@ -39,10 +39,7 @@ def _load(name: str, path: Path):
 
 
 principles = _load("gate_principles", ROOT / "tools" / "gate-principles.py")
-
-
-def _delete(document: dict, path: str) -> dict:
-    return gate_fixtures.apply_mutation(document, ["delete", path])
+gate_selftest = _load("gate_selftest", ROOT / "tools" / "gate-selftest.py")
 
 
 def _rename_actors(document: object) -> object:
@@ -84,45 +81,13 @@ class CriterionTests(unittest.TestCase):
     def evaluate(self, gate_id: str, observations: dict) -> dict:
         return principles.evaluate_entry(self.entries[gate_id], observations)
 
-    def test_every_criterion_is_satisfiable(self):
-        for gate_id, entry in self.entries.items():
-            with self.subTest(gate=gate_id):
-                result = self.evaluate(gate_id, gate_fixtures.base(gate_id))
-                self.assertEqual(result["status"], "PASS", result)
+    def test_the_shared_self_test_passes(self):
+        """The same function the register check runs: satisfiable, falsifiable, load-bearing.
 
-    def test_every_declared_control_produces_its_expected_status(self):
-        for gate_id, entry in self.entries.items():
-            for control in entry["negative_controls"]:
-                with self.subTest(gate=gate_id, control=control["name"]):
-                    result = self.evaluate(
-                        gate_id, gate_fixtures.controlled(gate_id, control))
-                    self.assertEqual(result["status"], control["expected"],
-                                     (control["name"], result))
-                    self.assertTrue(result["reasons"], result)
-
-    def test_a_missing_required_observation_is_precondition(self):
-        for gate_id, entry in self.entries.items():
-            for path in entry["requires"]:
-                with self.subTest(gate=gate_id, path=path):
-                    observations = _delete(gate_fixtures.base(gate_id), path)
-                    result = self.evaluate(gate_id, observations)
-                    self.assertEqual(result["status"], "PRECONDITION", result)
-
-    def test_every_declared_input_is_load_bearing(self):
-        """A `requires` path is a claim that the principle reads it.
-
-        `evaluate_entry` short-circuits on a missing required path, so the earlier test cannot
-        see a principle that declares an input and then ignores it. Call the principle directly:
-        deleting a declared input must never leave a PASS.
+        One implementation, so the suite and the CI-reached `check_criteria` cannot drift.
         """
-        for gate_id, entry in self.entries.items():
-            for path in entry["requires"]:
-                with self.subTest(gate=gate_id, path=path):
-                    observations = _delete(gate_fixtures.base(gate_id), path)
-                    result = principles.evaluate(
-                        entry["principle"], observations, entry.get("parameters") or {})
-                    self.assertNotEqual(result["status"], "PASS",
-                                        (gate_id, path, result))
+        errors = gate_selftest.run(self.entries, principles=principles)
+        self.assertEqual(errors, [])
 
     def test_malformed_observations_produce_a_verdict_not_an_exception(self):
         corruptions = [
@@ -141,16 +106,6 @@ class CriterionTests(unittest.TestCase):
                     result = principles.evaluate(
                         entry["principle"], observations, entry.get("parameters") or {})
                     self.assertIn(result["status"], principles.STATUSES, result)
-
-    def test_every_criterion_is_non_vacuous(self):
-        for gate_id, entry in self.entries.items():
-            with self.subTest(gate=gate_id):
-                expected = [control["expected"] for control in entry["negative_controls"]]
-                self.assertIn("FAIL", expected, "no contradictory control")
-                for control in entry["negative_controls"]:
-                    result = self.evaluate(
-                        gate_id, gate_fixtures.controlled(gate_id, control))
-                    self.assertNotEqual(result["status"], "PASS", control["name"])
 
     def test_the_verdict_does_not_depend_on_actor_names(self):
         for gate_id, entry in self.entries.items():
@@ -171,9 +126,10 @@ class CriterionTests(unittest.TestCase):
             "independent": True,
             "signed_at": "2026-11-18T12:00:00Z",
             "verdict": "PASS",
-            "evidence_sha256": "a" * 64,
+            "evidence_sha256": gate_fixtures.manifest_sha256(
+                ROOT / gate_fixtures.ATTESTATION_RECORD),
             "verdict_url": "https://example.invalid/verdict",
-            "evidence_record": "spec/audit/evidence/c343-observation-shape-20261119",
+            "evidence_record": gate_fixtures.ATTESTATION_RECORD,
         }
         parameters = {"owner": "Owner / release coordination"}
         self.assertEqual(
@@ -199,6 +155,25 @@ class CriterionTests(unittest.TestCase):
         self.assertEqual(
             principles.evaluate("human_attestation", {}, parameters)["status"],
             "PRECONDITION")
+
+    def test_a_materialised_map_cannot_escape_its_directory(self):
+        result = principles.evaluate(
+            "off_host_claim", {"record": {"files": {"../escape.log": "x"}}}, {})
+        self.assertEqual(result["status"], "FAIL", result)
+        self.assertFalse((ROOT / "target" / "escape.log").exists())
+
+    def test_a_process_pid_is_listed_once_across_names(self):
+        document = {"record": {
+            "host_processes": [
+                {"pid": 101, "name": "rnode"},
+                {"pid": 101, "name": "rnode-watchdog"},
+            ],
+            "declared_count": 1,
+        }}
+        self.assertEqual(
+            principles.evaluate("resource_attribution", document,
+                                {"process_name": "rnode"})["status"],
+            "FAIL")
 
     def test_the_registry_covers_every_machine_checkable_external_gate(self):
         executable = {"python", "rust-unit", "rust-integration", "two-binary",

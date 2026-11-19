@@ -10,9 +10,12 @@ ledger edit that is not reflected here is a drift failure.
 This builder is not an oracle. It records what the ledgers say and applies the
 authored measurement bindings in `mainnet-gates.bindings.json`. A gate is
 promoted to `met` only when a complete binding exists and the row is eligible:
-a decision/blocked/precondition/superseded row is never eligible, an S6 row
-needs an accepted disposition with a category-A effect, an HF51 row needs a
-merged or verified ledger item, and every dependency must already be met. The
+a decision/blocked/precondition/superseded row is never eligible, an HF51 row
+needs a merged or verified ledger item, and every dependency must already be
+met. The section-6 review is tracked in `section6-dispositions.json`; since
+2026-11-18 it is not a gate condition. An executable-criterion gate also needs
+a `criterion` block whose pinned observation the gate's own evaluator passes.
+The
 builder never invents a witness, a control or evidence; the checker
 `tools/check-mainnet-gates.py` is the judge of the resulting `met` row.
 """
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -48,11 +52,87 @@ WITNESS_KINDS = {
 }
 PROMOTABLE_STATUSES = {"owes", "external", "reviewable"}
 INELIGIBLE_IDS = {"TA-C3"}
+# **The ratchet's floor is not a copy of the data it guards.** `minimum == len(required_ids)` is
+# satisfied by lowering both; a promotion raises this constant in the same commit, and a demotion
+# is then an explicit two-file change.
+MINIMUM_MET = 47
 
 
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)
+
+
+def _load_tool(name: str, filename: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+witness = _load_tool("gate_witness", "gate-witness.py")
+_CRITERIA = None
+
+
+def criteria_entries():
+    """The executable criteria and the evaluator, loaded once."""
+    global _CRITERIA
+    if _CRITERIA is None:
+        principles = _load_tool("gate_principles_for_builder", "gate-principles.py")
+        _CRITERIA = (principles, principles.criteria_by_gate())
+    return _CRITERIA
+
+
+def criterion_binding_problem(ident: str, block: object, record: Path) -> str | None:
+    """Why this binding's criterion observation is not a PASS over pinned bytes, or None.
+
+    The observation must be a file inside the verified evidence record, listed in its manifest,
+    with the declared digest, and the gate's own criterion must return PASS on those bytes. The
+    builder and the checker both call this; a `met` row for an executable-criterion gate cannot
+    exist without it.
+    """
+    principles, entries = criteria_entries()
+    entry = entries.get(ident)
+    if entry is None:
+        if block is not None:
+            return "a criterion binding is present for a gate with no criterion entry"
+        return None
+    if not isinstance(block, dict):
+        return "a criterion binding is required for this gate"
+    relative = block.get("observations")
+    if not isinstance(relative, str) or not relative:
+        return "criterion.observations is required"
+    candidate = Path(relative)
+    record = Path(record).resolve()
+    path = (record / relative).resolve()
+    if candidate.is_absolute() or ".." in candidate.parts or not path.is_relative_to(record):
+        return "criterion.observations escapes the evidence record"
+    if not path.is_file():
+        return f"criterion.observations {relative!r} does not exist in the record"
+    try:
+        manifest = json.loads((record / "manifest.json").read_text())
+    except (OSError, ValueError) as error:
+        return f"the evidence record manifest is unreadable: {error}"
+    listed = {
+        item.get("path"): item for item in manifest.get("files") or []
+        if isinstance(item, dict)
+    }.get(relative)
+    if not isinstance(listed, dict):
+        return "criterion.observations is not listed in the evidence record manifest"
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if block.get("sha256") != actual or listed.get("sha256") != actual:
+        return "criterion.sha256 does not match the observation's bytes"
+    if block.get("verdict") != "PASS":
+        return "criterion.verdict must be PASS"
+    try:
+        observations = json.loads(path.read_text())
+    except ValueError as error:
+        return f"criterion.observations is not valid JSON: {error}"
+    result = principles.evaluate_entry(entry, observations)
+    if result.get("status") != "PASS":
+        return (f"the criterion is {result.get('status')}, not PASS: "
+                f"{result.get('reasons')}")
+    return None
 
 
 def _is_test(path: Path, symbol: str) -> bool:
@@ -146,6 +226,10 @@ def _binding_shape(binding: dict, row: dict) -> None:
     require((ROOT / path_text).is_file(),
             f"{ident}: witness path {path_text} does not exist")
     require(bool(symbol.strip()), f"{ident}: witness symbol is empty")
+    # **The builder asks the checker's question.** A file and a non-empty symbol are not a
+    # witness; the kind-specific rule lives in one shared resolver.
+    witness_problem = witness.problem(binding["witness_kind"], path_text, symbol)
+    require(witness_problem is None, f"{ident}: {witness_problem}")
     block = binding.get("witness_binding")
     require(isinstance(block, dict), f"{ident}: witness_binding is required")
     expected = hashlib.sha256(str(row["pass_condition"]).encode()).hexdigest()
@@ -193,6 +277,10 @@ def _binding_shape(binding: dict, row: dict) -> None:
     require(hashlib.sha256((record / "manifest.json").read_bytes()).hexdigest()
             == evidence["digest"],
             f"{ident}: evidence.digest does not match the record's manifest")
+    # **A criterion that is not run at promotion is decoration.** The observation is pinned in
+    # the same verified record and the gate's own evaluator must return PASS on it.
+    criterion_problem = criterion_binding_problem(ident, binding.get("criterion"), record)
+    require(criterion_problem is None, f"{ident}: {criterion_problem}")
 
 
 def _eligible(row: dict, met_ids: set[str]) -> tuple[bool, str]:
@@ -207,8 +295,11 @@ def _eligible(row: dict, met_ids: set[str]) -> tuple[bool, str]:
     return True, ""
 
 
-def apply_bindings(rows: list[dict], document: dict) -> None:
-    """Promote only complete, eligible authored bindings; verify the ratchet."""
+def apply_bindings(rows: list[dict], document: dict, floor: int = 0) -> None:
+    """Promote only complete, eligible authored bindings; verify the ratchet.
+
+    `floor` is the independent minimum the build enforces; synthetic tests pass 0.
+    """
     require(document.get("schema") == 1, "bindings schema 1 required")
     bindings = document.get("bindings")
     require(isinstance(bindings, list), "bindings must be a list")
@@ -244,6 +335,10 @@ def apply_bindings(rows: list[dict], document: dict) -> None:
             "status": "met",
             "status_reason": None,
         })
+        # Only when present: a `criterion: null` on the 47 existing rows would make the
+        # rebuilt register differ from the committed bytes for no reason.
+        if "criterion" in binding:
+            row["criterion"] = binding["criterion"]
     ratchet = document.get("met_ratchet")
     require(isinstance(ratchet, dict), "met_ratchet is required")
     minimum = ratchet.get("minimum")
@@ -257,6 +352,8 @@ def apply_bindings(rows: list[dict], document: dict) -> None:
             "met_ratchet.required_ids has duplicates")
     require(minimum == len(required),
             "met_ratchet.minimum must equal the required-id count")
+    require(minimum >= floor,
+            f"met_ratchet.minimum {minimum} is below the floor {floor}")
     met = {row["id"] for row in rows if row["status"] == "met"}
     require(met == set(required),
             f"the met set {sorted(met)} does not equal the ratchet {sorted(set(required))}")
@@ -371,7 +468,7 @@ def build() -> dict:
     for row in rows:
         row["related"] = [edge for edge in row.get("related") or []
                           if edge.get("id") in gate_ids]
-    apply_bindings(rows, bindings)
+    apply_bindings(rows, bindings, floor=MINIMUM_MET)
     seen = set()
     for row in rows:
         if row["id"] in seen:

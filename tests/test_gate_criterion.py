@@ -103,6 +103,18 @@ class CriterionTests(unittest.TestCase):
         victim["validators"][0]["finalized_anchor"] = False
         self.assertEqual(gate.check_rejoin(victim)[0], "FAIL")
 
+    def test_rejoin_requires_nonempty_unique_validator_ids(self):
+        """\"Every validator finalized the anchor\" means every *named* validator, once.
+
+        Without an id, three copies of one validator satisfy the universal claim vacuously.
+        """
+        missing = self.base_rejoin()
+        missing["validators"][0].pop("id")
+        self.assertEqual(gate.check_rejoin(missing)[0], "FAIL")
+        duplicate = self.base_rejoin()
+        duplicate["validators"][1]["id"] = duplicate["validators"][0]["id"]
+        self.assertEqual(gate.check_rejoin(duplicate)[0], "FAIL")
+
     def test_dwell_and_window_ceiling(self):
         unstable = self.base_rejoin()
         unstable["dwell"]["stable"] = False

@@ -72,6 +72,16 @@ def canonical_hash(value: object) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _load_tool(name: str, filename: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+witness = _load_tool("gate_witness", "gate-witness.py")
+
+
 def load_laws() -> dict[str, dict[str, str]]:
     path = ROOT / "spec" / "laws.tsv"
     index: dict[str, dict[str, str]] = {}
@@ -89,15 +99,6 @@ def normalize_source(text: str) -> str:
     return re.sub(r"\s+", " ", text.replace("*", "").replace("`", "")).strip().lower()
 
 
-def test_attribute(text: str, symbol: str) -> bool:
-    lines = text.splitlines()
-    for index, line in enumerate(lines):
-        if re.search(rf"\bfn\s+{re.escape(symbol)}\b", line):
-            window = "\n".join(lines[max(0, index - 3):index + 1])
-            return "#[test]" in window or "#[tokio::test]" in window
-    return False
-
-
 def resolve_test_ref(ref: str) -> None:
     require(isinstance(ref, str) and "::" in ref,
             "a negative control must name a test as path::symbol")
@@ -106,7 +107,7 @@ def resolve_test_ref(ref: str) -> None:
     require(path.is_file(), f"control path {path_text} does not exist")
     text = path.read_text(errors="ignore")
     if path.suffix == ".rs":
-        require(test_attribute(text, symbol),
+        require(witness.test_attribute(text, symbol),
                 f"control {ref} is not a #[test]")
     elif path.suffix == ".py":
         require(re.search(rf"\bdef\s+{re.escape(symbol)}\b", text)
@@ -144,13 +145,18 @@ def verify_record(value: object, gate_id: str, verdict: str) -> dict:
     return manifest
 
 
+_BUILDER = None
+
+
 def load_builder():
-    spec = importlib.util.spec_from_file_location("build_mainnet_gates", BUILDER)
-    if spec is None or spec.loader is None:
-        raise GateError("cannot load the register builder")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    global _BUILDER
+    if _BUILDER is None:
+        spec = importlib.util.spec_from_file_location("build_mainnet_gates", BUILDER)
+        if spec is None or spec.loader is None:
+            raise GateError("cannot load the register builder")
+        _BUILDER = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_BUILDER)
+    return _BUILDER
 
 
 def resolve_source(row: dict, matrix: dict, inventory: dict, ledger: dict) -> None:
@@ -200,42 +206,8 @@ def resolve_witness(row: dict) -> None:
     require(isinstance(ref, str) and "::" in ref,
             f"{row['id']}: a met witness must be path::symbol, not a bare file")
     path_text, symbol = ref.split("::", 1)
-    path = ROOT / path_text
-    require(path.is_file(), f"{row['id']}: witness path {path_text} does not exist")
-    text = path.read_text(errors="ignore")
-    if symbol.startswith("--"):
-        require(symbol in text, f"{row['id']}: witness flag {symbol} not found")
-    elif kind.startswith("rust-"):
-        require(path.suffix == ".rs", f"{row['id']}: a rust witness must be a .rs file")
-        require(test_attribute(text, symbol),
-                f"{row['id']}: witness {ref} is not a #[test]")
-    elif kind == "python":
-        require(path.suffix in {".py", ".sh"},
-                f"{row['id']}: a python witness must be .py or .sh")
-        if path.suffix == ".py":
-            require(re.search(rf"\bdef\s+{re.escape(symbol)}\b", text),
-                    f"{row['id']}: witness {symbol} is not defined in {path_text}")
-        else:
-            require(symbol in text,
-                    f"{row['id']}: witness {symbol} not found in {path_text}")
-    elif kind == "lean":
-        require(path.suffix == ".lean"
-                and re.search(rf"\btheorem\s+{re.escape(symbol)}\b", text),
-                f"{row['id']}: a lean witness must be a theorem")
-    elif kind == "human-attestation":
-        require(path.suffix == ".md",
-                f"{row['id']}: a human attestation must be a markdown record")
-    elif kind == "decision":
-        require(False, f"{row['id']}: a decision gate has no executable witness")
-    else:
-        # local-devnet / two-binary / live-host: the content check is the file's language, not
-        # the witness_kind label. A comment or a docstring is not a witness.
-        if path.suffix == ".py":
-            require(re.search(rf"\bdef\s+{re.escape(symbol)}\b", text),
-                    f"{row['id']}: witness {symbol} is not defined in {path_text}")
-        else:
-            require(symbol in text,
-                    f"{row['id']}: witness {symbol} not found in {path_text}")
+    witness_problem = witness.problem(kind, path_text, symbol)
+    require(witness_problem is None, f"{row['id']}: {witness_problem}")
     binding = row.get("witness_binding")
     require(isinstance(binding, dict),
             f"{row['id']}: a met gate needs witness_binding")
@@ -292,6 +264,11 @@ def resolve_witness(row: dict) -> None:
     manifest_path = record_path(evidence.get("record"))
     require(hashlib.sha256((manifest_path / "manifest.json").read_bytes()).hexdigest() == digest,
             f"{row['id']}: evidence.digest does not match the record's manifest")
+    # The executable criterion is a promotion precondition, not a parallel note: the same
+    # observation must still PASS, from the same verified record, on every check.
+    criterion_problem = load_builder().criterion_binding_problem(
+        row["id"], row.get("criterion"), manifest_path)
+    require(criterion_problem is None, f"{row['id']}: {criterion_problem}")
     if kind == "human-attestation":
         attestation = row.get("attestation") or {}
         for field in ("reviewer", "relationship", "independent", "signed_at",
@@ -415,12 +392,22 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
     require(document.get("schema") == 1, "schema 1 required")
     require(HEX40.fullmatch(str(document.get("register_dev_sha"))),
             "register_dev_sha must be a commit")
-    ancestry = subprocess.run(
-        ["git", "-C", str(ROOT), "merge-base", "--is-ancestor",
-         str(document["register_dev_sha"]), "HEAD"],
-        capture_output=True, timeout=30, check=False)
-    require(ancestry.returncode == 0,
-            "register_dev_sha must be an ancestor of HEAD")
+    # **Ancestry is unprovable in a shallow checkout.** CI checks out at depth 1, where the
+    # pinned dev commit is absent; failing there would make the register uncheckable in CI. The
+    # report records the degradation, and a full checkout still enforces the ancestor rule.
+    shallow = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "--is-shallow-repository"],
+        capture_output=True, text=True, timeout=30, check=False)
+    if shallow.returncode == 0 and shallow.stdout.strip() == "true":
+        ancestry = "unverified-shallow"
+    else:
+        ancestor = subprocess.run(
+            ["git", "-C", str(ROOT), "merge-base", "--is-ancestor",
+             str(document["register_dev_sha"]), "HEAD"],
+            capture_output=True, timeout=30, check=False)
+        require(ancestor.returncode == 0,
+                "register_dev_sha must be an ancestor of HEAD")
+        ancestry = "verified"
     require(document.get("ledger_source_dev_sha") == ledger.get("source_dev_sha"),
             "the register must pin the ledger's source commit")
     rows = document.get("gates")
@@ -507,6 +494,7 @@ def validate(document: dict, matrix: dict, inventory: dict, ledger: dict) -> dic
         "met": len(rows) - len(unresolved),
         "unresolved": len(unresolved),
         "unresolved_ids": unresolved,
+        "ancestry": ancestry,
     }
 
 
@@ -523,6 +511,24 @@ def _resolve_adapter(reference: object, gate_id: str) -> None:
     require(re.search(rf"\b(?:def|fn|struct)\s+{re.escape(symbol)}\b", text)
             or f"function {symbol}" in text or f"module {symbol}" in text,
             f"{gate_id}: adapter symbol {symbol} not found in {path_text}")
+
+
+_SELFTEST_CACHE: dict = {"key": None, "errors": []}
+
+
+def _selftest_errors(entries: dict, principles) -> list[str]:
+    """The criteria self-test, memoised by the bytes that define it and the entries fed in."""
+    digest = hashlib.sha256()
+    for path in (CRITERIA, ROOT / "tools" / "gate-principles.py",
+                 ROOT / "tools" / "gate-selftest.py", ROOT / "tests" / "gate_fixtures.py"):
+        digest.update(path.read_bytes())
+    digest.update(json.dumps(entries, sort_keys=True).encode())
+    key = digest.hexdigest()
+    if _SELFTEST_CACHE["key"] != key:
+        module = _load_tool("gate_selftest", "gate-selftest.py")
+        _SELFTEST_CACHE["key"] = key
+        _SELFTEST_CACHE["errors"] = module.run(entries, principles=principles)
+    return list(_SELFTEST_CACHE["errors"])
 
 
 def check_criteria(rows: list[dict]) -> None:
@@ -592,6 +598,11 @@ def check_criteria(rows: list[dict]) -> None:
             expected_fail += control.get("expected") == "FAIL"
         require(expected_fail > 0, f"{gate_id}: no control expects FAIL")
         _resolve_adapter(entry.get("adapter"), gate_id)
+    # **A criterion that has never been shown to fail is not a criterion.** The shape checks
+    # above cannot see a principle that passes a control it declares; the behavioural self-test
+    # can, and it runs here so the CI-wired register check executes it.
+    errors = _selftest_errors(by_id, module)
+    require(not errors, "the criteria self-test failed: " + "; ".join(errors[:5]))
 
 
 def check_met_ratchet(document: dict, rows: list[dict]) -> None:
@@ -614,6 +625,9 @@ def check_met_ratchet(document: dict, rows: list[dict]) -> None:
             "met_ratchet.required_ids has duplicates")
     require(minimum == len(required),
             "met_ratchet.minimum must equal the required-id count")
+    floor = getattr(load_builder(), "MINIMUM_MET", 0)
+    require(minimum >= floor,
+            f"met_ratchet.minimum {minimum} is below the floor {floor}")
     by_id = {row["id"]: row for row in rows}
     for ident in required:
         require(ident in by_id, f"met_ratchet names unknown gate {ident}")
@@ -622,6 +636,14 @@ def check_met_ratchet(document: dict, rows: list[dict]) -> None:
     met = {row["id"] for row in rows if row["status"] == "met"}
     require(met == set(required),
             f"the met set {sorted(met)} does not equal the ratchet {sorted(set(required))}")
+
+
+def unproven_controls(controls: dict) -> dict:
+    """The controls that did not demonstrate their failure; SKIPPED (a Rust control) is not one."""
+    return {
+        ident: result for ident, result in controls.items()
+        if result in ("UNPROVEN", "ERROR")
+    }
 
 
 def main() -> int:
@@ -668,6 +690,13 @@ def main() -> int:
         report["result"] = "TRACKER_MUST_REMAIN_OPEN"
         print(json.dumps(report, sort_keys=True))
         return 3
+    if args.run_controls:
+        unproven = unproven_controls(report["controls"])
+        if unproven:
+            report["result"] = "UNPROVEN_CONTROL"
+            report["unproven"] = unproven
+            print(json.dumps(report, sort_keys=True))
+            return 1
     print(json.dumps(report, sort_keys=True))
     return 0
 

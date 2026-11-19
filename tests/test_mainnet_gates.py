@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools/check-mainnet-gates.py"
@@ -23,6 +24,10 @@ BUILD_SPEC = importlib.util.spec_from_file_location(
     "build_mainnet_gates", ROOT / "tools/build-mainnet-gates.py")
 builder = importlib.util.module_from_spec(BUILD_SPEC)
 BUILD_SPEC.loader.exec_module(builder)
+FIXTURE_SPEC = importlib.util.spec_from_file_location(
+    "gate_fixtures", ROOT / "tests/gate_fixtures.py")
+fixtures = importlib.util.module_from_spec(FIXTURE_SPEC)
+FIXTURE_SPEC.loader.exec_module(fixtures)
 REGISTER = json.loads((ROOT / "spec/audit/mainnet-gates.json").read_text())
 MATRIX = json.loads((ROOT / "spec/audit/final-gap-matrix.json").read_text())
 INVENTORY = json.loads((ROOT / "spec/audit/section6-gap-inventory.json").read_text())
@@ -50,6 +55,10 @@ class RegisterTests(unittest.TestCase):
         (run / "source-sha.txt").write_text("a" * 40 + "\n")
         (run / "binary-sha256.txt").write_text("b" * 64 + "\n")
         (run / "result.json").write_text(json.dumps({"result": "PASS"}))
+        # The executable criterion for G584-G1 is the preflight observation. Pack it into the
+        # record so a binding can name it and a later check can re-evaluate the same bytes.
+        (run / "observations.json").write_text(json.dumps(fixtures.base_g584_g1()))
+        (run / "observations-bad.json").write_text(json.dumps({"preflight": {}}))
         cls.records = {}
         for gate_id in ("G520-MIGRATION", "G584-G1"):
             for verdict in ("PASS", "FAIL"):
@@ -103,19 +112,19 @@ class RegisterTests(unittest.TestCase):
                 "mutation": dict(MUTATION),
                 "test": M5_TEST,
                 "expected": "FAIL",
-                "run_record": self.records[("G520-MIGRATION", "FAIL")],
+                "run_record": self.records[(ident, "FAIL")],
             },
         }
         row["evidence"] = {
             "url": "https://github.com/rhovision-org/rholo/actions/runs/1",
-            "digest": record_digest(self.records[("G520-MIGRATION", "PASS")]),
+            "digest": record_digest(self.records[(ident, "PASS")]),
             "source_sha": "a" * 40,
             "binary_sha256": "b" * 64,
-            "record": self.records[("G520-MIGRATION", "PASS")],
+            "record": self.records[(ident, "PASS")],
         }
         return row
 
-    def make_human_met(self, ident="G584-G1"):
+    def make_human_met(self, ident="G520-MIGRATION"):
         row = self.make_met(ident)
         row["witness_kind"] = "human-attestation"
         row["witness_ref"] = "docs/src/spec/gate-terms.md::reviewer"
@@ -127,9 +136,9 @@ class RegisterTests(unittest.TestCase):
             test="docs/src/spec/gate-terms.md::reviewer",
             mutation={"file": "docs/src/spec/gate-terms.md",
                       "before": "Independent", "after": "Dependent"},
-            run_record=self.records[("G584-G1", "FAIL")],
+            run_record=self.records[(ident, "FAIL")],
         )
-        row["evidence"]["record"] = self.records[("G584-G1", "PASS")]
+        row["evidence"]["record"] = self.records[(ident, "PASS")]
         row["evidence"]["digest"] = record_digest(row["evidence"]["record"])
         return row
 
@@ -144,6 +153,12 @@ class RegisterTests(unittest.TestCase):
         witness = self.binding_root / "witness.py"
         ref = f"{witness}::witness"
         mutation = self.binding_root / "mutation.py"
+        # A binding for a gate with no packed records (the eligibility tests) reuses G520's;
+        # those tests are refused before record verification.
+        run_record = self.records.get((ident, "FAIL")) or \
+            self.records[("G520-MIGRATION", "FAIL")]
+        pass_record = self.records.get((ident, "PASS")) or \
+            self.records[("G520-MIGRATION", "PASS")]
         return {
             "gate_id": ident,
             "witness_kind": "python",
@@ -163,16 +178,24 @@ class RegisterTests(unittest.TestCase):
                                  "before": "before", "after": "after"},
                     "test": f"{witness}::self_test",
                     "expected": "FAIL",
-                    "run_record": self.records[("G520-MIGRATION", "FAIL")],
+                    "run_record": run_record,
                 },
             },
             "evidence": {
                 "url": "https://example.invalid/evidence",
-                "digest": record_digest(self.records[("G520-MIGRATION", "PASS")]),
+                "digest": record_digest(pass_record),
                 "source_sha": "a" * 40,
                 "binary_sha256": "b" * 64,
-                "record": self.records[("G520-MIGRATION", "PASS")],
+                "record": pass_record,
             },
+        }
+
+    def criterion_block(self, record, name="raw/observations.json", verdict="PASS"):
+        path = Path(record) / name
+        return {
+            "observations": name,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "verdict": verdict,
         }
 
     def unmet(self, ident="G520-MIGRATION"):
@@ -191,7 +214,7 @@ class RegisterTests(unittest.TestCase):
         })
         return row
 
-    def apply_bindings(self, bindings, rows=None, required=None):
+    def apply_bindings(self, bindings, rows=None, required=None, floor=0):
         rows = rows if rows is not None else [
             self.unmet("G520-MIGRATION"),
             copy.deepcopy(self.row("G428-M1"))]
@@ -202,7 +225,7 @@ class RegisterTests(unittest.TestCase):
             "met_ratchet": {"minimum": len(required), "required_ids": required},
             "bindings": bindings,
         }
-        builder.apply_bindings(rows, document)
+        builder.apply_bindings(rows, document, floor=floor)
         return rows
 
     def test_a_complete_binding_promotes_only_the_bound_row(self):
@@ -248,6 +271,67 @@ class RegisterTests(unittest.TestCase):
         binding["witness_binding"]["control"]["test"] = "x.py::other"
         with self.assertRaisesRegex(ValueError, "witness or its self_test"):
             self.apply_bindings([binding])
+
+    def test_the_builder_refuses_a_rust_witness_that_is_not_a_test(self):
+        """The builder asks the checker's question, so it cannot emit a row the judge refuses."""
+        rust = self.binding_root / "witness.rs"
+        rust.write_text("fn not_a_test() {}\n")
+        binding = self.make_binding()
+        binding["witness_kind"] = "rust-unit"
+        binding["witness_ref"] = f"{rust}::not_a_test"
+        control = binding["witness_binding"]["control"]
+        control.update(control_of=binding["witness_ref"], test=binding["witness_ref"])
+        with self.assertRaisesRegex(ValueError, "#\\[test\\]"):
+            self.apply_bindings([binding])
+
+    def test_the_builder_refuses_a_python_comment_as_a_witness(self):
+        path = self.binding_root / "comment-only.py"
+        path.write_text("# the witness is mentioned here only\n")
+        binding = self.make_binding()
+        binding["witness_ref"] = f"{path}::witness"
+        control = binding["witness_binding"]["control"]
+        control.update(control_of=binding["witness_ref"], test=f"{path}::self_test")
+        with self.assertRaisesRegex(ValueError, "not defined"):
+            self.apply_bindings([binding])
+
+    def test_a_criteria_binding_without_a_criterion_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "criterion binding is required"):
+            self.apply_bindings([self.make_binding("G584-G1")],
+                                rows=[self.unmet("G584-G1")],
+                                required=["G584-G1"])
+
+    def test_a_criterion_on_a_gate_without_an_entry_is_refused(self):
+        binding = self.make_binding()
+        binding["criterion"] = self.criterion_block(
+            self.records[("G520-MIGRATION", "PASS")])
+        with self.assertRaisesRegex(ValueError, "no criterion entry"):
+            self.apply_bindings([binding])
+
+    def test_a_criteria_binding_with_a_wrong_observation_digest_is_refused(self):
+        binding = self.make_binding("G584-G1")
+        binding["criterion"] = self.criterion_block(
+            self.records[("G584-G1", "PASS")])
+        binding["criterion"]["sha256"] = "c" * 64
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            self.apply_bindings([binding], rows=[self.unmet("G584-G1")],
+                                required=["G584-G1"])
+
+    def test_a_criteria_binding_with_a_nonpassing_observation_is_refused(self):
+        binding = self.make_binding("G584-G1")
+        binding["criterion"] = self.criterion_block(
+            self.records[("G584-G1", "PASS")], name="raw/observations-bad.json")
+        with self.assertRaisesRegex(ValueError, "not PASS"):
+            self.apply_bindings([binding], rows=[self.unmet("G584-G1")],
+                                required=["G584-G1"])
+
+    def test_a_criteria_binding_with_a_passing_criterion_promotes_and_is_copied(self):
+        binding = self.make_binding("G584-G1")
+        binding["criterion"] = self.criterion_block(
+            self.records[("G584-G1", "PASS")])
+        rows = self.apply_bindings([binding], rows=[self.unmet("G584-G1")],
+                                   required=["G584-G1"])
+        self.assertEqual(rows[0]["status"], "met")
+        self.assertEqual(rows[0]["criterion"], binding["criterion"])
 
     def test_a_binding_without_its_fail_record_is_refused(self):
         binding = self.make_binding()
@@ -302,6 +386,22 @@ class RegisterTests(unittest.TestCase):
     def test_the_met_ratchet_cannot_regress(self):
         with self.assertRaisesRegex(ValueError, "does not equal the ratchet"):
             self.apply_bindings([self.make_binding()], required=[])
+
+    def test_a_synthetic_ratchet_below_the_floor_is_refused(self):
+        binding = self.make_binding()
+        with self.assertRaisesRegex(ValueError, "below the floor"):
+            self.apply_bindings([binding], required=[binding["gate_id"]], floor=2)
+
+    def test_the_committed_register_is_at_the_builder_floor(self):
+        self.assertEqual(builder.MINIMUM_MET, 47)
+        self.assertEqual(REGISTER["met_ratchet"]["minimum"], builder.MINIMUM_MET)
+
+    def test_check_met_ratchet_refuses_a_ratchet_below_the_floor(self):
+        ids = self.payload["met_ratchet"]["required_ids"][:46]
+        rows = [{"id": ident, "status": "met"} for ident in ids]
+        with self.assertRaisesRegex(gate.GateError, "below the floor"):
+            gate.check_met_ratchet(
+                {"met_ratchet": {"minimum": 46, "required_ids": ids}}, rows)
 
     def test_an_unbound_row_keeps_its_status_and_reason(self):
         rows = self.apply_bindings([], rows=[self.unmet("G520-MIGRATION")],
@@ -414,13 +514,13 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_human_attestation_needs_an_independent_reviewer(self):
-        row = self.make_human_met("G584-G1")
+        row = self.make_human_met("G520-MIGRATION")
         self.assertNotIn("attestation", row)
         with self.assertRaisesRegex(gate.GateError, "attestation.reviewer"):
             self.inspect()
 
     def test_human_attestation_needs_a_review_record(self):
-        row = self.make_human_met("G584-G1")
+        row = self.make_human_met("G520-MIGRATION")
         row["attestation"] = {
             "reviewer": "external-reviewer",
             "relationship": "not the owner",
@@ -433,7 +533,7 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_human_attestation_needs_the_evidence_digest(self):
-        row = self.make_human_met("G584-G1")
+        row = self.make_human_met("G520-MIGRATION")
         digest = row["evidence"]["digest"]
         review = self.write_review("external-reviewer", "PASS", digest)
         row["attestation"] = {
@@ -448,7 +548,7 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_the_signed_digest_must_be_the_evidence_digest(self):
-        row = self.make_human_met("G584-G1")
+        row = self.make_human_met("G520-MIGRATION")
         review = self.write_review("external-reviewer", "PASS", "c" * 64)
         row["attestation"] = {
             "reviewer": "external-reviewer",
@@ -463,7 +563,7 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_the_review_record_must_carry_the_digest(self):
-        row = self.make_human_met("G584-G1")
+        row = self.make_human_met("G520-MIGRATION")
         digest = row["evidence"]["digest"]
         review = self.write_review("external-reviewer", "PASS", "d" * 64)
         row["attestation"] = {
@@ -479,7 +579,7 @@ class RegisterTests(unittest.TestCase):
             self.inspect()
 
     def test_a_complete_attestation_is_accepted(self):
-        row = self.make_human_met("G584-G1")
+        row = self.make_human_met("G520-MIGRATION")
         digest = row["evidence"]["digest"]
         review = self.write_review("external-reviewer", "PASS", digest)
         row["attestation"] = {
@@ -492,6 +592,25 @@ class RegisterTests(unittest.TestCase):
             "evidence_sha256": digest,
         }
         self.assertIsInstance(self.inspect(), dict)
+
+    def test_a_criteria_met_row_without_a_criterion_is_refused(self):
+        self.make_met("G584-G1")
+        with self.assertRaisesRegex(gate.GateError, "criterion binding is required"):
+            self.inspect()
+
+    def test_a_criteria_met_row_with_a_nonpassing_observation_is_refused(self):
+        row = self.make_met("G584-G1")
+        row["criterion"] = self.criterion_block(
+            self.records[("G584-G1", "PASS")], name="raw/observations-bad.json")
+        with self.assertRaisesRegex(gate.GateError, "not PASS"):
+            self.inspect()
+
+    def test_a_criteria_met_row_with_a_passing_criterion_is_accepted(self):
+        row = self.make_met("G584-G1")
+        row["criterion"] = self.criterion_block(
+            self.records[("G584-G1", "PASS")])
+        result = self.inspect()
+        self.assertEqual(result["result"], "REGISTER_VALID")
 
     def test_bare_path_witness_is_refused(self):
         row = self.make_met()
@@ -543,6 +662,26 @@ class RegisterTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.GateError, "ancestor"):
             self.inspect()
 
+    def test_a_shallow_checkout_records_unverified_ancestry(self):
+        """CI checks out at depth 1, where the pinned dev commit is absent.
+
+        The register must stay checkable there; the report records the degradation, and a full
+        checkout still enforces the ancestor rule.
+        """
+        real = gate.subprocess.run
+
+        def fake(command, *args, **kwargs):
+            if isinstance(command, list) and command[:3] == ["git", "-C", str(gate.ROOT)]:
+                if "rev-parse" in command:
+                    return SimpleNamespace(returncode=0, stdout="true\n")
+                if "merge-base" in command:
+                    raise AssertionError("ancestry was checked in a shallow checkout")
+            return real(command, *args, **kwargs)
+
+        with mock.patch.object(gate.subprocess, "run", side_effect=fake):
+            out = self.inspect()
+        self.assertEqual(out["ancestry"], "unverified-shallow")
+
     def test_source_block_must_match(self):
         self.payload["sources"]["G428"]["sha256"] = "0" * 64
         with self.assertRaisesRegex(gate.GateError, "source hash"):
@@ -552,6 +691,26 @@ class RegisterTests(unittest.TestCase):
         self.row("G428-M1")["source_phrase"] = "a tautology"
         with self.assertRaisesRegex(gate.GateError, "source phrase"):
             self.inspect()
+
+    def test_an_unproven_control_is_a_failure_not_a_note(self):
+        self.assertEqual(
+            gate.unproven_controls({"a": "CONTROLLED", "b": "SKIPPED"}), {})
+        self.assertEqual(
+            gate.unproven_controls(
+                {"a": "UNPROVEN", "b": "ERROR", "c": "SKIPPED", "d": "CONTROLLED"}),
+            {"a": "UNPROVEN", "b": "ERROR"})
+
+    def test_the_register_check_runs_the_criteria_self_test(self):
+        """The CI-reached hook: a failing self-test must fail `check_criteria`, not be ignored."""
+        fake = SimpleNamespace(run=lambda entries, principles=None: ["boom: a vacuous control"])
+        saved = dict(gate._SELFTEST_CACHE)
+        try:
+            gate._SELFTEST_CACHE.update({"key": None, "errors": []})
+            with mock.patch.object(gate, "_load_tool", return_value=fake):
+                with self.assertRaisesRegex(gate.GateError, "criteria self-test failed"):
+                    gate.check_criteria(REGISTER["gates"])
+        finally:
+            gate._SELFTEST_CACHE.update(saved)
 
     def test_criteria_hash_must_match_the_gate_text(self):
         self.row("G428-M1")["pass_condition"] = "Trivially met"

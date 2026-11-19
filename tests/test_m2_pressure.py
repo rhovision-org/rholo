@@ -54,6 +54,13 @@ class PressureTests(unittest.TestCase):
         self.assertEqual(status, "FAIL")
         self.assertTrue(any("probe count" in problem for problem in problems), problems)
 
+    def test_a_materialised_path_cannot_escape_its_directory(self):
+        spec = fixtures.base_g428_m2()
+        spec["pressure"]["files"]["../escape.jsonl"] = "{}\n"
+        status, problems = pressure.check_pressure(spec["pressure"], PARAMETERS)
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("escapes" in problem for problem in problems), problems)
+
     def test_a_packed_file_must_be_digest_pinned(self):
         spec = mutate("pressure/files/SHA256SUMS.json", "{}")
         status, problems = pressure.check_pressure(spec["pressure"], PARAMETERS)

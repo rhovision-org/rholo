@@ -202,6 +202,15 @@ carries `G6: PENDING` when no record is supplied (and the record's status when o
 `overall: NOT_A_VERDICT` and `execution_proven: false` are always present. The named independent
 reviewer records the verdict; the tool only checks the record's shape.
 
+**The promotion observation.** The executable criteria (G1–G5) are a promotion precondition, not a
+parallel note: a binding for a G584 gate must carry `criterion: {observations, sha256,
+verdict: "PASS"}`. `tools/gate-collect.py sample --config <plan> --out <run>` runs the same
+sampler and writes `<run>/observations.json` in the evaluator's shape. Before packing, set that
+document's `record.dir` to the **final committed evidence record** — the register checker
+re-evaluates the observation from that path on every check, so a scratch `target/` path fails by
+design. Pack the run so the file is `raw/observations.json`; the promotion binding names that path
+and its sha256.
+
 ### 1.4. Criterion map
 
 | Gate | Where it is evidenced |

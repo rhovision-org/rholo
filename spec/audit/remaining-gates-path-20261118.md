@@ -142,6 +142,19 @@ and the criterion refuses the document for locality. The live B/C/D snapshot rem
 | Jim | declared capacity tier and stake↔failure-domain map; independent hosts; a fifth routable observer; N=8 capacity | M1, M3, M4 |
 | Aria/operator | B/C/D read-only snapshot with the admin endpoint and a build that serves `/api/v1/status/operator` | C343 |
 
+## Promotion now requires the criterion (2026-11-19)
+
+An executable-criterion gate cannot be promoted on witness+evidence alone. Its binding carries
+`criterion: {observations, sha256, verdict: "PASS"}`; the observation must be a file inside the
+verified evidence record, listed in that record's manifest, and the gate's own evaluator must
+return PASS on those bytes. `check-mainnet-gates.py` re-runs the evaluation on every check, and the
+CI-wired test in `test_hardfork_51_closeout.py` runs the checker.
+
+For the live gates, `tools/gate-collect.py sample` already writes `observations.json` and
+`evidence-pack pack` copies it to `raw/observations.json`. The runbook step is to have the
+observation's `record.dir` name the committed evidence record (not a scratch `target/` run) before
+packing: a non-durable path fails the CI re-check by design.
+
 ## What this does not establish
 
 - No gate was promoted. The register is still 59 gates, 47 met, 12 open.

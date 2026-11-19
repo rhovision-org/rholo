@@ -384,6 +384,50 @@ def _integer(value: Any) -> int | None:
     return value
 
 
+# The fields `observation()` coerces. A string is not an observation: `bool("false")` is true,
+# `int("0")` is zero, so a node that reported `ready = "false"` would be recorded as healthy.
+CONTRACT_TYPES: dict[str, dict[str, object]] = {
+    "health": {
+        "ready": bool,
+        "proposalHalted": bool,
+        "finalityStalled": bool,
+        "readyReasons": list,
+        "shardPhases": (dict, list),
+        "pipelineFaultsOutstanding": int,
+        "orphanBodies": int,
+    },
+    "operator": {
+        "pipelineFaultsOutstanding": int,
+        "proposalHalted": bool,
+        "finalityStalled": bool,
+        "orphanBodies": int,
+        "syncPhase": str,
+    },
+}
+
+
+def _type_name(expected: object) -> str:
+    if isinstance(expected, tuple):
+        return "/".join(kind.__name__ for kind in expected)
+    return getattr(expected, "__name__", str(expected))
+
+
+def _type_problems(health: dict[str, Any], operator: dict[str, Any]) -> list[str]:
+    """Wrong-typed contract fields, named. Absence is handled by the completeness rule."""
+    problems: list[str] = []
+    for surface, document in (("health", health), ("operator", operator)):
+        for field, expected in CONTRACT_TYPES[surface].items():
+            if field not in document:
+                continue
+            value = document[field]
+            ok = isinstance(value, expected)
+            if isinstance(value, bool) and expected is int:
+                ok = False
+            if not ok:
+                problems.append(f"{surface}.{field} is not a {_type_name(expected)}")
+    return problems
+
+
 def host_evaluation(health: dict[str, Any], operator: dict[str, Any],
                     block6_text: str, table: list[dict[str, Any]]) -> dict[str, Any]:
     """One host's complete worksheet, shared by the criterion and `verify_run`.
@@ -408,14 +452,21 @@ def host_evaluation(health: dict[str, Any], operator: dict[str, Any],
     observed: dict[str, Any] = {}
     is_consistent = False
     unreadable = False
+    unreadable_detail: str | None = None
     if complete:
-        try:
-            observed = observation(health, operator)
-            is_consistent = consistent(observed)
-            diagnosis = diagnose(table, observed)
-        except (TypeError, ValueError):
+        type_problems = _type_problems(health, operator)
+        if type_problems:
             complete = False
             unreadable = True
+            unreadable_detail = "; ".join(type_problems)
+        else:
+            try:
+                observed = observation(health, operator)
+                is_consistent = consistent(observed)
+                diagnosis = diagnose(table, observed)
+            except (TypeError, ValueError):
+                complete = False
+                unreadable = True
     if complete:
         if not is_consistent:
             cells["phase-discriminator"] = cell("FAIL", "the observation is inconsistent")
@@ -469,8 +520,9 @@ def host_evaluation(health: dict[str, Any], operator: dict[str, Any],
         else:
             cells["reset-marker"] = cell("PASS", "no reset marker")
     else:
-        detail = ("the observation fields are not readable" if unreadable
-                  else "the observation cannot be completed")
+        detail = (unreadable_detail
+                  or ("the observation fields are not readable" if unreadable
+                      else "the observation cannot be completed"))
         for name in ("phase-discriminator", "height-gap", "readiness-conjunction",
                      "fault-latch", "isolation", "reset-marker"):
             cells[name] = cell("PRECONDITION", detail)
