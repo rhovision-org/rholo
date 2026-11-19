@@ -72,6 +72,16 @@ def canonical_hash(value: object) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _load_tool(name: str, filename: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+witness = _load_tool("gate_witness", "gate-witness.py")
+
+
 def load_laws() -> dict[str, dict[str, str]]:
     path = ROOT / "spec" / "laws.tsv"
     index: dict[str, dict[str, str]] = {}
@@ -89,15 +99,6 @@ def normalize_source(text: str) -> str:
     return re.sub(r"\s+", " ", text.replace("*", "").replace("`", "")).strip().lower()
 
 
-def test_attribute(text: str, symbol: str) -> bool:
-    lines = text.splitlines()
-    for index, line in enumerate(lines):
-        if re.search(rf"\bfn\s+{re.escape(symbol)}\b", line):
-            window = "\n".join(lines[max(0, index - 3):index + 1])
-            return "#[test]" in window or "#[tokio::test]" in window
-    return False
-
-
 def resolve_test_ref(ref: str) -> None:
     require(isinstance(ref, str) and "::" in ref,
             "a negative control must name a test as path::symbol")
@@ -106,7 +107,7 @@ def resolve_test_ref(ref: str) -> None:
     require(path.is_file(), f"control path {path_text} does not exist")
     text = path.read_text(errors="ignore")
     if path.suffix == ".rs":
-        require(test_attribute(text, symbol),
+        require(witness.test_attribute(text, symbol),
                 f"control {ref} is not a #[test]")
     elif path.suffix == ".py":
         require(re.search(rf"\bdef\s+{re.escape(symbol)}\b", text)
@@ -200,42 +201,8 @@ def resolve_witness(row: dict) -> None:
     require(isinstance(ref, str) and "::" in ref,
             f"{row['id']}: a met witness must be path::symbol, not a bare file")
     path_text, symbol = ref.split("::", 1)
-    path = ROOT / path_text
-    require(path.is_file(), f"{row['id']}: witness path {path_text} does not exist")
-    text = path.read_text(errors="ignore")
-    if symbol.startswith("--"):
-        require(symbol in text, f"{row['id']}: witness flag {symbol} not found")
-    elif kind.startswith("rust-"):
-        require(path.suffix == ".rs", f"{row['id']}: a rust witness must be a .rs file")
-        require(test_attribute(text, symbol),
-                f"{row['id']}: witness {ref} is not a #[test]")
-    elif kind == "python":
-        require(path.suffix in {".py", ".sh"},
-                f"{row['id']}: a python witness must be .py or .sh")
-        if path.suffix == ".py":
-            require(re.search(rf"\bdef\s+{re.escape(symbol)}\b", text),
-                    f"{row['id']}: witness {symbol} is not defined in {path_text}")
-        else:
-            require(symbol in text,
-                    f"{row['id']}: witness {symbol} not found in {path_text}")
-    elif kind == "lean":
-        require(path.suffix == ".lean"
-                and re.search(rf"\btheorem\s+{re.escape(symbol)}\b", text),
-                f"{row['id']}: a lean witness must be a theorem")
-    elif kind == "human-attestation":
-        require(path.suffix == ".md",
-                f"{row['id']}: a human attestation must be a markdown record")
-    elif kind == "decision":
-        require(False, f"{row['id']}: a decision gate has no executable witness")
-    else:
-        # local-devnet / two-binary / live-host: the content check is the file's language, not
-        # the witness_kind label. A comment or a docstring is not a witness.
-        if path.suffix == ".py":
-            require(re.search(rf"\bdef\s+{re.escape(symbol)}\b", text),
-                    f"{row['id']}: witness {symbol} is not defined in {path_text}")
-        else:
-            require(symbol in text,
-                    f"{row['id']}: witness {symbol} not found in {path_text}")
+    witness_problem = witness.problem(kind, path_text, symbol)
+    require(witness_problem is None, f"{row['id']}: {witness_problem}")
     binding = row.get("witness_binding")
     require(isinstance(binding, dict),
             f"{row['id']}: a met gate needs witness_binding")

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -53,6 +54,16 @@ INELIGIBLE_IDS = {"TA-C3"}
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)
+
+
+def _load_tool(name: str, filename: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+witness = _load_tool("gate_witness", "gate-witness.py")
 
 
 def _is_test(path: Path, symbol: str) -> bool:
@@ -146,6 +157,10 @@ def _binding_shape(binding: dict, row: dict) -> None:
     require((ROOT / path_text).is_file(),
             f"{ident}: witness path {path_text} does not exist")
     require(bool(symbol.strip()), f"{ident}: witness symbol is empty")
+    # **The builder asks the checker's question.** A file and a non-empty symbol are not a
+    # witness; the kind-specific rule lives in one shared resolver.
+    witness_problem = witness.problem(binding["witness_kind"], path_text, symbol)
+    require(witness_problem is None, f"{ident}: {witness_problem}")
     block = binding.get("witness_binding")
     require(isinstance(block, dict), f"{ident}: witness_binding is required")
     expected = hashlib.sha256(str(row["pass_condition"]).encode()).hexdigest()

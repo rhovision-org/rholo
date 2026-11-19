@@ -249,6 +249,28 @@ class RegisterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "witness or its self_test"):
             self.apply_bindings([binding])
 
+    def test_the_builder_refuses_a_rust_witness_that_is_not_a_test(self):
+        """The builder asks the checker's question, so it cannot emit a row the judge refuses."""
+        rust = self.binding_root / "witness.rs"
+        rust.write_text("fn not_a_test() {}\n")
+        binding = self.make_binding()
+        binding["witness_kind"] = "rust-unit"
+        binding["witness_ref"] = f"{rust}::not_a_test"
+        control = binding["witness_binding"]["control"]
+        control.update(control_of=binding["witness_ref"], test=binding["witness_ref"])
+        with self.assertRaisesRegex(ValueError, "#\\[test\\]"):
+            self.apply_bindings([binding])
+
+    def test_the_builder_refuses_a_python_comment_as_a_witness(self):
+        path = self.binding_root / "comment-only.py"
+        path.write_text("# the witness is mentioned here only\n")
+        binding = self.make_binding()
+        binding["witness_ref"] = f"{path}::witness"
+        control = binding["witness_binding"]["control"]
+        control.update(control_of=binding["witness_ref"], test=f"{path}::self_test")
+        with self.assertRaisesRegex(ValueError, "not defined"):
+            self.apply_bindings([binding])
+
     def test_a_binding_without_its_fail_record_is_refused(self):
         binding = self.make_binding()
         binding["witness_binding"]["control"]["run_record"] = str(
