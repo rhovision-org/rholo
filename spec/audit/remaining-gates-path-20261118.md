@@ -161,6 +161,9 @@ packing: a non-durable path fails the CI re-check by design.
 - The A1.3 record is `local-devnet`, not the live TA-C1 witness; the rehearsal's preflight is
   synthetic and is not #584 evidence.
 - No public deployment, real key, transfer or disruptive public-network arm ran.
-- M1/M4 also carry code gaps before their campaigns: a typed tier record (M1) and a cross-host arm
-  (M4). M3's transport/stage-6 witness is now typed and checkable; its off-host arm and failover
-  remain. They are not host-only tasks.
+- M1's typed tier record now exists (`capacity_tier`, `tools/capacity-tier.py`): the declaration,
+  the measured RAM/CPU/disk/RSS/replay record and the supermajority check are executable. What
+  remains is the declared tier and stake/host map, a measured campaign, and the multi-host
+  host-kill arm. M4's cross-host arm is still a code-and-campaign gap. M3's transport/stage-6
+  witness is typed and checkable; its off-host arm and failover remain. They are not host-only
+  tasks.

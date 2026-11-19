@@ -23,6 +23,11 @@ import subprocess
 import sys
 import time
 
+TOOLS = os.path.dirname(os.path.abspath(__file__))
+if TOOLS not in sys.path:
+    sys.path.insert(0, TOOLS)
+from capacity_facts import container_runtime, rss_mb  # noqa: E402
+
 PREFIX = os.environ.get("DEVNET_PREFIX", "n420soak")
 DEFAULT_CONTAINER = f"{PREFIX}-validator-1"
 SHARD = "/root"
@@ -157,7 +162,13 @@ def main():
 
     deadline = time.time() + args.timeout
     recovered = None
+    replay_peak = None
+    interval = 2
     while time.time() < deadline:
+        # The admin listener does not answer during replay, so read the process directly.
+        sample = rss_mb(args.container)
+        if sample is not None:
+            replay_peak = sample if replay_peak is None else max(replay_peak, sample)
         try:
             status = get(args.container, "/api/status")
             if status["latestBlockNumber"] >= height:
@@ -165,21 +176,27 @@ def main():
                 break
         except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError):
             pass
-        time.sleep(2)
+        time.sleep(interval)
     elapsed = time.time() - started
     if recovered is None:
         raise SystemExit(f"the node did not replay to height {height} within {args.timeout}s")
 
+    runtime = container_runtime(args.container)
     after_facts = facts(args.container)
     anchor_after = get(args.container, "/api/block/" + anchor["blockHash"]).get(
         "blockInfo", {}
     )
     record = {
-        "boundary": "finite restart/replay witness on a below-minimum host; not a supported-tier claim",
+        "boundary": "finite restart/replay witness; the collector classifies it against the "
+                    "declared tier",
+        "runtime": runtime,
         "container": args.container,
         "anchor_block": anchor["blockHash"],
         "anchor_height": height,
         "replay_seconds": elapsed,
+        "replay_height": recovered["latestBlockNumber"],
+        "replay_peak_rss_mb": replay_peak,
+        "rss_sample_interval_s": interval,
         "before": before_facts,
         "after": after_facts,
         "recovered_height": recovered["latestBlockNumber"],
@@ -188,7 +205,9 @@ def main():
         "manual_restart": True,
         "non_claims": [
             "one node, one SIGKILL; not a universal recovery theorem",
-            "restarted with the operator's --allow-under-minimum on a below-minimum host",
+            "the peak RSS is the maximum of samples every 2 s, not an exact high-water mark",
+            "the recorded command line is what the container was started with; a HOCON "
+            "override is not visible here",
         ],
     }
     os.makedirs(args.out, exist_ok=True)

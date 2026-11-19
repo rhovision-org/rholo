@@ -524,47 +524,257 @@ def join_chain(observations: dict, parameters: dict) -> dict:
             directory.cleanup()
 
 
-def resource_attribution(observations: dict, parameters: dict) -> dict:
-    """The observed process table, counted by name.
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
-    `declared_count` is the record's own claim, so this is a self-consistency check, not
-    independent evidence. It is still required: without it the declared-versus-measured rule has
-    nothing to compare, and a record could omit the number it is supposed to prove. A pid must be a
-    positive integer and appear once; the Rust witness counts numeric `/proc/<pid>` entries only.
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+CAPACITY_OVERRIDES = ("--allow-under-minimum", "--accept-under-minimum-risk")
+
+
+def _override_words(argv: list[str]) -> list[str]:
+    return [word for word in argv
+            if any(word == flag or word.startswith(flag + "=") for flag in CAPACITY_OVERRIDES)]
+
+
+def capacity_tier(observations: dict, parameters: dict) -> dict:
+    """A typed declaration of the supported tier and the measurements that claim it.
+
+    The record is either readable evidence or it is not: a missing or wrong-typed field, an
+    unknown tier, an unreadable RSS, or a run that is not a supported-tier measurement is
+    PRECONDITION. A readable record that contradicts its declaration is FAIL. The distinct host
+    ids are a declaration, not proof of independent provisioning, and the fault-domain arithmetic
+    is only as good as the stake map the record states.
     """
     record = observations.get("record")
     if not isinstance(record, dict):
         return verdict("PRECONDITION", ["record is absent"])
-    processes = record.get("host_processes")
-    if not isinstance(processes, list) or not processes:
-        return verdict("PRECONDITION", ["record.host_processes is absent or empty"])
-    declared = record.get("declared_count")
-    if declared is None:
-        return verdict("PRECONDITION", ["record.declared_count is absent"])
-    if not isinstance(declared, int) or isinstance(declared, bool) or declared < 0:
-        return verdict("FAIL", ["record.declared_count must be a non-negative integer"])
-    name = str(parameters.get("process_name") or "rnode")
-    counted: list[int] = []
-    seen: set[int] = set()
-    for entry in processes:
-        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
-            return verdict("FAIL", ["every process entry must be an object with a name"])
-        pid = entry.get("pid")
-        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
-            return verdict("FAIL", ["every process entry must carry a positive integer pid"])
-        if pid in seen:
-            # A host's process table has one entry per pid; a repeat is a malformed observation,
-            # not a second process, whatever name it carries.
-            return verdict("FAIL", ["a process pid is listed more than once"])
-        seen.add(pid)
-        if entry["name"] == name:
-            counted.append(pid)
-    if not counted:
-        return verdict("PRECONDITION", [f"no process named {name!r} was observed"])
-    if declared != len(counted):
+    if record.get("kind") != "supported-tier":
+        return verdict("PRECONDITION",
+                       ["the record is not a supported-tier measurement"])
+    declared = record.get("declared")
+    validators = record.get("validators")
+    if not isinstance(declared, dict):
+        return verdict("PRECONDITION", ["record.declared is absent"])
+    if not isinstance(validators, list) or not validators:
+        return verdict("PRECONDITION", ["record.validators is absent or empty"])
+
+    tier = declared.get("tier")
+    if tier not in ("minimal", "comfortable"):
+        return verdict("PRECONDITION", ["record.declared.tier is not a known tier"])
+    minima = declared.get("per_validator")
+    if not isinstance(minima, dict):
+        return verdict("PRECONDITION", ["record.declared.per_validator is absent"])
+    for field in ("cores", "ram_gib", "disk_gib"):
+        value = minima.get(field)
+        if not _is_int(value) or value <= 0:
+            return verdict(
+                "PRECONDITION",
+                [f"record.declared.per_validator.{field} is not a positive integer"])
+
+    # Policy scalars: a wrong type is unreadable (PRECONDITION); a readable non-positive value is
+    # a declaration that cannot support a claim (FAIL).
+    for field in ("max_peak_rss_mb", "max_replay_seconds", "served_height",
+                  "host_failure_tolerance", "validator_count", "total_stake"):
+        if not _is_int(declared.get(field)):
+            return verdict("PRECONDITION", [f"record.declared.{field} is not an integer"])
+    max_peak = declared["max_peak_rss_mb"]
+    max_replay = declared["max_replay_seconds"]
+    served = declared["served_height"]
+    tolerance = declared["host_failure_tolerance"]
+    problems: list[str] = []
+    if max_peak <= 0 or max_peak > minima["ram_gib"] * 1024:
+        problems.append("the declared peak-RSS budget is not a positive share of the declared RAM")
+    if max_replay <= 0:
+        problems.append("the declared replay budget must be positive")
+    if served <= 0:
+        problems.append("the declared served height must be positive")
+    if tolerance < 1:
+        problems.append("a supported-tier claim must declare a host failure tolerance of at least one")
+    if declared["validator_count"] != len(validators):
+        problems.append("record.declared.validator_count does not equal the validators listed")
+    if problems:
+        return verdict("FAIL", problems)
+
+    floor = {
+        "cores": parameters[f"{tier}_cores"],
+        "ram_gib": parameters[f"{tier}_ram_gib"],
+        "disk_gib": parameters[f"{tier}_disk_gib"],
+    }
+    short = [field for field in floor if minima[field] < floor[field]]
+    if short:
         return verdict(
-            "FAIL", [f"declared count {declared} != observed {len(counted)} {name} process(es)"])
-    return verdict("PASS", [], {"count": len(counted), "process_name": name})
+            "FAIL",
+            [f"the declared tier does not meet the {tier} floor: {field}" for field in short])
+
+    measured_ints = ("rss_mb", "peak_rss_mb", "mem_total_mb", "host_cores",
+                     "data_dir_free_mb", "rnode_processes", "chain_height",
+                     "replay_peak_rss_mb", "replay_height",
+                     "oom_kills_delta", "restart_count_delta")
+    seen_ids: set[str] = set()
+    host_stakes: dict[str, int] = {}
+    host_counts: dict[str, int] = {}
+    peaks: list[int] = []
+    cpus: list[float] = []
+    disks: list[int] = []
+    for index, entry in enumerate(validators):
+        where = f"validators[{index}]"
+        if not isinstance(entry, dict):
+            return verdict("PRECONDITION", [f"{where} is not an object"])
+        ident = entry.get("id")
+        host = entry.get("host")
+        stake = entry.get("stake")
+        if not isinstance(ident, str) or not ident:
+            return verdict("PRECONDITION", [f"{where}.id is not a non-empty string"])
+        if ident in seen_ids:
+            return verdict("FAIL", [f"{where}.id is listed more than once"])
+        seen_ids.add(ident)
+        if not isinstance(host, str) or not host:
+            return verdict("PRECONDITION", [f"{where}.host is not a non-empty string"])
+        if not _is_int(stake) or stake <= 0:
+            return verdict("FAIL", [f"{where}.stake must be a positive integer"])
+        measured = entry.get("measured")
+        if not isinstance(measured, dict):
+            return verdict("PRECONDITION", [f"{where}.measured is absent"])
+        for field in measured_ints:
+            if not _is_int(measured.get(field)):
+                return verdict("PRECONDITION",
+                               [f"{where}.measured.{field} is not an integer"])
+        limit = measured.get("cgroup_limit_mb")
+        if limit is not None and (not _is_int(limit) or limit <= 0):
+            return verdict(
+                "PRECONDITION",
+                [f"{where}.measured.cgroup_limit_mb is not a positive integer or null"])
+        cpu = measured.get("cpu_cores")
+        if not _is_number(cpu) or cpu <= 0:
+            return verdict("PRECONDITION",
+                           [f"{where}.measured.cpu_cores is not a positive number"])
+        replay_seconds = measured.get("replay_seconds")
+        if not _is_number(replay_seconds) or replay_seconds <= 0:
+            return verdict("PRECONDITION",
+                           [f"{where}.measured.replay_seconds is unreadable"])
+        states = measured.get("fallback_states")
+        if not isinstance(states, list) or not all(isinstance(state, str) for state in states):
+            return verdict("PRECONDITION",
+                           [f"{where}.measured.fallback_states is not a list of states"])
+        override = measured.get("runtime_override")
+        if not isinstance(override, bool):
+            return verdict("PRECONDITION",
+                           [f"{where}.measured.runtime_override is not a boolean"])
+        argv = measured.get("argv")
+        if not isinstance(argv, list) or not argv or not all(
+                isinstance(word, str) for word in argv):
+            return verdict("PRECONDITION", [f"{where}.measured.argv is not a command line"])
+        config = measured.get("container_config")
+        if not isinstance(config, dict) or not isinstance(config.get("cmd"), list) or not all(
+                isinstance(word, str) for word in config["cmd"]):
+            return verdict(
+                "PRECONDITION",
+                [f"{where}.measured.container_config.cmd is not a command line"])
+
+        unreadable = [field for field in
+                      ("rss_mb", "peak_rss_mb", "replay_peak_rss_mb",
+                       "host_cores", "rnode_processes") if measured[field] <= 0]
+        if unreadable:
+            return verdict("PRECONDITION",
+                           [f"{where}.measured.{field} is unreadable" for field in unreadable])
+
+        problems = []
+        if override:
+            problems.append("the run used the under-minimum override")
+        flags = _override_words(argv)
+        if flags and not override:
+            problems.append("the recorded command line carries the under-minimum override "
+                            "but runtime_override is false")
+        if measured["rnode_processes"] != 1:
+            problems.append("the sample must come from one validator's container")
+        if measured["chain_height"] < served:
+            problems.append(
+                f"the measured chain height is below the declared served height {served}")
+        if measured["replay_height"] < served:
+            problems.append(f"the replay height is below the declared served height {served}")
+        if measured["replay_seconds"] > max_replay:
+            problems.append(f"replay took longer than the declared {max_replay} s budget")
+        if measured["peak_rss_mb"] > max_peak:
+            problems.append(f"the peak RSS exceeds the declared {max_peak} MiB budget")
+        if measured["replay_peak_rss_mb"] > max_peak:
+            problems.append(f"the replay peak RSS exceeds the declared {max_peak} MiB budget")
+        if measured["oom_kills_delta"] != 0:
+            problems.append("the run was OOM-killed")
+        if measured["restart_count_delta"] != 0:
+            problems.append("the container restarted during the run")
+        if any(state in ("critical", "unavailable") for state in states):
+            problems.append("the fallback state reached critical or unavailable")
+        if problems:
+            return verdict("FAIL", [f"{where}: {problem}" for problem in problems])
+
+        host_stakes[host] = host_stakes.get(host, 0) + stake
+        host_counts[host] = host_counts.get(host, 0) + 1
+        peaks.append(measured["peak_rss_mb"])
+        cpus.append(cpu)
+        disks.append(measured["data_dir_free_mb"])
+
+    share = minima["ram_gib"] * 1024
+    problems = []
+    for host, count in host_counts.items():
+        for index, entry in enumerate(validators):
+            if entry["host"] != host:
+                continue
+            measured = entry["measured"]
+            limit = measured["cgroup_limit_mb"]
+            if limit is not None:
+                if limit < share:
+                    problems.append(
+                        f"validators[{index}]: the cgroup limit is below the declared "
+                        "per-validator share")
+            elif count > 1:
+                problems.append(
+                    f"validators[{index}]: a host running {count} validators has no "
+                    "per-validator cgroup limit")
+            elif measured["mem_total_mb"] < share:
+                problems.append(
+                    f"validators[{index}]: the host's memory is below the declared share")
+    for index, entry in enumerate(validators):
+        measured = entry["measured"]
+        if measured["cpu_cores"] < minima["cores"]:
+            problems.append(
+                f"validators[{index}]: the CPU share is below the declared core count")
+        if measured["data_dir_free_mb"] < minima["disk_gib"] * 1024:
+            problems.append(f"validators[{index}]: free disk is below the declared size")
+    if problems:
+        return verdict("FAIL", problems)
+
+    if len(host_stakes) < 2:
+        return verdict("FAIL", ["a supported-tier claim needs at least two declared hosts"])
+    total = sum(host_stakes.values())
+    if total != declared["total_stake"]:
+        return verdict(
+            "FAIL",
+            ["record.declared.total_stake does not equal the sum of the listed stakes"])
+    if tolerance >= len(host_stakes):
+        return verdict(
+            "FAIL",
+            ["the declared host failure tolerance exceeds the number of declared hosts"])
+    lost = sum(sorted(host_stakes.values(), reverse=True)[:tolerance])
+    remaining = total - lost
+    if 3 * remaining <= 2 * total:
+        return verdict(
+            "FAIL",
+            [f"losing {tolerance} host(s) leaves {remaining} of {total} stake, "
+             "which is not a supermajority"])
+    return verdict("PASS", [], {
+        "validators": len(validators),
+        "hosts": len(host_stakes),
+        "total_stake": total,
+        "lost_stake": lost,
+        "remaining_stake": remaining,
+        "min_peak_rss_mb": min(peaks),
+        "min_cpu_cores": min(cpus),
+        "min_data_dir_free_mb": min(disks),
+    })
 
 
 PRINCIPLES = {
@@ -582,7 +792,7 @@ PRINCIPLES = {
     "pressure_refusal": pressure_refusal,
     "off_host_claim": off_host_claim,
     "join_chain": join_chain,
-    "resource_attribution": resource_attribution,
+    "capacity_tier": capacity_tier,
 }
 
 PARAMETER_SCHEMA = {
@@ -601,7 +811,10 @@ PARAMETER_SCHEMA = {
     "pressure_refusal": {"queues": list, "locality": str, "rate_ceiling": int},
     "off_host_claim": {},
     "join_chain": {"locality": str},
-    "resource_attribution": {"process_name": str},
+    "capacity_tier": {
+        "minimal_cores": int, "minimal_ram_gib": int, "minimal_disk_gib": int,
+        "comfortable_cores": int, "comfortable_ram_gib": int, "comfortable_disk_gib": int,
+    },
 }
 
 
@@ -646,6 +859,14 @@ def evaluate(principle: str, observations: dict, parameters: dict) -> dict:
 
 
 def evaluate_entry(entry: dict, observations: dict) -> dict:
+    # The parameters are the criterion's own data, so a malformed one is an authoring defect, not
+    # missing evidence: refuse it before the observation is read. Without this the schema is
+    # enforced only by the meta-test, and a silently coerced parameter can change the verdict.
+    parameter_errors = validate_parameters(entry.get("principle"),
+                                           entry.get("parameters") or {})
+    if parameter_errors:
+        return verdict("FAIL", [f"the criterion's parameters are invalid: {error}"
+                                for error in parameter_errors])
     missing = [path for path in entry.get("requires") or [] if not _present(_get(observations, path))]
     if missing:
         return verdict("PRECONDITION",

@@ -13871,3 +13871,62 @@ remaining CI wiring are owed, not waived.
 
 **State.** 59 registered gates, 47 met, 12 unresolved; `--assert-closeable` exits 3;
 `check-hardfork-51-closeout.py` still opens.
+
+## 182. M1's supported tier becomes a typed, measured record (2026-11-19)
+
+**What this pass found.** G428-M1's pass condition is about declared and measured RAM/CPU, peak
+RSS, replay headroom, a stake/failure-domain map and the claimed host-failure tolerance. The
+executable criterion checked a hand-written process table and a declared count, and nothing in the
+tree produced even that record: the criterion's only input was its synthetic fixture. The two
+measurement arms recorded their own shapes and said, correctly, that a 1 GiB run is fault
+injection rather than supported-tier acceptance. The evaluate path also never validated a
+criterion's declared parameters; only the un-wired meta-test did.
+
+**What changed.**
+
+- **`capacity_tier` replaces `resource_attribution`.** The M1 observation is a typed record: the
+  declared tier, per-validator minima and service budgets; per-validator measured RSS and peak
+  RSS (including the replay peak), memory share (cgroup or `MemTotal`), CPU share, free disk,
+  chain and replay heights, replay time, OOM/restart deltas and fallback states; and a stake/host
+  map. The one-host-loss arithmetic is the code's own `stake * 3 > total * 2`
+  (`sdk/src/consensus.rs`), not a re-derived integer idiom.
+- **The verdict distinguishes unreadable from contradicted.** A missing or wrong-typed field, an
+  unknown tier, a zeroed RSS, or a run that is not a supported-tier measurement is `PRECONDITION`;
+  a readable record that contradicts its declaration is `FAIL`. A shared host with no
+  per-validator cgroup share is a FAIL, closing the `MemTotal`-only false pass the documentation's
+  per-validator rule forbids.
+- **Twenty-four declared controls** exercise the rules, including the shared-host memory case, the
+  cgroup share, peak and replay RSS, CPU, disk, OOM/restart, the override run (both the flag and a
+  command line that carries it), the 4-on-2 topology and the denominator checks
+  (`validator_count`, `total_stake`).
+- **The collector refuses to fabricate.** `tools/capacity-tier.py collect` reads the declaration
+  and the arms' JSON only, never Docker; it computes the peaks and deltas, classifies a run
+  `fault-injection` when it used the override or ran below the declared share, and writes the
+  evaluator's shape atomically. A missing measurement, an undeclared or unsampled container, or an
+  unreadable command line exits non-zero and leaves no output.
+- **The arms record what the record needs.** `n420-soak.py` samples the operator half's rss,
+  memory, cgroup, CPU quota, free disk and node-process count, plus the command line, entrypoint
+  and `nproc`; `resource-restart-arm.py` samples `VmRSS` every 2 s during replay and records the
+  peak. Both use one `capacity_facts` helper, and neither hard-codes the 1 GiB classification.
+- **The evaluate path enforces the parameter schema** before it reads an observation, so a
+  malformed criterion parameter is a FAIL even where the meta-test is not wired.
+- **CI reaches the collector's suite** through `test_hardfork_51_closeout.py`, the same discovered
+  seam the register check uses; no workflow file is edited.
+
+**Why believed.** The self-test runs every entry's base (PASS) and every declared control with its
+declared verdict; each new control was inspected to fail for its named rule, not an incidental
+one. The collector suite builds synthetic arm output and requires the emitted record to PASS the
+real criterion; the below-tier, override and missing-measurement runs are refused or classified
+`fault-injection`; the 4-on-2 and shared-host records FAIL. The register is byte-identical: 59
+gates, 47 met, 12 unresolved.
+
+**What it does not claim.** No gate is promoted; no campaign, public deployment, real key,
+transfer, second host or `.github/workflows/*` edit happened. The distinct host ids are a
+declaration, not proof of independent provisioning; the host-kill arm and M4's cross-host arm
+remain. The fault-domain arithmetic is only as good as the declared stake map, which a reviewer
+checks against the genesis bonds. Free disk and uncapped CPU are reported shares; an override in a
+HOCON config file is not visible to the command-line scan; a sampled peak RSS is not an exact
+high-water mark.
+
+**State.** 59 registered gates, 47 met, 12 unresolved; `--assert-closeable` exits 3;
+`check-hardfork-51-closeout.py` still opens.

@@ -5,94 +5,284 @@
  "criteria": [
   {
    "gate_id": "G428-M1",
-   "principle": "resource_attribution",
-   "adapter": "tools/gate-principles.py::resource_attribution",
+   "principle": "capacity_tier",
+   "adapter": "tools/gate-principles.py::capacity_tier",
    "parameters": {
-    "process_name": "rnode"
+    "minimal_cores": 2,
+    "minimal_ram_gib": 8,
+    "minimal_disk_gib": 100,
+    "comfortable_cores": 8,
+    "comfortable_ram_gib": 16,
+    "comfortable_disk_gib": 1000
    },
    "requires": [
-    "record/host_processes",
-    "record/declared_count"
+    "record"
    ],
    "negative_controls": [
     {
-     "name": "declared count disagrees",
+     "name": "a fault-injection arm",
      "mutation": [
       "set",
-      "record/declared_count",
+      "record/kind",
+      "fault-injection"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "an unknown tier",
+     "mutation": [
+      "set",
+      "record/declared/tier",
+      "enterprise"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "a comfortable tier at the minimal minima",
+     "mutation": [
+      "set",
+      "record/declared/tier",
+      "comfortable"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a declared memory below the minimal floor",
+     "mutation": [
+      [
+       "set",
+       "record/declared/per_validator/ram_gib",
+       2
+      ],
+      [
+       "set",
+       "record/declared/max_peak_rss_mb",
+       1500
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a peak budget above the declared RAM",
+     "mutation": [
+      "set",
+      "record/declared/max_peak_rss_mb",
+      9000
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "two validators on one host without a cgroup share",
+     "mutation": [
+      [
+       "set_where",
+       "record/validators",
+       {
+        "id": "v1"
+       },
+       {
+        "stake": 25,
+        "measured.cgroup_limit_mb": null,
+        "measured.mem_total_mb": 8192
+       }
+      ],
+      [
+       "set_where",
+       "record/validators",
+       {
+        "id": "v2"
+       },
+       {
+        "host": "host-a",
+        "stake": 25,
+        "measured.cgroup_limit_mb": null,
+        "measured.mem_total_mb": 8192
+       }
+      ],
+      [
+       "set",
+       "record/declared/total_stake",
+       250
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a host below the declared share",
+     "mutation": [
+      [
+       "set",
+       "record/validators/0/measured/cgroup_limit_mb",
+       null
+      ],
+      [
+       "set",
+       "record/validators/0/measured/mem_total_mb",
+       4096
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a cgroup limit below the declared share",
+     "mutation": [
+      "set",
+      "record/validators/0/measured/cgroup_limit_mb",
+      4096
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a measured peak RSS over the budget",
+     "mutation": [
+      "set",
+      "record/validators/0/measured/peak_rss_mb",
+      24576
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a replay peak RSS over the budget",
+     "mutation": [
+      "set",
+      "record/validators/0/measured/replay_peak_rss_mb",
+      24576
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a chain height below the served height",
+     "mutation": [
+      "set",
+      "record/validators/0/measured/chain_height",
+      10
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an unread replay measurement",
+     "mutation": [
+      "set",
+      "record/validators/0/measured/replay_seconds",
+      0
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "a CPU share below the declared cores",
+     "mutation": [
+      "set",
+      "record/validators/0/measured/cpu_cores",
+      1
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a disk below the declared size",
+     "mutation": [
+      "set",
+      "record/validators/0/measured/data_dir_free_mb",
+      10
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an OOM kill inside the tier",
+     "mutation": [
+      "set",
+      "record/validators/0/measured/oom_kills_delta",
+      1
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a container restart inside the tier",
+     "mutation": [
+      "set",
+      "record/validators/0/measured/restart_count_delta",
+      1
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "four validators on two hosts claiming one-host tolerance",
+     "mutation": [
+      "set_where",
+      "record/validators",
+      {
+       "id": "v2"
+      },
+      {
+       "host": "host-a"
+      }
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a run that used the under-minimum override",
+     "mutation": [
+      "set",
+      "record/validators/0/measured/runtime_override",
+      true
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a recorded command line that carries the override",
+     "mutation": [
+      "set",
+      "record/validators/0/measured/argv",
+      [
+       "rnode",
+       "run",
+       "--allow-under-minimum"
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "two node processes in one container",
+     "mutation": [
+      "set",
+      "record/validators/0/measured/rnode_processes",
       2
      ],
      "expected": "FAIL"
     },
     {
-     "name": "declared count omitted",
-     "mutation": [
-      "delete",
-      "record/declared_count"
-     ],
-     "expected": "PRECONDITION"
-    },
-    {
-     "name": "a process without a numeric pid",
+     "name": "a duplicated validator id",
      "mutation": [
       "set",
-      "record/host_processes/0/pid",
-      "not-a-pid"
+      "record/validators/1/id",
+      "v1"
      ],
      "expected": "FAIL"
     },
     {
-     "name": "a duplicated process pid",
-     "mutation": [
-      [
-       "append",
-       "record/host_processes",
-       {
-        "pid": 101,
-        "name": "rnode"
-       }
-      ],
-      [
-       "set",
-       "record/declared_count",
-       2
-      ]
-     ],
-     "expected": "FAIL"
-    },
-    {
-     "name": "no node process",
+     "name": "a validator count that disagrees with the list",
      "mutation": [
       "set",
-      "record/host_processes",
-      [
-       {
-        "pid": 1,
-        "name": "bash"
-       }
-      ]
-     ],
-     "expected": "PRECONDITION"
-    },
-    {
-     "name": "missing process list",
-     "mutation": [
-      "delete",
-      "record/host_processes"
-     ],
-     "expected": "PRECONDITION"
-    },
-    {
-     "name": "one pid listed under two names",
-     "mutation": [
-      "append",
-      "record/host_processes",
-      {
-       "pid": 101,
-       "name": "rnode-watchdog"
-      }
+      "record/declared/validator_count",
+      3
      ],
      "expected": "FAIL"
+    },
+    {
+     "name": "a total stake that disagrees with the map",
+     "mutation": [
+      "set",
+      "record/declared/total_stake",
+      500
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an unreadable RSS measurement",
+     "mutation": [
+      "delete",
+      "record/validators/0/measured/rss_mb"
+     ],
+     "expected": "PRECONDITION"
     }
    ],
    "pass_condition_sha256": "8090b5de08f923f19998a33a51efd622da8e1ea5a50bfd7aff0ce1ec35b2adef"
