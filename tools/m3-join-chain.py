@@ -754,6 +754,7 @@ def raw_problems(directory: Path, chain: object) -> list[str]:
         return ["the chain does not name its raw logs"]
     problems: list[str] = []
     texts: dict[str, str] = {}
+    resolved: dict[str, Path] = {}
     for role in ("joiner", "responder"):
         name = logs.get(role)
         if not _nonempty(name):
@@ -763,7 +764,15 @@ def raw_problems(directory: Path, chain: object) -> list[str]:
         if path is None:
             problems.append(f"the {role} log {name!r} is absent from the record (root or raw/)")
             continue
+        resolved[role] = path
         texts[role] = path.read_text(errors="replace")
+    if "joiner" in resolved and "responder" in resolved:
+        try:
+            same_file = resolved["joiner"].resolve() == resolved["responder"].resolve()
+        except OSError:
+            same_file = resolved["joiner"] == resolved["responder"]
+        if same_file:
+            problems.append("joiner and responder logs must be distinct files")
     stages = chain.get("stages")
     if not isinstance(stages, dict):
         return problems + ["the chain has no stages"]
