@@ -16,6 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
+
 REQUIRED = frozenset("""
 A:block-timestamp A:binary-attachments B:binary-attachments B:string-functions
 A:bigint-decimal A:double-mint A:hardfork1-migration A:vault-export
@@ -331,13 +333,12 @@ def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None,
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("ledger", type=Path,
-                        nargs="?", default=Path(__file__).resolve().parent.parent /
-                        "spec/audit/hardfork-51-closeout.json")
+                        nargs="?", default=ROOT / "spec/audit/hardfork-51-closeout.json")
     parser.add_argument("--assert-closeable", action="store_true",
                         help="exit 3 unless all rows are resolved and git provenance verified")
     parser.add_argument("--verify-local-git", action="store_true",
                         help="cross-check merged commits against pinned dev commit (full history required)")
-    parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent.parent)
+    parser.add_argument("--repo", type=Path, default=ROOT)
     args = parser.parse_args()
     try:
         payload = json.loads(args.ledger.read_text(), object_pairs_hook=no_duplicates)
