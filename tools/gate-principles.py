@@ -646,6 +646,14 @@ def evaluate(principle: str, observations: dict, parameters: dict) -> dict:
 
 
 def evaluate_entry(entry: dict, observations: dict) -> dict:
+    # The parameters are the criterion's own data, so a malformed one is an authoring defect, not
+    # missing evidence: refuse it before the observation is read. Without this the schema is
+    # enforced only by the meta-test, and a silently coerced parameter can change the verdict.
+    parameter_errors = validate_parameters(entry.get("principle"),
+                                           entry.get("parameters") or {})
+    if parameter_errors:
+        return verdict("FAIL", [f"the criterion's parameters are invalid: {error}"
+                                for error in parameter_errors])
     missing = [path for path in entry.get("requires") or [] if not _present(_get(observations, path))]
     if missing:
         return verdict("PRECONDITION",

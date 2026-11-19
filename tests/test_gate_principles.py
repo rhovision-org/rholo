@@ -162,6 +162,27 @@ class CriterionTests(unittest.TestCase):
         self.assertEqual(result["status"], "FAIL", result)
         self.assertFalse((ROOT / "target" / "escape.log").exists())
 
+    def test_an_invalid_parameter_is_a_fail_not_a_coercion(self):
+        """The evaluate path, not just the meta-test, refuses a malformed criterion parameter."""
+        entry = {"principle": "no_false_settlement",
+                 "parameters": {"min_observers": "4"},
+                 "requires": ["record"]}
+        result = principles.evaluate_entry(entry, {"record": {}})
+        self.assertEqual(result["status"], "FAIL", result)
+        self.assertTrue(any("parameters" in reason for reason in result["reasons"]), result)
+        self.assertEqual(
+            principles.evaluate_entry(
+                {"principle": "no_false_settlement", "parameters": {}, "requires": ["record"]},
+                {"record": {}})["status"],
+            "FAIL")
+        self.assertEqual(
+            principles.evaluate_entry(
+                {"principle": "no_false_settlement",
+                 "parameters": {"min_observers": 4, "unknown": True},
+                 "requires": ["record"]},
+                {"record": {}})["status"],
+            "FAIL")
+
     def test_a_process_pid_is_listed_once_across_names(self):
         document = {"record": {
             "host_processes": [
