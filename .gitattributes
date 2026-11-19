@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Evidence records are digest-pinned bytes. Normalising a captured transcript's line endings would
+# change the bytes below its manifest and SHA256SUMS, so a fresh checkout would fail `verify`.
+spec/audit/evidence/** -text
