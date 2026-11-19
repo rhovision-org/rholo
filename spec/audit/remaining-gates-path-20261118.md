@@ -74,24 +74,32 @@ G1: PASS   G2: PASS   G3: PASS   G4: INCOMPLETE   G5: PASS   G6: PENDING
 
 The rehearsal's preflight was synthetic and is not gate evidence.
 
-## M2: the pressure arm exists; promotion waits on G1
+## M2: the criterion is pressure-aware; the positive waits on G1
 
-`node/src/web/http.rs` now has
+`node/src/web/http.rs` has
 `a_full_in_flight_budget_refuses_concurrent_bodies_with_429_and_never_5xx`: all four permits held,
 32 simultaneous requests over a real TCP listener, every one 429 with `Retry-After`, no 5xx; after
 release the same request reaches the extractor. The per-peer rate limiter is taken out of the
 measurement.
 
-The default stays opt-in (decision, 2026-11-18). `node/src/web/http.rs:112-118` says no default is
-guessed without resource measurements; the gate's negative control is satisfied by running with the
-cap set and treating the unset run as the failing control. Before M2 can bind, the criterion needs a
-pressure adapter: `spec/audit/gate-criteria.json` currently evaluates only source shape
-(`tools/gate-principles.py::bounded_admission`), so a source fixture would pass and neither the
-pressure arm nor the unset-default mutation could fail.
+The criterion now consumes that evidence. `gate-criteria.json` G428-M2 names `pressure_refusal`,
+which composes the source-queue half (`bounded_admission`) with `tools/m2-pressure.py`: paired
+capped/unset runs, the HTTP and raw-socket transcripts, the gRPC ingress and pool arms and a
+permissive control, all with counts recomputed from the named transcripts, the refusal message
+bound to the source and the files digest-pinned. A public-live record must name a non-local
+endpoint; a `local-devnet` record is refused.
+
+`tools/m2-pressure-arm.py` produces the record on a disposable devnet (two lifetimes: the cap is
+read at listener startup), and the Rust gRPC arm binds the real `PeerAddressIo`/`DeployIngressGuard`
+stack. The local rehearsal is `spec/audit/evidence/m2-pressure-local-20261119/` (`INCONCLUSIVE`):
+the record passes its local policy and the criterion refuses it for locality. The default stays
+opt-in (decision, 2026-11-18); the unset run is the failing control. Still owed: the public-live
+campaign on the installed candidate, and the gate's `depends_on: G584-G1`.
 
 ## M3: the chain is checkable; the positive is still owed
 
-`G428-M3` is the only open gate with no `depends_on`. Its in-box half is now executable:
+`G428-M3` is the only open **G428** gate with no `depends_on` (G584-G1 and C343 also have empty
+lists; G584-G1 is the external critical path). Its in-box half is now executable:
 `tools/m3-join-chain.py` correlates the joiner's and the responder's logs into a typed six-stage
 `chain.json`, and the M3 criterion (`join_chain`) refuses a send-log-only, missing-stage or
 hash-mismatched chain and composes the off-host locality check.
@@ -104,6 +112,16 @@ hash-mismatched chain and composes the off-host locality check.
 - Still owed: a two-host off-host run (the runbook is pre-registered at
   `spec/audit/runbooks/m3-off-host-20261118.md`), the loopback refusal from a real second host, and
   failover (M3-11).
+
+## C343: the collector emits the criterion shape
+
+`tools/c343-live.py collect` now writes `raw/host-<alias>.observation.json` for each host — the
+`{health, operator, block6}` document `phase_diagnosis` consumes, with `block6` as journal text
+rather than a verdict — plus an index, and carries the run's locality. The criterion requires
+`live-host`, so a local rehearsal cannot be read as the operator snapshot. The local rehearsal is
+`spec/audit/evidence/c343-observation-shape-20261119/` (`INCONCLUSIVE`): the shape is emitted, the
+verifier is `PRECONDITION` because a fresh devnet's journal has no block-6 disposition, and the
+criterion refuses the document for locality. The live B/C/D snapshot remains owed.
 
 ## External inputs
 

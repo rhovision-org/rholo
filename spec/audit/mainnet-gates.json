@@ -110,10 +110,10 @@
       "source_sha256": "1b6fd74cdf5c865a629b2cac9d89d358f7f45aad280e4e647e5bd3ac23540dda",
       "source_url": "https://github.com/rhovision-org/rholo/issues/428",
       "status": "owes",
-      "status_reason": "Source-shape queue bounds and the C105 backpressure work exist; no installed-candidate pressure acceptance across HTTP, direct HTTP and gRPC.",
+      "status_reason": "Source-shape queue bounds and the C105 backpressure work exist, and the criterion now evaluates a typed pressure record across HTTP, direct HTTP and gRPC; no installed-candidate pressure acceptance has run. The criterion refuses a local-devnet record for locality.",
       "title": "Bounded public ingress and overload behavior",
       "witness_kind": "python",
-      "witness_ref": "tools/check-bounded-ingress-queues.sh::--gate",
+      "witness_ref": "tools/m2-pressure.py::check_pressure",
       "witness_scope": "unit"
     },
     {

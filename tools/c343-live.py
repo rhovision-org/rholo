@@ -75,6 +75,22 @@ def health_get(url: str, timeout: float, token: str | None) -> dict[str, Any]:
         return {"status": None, "body": "", "body_sha256": None, "error": str(error)}
 
 
+def observation_document(locality: str, health: dict, operator: dict, block6: str) -> dict:
+    """The per-host document `gate-principles.py::phase_diagnosis` consumes.
+
+    `block6` is the journal text, not a pre-classified verdict: the disposition is the checker's
+    to derive. `locality` is carried so a local rehearsal cannot be read as the live-host positive.
+    """
+    return {
+        "schema": 1,
+        "gate_id": "C343",
+        "locality": locality,
+        "health": health,
+        "operator": operator,
+        "block6": block6,
+    }
+
+
 def collect(args: argparse.Namespace) -> int:
     plan = json.loads(Path(args.plan).read_text())
     hosts = plan.get("hosts", [])
@@ -96,6 +112,8 @@ def collect(args: argparse.Namespace) -> int:
     }
     public_hosts = []
     events = []
+    observations_index: dict[str, str] = {}
+    locality = args.locality or plan.get("locality") or "live-host"
     all_ok = True
     for host in hosts:
         alias = host["alias"]
@@ -135,15 +153,37 @@ def collect(args: argparse.Namespace) -> int:
             if answer["status"] != 200:
                 all_ok = False
         run["answers"][alias] = answers
+
+        def read_doc(name: str) -> dict:
+            path = raw / f"{alias}-{name}.json"
+            if answers[name]["status"] != 200 or not path.is_file():
+                return {}
+            try:
+                parsed = json.loads(path.read_text())
+            except (ValueError, OSError):
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+
+        block6 = ""
         journal = (plan.get("journals") or {}).get(alias) or (
             str(Path(args.journal_dir) / f"{alias}.log") if args.journal_dir else None)
         if journal and Path(journal).is_file():
             data = Path(journal).read_bytes()
             (raw / f"{alias}-journal.log").write_bytes(data)
+            block6 = data.decode("utf-8", "replace")
             run["journals"][alias] = {"path": f"raw/{alias}-journal.log",
                                       "sha256": sha256_bytes(data)}
         elif journal:
             run["journals"][alias] = {"path": journal, "error": "not found"}
+        observation = observation_document(
+            locality, read_doc("health"), read_doc("operator"), block6
+        )
+        (raw / f"host-{alias}.observation.json").write_text(
+            json.dumps(observation, indent=1, sort_keys=True) + "\n"
+        )
+        observations_index[alias] = f"raw/host-{alias}.observation.json"
+    (raw / "observations.hosts.json").write_text(json.dumps(
+        {"schema": 1, "hosts": observations_index}, indent=1, sort_keys=True) + "\n")
     (raw / "run.json").write_text(json.dumps(run, indent=1, sort_keys=True) + "\n")
     (raw / "plan.public.json").write_text(json.dumps(
         {"schema": 1, "campaign": run["campaign"], "hosts": public_hosts}, indent=1,
@@ -600,6 +640,8 @@ def main() -> int:
     collect_p.add_argument("--journal-dir")
     collect_p.add_argument("--source-sha")
     collect_p.add_argument("--binary-sha256")
+    collect_p.add_argument("--locality", default="live-host",
+                           choices=("live-host", "public-live", "local-devnet", "single-host"))
     collect_p.add_argument("--timeout", type=float, default=10.0)
     verify_p = sub.add_parser("verify")
     verify_p.add_argument("--run-dir", required=True)

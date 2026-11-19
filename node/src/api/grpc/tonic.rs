@@ -898,6 +898,8 @@ mod tests {
         /// What `deploy` answers. `None` keeps the double refusing loudly for the tests that do not
         /// exercise the deploy path; `Some` reaches the trait's two refusal arms.
         deploy_refusal: Option<String>,
+        /// Whether `deploy` succeeds — the admitted side of a pressure arm.
+        deploy_ok: bool,
         /// What each conversion forwarded, as text. The `DeployService` trait's methods exist to
         /// *convert* a wire request into a domain one, so what can go wrong is a field that arrives
         /// swapped or dropped — which the response alone cannot show.
@@ -909,6 +911,9 @@ mod tests {
             unimplemented!()
         }
         async fn deploy(&self, _: &SignedDeployData) -> ApiErr<String> {
+            if self.deploy_ok {
+                return Ok("Success! Deploy submitted.".to_string());
+            }
             match &self.deploy_refusal {
                 Some(message) => Err(message.clone()),
                 None => unimplemented!(),
@@ -2095,6 +2100,161 @@ mod tests {
             // `to_tonic_service_error` carries the messages through unchanged.
             let converted = to_tonic_service_error(ServiceError::new("x"));
             assert_eq!(converted.messages, vec!["x"]);
+        }
+    }
+
+    /// **The M2 gRPC pressure arm over a real listener** (W-N2-01, #428 M2).
+    ///
+    /// A Python client cannot see a tonic status code or its metadata without grpcio, and a CLI
+    /// subprocess gives neither concurrency nor the refusal class. This arm binds the real tonic
+    /// stack — the same `PeerAddressIo` and `DeployIngressGuard` that `serve_deploy` installs — and
+    /// drives it with the real `DeployServiceClient`:
+    ///
+    /// * `ingress_rate`: a one-request allowance admits the first call and refuses the second with
+    ///   `RESOURCE_EXHAUSTED`;
+    /// * `pool_full`: the deploy path's capacity refusal keeps its `retry-after: 1`;
+    /// * `permissive`: a wide allowance admits every call, so a guard that refused
+    ///   unconditionally would fail the control.
+    ///
+    /// When `RNODE_M2_GRPC_OUT` names a directory, the observed records are written there for
+    /// `tools/m2-pressure-arm.py` to merge into the pressure record. The assertions run always.
+    #[tokio::test]
+    async fn m2_grpc_pressure_observes_the_ingress_and_pool_bounds() {
+        use super::super::{DeployIngressGuard, PeerAddressIo, MAX_TRACKED_PEERS};
+        use ::tonic::service::interceptor::InterceptedService;
+        use futures_util::StreamExt;
+        use rchain_casper::pool::{PoolError, RATE_LIMITED_MESSAGE};
+        use rchain_models::proto::casper::deploy_service_client::DeployServiceClient;
+        use rchain_models::proto::casper::deploy_service_server::DeployServiceServer;
+        use rchain_shared::rate_limiter::KeyedRateLimiter;
+
+        async fn serve(
+            deploy: DeployGrpcServiceV1,
+            allowance: u64,
+        ) -> (String, tokio::sync::oneshot::Sender<()>) {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind an ephemeral port");
+            let addr = listener.local_addr().expect("the bound address");
+            let incoming =
+                tokio_stream::wrappers::TcpListenerStream::new(listener).map(|accepted| {
+                    accepted.map(|stream| PeerAddressIo {
+                        peer: stream.peer_addr().ok(),
+                        stream,
+                    })
+                });
+            let service = InterceptedService::new(
+                DeployServiceServer::new(deploy),
+                DeployIngressGuard {
+                    limiter: Arc::new(KeyedRateLimiter::new(allowance, MAX_TRACKED_PEERS)),
+                },
+            );
+            let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+            tokio::spawn(async move {
+                let _ = ::tonic::transport::Server::builder()
+                    .add_service(service)
+                    .serve_with_incoming_shutdown(incoming, async move {
+                        let _ = stop_rx.await;
+                    })
+                    .await;
+            });
+            (format!("http://{addr}"), stop_tx)
+        }
+
+        // The ingress rate bound: one admitted call, then RESOURCE_EXHAUSTED.
+        let (svc, _) = deploy_service(|stub| stub.deploy_ok = true);
+        let (endpoint, stop) = serve(svc, 1).await;
+        let mut client = DeployServiceClient::connect(endpoint)
+            .await
+            .expect("connect to the pressure listener");
+        client
+            .do_deploy(wire::DeployDataProto::default())
+            .await
+            .expect("the first call is within the allowance");
+        let refused = client
+            .do_deploy(wire::DeployDataProto::default())
+            .await
+            .expect_err("the second call is over the allowance");
+        assert_eq!(refused.code(), ::tonic::Code::ResourceExhausted);
+        assert_eq!(refused.message(), RATE_LIMITED_MESSAGE);
+        let ingress_message = refused.message().to_string();
+        let _ = stop.send(());
+
+        // The pool bound: a capacity refusal with retry-after, over the wire.
+        let (svc, _) = deploy_service(|stub| {
+            stub.deploy_refusal = Some(PoolError::byte_full_message(10, 10));
+        });
+        let (endpoint, stop) = serve(svc, 1_000).await;
+        let mut client = DeployServiceClient::connect(endpoint)
+            .await
+            .expect("connect to the pressure listener");
+        let pool = client
+            .do_deploy(wire::DeployDataProto::default())
+            .await
+            .expect_err("a full pool refuses");
+        assert_eq!(pool.code(), ::tonic::Code::ResourceExhausted);
+        assert_eq!(
+            pool.metadata().get("retry-after").expect("retry-after"),
+            "1"
+        );
+        let pool_message = pool.message().to_string();
+        let _ = stop.send(());
+
+        // The permissive control: the same client sees no refusal.
+        let (svc, _) = deploy_service(|stub| stub.deploy_ok = true);
+        let (endpoint, stop) = serve(svc, 1_000).await;
+        let mut client = DeployServiceClient::connect(endpoint)
+            .await
+            .expect("connect to the pressure listener");
+        for _ in 0..2 {
+            client
+                .do_deploy(wire::DeployDataProto::default())
+                .await
+                .expect("the permissive control admits");
+        }
+        let _ = stop.send(());
+
+        if let Ok(directory) = std::env::var("RNODE_M2_GRPC_OUT") {
+            let directory = std::path::PathBuf::from(directory);
+            std::fs::create_dir_all(&directory).expect("create the observation directory");
+            let capped = [
+                serde_json::json!({"arm": "ingress_rate", "code": 0, "message": "ok",
+                                   "retry_after": null}),
+                serde_json::json!({"arm": "ingress_rate", "code": 8,
+                                   "message": ingress_message, "retry_after": null}),
+                serde_json::json!({"arm": "pool_full", "code": 8,
+                                   "message": pool_message, "retry_after": 1}),
+            ];
+            let permissive = [
+                serde_json::json!({"arm": "permissive", "code": 0, "message": "ok",
+                                   "retry_after": null}),
+                serde_json::json!({"arm": "permissive", "code": 0, "message": "ok",
+                                   "retry_after": null}),
+            ];
+            let lines = |records: &[serde_json::Value]| {
+                records
+                    .iter()
+                    .map(|record| record.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n"
+            };
+            std::fs::write(directory.join("grpc-capped.jsonl"), lines(&capped))
+                .expect("write the capped transcript");
+            std::fs::write(directory.join("grpc-permissive.jsonl"), lines(&permissive))
+                .expect("write the permissive transcript");
+            std::fs::write(
+                directory.join("grpc-summary.json"),
+                serde_json::json!({
+                    "ingress_rate": {"admitted": 1, "refused": 1, "code": 8,
+                                     "retry_after": null},
+                    "pool_full": {"admitted": 0, "refused": 1, "code": 8,
+                                  "retry_after": 1},
+                    "permissive": {"admitted": 2, "refused": 0},
+                })
+                .to_string(),
+            )
+            .expect("write the summary");
         }
     }
 }

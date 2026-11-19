@@ -50,18 +50,21 @@
   },
   {
    "gate_id": "G428-M2",
-   "principle": "bounded_admission",
-   "adapter": "tools/check-bounded-ingress-queues.sh::--gate",
+   "principle": "pressure_refusal",
+   "adapter": "tools/m2-pressure.py::check_pressure",
    "parameters": {
     "queues": [
      "incoming_blocks|let (incoming_blocks_tx",
      "processor_input|let (processor_input_tx",
      "validated_blocks|let (validated_blocks_tx",
      "tap_validated_blocks|let (tap_tx"
-    ]
+    ],
+    "locality": "public-live",
+    "rate_ceiling": 100
    },
    "requires": [
-    "source"
+    "source",
+    "pressure"
    ],
    "negative_controls": [
     {
@@ -88,6 +91,148 @@
       "set",
       "source/text",
       "let (incoming_blocks_tx, incoming_blocks_rx) = mpsc::channel(usize::MAX);\nlet (processor_input_tx, processor_input_rx) = mpsc::channel(MAX_PROCESSOR_INPUT);\nlet (validated_blocks_tx, validated_blocks_rx) = mpsc::channel(MAX_VALIDATED_BLOCKS);\nlet (tap_tx, tap_rx) = mpsc::channel(MAX_TAP_VALIDATED_BLOCKS);\n"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "no pressure record",
+     "mutation": [
+      "delete",
+      "pressure"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "no unset control",
+     "mutation": [
+      "delete",
+      "pressure/record/surfaces/http/unset"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "the unset default refuses",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/http/unset/refused",
+      3
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a server error under pressure",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/http/capped/server_errors",
+      1
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a refusal that is not 429",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/http/capped/refusal/class",
+      "400"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "not every permit was held",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/http/capped/held",
+      1
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a summary that disagrees with its transcript",
+     "mutation": [
+      "set",
+      "pressure/files/raw~1http-capped.jsonl",
+      "{\"kind\":\"probe\",\"status\":500,\"retry_after\":null,\"body\":\"\",\"t_ms\":0}\n"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an unpinned pressure record",
+     "mutation": [
+      "set",
+      "pressure/files/SHA256SUMS.json",
+      "{}"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a local endpoint on a public-live claim",
+     "mutation": [
+      "set",
+      "pressure/record/endpoint/url",
+      "http://127.0.0.1:40403"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a proxy between the observer and the node",
+     "mutation": [
+      "set",
+      "pressure/record/endpoint/proxy",
+      "nginx"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a local-devnet record claiming the live locality",
+     "mutation": [
+      "set",
+      "pressure/record/locality",
+      "local-devnet"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a gRPC pool refusal without a retry signal",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/grpc/capped/arms/pool_full/retry_after",
+      0
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a gRPC arm that never refuses",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/grpc/capped/arms/ingress_rate/refused",
+      0
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a gRPC status outside the closed classes",
+     "mutation": [
+      "set",
+      "pressure/files/raw~1grpc-capped.jsonl",
+      "{\"arm\":\"ingress_rate\",\"code\":16,\"message\":\"x\",\"retry_after\":null}\n{\"arm\":\"pool_full\",\"code\":8,\"message\":\"x\",\"retry_after\":1}\n"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a permissive control that refuses",
+     "mutation": [
+      "set",
+      "pressure/files/raw~1grpc-permissive.jsonl",
+      "{\"arm\":\"permissive\",\"code\":8,\"message\":\"x\",\"retry_after\":null}\n{\"arm\":\"permissive\",\"code\":0,\"message\":\"ok\",\"retry_after\":null}\n"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a burst above the per-peer ceiling",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/http/capped/requests_per_second",
+      500
      ],
      "expected": "FAIL"
     }
@@ -542,7 +687,8 @@
    "principle": "phase_diagnosis",
    "adapter": "tools/c343-live.py::verify_run",
    "parameters": {
-    "table": "spec/audit/phase-diagnosis.tsv"
+    "table": "spec/audit/phase-diagnosis.tsv",
+    "locality": "live-host"
    },
    "requires": [
     "health",
@@ -592,6 +738,15 @@
       ]
      ],
      "expected": "PRECONDITION"
+    },
+    {
+     "name": "a local-devnet observation claiming the live locality",
+     "mutation": [
+      "set",
+      "locality",
+      "local-devnet"
+     ],
+     "expected": "FAIL"
     }
    ],
    "pass_condition_sha256": "27995ccfcd55dee8e44806cb04d6904e223c8ed97a9c0e5fe728d98be80a6a25"
