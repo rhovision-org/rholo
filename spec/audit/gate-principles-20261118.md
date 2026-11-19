@@ -53,10 +53,10 @@ The layer is deliberately small:
 
 | principle | invariant | gates |
 |---|---|---|
-| `identity_agreement` | observers agree on the selected pins; identities and endpoints are distinct; count ≥ parameter | G584-G1 |
-| `staged_lifecycle` | each subject reaches each required stage, in order, per observer; one inclusion identity; no success/failure contradiction | G584-G2 |
+| `identity_agreement` | observers agree on the selected pins; identities and endpoints are distinct; each record's bonded stake is a positive integer; count ≥ parameter | G584-G1 |
+| `staged_lifecycle` | the declared subject is the sampled deploy (`subject.deploy_id == run.deploy_id`, with `submission` required); each subject reaches each required stage, in order, per observer; one inclusion identity; no success/failure contradiction | G584-G2 |
 | `no_false_settlement` | no surface claims settlement before a finalized observation; finality agrees; heights are consistent | G584-G3 |
-| `recovery_no_loss` | the same subject finalizes after an observed recovery; no accepted work is lost; no own-key halt or self-replay | G584-G4 |
+| `recovery_no_loss` | at least one accepted deploy exists; a post-window `finalizedSuccess` is for an accepted deploy; the same subject finalizes after an observed recovery; no accepted work is lost; no own-key halt or self-replay | G584-G4 |
 | `independent_observations` | ≥N distinct endpoints/identities contribute; each alias covers the required routes; records are hash-covered; no duplicate endpoint | G584-G5 |
 | `human_attestation` | one typed reviewer record: relationship, independence, verdict enum, evidence digest, https URL, UTC time, cited record; reviewer ≠ owner | M6, G6, TA-C1/C2 |
 | `healing_anchor` | a fixed finalized anchor survives a K-sample dwell and every validator finalizes it; moving-head equality is not the criterion | G428-M4 |
@@ -67,7 +67,7 @@ The layer is deliberately small:
 | `pressure_refusal` | the queues are bounded (composes `bounded_admission`), and a capped run refuses with 429/RESOURCE_EXHAUSTED and a retry signal, no 5xx, and a handler reachable after release, while the unset default refuses nothing; counts are recomputed from the named raw transcripts, the refusal message is bound to the source, the endpoint is non-local, and a local-devnet record is refused | G428-M2 |
 | `off_host_claim` | an off-host/live-host claim carries a routable peer; loopback/private/encoded addresses cannot satisfy it | G428-M3 (locality half) |
 | `join_chain` | the six-stage chain is typed, `complete: true` and complete: all stages keyed by peer + anchor, a transport outcome whose words match (not a send line), served = received = restored = walked hashes, and every quoted line present in the named raw logs; an off-host record is digest-pinned; the off-host policy composes `off_host_claim` | G428-M3 |
-| `resource_attribution` | process accounting counts only the node's processes; unrelated processes cannot inflate or hide the count | G428-M1 |
+| `resource_attribution` | process accounting counts only the node's processes; the declared count is required and must equal the observed count; every entry carries a positive integer `pid`, each listed once | G428-M1 |
 
 `human_attestation` is the only principle that consumes a human record. The layer checks the
 record's shape and independence; it never manufactures a verdict, names a reviewer, or treats a
