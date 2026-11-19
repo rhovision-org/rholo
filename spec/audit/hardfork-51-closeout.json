@@ -3,6 +3,7 @@
   "tracker": "https://github.com/rhovision-org/rholo/issues/51",
   "source_dev_sha": "e33125f65a95cff4f12baf8139a7361c7d158e43",
   "observed_date": "2026-11-12",
+  "acceptance_observed_date": "2026-11-19",
   "closure_requested": false,
   "policy": "Every \u00a7A/\u00a7B and every \u00a76 consensus-changing row must be landed on dev or deferred with a named decision owner and a one-line reason. Release execution evidence remains separately accountable; a green test run alone is not closure.",
   "items": [
@@ -13,6 +14,12 @@
       "evidence": {
         "pr": 44,
         "merge_commit": "228b66742fb740b2e44828a580122f4dac91489c"
+      },
+      "acceptance": {
+        "tests": [
+          "models/src/casper/protocol/casper_message.rs::block_message_round_trip_preserves_timestamp",
+          "casper/src/validate.rs::a_block_timestamp_is_never_a_validity_input"
+        ]
       },
       "notes": "Header encoding landed in #44; #529 retires the parent-relative validity bound and restores informational time. Old/new acceptance differs for a child more than five minutes behind its parent. Coordinated activation and historical replay remain separate #51/#520/#428 obligations; source/CI evidence is not rollout acceptance.",
       "validation_follow_up": {
@@ -29,6 +36,11 @@
         "pr": 53,
         "merge_commit": "9a04285a6bb80221256fc97290a4a31d2cafc6ad"
       },
+      "acceptance": {
+        "tests": [
+          "models/src/casper/protocol/casper_message.rs::attachments_are_part_of_the_signature"
+        ]
+      },
       "notes": "Merged implementation; validators must still coordinate before attachment-bearing deploys."
     },
     {
@@ -39,6 +51,11 @@
         "pr": 53,
         "merge_commit": "9a04285a6bb80221256fc97290a4a31d2cafc6ad"
       },
+      "acceptance": {
+        "tests": [
+          "models/src/casper/protocol/casper_message.rs::attachments_round_trip_proto_and_json"
+        ]
+      },
       "notes": "Protocol feature landed; client/validator rollout requires independent acceptance."
     },
     {
@@ -48,6 +65,11 @@
       "evidence": {
         "pr": 47,
         "merge_commit": "f07a2628a7242d4d16e1daeed94a3d9d7d183a09"
+      },
+      "acceptance": {
+        "tests": [
+          "rholang/src/reduce.rs::string_methods_from_rchip_37"
+        ]
       },
       "notes": "Merged; S.length bytes-to-characters behavior is a compatibility change."
     },
@@ -69,6 +91,11 @@
       "evidence": {
         "pr": 389,
         "merge_commit": "666ddb75e2d2787f099e05f983e31fb9728e7ed6"
+      },
+      "acceptance": {
+        "tests": [
+          "rholang/src/reduce.rs::division_and_modulo_overflow_promote_to_bigint"
+        ]
       },
       "notes": "BigInt #49 is on the pinned dev. The exact Decimal (#389/#390) was removed before mainnet by issue #527; there is no decimal release obligation. This is landed code, not proof of a scanned archive or uniform live validator rollout. The removal itself is PR #532 (merge `ad77fb442`), which also carries the dated section 6 correction."
     },
@@ -324,6 +351,11 @@
         "pr": 373,
         "merge_commit": "c42440716ddb3d467fe0e16b3607ed40ff20f5b1"
       },
+      "acceptance": {
+        "tests": [
+          "casper/src/validate.rs::scheduled_block_versions_are_required_at_and_after_activation_and_history_replays"
+        ]
+      },
       "notes": "#373 merged with #376's committed-bound, format and restore guards. #391, #392, #402 and #404 are also on the pinned dev. Integrated acceptance and operator provenance remain separate."
     },
     {
@@ -409,6 +441,11 @@
         "pr": 108,
         "merge_commit": "a4dd4ede66546d1a6d798f5508090f6aa654a7c7"
       },
+      "acceptance": {
+        "tests": [
+          "casper/tests/finalization.rs::a_silent_bonded_validator_does_not_cap_the_fringe"
+        ]
+      },
       "notes": "The live partition/full bonded-stake quorum separation is landed in #108. Later derivation/containment deviations remain explicitly enumerated in \u00a76; deployment and independent historical acceptance are separate release obligations."
     },
     {
@@ -438,6 +475,11 @@
         "pr": 186,
         "merge_commit": "37ed6f50688fba7b07f4849a8864500c2c66d6fa"
       },
+      "acceptance": {
+        "tests": [
+          "casper/tests/consensus.rs::the_drawn_active_set_is_the_states_and_not_the_boundary_blocks"
+        ]
+      },
       "notes": "The original uniform draw was replaced by stake-weighted sampling without replacement in #186. The epoch-ahead seed and exact integer draw are in the pinned source; residual incentives and release acceptance are not certified by this implementation reference."
     },
     {
@@ -453,6 +495,11 @@
         "pr": 373,
         "merge_commit": "c42440716ddb3d467fe0e16b3607ed40ff20f5b1"
       },
+      "acceptance": {
+        "tests": [
+          "casper/tests/committed_bounds.rs::committed_bounds_control_the_block_path_with_opposing_local_configs"
+        ]
+      },
       "notes": "The #160 parent-width rule and #373's committed-bound validation/restore paths are landed. This records implementation ancestry; distributed release acceptance is not inferred."
     },
     {
@@ -467,6 +514,11 @@
       "evidence": {
         "pr": 209,
         "merge_commit": "5f0763eb4d352825e779cc5bc43b2d566873e316"
+      },
+      "acceptance": {
+        "tests": [
+          "casper/tests/deploy_native_write.rs::the_sidecar_a_block_saves_carries_the_user_deploys_write_not_only_the_systems"
+        ]
       },
       "notes": "C207 cost-accounting composition is landed in #209. This does not resolve every concurrent native-ledger conflict or prove partition liveness."
     },
@@ -539,6 +591,11 @@
         "pr": 388,
         "merge_commit": "8803233b96ce9a9e31787c9342251be27c82c89a"
       },
+      "acceptance": {
+        "tests": [
+          "casper/tests/determinism.rs::genesis_with_a_developer_allocation_creates_and_replays_the_same_state"
+        ]
+      },
       "notes": "#388 is the merged canonical implementation; #371 closed as superseded. This implementation selection does not decide #372's recipient, custody, distribution cadence, or wider governance terms, which remain under the separately deferred A:rev-economics disposition."
     },
     {
@@ -554,6 +611,11 @@
       "evidence": {
         "pr": 514,
         "merge_commit": "78efd3fa1e6dbaf2a863fbf9da58325eccfb4e90"
+      },
+      "acceptance": {
+        "tests": [
+          "rholang/src/accounting.rs::collection_and_censure_charges_are_the_models"
+        ]
       },
       "notes": "The C345/C346 charges are on dev in #514. The \u00a76 cost-deviation row and the inventory re-pin are recorded at this SHA. Remaining: a pre-fork replay refusal, a populated-store upgrade, a second binary, and regeneration of every network's genesis post-state hash."
     },
@@ -571,6 +633,11 @@
       "evidence": {
         "pr": 518,
         "merge_commit": "9e93c3d1f7787b0b9e67ee67e4ad7945c8d9474e"
+      },
+      "acceptance": {
+        "tests": [
+          "rholang/src/accounting.rs::the_tally_charges_are_the_models"
+        ]
       },
       "notes": "The charge change and the cost register are on dev, with the section 6 deviation row extended for C353/C354. Replay, populated-store, second-binary and genesis-regeneration evidence remain separate release obligations."
     }
