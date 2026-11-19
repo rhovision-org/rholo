@@ -372,6 +372,10 @@ def cmd_verify(args) -> int:
         fail("SHA256SUMS.json and manifest.json disagree on the file set")
     for relative, entry in listed.items():
         path = record / relative
+        # `pack` refuses a symlink in the run; `verify` must refuse one in the record, or a
+        # manifest can name a link and the digest chain attests a file outside the record.
+        if path.is_symlink():
+            fail(f"symlink in the record: {relative}")
         if not path.is_file():
             fail(f"missing file: {relative}")
         digest = sha256(path)
@@ -379,6 +383,9 @@ def cmd_verify(args) -> int:
             fail(f"digest mismatch: {relative}")
         if path.stat().st_size != entry["bytes"]:
             fail(f"byte count mismatch: {relative}")
+    links = [p for p in (record / "raw").rglob("*") if p.is_symlink()]
+    if links:
+        fail(f"symlink(s) under raw/: {sorted(p.name for p in links)[:5]}")
     actual = {
         p.relative_to(record).as_posix()
         for p in (record / "raw").rglob("*")

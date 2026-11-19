@@ -125,6 +125,22 @@ class EvidencePackTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             pack.cmd_pack(self.args())
 
+    def test_a_symlink_in_a_packed_record_is_refused_by_verify(self):
+        """`pack` refuses a link; `verify` must too, or the digest chain attests a file outside."""
+        self.assertEqual(self.packed(), 0)
+        outside = self.base / "outside.log"
+        outside.write_text("a log line\n")
+        extra = self.record / "raw" / "extra.log"
+        extra.symlink_to(outside)
+        with self.assertRaises(SystemExit):
+            pack.cmd_verify(SimpleNamespace(record=str(self.record)))
+        extra.unlink()
+        listed = self.record / "raw" / "node-0.log"
+        listed.unlink()
+        listed.symlink_to(outside)
+        with self.assertRaises(SystemExit):
+            pack.cmd_verify(SimpleNamespace(record=str(self.record)))
+
     def test_a_non_upstream_url_is_refused(self):
         with self.assertRaises(SystemExit):
             pack.cmd_pack(self.args(run_url="https://github.com/other/repo/actions/runs/1"))
