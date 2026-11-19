@@ -89,6 +89,18 @@ class HostEvaluationTests(unittest.TestCase):
         self.assertEqual(result["verdict"], "PRECONDITION", result)
         self.assertEqual(result["cells"]["height-gap"]["verdict"], "PRECONDITION")
 
+    def test_a_string_typed_contract_field_is_a_precondition(self):
+        """`bool("false")` is true: a string is not an observation, it is unreadable input."""
+        health = self.module._base_health()
+        health["ready"] = "false"
+        result = self.evaluate(health=health)
+        self.assertEqual(result["verdict"], "PRECONDITION", result)
+        self.assertIn("health.ready", " ".join(
+            cell["detail"] for cell in result["cells"].values()))
+        operator = self.module._base_operator()
+        operator["finalityStalled"] = "false"
+        self.assertEqual(self.evaluate(operator=operator)["verdict"], "PRECONDITION")
+
     def test_a_missing_journal_is_a_precondition(self):
         result = self.evaluate(block6="")
         self.assertEqual(result["verdict"], "PRECONDITION", result)

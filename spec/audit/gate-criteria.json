@@ -874,6 +874,15 @@
       2
      ],
      "expected": "FAIL"
+    },
+    {
+     "name": "a contract field with the wrong type",
+     "mutation": [
+      "set",
+      "health/ready",
+      "false"
+     ],
+     "expected": "PRECONDITION"
     }
    ],
    "pass_condition_sha256": "27995ccfcd55dee8e44806cb04d6904e223c8ed97a9c0e5fe728d98be80a6a25"
