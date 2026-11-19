@@ -1,5 +1,6 @@
 """Negative controls for the Issue #51 hard-fork closeout evidence gate."""
 import copy
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -17,6 +18,11 @@ SPEC = importlib.util.spec_from_file_location("hardfork_51", SCRIPT)
 gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
 LEDGER = json.loads((ROOT / "spec/audit/hardfork-51-closeout.json").read_text())
+ARTIFACT = "spec/audit/hardfork-51-closeout.json"
+
+
+def artifact_sha() -> str:
+    return hashlib.sha256((ROOT / ARTIFACT).read_bytes()).hexdigest()
 
 
 class CloseoutTests(unittest.TestCase):
@@ -169,20 +175,31 @@ class CloseoutTests(unittest.TestCase):
             item.update(id="placeholder",title="Placeholder",status="deferred",
                         decision_owner="@jimscarver",
                         reason="Delay until a separately approved first-release fork design.")
-        # Reattach the identities; §6 classification cannot be deferred.
-        for item, ident in zip(self.payload["items"], sorted(gate.REQUIRED)):
-            item["id"] = ident
-            if ident == gate.AUDIT_SIGNOFF_ID:
-                item["status"] = "verified"
-                item["evidence_url"] = "https://github.com/rhovision-org/rholo/issues/51"
-                item["approval_url"] = "https://github.com/rhovision-org/rholo/issues/51"
-                item["approved_by"] = "Maintainer"
-                item["evidence_sha256"] = "a" * 64
-        self.payload["closure_requested"] = True
-        self.assertEqual(self.inspect()["result"], "TRACKER_MUST_REMAIN_OPEN")
-        with patch.object(gate, "is_ancestor", return_value=True):
-            self.assertEqual(self.inspect(verify_git=True)["result"],
-                             "CLOSEOUT_ELIGIBLE_FOR_INDEPENDENT_REVIEW")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            record = root / "evidence"
+            record.mkdir()
+            (record / "manifest.json").write_text("{}\n")
+            digest = hashlib.sha256((record / "manifest.json").read_bytes()).hexdigest()
+            (root / "review.md").write_text(f"Maintainer verified {digest}\n")
+            # Reattach the identities; §6 classification cannot be deferred.
+            for item, ident in zip(self.payload["items"], sorted(gate.REQUIRED)):
+                item["id"] = ident
+                if ident == gate.AUDIT_SIGNOFF_ID:
+                    item["status"] = "verified"
+                    item["evidence_url"] = "https://github.com/rhovision-org/rholo/issues/51"
+                    item["approval_url"] = "https://github.com/rhovision-org/rholo/issues/51"
+                    item["approved_by"] = "Maintainer"
+                    item["evidence_sha256"] = digest
+                    item["evidence_record"] = "evidence"
+                    item["review_record"] = "review.md"
+            self.payload["closure_requested"] = True
+            self.assertEqual(gate.validate(self.payload, repo=root)["result"],
+                             "TRACKER_MUST_REMAIN_OPEN")
+            with patch.object(gate, "is_ancestor", return_value=True):
+                self.assertEqual(
+                    gate.validate(self.payload, repo=root, verify_git=True)["result"],
+                    "CLOSEOUT_ELIGIBLE_FOR_INDEPENDENT_REVIEW")
 
     def test_the_ledger_is_the_hf51_tracker(self):
         bound, unresolved, note = gate.gate_binding(ROOT)
@@ -252,7 +269,7 @@ class CloseoutTests(unittest.TestCase):
     def test_acceptance_record_must_name_an_artifact_and_digests(self):
         record = {"gate_id": "n8-partition-rejoin", "source_sha": "a" * 40,
                   "binary_sha256": "b" * 64, "aggregate": "PASS",
-                  "artifact": "spec/audit/evidence/rejoin-acceptance-20261031/README.md"}
+                  "artifact": ARTIFACT, "artifact_sha256": artifact_sha()}
         self.payload["acceptance_records"] = [record]
         self.assertEqual(self.inspect()["result"], "TRACKER_MUST_REMAIN_OPEN")
         for field, value in (("source_sha", "tbd"), ("binary_sha256", "tbd"),
@@ -264,14 +281,125 @@ class CloseoutTests(unittest.TestCase):
                 with self.assertRaises(gate.LedgerError):
                     self.inspect()
 
+    def test_an_acceptance_record_binds_to_the_artifact_bytes(self):
+        record = {"gate_id": "n8-partition-rejoin", "source_sha": "a" * 40,
+                  "binary_sha256": "b" * 64, "aggregate": "PASS",
+                  "artifact": ARTIFACT, "artifact_sha256": artifact_sha()}
+        for field, value in (
+                ("artifact", "https://github.com/rhovision-org/rholo/issues/51"),
+                ("artifact", "/etc/passwd"),
+                ("artifact", "../outside.json"),
+                ("artifact", "spec/audit/no-such-record.json"),
+                ("artifact_sha256", "tbd"),
+                ("artifact_sha256", "a" * 64)):
+            with self.subTest(field=field, value=value):
+                bad = dict(record)
+                bad[field] = value
+                self.payload["acceptance_records"] = [bad]
+                with self.assertRaises(gate.LedgerError):
+                    self.inspect()
+
+    def test_a_symlinked_artifact_is_not_a_pinned_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real = root / "real.json"
+            real.write_text("{}\n")
+            (root / "link.json").symlink_to(real)
+            record = {"gate_id": "n8-partition-rejoin", "source_sha": "a" * 40,
+                      "binary_sha256": "b" * 64, "aggregate": "PASS",
+                      "artifact": "link.json",
+                      "artifact_sha256": hashlib.sha256(real.read_bytes()).hexdigest()}
+            self.payload["acceptance_records"] = [record]
+            with self.assertRaisesRegex(gate.LedgerError, "symlink"):
+                gate.validate(self.payload, repo=root)
+
+    def test_an_evidence_record_artifact_must_agree_with_the_acceptance_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            record_dir = root / "record"
+            record_dir.mkdir()
+            manifest = record_dir / "manifest.json"
+            manifest.write_text(json.dumps({"source_sha": "a" * 40,
+                                            "binary_sha256": "b" * 64,
+                                            "verdict": "PASS"}))
+            record = {"gate_id": "n8-partition-rejoin", "source_sha": "a" * 40,
+                      "binary_sha256": "b" * 64, "aggregate": "PASS",
+                      "artifact": "record",
+                      "artifact_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest()}
+            self.payload["acceptance_records"] = [record]
+            self.assertEqual(gate.validate(self.payload, repo=root)["result"],
+                             "TRACKER_MUST_REMAIN_OPEN")
+            for field, value in (("source_sha", "c" * 40),
+                                 ("binary_sha256", "c" * 64),
+                                 ("verdict", "INCONCLUSIVE")):
+                with self.subTest(field=field):
+                    manifest.write_text(json.dumps(
+                        {"source_sha": "a" * 40, "binary_sha256": "b" * 64,
+                         "verdict": "PASS", field: value}))
+                    bad = dict(record)
+                    bad["artifact_sha256"] = hashlib.sha256(
+                        manifest.read_bytes()).hexdigest()
+                    self.payload["acceptance_records"] = [bad]
+                    with self.assertRaisesRegex(gate.LedgerError, "manifest"):
+                        gate.validate(self.payload, repo=root)
+
     def test_a_pass_and_a_fail_at_one_digest_invalidate_the_gate(self):
         base = {"gate_id": "n8-partition-rejoin", "source_sha": "a" * 40,
-                "binary_sha256": "b" * 64,
-                "artifact": "spec/audit/evidence/rejoin-acceptance-20261031/README.md"}
+                "binary_sha256": "b" * 64, "artifact": ARTIFACT,
+                "artifact_sha256": artifact_sha()}
         self.payload["acceptance_records"] = [{**base, "aggregate": "PASS"},
                                               {**base, "aggregate": "FAIL"}]
         with self.assertRaisesRegex(gate.LedgerError, "PASS/FAIL conflict"):
             self.inspect()
+
+
+    def test_the_sign_off_binds_the_digest_to_an_in_repo_record_and_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            record = root / "evidence"
+            record.mkdir()
+            (record / "manifest.json").write_text("{}\n")
+            digest = hashlib.sha256((record / "manifest.json").read_bytes()).hexdigest()
+            (root / "review.md").write_text(f"Maintainer verified {digest}\n")
+            review_dir = root / "review-dir"
+            review_dir.mkdir()
+            (review_dir / "README.md").write_text(f"Maintainer verified {digest}\n")
+            item = next(x for x in self.payload["items"] if x["id"] == gate.AUDIT_SIGNOFF_ID)
+            item.update(status="verified",
+                        evidence_url="https://github.com/rhovision-org/rholo/issues/51",
+                        approval_url="https://github.com/rhovision-org/rholo/issues/51",
+                        approved_by="Maintainer", evidence_sha256=digest,
+                        evidence_record="evidence", review_record="review.md")
+            self.assertEqual(gate.validate(self.payload, repo=root)["result"],
+                             "TRACKER_MUST_REMAIN_OPEN")
+            # The directory form is the register's human-attestation convention.
+            item["review_record"] = "review-dir"
+            self.assertEqual(gate.validate(self.payload, repo=root)["result"],
+                             "TRACKER_MUST_REMAIN_OPEN")
+            item["review_record"] = "review.md"
+            original = dict(item)
+            for field, value in (("evidence_sha256", "a" * 64),
+                                 ("evidence_record", "missing"),
+                                 ("review_record", "missing.md"),
+                                 ("approved_by", "SomeoneElse")):
+                with self.subTest(field=field):
+                    item.clear()
+                    item.update(original)
+                    item[field] = value
+                    with self.assertRaises(gate.LedgerError):
+                        gate.validate(self.payload, repo=root)
+            for field in ("evidence_record", "review_record"):
+                with self.subTest(absent=field):
+                    item.clear()
+                    item.update(original)
+                    del item[field]
+                    with self.assertRaises(gate.LedgerError):
+                        gate.validate(self.payload, repo=root)
+            item.clear()
+            item.update(original)
+            (root / "review.md").write_text("Maintainer verified\n")
+            with self.assertRaisesRegex(gate.LedgerError, "digest"):
+                gate.validate(self.payload, repo=root)
 
 
 class MainnetRegisterTests(unittest.TestCase):
