@@ -77,6 +77,9 @@ def materialise(spec: object) -> tuple[Path | None, tempfile.TemporaryDirectory 
         return None, None
     files = spec.get("files")
     if isinstance(files, dict) and files:
+        # A Python-only job on a fresh checkout has no target/; a fixture must not depend on a
+        # build artefact.
+        (ROOT / "target").mkdir(parents=True, exist_ok=True)
         directory = tempfile.TemporaryDirectory(dir=ROOT / "target")
         base = Path(directory.name)
         for relative, text in files.items():
