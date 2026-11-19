@@ -529,6 +529,119 @@
       500
      ],
      "expected": "FAIL"
+    },
+    {
+     "name": "a gRPC surface with no origin",
+     "mutation": [
+      "delete",
+      "pressure/record/surfaces/grpc/origin"
+     ],
+     "expected": "PRECONDITION"
+    },
+    {
+     "name": "an unknown gRPC origin",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/grpc/origin",
+      "somewhere"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a gRPC candidate from another source",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/grpc/candidate/source_sha",
+      "cccccccccccccccccccccccccccccccccccccccc"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a gRPC candidate from another binary",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/grpc/candidate/binary_sha256",
+      "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a local gRPC endpoint on a public-live record",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/grpc/endpoint/url",
+      "http://127.0.0.1:40404"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a gRPC endpoint that is not the measured node",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/grpc/endpoint/url",
+      "http://203.0.113.99:40404"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a candidate-test surface claiming the endpoint",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/grpc/origin",
+      "endpoint"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a candidate-code surface with no scope",
+     "mutation": [
+      "delete",
+      "pressure/record/surfaces/grpc/scope"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "an HTTP surface from another host",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/http/endpoint/url",
+      "http://203.0.113.99:40403"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a direct-HTTP surface from another host",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/direct_http/endpoint/url",
+      "http://203.0.113.99:40403"
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a public endpoint labelled local-devnet",
+     "mutation": [
+      [
+       "set",
+       "pressure/record/locality",
+       "local-devnet"
+      ],
+      [
+       "set",
+       "pressure/files/README.md",
+       "# M2 pressure witness\n\n**Evidence locality.** local-devnet \u2014 four hosts.\n"
+      ]
+     ],
+     "expected": "FAIL"
+    },
+    {
+     "name": "a gRPC candidate record that is absent",
+     "mutation": [
+      "set",
+      "pressure/record/surfaces/grpc/candidate_record",
+      "raw/missing.json"
+     ],
+     "expected": "FAIL"
     }
    ],
    "pass_condition_sha256": "25c97f9b905e6251de65e5d387b4290fcbf379440ab013eb098083921a2747a1"

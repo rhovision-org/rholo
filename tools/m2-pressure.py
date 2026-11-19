@@ -401,7 +401,8 @@ def check_binding(record: dict, base: Path) -> list[str]:
     def walk(value: object) -> None:
         if isinstance(value, dict):
             for key, item in value.items():
-                if key in ("transcript", "inspect", "version") and _nonempty(item):
+                if key in ("transcript", "inspect", "version", "candidate_record") \
+                        and _nonempty(item):
                     named.add(item)
                 else:
                     walk(item)
@@ -443,6 +444,114 @@ def check_binding(record: dict, base: Path) -> list[str]:
             elif digest != hashlib.sha256(path.read_bytes()).hexdigest():
                 problems.append(f"{name} digest does not match SHA256SUMS.json")
     return problems
+
+
+def _same_listener(left: object, right: object) -> bool:
+    if not (_nonempty(left) and _nonempty(right)):
+        return False
+    first, second = urlparse(str(left)), urlparse(str(right))
+    return first.hostname == second.hostname and first.port == second.port
+
+
+def _same_host(left: object, right: object) -> bool:
+    if not (_nonempty(left) and _nonempty(right)):
+        return False
+    return urlparse(str(left)).hostname == urlparse(str(right)).hostname
+
+
+def _check_surface_binding(record: dict, base: Path, locality: str,
+                           problems: list[str], preconditions: list[str]) -> None:
+    """A public-live record binds every surface to the measured endpoint.
+
+    A `candidate-test` gRPC transcript is a candidate-code measurement, not an endpoint
+    transport measurement; the record must say so and must not claim otherwise. The committed
+    local rehearsal predates these fields and is gated out: it is not gate evidence.
+    """
+    if locality != "public-live":
+        return
+    endpoint = record.get("endpoint") if isinstance(record.get("endpoint"), dict) else {}
+    surfaces = record.get("surfaces") if isinstance(record.get("surfaces"), dict) else {}
+    for name in ("http", "direct_http"):
+        surface = surfaces.get(name)
+        if not isinstance(surface, dict):
+            continue
+        declared = surface.get("endpoint")
+        if not isinstance(declared, dict) or not _nonempty(declared.get("url")):
+            problems.append(f"surfaces.{name}.endpoint is absent")
+            continue
+        if declared.get("proxy") != "none":
+            problems.append(f"surfaces.{name}.endpoint.proxy is not 'none'")
+        if not _same_listener(declared.get("url"), endpoint.get("url")):
+            problems.append(
+                f"surfaces.{name}.endpoint is not the measured endpoint "
+                f"{endpoint.get('url')!r}")
+    grpc = surfaces.get("grpc")
+    if not isinstance(grpc, dict):
+        return
+    origin = grpc.get("origin")
+    if origin is None:
+        preconditions.append("surfaces.grpc.origin is absent")
+        return
+    if origin not in ("endpoint", "candidate-test"):
+        problems.append(f"surfaces.grpc.origin {origin!r} is unknown")
+        return
+    scope = grpc.get("scope")
+    if origin == "candidate-test" and scope != "candidate-code":
+        problems.append("a candidate-test gRPC surface must declare scope 'candidate-code'")
+    candidate = grpc.get("candidate")
+    record_candidate = record.get("candidate") if isinstance(record.get("candidate"), dict) else {}
+    if not isinstance(candidate, dict):
+        problems.append("surfaces.grpc.candidate is absent")
+    else:
+        if candidate.get("source_sha") != record_candidate.get("source_sha"):
+            problems.append("surfaces.grpc.candidate.source_sha is not the record candidate")
+        if candidate.get("binary_sha256") != record_candidate.get("binary_sha256"):
+            problems.append("surfaces.grpc.candidate.binary_sha256 is not the record candidate")
+    declared = grpc.get("endpoint")
+    if not isinstance(declared, dict) or not _nonempty(declared.get("url")):
+        problems.append("surfaces.grpc.endpoint is absent")
+    else:
+        if declared.get("proxy") != "none":
+            problems.append("surfaces.grpc.endpoint.proxy is not 'none'")
+        parsed = urlparse(str(declared.get("url")))
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            problems.append("surfaces.grpc.endpoint.url is not an http(s) URL")
+        else:
+            if _locality.local_address(parsed.hostname):
+                problems.append("surfaces.grpc.endpoint is local, not public-live")
+            if not _same_host(declared.get("url"), endpoint.get("url")):
+                problems.append("surfaces.grpc.endpoint is not the measured node")
+        used = declared.get("used")
+        if not isinstance(used, bool):
+            problems.append("surfaces.grpc.endpoint.used is not a boolean")
+        elif origin == "candidate-test" and used is not False:
+            problems.append("a candidate-test gRPC surface cannot claim the endpoint")
+        elif origin == "endpoint" and used is not True:
+            problems.append("an endpoint gRPC surface must declare endpoint.used true")
+    name = grpc.get("candidate_record")
+    if not _nonempty(name):
+        problems.append("surfaces.grpc.candidate_record is absent")
+        return
+    path = resolve(base, name)
+    if path is None:
+        problems.append(f"surfaces.grpc.candidate_record {name!r} is absent")
+        return
+    try:
+        document = json.loads(path.read_text())
+    except ValueError:
+        problems.append(f"surfaces.grpc.candidate_record {name!r} is not JSON")
+        return
+    if not isinstance(document, dict):
+        problems.append("surfaces.grpc.candidate_record is not an object")
+        return
+    if document.get("origin") != origin:
+        problems.append("the gRPC candidate record disagrees about its origin")
+    if document.get("scope") != scope:
+        problems.append("the gRPC candidate record disagrees about its scope")
+    if document.get("candidate") != candidate:
+        problems.append("the gRPC candidate record disagrees about the candidate")
+    if document.get("endpoint") != declared:
+        problems.append("the gRPC candidate record disagrees about the endpoint")
 
 
 def check_pressure(spec: dict, parameters: dict, source: str = "") -> tuple[str, list[str]]:
@@ -502,6 +611,11 @@ def check_pressure(spec: dict, parameters: dict, source: str = "") -> tuple[str,
                     problems.append(f"endpoint.url {url!r} is not an http(s) URL")
                 elif wanted == "public-live" and _locality.local_address(parsed.hostname):
                     problems.append(f"endpoint host {parsed.hostname!r} is local, not public-live")
+                elif _nonempty(locality) and locality == "local-devnet" \
+                        and not _locality.local_address(parsed.hostname):
+                    problems.append(
+                        f"endpoint host {parsed.hostname!r} is not local, but the record "
+                        "declares local-devnet")
         candidate = record.get("candidate")
         if not isinstance(candidate, dict):
             problems.append("candidate is absent")
@@ -561,6 +675,8 @@ def check_pressure(spec: dict, parameters: dict, source: str = "") -> tuple[str,
             record, base, source, rate_ceiling
         )
         problems.extend(transcript_problems)
+        _check_surface_binding(record, base, locality if _nonempty(locality) else "",
+                               problems, preconditions)
         problems.extend(check_binding(record, base))
         if preconditions:
             return "PRECONDITION", preconditions + problems
