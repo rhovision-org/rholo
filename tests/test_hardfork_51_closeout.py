@@ -342,6 +342,14 @@ class CloseoutTests(unittest.TestCase):
                     self.payload["acceptance_records"] = [bad]
                     with self.assertRaisesRegex(gate.LedgerError, "manifest"):
                         gate.validate(self.payload, repo=root)
+            # A manifest that omits a field is not agreement.
+            manifest.write_text(json.dumps({"source_sha": "a" * 40,
+                                            "binary_sha256": "b" * 64}))
+            bad = dict(record)
+            bad["artifact_sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+            self.payload["acceptance_records"] = [bad]
+            with self.assertRaisesRegex(gate.LedgerError, "verdict"):
+                gate.validate(self.payload, repo=root)
 
     def test_a_pass_and_a_fail_at_one_digest_invalidate_the_gate(self):
         base = {"gate_id": "n8-partition-rejoin", "source_sha": "a" * 40,
@@ -380,6 +388,8 @@ class CloseoutTests(unittest.TestCase):
             original = dict(item)
             for field, value in (("evidence_sha256", "a" * 64),
                                  ("evidence_record", "missing"),
+                                 ("evidence_record", "review.md"),
+                                 ("evidence_record", "../evidence"),
                                  ("review_record", "missing.md"),
                                  ("approved_by", "SomeoneElse")):
                 with self.subTest(field=field):
@@ -488,6 +498,7 @@ class RustControlTests(unittest.TestCase):
             top_level_dir=str(ROOT / "tests"))
         result = unittest.TextTestRunner(stream=StringIO(), verbosity=0).run(suite)
         self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+        self.assertGreater(result.testsRun, 0)
 
 
 if __name__ == "__main__":

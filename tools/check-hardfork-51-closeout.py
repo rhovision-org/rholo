@@ -77,7 +77,7 @@ def repo_path(value: object, label: str, root: Path) -> Path:
     """
     text = good_text(value, label)
     raw = Path(text)
-    require(not raw.is_absolute() and "://" not in text,
+    require(not raw.is_absolute() and ".." not in raw.parts and "://" not in text,
             f"{label}: a repo-relative path is required, not a URL")
     lexical = root / raw
     cursor = lexical
@@ -100,6 +100,13 @@ def artifact_digest(path: Path, label: str) -> str:
         require(manifest.is_file(), f"{label}: an evidence record needs manifest.json")
         return hashlib.sha256(manifest.read_bytes()).hexdigest()
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def record_digest(path: Path, label: str) -> str:
+    """sha256 of an evidence record's manifest; a bare file is not a record."""
+    require(path.is_dir() and (path / "manifest.json").is_file(),
+            f"{label}: an evidence record directory with manifest.json is required")
+    return hashlib.sha256((path / "manifest.json").read_bytes()).hexdigest()
 
 
 def is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
@@ -236,7 +243,7 @@ def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None,
             # **The signed digest is the record's digest, and the review carries it.**
             # A bare 64-hex string, two URLs and a name were the forgeable sign-off.
             evidence = repo_path(item.get("evidence_record"), ident + ".evidence_record", root)
-            require(digest == artifact_digest(evidence, ident + ".evidence_record"),
+            require(digest == record_digest(evidence, ident + ".evidence_record"),
                     f"{ident}: evidence_sha256 is not the evidence record's digest")
             review = repo_path(item.get("review_record"), ident + ".review_record", root)
             review_text = ((review / "README.md").read_text(errors="ignore")
@@ -289,8 +296,7 @@ def validate(raw: dict, *, verify_git: bool = False, repo: Path | None = None,
             for field, expected in (("source_sha", source),
                                     ("binary_sha256", binary),
                                     ("verdict", aggregate)):
-                actual = manifest.get(field)
-                require(actual is None or actual == expected,
+                require(manifest.get(field) == expected,
                         f"{gate}: the artifact manifest's {field} does not match the record")
         key = (gate, source, binary)
         verdicts.setdefault(key, set()).add(aggregate)
