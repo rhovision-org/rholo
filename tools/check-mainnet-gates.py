@@ -620,6 +620,9 @@ def check_met_ratchet(document: dict, rows: list[dict]) -> None:
             "met_ratchet.required_ids has duplicates")
     require(minimum == len(required),
             "met_ratchet.minimum must equal the required-id count")
+    floor = getattr(load_builder(), "MINIMUM_MET", 0)
+    require(minimum >= floor,
+            f"met_ratchet.minimum {minimum} is below the floor {floor}")
     by_id = {row["id"]: row for row in rows}
     for ident in required:
         require(ident in by_id, f"met_ratchet names unknown gate {ident}")

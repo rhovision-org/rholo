@@ -192,7 +192,7 @@ class RegisterTests(unittest.TestCase):
         })
         return row
 
-    def apply_bindings(self, bindings, rows=None, required=None):
+    def apply_bindings(self, bindings, rows=None, required=None, floor=0):
         rows = rows if rows is not None else [
             self.unmet("G520-MIGRATION"),
             copy.deepcopy(self.row("G428-M1"))]
@@ -203,7 +203,7 @@ class RegisterTests(unittest.TestCase):
             "met_ratchet": {"minimum": len(required), "required_ids": required},
             "bindings": bindings,
         }
-        builder.apply_bindings(rows, document)
+        builder.apply_bindings(rows, document, floor=floor)
         return rows
 
     def test_a_complete_binding_promotes_only_the_bound_row(self):
@@ -325,6 +325,22 @@ class RegisterTests(unittest.TestCase):
     def test_the_met_ratchet_cannot_regress(self):
         with self.assertRaisesRegex(ValueError, "does not equal the ratchet"):
             self.apply_bindings([self.make_binding()], required=[])
+
+    def test_a_synthetic_ratchet_below_the_floor_is_refused(self):
+        binding = self.make_binding()
+        with self.assertRaisesRegex(ValueError, "below the floor"):
+            self.apply_bindings([binding], required=[binding["gate_id"]], floor=2)
+
+    def test_the_committed_register_is_at_the_builder_floor(self):
+        self.assertEqual(builder.MINIMUM_MET, 47)
+        self.assertEqual(REGISTER["met_ratchet"]["minimum"], builder.MINIMUM_MET)
+
+    def test_check_met_ratchet_refuses_a_ratchet_below_the_floor(self):
+        ids = self.payload["met_ratchet"]["required_ids"][:46]
+        rows = [{"id": ident, "status": "met"} for ident in ids]
+        with self.assertRaisesRegex(gate.GateError, "below the floor"):
+            gate.check_met_ratchet(
+                {"met_ratchet": {"minimum": 46, "required_ids": ids}}, rows)
 
     def test_an_unbound_row_keeps_its_status_and_reason(self):
         rows = self.apply_bindings([], rows=[self.unmet("G520-MIGRATION")],

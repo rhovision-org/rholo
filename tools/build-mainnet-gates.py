@@ -49,6 +49,10 @@ WITNESS_KINDS = {
 }
 PROMOTABLE_STATUSES = {"owes", "external", "reviewable"}
 INELIGIBLE_IDS = {"TA-C3"}
+# **The ratchet's floor is not a copy of the data it guards.** `minimum == len(required_ids)` is
+# satisfied by lowering both; a promotion raises this constant in the same commit, and a demotion
+# is then an explicit two-file change.
+MINIMUM_MET = 47
 
 
 def require(condition: bool, message: str) -> None:
@@ -222,8 +226,11 @@ def _eligible(row: dict, met_ids: set[str]) -> tuple[bool, str]:
     return True, ""
 
 
-def apply_bindings(rows: list[dict], document: dict) -> None:
-    """Promote only complete, eligible authored bindings; verify the ratchet."""
+def apply_bindings(rows: list[dict], document: dict, floor: int = 0) -> None:
+    """Promote only complete, eligible authored bindings; verify the ratchet.
+
+    `floor` is the independent minimum the build enforces; synthetic tests pass 0.
+    """
     require(document.get("schema") == 1, "bindings schema 1 required")
     bindings = document.get("bindings")
     require(isinstance(bindings, list), "bindings must be a list")
@@ -272,6 +279,8 @@ def apply_bindings(rows: list[dict], document: dict) -> None:
             "met_ratchet.required_ids has duplicates")
     require(minimum == len(required),
             "met_ratchet.minimum must equal the required-id count")
+    require(minimum >= floor,
+            f"met_ratchet.minimum {minimum} is below the floor {floor}")
     met = {row["id"] for row in rows if row["status"] == "met"}
     require(met == set(required),
             f"the met set {sorted(met)} does not equal the ratchet {sorted(set(required))}")
@@ -386,7 +395,7 @@ def build() -> dict:
     for row in rows:
         row["related"] = [edge for edge in row.get("related") or []
                           if edge.get("id") in gate_ids]
-    apply_bindings(rows, bindings)
+    apply_bindings(rows, bindings, floor=MINIMUM_MET)
     seen = set()
     for row in rows:
         if row["id"] in seen:
