@@ -60,6 +60,7 @@ _c343 = _module("gate_principles_c343", ROOT / "tools" / "c343-live.py")
 _c357 = _module("gate_principles_c357", ROOT / "tools" / "c357-acceptance.py")
 _locality = _module("gate_principles_locality", ROOT / "tools" / "check-evidence-locality.py")
 _m3chain = _module("gate_principles_m3_chain", ROOT / "tools" / "m3-join-chain.py")
+_m2pressure = _module("gate_principles_m2_pressure", ROOT / "tools" / "m2-pressure.py")
 
 
 def _present(value: object) -> bool:
@@ -337,6 +338,24 @@ def bounded_admission(observations: dict, parameters: dict) -> dict:
             directory.cleanup()
 
 
+def pressure_refusal(observations: dict, parameters: dict) -> dict:
+    """M2's two halves: bounded queues (source) and deterministic overload refusal (record).
+
+    The source half stays `bounded_admission`; this principle composes it and then measures the
+    typed pressure record. An unset-default run that refuses, a 5xx, a refusal without a retry
+    signal or a summary that disagrees with its transcripts are all failures; a missing surface or
+    record is a precondition, never a pass.
+    """
+    source = bounded_admission(observations, {"queues": parameters.get("queues", [])})
+    if source["status"] != "PASS":
+        return source
+    pressure = observations.get("pressure")
+    if not isinstance(pressure, dict):
+        return verdict("PRECONDITION", ["pressure is absent"])
+    status, problems = _m2pressure.check_pressure(pressure, parameters)
+    return verdict(status, problems)
+
+
 def off_host_claim(observations: dict, parameters: dict) -> dict:
     record = observations.get("record")
     if not isinstance(record, dict):
@@ -493,6 +512,7 @@ PRINCIPLES = {
     "phase_diagnosis": phase_diagnosis,
     "lockstep_acceptance": lockstep_acceptance,
     "bounded_admission": bounded_admission,
+    "pressure_refusal": pressure_refusal,
     "off_host_claim": off_host_claim,
     "join_chain": join_chain,
     "resource_attribution": resource_attribution,
@@ -511,6 +531,7 @@ PARAMETER_SCHEMA = {
     "lockstep_acceptance": {"table": str, "require_original_trace": bool,
                             "max_window": (int, float)},
     "bounded_admission": {"queues": list},
+    "pressure_refusal": {"queues": list, "locality": str, "rate_ceiling": int},
     "off_host_claim": {},
     "join_chain": {"locality": str},
     "resource_attribution": {"process_name": str},

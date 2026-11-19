@@ -63,7 +63,8 @@ The layer is deliberately small:
 | `merge_accounting` | per-deploy effects; no unapplied kept write; no rejection without a conflict; kept effects read back from the produced state | G428-M5 |
 | `phase_diagnosis` | the phase table's conditions hold; block-6 disposition is structural; a later orphan overrides an earlier accepted; 404/unparsed is `PRECONDITION` | C343 |
 | `lockstep_acceptance` | selected pins; derived/declared lockstep window; no mixed version; required shape; independent reviewer; accepted verdict; incident trace | C357 |
-| `bounded_admission` | every ingress queue is bounded by a named constant; no unbounded channel; a full queue refuses in the bounded class | G428-M2 |
+| `bounded_admission` | every ingress queue is bounded by a named constant; no unbounded channel; a full queue refuses in the bounded class | G428-M2 (source half) |
+| `pressure_refusal` | the queues are bounded (composes `bounded_admission`), and a capped run refuses with 429/RESOURCE_EXHAUSTED and a retry signal, no 5xx, and a handler reachable after release, while the unset default refuses nothing; counts are recomputed from the named raw transcripts, the refusal message is bound to the source, the endpoint is non-local, and a local-devnet record is refused | G428-M2 |
 | `off_host_claim` | an off-host/live-host claim carries a routable peer; loopback/private/encoded addresses cannot satisfy it | G428-M3 (locality half) |
 | `join_chain` | the six-stage chain is typed, `complete: true` and complete: all stages keyed by peer + anchor, a transport outcome whose words match (not a send line), served = received = restored = walked hashes, and every quoted line present in the named raw logs; an off-host record is digest-pinned; the off-host policy composes `off_host_claim` | G428-M3 |
 | `resource_attribution` | process accounting counts only the node's processes; unrelated processes cannot inflate or hide the count | G428-M1 |
@@ -98,6 +99,7 @@ python3 -m unittest discover -s tests -p test_gate_criterion.py -v
 python3 -m unittest discover -s tests -p test_live_gate.py -v
 python3 -m unittest discover -s tests -p test_mainnet_gates.py -v
 python3 -m unittest discover -s tests -p test_m3_join_chain.py -v
+python3 -m unittest discover -s tests -p test_m2_pressure.py -v
 python3 tools/gate-check.py --list
 python3 tools/check-mainnet-gates.py --check        # 59 gates, 47 met, 12 unresolved
 python3 tools/check-mainnet-gates.py --assert-closeable   # exits 3

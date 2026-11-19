@@ -97,13 +97,147 @@ def base_g428_m1() -> dict:
                        "declared_count": 1}}
 
 
+def _m2_jsonl(records: list[dict]) -> str:
+    return "".join(json.dumps(record) + "\n" for record in records)
+
+
 def base_g428_m2() -> dict:
-    return {"source": {"text": (
-        "let (incoming_blocks_tx, incoming_blocks_rx) = mpsc::channel(MAX_PENDING_BLOCKS);\n"
-        "let (processor_input_tx, processor_input_rx) = mpsc::channel(MAX_PROCESSOR_INPUT);\n"
-        "let (validated_blocks_tx, validated_blocks_rx) = mpsc::channel(MAX_VALIDATED_BLOCKS);\n"
-        "let (tap_tx, tap_rx) = mpsc::channel(MAX_TAP_VALIDATED_BLOCKS);\n"
-    )}}
+    """One complete pressure record: capped, unset, direct-socket and gRPC.
+
+    The single source of the synthetic transcripts, so a fixture and the checker cannot drift
+    apart. The record is inline under `pressure.record` so the criterion's declared controls can
+    mutate its fields; the raw files stay separate so editing a transcript without editing the
+    summary is the failure the checker recomputes.
+    """
+    message = "HTTP in-flight capacity exhausted"
+    capped_http = (
+        [
+            {"kind": "held", "status": None, "retry_after": None, "body": "", "t_ms": 0},
+            {"kind": "held", "status": None, "retry_after": None, "body": "", "t_ms": 100},
+        ]
+        + [
+            {"kind": "probe", "status": 429, "retry_after": 1, "body": message,
+             "t_ms": 200 + 50 * index}
+            for index in range(4)
+        ]
+        + [
+            {"kind": "after", "status": 400, "retry_after": None, "body": "invalid json",
+             "t_ms": 500},
+        ]
+    )
+    unset_http = [
+        {"kind": "probe", "status": 400, "retry_after": None, "body": "invalid json",
+         "t_ms": 120 * index}
+        for index in range(6)
+    ]
+    capped_direct = (
+        "POST /api/v1/deploy HTTP/1.1\n"
+        "Content-Length: 64\n\n"
+        "HTTP/1.1 429 Too Many Requests\n"
+        "retry-after: 1\n"
+        "content-type: application/json\n\n"
+        '{"error":"HTTP in-flight capacity exhausted"}\n'
+        "-- release --\n"
+        "HTTP/1.1 400 Bad Request\n"
+    )
+    unset_direct = "HTTP/1.1 400 Bad Request\n"
+    grpc_capped = [
+        {"arm": "ingress_rate", "code": 0, "message": "ok", "retry_after": None},
+        {"arm": "ingress_rate", "code": 8, "message": "rate limited", "retry_after": None},
+        {"arm": "pool_full", "code": 8, "message": "pool full", "retry_after": 1},
+    ]
+    grpc_permissive = [
+        {"arm": "permissive", "code": 0, "message": "ok", "retry_after": None},
+        {"arm": "permissive", "code": 0, "message": "ok", "retry_after": None},
+    ]
+    source_sha, binary = "a" * 40, "b" * 64
+    record = {
+        "schema": 1,
+        "gate_id": "G428-M2",
+        "locality": "public-live",
+        "endpoint": {"url": "http://203.0.113.7:40403", "proxy": "none"},
+        "candidate": {"source_sha": source_sha, "binary_sha256": binary},
+        "runs": {
+            "capped": {
+                "env": {"RNODE_HTTP_MAX_INFLIGHT_DEPLOY": 2},
+                "inspect": "raw/capped-inspect.json",
+                "version": "raw/capped-version.txt",
+            },
+            "unset": {
+                "env": {},
+                "inspect": "raw/unset-inspect.json",
+                "version": "raw/unset-version.txt",
+            },
+        },
+        "surfaces": {
+            "http": {
+                "capped": {
+                    "cap": 2, "held": 2, "probe": 4, "admitted": 0, "refused": 4,
+                    "server_errors": 0, "retry_after": 4,
+                    "refusal": {"class": "429", "message": message},
+                    "handler_reached_after_release": True,
+                    "transcript": "raw/http-capped.jsonl",
+                    "requests_per_second": 20.0,
+                },
+                "unset": {
+                    "probe": 6, "admitted": 6, "refused": 0, "server_errors": 0,
+                    "retry_after": 0, "handler_reached_after_release": True,
+                    "transcript": "raw/http-unset.jsonl",
+                    "requests_per_second": 8.3,
+                },
+            },
+            "direct_http": {
+                "capped": {"status_line": "HTTP/1.1 429", "retry_after": 1,
+                           "transcript": "raw/direct-capped.txt"},
+                "unset": {"status_line": "HTTP/1.1 400",
+                          "transcript": "raw/direct-unset.txt"},
+            },
+            "grpc": {
+                "capped": {
+                    "arms": {
+                        "ingress_rate": {"admitted": 1, "refused": 1, "code": 8,
+                                         "retry_after": None},
+                        "pool_full": {"admitted": 0, "refused": 1, "code": 8,
+                                      "retry_after": 1},
+                    },
+                    "server_errors": 0,
+                    "transcript": "raw/grpc-capped.jsonl",
+                },
+                "permissive": {"admitted": 2, "refused": 0,
+                               "transcript": "raw/grpc-permissive.jsonl"},
+            },
+        },
+    }
+    files = {
+        "README.md": (
+            "# M2 pressure witness\n\n"
+            "**Evidence locality.** public-live — four independent hosts.\n"
+        ),
+        "raw/http-capped.jsonl": _m2_jsonl(capped_http),
+        "raw/http-unset.jsonl": _m2_jsonl(unset_http),
+        "raw/direct-capped.txt": capped_direct,
+        "raw/direct-unset.txt": unset_direct,
+        "raw/grpc-capped.jsonl": _m2_jsonl(grpc_capped),
+        "raw/grpc-permissive.jsonl": _m2_jsonl(grpc_permissive),
+        "raw/capped-inspect.json": json.dumps(
+            [{"Config": {"Env": ["RNODE_HTTP_MAX_INFLIGHT_DEPLOY=2"]}}]
+        ),
+        "raw/unset-inspect.json": json.dumps([{"Config": {"Env": []}}]),
+        "raw/capped-version.txt": f"commit {source_sha}\n",
+        "raw/unset-version.txt": f"commit {source_sha}\n",
+    }
+    files["SHA256SUMS.json"] = json.dumps(
+        {name: hashlib.sha256(text.encode()).hexdigest() for name, text in files.items()}
+    )
+    return {
+        "source": {"text": (
+            "let (incoming_blocks_tx, incoming_blocks_rx) = mpsc::channel(MAX_PENDING_BLOCKS);\n"
+            "let (processor_input_tx, processor_input_rx) = mpsc::channel(MAX_PROCESSOR_INPUT);\n"
+            "let (validated_blocks_tx, validated_blocks_rx) = mpsc::channel(MAX_VALIDATED_BLOCKS);\n"
+            "let (tap_tx, tap_rx) = mpsc::channel(MAX_TAP_VALIDATED_BLOCKS);\n"
+        )},
+        "pressure": {"record": record, "files": files},
+    }
 
 
 def m3_chain(
