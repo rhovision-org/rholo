@@ -626,6 +626,7 @@ def write_campaign(d, args, result, source_sha, binary_sha256):
         "binary_sha256": binary_sha256,
         "run_id": os.environ.get("GITHUB_RUN_ID"),
         "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+        "locality": "local-devnet" if getattr(args, "local", False) else "single-host",
         "validators": args.validators,
         "aggregate": result["result"],
         "cycles": [{"cycle": r.get("cycle"), "result": r.get("result"),
@@ -639,11 +640,20 @@ def main():
     ap.add_argument("--validators",type=int,choices=[4,8],required=True)
     ap.add_argument("--epoch-length",type=int,default=10,
                     help="the devnet's epoch length, for missing-range coverage")
-    ap.add_argument("--out",required=True);args=ap.parse_args();args.window=150
-    if os.environ.get("GITHUB_ACTIONS")!="true" or os.environ.get("RUNNER_ENVIRONMENT")!="github-hosted":
-        raise SystemExit("disposable hosted runner only")
-    if os.environ.get("DEVNET_PREFIX")!="acceptance":
-        raise SystemExit("unexpected namespace")
+    ap.add_argument("--out",required=True)
+    ap.add_argument("--local",action="store_true",
+                    help="single-host local-devnet mechanism check; never multi-host evidence")
+    args=ap.parse_args();args.window=150
+    if args.local:
+        # A local run is the same mechanism on one Docker host. It is recorded as
+        # `local-devnet` and cannot stand in for the multi-host campaign.
+        if os.environ.get("DEVNET_PREFIX")!="acceptance":
+            raise SystemExit("local mode uses the acceptance namespace")
+    else:
+        if os.environ.get("GITHUB_ACTIONS")!="true" or os.environ.get("RUNNER_ENVIRONMENT")!="github-hosted":
+            raise SystemExit("disposable hosted runner only (or pass --local)")
+        if os.environ.get("DEVNET_PREFIX")!="acceptance":
+            raise SystemExit("unexpected namespace")
     d=WorkloadDrill(args);d.run()
     original=json.loads((d.out/"workload-result.json").read_text())
     # **Rotate the victim.** Two cycles that cut the same node look like two witnesses and are one;

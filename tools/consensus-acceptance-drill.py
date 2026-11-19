@@ -430,6 +430,7 @@ class Drill:
                           lambda: self.finalized_marker(target, required=True))
         self.fixed_snapshots(initial)
         summary = {"result": "pass", "validators": self.args.validators,
+                   "locality": "local-devnet" if getattr(self.args, "local", False) else "hosted-runner",
                    "initial_finalized": initial, "final_finalized": final,
                    "target_height": target,
                    "boundary": "finite devnet witness; no universal safety theorem"}
@@ -442,9 +443,16 @@ def main():
     parser.add_argument("--validators", type=int, choices=[4, 5, 8], required=True)
     parser.add_argument("--window", type=int, default=240)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--local", action="store_true",
+                        help="single-host local-devnet mechanism check; never hosted-runner evidence")
     args = parser.parse_args()
-    if os.environ.get("GITHUB_ACTIONS") != "true":
-        parser.error("execution requires an isolated GitHub Actions runner")
+    if args.local:
+        # A local run is the same mechanism on one Docker host. It is recorded as
+        # `local-devnet` and cannot stand in for the hosted acceptance run.
+        if os.environ.get("DEVNET_PREFIX") != "acceptance":
+            parser.error("local mode uses the acceptance namespace")
+    elif os.environ.get("GITHUB_ACTIONS") != "true":
+        parser.error("execution requires an isolated GitHub Actions runner (or pass --local)")
     if not 30 <= args.window <= 600:
         parser.error("window must be between 30 and 600 seconds")
     drill = Drill(args)
