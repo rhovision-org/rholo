@@ -91,16 +91,16 @@ def verify_producing_isolation(observations):
 
     This is the producing-split control: with autopropose on, the isolated minority keeps proposing,
     so a stable tip is the wrong predicate. The sound one is that the tip moves (production) while
-    the finalized fence cannot (no quorum), over the same three-poll dwell.
+    the finalized fence cannot (no quorum). The tip movement is read over the **whole isolation
+    window**, not the last three polls: an autopropose victim can produce a burst and then idle for
+    longer than the three-poll dwell, and a last-three check calls that a failure.
     """
-    last = observations[-DWELL_MIN_SAMPLES:]
-    if len(last) != DWELL_MIN_SAMPLES:
+    rows = [row for row in observations if type(row.get("tip")) is int]
+    heights = [row.get("finalized_height") for row in rows]
+    if len(rows) < DWELL_MIN_SAMPLES:
         return False
-    tips = [row.get("tip") for row in last]
-    heights = [row.get("finalized_height") for row in last]
-    return (all(type(value) is int for value in tips)
-            and all(type(value) is int for value in heights)
-            and len(set(tips)) > 1
+    return (all(type(value) is int for value in heights)
+            and len({row["tip"] for row in rows}) > 1
             and len(set(heights)) == 1)
 
 

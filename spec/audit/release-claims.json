@@ -95,7 +95,7 @@
       "trace": "finality",
       "close": {
         "not-observed": "Run the local partition drill; the record must carry `finality-*.json` per validator.",
-        "precondition": "RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.",
+        "precondition": "The acceptance drill did not reach the partition phase (no marker observed and finalised once), so no partition was installed; fix that precondition before judging safety.",
         "unsafe-point": "Fix the false finality predicate: `denominator_ok` means the gate used a denominator other than the whole bonded map; `support_ok` means an advance lacked 3*supporting > 2*quorum; `partition_ok` means an unbonded sender entered the partition.",
         "model-incomplete": "Containment failed with every node trace safe: add the cross-view coordinate (which finalised block, which validator) to `FinalityDecision` before changing the test.",
         "evidence-insufficient": "Capture `finality-*.json` per validator; the trace is emitted at `get_pre_state_for_parents` when `RNODE_TRACE_DIR` is set."
