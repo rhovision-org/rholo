@@ -265,15 +265,9 @@
           "required": true
         },
         "local": {
-          "items": [
-            {
-              "action": "The acceptance drill did not reach the partition phase (no marker observed and finalised once), so no partition was installed; fix that precondition before judging safety.",
-              "finding": "RC-1's settlement-retention precondition failed; no partition was installed",
-              "item": "RC-2/local/precondition"
-            }
-          ],
-          "next_pr": "rc-confirm-local",
-          "reading": "precondition",
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
           "required": true
         },
         "multi-host": {
@@ -408,26 +402,18 @@
         },
         "local": {
           "action": {
-            "items": [
-              {
-                "action": "The acceptance drill did not reach the partition phase (no marker observed and finalised once), so no partition was installed; fix that precondition before judging safety.",
-                "finding": "RC-1's settlement-retention precondition failed; no partition was installed",
-                "item": "RC-2/local/precondition"
-              }
-            ],
-            "next_pr": "rc-confirm-local",
-            "reading": "precondition",
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
             "required": true
           },
-          "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
-          "finished_at": "2026-11-20T11:43:11Z",
-          "reasons": [
-            "RC-1's settlement-retention precondition failed; no partition was installed"
-          ],
-          "record": "spec/audit/evidence/rc2-local-20261120-0669419/raw/claim.json",
+          "binary_sha256": "cba8680143aeb7e408f3a9fac68a5472d7efd88aebf572eb9f30310467acded4",
+          "finished_at": "2026-11-20T23:03:23Z",
+          "reasons": [],
+          "record": "spec/audit/evidence/rc2-local-20261120-81ee948/raw/claim.json",
           "required": true,
-          "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a",
-          "status": "not run"
+          "source_sha": "81ee9480bc4873ea9a1d35ab27e8c267b23d1bd0",
+          "status": "pass"
         },
         "multi-host": {
           "action": {
