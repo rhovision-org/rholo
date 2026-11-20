@@ -96,7 +96,15 @@ def wait_new_boot(i, previous, deadline, events):
             last = repr(error)
         time.sleep(0.5)
     record(events, wait_new_boot=i, previous=previous, last=last)
-    raise RuntimeError(f"validator {i} did not restart with a new bootId")
+    # **A silent /health is not the same as a slow one.** The restarted process may have exited
+    # with a named refusal; capture its own log and exit code so the failure names the reason.
+    node = node_name(i)
+    logs = docker("logs", "--tail", "80", node)
+    exit_code = docker("inspect", "-f", "{{.State.ExitCode}}", node)
+    detail = (logs.stdout + logs.stderr)[-1500:]
+    raise RuntimeError(
+        f"validator {i} did not restart with a new bootId "
+        f"(exit={exit_code.stdout.strip()}, last={last}); log tail: {detail}")
 
 
 def wait_ready(i, deadline, events):

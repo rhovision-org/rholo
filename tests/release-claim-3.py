@@ -96,6 +96,10 @@ def run(argv: list[str]) -> int:
                                "local-devnet" if args.env == "local" else "public-live")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    failure = common.preflight_failure(CLAIM_ID, args.env, out, record,
+                                       getattr(args, "public_manifest", None))
+    if failure is not None:
+        return failure
 
     if args.env == "public":
         manifest = common.load_manifest(args.public_manifest)

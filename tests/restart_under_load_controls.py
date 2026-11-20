@@ -29,6 +29,25 @@ def baseline_verdict(identities):
     return None
 
 
+def certificate_verdict(checkpoint, finalised_height):
+    """None iff the restarted victim holds a verified certificate covering the pre-kill height.
+
+    A validator with a populated DAG and no local certificate cannot attribute its state, and the
+    launch refuses; a certificate whose anchor predates the killed finalised height does not cover
+    the state the node accepted either.
+    """
+    if not isinstance(checkpoint, dict):
+        return "no checkpoint status after restart"
+    if checkpoint.get("kind") != "checkpoint" or not checkpoint.get("digest"):
+        return "no verified checkpoint certificate after restart"
+    anchor = checkpoint.get("anchorHeight")
+    if type(anchor) is not int:
+        return "the checkpoint names no anchor height"
+    if anchor < finalised_height:
+        return f"the certificate anchor {anchor} is below the killed height {finalised_height}"
+    return None
+
+
 def deploy_is_success(status):
     """The deploy-status body carries `ProcessedWithSuccess` (any other arm is not resolved)."""
     return isinstance(status, dict) and "ProcessedWithSuccess" in status

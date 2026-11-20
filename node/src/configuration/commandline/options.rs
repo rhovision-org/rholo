@@ -241,6 +241,26 @@ pub enum Commands {
         /// A scratch directory for the replay's runtime. Not a live node's data directory.
         #[arg(long = "data-dir", required = true)]
         data_dir: PathBuf,
+        /// The audited chain's configuration file (shard and genesis descriptors). Required unless
+        /// both `--bonds-file` and `--wallets-file` are supplied; a bare `--data-dir` would verify
+        /// the replay against `defaults.conf`'s genesis instead of the chain's.
+        #[arg(long = "config-file")]
+        config_file: Option<PathBuf>,
+        /// The chain's bonds file, when no config file is supplied.
+        #[arg(long = "bonds-file")]
+        bonds_file: Option<String>,
+        /// The chain's wallets file, when no config file is supplied.
+        #[arg(long = "wallets-file")]
+        wallets_file: Option<String>,
+        /// The chain's epoch length, when no config file is supplied.
+        #[arg(long = "epoch-length")]
+        epoch_length: Option<i32>,
+        /// The chain's shard name, when no config file is supplied.
+        #[arg(long = "shard-name")]
+        shard_name: Option<String>,
+        /// Genesis dev mode, when no config file is supplied.
+        #[arg(long = "dev-mode")]
+        dev_mode: bool,
         /// Where `audit.json` is written.
         #[arg(long = "out", required = true)]
         out: PathBuf,
@@ -974,6 +994,7 @@ mod tests {
                 nonce,
                 previous,
                 sequence,
+                ..
             } => {
                 assert_eq!(bootstrap, "http://127.0.0.1:40403");
                 assert!(checkpoint.is_none(), "the served checkpoint is the default");

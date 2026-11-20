@@ -577,6 +577,33 @@ pub fn from_options(options: &Options) -> Hocon {
             "dev.deployer-private-key",
             &run.deployer_private_key,
         );
+    } else if let Commands::Audit {
+        data_dir,
+        bonds_file,
+        wallets_file,
+        epoch_length,
+        shard_name,
+        dev_mode,
+        ..
+    } = &options.subcommand
+    {
+        // **The audit's genesis must be the audited chain's, not the defaults.** The replay reads
+        // the bonds and vaults from this configuration; a bare `--data-dir` would silently verify
+        // against `defaults.conf`. `build_audit` refuses that case; this arm maps the named files.
+        opt_path(&mut e, "storage.data-dir", &Some(data_dir.clone()));
+        opt_str(&mut e, "casper.shard-name", shard_name);
+        opt_str(&mut e, "casper.genesis-block-data.bonds-file", bonds_file);
+        opt_str(
+            &mut e,
+            "casper.genesis-block-data.wallets-file",
+            wallets_file,
+        );
+        opt_i32(
+            &mut e,
+            "casper.genesis-block-data.epoch-length",
+            *epoch_length,
+        );
+        flag(&mut e, "dev-mode", *dev_mode);
     }
 
     nested_hash(e)

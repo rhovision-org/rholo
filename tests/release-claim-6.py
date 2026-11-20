@@ -66,7 +66,8 @@ def check(record: dict) -> tuple[str, list[str]]:
         if audit.get("exit") != 0:
             problems.append(f"rnode audit exited {audit.get('exit')}: {audit.get('error')}")
         if audit.get("verdict") != "AGREE":
-            problems.append(f"rnode audit verdict is {audit.get('verdict')!r}, not AGREE")
+            detail = f": {audit['reason']}" if audit.get("reason") else ""
+            problems.append(f"rnode audit verdict is {audit.get('verdict')!r}, not AGREE{detail}")
         if audit.get("derivedRoot") != audit.get("claimedRoot"):
             problems.append("the audit's derived root differs from the claim")
         if audit.get("blocks") in (0, None):
@@ -90,6 +91,10 @@ def run(argv: list[str]) -> int:
                                "local-devnet" if args.env == "local" else "public-live")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    failure = common.preflight_failure(CLAIM_ID, args.env, out, record,
+                                       getattr(args, "public_manifest", None))
+    if failure is not None:
+        return failure
 
     if args.env == "public":
         manifest = common.load_manifest(args.public_manifest)
@@ -134,7 +139,10 @@ def run(argv: list[str]) -> int:
         (out / "chain.log").write_text(chain.stdout + chain.stderr)
         record["observations"]["chain_problems"] = (
             [] if chain.returncode == 0 else (chain.stdout + chain.stderr).strip().splitlines())
-        return _audit(devnet.target(), record, out, None, joiner_index=3, container=devnet.node(3))
+        # The joiner synced at a checkpoint and does not hold the pre-anchor bodies, so the replay
+        # must read the certificate and history from the bootstrap, not from the joiner's own API.
+        return _audit(devnet.target(), record, out, f"http://{devnet.node(0)}:40403",
+                      joiner_index=3, container=devnet.node(3))
     except Exception as error:  # noqa: BLE001
         common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
         return common.write_record(out, record)[1]
@@ -162,7 +170,11 @@ def _audit(target, record: dict, out: Path, public_bootstrap, joiner_index: int 
             data_dir = "/tmp/rc6-audit-data"
             audit_out = "/tmp/rc6-audit-out"
             command = ["rnode", "audit", "--bootstrap", bootstrap,
-                       "--data-dir", data_dir, "--out", audit_out]
+                       "--data-dir", data_dir, "--out", audit_out,
+                       # The replay must use the audited chain's genesis, not defaults.conf.
+                       "--bonds-file", "/genesis/bonds.txt",
+                       "--wallets-file", "/genesis/wallets.txt",
+                       "--dev-mode", "--epoch-length", "10"]
             if checkpoint.get("kind") == "checkpoint" and checkpoint.get("digest"):
                 command += ["--checkpoint", checkpoint["digest"]]
             subprocess.run(["docker", "exec", container, "rm", "-rf", data_dir, audit_out],
@@ -199,6 +211,7 @@ def _audit(target, record: dict, out: Path, public_bootstrap, joiner_index: int 
             "claimedRoot": report.get("claimedRoot"),
             "derivedRoot": report.get("derivedRoot"),
             "blocks": report.get("blocks"),
+            "reason": report.get("reason"),
             "error": None if result.returncode == 0 else
             ("\n".join(named[:5]) if named else text[:800]),
         }

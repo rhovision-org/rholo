@@ -300,6 +300,56 @@ theorem a_fork_block_is_a_non_descendant_conflict_block
     id ∈ conflictScope dag mergeFringe finalFringe ∧ ¬ descends dag finalFringe id := by
   simpa [forkBlocks] using h
 
+/-- **Finalised by this fringe**: some member's seen set contains the block. This is the fringe's
+    definition of finality, so the exclusion theorems below take no implementation hypothesis. -/
+def FinalisedBy (dag : Dag) (finalFringe : Finset Nat) (x : Nat) : Prop :=
+  ∃ f ∈ finalFringe, x ∈ seenOf dag f
+
+/-- **A finalised block is not in the conflict scope.** The conflict scope is
+    `seen(mergeFringe) \ seen(finalFringe)`; a block in any final member's seen set is in the
+    subtracted part, so it cannot be reclassified as conflict work. -/
+theorem a_finalised_block_is_not_in_the_conflict_scope
+    (dag : Dag) (mergeFringe finalFringe : Finset Nat) (x : Nat)
+    (h : FinalisedBy dag finalFringe x) :
+    x ∉ conflictScope dag mergeFringe finalFringe := by
+  rcases h with ⟨f, hf, hx⟩
+  intro hc
+  rw [conflictScope, between, Finset.mem_sdiff] at hc
+  exact hc.2 (Finset.mem_biUnion.mpr ⟨f, hf, hx⟩)
+
+/-- **A finalised block is not a fork.** `forkBlocks` is a subset of the conflict scope, so the
+    scope exclusion above rules it out. -/
+theorem a_finalised_block_is_not_a_fork
+    (dag : Dag) (mergeFringe finalFringe : Finset Nat) (x : Nat)
+    (h : FinalisedBy dag finalFringe x) :
+    x ∉ forkBlocks dag mergeFringe finalFringe := by
+  intro hf
+  exact a_finalised_block_is_not_in_the_conflict_scope dag mergeFringe finalFringe x h
+    (a_fork_block_is_a_non_descendant_conflict_block dag mergeFringe finalFringe x hf).1
+
+/-- **Every conflict-scope block is seen by the merge fringe.** The fringe merge's conflict scope is
+    `seen(mergeFringe) \ seen(finalFringe)`, so a member is by construction in the set that merge is
+    finalising. -/
+theorem conflict_scope_is_seen_by_the_merge_fringe
+    (dag : Dag) (mergeFringe finalFringe : Finset Nat) :
+    conflictScope dag mergeFringe finalFringe ⊆ mergeFringe.biUnion (seenOf dag) := by
+  intro x hx
+  rw [conflictScope, between, Finset.mem_sdiff] at hx
+  exact hx.1
+
+/-- **The guarded fork set.** A finalising merge applies no fork rule: every conflict-scope block is
+    finalised by it. The conflict merge keeps `forkBlocks` unchanged. This is the decision the Rust
+    `MergeMode` encodes. -/
+def guardedForkBlocks (fringeMerge : Bool) (dag : Dag) (mergeFringe finalFringe : Finset Nat) :
+    Set Nat :=
+  if fringeMerge then ∅ else forkBlocks dag mergeFringe finalFringe
+
+/-- A finalising merge names no forks. -/
+theorem finalising_merge_has_no_forks
+    (dag : Dag) (mergeFringe finalFringe : Finset Nat) :
+    guardedForkBlocks true dag mergeFringe finalFringe = ∅ := by
+  simp [guardedForkBlocks]
+
 /-! ### Law 115 — the least closure `with_dependencies` computes -/
 
 /-- The least-closure property: contains the roots, closed under the dependency map, and least

@@ -151,6 +151,7 @@ refused. The 12 old campaign rows are deleted; their fate is in the `superseded`
   - the restart harness did not pass: 'FAIL'
   - post-recovery heads were not read on every validator
   - the victim was not restarted (its boot time did not change)
+  - evidence-insufficient: the failed restart carries no boot trace
 - **public:** not run — no committed run record
 
 **Supersedes.** G584-G4, TA-C2, G428-M4

@@ -6682,7 +6682,9 @@ def lawsC : List Law := [
     rustWitness := [
       "casper/src/engine/anchor.rs:an_accepted_state_carries_its_anchors_root",
       "casper/src/engine/anchor.rs:a_checkpoint_root_is_the_certified_fringe_state",
-      "casper/src/engine/anchor.rs:a_genesis_anchor_must_match_the_pin"],
+      "casper/src/engine/anchor.rs:a_genesis_anchor_must_match_the_pin",
+      "casper/src/engine/node_launch.rs:a_fetched_certificate_is_recorded_and_adopted",
+      "casper/src/engine/node_launch.rs:a_stored_certificate_is_reverified_without_a_fetch"],
     witness := [`Rchain.Sync.Anchor.running_is_anchored,
       `Rchain.Sync.Anchor.a_checkpoint_anchors_the_fringe_state,
       `Rchain.Sync.Anchor.a_checkpoint_root_is_not_a_blocks_post_state,
@@ -6864,7 +6866,8 @@ def lawsC : List Law := [
       "node/src/runtime/audit.rs"],
     rustWitness := [
       "casper/src/audit.rs:a_reproduced_claim_is_accepted",
-      "casper/src/audit.rs:a_chained_claim_extends_the_head_and_an_unchained_one_is_refused"],
+      "casper/src/audit.rs:a_chained_claim_extends_the_head_and_an_unchained_one_is_refused",
+      "node/src/runtime/audit.rs:a_multi_member_fringe_targets_the_anchor_alone"],
     witness := [`Rchain.Sync.Claim.only_a_reproduced_claim_is_accepted,
       `Rchain.Sync.Claim.an_unchained_claim_is_refused],
     falsifiable := "Make `accept` total (always `some`) and `a_mismatched_claim_is_refused` fails; \
@@ -6893,7 +6896,17 @@ def lawsC : List Law := [
       `between(final_fringe, prune_fringe)`; a conflict-scope block that does not descend from the \
       final fringe is a **fork**, and its chains are rejected rather than merged against a replayed \
       history. The whole finalised closure is never read, and the scope is a function of the DAG, not \
-      of which states the local node holds. The genesis fallback is keyed on the final fringe.",
+      of which states the local node holds. The genesis fallback is keyed on the final fringe. \
+      **The base is guarded by agreement.** The Rust reader compares the finalisers' \
+      `fringe_state_hash` values and refuses a disagreement (`choose_base_claim`); `Agree`/`pickBase` \
+      model that guard, and `pickBase_agrees` is the theorem a silently-picked stale base cannot \
+      satisfy. **A finalising merge applies no fork rule:** every conflict-scope block of the fringe \
+      merge is in `seen(merge_fringe)`, so `guardedForkBlocks true = ∅`; the conflict merge keeps the \
+      fork rule. **The ledger excludes what the final scope accepted:** \
+      `guardedRejected accepted rejected` is the rejected set minus the accepted set, and \
+      `a_finalised_deploy_is_not_in_the_ledger` is the set-level form of the Rust \
+      `finalised_floor` refusal. A finalised block is outside `conflictScope` and `forkBlocks` \
+      (`FinalisedBy`).",
     status := .provedModel,
     formal := `Rchain.FinalizedMerge.law113_statement,
     mutant := `Rchain.FinalizedMerge.law113_mutant,
@@ -6902,12 +6915,25 @@ def lawsC : List Law := [
       `Rchain.FinalizedMerge.applyKept, `Rchain.FinalizedMerge.law113_statement,
       `Rchain.FinalizedMerge.law113, `Rchain.FinalizedMerge.law113_mutant,
       `Rchain.FinalizedMerge.law113_falsifier,
+      `Rchain.FinalizedMerge.Claim, `Rchain.FinalizedMerge.pickClaim,
+      `Rchain.FinalizedMerge.pickClaim_mem, `Rchain.FinalizedMerge.Agree,
+      `Rchain.FinalizedMerge.pickBase, `Rchain.FinalizedMerge.pickBase_none_of_disagree,
+      `Rchain.FinalizedMerge.pickBase_agrees, `Rchain.FinalizedMerge.pickBase_mem,
+      `Rchain.FinalizedMerge.guardedRejected,
+      `Rchain.FinalizedMerge.a_finalised_deploy_is_not_in_the_ledger,
+      `Rchain.FinalizedMerge.unguarded_ledger_can_name_a_finalised_deploy,
       `Rchain.MergeScope.finalScope, `Rchain.MergeScope.KeptRule,
       `Rchain.MergeScope.kept_chains_descend,
       `Rchain.MergeScope.a_non_descendant_is_not_kept,
       `Rchain.MergeScope.final_scope_is_the_trimmed_layer,
       `Rchain.MergeScope.widening_reads_the_closure,
-      `Rchain.MergeScope.scope_is_a_function_of_the_dag],
+      `Rchain.MergeScope.scope_is_a_function_of_the_dag,
+      `Rchain.MergeScope.FinalisedBy,
+      `Rchain.MergeScope.a_finalised_block_is_not_in_the_conflict_scope,
+      `Rchain.MergeScope.a_finalised_block_is_not_a_fork,
+      `Rchain.MergeScope.conflict_scope_is_seen_by_the_merge_fringe,
+      `Rchain.MergeScope.guardedForkBlocks,
+      `Rchain.MergeScope.finalising_merge_has_no_forks],
     axioms := [],
     rust := ["casper/src/merging.rs", "casper/src/multi_parent_casper.rs",
       "rspace/src/merger/state_change.rs", "rspace/src/merger/state_change_merger.rs"],
@@ -6917,14 +6943,29 @@ def lawsC : List Law := [
       "casper/tests/merge_determinism.rs:system_deploy_ids_are_not_final_scope_rejections",
       "casper/tests/n420_boundary_merge.rs:a_final_scope_system_deploy_chain_is_not_rejected",
       "casper/src/merging.rs:a_non_empty_final_fringe_never_falls_back_to_genesis",
-      "casper/src/merging.rs:a_non_descendant_conflict_block_is_a_fork_and_the_final_scope_stays_trimmed"],
+      "casper/src/merging.rs:a_non_descendant_conflict_block_is_a_fork_and_the_final_scope_stays_trimmed",
+      "casper/src/merging.rs:a_fringe_merge_never_names_a_fork",
+      "casper/src/merging.rs:a_conflict_merge_still_names_a_non_descendant_fork",
+      "casper/src/merging.rs:the_finalised_floor_refuses_a_rejected_finalised_host",
+      "casper/src/multi_parent_casper.rs:disagreeing_claims_are_refused_not_tie_broken",
+      "casper/src/multi_parent_casper.rs:a_certified_base_wins_over_disagreeing_claims"],
     witness := [`Rchain.FinalizedMerge.law113_falsifier,
       `Rchain.FinalizedMerge.the_same_fixture_survives_under_the_law,
+      `Rchain.FinalizedMerge.pickClaim_mem,
+      `Rchain.FinalizedMerge.pickBase_none_of_disagree,
+      `Rchain.FinalizedMerge.pickBase_agrees,
+      `Rchain.FinalizedMerge.pickBase_mem,
+      `Rchain.FinalizedMerge.a_finalised_deploy_is_not_in_the_ledger,
+      `Rchain.FinalizedMerge.unguarded_ledger_can_name_a_finalised_deploy,
       `Rchain.MergeScope.final_scope_is_the_trimmed_layer,
       `Rchain.MergeScope.kept_chains_descend,
       `Rchain.MergeScope.a_non_descendant_is_not_kept,
       `Rchain.MergeScope.widening_reads_the_closure,
-      `Rchain.MergeScope.scope_is_a_function_of_the_dag],
+      `Rchain.MergeScope.scope_is_a_function_of_the_dag,
+      `Rchain.MergeScope.a_finalised_block_is_not_in_the_conflict_scope,
+      `Rchain.MergeScope.a_finalised_block_is_not_a_fork,
+      `Rchain.MergeScope.conflict_scope_is_seen_by_the_merge_fringe,
+      `Rchain.MergeScope.finalising_merge_has_no_forks],
     falsifiable := "`law113_mutant` applies the **rejected** half of the scope as well; \
       `law113_falsifier` exhibits a rejected chain's removal dropping a datum the kept slice preserved. \
       The code applies `to_merge` alone, so the mutation is `compute_merged_state(&conflict_set)`. \
@@ -6948,12 +6989,13 @@ def lawsC : List Law := [
       consensus-mandated close chain and drop its native writes (the `pos:liveness-anchor` slot is \
       the measured case). `final_scope_rejections` does not propagate a system id, and `merge` \
       refuses to reject a system-deploy chain; the two tests above pin the derivation and the merge \
-      decision. **What the Lean model does not cover:** native slots themselves (the relation is a \
-      code rule over `NativeStoreAction`, not a theorem about it), and the honest-quorum hypothesis \
-      (less than one third Byzantine) needed to lift the local merge invariant to \"every honest \
-      node's finalised write survives\". The Rust tie is the six tests above: base surviving, \
-      consume, the two system-chain guards, the genesis fallback, and the fork rejection. The \
-      rejected-slice arm is pinned by the Lean model, not yet by a Rust test." },
+      decision. **The guarded model is the Rust tie:** `guardedForkBlocks` is `MergeMode::Fringe`'s \
+      empty fork set, `guardedRejected` is `finalised_floor`'s subtraction, and `pickBase` is \
+      `choose_base_claim`'s agreement refusal; `a_fringe_merge_never_names_a_fork`, \
+      `the_finalised_floor_refuses_a_rejected_finalised_host` and \
+      `disagreeing_claims_are_refused_not_tie_broken` are their Rust witnesses. Native slots remain \
+      a code rule over `NativeStoreAction`, and lifting the local invariant to every honest node \
+      assumes the same fewer-than-one-third bound as Law 104." },
 
   { number := 114, layer := "Sync",
     statement := "**The certificate statement determines the join input set, and an incomplete \

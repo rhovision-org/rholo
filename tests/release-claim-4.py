@@ -44,8 +44,13 @@ def fixture() -> dict:
                 for i in range(4)
             ],
             "boot_ids": {"before": {str(i): "a" for i in range(4)},
-                         "after": {str(i): ("b" if i == 3 else "a") for i in range(4)}},
-            "victim": 3,
+                         "after": {str(i): ("b" if i == 1 else "a") for i in range(4)}},
+            "victim": 1,
+            "certificates_after": {str(i): {"kind": "checkpoint"} for i in range(4)},
+            "boot_traces": [{
+                "validator": 1, "acquisition": "certificate", "accepted": True,
+                "dag_len": 40, "store_head": None, "source_configured": True,
+            }],
         },
     }
 
@@ -76,9 +81,31 @@ def check(record: dict) -> tuple[str, list[str]]:
             problems.append(f"validator {row.get('validator')}: the inclusion block is not finalised")
     boot = observations.get("boot_ids") or {}
     before, after = boot.get("before") or {}, boot.get("after") or {}
-    victim = str(observations.get("victim", 3))
+    victim = str(observations.get("victim", 1))
     if before.get(victim) and before.get(victim) == after.get(victim):
         problems.append("the victim was not restarted (its boot time did not change)")
+    certificates = observations.get("certificates_after")
+    if isinstance(certificates, dict):
+        if (certificates.get(victim) or {}).get("kind") != "checkpoint":
+            problems.append(
+                f"victim {victim} has no verified checkpoint certificate after restart")
+    boot_traces = observations.get("boot_traces")
+    victim_traces = ([t for t in boot_traces
+                      if isinstance(t, dict) and str(t.get("validator")) == victim]
+                     if isinstance(boot_traces, list) else [])
+    if victim_traces:
+        trace = victim_traces[-1]
+        if str(trace.get("acquisition", "")).startswith("refused"):
+            problems.append(
+                f"victim {victim}: the boot decision refused: {trace['acquisition']} "
+                f"(dag {trace.get('dag_len')} block(s), store head {trace.get('store_head')}, "
+                f"source configured {trace.get('source_configured')})")
+        elif trace.get("accepted") is not True:
+            problems.append(
+                f"victim {victim}: the boot decision did not accept (acquisition "
+                f"{trace.get('acquisition')})")
+    elif observations.get("harness_result") != "PASS":
+        problems.append("evidence-insufficient: the failed restart carries no boot trace")
     return common.evaluate(record, problems)
 
 
@@ -94,6 +121,10 @@ def run(argv: list[str]) -> int:
                                "local-devnet" if args.env == "local" else "public-live")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    failure = common.preflight_failure(CLAIM_ID, args.env, out, record,
+                                       getattr(args, "public_manifest", None))
+    if failure is not None:
+        return failure
 
     if args.env == "public":
         manifest = common.load_manifest(args.public_manifest)
@@ -113,7 +144,9 @@ def run(argv: list[str]) -> int:
                                        "victim": manifest.get("victim", 3)})
         return _post_reads(target, record, out)
 
-    devnet = common.Devnet("restartload", validators=4)
+    # The known-good restart arm uses 4 GiB per validator; 2 GiB fails the resource preflight and
+    # would confound the certificate refusal with a memory refusal.
+    devnet = common.Devnet("restartload", validators=4, memory="4g")
     try:
         devnet.up()
         record["provenance"] = devnet.provenance()
@@ -147,6 +180,22 @@ def run(argv: list[str]) -> int:
         (out / "restart.log").write_text(result.stdout + result.stderr)
         after = _boot_ids(devnet)
         result_doc = _read_json(harness_out / "result.json") or {}
+        # The harness's first victim is validator 1, not a constant; derive it from the run.
+        victim = _last_victim(harness_out)
+        if victim is None:
+            victim = 1
+        certificates_after = _certificates(target, timeout=0)
+        boot_traces = []
+        for i in range(4):
+            dest = out / "traces" / f"validator-{i}"
+            devnet.copy_traces(i, dest)
+            for path in sorted(dest.glob("boot-*.json")):
+                try:
+                    row = json.loads(path.read_text())
+                except ValueError:
+                    continue
+                boot_traces.append({"validator": i, "file": path.name, **row})
+        record["observations"]["boot_traces"] = boot_traces
         record["harness"] = {"name": "consensus-restart-under-load", "command": command,
                              "exit_code": result.returncode, "out": str(harness_out)}
         record["observations"].update({
@@ -154,11 +203,12 @@ def run(argv: list[str]) -> int:
             "harness_result": result_doc.get("verdict") or (
                 "PASS" if result.returncode == 0 else "FAIL"),
             "boot_ids": {"before": before, "after": after},
-            "victim": 3,
+            "victim": victim,
+            "certificates_after": certificates_after,
         })
         if result.returncode:
             victim_log = subprocess.run(
-                ["docker", "logs", devnet.node(3)],
+                ["docker", "logs", devnet.node(victim)],
                 text=True, capture_output=True, timeout=60)
             text = victim_log.stdout + victim_log.stderr
             refusal = [line for line in text.splitlines()
@@ -173,6 +223,21 @@ def run(argv: list[str]) -> int:
                           or record["observations"]["harness_error"]))
             if refusal:
                 reason += " — " + refusal[-1]
+            if (certificates_after.get(str(victim)) or {}).get("kind") != "checkpoint":
+                reason += f"; victim {victim} restarted without a verified checkpoint certificate"
+            victim_trace = next((t for t in reversed(boot_traces)
+                                 if str(t.get("validator")) == str(victim)), None)
+            if victim_trace:
+                if str(victim_trace.get("acquisition", "")).startswith("refused"):
+                    reason += (f"; victim {victim} boot trace: {victim_trace['acquisition']} "
+                               f"(dag {victim_trace.get('dag_len')} block(s), store head "
+                               f"{victim_trace.get('store_head')}, source configured "
+                               f"{victim_trace.get('source_configured')})")
+                elif victim_trace.get("accepted") is not True:
+                    reason += (f"; victim {victim} boot trace: accepted=false (acquisition "
+                               f"{victim_trace.get('acquisition')})")
+            else:
+                reason += f"; evidence-insufficient: victim {victim} carries no boot trace"
             common.finish(record, "fail", [reason])
             return common.write_record(out, record)[1]
         return _post_reads(target, record, out)
@@ -211,6 +276,26 @@ def _certificates(target, timeout: float = 300) -> dict:
         if time.monotonic() >= deadline:
             return found
         time.sleep(5)
+
+
+def _last_victim(harness_out: Path) -> int | None:
+    """The victim index the harness was working on when it stopped.
+
+    The harness records the cycle's victim in its event stream before the kill; a failed run does
+    not reach `campaign.json`, so the event stream is the only place the index survives.
+    """
+    victim = None
+    try:
+        for line in (harness_out / "observations.jsonl").read_text().splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event.get("victim"), int):
+                victim = event["victim"]
+    except OSError:
+        return None
+    return victim
 
 
 def _read_json(path: Path):

@@ -515,7 +515,35 @@ impl MergeReport {
 pub struct MergeOutcome {
     pub state: Blake2b256Hash,
     pub rejected_deploys: BTreeSet<Vec<u8>>,
+    /// **The hosts of the chains this merge rejected.** `rejected_deploys` names the deploy ids; this
+    /// names the blocks they were hosted in, which is what [`finalised_floor`] needs: a fringe merge
+    /// must not reject a chain hosted in a block it is finalising.
+    pub rejected_hosts: BTreeSet<BlockHash>,
     pub report: MergeReport,
+}
+
+/// **The finalised floor.** A merge that is finalising a set of blocks must not report a rejection
+/// for a chain hosted in one of them. The sets are host hashes; the error names the overlap so the
+/// caller can refuse the merge rather than let the rejection reach the next block's
+/// `rejectedDeploys`.
+pub fn finalised_floor(
+    finalised_hosts: &BTreeSet<BlockHash>,
+    rejected_hosts: &BTreeSet<BlockHash>,
+) -> Result<(), String> {
+    let clash: Vec<String> = finalised_hosts
+        .intersection(rejected_hosts)
+        .map(|h| h.to_hex())
+        .collect();
+    if clash.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "merge rejected {} chain(s) hosted in blocks this merge finalises ({}); a finalised \
+             deploy cannot be rejected by the merge that finalises it",
+            clash.len(),
+            describe_ids(&clash)
+        ))
+    }
 }
 
 /// A list of `(prefix, key)` slots, first four then a count.
@@ -1925,6 +1953,18 @@ impl NativeRelations<'_> {
     }
 }
 
+/// **Which merge this is.** The fork rule has a subject only in the conflict merge: a block that did
+/// not see the final fringe is alterable work above it. In the fringe merge the "conflict" scope is
+/// exactly the set this merge finalises, so applying the fork rule there rejects a finalised chain —
+/// the RC-1 loss. The mode is a parameter of the scope constructor, not a computed property.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MergeMode {
+    /// `from_dag(new_fringe, prev_fringe, …)`: every conflict-scope block is being finalised.
+    Fringe,
+    /// `from_dag(parents, new_fringe, …)`: conflict work above the final fringe.
+    Conflict,
+}
+
 /// The scope of a merge: final (immutable) and conflict (alterable) blocks (port of `MergeScope`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MergeScope {
@@ -1945,7 +1985,30 @@ pub struct MergeScope {
 
 impl MergeScope {
     /// Create a merge scope from the DAG (port of `MergeScope.fromDag`).
+    ///
+    /// Kept as the conflict-mode spelling for every existing caller. The consensus path names its
+    /// mode explicitly through [`MergeScope::from_dag_guarded`].
     pub fn from_dag(
+        merge_fringe: &BTreeSet<BlockHash>,
+        final_fringe: &BTreeSet<BlockHash>,
+        child_map: &BTreeMap<BlockHash, BTreeSet<BlockHash>>,
+        dag_data: &BTreeMap<BlockHash, Message<BlockHash, Validator>>,
+    ) -> Result<(MergeScope, Option<BlockHash>), String> {
+        MergeScope::from_dag_guarded(
+            MergeMode::Conflict,
+            merge_fringe,
+            final_fringe,
+            child_map,
+            dag_data,
+        )
+    }
+
+    /// **The guarded constructor.** In [`MergeMode::Fringe`] every block in
+    /// `between(merge_fringe, final_fringe)` is in `seen(merge_fringe)` — the set this merge is
+    /// finalising — so the fork rule has no subject and `fork_blocks` is empty. In
+    /// [`MergeMode::Conflict`] the rule is unchanged.
+    pub fn from_dag_guarded(
+        mode: MergeMode,
         merge_fringe: &BTreeSet<BlockHash>,
         final_fringe: &BTreeSet<BlockHash>,
         child_map: &BTreeMap<BlockHash, BTreeSet<BlockHash>>,
@@ -2005,11 +2068,28 @@ impl MergeScope {
         } else {
             derived_prune
         };
-        MergeScope::from_fringes(merge_fringe, final_fringe, &prune_fringe, dag_data)
+        MergeScope::from_fringes_guarded(mode, merge_fringe, final_fringe, &prune_fringe, dag_data)
     }
 
     /// Create a merge scope from explicit fringes (port of `MergeScope.fromFringes`).
     pub fn from_fringes(
+        merge_fringe: &BTreeSet<BlockHash>,
+        final_fringe: &BTreeSet<BlockHash>,
+        prune_fringe: &BTreeSet<BlockHash>,
+        dag_data: &BTreeMap<BlockHash, Message<BlockHash, Validator>>,
+    ) -> Result<(MergeScope, Option<BlockHash>), String> {
+        MergeScope::from_fringes_guarded(
+            MergeMode::Conflict,
+            merge_fringe,
+            final_fringe,
+            prune_fringe,
+            dag_data,
+        )
+    }
+
+    /// The guarded explicit-fringe constructor; see [`MergeScope::from_dag_guarded`].
+    pub fn from_fringes_guarded(
+        mode: MergeMode,
         merge_fringe: &BTreeSet<BlockHash>,
         final_fringe: &BTreeSet<BlockHash>,
         prune_fringe: &BTreeSet<BlockHash>,
@@ -2051,7 +2131,7 @@ impl MergeScope {
         // `unknown root` on a height-23 block). The rule is now structural: the fork's chains are
         // rejected in `merge` (and so are their dependents), and the final scope stays the trimmed
         // layer. See `Rchain.MergeScope.KeptRule`.
-        let fork_blocks: BTreeSet<BlockHash> = c_scope_ids
+        let unguarded_fork_blocks: BTreeSet<BlockHash> = c_scope_ids
             .iter()
             .copied()
             .filter(|id| {
@@ -2060,6 +2140,15 @@ impl MergeScope {
                     .is_some_and(|m| !final_fringe.is_subset(m.seen.as_ref()))
             })
             .collect();
+        // **The fringe merge has no forks.** Its conflict scope is `seen(merge_fringe) \
+        // seen(final_fringe)`, so every member is in the set this merge is finalising; a member
+        // that did not see the *previous* final fringe is an older branch the new fringe now sees,
+        // not alterable work. Naming it a fork force-rejects a finalised chain (RC-1). The conflict
+        // merge keeps the rule: its members are not finalised by `final_fringe`.
+        let fork_blocks: BTreeSet<BlockHash> = match mode {
+            MergeMode::Fringe => BTreeSet::new(),
+            MergeMode::Conflict => unguarded_fork_blocks,
+        };
         let f_scope_ids = message_map::between(dag_data, final_fringe, prune_fringe);
         let conflict_scope: BTreeSet<BlockHash> = c_scope_ids
             .difference(&base_msg.into_iter().collect())
@@ -2295,6 +2384,10 @@ impl MergeScope {
         // **What this merge did, for the caller that holds a logger** (#280). Computed here rather
         // than logged here: `merge` has no log handle by design, and the two invariants are worth
         // stating where the maps that decide them are still in hand.
+        let rejected_hosts: BTreeSet<BlockHash> = rejected
+            .iter()
+            .map(|c| BlockHash::new(*c.host_block.as_bytes()))
+            .collect();
         let report = MergeReport {
             conflict_chains: conflict_set.len(),
             kept_chains: to_merge.len(),
@@ -2362,6 +2455,7 @@ impl MergeScope {
         Ok(MergeOutcome {
             state: new_state,
             rejected_deploys: rejected_ids,
+            rejected_hosts,
             report,
         })
     }
@@ -5851,5 +5945,93 @@ mod kept_effect_coverage_tests {
         report.unapplied_kept_datums = vec![hash(9)];
         assert!(!report.is_quiet());
         assert!(report.describe().contains("I2 VIOLATED (tuple space)"));
+    }
+}
+
+#[cfg(test)]
+mod rc1_guard_tests {
+    use super::*;
+    use rchain_shared::refined::{BlockHeight, SeqNum};
+
+    fn msg(id: u8, parents: &[u8], seen: &[u8]) -> Message<BlockHash, Validator> {
+        let hash = |b: u8| BlockHash::new([b; 32]);
+        Message {
+            id: hash(id),
+            height: BlockHeight::zero(),
+            sender: Validator::new([id; 65]),
+            sender_seq: SeqNum::zero(),
+            bonds_map: BTreeMap::new(),
+            parents: parents.iter().map(|&b| hash(b)).collect(),
+            fringe: BTreeSet::new(),
+            seen: Arc::new(seen.iter().map(|&b| hash(b)).collect()),
+        }
+    }
+
+    fn fork_fixture() -> (
+        Message<BlockHash, Validator>,
+        Message<BlockHash, Validator>,
+        Message<BlockHash, Validator>,
+        BTreeMap<BlockHash, Message<BlockHash, Validator>>,
+    ) {
+        let h = msg(1, &[], &[1]); // older finalised writer
+        let f = msg(2, &[1], &[1, 2]); // the final fringe
+        let c = msg(3, &[], &[3]); // a branch that does not see the final fringe
+        let dag = BTreeMap::from([(h.id, h.clone()), (f.id, f.clone()), (c.id, c.clone())]);
+        (h, f, c, dag)
+    }
+
+    #[test]
+    fn a_fringe_merge_never_names_a_fork() {
+        let (h, f, c, dag) = fork_fixture();
+        let (scope, _) = MergeScope::from_fringes_guarded(
+            MergeMode::Fringe,
+            &[c.id].into_iter().collect(),
+            &[f.id].into_iter().collect(),
+            &[h.id].into_iter().collect(),
+            &dag,
+        )
+        .expect("a well-formed dag");
+
+        assert!(
+            scope.fork_blocks.is_empty(),
+            "the fringe merge finalises every conflict-scope block; none can be a fork"
+        );
+        assert!(
+            scope.conflict_scope.contains(&c.id),
+            "the newly finalised block stays merged, not rejected"
+        );
+    }
+
+    #[test]
+    fn a_conflict_merge_still_names_a_non_descendant_fork() {
+        let (h, f, c, dag) = fork_fixture();
+        let (scope, _) = MergeScope::from_fringes_guarded(
+            MergeMode::Conflict,
+            &[c.id].into_iter().collect(),
+            &[f.id].into_iter().collect(),
+            &[h.id].into_iter().collect(),
+            &dag,
+        )
+        .expect("a well-formed dag");
+
+        assert_eq!(
+            scope.fork_blocks,
+            [c.id].into_iter().collect::<BTreeSet<_>>(),
+            "conflict work that did not see the final fringe is still a fork"
+        );
+    }
+
+    #[test]
+    fn the_finalised_floor_refuses_a_rejected_finalised_host() {
+        let finalised: BTreeSet<BlockHash> = [BlockHash::new([1; 32])].into_iter().collect();
+        let other: BTreeSet<BlockHash> = [BlockHash::new([2; 32])].into_iter().collect();
+        assert!(finalised_floor(&finalised, &other).is_ok());
+
+        let clash: BTreeSet<BlockHash> = [BlockHash::new([1; 32]), BlockHash::new([2; 32])]
+            .into_iter()
+            .collect();
+        let error = finalised_floor(&finalised, &clash).expect_err("the overlap is refused");
+        assert!(error.contains(&BlockHash::new([1; 32]).to_hex()));
+        assert!(error.contains("finalised deploy cannot be rejected"));
     }
 }

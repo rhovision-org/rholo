@@ -53,6 +53,14 @@ def fixture() -> dict:
                 for i in range(4)
             ],
             "rejected": [{"validator": i, "found": False} for i in range(4)],
+            "traces": [{
+                "validator": 0, "mode": "fringe",
+                "claims": [{"height": 3, "id": "ab" * 32, "hash": "cd" * 32}],
+                "certified_base": None, "base_source": "agreed",
+                "conflict_scope": ["ef" * 32], "fork_blocks": [],
+                "rejected_hosts": [],
+                "report": {"conflict_chains": 1, "kept_chains": 0, "rejected_chains": 1},
+            }],
         },
     }
 
@@ -114,6 +122,33 @@ def check(record: dict) -> tuple[str, list[str]]:
     for row in rejected:
         if isinstance(row, dict) and row.get("found"):
             problems.append(f"validator {row.get('validator')}: the deploy appears in rejectedDeploys")
+
+    # **Read the failure against the proven phase space.** The predicates are recomputed from the
+    # trace coordinates; the node's own labels are not trusted. A failure with every predicate true
+    # is a model gap, not a guessed cause.
+    traces = observations.get("traces")
+    bad_outcome = any(isinstance(row, dict) and row.get("marker_present") is not True
+                      for row in finalised) or any(
+        isinstance(row, dict) and row.get("found") for row in rejected)
+    evaluations = []
+    if isinstance(traces, list) and traces:
+        for row in traces:
+            if not isinstance(row, dict):
+                continue
+            evaluation = common.evaluate_merge_trace(row)
+            evaluations.append((row, evaluation))
+            if evaluation["false"]:
+                problems.append(
+                    f"validator {row.get('validator')}: merge predicate(s) "
+                    f"{', '.join(evaluation['false'])} false (mode {row.get('mode')}, base "
+                    f"{row.get('base_source')}, {len(row.get('rejected_hosts') or [])} rejected "
+                    f"host(s), {len(row.get('conflict_scope') or [])} conflict-scope block(s))")
+        if bad_outcome and all(not evaluation["false"] for _, evaluation in evaluations):
+            problems.append(
+                "model-incomplete: every merge predicate holds on the captured traces, yet the "
+                "finalised write is absent or rejected; the trace is the model gap")
+    elif bad_outcome:
+        problems.append("evidence-insufficient: the failure carries no merge trace")
     return common.evaluate(record, problems)
 
 
@@ -129,6 +164,10 @@ def run(argv: list[str]) -> int:
                                "local-devnet" if args.env == "local" else "public-live")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    failure = common.preflight_failure(CLAIM_ID, args.env, out, record,
+                                       getattr(args, "public_manifest", None))
+    if failure is not None:
+        return failure
 
     if args.env == "public":
         manifest = common.load_manifest(args.public_manifest)
@@ -174,7 +213,7 @@ def run(argv: list[str]) -> int:
             common.finish(record, "fail", ["the acceptance drill failed: " +
                                            str(record["observations"]["drill_error"])])
             return common.write_record(out, record)[1]
-        return _observe(devnet.target(), record, summary, out, 4)
+        return _observe(devnet.target(), record, summary, out, 4, devnet=devnet)
     except Exception as error:  # noqa: BLE001 - the record is the report
         common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
         return common.write_record(out, record)[1]
@@ -183,7 +222,8 @@ def run(argv: list[str]) -> int:
             devnet.down()
 
 
-def _observe(target, record: dict, source: dict, out: Path, validators: int) -> int:
+def _observe(target, record: dict, source: dict, out: Path, validators: int,
+             devnet=None) -> int:
     deploy_id = source["deploy_id"]
     marker = source["marker"]
     value = int(source.get("value", common.MARKER_VALUE))
@@ -214,9 +254,21 @@ def _observe(target, record: dict, source: dict, out: Path, validators: int) -> 
                 found = any(deploy_id in (row.get("rejectedDeploys") or [])
                             for row in rows if isinstance(row, dict))
             rejected.append({"validator": i, "found": found})
+        traces = []
+        if devnet is not None:
+            for i in range(validators):
+                dest = out / "traces" / f"validator-{i}"
+                devnet.copy_traces(i, dest)
+                for path in sorted(dest.glob("merge-*.json")):
+                    try:
+                        row = json.loads(path.read_text())
+                    except ValueError:
+                        continue
+                    traces.append({"validator": i, "file": path.name, **row})
         record["observations"].update({
             "deploy_id": deploy_id, "marker": marker, "value": value,
             "settlements": settlements, "finalised": finalised, "rejected": rejected,
+            "traces": traces,
             "control_absent_before": True,
         })
     except Exception as error:  # noqa: BLE001

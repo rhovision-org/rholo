@@ -153,7 +153,8 @@
           "reasons": [
             "the restart harness did not pass: 'FAIL'",
             "post-recovery heads were not read on every validator",
-            "the victim was not restarted (its boot time did not change)"
+            "the victim was not restarted (its boot time did not change)",
+            "evidence-insufficient: the failed restart carries no boot trace"
           ],
           "record": "spec/audit/evidence/rc4-local-20261120-0669419/raw/claim.json",
           "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a",

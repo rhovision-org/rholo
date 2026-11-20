@@ -115,6 +115,25 @@ fn audit_batches(last_height: i64) -> Vec<(i64, i64)> {
     batches
 }
 
+/// **The anchored replay target.** A recovery reply for a named anchor carries exactly that block
+/// (`hashes: vec![anchor]`) and its post-state; `check_target` guards that shape. A certificate's
+/// `fringe_hashes` is the whole finalised fringe, so copying it here asks `check_target` for a
+/// shape the protocol never sends — the `recovery reply does not name the requested anchor`
+/// disagreement. The certificate's own digest check already refuses an anchor outside its fringe.
+fn anchored_target(
+    certificate: &CheckpointCertificate,
+    anchor: BlockHash,
+) -> Result<FinalizedFringe, String> {
+    let claimed_root = base16::decode(&certificate.checkpoint.anchor_post_state)
+        .ok_or_else(|| "the checkpoint's post-state is not base16".to_string())?;
+    Ok(FinalizedFringe {
+        hashes: vec![anchor],
+        state_hash: rchain_models::block::state_hash::StateHash::try_from(claimed_root.as_slice())
+            .map_err(|e| format!("the checkpoint's post-state is not a state root: {e}"))?,
+        ancestry: Vec::new(),
+    })
+}
+
 /// The bodies for `[from, to]` from the history service, when the node serves one complete range.
 /// `Ok(None)` means "use the per-height route": an older node, a refusal, or a gap. `Err` is a
 /// transport or decode failure, which the caller also answers by the per-height route — but it keeps
@@ -743,25 +762,10 @@ pub async fn run(
         }
     }
 
-    let fringe_hashes: Vec<BlockHash> = certificate
-        .checkpoint
-        .fringe_hashes
-        .iter()
-        .map(|hex| {
-            let bytes = base16::decode(hex)
-                .ok_or_else(|| format!("checkpoint fringe hash {hex} is not base16"))?;
-            BlockHash::try_from(bytes.as_slice())
-                .map_err(|e| format!("checkpoint fringe hash {hex} is not a hash: {e}"))
-        })
-        .collect::<Result<_, String>>()?;
-    let claimed_root = base16::decode(&certificate.checkpoint.anchor_post_state)
-        .ok_or_else(|| "the checkpoint's post-state is not base16".to_string())?;
-    let target = FinalizedFringe {
-        hashes: fringe_hashes,
-        state_hash: rchain_models::block::state_hash::StateHash::try_from(claimed_root.as_slice())
-            .map_err(|e| format!("the checkpoint's post-state is not a state root: {e}"))?,
-        ancestry: Vec::new(),
-    };
+    // **The anchored reply shape**, not the certificate's whole fringe: `check_target` accepts an
+    // anchored target as `[anchor]`, and the certificate's digest check (`AnchorNotInFringe`) is
+    // what proves the anchor is a member of the fringe it names.
+    let target = anchored_target(&certificate, anchor)?;
 
     let replay = RecoveryReplay {
         runtime: parts.runtime_manager.clone(),
@@ -1165,5 +1169,47 @@ mod tests {
             Err(sibling.block_hash),
             "a missing ancestor is INCOMPLETE evidence, not a disagreement"
         );
+    }
+
+    fn certificate_with_fringe(fringe: Vec<String>) -> CheckpointCertificate {
+        CheckpointCertificate {
+            checkpoint: rchain_models::casper::protocol::checkpoint::Checkpoint {
+                shard_id: "root".to_string(),
+                anchor: base16::encode(&[1u8; 32]),
+                anchor_height: 9,
+                anchor_post_state: base16::encode(&[2u8; 32]),
+                fringe_state: None,
+                fringe_hashes: fringe,
+                parent_digest: None,
+                epoch: 0,
+                metadata_root: None,
+                history_root: None,
+                fringe_headers_root: None,
+            },
+            attestations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_multi_member_fringe_targets_the_anchor_alone() {
+        let anchor = BlockHash::new([1u8; 32]);
+        let certificate =
+            certificate_with_fringe(vec![base16::encode(&[1u8; 32]), base16::encode(&[3u8; 32])]);
+        let target = anchored_target(&certificate, anchor).expect("a well-formed certificate");
+        assert_eq!(
+            target.hashes,
+            vec![anchor],
+            "an anchored reply names the anchor, not the whole fringe"
+        );
+        assert!(target.ancestry.is_empty());
+    }
+
+    #[test]
+    fn a_post_state_that_is_not_base16_is_refused() {
+        let mut certificate = certificate_with_fringe(vec![base16::encode(&[1u8; 32])]);
+        certificate.checkpoint.anchor_post_state = "not-hex".to_string();
+        let error = anchored_target(&certificate, BlockHash::new([1u8; 32]))
+            .expect_err("a malformed root is not a target");
+        assert!(error.contains("not base16"));
     }
 }

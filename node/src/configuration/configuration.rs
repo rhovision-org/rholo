@@ -49,51 +49,66 @@ impl Configuration {
     /// Build a `NodeConf` from CLI options (port of `Configuration.build`). The kamon config (the
     /// 4th return value in Scala) is not carried: the reporter switches are checked here instead —
     /// refused or noted, never left as settings nothing reads (`check_metrics_config`, AUDIT §6).
+    /// The `run` builder: the only caller that may take a `Run` subcommand.
     pub fn build(options: &Options) -> Result<(NodeConf, Profile, Option<PathBuf>), String> {
-        // **An unrecognised `--profile` is refused, not silently replaced by the default** (AUDIT C147).
-        // The profile is the whole of the decision about where a node's data lives, and the default's
-        // directory is `$HOME/.rnode` — so the docs' own command (`--profile docker`, one keystroke from
-        // `docer`) typo'd starts the node on a *fresh, empty* data directory: a restart that looks like
-        // data loss or an unexpected re-genesis, with nothing naming the profile. A refusal names both
-        // the name it did not recognise and the ones it has, which is the whole of the fix. (Whether the
-        // oracle falls back here is not established — typesafe-config's `--profile` selects a *file*, and
-        // the Scala's behaviour on a name with no file is unrecorded — so this refuses on the port's own
-        // ground: a silent change of data directory is the class this register exists for.)
-        let profile = match &options.profile {
-            Some(name) => profiles()
-                .into_iter()
-                .find(|p| &p.name == name)
-                .ok_or_else(|| {
-                    let known: Vec<String> = profiles()
-                        .iter()
-                        .map(|p| format!("'{}' ({})", p.name, p.data_dir.display()))
-                        .collect();
-                    format!(
-                        "unknown profile '{name}': this port has {}. Refusing rather than falling back \
-                         to '{}', whose data directory is different",
-                        known.join(", "),
-                        default_profile().name
-                    )
-                })?,
-            None => default_profile(),
-        };
-
         let run = match &options.subcommand {
             Commands::Run(run) => run,
             _ => {
                 return Err("`run` subcommand is required to build a node configuration".to_string())
             }
         };
-
+        let profile = resolve_profile(options)?;
         let data_dir = run
             .data_dir
             .clone()
             .unwrap_or_else(|| profile.data_dir.clone());
-
         let config_file_path = run
             .config_file
             .clone()
             .unwrap_or_else(|| data_dir.join("rnode.conf"));
+        Self::assemble(options, profile, data_dir, config_file_path)
+    }
+
+    /// The `audit` builder: the replay's scratch directory is its data dir, but the genesis
+    /// descriptors must come from the audited chain, never from `defaults.conf`. The audit must name
+    /// a config file or both genesis files; a bare `--data-dir` is refused rather than verifying a
+    /// default genesis against a real chain.
+    pub fn build_audit(options: &Options) -> Result<(NodeConf, Profile, Option<PathBuf>), String> {
+        let (data_dir, config_file, bonds_file, wallets_file) = match &options.subcommand {
+            Commands::Audit {
+                data_dir,
+                config_file,
+                bonds_file,
+                wallets_file,
+                ..
+            } => (data_dir, config_file, bonds_file, wallets_file),
+            _ => {
+                return Err(
+                    "`audit` subcommand is required to build a replay configuration".to_string(),
+                )
+            }
+        };
+        if config_file.is_none() && (bonds_file.is_none() || wallets_file.is_none()) {
+            return Err(
+                "`audit` needs --config-file, or both --bonds-file and --wallets-file: the replay \
+                 must use the audited chain's genesis, not the defaults"
+                    .to_string(),
+            );
+        }
+        let profile = resolve_profile(options)?;
+        let config_file_path = config_file
+            .clone()
+            .unwrap_or_else(|| profile.data_dir.join("rnode.conf"));
+        Self::assemble(options, profile, data_dir.clone(), config_file_path)
+    }
+
+    /// The shared merge of defaults, the config file and the supplied options.
+    fn assemble(
+        options: &Options,
+        profile: Profile,
+        data_dir: PathBuf,
+        config_file_path: PathBuf,
+    ) -> Result<(NodeConf, Profile, Option<PathBuf>), String> {
         let config_file = if config_file_path.exists() {
             Some(config_file_path)
         } else {
@@ -167,6 +182,35 @@ impl Configuration {
         check_dev_tax_address(&node_conf)?;
 
         Ok((check_dev_mode(node_conf), profile, config_file))
+    }
+}
+
+/// Resolve the `--profile` name, refusing an unknown one.
+///
+/// **An unrecognised `--profile` is refused, not silently replaced by the default** (AUDIT C147).
+/// The profile is the whole of the decision about where a node's data lives, and the default's
+/// directory is `$HOME/.rnode` — so the docs' own command (`--profile docker`, one keystroke from
+/// `docer`) typo'd starts the node on a *fresh, empty* data directory: a restart that looks like
+/// data loss or an unexpected re-genesis, with nothing naming the profile. A refusal names both
+/// the name it did not recognise and the ones it has, which is the whole of the fix.
+fn resolve_profile(options: &Options) -> Result<Profile, String> {
+    match &options.profile {
+        Some(name) => profiles()
+            .into_iter()
+            .find(|p| &p.name == name)
+            .ok_or_else(|| {
+                let known: Vec<String> = profiles()
+                    .iter()
+                    .map(|p| format!("'{}' ({})", p.name, p.data_dir.display()))
+                    .collect();
+                format!(
+                    "unknown profile '{name}': this port has {}. Refusing rather than falling back \
+                     to '{}', whose data directory is different",
+                    known.join(", "),
+                    default_profile().name
+                )
+            }),
+        None => Ok(default_profile()),
     }
 }
 

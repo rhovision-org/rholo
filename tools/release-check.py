@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -114,7 +115,10 @@ def cmd_run(args) -> int:
         command += ["--old-image", args.old_image]
     if args.keep:
         command.append("--keep")
-    result = subprocess.run(command, cwd=ROOT, text=True)
+    env = dict(os.environ)
+    if getattr(args, "allow_dirty", False):
+        env["RELEASE_ALLOW_DIRTY"] = "1"
+    result = subprocess.run(command, cwd=ROOT, text=True, env=env)
     print(f"record: {out / 'claim.json'}")
     return result.returncode
 
@@ -194,6 +198,8 @@ def main(argv: list[str]) -> int:
     run.add_argument("--public-manifest")
     run.add_argument("--old-image")
     run.add_argument("--keep", action="store_true")
+    run.add_argument("--allow-dirty", action="store_true",
+                     help="the image is known to contain this working tree")
     run.set_defaults(func=cmd_run)
     check = sub.add_parser("check", help="re-run a record's predicate")
     check.add_argument("--claim", required=True)

@@ -229,8 +229,16 @@ class Devnet:
             "DEVNET_GRPC_BASE": str(self.grpc_base),
             "DEVNET_NODE_MEMORY": self.memory,
         })
-        if self.node_env:
-            env["DEVNET_NODE_ENV"] = self.node_env
+        # **Decision traces, for the phase-space reading.** A claim failure then carries the merge
+        # inputs, not only the outcome. Production never sets this.
+        trace_pair = "RNODE_TRACE_DIR=/var/lib/rnode/traces"
+        node_env = self.node_env
+        if node_env:
+            separator = ";" if ";" in node_env else ","
+            node_env = f"{node_env}{separator}{trace_pair}"
+        else:
+            node_env = trace_pair
+        env["DEVNET_NODE_ENV"] = node_env
         # `tools/devnet.sh` names the per-node image by container name with dashes as underscores.
         for index, image in self.node_images.items():
             key = "RNODE_IMAGE_" + self.node(index).replace("-", "_")
@@ -280,6 +288,14 @@ class Devnet:
 
     def down(self) -> None:
         self.shell("down", "-v", timeout=300)
+
+    def copy_traces(self, index: int, dest: Path) -> int:
+        """Copy one node's decision traces out of its container into `dest`."""
+        dest.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            ["docker", "cp", f"{self.node(index)}:/var/lib/rnode/traces/.", str(dest)],
+            text=True, capture_output=True)
+        return result.returncode
 
     def deploy(self, term: str, index: int = 0, timeout: float = 60) -> str:
         """Submit one signed deploy through node `index`; return its id."""
@@ -412,3 +428,113 @@ def expect(record: dict, key: str, kind: type, problems: list[str], where: str =
         problems.append(f"{where or key}: missing or not {kind.__name__}")
         return None
     return value
+
+
+class _Result:
+    def __init__(self, returncode: int, stdout: str = "", stderr: str = ""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def preflight(environment: str, public_manifest: str | None = None, *,
+              runner=None, head: str | None = None) -> list[str]:
+    """Check the run's inputs before a container starts.
+
+    A failure here is a `not run` with the missing coordinate, not a claim fail: the claim has not
+    been tested. The checks are the ones that make an otherwise unexplainable run explainable — the
+    image's revision, the tree it was built from, the manifest's provenance.
+    """
+    run = runner or (
+        lambda command: subprocess.run(
+            command, cwd=ROOT, text=True, capture_output=True))
+    problems: list[str] = []
+    allow_dirty = os.environ.get("RELEASE_ALLOW_DIRTY") == "1"
+
+    if head is None:
+        result = run(["git", "rev-parse", "HEAD"])
+        head = result.stdout.strip() if result.returncode == 0 else None
+
+    if environment == "local":
+        docker = run(["docker", "info"])
+        if docker.returncode != 0:
+            problems.append("preflight: the docker daemon is unreachable")
+        image = os.environ.get("RNODE_IMAGE", "rnode:local")
+        inspect = run(["docker", "image", "inspect", image])
+        if inspect.returncode != 0:
+            problems.append(f"preflight: image {image} is missing; run tools/devnet.sh build")
+        else:
+            label = run([
+                "docker", "image", "inspect", "--format",
+                '{{ index .Config.Labels "org.opencontainers.image.revision" }}', image,
+            ]).stdout.strip()
+            if not label:
+                problems.append(
+                    f"preflight: image {image} carries no org.opencontainers.image.revision "
+                    "label; rebuild it with tools/devnet.sh build")
+            elif head and label != head:
+                problems.append(
+                    f"preflight: image {image} is revision {label[:12]}, not HEAD {head[:12]}; "
+                    "rebuild it or check out the revision the image was built from")
+        if not allow_dirty:
+            status = run(["git", "status", "--porcelain"]).stdout
+            if status.strip():
+                problems.append(
+                    "preflight: the working tree is dirty, so the image may not contain this "
+                    "source; commit, or set RELEASE_ALLOW_DIRTY=1 only if it does")
+    elif environment == "public":
+        if not public_manifest:
+            problems.append("preflight: the public run needs --public-manifest")
+        else:
+            path = Path(public_manifest)
+            if not path.exists():
+                problems.append(f"preflight: manifest {public_manifest} does not exist")
+            else:
+                try:
+                    manifest = json.loads(path.read_text())
+                except ValueError as error:
+                    problems.append(f"preflight: manifest {public_manifest} is not JSON: {error}")
+                else:
+                    sha = (manifest.get("provenance") or {}).get("source_sha")
+                    if sha and head and sha != head:
+                        problems.append(
+                            f"preflight: the manifest's provenance source_sha {sha[:12]} is not "
+                            f"HEAD {head[:12]}")
+    return problems
+
+
+def preflight_failure(claim_id: str, environment: str, out, record: dict,
+                      public_manifest: str | None = None) -> int | None:
+    """Write a `not run` record when the preflight refuses; `None` means proceed."""
+    problems = preflight(environment, public_manifest)
+    if not problems:
+        return None
+    record["claim_id"] = claim_id
+    return not_run(out, record, "; ".join(problems))[1]
+
+
+def evaluate_merge_trace(trace: dict) -> dict:
+    """Evaluate the merge phase-space predicates on one trace.
+
+    The predicates are recomputed from the coordinates, never read from the node's own booleans:
+    a trace is evidence, and a node that mislabels its decision must not hide it.
+    """
+    mode = trace.get("mode")
+    claims = [c for c in (trace.get("claims") or []) if isinstance(c, dict)]
+    hashes = {c.get("hash") for c in claims}
+    base_ok = trace.get("certified_base") is not None or len(hashes) <= 1
+    fork_ok = mode != "fringe" or not (trace.get("fork_blocks") or [])
+    conflict = set(trace.get("conflict_scope") or [])
+    rejected_hosts = set(trace.get("rejected_hosts") or [])
+    ledger_ok = mode != "fringe" or not (conflict & rejected_hosts)
+    report = trace.get("report") or {}
+    scope_partition_ok = (
+        report.get("conflict_chains")
+        == (report.get("kept_chains") or 0) + (report.get("rejected_chains") or 0))
+    predicates = {
+        "base_ok": base_ok,
+        "fork_ok": fork_ok,
+        "ledger_ok": ledger_ok,
+        "scope_partition_ok": scope_partition_ok,
+    }
+    return {"predicates": predicates, "false": [k for k, v in predicates.items() if not v]}

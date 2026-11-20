@@ -290,9 +290,10 @@ async fn async_main(options: Options, log_level: rchain_shared::log::Level) {
         nonce,
         previous,
         sequence,
+        ..
     } = &options.subcommand
     {
-        let (node_conf, _, _) = match Configuration::build(&options) {
+        let (node_conf, _, _) = match Configuration::build_audit(&options) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Configuration error: {e}");
