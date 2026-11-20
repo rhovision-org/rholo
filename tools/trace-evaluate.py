@@ -47,15 +47,15 @@ ANCHORS = {
     },
     ("finality", "denominator_ok"): {
         "rust": "block-storage/src/dag/liveness.rs:calculate_finalization_reported",
-        "lean": "Rchain.Casper.Liveness.finalitySafe",
+        "lean": "Rchain.finalitySafe",
     },
     ("finality", "support_ok"): {
         "rust": "block-storage/src/dag/finalizer.rs:next_fringe_reported",
-        "lean": "Rchain.Casper.Liveness.a_safe_advance_has_a_supermajority",
+        "lean": "Rchain.a_safe_advance_has_a_supermajority",
     },
     ("finality", "partition_ok"): {
         "rust": "block-storage/src/dag/liveness.rs:live_weight_set",
-        "lean": "Rchain.Casper.Liveness.live_senders_are_bonded",
+        "lean": "Rchain.finality_safe_partition",
     },
     ("state", "pre_ok"): {
         "rust": "casper/src/interpreter_util.rs:validate_block_checkpoint",
