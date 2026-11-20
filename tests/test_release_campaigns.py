@@ -196,6 +196,27 @@ class ClaimTests(unittest.TestCase):
                     self.assertTrue(any(predicate in reason for reason in reasons),
                                     (row["id"], arm["id"], predicate, reasons))
 
+    def test_a_fringe_rejection_of_a_finalising_host_names_ledger_ok(self):
+        row = self.claim("RC-1")
+        module = checker.load_test(row)
+        record = module.fixture("local")
+        trace = record["observations"]["traces"][0]
+        trace["rejected_hosts"] = list(trace["conflict_scope"])
+        verdict, reasons = module.check(record)
+        self.assertEqual(verdict, "fail")
+        self.assertTrue(any("ledger_ok" in reason for reason in reasons), reasons)
+
+    def test_a_final_scope_only_rejection_is_not_a_ledger_failure(self):
+        row = self.claim("RC-1")
+        module = checker.load_test(row)
+        record = module.fixture("local")
+        trace = record["observations"]["traces"][0]
+        trace["conflict_scope"] = ["aa" * 32]
+        trace["final_scope"] = ["ef" * 32]
+        trace["rejected_hosts"] = ["ef" * 32]
+        verdict, reasons = module.check(record)
+        self.assertEqual(verdict, "pass", reasons)
+
     def test_every_claim_names_its_trace_close_actions_and_next_pr(self):
         pr_ids = {entry["id"] for entry in self.payload["action_prs"]}
         for row in self.payload["claims"]:

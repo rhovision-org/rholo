@@ -60,8 +60,8 @@ def _fixture_baseline(arm: str = "local") -> dict:
                 "mode": "fringe",
                 "claims": [{"height": 3, "id": "ab" * 32, "hash": "cd" * 32}],
                 "certified_base": None, "base_source": "agreed",
-                "conflict_scope": ["ef" * 32], "fork_blocks": [],
-                "rejected_hosts": [],
+                "conflict_scope": ["ef" * 32], "final_scope": ["ef" * 32],
+                "fork_blocks": [], "rejected_hosts": [],
                 "report": {"conflict_chains": 1, "kept_chains": 0, "rejected_chains": 1},
             }],
         },
@@ -223,6 +223,9 @@ def run(argv: list[str]) -> int:
             "control_absent_before": drill_ok,
         }
         if not drill_ok:
+            # The refused merge is the observation. Copy the decision traces before the devnet is
+            # torn down, or the failure reads as evidence-insufficient and names no predicate.
+            record["observations"]["traces"] = _collect_merge_traces(devnet, out)
             common.finish(record, "fail", ["the acceptance drill failed: " +
                                            str(record["observations"]["drill_error"])])
             return common.write_record(out, record)[1]
@@ -233,6 +236,21 @@ def run(argv: list[str]) -> int:
     finally:
         if not args.keep:
             devnet.down()
+
+
+def _collect_merge_traces(devnet, out: Path, validators: int = 4) -> list[dict]:
+    """Every node's merge traces, copied before the devnet is torn down."""
+    traces: list[dict] = []
+    for i in range(validators):
+        dest = out / "traces" / f"validator-{i}"
+        devnet.copy_traces(i, dest)
+        for path in sorted(dest.glob("merge-*.json")):
+            try:
+                row = json.loads(path.read_text())
+            except ValueError:
+                continue
+            traces.append({"validator": i, "file": path.name, **row})
+    return traces
 
 
 def _observe(target, record: dict, source: dict, out: Path, validators: int,
