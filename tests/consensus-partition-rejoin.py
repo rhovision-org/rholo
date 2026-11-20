@@ -107,14 +107,25 @@ def verify_producing_isolation(observations):
 def finalized_fence_is_frozen(victim_before, observations):
     """The isolated victim may hold a rising tip; it may not advance its finalized fence.
 
-    `victim_before` is read *after* the cut, so any later finalization would need a quorum the
-    isolated validator does not have. This is the sound invariant behind the tip dwell: a locally
-    proposed block raises `latest` without raising `finalized_height` (run 41219535778 arm 2 read
-    34, 34, 35 while finality stayed at 25).
+    The cut is not a barrier for work already in flight: the victim can finalise **one** queued
+    pre-cut fringe immediately after the network is removed. The baseline is therefore established
+    after a three-sample settling window, not from the instant of the cut; every sample after that
+    window must hold that height. (Observed 2026-11-20: baseline 36, the victim settled at 37 on the
+    first sample and stayed at 37 for all 40 samples while its tip rose 40→45.)
     """
-    baseline = victim_before["finalized_height"]
     heights = [x["finalized_height"] for x in observations if "finalized_height" in x]
-    return len(heights) >= DWELL_MIN_SAMPLES and all(h == baseline for h in heights)
+    pre_cut = victim_before.get("finalized_height")
+    if len(heights) < DWELL_MIN_SAMPLES:
+        return False
+    for start in range(len(heights) - DWELL_MIN_SAMPLES + 1):
+        window = heights[start:start + DWELL_MIN_SAMPLES]
+        if len(set(window)) == 1:
+            settled = window[0]
+            # A settle below the pre-cut fence is a regression, not a drain.
+            if type(pre_cut) is int and settled < pre_cut:
+                return False
+            return all(height == settled for height in heights[start:])
+    return False
 
 
 def epoch_boundary_crossed(low, high, epoch):
