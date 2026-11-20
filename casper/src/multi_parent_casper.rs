@@ -402,8 +402,12 @@ fn merge_trace(
     };
     let ledger_ok = match mode {
         // In a fringe merge the conflict scope is the layer this merge finalises (the final scope is
-        // the older layer it prunes); a rejection in it would drop a finalised write.
-        MergeMode::Fringe => outcome.rejected_hosts.is_disjoint(&scope.conflict_scope),
+        // the older layer it prunes); a rejection that carries a deploy id and is hosted in it would
+        // drop a finalised write. A rejected chain with no deploy id loses no deploy.
+        MergeMode::Fringe => {
+            outcome.rejected_deploys.is_empty()
+                || outcome.rejected_hosts.is_disjoint(&scope.conflict_scope)
+        }
         MergeMode::Conflict => true,
     };
     let scope_partition_ok = outcome.report.conflict_chains
@@ -881,10 +885,14 @@ where
                 base_state,
             ));
             // **The finalised floor.** In a fringe merge the conflict scope *is* the layer being
-            // finalised; a rejection hosted in one of those blocks would travel into the next
-            // block's `rejectedDeploys` and drop a finalised write (RC-1). Refuse instead.
-            finalised_floor(&m_scope.conflict_scope, &result.rejected_hosts)
-                .map_err(|e| format!("the fringe merge was refused: {e}"))?;
+            // finalised; a rejection that carries a deploy id and is hosted in one of those blocks
+            // would travel into the next block's `rejectedDeploys` and drop a finalised write
+            // (RC-1). A rejected chain with no deploy id (an empty/native-only chain) loses no
+            // deploy; refusing it stalled every fringe whose blocks carried such a chain.
+            if !result.rejected_deploys.is_empty() {
+                finalised_floor(&m_scope.conflict_scope, &result.rejected_hosts)
+                    .map_err(|e| format!("the fringe merge was refused: {e}"))?;
+            }
             Some(result)
         }
         None => None,

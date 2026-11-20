@@ -591,7 +591,9 @@ def evaluate_merge_trace(trace: dict) -> dict:
     fork_ok = mode != "fringe" or not (trace.get("fork_blocks") or [])
     conflict = set(trace.get("conflict_scope") or [])
     rejected_hosts = set(trace.get("rejected_hosts") or [])
-    ledger_ok = mode != "fringe" or not (conflict & rejected_hosts)
+    rejected_deploys = list(trace.get("rejected_deploys") or [])
+    ledger_ok = (mode != "fringe" or not rejected_deploys
+                 or not (conflict & rejected_hosts))
     report = trace.get("report") or {}
     scope_partition_ok = (
         report.get("conflict_chains")
