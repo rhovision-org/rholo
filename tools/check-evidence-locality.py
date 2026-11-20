@@ -60,7 +60,7 @@ EVIDENCE = ROOT / "spec/audit/evidence"
 RUN_ARTEFACTS = ("acceptance.json", "collector.json", "plan.public.json", "report.json",
                  "run.json", "result.json", "manifest.json")
 RUN_PREFIXES = ("journal", "observations", "progress-samples", "snapshots")
-LABELS = ("off-host-claim", "loopback-diagnostic", "local-devnet", "single-host",
+LABELS = ("off-host-claim", "multi-host", "loopback-diagnostic", "local-devnet", "single-host",
           "public-live", "live-host", "external", "not-a-run")
 MUTATION_VERBS = ("POST ", "PUT ", "PATCH ", "DELETE ", "/deploy", "/propose", "/resume")
 ADVERTISED = [
@@ -295,6 +295,14 @@ def check(directory: Path) -> list[str]:
                 f"{directory.name}: an off-host claim must carry a captured non-loopback "
                 "advertised peer, not only README wording"
             )
+    elif label == "multi-host":
+        for claim in local:
+            problems.append(
+                f"{directory.name}: a multi-host record carries a local "
+                f"(loopback/private/reserved) {claim}")
+        if not re.search(r"declared host", readme, re.I):
+            problems.append(
+                f"{directory.name}: a multi-host record must name the declared hosts")
     elif label == "loopback-diagnostic":
         if not loopbacks:
             problems.append(

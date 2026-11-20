@@ -58,9 +58,10 @@ def module_for(row: dict):
     return builder().claim_module(row)
 
 
-def newest(rows: list[dict], ident: str, environment: str, root: Path):
+def newest(rows: list[dict], ident: str, arm: str, root: Path):
     candidates = [row for row in rows
-                  if row.get("claim_id") == ident and row.get("environment") == environment
+                  if row.get("claim_id") == ident
+                  and (row.get("arm") or row.get("environment")) == arm
                   and Path(row.get("_path", "")).is_relative_to(root)]
     if not candidates:
         return None
@@ -78,25 +79,23 @@ def statuses(roots=(EVIDENCE,)) -> dict:
 
 
 def cmd_list(args) -> int:
-    rows = builder().claim_records((EVIDENCE, SCRATCH))
     committed = statuses((EVIDENCE,))
     scratch = statuses((EVIDENCE, SCRATCH))
-    print(f"{'claim':6} {'local':28} {'public':28}  test")
+    print(f"{'claim':6} {'arm':14} {'env':7} {'reading':28}  test")
     ready = True
     for row in claims():
-        idents = row["id"]
-        cells = []
-        for environment in ENVIRONMENTS:
-            entry = committed[idents][environment]
+        for arm in row["arms"]:
+            entry = committed[row["id"]][arm["id"]]
             state = (entry.get("action") or {}).get("reading") or "not-observed"
-            scratch_entry = scratch[idents][environment]
+            scratch_entry = scratch[row["id"]][arm["id"]]
             if (scratch_entry.get("record") or "").startswith("target/"):
                 state += "*"
-            if not state.startswith("safe"):
+            if arm.get("required", True) and not state.startswith("safe"):
                 ready = False
             pin = (entry.get("source_sha") or "")[:7]
-            cells.append(f"{state}{('@' + pin) if pin and state.startswith('safe') else ''}")
-        print(f"{idents:6} {cells[0]:28} {cells[1]:28}  {row['test']}")
+            reading = f"{state}{('@' + pin) if pin and state.startswith('safe') else ''}"
+            print(f"{row['id']:6} {arm['id']:14} {arm['environment']:7} "
+                  f"{reading:28}  {row['test']}")
     print(f"\n{'RELEASE_CLAIMS_READY' if ready else 'RELEASE_CLAIMS_NOT_READY'} "
           f"(* = a newer scratch record exists; it does not count)")
     if args.json:
@@ -107,9 +106,15 @@ def cmd_list(args) -> int:
 
 def cmd_run(args) -> int:
     row = claim_row(args.claim)
-    out = Path(args.out or (SCRATCH / args.claim / args.env))
-    command = [sys.executable, str(ROOT / row["test"]), "--env", args.env,
-               "--out", str(out)]
+    arm_id = args.arm or args.env or "local"
+    arm = next((entry for entry in row["arms"] if entry["id"] == arm_id), None)
+    if arm is None:
+        raise SystemExit(f"{row['id']}: unknown arm {arm_id!r}; "
+                         f"expected one of {[entry['id'] for entry in row['arms']]}")
+    environment = arm["environment"]
+    out = Path(args.out or (SCRATCH / args.claim / arm_id))
+    command = [sys.executable, str(ROOT / row["test"]), "--env", environment,
+               "--arm", arm_id, "--out", str(out)]
     if args.public_manifest:
         command += ["--public-manifest", args.public_manifest]
     if args.old_image:
@@ -145,8 +150,9 @@ def cmd_record(args) -> int:
     # retained observation, and the tracker must be able to show which precondition blocked it.
     evidence_verdict = {"pass": "PASS", "fail": "FAIL"}.get(verdict, "INCONCLUSIVE")
     provenance = record.get("provenance") or {}
+    arm_id = args.arm or record.get("arm") or record.get("environment") or args.env or "local"
     destination = Path(args.into) if args.into else (
-        EVIDENCE / f"{row['id'].lower().replace('-', '')}-{args.env}-"
+        EVIDENCE / f"{row['id'].lower().replace('-', '')}-{arm_id}-"
                   f"{(record.get('finished_at') or '')[:10].replace('-', '')}-"
                   f"{(provenance.get('source_sha') or '0000000')[:7]}")
     if destination.exists():
@@ -173,10 +179,13 @@ def cmd_assert_ready(args) -> int:
     current = statuses((EVIDENCE,))
     not_ready = []
     for row in claims():
-        for environment in ENVIRONMENTS:
-            entry = current[row["id"]][environment]
+        for arm in row["arms"]:
+            if not arm.get("required", True):
+                continue
+            entry = current[row["id"]][arm["id"]]
             if (entry.get("status") or "not run") != "pass":
-                not_ready.append(f"{row['id']}/{environment}={entry.get('status') or 'not run'}")
+                not_ready.append(
+                    f"{row['id']}/{arm['id']}={entry.get('status') or 'not run'}")
     token = "RELEASE_CLAIMS_NOT_READY" if not_ready else "RELEASE_CLAIMS_READY"
     print(token)
     for line in not_ready:
@@ -192,9 +201,10 @@ def main(argv: list[str]) -> int:
     listing = sub.add_parser("list", help="show the derived statuses")
     listing.add_argument("--json", action="store_true")
     listing.set_defaults(func=cmd_list)
-    run = sub.add_parser("run", help="run one claim's test")
+    run = sub.add_parser("run", help="run one claim arm's test")
     run.add_argument("--claim", required=True)
-    run.add_argument("--env", choices=ENVIRONMENTS, required=True)
+    run.add_argument("--arm", help="arm id; defaults to --env or the baseline local arm")
+    run.add_argument("--env", choices=ENVIRONMENTS)
     run.add_argument("--out")
     run.add_argument("--public-manifest")
     run.add_argument("--old-image")
@@ -208,7 +218,8 @@ def main(argv: list[str]) -> int:
     check.set_defaults(func=cmd_check)
     record = sub.add_parser("record", help="pack a run into an evidence record")
     record.add_argument("--claim", required=True)
-    record.add_argument("--env", choices=ENVIRONMENTS, required=True)
+    record.add_argument("--arm", help="arm id; read from the record when omitted")
+    record.add_argument("--env", choices=ENVIRONMENTS, help="legacy environment selector")
     record.add_argument("--record", required=True)
     record.add_argument("--into")
     record.set_defaults(func=cmd_record)

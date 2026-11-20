@@ -17,7 +17,7 @@ verifies.
 | `source_sha` | the source the binary was built from |
 | `binary_sha256` | the exact binary |
 | `run.url`, `run.attempt` | the **upstream** actions run (`rhovision-org/rholo`), with the attempt |
-| `locality` | `local-devnet`, `loopback-diagnostic` or `off-host-claim` |
+| `locality` | `local-devnet`, `loopback-diagnostic`, `off-host-claim`, `multi-host`, `single-host`, `public-live`, `live-host` or `external` |
 | `files[]` | `{path, sha256, bytes, kind}` for every copied file |
 | `redactions[]` | globs omitted from the bundle, recorded rather than silently dropped |
 | `execution_proven` | **always `false`** |
@@ -47,4 +47,5 @@ python3 tools/evidence-pack.py verify --record spec/audit/evidence/<slug>
 `pack` refuses: a missing source or binary pin; a `PASS` beside a `FAIL` arm; a destination under
 `target/`; a symlink; a fork run URL (the #515 404); and a non-empty destination. It copies by
 default and never moves. The local-only `loopback-diagnostic` label must say in words that it is not
-an off-host positive (`tools/check-evidence-locality.py`).
+an off-host positive, and a `multi-host` label must name the declared hosts and carry no local
+advertised peer (`tools/check-evidence-locality.py`).

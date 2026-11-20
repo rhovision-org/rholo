@@ -1,8 +1,8 @@
 {
-  "schema": 2,
+  "schema": 3,
   "generated": "2026-11-20",
   "source_review": "spec/audit/release-campaign-red-team-20261119.md",
-  "rule": "Each claim names exactly one executable test under tests/. The tracker stores no status and no missing observation: a claim's status in an environment is 'pass', 'fail' or 'not run', derived from that environment's newest committed run record by re-running the test's pure check(record). A claim whose test does not exist, does not import, or does not define run/check/fixture/CLAIM_ID is refused.",
+  "rule": "Each claim names exactly one executable test under tests/ and one or more arms. An arm is a named behaviour with its own environment, evidence locality, test mode and next PR. The tracker stores no status and no missing observation: an arm's status is derived from its newest committed run record by re-running the test's pure check(record), dispatched on the record's arm. A claim whose test does not exist, does not import, or does not define run/check/fixture/CLAIM_ID is refused.",
   "claims": [
     {
       "id": "RC-1",
@@ -27,19 +27,47 @@
         "TA-C1"
       ],
       "owner": "Aria / operator",
-      "does_not_claim": "A local pass is a mechanism check; the public claim needs testnet-4.",
+      "does_not_claim": "A local pass is a mechanism check; the public claim needs testnet-4. The bond-leave arm covers a bond and a withdrawal; it does not claim a validator can leave with an unpaid bond or skip quarantine.",
       "trace": "merge",
-      "next_pr": {
-        "local": "rc-confirm-local",
-        "public": "rc-public-fleet"
-      },
       "close": {
         "not-observed": "Run the local arm with the current image; the record must carry the merge trace (`merge-*.json`).",
         "precondition": "The acceptance drill did not retain its marker; fix that precondition and re-run, because a partition or settlement read without a retained write cannot be judged.",
         "unsafe-point": "Fix the false merge predicate at its Rust anchor: `base_ok` -> `choose_base_claim`; `fork_ok` -> `MergeMode::Fringe`; `ledger_ok` -> `finalised_floor`. The trace host ids name the block whose write was dropped.",
         "model-incomplete": "Every merge predicate holds and the write is still absent: add the missing coordinate to `MergeDecision`/`MergeTrace` first; the trace is the model gap.",
         "evidence-insufficient": "The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read."
-      }
+      },
+      "arms": [
+        {
+          "id": "local",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "default",
+          "behaviour": "the acceptance drill retains a confirmed marker through two further epoch boundaries",
+          "next_pr": "rc-confirm-local"
+        },
+        {
+          "id": "public",
+          "environment": "public",
+          "locality": "public-live",
+          "required": true,
+          "test_mode": "default",
+          "behaviour": "the same settlement and retention reading on the four-host public fleet",
+          "next_pr": "rc-public-fleet",
+          "close": {
+            "not-observed": "Supply the four-host public manifest and run the settlement/retention reading on testnet-4."
+          }
+        },
+        {
+          "id": "bond-leave",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "bond-leave",
+          "behaviour": "a bond and a withdrawal settle, activate at an epoch boundary, pay after quarantine, and the settlement marker is retained",
+          "next_pr": "rc-bond-leave"
+        }
+      ]
     },
     {
       "id": "RC-2",
@@ -63,19 +91,65 @@
         "TA-C1"
       ],
       "owner": "Jim / release coordination",
-      "does_not_claim": "The claim assumes the <=1/3 Byzantine/equivocation bound; without it an equivocator can back two quorums.",
+      "does_not_claim": "The claim assumes the <=1/3 Byzantine/equivocation bound; without it an equivocator can back two quorums. The multi-host arm covers N=4 and N=8 on declared hosts, not an arbitrary topology.",
       "trace": "finality",
-      "next_pr": {
-        "local": "rc-confirm-local",
-        "public": "rc-public-fleet"
-      },
       "close": {
         "not-observed": "Run the local partition drill; the record must carry `finality-*.json` per validator.",
         "precondition": "RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.",
         "unsafe-point": "Fix the false finality predicate: `denominator_ok` means the gate used a denominator other than the whole bonded map; `support_ok` means an advance lacked 3*supporting > 2*quorum; `partition_ok` means an unbonded sender entered the partition.",
         "model-incomplete": "Containment failed with every node trace safe: add the cross-view coordinate (which finalised block, which validator) to `FinalityDecision` before changing the test.",
         "evidence-insufficient": "Capture `finality-*.json` per validator; the trace is emitted at `get_pre_state_for_parents` when `RNODE_TRACE_DIR` is set."
-      }
+      },
+      "arms": [
+        {
+          "id": "local",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "default",
+          "behaviour": "partition/rejoin with a producing victim; containment and no regression",
+          "next_pr": "rc-confirm-local"
+        },
+        {
+          "id": "public",
+          "environment": "public",
+          "locality": "public-live",
+          "required": true,
+          "test_mode": "default",
+          "behaviour": "the operator's partition window on the public fleet",
+          "next_pr": "rc-public-fleet",
+          "close": {
+            "not-observed": "Run the operator's declared partition window on the public fleet."
+          }
+        },
+        {
+          "id": "multi-host",
+          "environment": "local",
+          "locality": "multi-host",
+          "required": true,
+          "test_mode": "multi-host",
+          "behaviour": "N=4 and N=8 on distinct declared hosts: partition, host loss, approved-root retention, and a safe halt beyond tolerance with no conflicting finality",
+          "next_pr": "rc-multi-host"
+        },
+        {
+          "id": "equivocation",
+          "environment": "local",
+          "locality": "multi-host",
+          "required": true,
+          "test_mode": "equivocation",
+          "behaviour": "two signed blocks at one height under the <=1/3 bound produce no conflicting finality and the fault surfaces",
+          "next_pr": "rc-equivocation"
+        },
+        {
+          "id": "validator-set",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "bond-leave",
+          "behaviour": "every validator agrees on the bond set at each epoch boundary and the finality denominator is that set",
+          "next_pr": "rc-bond-leave"
+        }
+      ]
     },
     {
       "id": "RC-3",
@@ -100,17 +174,45 @@
       "owner": "Jim / release coordination",
       "does_not_claim": "The claim is conditional on the same binary and conflict scope; block-merge.md records that two binaries can reject different chains at a merge.",
       "trace": "state",
-      "next_pr": {
-        "local": "rc-confirm-local",
-        "public": "rc-public-fleet"
-      },
       "close": {
         "not-observed": "Run the local state-agreement arm; the record must carry `state-*.json` for the common block hashes.",
         "precondition": "The marker was not visible at the same block on every validator; fix that precondition and re-run.",
         "unsafe-point": "A validator accepted a block whose claim was not its derivation: fix `validate_block_checkpoint` (`pre_ok`/`post_ok`/`rejected_ok`) or the mismatch source named by the trace.",
         "model-incomplete": "The computed triples agree in the trace but the observable disagrees: add the missing block or ledger coordinate to `StateDecision`; the trace is the gap.",
         "evidence-insufficient": "Capture `state-*.json` for the common block hashes; the trace is emitted from `validate_block_checkpoint`."
-      }
+      },
+      "arms": [
+        {
+          "id": "local",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "default",
+          "behaviour": "state agreement across a merge on the local four-validator devnet",
+          "next_pr": "rc-confirm-local"
+        },
+        {
+          "id": "public",
+          "environment": "public",
+          "locality": "public-live",
+          "required": true,
+          "test_mode": "default",
+          "behaviour": "state agreement on the public fleet",
+          "next_pr": "rc-public-fleet"
+        },
+        {
+          "id": "availability",
+          "environment": "public",
+          "locality": "public-live",
+          "required": true,
+          "test_mode": "availability",
+          "behaviour": "every finalised block body and finalised-head state is servable from every validator; not-yet-available never hides a loss",
+          "next_pr": "rc-public-fleet",
+          "close": {
+            "not-observed": "Run the finalised-block availability sweep on the public fleet: every finalised body and finalised-head state from every validator."
+          }
+        }
+      ]
     },
     {
       "id": "RC-4",
@@ -135,19 +237,65 @@
         "G428-M4"
       ],
       "owner": "Jim / release coordination",
-      "does_not_claim": "A store loss needs a fresh data dir and a checkpoint join; 'no operator action' covers a verified restart, not a lost store.",
+      "does_not_claim": "A store loss needs a fresh data dir and a checkpoint join; 'no operator action' covers a verified restart, not a lost store. The returner arm covers a validator that missed a boundary, not one that missed the bond change entirely.",
       "trace": "boot",
-      "next_pr": {
-        "local": "rc-confirm-local",
-        "public": "rc-public-fleet"
-      },
       "close": {
         "not-observed": "Run the restart-under-load arm; the record must carry the victim's `boot-*.json`.",
         "precondition": "The victim did not restart with a new boot id; the trace needs a restart, so fix that precondition first.",
         "unsafe-point": "`acquisition_ok`/`verification_ok`/`anchor_ok` false: the boot accepted a state it could not attribute. Fix `boot_outcome` or `acquire_boot_certificate`; the refusal coordinate is in the trace.",
         "model-incomplete": "The boot trace is safe and the victim still did not run: add the missing acquisition or window coordinate to `BootEvidence`.",
         "evidence-insufficient": "Capture the victim's `boot-*.json`; the reconnect branch emits it when `RNODE_TRACE_DIR` is set."
-      }
+      },
+      "arms": [
+        {
+          "id": "local",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "default",
+          "behaviour": "restart under load: accepted work survives and the victim rejoins",
+          "next_pr": "rc-confirm-local"
+        },
+        {
+          "id": "public",
+          "environment": "public",
+          "locality": "public-live",
+          "required": true,
+          "test_mode": "default",
+          "behaviour": "a real host stop on the public fleet",
+          "next_pr": "rc-public-fleet",
+          "close": {
+            "not-observed": "Run the operator's real host stop on the public fleet."
+          }
+        },
+        {
+          "id": "multi-host",
+          "environment": "local",
+          "locality": "multi-host",
+          "required": true,
+          "test_mode": "multi-host",
+          "behaviour": "host loss, restart/replay and the recovery arm on the M4 topology with no lost accepted deploy",
+          "next_pr": "rc-multi-host"
+        },
+        {
+          "id": "failover",
+          "environment": "local",
+          "locality": "off-host-claim",
+          "required": true,
+          "test_mode": "failover",
+          "behaviour": "a joiner with an ordered seed list joins when the first seed is down and the second is live",
+          "next_pr": "rc-failover"
+        },
+        {
+          "id": "returner",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "bond-leave",
+          "behaviour": "a validator down across a bond-change boundary rejoins the same finalised head without manual surgery",
+          "next_pr": "rc-bond-leave"
+        }
+      ]
     },
     {
       "id": "RC-5",
@@ -170,19 +318,47 @@
         "G428-M2"
       ],
       "owner": "Jim / release coordination",
-      "does_not_claim": "The opt-in in-flight cap is not the shipping default; the pool's count/byte/term/share/rate bounds are the intended throttle. Transport correctness across HTTP, direct HTTP, gRPC and a proxy is out of scope.",
+      "does_not_claim": "The opt-in in-flight cap is not the shipping default; the pool's count/byte/term/share/rate bounds are the intended throttle. The transport arm proves id, status, settlement stage and error-class equivalence across the four surfaces; it does not claim byte-identical payloads or gas accounting.",
       "trace": "admission",
-      "next_pr": {
-        "local": "rc-confirm-local",
-        "public": "rc-public-fleet"
-      },
       "close": {
         "not-observed": "Run the capped/unset pressure arm; the record must carry `admission-*.json` from both devnets.",
         "precondition": "The pressure record was not produced; fix the arm precondition and re-run.",
         "unsafe-point": "`bounded_ok` false means the refusal class is not a bound; `retry_signal_ok` false means a 429/RESOURCE_EXHAUSTED carried no retry signal or a 5xx was used; `permit_ok`/`pool_bound_ok` false means a count overran.",
         "model-incomplete": "Every admission predicate holds and an accepted deploy was lost: add the accepted-deploy coordinate to `AdmissionDecision`.",
         "evidence-insufficient": "Capture `admission-*.json` from both devnets before `down()`; the sites are `pool-*`, `http-*` and `grpc-*`."
-      }
+      },
+      "arms": [
+        {
+          "id": "local",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "default",
+          "behaviour": "capped and unset pressure on the local node",
+          "next_pr": "rc-confirm-local"
+        },
+        {
+          "id": "public",
+          "environment": "public",
+          "locality": "public-live",
+          "required": true,
+          "test_mode": "default",
+          "behaviour": "pressure on the public endpoint and proxy",
+          "next_pr": "rc-public-fleet",
+          "close": {
+            "not-observed": "Supply the capped/unset pressure record from the public endpoint and proxy."
+          }
+        },
+        {
+          "id": "transport",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "transport",
+          "behaviour": "one deploy id through HTTP, direct HTTP, gRPC and a proxy returns the same id, status, settlement stage and error class",
+          "next_pr": "rc-transport"
+        }
+      ]
     },
     {
       "id": "RC-6",
@@ -205,19 +381,59 @@
         "G428-M3"
       ],
       "owner": "Aria / evidence work",
-      "does_not_claim": "A routable address is setup, not the claim; off-host transport and the loopback refusal are out of scope. Alternative-peer failover (M3-11) is separate and never landed.",
+      "does_not_claim": "The join half proves the six-stage chain for one routable advertised address; the off-host arm is that address and a loopback negative, not every transport. Alternative-peer failover is RC-4's arm; the audit half does not claim a replay of a chain the audited node never held.",
       "trace": "audit",
-      "next_pr": {
-        "local": "rc-confirm-local",
-        "public": "rc-public-fleet"
-      },
       "close": {
         "not-observed": "Run the join/audit arm; the record must carry `audit-*.json` and the joiner's `boot-*.json`.",
         "precondition": "The join half did not pass; fix it before the audit, because the audit has nothing to reproduce without an accepted anchor.",
         "unsafe-point": "`target_shape_ok` false means the audit built a whole-fringe target; `replay_agrees_ok` false means it accepted a different root; `anchor_membership_ok` false means the anchor is outside the fringe.",
         "model-incomplete": "The target is the anchored shape and the replay still disagrees: add the replay coordinate (derived/claimed root, head) to the model.",
         "evidence-insufficient": "Pass `RNODE_TRACE_DIR` to `docker exec rnode audit` and copy `audit-*.json`; the trace is written after `check_target`."
-      }
+      },
+      "arms": [
+        {
+          "id": "local",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "default",
+          "behaviour": "genesis join and audit on the local devnet",
+          "next_pr": "rc-confirm-local"
+        },
+        {
+          "id": "public",
+          "environment": "public",
+          "locality": "public-live",
+          "required": true,
+          "test_mode": "default",
+          "behaviour": "a public join and audit",
+          "next_pr": "rc-public-fleet",
+          "close": {
+            "not-observed": "Supply the operator's completed public join record."
+          }
+        },
+        {
+          "id": "off-host",
+          "environment": "local",
+          "locality": "off-host-claim",
+          "required": true,
+          "test_mode": "off-host",
+          "behaviour": "host B joins host A through a routable advertised address with the six-stage chain, and a loopback advertisement is refused",
+          "next_pr": "rc-offhost"
+        },
+        {
+          "id": "availability",
+          "environment": "public",
+          "locality": "public-live",
+          "required": true,
+          "test_mode": "availability",
+          "behaviour": "a joiner bootstraps from a non-producer, restores the served anchor and audits it",
+          "next_pr": "rc-public-fleet",
+          "close": {
+            "not-observed": "Bootstrap a joiner from a non-producer on the public fleet, restore the served anchor and audit it."
+          }
+        }
+      ]
     },
     {
       "id": "RC-7",
@@ -240,17 +456,36 @@
       "owner": "Jim / release coordination",
       "does_not_claim": "For a fresh-genesis launch this is post-launch; it becomes a launch blocker only over a populated store or a mixed fleet. The mixed arm needs a separately built prior image.",
       "trace": "format",
-      "next_pr": {
-        "local": "rc-harness-old-image",
-        "public": "rc-public-fleet"
-      },
       "close": {
         "not-observed": "The local mixed arm needs a separately built prior image: set `RNODE_OLD_IMAGE=<image>`; the downgrade arm also writes `format-*.json`.",
         "precondition": "The arm did not produce its observation: the mixed arm needs RNODE_OLD_IMAGE set to a separately built prior image, and the downgrade arm needs a store stamped with format 5. Fix that input and re-run.",
         "unsafe-point": "`format_ok` false means a newer marker was opened or the decision is not the arithmetic one; `stamp_ok` false means a stamp was claimed without a durable write.",
         "model-incomplete": "The format decision is safe and the mixed fleet still disagrees: add the mixed-fleet coordinate to `StoreFormat`/`StateDecision`.",
         "evidence-insufficient": "Capture `format-*.json` from the mixed nodes and the downgrade container (pass `RNODE_TRACE_DIR=/data/traces`)."
-      }
+      },
+      "arms": [
+        {
+          "id": "local",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "mixed-store",
+          "behaviour": "mixed N/N+1 binaries agree on a block's state, a populated store migrates, and a newer store is refused",
+          "next_pr": "rc-harness-old-image"
+        },
+        {
+          "id": "public",
+          "environment": "public",
+          "locality": "public-live",
+          "required": true,
+          "test_mode": "fleet-upgrade",
+          "behaviour": "a rolling fleet swap keeps one finalised chain through the mixed window and reaches the same head after the swap",
+          "next_pr": "rc-fleet-upgrade",
+          "close": {
+            "not-observed": "Record the rolling fleet swap's mixed-window block agreement and the post-swap finalised head."
+          }
+        }
+      ]
     }
   ],
   "superseded": [
@@ -311,23 +546,14 @@
     },
     {
       "id": "TA-C2",
-      "fate": "claim RC-4; bond/leave are out of scope",
-      "home": "release-claims.json RC-4"
+      "fate": "claims RC-1/RC-2/RC-4 bond-leave arms",
+      "home": "release-claims.json RC-1 bond-leave, RC-2 validator-set, RC-4 returner"
     }
-  ],
-  "out_of_scope": [
-    "Off-host routable transport and the loopback refusal (M3).",
-    "Alternative-peer failover (M3-11).",
-    "Host loss and the multi-host N=4/N=8 envelope (M4).",
-    "Bond and leave (TA-C2).",
-    "Transport correctness across HTTP, direct HTTP, gRPC and a proxy.",
-    "Finalised block body and state availability on every validator.",
-    "Equivocation injection under a validator key."
   ],
   "action_prs": [
     {
       "id": "rc-confirm-local",
-      "scope": "Re-run the local arms with the current image and commit the records. Read each failure with tools/trace-evaluate.py: unsafe-point names a predicate and its anchor; model-incomplete names a model gap; evidence-insufficient names the missing trace. Close a claim only when both environments read safe.",
+      "scope": "Re-run the baseline local arms with the current image and commit the records. Read each failure with tools/trace-evaluate.py: unsafe-point names a predicate and its anchor; model-incomplete names a model gap; evidence-insufficient names the missing trace. Close an arm only when its committed record reads safe.",
       "claims": [
         "RC-1",
         "RC-2",
@@ -339,14 +565,14 @@
     },
     {
       "id": "rc-harness-old-image",
-      "scope": "Build and pin a prior image for the mixed fleet, set RNODE_OLD_IMAGE, and run RC-7 locally. The mixed agreement is a claim-level predicate; the format trace is the decision record.",
+      "scope": "Build and pin a prior image for the mixed fleet, set RNODE_OLD_IMAGE, and run RC-7's local mixed-store arm.",
       "claims": [
         "RC-7"
       ]
     },
     {
       "id": "rc-public-fleet",
-      "scope": "Supply the four-host public manifest (deploy id, marker, provenance) and run every claim with --env public. A public safe is the same reading on the live fleet, not a different test.",
+      "scope": "Supply the four-host public manifest and run the public arms. The availability sweep emits RC-3 and RC-6 availability from the same fleet window.",
       "claims": [
         "RC-1",
         "RC-2",
@@ -355,6 +581,126 @@
         "RC-5",
         "RC-6",
         "RC-7"
+      ]
+    },
+    {
+      "id": "rc-bond-leave",
+      "scope": "One bond/leave campaign feeds RC-1 bond-leave, RC-2 validator-set and RC-4 returner.",
+      "claims": [
+        "RC-1",
+        "RC-2",
+        "RC-4"
+      ]
+    },
+    {
+      "id": "rc-offhost",
+      "scope": "Run the pre-registered M3 two-host join and record RC-6 off-host, including the loopback negative.",
+      "claims": [
+        "RC-6"
+      ]
+    },
+    {
+      "id": "rc-failover",
+      "scope": "Add an ordered seed list to bootstrap resolution and run RC-4 failover with the first seed down.",
+      "claims": [
+        "RC-4"
+      ]
+    },
+    {
+      "id": "rc-multi-host",
+      "scope": "Add the multi-host driver the M4 runbook owes, run N=4 and N=8 on declared hosts, and record RC-2/RC-4 multi-host from the one campaign.",
+      "claims": [
+        "RC-2",
+        "RC-4"
+      ]
+    },
+    {
+      "id": "rc-equivocation",
+      "scope": "Inject an equivocation under a validator key on the M4 topology, add the finality coordinate, and record RC-2 equivocation.",
+      "claims": [
+        "RC-2"
+      ]
+    },
+    {
+      "id": "rc-transport",
+      "scope": "Drive one deploy id through HTTP, direct HTTP, gRPC and a proxy and record RC-5 transport.",
+      "claims": [
+        "RC-5"
+      ]
+    },
+    {
+      "id": "rc-fleet-upgrade",
+      "scope": "Roll the public fleet through the mixed window to the new image and record RC-7 public.",
+      "claims": [
+        "RC-7"
+      ]
+    },
+    {
+      "id": "launch-gate",
+      "scope": "Aggregate the required arms and the external obligations into the launch gate; refuse ready while any external item is open without a dated disposition.",
+      "claims": [
+        "RC-1",
+        "RC-2",
+        "RC-3",
+        "RC-4",
+        "RC-5",
+        "RC-6",
+        "RC-7"
+      ]
+    }
+  ],
+  "excluded_behaviours": [
+    {
+      "id": "off-host-transport",
+      "behaviour": "Off-host routable transport and the loopback refusal (M3).",
+      "arms": [
+        "RC-6/off-host"
+      ]
+    },
+    {
+      "id": "alternative-peer-failover",
+      "behaviour": "Alternative-peer failover (M3-11).",
+      "arms": [
+        "RC-4/failover"
+      ]
+    },
+    {
+      "id": "host-loss-multi-host",
+      "behaviour": "Host loss and the multi-host N=4/N=8 envelope (M4).",
+      "arms": [
+        "RC-2/multi-host",
+        "RC-4/multi-host"
+      ]
+    },
+    {
+      "id": "bond-and-leave",
+      "behaviour": "Bond and leave (TA-C2).",
+      "arms": [
+        "RC-1/bond-leave",
+        "RC-2/validator-set",
+        "RC-4/returner"
+      ]
+    },
+    {
+      "id": "transport-equivalence",
+      "behaviour": "Transport correctness across HTTP, direct HTTP, gRPC and a proxy.",
+      "arms": [
+        "RC-5/transport"
+      ]
+    },
+    {
+      "id": "finalised-availability",
+      "behaviour": "Finalised block body and state availability on every validator.",
+      "arms": [
+        "RC-3/availability",
+        "RC-6/availability"
+      ]
+    },
+    {
+      "id": "equivocation",
+      "behaviour": "Equivocation injection under a validator key.",
+      "arms": [
+        "RC-2/equivocation"
       ]
     }
   ]

@@ -37,10 +37,12 @@ TITLE = "Upgrade compatibility"
 STORE_FORMAT_VERSION = 4  # casper/src/storage.rs; the test stamps one higher
 
 
-def fixture() -> dict:
+def _fixture_baseline(arm: str = "local") -> dict:
+    environment = "public" if arm == "public" else "local"
     return {
-        "schema": 1, "claim_id": CLAIM_ID, "claim_title": TITLE,
-        "environment": "local", "locality": "local-devnet",
+        "schema": 1, "claim_id": CLAIM_ID, "claim_title": TITLE, "arm": arm,
+        "environment": environment,
+        "locality": "public-live" if environment == "public" else "local-devnet",
         "provenance": {"source_sha": "0" * 40, "binary_sha256": "1" * 64},
         "preconditions": [], "verdict": "pass", "reasons": [], "errors": [],
         "harness": {"name": "populated-store-migration-drill", "exit_code": 0},
@@ -62,7 +64,7 @@ def fixture() -> dict:
     }
 
 
-def check(record: dict) -> tuple[str, list[str]]:
+def _check_baseline(record: dict) -> tuple[str, list[str]]:
     if record.get("verdict") == "not run":
         return "not run", list(record.get("preconditions") or record.get("reasons") or [])
     problems: list[str] = []
@@ -92,24 +94,47 @@ def check(record: dict) -> tuple[str, list[str]]:
     return common.evaluate(record, problems)
 
 
+FIXTURES = {
+    "local": lambda: _fixture_baseline("local"),
+    "public": lambda: _fixture_baseline("public"),
+}
+ARMS = {
+    "local": _check_baseline,
+    "public": _check_baseline,
+}
+
+
+def fixture(arm: str = "local") -> dict:
+    return FIXTURES[arm]()
+
+
+def check(record: dict) -> tuple[str, list[str]]:
+    if record.get("verdict") == "not run":
+        return "not run", list(record.get("preconditions") or record.get("reasons") or [])
+    return common.dispatch_arm(ARMS, record)
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", choices=("local", "public"), required=True)
+    parser.add_argument("--env", choices=("local", "public"))
+    parser.add_argument("--arm")
     parser.add_argument("--out", required=True)
     parser.add_argument("--public-manifest")
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--old-image", default=os.environ.get("RNODE_OLD_IMAGE"))
     args = parser.parse_args(argv)
-    record = common.new_record(CLAIM_ID, TITLE, args.env,
-                               "local-devnet" if args.env == "local" else "public-live")
+    arm = args.arm or args.env or "local"
+    meta = common.claim_arm(CLAIM_ID, arm)
+    environment = meta["environment"]
+    record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    failure = common.preflight_failure(CLAIM_ID, args.env, out, record,
+    failure = common.preflight_failure(CLAIM_ID, environment, out, record,
                                        getattr(args, "public_manifest", None))
     if failure is not None:
         return failure
 
-    if args.env == "public":
+    if environment == "public":
         manifest = common.load_manifest(args.public_manifest)
         if not manifest:
             return common.not_run(out, record, "no --public-manifest for the public fleet")[1]
