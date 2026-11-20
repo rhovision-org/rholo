@@ -267,7 +267,7 @@
         "local": {
           "items": [
             {
-              "action": "RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.",
+              "action": "The acceptance drill did not reach the partition phase (no marker observed and finalised once), so no partition was installed; fix that precondition before judging safety.",
               "finding": "RC-1's settlement-retention precondition failed; no partition was installed",
               "item": "RC-2/local/precondition"
             }
@@ -369,7 +369,7 @@
         "evidence-insufficient": "Capture `finality-*.json` per validator; the trace is emitted at `get_pre_state_for_parents` when `RNODE_TRACE_DIR` is set.",
         "model-incomplete": "Containment failed with every node trace safe: add the cross-view coordinate (which finalised block, which validator) to `FinalityDecision` before changing the test.",
         "not-observed": "Run the local partition drill; the record must carry `finality-*.json` per validator.",
-        "precondition": "RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.",
+        "precondition": "The acceptance drill did not reach the partition phase (no marker observed and finalised once), so no partition was installed; fix that precondition before judging safety.",
         "unsafe-point": "Fix the false finality predicate: `denominator_ok` means the gate used a denominator other than the whole bonded map; `support_ok` means an advance lacked 3*supporting > 2*quorum; `partition_ok` means an unbonded sender entered the partition."
       },
       "does_not_claim": "The claim assumes the <=1/3 Byzantine/equivocation bound; without it an equivocator can back two quorums. The multi-host arm covers N=4 and N=8 on declared hosts, not an arbitrary topology.",
@@ -410,7 +410,7 @@
           "action": {
             "items": [
               {
-                "action": "RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.",
+                "action": "The acceptance drill did not reach the partition phase (no marker observed and finalised once), so no partition was installed; fix that precondition before judging safety.",
                 "finding": "RC-1's settlement-retention precondition failed; no partition was installed",
                 "item": "RC-2/local/precondition"
               }

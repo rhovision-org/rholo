@@ -207,25 +207,30 @@ def run(argv: list[str]) -> int:
         record["provenance"] = devnet.provenance()
         typed = _read_json(harness_out / "partition-rejoin.json") or {}
         result_doc = _read_json(harness_out / "partition-result.json") or {}
-        if result.returncode and not typed.get("cycles"):
-            # The harness's first phase is the shared acceptance drill. On this build that drill
-            # stops at the RC-1 retention defect, before a partition is installed. That is a
-            # precondition of this test, not evidence about safety; say so instead of calling the
-            # missing partition a safety failure.
+        # A partition result file means the shared drill reached the partition phase. A failure
+        # there is evidence about safety/liveness, not an RC-1 precondition: the verdict must be
+        # `fail`, not `not run`. Only a missing partition result is a precondition.
+        partition_started = bool(result_doc.get("rounds") or result_doc.get("failed_phase"))
+        if result.returncode and not partition_started and not typed.get("cycles"):
             reason = ("the shared acceptance drill did not reach the partition phase: "
                       + (result.stdout + result.stderr)[-1200:])
             record["observations"]["harness_error"] = reason
             record["preconditions"].append(
-                "RC-1's settlement-retention precondition failed; no partition was installed")
+                "the acceptance drill did not reach the partition phase; no partition was installed")
             common.finish(record, "not run", [reason])
             return common.write_record(out, record)[1]
         record["observations"].update({
             "harness_result": result_doc.get("result") or (
                 PASS_TOKEN if result.returncode == 0 else "FAIL"),
-            "cycles": typed.get("cycles") or [],
-            "harness_error": None if result.returncode == 0 else
-            (result.stdout + result.stderr)[-1500:],
+            "cycles": typed.get("cycles") or result_doc.get("rounds") or [],
+            "harness_error": None if result.returncode == 0 else (
+                result_doc.get("error")
+                or f"the partition harness failed in phase {result_doc.get('failed_phase')}: "
+                   + (result.stdout + result.stderr)[-1200:]),
         })
+        if result.returncode:
+            common.finish(record, "fail", [str(record["observations"]["harness_error"])])
+            return common.write_record(out, record)[1]
         return _containment(devnet.target(), record, out, devnet)
     except Exception as error:  # noqa: BLE001
         common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
