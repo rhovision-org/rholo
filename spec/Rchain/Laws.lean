@@ -7402,6 +7402,41 @@ def lawsC : List Law := [
       version and read — the model records that as `Stamp`, not as `Advance`. The \
       v3→v4 disposition-ledger copy is the migration that makes `Advance` safe; it is Laws 66/68 \
       and `block_disposition`'s own tests, not this law." },
+  { number := 119, layer := "Casper",
+    statement := "A duplicate or effect-free rejection is not a lost deploy: a rejected deploy whose \
+      id is also in a kept chain, or whose chain has no state effect, is not in the lossy rejection \
+      ledger. The merge kept a copy (or the deploy was an autopropose `Nil`), so no finalised write \
+      is dropped.",
+    status := .provedModel,
+    formal := `Rchain.MergeDecision.law119_statement,
+    mutant := `Rchain.MergeDecision.law119_mutant,
+    falsifier := `Rchain.MergeDecision.law119_falsifier,
+    declarations := [`Rchain.MergeDecision.DeployLedger,
+      `Rchain.MergeDecision.lossyRejected,
+      `Rchain.MergeDecision.lossyRejectedUnfiltered,
+      `Rchain.MergeDecision.law119_statement,
+      `Rchain.MergeDecision.law119,
+      `Rchain.MergeDecision.law119_mutant,
+      `Rchain.MergeDecision.law119_falsifier],
+    axioms := [],
+    rust := ["casper/src/merging.rs"],
+    rustWitness := [
+      "casper/src/merging.rs:a_duplicate_rejection_is_not_a_loss",
+      "casper/src/merging.rs:a_unique_user_rejection_is_a_loss",
+      "casper/src/merging.rs:an_effect_free_rejection_is_not_a_loss",
+      "casper/src/merging.rs:a_system_rejection_is_not_a_loss"],
+    witness := [`Rchain.MergeDecision.law119,
+      `Rchain.MergeDecision.law119_falsifier],
+    falsifiable := "Use `lossyRejectedUnfiltered` (the pre-fix ledger): it names a deploy id that is \
+      in `kept`, which `law119_mutant` and `law119_falsifier` exhibit. In Rust, the duplicate \
+      `rejected_user_hosts` entry fired `finalised_floor` on the RC-2 fringe; the four \
+      `rejected_user_loss_hosts` tests keep the unique-loss case and exclude the duplicate, the \
+      dummy and the system chain.",
+    note := "The law's subject is the **deploy set**, not the chain set. The merge's conflict \
+      resolution is unchanged: a shared deploy id remains a conflict, and the losing chain is still \
+      rejected. What changes is the loss classification: a rejection whose deploy is kept elsewhere \
+      is a dedup, and an effect-free rejection cannot drop a write. The finalised floor remains \
+      fail-closed for a unique user deploy with effects; the negative test is the guard." },
 
 ]
 
