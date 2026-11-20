@@ -850,6 +850,47 @@ attribute.
 | U24-17 | not a law — **R1 by construction** | the bad dispatch is a type error once the run and audit builders are distinct; there is no state relation to prove |
 | U24-18 | Law 106's replay soundness assumes a complete history; **no law covers the fetch protocol** | the deviation is the transport that supplies the history, not the verdict relation the law proves |
 
+### U25 — The RC-2 fringe/dedup node (2026-11-20)
+
+**Design intent.** A fringe merge finalises a layer only when every user deploy in it either survives
+in the merged state or was a duplicate of a kept deploy (or an effect-free dummy); a duplicate
+rejection is not a lost write, and a genuine finalised write is never dropped. The node must not turn
+a harmless dedup into a halt, and must not hide a genuine loss behind an exemption.
+
+**Why this node exists.** RC-2's local arm stalled deterministically at the height-30→31 fringe. The
+same signed `Nil` deploy (an autopropose dummy, `3045022100933e…`) was gossiped into several
+validators' pools and included in more than one concurrent block. The merge correctly deduplicated
+it; `finalised_floor` classified the duplicate's host as a finalised-write loss and refused every
+retry (129 identical merge traces). RC-1 local passes at the same source; the failure is RC-2's.
+
+**Guide words.** row: NO, MORE, AS WELL AS, PART OF, OTHER THAN, REVERSE, EARLY, LATE, BEFORE, AFTER · vacuous: LESS
+
+LESS is vacuous: the loss classification is a set difference; there is no quantity to compare.
+
+| ID | Guide word | Deviation | RCA → causal chain | Current behaviour | Class | Disposition | Falsifier |
+|---|---|---|---|---|---|---|---|
+| **F-U25-01** | OTHER THAN | A **duplicate** rejection (the deploy id is also in a kept chain) is classified as a user-write loss | `rejected_user_hosts` tests only `!is_system_deploy_id(first_id)` (`casper/src/merging.rs`); it never checks the kept deploy set; `DeployChainIndex::deploys_are_conflicting` treats a shared id as a conflict → the merge keeps one copy and rejects the other | the lossy ledger excludes the duplicate; the floor no longer fires on it | Terminal | R1 (the lossy ledger is the constructor) | casper/src/merging.rs::a_duplicate_rejection_is_not_a_loss |
+| **F-U25-02** | MORE | The floor refuses **more** than the invariant: host overlap is refused even when the rejected effect survives | `finalised_floor(&conflict_scope, &rejected_user_hosts)` (`casper/src/multi_parent_casper.rs`; `merging.rs`) consumes the lossy set | the floor is fail-closed for a unique loss; the duplicate no longer reaches it | Terminal | R2 (the floor remains the guard) | casper/src/merging.rs::a_unique_user_rejection_is_a_loss |
+| **F-U25-03** | OTHER THAN | `ledger_ok=false` reports a false ledger violation | the same duplicate-blind set (`casper/src/multi_parent_casper.rs`) | a safe duplicate trace reads `ledger_ok=true` | Drift | R2 (the trace is the loud surface) | casper/src/merging.rs::a_duplicate_rejection_is_not_a_loss |
+| **F-U25-04** | AFTER | A fringe rejection is written into the next block's `rejectedDeploys`; a duplicate could become a historical row | `casper/src/blocks/proposer/block_creator.rs` copies `fringe_rejected_deploys`; `casper/src/interpreter_util.rs` compares the block's ledger | the lossy ledger excludes the duplicate before the write | Drift | R2 (the ledger is the surface) | casper/tests/n420_boundary_merge.rs::sibling_hot_cell_merges_keep_one_value_and_name_a_rejection |
+| **F-U25-05** | NO | The floor calls D933 “a finalised deploy” though it is an autopropose dummy `Nil`, never settled or finalised | `node/src/runtime/node_runtime.rs` injects the signed `Nil`; `casper/src/blocks/proposer/proposer.rs` signs it; `is_system_deploy_id` only excludes 33-byte ids | the effect-free exemption removes the dummy from the loss set | Terminal | R1 (the effect-free construct is the guard) | casper/src/merging.rs::an_effect_free_rejection_is_not_a_loss |
+| **F-U25-06** | AS WELL AS | RC-2's “shared” drill runs autopropose; RC-1's does not | `tools/devnet.sh` defaults autopropose on; `tests/release-claim-2.py` does not pass `--no-autopropose`; `tests/release-claim-1.py` does | the two claims exercise different rigs; the dummy path is RC-2-only | Drift | R4 (rig assertion owed) | owed: the RC-2 rig assertion |
+| **F-U25-07** | OTHER THAN | A node stall was recorded as `not run / precondition`, not as a safety/consensus failure | `tests/release-claim-2.py` mapped any drill failure with no cycles to the precondition verdict | a partition-phase failure is now a `fail` with the phase and error | Drift | R4 (verdict mapping) | owed: the RC-2 verdict test |
+| **F-U25-08** | PART OF | RC-1's `rejectedDeploys` scan is id-level, not effect-level | `tests/release-claim-1.py` fails on `found=True` without checking the effect; the marker id appears in conflict-mode `rejectedDeploys` with the effect retained | the scan is not yet scoped to the confirmed deploy | Drift | R4 (scope, no new claim id) | owed: the scoped RC-1 scan test |
+| **F-U25-09** | BEFORE | The precondition path does not attach the merge traces it already has | `tests/release-claim-2.py` copies only the stdout/stderr tail on the drill failure; the traces are in `RNODE_TRACE_DIR` | the failure can still read as evidence-insufficient | Drift | R2 (the trace is the surface) | owed: the RC-2 trace attachment |
+| **F-U25-10** | LATE | A fringe may co-finalise mutually deploy-incompatible blocks; the conflict is discovered only at the merge | `block-storage/src/dag/finalizer.rs` checks sender coverage + supermajority only; `finalitySafe` (`spec/Rchain/Casper/Liveness.lean`) has no compatibility clause | a **unique** user-deploy conflict in a fringe would still halt at the floor | Drift | R2 (residual; the compatibility law is owed) | owed: the finality compatibility test |
+| **F-U25-11** | EARLY | Finality is granted early (whole layer), the conflict is discovered late, the refusal is last | `casper/src/multi_parent_casper.rs`; `MergeDecision.Safe` (`spec/Rchain/Casper/MergeDecision.lean`) has no `finalising` set | no forward path once the conflict is known | Drift | R3 (safe exit owed; Law 120) | owed: the finality/merge order test |
+| **F-U25-12** | REVERSE | The user-host floor ignores system chains; a rejected CloseBlock chain may drop the liveness anchor | the floor reads `rejected_user_hosts` only; the conflict-scope resolution has no system filter | C344 regression while fixing RC-1 | Drift | R2 (the C344 guard is the surface) | casper/src/merging.rs::a_system_rejection_is_not_a_loss |
+
+**Table C — law coverage**
+
+| deviation | law that captures it, or the law owed | why |
+|---|---|---|
+| U25-01, U25-02, U25-03, U25-05 | **Law 119 (landed)** — a duplicate or effect-free rejection is not a lost deploy | `Rchain.MergeDecision.law119` / `law119_falsifier` prove the lossy set excludes a kept or effect-free id; the Rust witness is `rejected_user_hosts` with the four `rc1_guard_tests` cases (duplicate, unique loss, dummy, system). |
+| U25-10, U25-11 | **Law 120 (owed)** — a finalising merge rejects no finalising user chain | `MergeDecision.Safe` lacks the `finalising` coordinate; the theorem is `a_safe_decision_rejects_no_finalising_deploy`, with the RC-2 trace as the unsafe witness. This is the finality/merge order follow-up, not the duplicate exemption. |
+| U25-12 | Law 113 and C344 | a finalised close chain is consensus-mandated; the user/system split and the existing C344 tests are the guard. |
+| U25-06, U25-07, U25-08, U25-09 | not a law — **R4 / R2** | the deviations are in the harness, claim scope and evidence capture; the falsifiers are the rig assertion, the trace-derived verdict, and the scoped scan. |
+
 ## 4. The fault tree
 
 ```
@@ -1029,7 +1070,7 @@ not read: the whole of `casper/src/merging.rs` (3,800+ lines), `casper/src/dag.r
 `spec/findings.tsv`'s C248 row in the register's emitted form; the remaining `spec/audit/evidence/`
 runs; and the `rspace` history and store internals beyond the named cache and lock sites.
 
-**Debt.** falsifiers owed: 22 · node-words owed: 44
+**Debt.** falsifiers owed: 28 · node-words owed: 44
 
 *(A `F-` row with an `owed` falsifier is a deviation this pass **dispositioned** but did not **prove**;
 the number above is checked against the page by `tools/check-hazop-worksheet.sh`, so it cannot rot.

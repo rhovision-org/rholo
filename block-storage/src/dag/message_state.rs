@@ -183,29 +183,40 @@ where
         if self.round_parents.is_empty() {
             return self.latest_msgs.values().cloned().collect();
         }
-        let mut parents = self.round_parents.clone();
-        if let Some(mine) = self.latest_msgs.get(sender) {
-            // The previous self-message is the validation rule's comparison point.
-            // Each of its peer parents must still be seen by the replacement
-            // justification. Prefer the newest peer message when it includes
-            // that history; retain the prior parent across a conflicting fork.
-            for id in &mine.parents {
-                if let Some(prior) = self.msg_map.get(id) {
-                    let covered = parents
+        let Some(mine) = self.latest_msgs.get(sender) else {
+            // No self-message yet: the round snapshot is the only admissible parent set.
+            return self.round_parents.values().cloned().collect();
+        };
+        // **Start from the live view, not the frozen round.** The round snapshot may be
+        // stale because a quiet bonded sender holds the boundary open. Escaping with the
+        // snapshot's stale peers justifies `{own-latest, stale peers}` and the finality
+        // gate can never credit the online supermajority (`sees_the_whole_partition`).
+        // Each sender's newest message is one entry; the repair below preserves the
+        // previous self-message's justification history when the newest peer is a fork.
+        let mut parents = self.latest_msgs.clone();
+        // The previous self-message is the validation rule's comparison point.
+        // Each of its peer parents must still be seen by the replacement
+        // justification. Prefer the newest peer message when it includes
+        // that history; retain the prior parent across a conflicting fork.
+        for id in &mine.parents {
+            if let Some(prior) = self.msg_map.get(id) {
+                let covered = parents
+                    .get(&prior.sender)
+                    .is_some_and(|selected| prior.seen.is_subset(&selected.seen));
+                if !covered {
+                    let replacement = self
+                        .latest_msgs
                         .get(&prior.sender)
-                        .is_some_and(|selected| prior.seen.is_subset(&selected.seen));
-                    if !covered {
-                        let replacement = self
-                            .latest_msgs
-                            .get(&prior.sender)
-                            .filter(|latest| prior.seen.is_subset(&latest.seen))
-                            .unwrap_or(prior);
-                        parents.insert(prior.sender.clone(), replacement.clone());
-                    }
+                        .filter(|latest| prior.seen.is_subset(&latest.seen))
+                        .unwrap_or(prior);
+                    parents.insert(prior.sender.clone(), replacement.clone());
                 }
             }
-            parents.insert(sender.clone(), mine.clone());
         }
+        // Explicit in case the latest map had no entry for this sender (it cannot:
+        // `mine` came from it, but the insertion keeps the one-per-sender invariant
+        // obvious to a reader).
+        parents.insert(sender.clone(), mine.clone());
         parents.values().cloned().collect()
     }
 
@@ -594,6 +605,52 @@ mod tests {
             fork_escape.iter().find(|m| m.sender == 1).unwrap().id,
             b2.id
         );
+    }
+
+    /// **The RC-2 cycle-2 shape.** A quiet bonded sender freezes the round; the online
+    /// supermajority escapes. The escape must justify every sender's **live latest**
+    /// message, not the round snapshot's stale peers, or the finality gate can never
+    /// credit the online supermajority.
+    #[test]
+    fn escape_uses_each_senders_live_latest_message() {
+        let bonds = [(0, 100), (1, 100), (2, 100), (3, 100)];
+        let mut state: DagMessageState<i32, i32> = DagMessageState::empty();
+        let mut old = BTreeMap::new();
+        for sender in 0..4 {
+            let m = at(100 + sender, sender, 1, 1, &bonds);
+            state.insert_msg_mut(&m);
+            old.insert(sender, m);
+        }
+        let just: BTreeSet<_> = old.values().cloned().collect();
+        let bond_map: BTreeMap<i32, NonNegI64> = bonds
+            .iter()
+            .map(|(sender, bond)| (*sender, NonNegI64::try_from(*bond).unwrap()))
+            .collect();
+        for sender in 0..4 {
+            let m = state.create_message(
+                200 + sender,
+                BlockHeight::try_from(2).unwrap(),
+                sender,
+                SeqNum::try_from(2).unwrap(),
+                bond_map.clone(),
+                &just,
+            );
+            state.insert_msg_mut(&m);
+        }
+        // The round is frozen at the old layer; every sender has a live latest at 2.
+        state.round_parents = old;
+        let escaped = state.parents_for_new_block_escaping(&0);
+        for sender in 0..4 {
+            let selected = escaped
+                .iter()
+                .find(|m| m.sender == sender)
+                .unwrap_or_else(|| panic!("sender {sender} is missing from the escape"));
+            assert_eq!(
+                selected.sender_seq,
+                SeqNum::try_from(2).unwrap(),
+                "sender {sender} must escape on its live latest message, not the frozen snapshot"
+            );
+        }
     }
 
     /// The production escape gate must name unresolved previous justifications,

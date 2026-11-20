@@ -339,6 +339,9 @@ pub struct MergeTrace {
     pub fork_blocks: Vec<String>,
     pub rejected_deploys: Vec<String>,
     pub rejected_hosts: Vec<String>,
+    /// The rejected hosts whose chain carries a user deploy; the finalised floor reads this set.
+    #[serde(default)]
+    pub rejected_user_hosts: Vec<String>,
     pub report: TraceReport,
     pub predicates: TracePredicates,
 }
@@ -357,6 +360,12 @@ pub struct TraceReport {
     pub rejected_chains: usize,
     pub fork_rejected_chains: usize,
     pub final_scope_rejected_chains: usize,
+    #[serde(default)]
+    pub duplicate_rejections: usize,
+    #[serde(default)]
+    pub effect_free_rejections: usize,
+    #[serde(default)]
+    pub system_rejections: usize,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -401,7 +410,12 @@ fn merge_trace(
         MergeMode::Conflict => true,
     };
     let ledger_ok = match mode {
-        MergeMode::Fringe => outcome.rejected_hosts.is_disjoint(&scope.conflict_scope),
+        // In a fringe merge the conflict scope is the layer this merge finalises (the final scope is
+        // the older layer it prunes); a **user deploy** rejection hosted in it would drop a
+        // finalised write. A CloseBlock system chain's rejection loses no user deploy (C344).
+        MergeMode::Fringe => outcome
+            .rejected_user_hosts
+            .is_disjoint(&scope.conflict_scope),
         MergeMode::Conflict => true,
     };
     let scope_partition_ok = outcome.report.conflict_chains
@@ -433,12 +447,16 @@ fn merge_trace(
             .map(|id| rchain_shared::base16::encode(id))
             .collect(),
         rejected_hosts: hex_set(&outcome.rejected_hosts),
+        rejected_user_hosts: hex_set(&outcome.rejected_user_hosts),
         report: TraceReport {
             conflict_chains: outcome.report.conflict_chains,
             kept_chains: outcome.report.kept_chains,
             rejected_chains: outcome.report.rejected_chains,
             fork_rejected_chains: outcome.report.fork_rejected_chains,
             final_scope_rejected_chains: outcome.report.final_scope_rejected_chains,
+            duplicate_rejections: outcome.report.duplicate_rejections,
+            effect_free_rejections: outcome.report.effect_free_rejections,
+            system_rejections: outcome.report.system_rejections,
         },
         predicates: TracePredicates {
             base_ok,
@@ -864,11 +882,9 @@ where
                 DeployChainIndex::deploy_chain_cost,
             )
             .await?;
-            // **The finalised floor.** This merge finalises every block in its conflict scope; a
-            // rejection hosted in one of them would travel into the next block's `rejectedDeploys`
-            // and drop a finalised write (RC-1). Refuse instead.
-            finalised_floor(&m_scope.conflict_scope, &result.rejected_hosts)
-                .map_err(|e| format!("the fringe merge was refused: {e}"))?;
+            // **Write the decision before the refusal.** A refused merge is the most important one
+            // to read: the trace names the rejected hosts and the predicate that refused it. Writing
+            // after the guard left the RC-1 refusal with no trace at all.
             write_merge_trace(&merge_trace(
                 MergeMode::Fringe,
                 parent_hashes,
@@ -880,6 +896,13 @@ where
                 &result,
                 base_state,
             ));
+            // **The finalised floor.** In a fringe merge the conflict scope *is* the layer being
+            // finalised; a rejection of a chain carrying a **user deploy** and hosted in one of
+            // those blocks would travel into the next block's `rejectedDeploys` and drop a finalised
+            // write (RC-1). A CloseBlock system chain's rejection is not a user deploy loss (C344),
+            // so the floor reads `rejected_user_hosts`, not every rejected host.
+            finalised_floor(&m_scope.conflict_scope, &result.rejected_user_hosts)
+                .map_err(|e| format!("the fringe merge was refused: {e}"))?;
             Some(result)
         }
         None => None,
@@ -890,6 +913,7 @@ where
         state: prev_fringe_state,
         rejected_deploys: prev_fringe_rejected_deploys,
         rejected_hosts: BTreeSet::new(),
+        rejected_user_hosts: BTreeSet::new(),
         report: MergeReport::default(),
     });
     let (fringe_state, fringe_rejected_deploys) =
@@ -917,6 +941,7 @@ where
             state: Blake2b256Hash::from_byte_array(block.post_state_hash.as_bytes()),
             rejected_deploys: BTreeSet::new(),
             rejected_hosts: BTreeSet::new(),
+            rejected_user_hosts: BTreeSet::new(),
             report: MergeReport::default(),
         }
     } else {
@@ -983,6 +1008,12 @@ where
             + conflict_merge.report.fork_rejected_chains,
         final_scope_rejected_chains: fringe_merge.report.final_scope_rejected_chains
             + conflict_merge.report.final_scope_rejected_chains,
+        duplicate_rejections: fringe_merge.report.duplicate_rejections
+            + conflict_merge.report.duplicate_rejections,
+        effect_free_rejections: fringe_merge.report.effect_free_rejections
+            + conflict_merge.report.effect_free_rejections,
+        system_rejections: fringe_merge.report.system_rejections
+            + conflict_merge.report.system_rejections,
         final_scope_rejected_deploys: {
             let mut ids = fringe_merge.report.final_scope_rejected_deploys.clone();
             ids.extend(

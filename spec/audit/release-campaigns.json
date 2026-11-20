@@ -114,15 +114,9 @@
           "required": true
         },
         "local": {
-          "items": [
-            {
-              "action": "The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read.",
-              "finding": "no decision trace in the record",
-              "item": "RC-1/local/trace"
-            }
-          ],
-          "next_pr": "rc-confirm-local",
-          "reading": "evidence-insufficient",
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
           "required": true
         },
         "public": {
@@ -215,34 +209,18 @@
         },
         "local": {
           "action": {
-            "items": [
-              {
-                "action": "The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read.",
-                "finding": "no decision trace in the record",
-                "item": "RC-1/local/trace"
-              }
-            ],
-            "next_pr": "rc-confirm-local",
-            "reading": "evidence-insufficient",
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
             "required": true
           },
-          "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
-          "finished_at": "2026-11-20T10:32:58Z",
-          "reasons": [
-            "the acceptance drill did not pass (marker retention)",
-            "the absent-marker control did not hold before the write",
-            "settlements: missing or empty",
-            "finalised: missing or empty",
-            "rejected: missing or not a list",
-            "no settlement reported finalizedSuccess with settlementConfirmed true",
-            "settlements carry no inclusion height",
-            "finalised heads read on 0 validators, expected 4",
-            "rejectedDeploys was not scanned on every validator"
-          ],
-          "record": "spec/audit/evidence/rc1-local-20261120-0669419/raw/claim.json",
+          "binary_sha256": "bc260d70d03da98dfcf0694a23b143731b6a36c0a7d8ac6fbf2152bc7ccd4db7",
+          "finished_at": "2026-11-20T19:16:45Z",
+          "reasons": [],
+          "record": "spec/audit/evidence/rc1-local-20261120-2a1bc85/raw/claim.json",
           "required": true,
-          "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a",
-          "status": "fail"
+          "source_sha": "2a1bc85bb3d3b4a49f6599ebaacbbfbb5d6a235b",
+          "status": "pass"
         },
         "public": {
           "action": {
@@ -287,15 +265,9 @@
           "required": true
         },
         "local": {
-          "items": [
-            {
-              "action": "RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.",
-              "finding": "RC-1's settlement-retention precondition failed; no partition was installed",
-              "item": "RC-2/local/precondition"
-            }
-          ],
-          "next_pr": "rc-confirm-local",
-          "reading": "precondition",
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
           "required": true
         },
         "multi-host": {
@@ -391,7 +363,7 @@
         "evidence-insufficient": "Capture `finality-*.json` per validator; the trace is emitted at `get_pre_state_for_parents` when `RNODE_TRACE_DIR` is set.",
         "model-incomplete": "Containment failed with every node trace safe: add the cross-view coordinate (which finalised block, which validator) to `FinalityDecision` before changing the test.",
         "not-observed": "Run the local partition drill; the record must carry `finality-*.json` per validator.",
-        "precondition": "RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.",
+        "precondition": "The acceptance drill did not reach the partition phase (no marker observed and finalised once), so no partition was installed; fix that precondition before judging safety.",
         "unsafe-point": "Fix the false finality predicate: `denominator_ok` means the gate used a denominator other than the whole bonded map; `support_ok` means an advance lacked 3*supporting > 2*quorum; `partition_ok` means an unbonded sender entered the partition."
       },
       "does_not_claim": "The claim assumes the <=1/3 Byzantine/equivocation bound; without it an equivocator can back two quorums. The multi-host arm covers N=4 and N=8 on declared hosts, not an arbitrary topology.",
@@ -430,26 +402,18 @@
         },
         "local": {
           "action": {
-            "items": [
-              {
-                "action": "RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.",
-                "finding": "RC-1's settlement-retention precondition failed; no partition was installed",
-                "item": "RC-2/local/precondition"
-              }
-            ],
-            "next_pr": "rc-confirm-local",
-            "reading": "precondition",
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
             "required": true
           },
-          "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
-          "finished_at": "2026-11-20T11:43:11Z",
-          "reasons": [
-            "RC-1's settlement-retention precondition failed; no partition was installed"
-          ],
-          "record": "spec/audit/evidence/rc2-local-20261120-0669419/raw/claim.json",
+          "binary_sha256": "cba8680143aeb7e408f3a9fac68a5472d7efd88aebf572eb9f30310467acded4",
+          "finished_at": "2026-11-20T23:03:23Z",
+          "reasons": [],
+          "record": "spec/audit/evidence/rc2-local-20261120-81ee948/raw/claim.json",
           "required": true,
-          "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a",
-          "status": "not run"
+          "source_sha": "81ee9480bc4873ea9a1d35ab27e8c267b23d1bd0",
+          "status": "pass"
         },
         "multi-host": {
           "action": {

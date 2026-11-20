@@ -590,8 +590,12 @@ def evaluate_merge_trace(trace: dict) -> dict:
     base_ok = trace.get("certified_base") is not None or len(hashes) <= 1
     fork_ok = mode != "fringe" or not (trace.get("fork_blocks") or [])
     conflict = set(trace.get("conflict_scope") or [])
-    rejected_hosts = set(trace.get("rejected_hosts") or [])
-    ledger_ok = mode != "fringe" or not (conflict & rejected_hosts)
+    # The floor reads user-deploy rejections. An older trace has no such field; fall back to the
+    # full rejected-host set so the older record is not read as vacuously safe.
+    rejected_user = trace.get("rejected_user_hosts")
+    if rejected_user is None:
+        rejected_user = trace.get("rejected_hosts") or []
+    ledger_ok = mode != "fringe" or not (conflict & set(rejected_user))
     report = trace.get("report") or {}
     scope_partition_ok = (
         report.get("conflict_chains")

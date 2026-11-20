@@ -1,0 +1,378 @@
+[
+    {
+        "Id": "96d1c1315fb71712ba3f7b3bfe988d6d45d5da6a47fd49ff6fe4c2e71958392b",
+        "Created": "2026-11-20T19:15:46.653856732Z",
+        "Path": "rnode",
+        "Args": [
+            "run",
+            "--host",
+            "acceptance-validator-3",
+            "--api-host",
+            "0.0.0.0",
+            "--data-dir",
+            "/var/lib/rnode",
+            "--protocol-port",
+            "40400",
+            "--discovery-port",
+            "40404",
+            "--api-port-grpc-external",
+            "40401",
+            "--api-port-grpc-internal",
+            "40402",
+            "--api-port-http",
+            "40403",
+            "--api-port-admin-http",
+            "40405",
+            "--propose-on-deploy",
+            "--api-enable-devnet-cors",
+            "--api-enable-devnet-admin-public",
+            "--dev-mode",
+            "--deployer-private-key",
+            "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76",
+            "--epoch-length",
+            "10",
+            "--bootstrap",
+            "rnode://ec9333939588b004496f95b9cd014d0694ffd64a@acceptance-bootstrap?protocol=40400&discovery=40404",
+            "--bonds-file",
+            "/genesis/bonds.txt",
+            "--wallets-file",
+            "/genesis/wallets.txt",
+            "--validator-private-key-path",
+            "/var/lib/rnode/validator.hex"
+        ],
+        "State": {
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 315947,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2026-11-20T19:15:46.904404858Z",
+            "FinishedAt": "0001-01-01T00:00:00Z",
+            "Health": {
+                "Status": "starting",
+                "FailingStreak": 0,
+                "Log": []
+            }
+        },
+        "Image": "sha256:5dda652117ce17606803b7ef7ee1a1c38a23f28d389da04dd2ab4bb751d80927",
+        "ResolvConfPath": "/var/lib/docker/containers/96d1c1315fb71712ba3f7b3bfe988d6d45d5da6a47fd49ff6fe4c2e71958392b/resolv.conf",
+        "HostnamePath": "/var/lib/docker/containers/96d1c1315fb71712ba3f7b3bfe988d6d45d5da6a47fd49ff6fe4c2e71958392b/hostname",
+        "HostsPath": "/var/lib/docker/containers/96d1c1315fb71712ba3f7b3bfe988d6d45d5da6a47fd49ff6fe4c2e71958392b/hosts",
+        "LogPath": "/var/lib/docker/containers/96d1c1315fb71712ba3f7b3bfe988d6d45d5da6a47fd49ff6fe4c2e71958392b/96d1c1315fb71712ba3f7b3bfe988d6d45d5da6a47fd49ff6fe4c2e71958392b-json.log",
+        "Name": "/acceptance-validator-3",
+        "RestartCount": 0,
+        "Driver": "overlay2",
+        "Platform": "linux",
+        "MountLabel": "",
+        "ProcessLabel": "",
+        "AppArmorProfile": "docker-default",
+        "ExecIDs": null,
+        "HostConfig": {
+            "Binds": [
+                "/home/patrick/RNodeRust/.claude/worktrees/pr-567/examples:/contracts:ro",
+                "/tmp/tmp.d7wUkZr6gA:/genesis:ro",
+                "acceptance-validator-3-data:/var/lib/rnode"
+            ],
+            "ContainerIDFile": "",
+            "LogConfig": {
+                "Type": "json-file",
+                "Config": {}
+            },
+            "NetworkMode": "acceptance",
+            "PortBindings": {
+                "40401/tcp": [
+                    {
+                        "HostIp": "",
+                        "HostPort": "48402"
+                    }
+                ],
+                "40403/tcp": [
+                    {
+                        "HostIp": "",
+                        "HostPort": "43403"
+                    }
+                ],
+                "40405/tcp": [
+                    {
+                        "HostIp": "",
+                        "HostPort": "43405"
+                    }
+                ]
+            },
+            "RestartPolicy": {
+                "Name": "no",
+                "MaximumRetryCount": 0
+            },
+            "AutoRemove": false,
+            "VolumeDriver": "",
+            "VolumesFrom": null,
+            "ConsoleSize": [
+                0,
+                0
+            ],
+            "CapAdd": null,
+            "CapDrop": null,
+            "CgroupnsMode": "private",
+            "Dns": [],
+            "DnsOptions": [],
+            "DnsSearch": [],
+            "ExtraHosts": null,
+            "GroupAdd": null,
+            "IpcMode": "private",
+            "Cgroup": "",
+            "Links": null,
+            "OomScoreAdj": 0,
+            "PidMode": "",
+            "Privileged": false,
+            "PublishAllPorts": false,
+            "ReadonlyRootfs": false,
+            "SecurityOpt": null,
+            "UTSMode": "",
+            "UsernsMode": "",
+            "ShmSize": 67108864,
+            "Sysctls": {
+                "net.ipv4.ip_local_reserved_ports": "40400-40405"
+            },
+            "Runtime": "runc",
+            "Isolation": "",
+            "CpuShares": 0,
+            "Memory": 2147483648,
+            "NanoCpus": 0,
+            "CgroupParent": "",
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": [],
+            "BlkioDeviceReadBps": [],
+            "BlkioDeviceWriteBps": [],
+            "BlkioDeviceReadIOps": [],
+            "BlkioDeviceWriteIOps": [],
+            "CpuPeriod": 0,
+            "CpuQuota": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "CpusetCpus": "",
+            "CpusetMems": "",
+            "Devices": [],
+            "DeviceCgroupRules": null,
+            "DeviceRequests": null,
+            "MemoryReservation": 0,
+            "MemorySwap": 2147483648,
+            "MemorySwappiness": null,
+            "OomKillDisable": null,
+            "PidsLimit": null,
+            "Ulimits": [],
+            "CpuCount": 0,
+            "CpuPercent": 0,
+            "IOMaximumIOps": 0,
+            "IOMaximumBandwidth": 0,
+            "MaskedPaths": [
+                "/proc/asound",
+                "/proc/acpi",
+                "/proc/kcore",
+                "/proc/keys",
+                "/proc/latency_stats",
+                "/proc/timer_list",
+                "/proc/timer_stats",
+                "/proc/sched_debug",
+                "/proc/scsi",
+                "/sys/firmware",
+                "/sys/devices/virtual/powercap"
+            ],
+            "ReadonlyPaths": [
+                "/proc/bus",
+                "/proc/fs",
+                "/proc/irq",
+                "/proc/sys",
+                "/proc/sysrq-trigger"
+            ]
+        },
+        "GraphDriver": {
+            "Data": {
+                "LowerDir": "/var/lib/docker/overlay2/268c17dbdb35482889246d9f0f449acf118ab6b6fe5ef8d3bcfe20c85a8048a3-init/diff:/var/lib/docker/overlay2/d62116b9ugmagd4ojcxazqltk/diff:/var/lib/docker/overlay2/ye1n1blcw7ls7i9tcofpeutyf/diff:/var/lib/docker/overlay2/ba7yoe43ojrh7wt9fwsyc9bcc/diff:/var/lib/docker/overlay2/4eif9nzegse2xx4a6zc7h85ev/diff:/var/lib/docker/overlay2/9a6f1652285d81dfa405f4c85398934d68189de03eb7acf432fea9c610ea5731/diff",
+                "MergedDir": "/var/lib/docker/overlay2/268c17dbdb35482889246d9f0f449acf118ab6b6fe5ef8d3bcfe20c85a8048a3/merged",
+                "UpperDir": "/var/lib/docker/overlay2/268c17dbdb35482889246d9f0f449acf118ab6b6fe5ef8d3bcfe20c85a8048a3/diff",
+                "WorkDir": "/var/lib/docker/overlay2/268c17dbdb35482889246d9f0f449acf118ab6b6fe5ef8d3bcfe20c85a8048a3/work"
+            },
+            "Name": "overlay2"
+        },
+        "Mounts": [
+            {
+                "Type": "bind",
+                "Source": "/tmp/tmp.d7wUkZr6gA",
+                "Destination": "/genesis",
+                "Mode": "ro",
+                "RW": false,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "volume",
+                "Name": "acceptance-validator-3-data",
+                "Source": "/var/lib/docker/volumes/acceptance-validator-3-data/_data",
+                "Destination": "/var/lib/rnode",
+                "Driver": "local",
+                "Mode": "z",
+                "RW": true,
+                "Propagation": ""
+            },
+            {
+                "Type": "bind",
+                "Source": "/home/patrick/RNodeRust/.claude/worktrees/pr-567/examples",
+                "Destination": "/contracts",
+                "Mode": "ro",
+                "RW": false,
+                "Propagation": "rprivate"
+            }
+        ],
+        "Config": {
+            "Hostname": "96d1c1315fb7",
+            "Domainname": "",
+            "User": "rnode",
+            "AttachStdin": false,
+            "AttachStdout": false,
+            "AttachStderr": false,
+            "ExposedPorts": {
+                "40401/tcp": {},
+                "40403/tcp": {},
+                "40405/tcp": {}
+            },
+            "Tty": false,
+            "OpenStdin": false,
+            "StdinOnce": false,
+            "Env": [
+                "RNODE_TRACE_DIR=/var/lib/rnode/traces",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            ],
+            "Cmd": [
+                "run",
+                "--host",
+                "acceptance-validator-3",
+                "--api-host",
+                "0.0.0.0",
+                "--data-dir",
+                "/var/lib/rnode",
+                "--protocol-port",
+                "40400",
+                "--discovery-port",
+                "40404",
+                "--api-port-grpc-external",
+                "40401",
+                "--api-port-grpc-internal",
+                "40402",
+                "--api-port-http",
+                "40403",
+                "--api-port-admin-http",
+                "40405",
+                "--propose-on-deploy",
+                "--api-enable-devnet-cors",
+                "--api-enable-devnet-admin-public",
+                "--dev-mode",
+                "--deployer-private-key",
+                "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76",
+                "--epoch-length",
+                "10",
+                "--bootstrap",
+                "rnode://ec9333939588b004496f95b9cd014d0694ffd64a@acceptance-bootstrap?protocol=40400&discovery=40404",
+                "--bonds-file",
+                "/genesis/bonds.txt",
+                "--wallets-file",
+                "/genesis/wallets.txt",
+                "--validator-private-key-path",
+                "/var/lib/rnode/validator.hex"
+            ],
+            "Healthcheck": {
+                "Test": [
+                    "CMD-SHELL",
+                    "curl -fsS http://localhost:40403/api/status || exit 1"
+                ],
+                "Interval": 10000000000,
+                "Timeout": 3000000000,
+                "StartPeriod": 30000000000,
+                "Retries": 5
+            },
+            "Image": "rnode:local",
+            "Volumes": null,
+            "WorkingDir": "/var/lib/rnode",
+            "Entrypoint": [
+                "rnode"
+            ],
+            "OnBuild": null,
+            "Labels": {
+                "org.opencontainers.image.revision": "2a1bc85bb3d3b4a49f6599ebaacbbfbb5d6a235b"
+            }
+        },
+        "NetworkSettings": {
+            "Bridge": "",
+            "SandboxID": "77a07b33ce77a3322f878ac78df3c01a9a299234394e4bd2851317a2b088668a",
+            "SandboxKey": "/var/run/docker/netns/77a07b33ce77",
+            "Ports": {
+                "40401/tcp": [
+                    {
+                        "HostIp": "0.0.0.0",
+                        "HostPort": "48402"
+                    },
+                    {
+                        "HostIp": "::",
+                        "HostPort": "48402"
+                    }
+                ],
+                "40403/tcp": [
+                    {
+                        "HostIp": "0.0.0.0",
+                        "HostPort": "43403"
+                    },
+                    {
+                        "HostIp": "::",
+                        "HostPort": "43403"
+                    }
+                ],
+                "40405/tcp": [
+                    {
+                        "HostIp": "0.0.0.0",
+                        "HostPort": "43405"
+                    },
+                    {
+                        "HostIp": "::",
+                        "HostPort": "43405"
+                    }
+                ]
+            },
+            "HairpinMode": false,
+            "LinkLocalIPv6Address": "",
+            "LinkLocalIPv6PrefixLen": 0,
+            "SecondaryIPAddresses": null,
+            "SecondaryIPv6Addresses": null,
+            "EndpointID": "",
+            "Gateway": "",
+            "GlobalIPv6Address": "",
+            "GlobalIPv6PrefixLen": 0,
+            "IPAddress": "",
+            "IPPrefixLen": 0,
+            "IPv6Gateway": "",
+            "MacAddress": "",
+            "Networks": {
+                "acceptance": {
+                    "IPAMConfig": null,
+                    "Links": null,
+                    "Aliases": null,
+                    "MacAddress": "02:42:ac:13:00:05",
+                    "DriverOpts": null,
+                    "NetworkID": "0a1e1edbc028b15082735ac1824fe79b21349299923284de99b5c5acef1c588e",
+                    "EndpointID": "3fcb02581ec87a5929526cdb57a986b4c05cb274e75a8baf8ff3e36a7d045418",
+                    "Gateway": "172.19.0.1",
+                    "IPAddress": "172.19.0.5",
+                    "IPPrefixLen": 16,
+                    "IPv6Gateway": "",
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "DNSNames": [
+                        "acceptance-validator-3",
+                        "96d1c1315fb7"
+                    ]
+                }
+            }
+        }
+    }
+]

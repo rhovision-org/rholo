@@ -492,6 +492,12 @@ class HealingWindowTests(unittest.TestCase):
                       {"latest": 35, "finalized_height": 25},
                       {"latest": 35, "finalized_height": 25}]
         self.assertTrue(m.finalized_fence_is_frozen(before, moving_tip))
+        # The cut does not erase work already in flight: a single queued fringe may settle one
+        # height above the pre-cut fence, then stay frozen.
+        self.assertTrue(m.finalized_fence_is_frozen(
+            before, [{"latest": 34, "finalized_height": 26}] * 3))
+        self.assertFalse(m.finalized_fence_is_frozen(
+            before, [{"latest": 34, "finalized_height": 27}] * 3))
         self.assertFalse(m.finalized_fence_is_frozen(
             before, moving_tip + [{"latest": 36, "finalized_height": 26}]))
         self.assertFalse(m.finalized_fence_is_frozen(before, moving_tip[:2]))

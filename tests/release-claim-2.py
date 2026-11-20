@@ -109,9 +109,16 @@ def _check_baseline(record: dict) -> tuple[str, list[str]]:
             problems.append(f"validator {row.get('validator')}: no containment answers")
             continue
         required = {entry.get("validator") for entry in answers if isinstance(entry, dict)}
-        if len(required) < 4:
-            problems.append(f"validator {row.get('validator')}: containment read on "
-                            f"{len(required)} validators, expected 4")
+        # The claim's containment is "every validator **at or above** its height". A
+        # validator that is ahead of the sample has fewer at-or-above peers; the runner
+        # records that set in `at_or_above`. The old floor of 4 called a correct 2-peer
+        # sample for the leading validator a failure.
+        at_or_above = row.get("at_or_above")
+        expected = (set(at_or_above) if isinstance(at_or_above, list) else required)
+        if required != expected:
+            problems.append(
+                f"validator {row.get('validator')}: containment read on "
+                f"{sorted(required)}, expected the at-or-above set {sorted(expected)}")
         for entry in answers:
             if isinstance(entry, dict) and entry.get("finalized") is not True:
                 problems.append(
@@ -207,25 +214,30 @@ def run(argv: list[str]) -> int:
         record["provenance"] = devnet.provenance()
         typed = _read_json(harness_out / "partition-rejoin.json") or {}
         result_doc = _read_json(harness_out / "partition-result.json") or {}
-        if result.returncode and not typed.get("cycles"):
-            # The harness's first phase is the shared acceptance drill. On this build that drill
-            # stops at the RC-1 retention defect, before a partition is installed. That is a
-            # precondition of this test, not evidence about safety; say so instead of calling the
-            # missing partition a safety failure.
+        # A partition result file means the shared drill reached the partition phase. A failure
+        # there is evidence about safety/liveness, not an RC-1 precondition: the verdict must be
+        # `fail`, not `not run`. Only a missing partition result is a precondition.
+        partition_started = bool(result_doc.get("rounds") or result_doc.get("failed_phase"))
+        if result.returncode and not partition_started and not typed.get("cycles"):
             reason = ("the shared acceptance drill did not reach the partition phase: "
                       + (result.stdout + result.stderr)[-1200:])
             record["observations"]["harness_error"] = reason
             record["preconditions"].append(
-                "RC-1's settlement-retention precondition failed; no partition was installed")
+                "the acceptance drill did not reach the partition phase; no partition was installed")
             common.finish(record, "not run", [reason])
             return common.write_record(out, record)[1]
         record["observations"].update({
             "harness_result": result_doc.get("result") or (
                 PASS_TOKEN if result.returncode == 0 else "FAIL"),
-            "cycles": typed.get("cycles") or [],
-            "harness_error": None if result.returncode == 0 else
-            (result.stdout + result.stderr)[-1500:],
+            "cycles": typed.get("cycles") or result_doc.get("rounds") or [],
+            "harness_error": None if result.returncode == 0 else (
+                result_doc.get("error")
+                or f"the partition harness failed in phase {result_doc.get('failed_phase')}: "
+                   + (result.stdout + result.stderr)[-1200:]),
         })
+        if result.returncode:
+            common.finish(record, "fail", [str(record["observations"]["harness_error"])])
+            return common.write_record(out, record)[1]
         return _containment(devnet.target(), record, out, devnet)
     except Exception as error:  # noqa: BLE001
         common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
@@ -257,10 +269,9 @@ def _containment(target, record: dict, out: Path, devnet=None) -> int:
         heads = [(i, max(first[i], second[i], key=lambda pair: pair[0])) for i in range(len(target.nodes))]
         containment = []
         for v, (height, block_hash) in heads:
+            at_or_above = [w for w, (w_height, _) in heads if w_height >= height]
             answers = []
-            for w, (w_height, _) in heads:
-                if w_height < height:
-                    continue
+            for w in at_or_above:
                 seen = []
                 for _ in range(3):
                     try:
@@ -271,7 +282,7 @@ def _containment(target, record: dict, out: Path, devnet=None) -> int:
                 answers.append({"validator": w, "finalized": all(x is True for x in seen),
                                 "samples": seen})
             containment.append({"validator": v, "height": height, "hash": block_hash,
-                                "answers": answers})
+                                "at_or_above": at_or_above, "answers": answers})
         observations["containment"] = containment
         observations["regression"] = regression
         if devnet is not None:

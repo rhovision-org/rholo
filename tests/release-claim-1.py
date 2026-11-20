@@ -16,6 +16,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,8 +61,8 @@ def _fixture_baseline(arm: str = "local") -> dict:
                 "mode": "fringe",
                 "claims": [{"height": 3, "id": "ab" * 32, "hash": "cd" * 32}],
                 "certified_base": None, "base_source": "agreed",
-                "conflict_scope": ["ef" * 32], "fork_blocks": [],
-                "rejected_hosts": [],
+                "conflict_scope": ["ef" * 32], "final_scope": ["ef" * 32],
+                "fork_blocks": [], "rejected_hosts": [], "rejected_user_hosts": [],
                 "report": {"conflict_chains": 1, "kept_chains": 0, "rejected_chains": 1},
             }],
         },
@@ -223,6 +224,9 @@ def run(argv: list[str]) -> int:
             "control_absent_before": drill_ok,
         }
         if not drill_ok:
+            # The refused merge is the observation. Copy the decision traces before the devnet is
+            # torn down, or the failure reads as evidence-insufficient and names no predicate.
+            record["observations"]["traces"] = _collect_merge_traces(devnet, out)
             common.finish(record, "fail", ["the acceptance drill failed: " +
                                            str(record["observations"]["drill_error"])])
             return common.write_record(out, record)[1]
@@ -235,19 +239,67 @@ def run(argv: list[str]) -> int:
             devnet.down()
 
 
+def _collect_merge_traces(devnet, out: Path, validators: int = 4) -> list[dict]:
+    """Every node's merge traces, copied before the devnet is torn down."""
+    traces: list[dict] = []
+    for i in range(validators):
+        dest = out / "traces" / f"validator-{i}"
+        devnet.copy_traces(i, dest)
+        for path in sorted(dest.glob("merge-*.json")):
+            try:
+                row = json.loads(path.read_text())
+            except ValueError:
+                continue
+            traces.append({"validator": i, "file": path.name, **row})
+    return traces
+
+
 def _observe(target, record: dict, source: dict, out: Path, validators: int,
              devnet=None) -> int:
     deploy_id = source["deploy_id"]
     marker = source["marker"]
     value = int(source.get("value", common.MARKER_VALUE))
     settlements, finalised, rejected = [], [], []
-    try:
+
+    def read_settlements() -> list[dict]:
+        rows = []
         for i in range(validators):
             settlement = target.settlement(i, deploy_id)
-            settlements.append({"validator": i, **{key: settlement.get(key) for key in
-                               ("stage", "settlementConfirmed", "execution",
-                                "blockHash", "blockNumber")}})
-        inclusion = {row["blockHash"] for row in settlements}
+            rows.append({"validator": i, **{key: settlement.get(key) for key in
+                         ("stage", "settlementConfirmed", "execution",
+                          "blockHash", "blockNumber")}})
+        return rows
+
+    try:
+        settlements = read_settlements()
+        inclusion = {row["blockHash"] for row in settlements if row.get("blockHash")}
+        # Finality is asynchronous; the drill stops as soon as its own barrier passes. Drive a
+        # bounded catch-up so the inclusion block is finalised on every validator before the
+        # cross-validator read, rather than reading one validator a block behind.
+        if inclusion:
+            deadline = time.monotonic() + 240
+            while time.monotonic() < deadline:
+                if all(target.is_finalized(i, h) for i in range(validators)
+                       for h in inclusion):
+                    break
+                if devnet is not None:
+                    try:
+                        devnet.deploy("Nil", timeout=30)
+                    except Exception:  # noqa: BLE001 - the wait is the observation
+                        pass
+                time.sleep(5)
+        # The settlement read can race the finality advance: it named includedUnfinalized while
+        # the inclusion block was one finality step behind. Re-read after the wait, and give the
+        # route a bounded window to observe its own finalised fringe.
+        deadline = time.monotonic() + 120
+        while True:
+            settlements = read_settlements()
+            if all(row.get("stage") == "finalizedSuccess"
+                   and row.get("settlementConfirmed") is True for row in settlements):
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(3)
         for i in range(validators):
             height, block_hash = target.finalized_head(i)
             response = target.probe(i, marker, block_hash)

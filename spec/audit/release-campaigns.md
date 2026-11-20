@@ -17,10 +17,10 @@ cannot yet be made. No status is authored.
 
 | claim | arm | env | locality | reading | next action | next PR |
 |---|---|---|---|---|---|---|
-| `RC-1` | `local` | local | local-devnet | **evidence-insufficient** | The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read. | `rc-confirm-local` |
+| `RC-1` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-1` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest and run the settlement/retention reading on testnet-4. | `rc-public-fleet` |
 | `RC-1` | `bond-leave` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-1 --arm bond-leave` and commit its record; the arm's harness lands in `rc-bond-leave`. | `rc-bond-leave` |
-| `RC-2` | `local` | local | local-devnet | **precondition** | RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first. | `rc-confirm-local` |
+| `RC-2` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-2` | `public` | public | public-live | **not-observed** | Run the operator's declared partition window on the public fleet. | `rc-public-fleet` |
 | `RC-2` | `multi-host` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm multi-host` and commit its record; the arm's harness lands in `rc-multi-host`. | `rc-multi-host` |
 | `RC-2` | `equivocation` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm equivocation` and commit its record; the arm's harness lands in `rc-equivocation`. | `rc-equivocation` |
@@ -87,13 +87,8 @@ cannot yet be made. No status is authored.
 
 **Arm `local`** (local, `local-devnet`) — the acceptance drill retains a confirmed marker through two further epoch boundaries
 
-Reading: `evidence-insufficient` — spec/audit/evidence/rc1-local-20261120-0669419/raw/claim.json
-- `RC-1/local/trace` — no decision trace in the record. **Next:** The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read.
-- Next PR: `rc-confirm-local`
-  - observed: the acceptance drill did not pass (marker retention)
-  - observed: the absent-marker control did not hold before the write
-  - observed: settlements: missing or empty
-  - observed: finalised: missing or empty
+Reading: `safe` — spec/audit/evidence/rc1-local-20261120-2a1bc85/raw/claim.json
+- No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — the same settlement and retention reading on the four-host public fleet
 
@@ -139,10 +134,8 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — partition/rejoin with a producing victim; containment and no regression
 
-Reading: `precondition` — spec/audit/evidence/rc2-local-20261120-0669419/raw/claim.json
-- `RC-2/local/precondition` — RC-1's settlement-retention precondition failed; no partition was installed. **Next:** RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.
-- Next PR: `rc-confirm-local`
-  - observed: RC-1's settlement-retention precondition failed; no partition was installed
+Reading: `safe` — spec/audit/evidence/rc2-local-20261120-81ee948/raw/claim.json
+- No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — the operator's partition window on the public fleet
 
