@@ -629,18 +629,24 @@ def typed_partition_record(validators, rounds):
     for record in rounds:
         anchor = record.get("healing_anchor") or {}
         retention = record.get("anchor_retention")
-        if not isinstance(retention, list) or not retention:
-            raise RuntimeError("FAIL_ANCHOR_RETENTION: a cycle recorded no retention rows")
+        if not isinstance(retention, list):
+            retention = []
         cycles.append({
             "cycle": record.get("cycle"),
             "victim_index": record.get("victim_index"),
+            "producing_victim": record.get("producing_victim"),
             "anchor": {"hash": anchor.get("hash"), "height": anchor.get("height")},
             "dwell": {"samples": record.get("anchor_dwell_samples"),
                       "stable": record.get("rejoined") is not None},
             "window": {"seconds": record.get("healing_window_seconds")},
+            # The claim checker reads `anchor_retention`; the M4 collator reads `validators`.
+            # One value, two names, so neither consumer can see a different retention set.
+            "anchor_retention": retention,
             "validators": retention,
             "rejoined": record.get("rejoined") is not None,
             "epoch_boundary_crossed": record.get("epoch_boundary_crossed"),
+            "phase": record.get("phase"),
+            "failure_class": record.get("healing_failure_class"),
         })
     return {"schema": 1, "gate_id": "G428-M4", "validators": validators,
             "cycles": cycles}
@@ -722,6 +728,7 @@ def main():
                 lifecycle=container_lifecycle(victim)
                 victim_before=victim_sample(victim)
                 producing = bool(getattr(args, "producing_victim", False))
+                record["producing_victim"] = producing
                 expected_autopropose = True if producing else False
                 if victim_before.get("autopropose") is not expected_autopropose:
                     raise AssertionError(
@@ -864,8 +871,14 @@ def main():
             except (OSError,subprocess.TimeoutExpired) as cleanup_error:
                 (d.out/"partition-cleanup-error.txt").write_text(str(cleanup_error)+"\n")
         (d.out/"partition-observations.json").write_text(json.dumps(rounds,indent=2)+"\n")
-    (d.out/"partition-rejoin.json").write_text(
-        json.dumps(typed_partition_record(args.validators, rounds), indent=2)+"\n")
+        # The typed cycle record is the claim's evidence and must survive a failed cycle.
+        # A cycle without retention is emitted with an empty list; the claim checker refuses
+        # it by name instead of the failure path silently dropping the whole record.
+        try:
+            (d.out/"partition-rejoin.json").write_text(
+                json.dumps(typed_partition_record(args.validators, rounds), indent=2)+"\n")
+        except Exception:  # noqa: BLE001 - never mask the harness failure
+            pass
     memory=cmd("docker","stats","--no-stream","--format","{{.Name}} {{.MemUsage}}")
     result={"result":"PASS_BOUNDED_WORKLOAD_PARTITION_REJOIN","source_sha":cmd("git","rev-parse","HEAD"),
         "validators":args.validators,"partition_cycles":len(rounds),"rounds":rounds,

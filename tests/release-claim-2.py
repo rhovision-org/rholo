@@ -109,9 +109,16 @@ def _check_baseline(record: dict) -> tuple[str, list[str]]:
             problems.append(f"validator {row.get('validator')}: no containment answers")
             continue
         required = {entry.get("validator") for entry in answers if isinstance(entry, dict)}
-        if len(required) < 4:
-            problems.append(f"validator {row.get('validator')}: containment read on "
-                            f"{len(required)} validators, expected 4")
+        # The claim's containment is "every validator **at or above** its height". A
+        # validator that is ahead of the sample has fewer at-or-above peers; the runner
+        # records that set in `at_or_above`. The old floor of 4 called a correct 2-peer
+        # sample for the leading validator a failure.
+        at_or_above = row.get("at_or_above")
+        expected = (set(at_or_above) if isinstance(at_or_above, list) else required)
+        if required != expected:
+            problems.append(
+                f"validator {row.get('validator')}: containment read on "
+                f"{sorted(required)}, expected the at-or-above set {sorted(expected)}")
         for entry in answers:
             if isinstance(entry, dict) and entry.get("finalized") is not True:
                 problems.append(
@@ -262,10 +269,9 @@ def _containment(target, record: dict, out: Path, devnet=None) -> int:
         heads = [(i, max(first[i], second[i], key=lambda pair: pair[0])) for i in range(len(target.nodes))]
         containment = []
         for v, (height, block_hash) in heads:
+            at_or_above = [w for w, (w_height, _) in heads if w_height >= height]
             answers = []
-            for w, (w_height, _) in heads:
-                if w_height < height:
-                    continue
+            for w in at_or_above:
                 seen = []
                 for _ in range(3):
                     try:
@@ -276,7 +282,7 @@ def _containment(target, record: dict, out: Path, devnet=None) -> int:
                 answers.append({"validator": w, "finalized": all(x is True for x in seen),
                                 "samples": seen})
             containment.append({"validator": v, "height": height, "hash": block_hash,
-                                "answers": answers})
+                                "at_or_above": at_or_above, "answers": answers})
         observations["containment"] = containment
         observations["regression"] = regression
         if devnet is not None:
