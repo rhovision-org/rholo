@@ -16,6 +16,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -259,13 +260,46 @@ def _observe(target, record: dict, source: dict, out: Path, validators: int,
     marker = source["marker"]
     value = int(source.get("value", common.MARKER_VALUE))
     settlements, finalised, rejected = [], [], []
-    try:
+
+    def read_settlements() -> list[dict]:
+        rows = []
         for i in range(validators):
             settlement = target.settlement(i, deploy_id)
-            settlements.append({"validator": i, **{key: settlement.get(key) for key in
-                               ("stage", "settlementConfirmed", "execution",
-                                "blockHash", "blockNumber")}})
-        inclusion = {row["blockHash"] for row in settlements}
+            rows.append({"validator": i, **{key: settlement.get(key) for key in
+                         ("stage", "settlementConfirmed", "execution",
+                          "blockHash", "blockNumber")}})
+        return rows
+
+    try:
+        settlements = read_settlements()
+        inclusion = {row["blockHash"] for row in settlements if row.get("blockHash")}
+        # Finality is asynchronous; the drill stops as soon as its own barrier passes. Drive a
+        # bounded catch-up so the inclusion block is finalised on every validator before the
+        # cross-validator read, rather than reading one validator a block behind.
+        if inclusion:
+            deadline = time.monotonic() + 240
+            while time.monotonic() < deadline:
+                if all(target.is_finalized(i, h) for i in range(validators)
+                       for h in inclusion):
+                    break
+                if devnet is not None:
+                    try:
+                        devnet.deploy("Nil", timeout=30)
+                    except Exception:  # noqa: BLE001 - the wait is the observation
+                        pass
+                time.sleep(5)
+        # The settlement read can race the finality advance: it named includedUnfinalized while
+        # the inclusion block was one finality step behind. Re-read after the wait, and give the
+        # route a bounded window to observe its own finalised fringe.
+        deadline = time.monotonic() + 120
+        while True:
+            settlements = read_settlements()
+            if all(row.get("stage") == "finalizedSuccess"
+                   and row.get("settlementConfirmed") is True for row in settlements):
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(3)
         for i in range(validators):
             height, block_hash = target.finalized_head(i)
             response = target.probe(i, marker, block_hash)
