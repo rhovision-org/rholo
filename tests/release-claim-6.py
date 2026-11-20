@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -44,6 +45,13 @@ def fixture() -> dict:
                       "claimedRoot": "ef" * 32, "derivedRoot": "ef" * 32, "blocks": 29},
             "digest_matches": True,
             "derived_root_matches": True,
+            "audit_traces": [{
+                "kind": "audit", "digest": "ab" * 32,
+                "anchor": "cd" * 32, "anchor_in_fringe": True,
+                "target_hashes": ["cd" * 32], "target_state": "ef" * 32,
+                "anchor_post_state": "ef" * 32, "verdict": "AGREE",
+                "derived_root": "ef" * 32, "claimed_root": "ef" * 32,
+            }],
         },
     }
 
@@ -76,6 +84,7 @@ def check(record: dict) -> tuple[str, list[str]]:
     if checkpoint.get("kind") == "checkpoint":
         if observations.get("digest_matches") is not True:
             problems.append("the audit's digest does not equal the joiner's accepted digest")
+    problems.extend(common.phase_space_reading(observations, bool(problems)))
     return common.evaluate(record, problems)
 
 
@@ -169,6 +178,7 @@ def _audit(target, record: dict, out: Path, public_bootstrap, joiner_index: int 
             # report is copied out, not read through the host's temp directory.
             data_dir = "/tmp/rc6-audit-data"
             audit_out = "/tmp/rc6-audit-out"
+            trace_dir = "/tmp/rc6-audit-traces"
             command = ["rnode", "audit", "--bootstrap", bootstrap,
                        "--data-dir", data_dir, "--out", audit_out,
                        # The replay must use the audited chain's genesis, not defaults.conf.
@@ -177,11 +187,16 @@ def _audit(target, record: dict, out: Path, public_bootstrap, joiner_index: int 
                        "--dev-mode", "--epoch-length", "10"]
             if checkpoint.get("kind") == "checkpoint" and checkpoint.get("digest"):
                 command += ["--checkpoint", checkpoint["digest"]]
-            subprocess.run(["docker", "exec", container, "rm", "-rf", data_dir, audit_out],
-                           text=True, capture_output=True, timeout=60)
+            subprocess.run(
+                ["docker", "exec", container, "rm", "-rf", data_dir, audit_out, trace_dir],
+                text=True, capture_output=True, timeout=60)
             result = subprocess.run(
-                ["docker", "exec", container, *command], cwd=ROOT, text=True,
-                capture_output=True, timeout=900)
+                ["docker", "exec", "-e", f"RNODE_TRACE_DIR={trace_dir}", container, *command],
+                cwd=ROOT, text=True, capture_output=True, timeout=900)
+            trace_host = out / "traces" / "audit"
+            subprocess.run(["docker", "cp", f"{container}:{trace_dir}/.", str(trace_host)],
+                           text=True, capture_output=True, timeout=60)
+            _collect_audit_traces(trace_host, observations)
             (out / "audit.log").write_text(result.stdout + result.stderr)
             report_host = out / "audit.json"
             copy = subprocess.run(
@@ -195,10 +210,13 @@ def _audit(target, record: dict, out: Path, public_bootstrap, joiner_index: int 
                            "--out", str(Path(scratch) / "out")]
                 if checkpoint.get("kind") == "checkpoint" and checkpoint.get("digest"):
                     command += ["--checkpoint", checkpoint["digest"]]
-                result = subprocess.run(command, cwd=ROOT, text=True,
+                trace_dir = Path(scratch) / "traces"
+                env = {**os.environ, "RNODE_TRACE_DIR": str(trace_dir)}
+                result = subprocess.run(command, cwd=ROOT, text=True, env=env,
                                         capture_output=True, timeout=900)
                 (out / "audit.log").write_text(result.stdout + result.stderr)
                 report = _read_json(Path(scratch) / "out" / "audit.json") or {}
+                _collect_audit_traces(trace_dir, observations)
         text = result.stdout + result.stderr
         named = [line for line in text.splitlines()
                  if line.startswith("Configuration error")
@@ -227,6 +245,19 @@ def _audit(target, record: dict, out: Path, public_bootstrap, joiner_index: int 
     verdict, reasons = check(record)
     common.finish(record, verdict, reasons)
     return common.write_record(out, record)[1]
+
+
+def _collect_audit_traces(directory: Path, observations: dict) -> None:
+    """Copy the audit process's `AuditTrace` files into the record."""
+    rows = []
+    if directory.is_dir():
+        for path in sorted(directory.glob("audit-*.json")):
+            try:
+                row = json.loads(path.read_text())
+            except ValueError:
+                continue
+            rows.append({"file": path.name, **row})
+    observations["audit_traces"] = rows
 
 
 def _read_json(path: Path):

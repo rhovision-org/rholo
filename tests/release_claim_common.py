@@ -513,12 +513,47 @@ def preflight_failure(claim_id: str, environment: str, out, record: dict,
     return not_run(out, record, "; ".join(problems))[1]
 
 
-def evaluate_merge_trace(trace: dict) -> dict:
-    """Evaluate the merge phase-space predicates on one trace.
+# --------------------------------------------------------------------------------------
+# The phase-space evaluator. Every predicate is recomputed from the trace coordinates; the
+# node's own `predicates`/`bounded`/`accepted` labels are never trusted.
+# --------------------------------------------------------------------------------------
 
-    The predicates are recomputed from the coordinates, never read from the node's own booleans:
-    a trace is evidence, and a node that mislabels its decision must not hide it.
-    """
+TRACE_KINDS = ("merge", "finality", "state", "boot", "admission", "audit", "format")
+
+BOUNDED_ADMISSION_CLASSES = {"full", "byte-full", "deployer-share", "rate-limited", "inflight"}
+
+
+def trace_kind(trace: dict) -> str | None:
+    kind = trace.get("kind")
+    if isinstance(kind, str) and kind in TRACE_KINDS:
+        return kind
+    # Records written before `kind` existed.
+    if "mode" in trace:
+        return "merge"
+    if "acquisition" in trace or "dag_len" in trace:
+        return "boot"
+    return None
+
+
+def _integer(value) -> int | None:
+    return value if type(value) is int else None
+
+
+def _string_set(value) -> set[str]:
+    return {item for item in (value or []) if isinstance(item, str)}
+
+
+def _predicate_result(predicates: dict[str, bool | None]) -> dict:
+    computable = {name: value for name, value in predicates.items() if value is not None}
+    return {
+        "predicates": computable,
+        "missing": [name for name, value in predicates.items() if value is None],
+        "false": [name for name, value in computable.items() if not value],
+    }
+
+
+def evaluate_merge_trace(trace: dict) -> dict:
+    """The merge decision: base agreement, the fringe fork rule, the finalised floor, the split."""
     mode = trace.get("mode")
     claims = [c for c in (trace.get("claims") or []) if isinstance(c, dict)]
     hashes = {c.get("hash") for c in claims}
@@ -531,10 +566,255 @@ def evaluate_merge_trace(trace: dict) -> dict:
     scope_partition_ok = (
         report.get("conflict_chains")
         == (report.get("kept_chains") or 0) + (report.get("rejected_chains") or 0))
-    predicates = {
+    return _predicate_result({
         "base_ok": base_ok,
         "fork_ok": fork_ok,
         "ledger_ok": ledger_ok,
         "scope_partition_ok": scope_partition_ok,
-    }
-    return {"predicates": predicates, "false": [k for k, v in predicates.items() if not v]}
+    })
+
+
+def evaluate_finality_trace(trace: dict) -> dict:
+    """The finality advance: denominator, partition membership, supermajority support."""
+    bonded = _integer(trace.get("bonded_total"))
+    quorum = _integer(trace.get("quorum_total"))
+    supporting = _integer(trace.get("supporting"))
+    partition = _string_set(trace.get("partition"))
+    bonded_senders = _string_set(trace.get("bonded_senders"))
+    advanced = trace.get("advanced") is True
+    reason = (trace.get("reason_kind") or "").lower()
+    denominator_ok = None if bonded is None or quorum is None else quorum == bonded
+    partition_ok = None if not bonded_senders else partition <= bonded_senders
+    if supporting is None or quorum is None:
+        support_ok = None
+    elif advanced:
+        support_ok = 3 * supporting > 2 * quorum
+    elif reason.startswith("support"):
+        support_ok = 3 * supporting <= 2 * quorum
+    else:
+        support_ok = True
+    return _predicate_result({
+        "denominator_ok": denominator_ok,
+        "support_ok": support_ok,
+        "partition_ok": partition_ok,
+    })
+
+
+def evaluate_state_trace(trace: dict) -> dict:
+    """A block's state decision: an accepted block's claim equals the derived state and ledger."""
+    verdict = trace.get("verdict") or ""
+    accepted = verdict == "matched"
+    claimed_pre, computed_pre = trace.get("claimed_pre"), trace.get("computed_pre")
+    claimed_post = trace.get("claimed_post")
+    replayed_post = trace.get("replayed_post", trace.get("computed_post"))
+    claimed_rejected = _string_set(trace.get("claimed_rejected"))
+    computed_rejected = _string_set(trace.get("computed_rejected"))
+    return _predicate_result({
+        "pre_ok": True if not accepted else claimed_pre == computed_pre,
+        "post_ok": True if not accepted else claimed_post == replayed_post,
+        "rejected_ok": True if not accepted else claimed_rejected == computed_rejected,
+    })
+
+
+def evaluate_boot_trace(trace: dict) -> dict:
+    """The boot decision: genesis, acquisition, quorum verification and the anchor closure."""
+    genesis_only = trace.get("genesis_only") is True
+    accepted = trace.get("accepted") is True
+    acquisition = (trace.get("acquisition") or "").lower()
+    outcome = (trace.get("outcome") or "").lower()
+    stage = trace.get("stage") or "acquisition"
+    genesis_ok = (not genesis_only) or accepted or outcome == "genesis"
+    acquisition_ok = genesis_only or not accepted or acquisition in (
+        "certificate", "stored", "fetched")
+    supporting = _integer(trace.get("served_supporting_stake")) or 0
+    total = _integer(trace.get("served_total_stake")) or 0
+    verification_ok = genesis_only or not accepted or total <= 0 or 3 * supporting > 2 * total
+    if stage == "decision" and accepted and not genesis_only:
+        anchor_ok = (trace.get("anchor_closure_present") is True
+                     and trace.get("fringe_agrees") is True)
+    else:
+        anchor_ok = True
+    return _predicate_result({
+        "genesis_ok": genesis_ok,
+        "acquisition_ok": acquisition_ok,
+        "verification_ok": verification_ok,
+        "anchor_ok": anchor_ok,
+    })
+
+
+def evaluate_admission_trace(trace: dict) -> dict:
+    """An admission refusal: bounded class, a visible retry signal, no permit overrun."""
+    refused = trace.get("refused") is True
+    refusal_class = (trace.get("class") or "").lower()
+    status = _integer(trace.get("status"))
+    code = _integer(trace.get("grpc_code"))
+    retry_after = trace.get("retry_after")
+    server_error = status in (500, 502, 503, 504) or code in (13, 14)
+    bounded_ok = None if (refused and not refusal_class) else (
+        True if not refused else refusal_class in BOUNDED_ADMISSION_CLASSES)
+    # Recompute the visibility from the wire, not from the node's `bounded` label.
+    retry_signal_ok = True
+    if refused:
+        if server_error:
+            retry_signal_ok = False
+        elif status == 429 or code == 8:
+            retry_signal_ok = retry_after not in (None, "", 0)
+    inflight, inflight_limit = trace.get("inflight"), trace.get("inflight_limit")
+    permit_ok = (True if not (type(inflight) is int and type(inflight_limit) is int)
+                 else inflight <= inflight_limit)
+    pool_count, pool_limit = trace.get("pool_count"), trace.get("pool_limit")
+    pool_bytes, byte_limit = trace.get("pool_bytes"), trace.get("byte_limit")
+    pool_bound_ok = True
+    if type(pool_count) is int and type(pool_limit) is int:
+        pool_bound_ok = pool_bound_ok and pool_count <= pool_limit
+    if type(pool_bytes) is int and type(byte_limit) is int:
+        pool_bound_ok = pool_bound_ok and pool_bytes <= byte_limit
+    return _predicate_result({
+        "bounded_ok": bounded_ok,
+        "retry_signal_ok": retry_signal_ok,
+        "permit_ok": permit_ok,
+        "pool_bound_ok": pool_bound_ok,
+    })
+
+
+def evaluate_audit_trace(trace: dict) -> dict:
+    """The audit target: the anchor is in the fringe, the target is its anchored shape, replay agrees."""
+    anchor = trace.get("anchor")
+    target_hashes = [row for row in (trace.get("target_hashes") or []) if isinstance(row, str)]
+    anchor_membership_ok = None if "anchor_in_fringe" not in trace else (
+        trace.get("anchor_in_fringe") is True)
+    target_shape_ok = (
+        bool(anchor) and target_hashes == [anchor]
+        and trace.get("target_state") == trace.get("anchor_post_state"))
+    verdict = (trace.get("verdict") or "").upper()
+    derived, claimed = trace.get("derived_root"), trace.get("claimed_root")
+    if verdict == "AGREE":
+        replay_agrees_ok = derived is not None and derived == claimed
+    elif verdict == "DISAGREE":
+        # The audit ran and refused the claim: a safe refusal, not an unsafe acceptance.
+        replay_agrees_ok = True
+    else:
+        replay_agrees_ok = False
+    return _predicate_result({
+        "anchor_membership_ok": anchor_membership_ok,
+        "target_shape_ok": target_shape_ok,
+        "replay_agrees_ok": replay_agrees_ok,
+    })
+
+
+def evaluate_format_trace(trace: dict) -> dict:
+    """The store-format gate: the decision is the arithmetic one, and a stamp is durable."""
+    present = _integer(trace.get("on_disk"))
+    build = _integer(trace.get("build"))
+    decision = (trace.get("decision") or "").lower()
+    if build is None:
+        expected = None
+    elif decision == "stamp":
+        expected = present is None
+    elif decision == "accept":
+        expected = present == build
+    elif decision == "advance":
+        expected = present is not None and present < build
+    elif decision == "refuse_newer":
+        expected = present is not None and present > build
+    elif decision == "refuse_unreadable":
+        expected = present is None
+    else:
+        expected = False
+    # A newer marker must never be opened, whatever the decision is called.
+    opened = decision in ("stamp", "accept", "advance")
+    format_ok = (None if build is None else
+                 (expected is True and not (opened and present is not None and present > build)))
+    stamped = trace.get("stamped") is True
+    stamp_ok = True if not stamped else trace.get("durable") is True
+    return _predicate_result({"format_ok": format_ok, "stamp_ok": stamp_ok})
+
+
+EVALUATORS = {
+    "merge": evaluate_merge_trace,
+    "finality": evaluate_finality_trace,
+    "state": evaluate_state_trace,
+    "boot": evaluate_boot_trace,
+    "admission": evaluate_admission_trace,
+    "audit": evaluate_audit_trace,
+    "format": evaluate_format_trace,
+}
+
+
+def evaluate_trace(trace: dict) -> dict:
+    kind = trace_kind(trace)
+    if kind is None:
+        return {"kind": "unknown", "predicates": {}, "missing": [],
+                "false": [], "error": "unknown trace kind"}
+    result = EVALUATORS[kind](trace)
+    result["kind"] = kind
+    return result
+
+
+def traces_from(record: dict) -> list[dict]:
+    """Every decision trace a record carries, from any of the observation lists."""
+    observations = record.get("observations")
+    if not isinstance(observations, dict):
+        observations = {}
+    rows: list[dict] = []
+    for key in ("traces", "boot_traces", "finality_traces", "state_traces",
+                "admission_traces", "audit_traces", "format_traces"):
+        value = observations.get(key)
+        if isinstance(value, list):
+            rows.extend(row for row in value if isinstance(row, dict))
+    if not rows:
+        value = record.get("traces")
+        if isinstance(value, list):
+            rows.extend(row for row in value if isinstance(row, dict))
+    return rows
+
+
+def evaluate_state_agreement(traces: list[dict]) -> list[str]:
+    """The cross-validator half of RC-3: one computed triple per block hash."""
+    by_block: dict[str, set[tuple]] = {}
+    for trace in traces:
+        if trace_kind(trace) != "state":
+            continue
+        block = trace.get("block")
+        if not isinstance(block, str):
+            continue
+        triple = (trace.get("computed_pre"), trace.get("computed_post"),
+                  tuple(sorted(_string_set(trace.get("computed_rejected")))))
+        by_block.setdefault(block, set()).add(triple)
+    return [block for block, triples in by_block.items() if len(triples) > 1]
+
+
+def phase_space_reading(observations: dict, bad_outcome: bool) -> list[str]:
+    """Read a claim's traces against its predicates.
+
+    Returns problems only when the claim's own bad outcome is true: a passing run without traces
+    must not be failed for the absence of diagnostics. `model-incomplete` means every predicate
+    held and the bad state still happened, so the trace is where the model must extend.
+    """
+    traces = traces_from({"observations": observations})
+    problems: list[str] = []
+    if not traces:
+        if bad_outcome:
+            problems.append("evidence-insufficient: the failure carries no decision trace")
+        return problems
+    evaluations = [(trace, evaluate_trace(trace)) for trace in traces]
+    for trace, evaluation in evaluations:
+        if evaluation["false"]:
+            problems.append(
+                f"{evaluation['kind']} trace (validator {trace.get('validator')}, "
+                f"site {trace.get('site') or trace.get('mode') or trace.get('stage') or '-'}): "
+                f"predicate(s) {', '.join(evaluation['false'])} false")
+        if evaluation["missing"]:
+            problems.append(
+                f"{evaluation['kind']} trace lacks coordinate(s): "
+                f"{', '.join(evaluation['missing'])}")
+    disagreed = evaluate_state_agreement(traces)
+    if disagreed:
+        problems.append(
+            "agreement_ok false: validators derived different state for block(s) "
+            + ", ".join(disagreed[:5]))
+    if bad_outcome and not problems:
+        problems.append(
+            "model-incomplete: every predicate holds on the captured traces, yet the bad outcome "
+            "was observed; the trace is the model gap")
+    return problems

@@ -46,6 +46,13 @@ def fixture() -> dict:
             ],
             "marker_block": f"{11:064x}",
             "marker_present": [{"validator": i, "present": True} for i in range(4)],
+            "state_traces": [{
+                "kind": "state", "validator": 0, "block": f"{11:064x}",
+                "parents": [f"{10:064x}"],
+                "claimed_pre": "aa" * 32, "computed_pre": "aa" * 32,
+                "claimed_post": "bb" * 32, "replayed_post": "bb" * 32,
+                "claimed_rejected": [], "computed_rejected": [], "verdict": "matched",
+            }],
         },
     }
 
@@ -82,6 +89,7 @@ def check(record: dict) -> tuple[str, list[str]]:
                 problems.append(
                     f"validator {entry.get('validator') if isinstance(entry, dict) else entry}: "
                     "the marker is absent at the common block")
+    problems.extend(common.phase_space_reading(observations, bool(problems)))
     return common.evaluate(record, problems)
 
 
@@ -197,6 +205,20 @@ def _observe(target, record: dict, out: Path, devnet=None) -> int:
                  target.probe(i, marker, inclusion_hash), value)}
             for i in range(len(target.nodes))
         ]
+        if devnet is not None:
+            common_set = set(common_hashes)
+            traces = []
+            for i in range(len(target.nodes)):
+                dest = out / "traces" / f"validator-{i}"
+                devnet.copy_traces(i, dest)
+                for path in sorted(dest.glob("state-*.json")):
+                    try:
+                        row = json.loads(path.read_text())
+                    except ValueError:
+                        continue
+                    if row.get("block") in common_set:
+                        traces.append({"validator": i, "file": path.name, **row})
+            observations["state_traces"] = traces
     except Exception as error:  # noqa: BLE001
         common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
         return common.write_record(out, record)[1]

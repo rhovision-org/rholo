@@ -49,8 +49,9 @@ use rchain_casper::reporting::{rho_reporter, ReportingCasper};
 use rchain_casper::runtime_manager::RuntimeManager;
 use rchain_casper::state::ProposerState;
 use rchain_casper::storage::{
-    rnode_key_value_store_manager, shard_data_dir, EQUIVOCATION_EVIDENCE_DB, RESET_MARKER_DB,
-    SHARD_ID_MARKER, STORE_FORMAT_MARKER, STORE_FORMAT_VERSION,
+    decide_store_format, rnode_key_value_store_manager, shard_data_dir, StoreFormatDecision,
+    EQUIVOCATION_EVIDENCE_DB, RESET_MARKER_DB, SHARD_ID_MARKER, STORE_FORMAT_MARKER,
+    STORE_FORMAT_VERSION,
 };
 use rchain_casper::validator_identity::ValidatorIdentity;
 use rchain_comm::discovery::grpc_kademlia_rpc::GrpcKademliaRpc;
@@ -2841,6 +2842,10 @@ pub async fn setup_shard(
     log: &dyn Log,
 ) -> Result<ShardParts, String> {
     let data_dir = shard_data_dir(&conf.storage.data_dir, index, &spec.shard_id);
+    // **Refuse a newer format before any store is opened.** The full check below still stamps after
+    // migration; this probe only refuses, so an old build never opens (or migrates) a store it
+    // cannot read. It writes no marker.
+    probe_store_format(&data_dir)?;
     let store_manager = rnode_key_value_store_manager(&data_dir);
 
     // Block store + DAG storage.
@@ -3377,7 +3382,51 @@ fn write_marker_durably(path: &std::path::Path, contents: &str) -> std::io::Resu
 ///
 /// A marker that is not a number is refused rather than guessed at: it was written by something, and
 /// "something wrote this and it is not a version" is not a state to read a store from.
-fn check_store_format(dir: &std::path::Path) -> Result<(), String> {
+/// **The store-format gate as a trace.** The marker's value, this build's version, the typed
+/// decision and whether a durable stamp followed. The evaluator recomputes `format_ok`/`stamp_ok`
+/// from the coordinates; the node's decision name is not trusted.
+#[derive(Debug, serde::Serialize)]
+struct FormatTrace {
+    kind: String,
+    stage: String,
+    present: Option<String>,
+    build: u32,
+    on_disk: Option<u32>,
+    decision: String,
+    stamped: bool,
+    durable: bool,
+    marker_path: String,
+}
+
+fn emit_format_trace(
+    stage: &str,
+    marker: &std::path::Path,
+    present: Option<&str>,
+    decision: &StoreFormatDecision,
+    stamped: bool,
+) {
+    if !rchain_casper::trace::trace_enabled() {
+        return;
+    }
+    rchain_casper::trace::write_trace(
+        "format",
+        &FormatTrace {
+            kind: "format".to_string(),
+            stage: stage.to_string(),
+            present: present.map(|value| value.trim().to_string()),
+            build: STORE_FORMAT_VERSION,
+            on_disk: decision.on_disk(),
+            decision: decision.as_str().to_string(),
+            stamped,
+            durable: stamped,
+            marker_path: marker.display().to_string(),
+        },
+    );
+}
+
+fn read_store_marker(
+    dir: &std::path::Path,
+) -> Result<(std::path::PathBuf, Option<String>), String> {
     let marker = dir.join(STORE_FORMAT_MARKER);
     let recorded = match std::fs::read_to_string(&marker) {
         Ok(recorded) => Some(recorded.trim().to_string()),
@@ -3389,35 +3438,55 @@ fn check_store_format(dir: &std::path::Path) -> Result<(), String> {
             ))
         }
     };
-    let stamp = || -> Result<(), String> {
+    Ok((marker, recorded))
+}
+
+fn format_refusal(dir: &std::path::Path, decision: &StoreFormatDecision) -> Option<String> {
+    match decision {
+        StoreFormatDecision::RefuseUnreadable { marker } => Some(format!(
+            "the data directory {} carries a store-format marker this build cannot read: '{marker}' \
+             (this build writes {STORE_FORMAT_VERSION})",
+            dir.display()
+        )),
+        StoreFormatDecision::RefuseNewer { on_disk } => Some(format!(
+            "the data directory {} was written by a newer build (store format {on_disk}, this build \
+             writes {STORE_FORMAT_VERSION}); reading a format it does not know is how a downgrade \
+             silently becomes an advance — start the newer build, or point this one at a copy",
+            dir.display()
+        )),
+        _ => None,
+    }
+}
+
+/// **Refuse a newer format before any store is opened.** It never stamps, so the migration order
+/// and the crash semantics of [`check_store_format`] are untouched.
+fn probe_store_format(dir: &std::path::Path) -> Result<(), String> {
+    let (marker, recorded) = read_store_marker(dir)?;
+    let decision = decide_store_format(recorded.as_deref(), STORE_FORMAT_VERSION);
+    emit_format_trace("probe", &marker, recorded.as_deref(), &decision, false);
+    match format_refusal(dir, &decision) {
+        Some(refusal) => Err(refusal),
+        None => Ok(()),
+    }
+}
+
+fn check_store_format(dir: &std::path::Path) -> Result<(), String> {
+    let (marker, recorded) = read_store_marker(dir)?;
+    let decision = decide_store_format(recorded.as_deref(), STORE_FORMAT_VERSION);
+    if let Some(refusal) = format_refusal(dir, &decision) {
+        emit_format_trace("check", &marker, recorded.as_deref(), &decision, false);
+        return Err(refusal);
+    }
+    let stamped = decision.needs_stamp();
+    if stamped {
         write_marker_durably(&marker, &STORE_FORMAT_VERSION.to_string()).map_err(|error| {
             format!(
                 "cannot write store-format marker {}: {error}",
                 marker.display()
             )
-        })
-    };
-    let Some(recorded) = recorded else {
-        return stamp();
-    };
-    let version: u32 = recorded.parse().map_err(|_| {
-        format!(
-            "the data directory {} carries a store-format marker this build cannot read: '{recorded}' \
-             (this build writes {STORE_FORMAT_VERSION})",
-            dir.display()
-        )
-    })?;
-    if version > STORE_FORMAT_VERSION {
-        return Err(format!(
-            "the data directory {} was written by a newer build (store format {version}, this build \
-             writes {STORE_FORMAT_VERSION}); reading a format it does not know is how a downgrade \
-             silently becomes an advance — start the newer build, or point this one at a copy",
-            dir.display()
-        ));
+        })?;
     }
-    if version < STORE_FORMAT_VERSION {
-        stamp()?;
-    }
+    emit_format_trace("check", &marker, recorded.as_deref(), &decision, stamped);
     Ok(())
 }
 

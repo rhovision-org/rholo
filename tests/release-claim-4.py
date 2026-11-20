@@ -48,8 +48,11 @@ def fixture() -> dict:
             "victim": 1,
             "certificates_after": {str(i): {"kind": "checkpoint"} for i in range(4)},
             "boot_traces": [{
-                "validator": 1, "acquisition": "certificate", "accepted": True,
-                "dag_len": 40, "store_head": None, "source_configured": True,
+                "kind": "boot", "stage": "acquisition", "validator": 1,
+                "acquisition": "certificate", "accepted": True, "genesis_only": False,
+                "outcome": "certified", "dag_len": 40, "store_head": None,
+                "source_configured": True, "shard_id": "root",
+                "served_supporting_stake": 300, "served_total_stake": 400,
             }],
         },
     }
@@ -104,8 +107,7 @@ def check(record: dict) -> tuple[str, list[str]]:
             problems.append(
                 f"victim {victim}: the boot decision did not accept (acquisition "
                 f"{trace.get('acquisition')})")
-    elif observations.get("harness_result") != "PASS":
-        problems.append("evidence-insufficient: the failed restart carries no boot trace")
+    problems.extend(common.phase_space_reading(observations, bool(problems)))
     return common.evaluate(record, problems)
 
 

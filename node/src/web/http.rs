@@ -751,6 +751,14 @@ fn deploy_response(result: Result<String, BlockApiException>) -> Response {
     match result {
         Ok(id) => (StatusCode::OK, Json(id)).into_response(),
         Err(err) if rchain_casper::api::block_api::deploy_refusal_is_bounded(err.client_text()) => {
+            if rchain_casper::trace::trace_enabled() {
+                let class = rchain_casper::pool::classify(err.client_text())
+                    .map_or("pool", rchain_casper::pool::PoolError::class_name);
+                rchain_casper::pool::AdmissionTrace::new("http-deploy", "http")
+                    .refusal(class)
+                    .http_status(429, Some(1))
+                    .write();
+            }
             in_flight_refused(err.client_text())
         }
         Err(err) => (StatusCode::BAD_REQUEST, Json(err.into_client_message())).into_response(),
@@ -2591,7 +2599,14 @@ async fn peer_rate_limit(
         None => UNATTRIBUTED_PEER.to_vec(),
     };
     if !limiter.allow(&key) {
-        return (StatusCode::TOO_MANY_REQUESTS, Json(message.to_string())).into_response();
+        if rchain_casper::trace::trace_enabled() {
+            rchain_casper::pool::AdmissionTrace::new("http-rate", "http")
+                .refusal("rate-limited")
+                .http_status(429, Some(1))
+                .write();
+        }
+        // A bounded refusal carries a retry signal: the node is serving, and the caller may return.
+        return in_flight_refused(message);
     }
     next.run(request).await
 }
@@ -2623,7 +2638,16 @@ async fn in_flight_admission(
     let _permit: Option<OwnedSemaphorePermit> = match budget {
         Some(budget) => match budget.semaphore.try_acquire_owned() {
             Ok(permit) => Some(permit),
-            Err(_) => return in_flight_refused("HTTP in-flight capacity exhausted"),
+            Err(_) => {
+                if rchain_casper::trace::trace_enabled() {
+                    rchain_casper::pool::AdmissionTrace::new("http-inflight", "http")
+                        .refusal("inflight")
+                        .http_status(429, Some(1))
+                        .inflight(budget.limit, budget.limit)
+                        .write();
+                }
+                return in_flight_refused("HTTP in-flight capacity exhausted");
+            }
         },
         None => None,
     };
@@ -2640,12 +2664,29 @@ async fn explore_in_flight(
 ) -> Response {
     let _permit = match capacity.explore.try_acquire() {
         Some(permit) => permit,
-        None => return in_flight_refused("explore execution budget exhausted"),
+        None => {
+            if rchain_casper::trace::trace_enabled() {
+                rchain_casper::pool::AdmissionTrace::new("http-explore", "http")
+                    .refusal("inflight")
+                    .http_status(429, Some(1))
+                    .write();
+            }
+            return in_flight_refused("explore execution budget exhausted");
+        }
     };
     let _fixed: Option<OwnedSemaphorePermit> = match fixed {
         Some(fixed) => match fixed.semaphore.try_acquire_owned() {
             Ok(permit) => Some(permit),
-            Err(_) => return in_flight_refused("HTTP in-flight capacity exhausted"),
+            Err(_) => {
+                if rchain_casper::trace::trace_enabled() {
+                    rchain_casper::pool::AdmissionTrace::new("http-explore", "http")
+                        .refusal("inflight")
+                        .http_status(429, Some(1))
+                        .inflight(fixed.limit, fixed.limit)
+                        .write();
+                }
+                return in_flight_refused("HTTP in-flight capacity exhausted");
+            }
         },
         None => None,
     };

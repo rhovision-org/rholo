@@ -54,7 +54,8 @@ def fixture() -> dict:
             ],
             "rejected": [{"validator": i, "found": False} for i in range(4)],
             "traces": [{
-                "validator": 0, "mode": "fringe",
+                "kind": "merge", "validator": 0, "parents": ["ab" * 32],
+                "mode": "fringe",
                 "claims": [{"height": 3, "id": "ab" * 32, "hash": "cd" * 32}],
                 "certified_base": None, "base_source": "agreed",
                 "conflict_scope": ["ef" * 32], "fork_blocks": [],
@@ -126,29 +127,10 @@ def check(record: dict) -> tuple[str, list[str]]:
     # **Read the failure against the proven phase space.** The predicates are recomputed from the
     # trace coordinates; the node's own labels are not trusted. A failure with every predicate true
     # is a model gap, not a guessed cause.
-    traces = observations.get("traces")
     bad_outcome = any(isinstance(row, dict) and row.get("marker_present") is not True
                       for row in finalised) or any(
         isinstance(row, dict) and row.get("found") for row in rejected)
-    evaluations = []
-    if isinstance(traces, list) and traces:
-        for row in traces:
-            if not isinstance(row, dict):
-                continue
-            evaluation = common.evaluate_merge_trace(row)
-            evaluations.append((row, evaluation))
-            if evaluation["false"]:
-                problems.append(
-                    f"validator {row.get('validator')}: merge predicate(s) "
-                    f"{', '.join(evaluation['false'])} false (mode {row.get('mode')}, base "
-                    f"{row.get('base_source')}, {len(row.get('rejected_hosts') or [])} rejected "
-                    f"host(s), {len(row.get('conflict_scope') or [])} conflict-scope block(s))")
-        if bad_outcome and all(not evaluation["false"] for _, evaluation in evaluations):
-            problems.append(
-                "model-incomplete: every merge predicate holds on the captured traces, yet the "
-                "finalised write is absent or rejected; the trace is the model gap")
-    elif bad_outcome:
-        problems.append("evidence-insufficient: the failure carries no merge trace")
+    problems.extend(common.phase_space_reading(observations, bad_outcome))
     return common.evaluate(record, problems)
 
 

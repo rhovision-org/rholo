@@ -57,6 +57,19 @@ impl<M: Hash, S> Hash for Message<M, S> {
 /// problem — see #70). Each variant carries the numbers that name the fault, and they are *returned
 /// by the gate itself* rather than recomputed by an explainer, because two implementations of one
 /// rule can disagree (`Split`, Law 51b) and this is the rule the node's finality runs on.
+/// The gate's own numbers for one attempt: what the supporting stake was, against which total,
+/// how many full partitions and candidates made the layer, and how many senders the partition
+/// held. Returned on both an advance and a refusal so a phase-space trace records the decision's
+/// inputs rather than a second derivation of them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FringeGateNumbers {
+    pub supporting: i128,
+    pub total: i128,
+    pub full_partitions: usize,
+    pub candidates: usize,
+    pub partition: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NoAdvance<S> {
     /// `check_min_messages` refused: the minimum messages' **senders** are not the partition's.
@@ -294,6 +307,22 @@ where
         quorum_bonds: &BTreeMap<S, NonNegI64>,
         prev_fringe: &BTreeSet<Message<M, S>>,
     ) -> Result<BTreeSet<Message<M, S>>, NoAdvance<S>> {
+        self.next_fringe_reported(justifications, partition_bonds, quorum_bonds, prev_fringe)
+            .map(|(fringe, _numbers)| fringe)
+    }
+
+    /// [`Self::next_fringe_detailed`], with the gate's own numbers whether it advanced or refused.
+    ///
+    /// The numbers on an advance are what a phase-space trace needs: `calculate_fringe_numbers`
+    /// reads the same tuple the gate compared, so the trace cannot be a second implementation of
+    /// the rule (`Split`, Law 51b).
+    pub fn next_fringe_reported(
+        &self,
+        justifications: &BTreeSet<Message<M, S>>,
+        partition_bonds: &BTreeMap<S, NonNegI64>,
+        quorum_bonds: &BTreeMap<S, NonNegI64>,
+        prev_fringe: &BTreeSet<Message<M, S>>,
+    ) -> Result<(BTreeSet<Message<M, S>>, FringeGateNumbers), NoAdvance<S>> {
         // Minimum (oldest non-finalized) message from each justification sender.
         let mut min_msgs = Vec::new();
         for p in justifications {
@@ -332,7 +361,18 @@ where
                 partition: partition_bonds.len(),
             });
         }
-        Ok(next_layer.values().cloned().collect())
+        let (supporting, total, full_partitions, candidates) =
+            self.calculate_fringe_numbers(&fringe_support_map, partition_bonds, quorum_bonds);
+        Ok((
+            next_layer.values().cloned().collect(),
+            FringeGateNumbers {
+                supporting,
+                total,
+                full_partitions,
+                candidates,
+                partition: partition_bonds.len(),
+            },
+        ))
     }
 
     /// Compute the fringe from joined justifications and any newly detected fringe.
@@ -367,20 +407,40 @@ where
         Option<BTreeSet<Message<M, S>>>,
         Option<NoAdvance<S>>,
     ) {
+        let (parent, fringe, reason, _numbers) =
+            self.calculate_finalization_reported(justifications, partition_bonds, quorum_bonds);
+        (parent, fringe, reason)
+    }
+
+    /// [`Self::calculate_finalization_detailed`], with the last advance's gate numbers (or none when
+    /// the walk never advanced). The trace uses this; the consensus callers use the plain form.
+    pub fn calculate_finalization_reported(
+        &self,
+        justifications: &BTreeSet<Message<M, S>>,
+        partition_bonds: &BTreeMap<S, NonNegI64>,
+        quorum_bonds: &BTreeMap<S, NonNegI64>,
+    ) -> (
+        BTreeSet<Message<M, S>>,
+        Option<BTreeSet<Message<M, S>>>,
+        Option<NoAdvance<S>>,
+        Option<FringeGateNumbers>,
+    ) {
         let parent_fringe = message_map::latest_fringe(self.msg_map, justifications);
         let mut current = parent_fringe.clone();
         let mut new_fringe_opt: Option<BTreeSet<Message<M, S>>> = None;
+        let mut numbers: Option<FringeGateNumbers> = None;
         // The reason the *last* attempt failed — the one that stopped the walk.
         let why: NoAdvance<S> = loop {
-            match self.next_fringe_detailed(justifications, partition_bonds, quorum_bonds, &current)
+            match self.next_fringe_reported(justifications, partition_bonds, quorum_bonds, &current)
             {
                 Err(reason) => break reason,
-                Ok(nf) => {
+                Ok((nf, gate_numbers)) => {
                     // Progress guard: a non-advancing fringe would loop forever. Only record a
                     // strictly new fringe.
                     if nf == current {
                         break NoAdvance::AlreadyPublished;
                     }
+                    numbers = Some(gate_numbers);
                     new_fringe_opt = Some(nf.clone());
                     current = nf;
                 }
@@ -393,7 +453,7 @@ where
         } else {
             Some(why)
         };
-        (parent_fringe, new_fringe_opt, reason)
+        (parent_fringe, new_fringe_opt, reason, numbers)
     }
 }
 

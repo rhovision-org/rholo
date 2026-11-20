@@ -535,7 +535,7 @@ pub async fn run(
                     certificate.checkpoint.anchor_height,
                     format!("the anchor's ancestor {} has no body", hash.to_hex()),
                 );
-                write_report(&request.out, &report).await?;
+                write_report(&request.out, &report, None).await?;
                 return Ok(report);
             }
         };
@@ -596,7 +596,7 @@ pub async fn run(
                          served"
                     )),
                 };
-                write_report(&request.out, &report).await?;
+                write_report(&request.out, &report, None).await?;
                 return Ok(report);
             }
             let mut fringe = BTreeSet::new();
@@ -652,7 +652,7 @@ pub async fn run(
                 window_committed,
                 reason: Some(format!("the committed header set is inconsistent: {e}")),
             };
-            write_report(&request.out, &report).await?;
+            write_report(&request.out, &report, None).await?;
             return Ok(report);
         }
         // **The genesis header is checked against its body separately.** Genesis is excluded from
@@ -702,7 +702,7 @@ pub async fn run(
                     window_committed,
                     reason: Some(format!("the genesis header is refused: {e}")),
                 };
-                write_report(&request.out, &report).await?;
+                write_report(&request.out, &report, None).await?;
                 return Ok(report);
             }
         }
@@ -729,7 +729,7 @@ pub async fn run(
                         "the metadata commitment does not match the served headers: {e}"
                     )),
                 };
-                write_report(&request.out, &report).await?;
+                write_report(&request.out, &report, None).await?;
                 return Ok(report);
             }
         }
@@ -756,7 +756,7 @@ pub async fn run(
                         "the validation-window commitment does not match the served headers: {e}"
                     )),
                 };
-                write_report(&request.out, &report).await?;
+                write_report(&request.out, &report, None).await?;
                 return Ok(report);
             }
         }
@@ -813,7 +813,7 @@ pub async fn run(
             reason: Some(reason),
         },
     };
-    write_report(&request.out, &report).await?;
+    write_report(&request.out, &report, Some(&target)).await?;
     log.info(
         source,
         &format!(
@@ -965,7 +965,30 @@ fn incomplete(
     }
 }
 
-async fn write_report(out: &std::path::Path, report: &AuditReport) -> Result<(), String> {
+/// **The audit target decision as a trace.** Written only when the audit reached the replay target
+/// (`target` is `Some`); the earlier reports are refusals before that decision and carry no target
+/// to evaluate. The evaluator recomputes `anchor_membership_ok`, `target_shape_ok` and
+/// `replay_agrees_ok` from these coordinates.
+#[derive(Debug, serde::Serialize)]
+struct AuditTrace {
+    kind: String,
+    checkpoint_digest: String,
+    anchor: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anchor_in_fringe: Option<bool>,
+    target_hashes: Vec<String>,
+    target_state: Option<String>,
+    anchor_post_state: String,
+    verdict: String,
+    derived_root: Option<String>,
+    claimed_root: String,
+}
+
+async fn write_report(
+    out: &std::path::Path,
+    report: &AuditReport,
+    target: Option<&FinalizedFringe>,
+) -> Result<(), String> {
     tokio::fs::create_dir_all(out)
         .await
         .map_err(|e| format!("cannot create {}: {e}", out.display()))?;
@@ -973,7 +996,27 @@ async fn write_report(out: &std::path::Path, report: &AuditReport) -> Result<(),
     let path = out.join("audit.json");
     tokio::fs::write(&path, bytes)
         .await
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    if let Some(target) = target {
+        if rchain_casper::trace::trace_enabled() {
+            rchain_casper::trace::write_trace(
+                "audit",
+                &AuditTrace {
+                    kind: "audit".to_string(),
+                    checkpoint_digest: report.checkpoint_digest.clone(),
+                    anchor: report.anchor.clone(),
+                    anchor_in_fringe: Some(true),
+                    target_hashes: target.hashes.iter().map(|hash| hash.to_hex()).collect(),
+                    target_state: Some(base16::encode(target.state_hash.as_bytes())),
+                    anchor_post_state: report.claimed_root.clone(),
+                    verdict: report.verdict.clone(),
+                    derived_root: report.derived_root.clone(),
+                    claimed_root: report.claimed_root.clone(),
+                },
+            );
+        }
+    }
+    Ok(())
 }
 
 /// GET a JSON body with a 64 MiB cap. A body page of light infos is small; the cap is a bound on a

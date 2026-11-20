@@ -1,3 +1,4 @@
+import Mathlib.Data.Finset.Basic
 import Mathlib.Logic.Function.Basic
 
 /-!
@@ -73,6 +74,108 @@ theorem a_block_whose_pre_state_is_not_the_previous_post_is_refused
     (s : Nat) (b : Block) (rest : List Block) (h : b.pre ≠ s) :
     replay s (b :: rest) = none := by
   simp [replay, h]
+
+/-! ## The state decision as a phase space
+
+`validate_block_checkpoint` derives a block's pre-state, replays its post-state, and compares the
+block's claim against both. The trace `StateTrace` records the claim and the derivation. A safe
+decision is one whose accepted claim is the derived triple; two validators with the same parent set
+have at most one derivation. -/
+
+/-- A validator's decision for one block: what the block claims, what this node derived, and whether
+    the block was accepted. -/
+structure StateDecision where
+  claimedPre : Nat
+  computedPre : Nat
+  claimedPost : Nat
+  computedPost : Nat
+  claimedRejected : Finset Nat
+  computedRejected : Finset Nat
+  accepted : Bool
+
+/-- **The safe predicate**: an accepted block's claim is exactly the derived state and ledger. A
+    refusal is always safe — the block was not applied. -/
+def stateSafe (d : StateDecision) : Prop :=
+  d.accepted = false ∨
+    (d.claimedPre = d.computedPre ∧
+     d.claimedPost = d.computedPost ∧
+     d.claimedRejected = d.computedRejected)
+
+/-- A safe accepted decision is the derived state. -/
+theorem a_safe_state_decision_is_the_derived_state (d : StateDecision)
+    (h : stateSafe d) (ha : d.accepted = true) :
+    d.claimedPre = d.computedPre ∧ d.claimedPost = d.computedPost ∧
+      d.claimedRejected = d.computedRejected := by
+  rcases h with h | h
+  · exact absurd ha (by simp [h])
+  · exact h
+
+/-- **The derivation is a function of the parent set**: at most one decision's computed triple is
+    *the* derivation for a given parent list. This is the agreement predicate RC-3 measures. -/
+def Derives (derive : List Nat → StateDecision) (parents : List Nat) (d : StateDecision) : Prop :=
+  derive parents = d
+
+theorem same_parents_same_state (derive : List Nat → StateDecision) (parents : List Nat) :
+    ∀ d₁ d₂, Derives derive parents d₁ → Derives derive parents d₂ → d₁ = d₂ := by
+  intro d₁ d₂ h₁ h₂
+  rw [← h₁, ← h₂]
+
+/-- The outcome type. -/
+inductive StateOutcome where
+  | accepted
+  | refused
+
+def stateOutcome (d : StateDecision) : StateOutcome :=
+  if d.accepted then .accepted else .refused
+
+/-- **Totality**: every input has exactly one outcome. -/
+theorem state_decision_is_total (d : StateDecision) :
+    ∃! o : StateOutcome, stateOutcome d = o := by
+  refine ⟨stateOutcome d, rfl, ?_⟩
+  intro o ho
+  exact ho.symm
+
+/-- **The unsafe witness**: an accepted block whose pre-state is not the derived one. -/
+def acceptedMismatch : StateDecision :=
+  { claimedPre := 1, computedPre := 2, claimedPost := 2, computedPost := 2,
+    claimedRejected := ∅, computedRejected := ∅, accepted := true }
+
+theorem an_accepted_mismatch_is_the_unsafe_witness : ¬ stateSafe acceptedMismatch := by
+  simp [stateSafe, acceptedMismatch]
+
+/-! ## The audit target's shape as a phase space
+
+An explicit-anchor replay reply carries exactly the named anchor and the anchor's post-state. The
+Rust `target_shape_ok` (`casper/src/engine/recovery.rs`) is the guard; `anchored_target` is the only
+constructor the audit uses. The trace `AuditTrace` records the hashes, the state and the verdict. -/
+
+/-- The replay target's shape. `anchor = none` means the reply was not for a named anchor. -/
+structure TargetShape where
+  hashes : List Nat
+  anchor : Option Nat
+  stateIsAnchorPost : Bool
+
+/-- **The safe shape**: a named anchor's target is exactly `[anchor]`, carrying the anchor's
+    post-state. -/
+def targetShapeSafe (t : TargetShape) : Prop :=
+  match t.anchor with
+  | none => True
+  | some a => t.hashes = [a] ∧ t.stateIsAnchorPost = true
+
+/-- **An anchored target is the only accepted shape.** -/
+theorem an_anchored_target_is_the_only_accepted_shape (t : TargetShape) (a : Nat)
+    (h : targetShapeSafe t) (hanchor : t.anchor = some a) : t.hashes = [a] := by
+  simp [targetShapeSafe, hanchor] at h
+  exact h.1
+
+/-- A whole-fringe target for a named anchor is refused. -/
+theorem a_whole_fringe_target_is_refused (a b : Nat) (hne : a ≠ b) :
+    ¬ targetShapeSafe { hashes := [a, b], anchor := some a, stateIsAnchorPost := true } := by
+  simp [targetShapeSafe, hne]
+
+/-- **Totality**: every target is either the safe shape or not. -/
+theorem target_shape_is_total (t : TargetShape) : targetShapeSafe t ∨ ¬ targetShapeSafe t :=
+  Classical.em _
 
 end ReplayState
 end Sync

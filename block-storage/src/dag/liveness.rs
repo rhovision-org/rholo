@@ -38,7 +38,7 @@ use std::hash::Hash;
 
 use rchain_shared::refined::{BlockHeight, NonNegI64};
 
-use super::finalizer::{Finalizer, Message, NoAdvance};
+use super::finalizer::{Finalizer, FringeGateNumbers, Message, NoAdvance};
 
 /// How many heights of silence a bonded validator may accumulate before its stake leaves the live
 /// weight set — the one number the proposer's attestation guard and the finalizer's fringe gate share.
@@ -149,6 +149,18 @@ where
 /// ([`super::finalizer::Finalizer::NoAdvance`]) rather than recomputed by an explainer — two
 /// implementations of one rule can disagree, which is `Split` (Law 51b), and this is the rule the node's
 /// finality runs on.
+/// The finality decision's coordinates: the whole bonded map, the live partition the rule derived,
+/// the supported tip, the gate's numbers, and the refusal when it did not advance. This is the
+/// input type the phase-space trace inhabits (`FinalityTrace` in `casper`).
+#[derive(Clone, Debug)]
+pub struct FinalityReport<S> {
+    pub bonded: BTreeMap<S, NonNegI64>,
+    pub live: BTreeMap<S, NonNegI64>,
+    pub supported_tip: BlockHeight,
+    pub numbers: Option<FringeGateNumbers>,
+    pub reason: Option<NoAdvance<S>>,
+}
+
 pub fn calculate_finalization_detailed<M, S>(
     finalizer: &Finalizer<'_, M, S>,
     justifications: &BTreeSet<Message<M, S>>,
@@ -157,6 +169,27 @@ pub fn calculate_finalization_detailed<M, S>(
     BTreeSet<Message<M, S>>,
     Option<BTreeSet<Message<M, S>>>,
     Option<NoAdvance<S>>,
+)
+where
+    M: Ord + Clone + Eq + Hash,
+    S: Ord + Clone + Eq + Hash,
+{
+    let (parent, fringe, reason, _report) =
+        calculate_finalization_reported(finalizer, justifications, bonds);
+    (parent, fringe, reason)
+}
+
+/// [`calculate_finalization_detailed`], with the report a phase-space trace records. The plain form
+/// delegates, so the decision has one implementation and the report cannot drift from it.
+pub fn calculate_finalization_reported<M, S>(
+    finalizer: &Finalizer<'_, M, S>,
+    justifications: &BTreeSet<Message<M, S>>,
+    bonds: &BTreeMap<S, NonNegI64>,
+) -> (
+    BTreeSet<Message<M, S>>,
+    Option<BTreeSet<Message<M, S>>>,
+    Option<NoAdvance<S>>,
+    FinalityReport<S>,
 )
 where
     M: Ord + Clone + Eq + Hash,
@@ -179,7 +212,16 @@ where
         .filter(|m| live.contains_key(&m.sender))
         .cloned()
         .collect();
-    finalizer.calculate_finalization_detailed(&live_justifications, &live, bonds)
+    let (parent, fringe, reason, numbers) =
+        finalizer.calculate_finalization_reported(&live_justifications, &live, bonds);
+    let report = FinalityReport {
+        bonded: bonds.clone(),
+        live,
+        supported_tip,
+        numbers,
+        reason: reason.clone(),
+    };
+    (parent, fringe, reason, report)
 }
 
 #[cfg(test)]

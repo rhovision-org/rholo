@@ -36,6 +36,11 @@ def fixture() -> dict:
         "observations": {
             "check_exit": 0, "verdict": "PASS",
             "pressure": "record/pressure.json", "not_processed": [],
+            "admission_traces": [{
+                "kind": "admission", "site": "http-inflight", "surface": "http",
+                "refused": True, "class": "inflight", "status": 429, "retry_after": 1,
+                "inflight": 2, "inflight_limit": 2,
+            }],
         },
     }
 
@@ -53,6 +58,7 @@ def check(record: dict) -> tuple[str, list[str]]:
         problems.append(f"the pressure check exited {observations.get('check_exit')}")
     if observations.get("not_processed"):
         problems.append(f"accepted deploy(s) not resolved: {observations['not_processed']}")
+    problems.extend(common.phase_space_reading(observations, bool(problems)))
     return common.evaluate(record, problems)
 
 
@@ -106,11 +112,13 @@ def run(argv: list[str]) -> int:
         _run([sys.executable, str(arm), "phase", "--mode", "capped",
               "--out", str(out / "capped"), "--container", "m2cap-bootstrap",
               "--port", "56403", "--cap", "2"], record, out / "capped.log")
+        _collect_admission_traces(capped, out / "traces" / "capped", record)
         capped.down()
         unset.up()
         _run([sys.executable, str(arm), "phase", "--mode", "unset",
               "--out", str(out / "unset"), "--container", "m2cap-bootstrap",
               "--port", "56403"], record, out / "unset.log")
+        _collect_admission_traces(unset, out / "traces" / "unset", record)
         unset.down()
         _run([sys.executable, str(arm), "grpc", "--out", str(out / "grpc")],
              record, out / "grpc.log")
@@ -162,6 +170,21 @@ def _judge(record_dir: Path, record: dict, out: Path, locality: str) -> int:
     verdict, reasons = check(record)
     common.finish(record, verdict, reasons)
     return common.write_record(out, record)[1]
+
+
+def _collect_admission_traces(devnet, dest: Path, record: dict) -> None:
+    """Copy the node's admission traces before its container is torn down."""
+    try:
+        devnet.copy_traces(0, dest)
+    except Exception:  # noqa: BLE001 - a missing trace is evidence-insufficient, not a crash
+        return
+    rows = record["observations"].setdefault("admission_traces", [])
+    for path in sorted(dest.glob("admission-*.json")):
+        try:
+            row = json.loads(path.read_text())
+        except ValueError:
+            continue
+        rows.append({"file": path.name, **row})
 
 
 def _read_json(path: Path):

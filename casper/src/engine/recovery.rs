@@ -106,6 +106,19 @@ pub(super) fn compare_claim(local: &BlockMetadata, claimed: &BlockFringe) -> Res
     Ok(())
 }
 
+/// **The anchored target shape.** An explicit anchor's reply carries exactly that block
+/// (`hashes == [anchor]`); `node/src/runtime/audit.rs` builds this shape, and the audit's
+/// `AuditTrace` replays this predicate. A whole-fringe reply is the shape the protocol never sends
+/// for a named anchor.
+pub fn target_shape_ok(hashes: &[BlockHash], anchor: Option<BlockHash>) -> Result<(), String> {
+    if let Some(anchor) = anchor {
+        if hashes != [anchor] {
+            return Err("recovery reply does not name the requested anchor".to_string());
+        }
+    }
+    Ok(())
+}
+
 /// Law 85: ordinary replies serve the max member's locally derived claim;
 /// explicit anchors and the fresh-genesis reply serve the named block's post-state.
 async fn check_target(
@@ -129,9 +142,7 @@ async fn check_target(
         .max_by_key(|m| (m.block_num, m.block_hash))
         .ok_or_else(|| "recovery target is empty".to_string())?;
     let expected = if let Some(anchor) = anchor {
-        if fringe.hashes != vec![anchor] {
-            return Err("recovery reply does not name the requested anchor".to_string());
-        }
+        target_shape_ok(&fringe.hashes, Some(anchor))?;
         let block = store
             .get(&[anchor])
             .await?
@@ -442,5 +453,16 @@ mod tests {
         assert!(compare_claim(&local, &claim)
             .unwrap_err()
             .contains("disagrees"));
+    }
+
+    #[test]
+    fn an_anchored_target_is_the_only_accepted_shape() {
+        let anchor = BlockHash::new([3; 32]);
+        target_shape_ok(&[anchor], Some(anchor)).expect("the anchored shape is accepted");
+        let error = target_shape_ok(&[anchor, BlockHash::new([4; 32])], Some(anchor))
+            .expect_err("a whole-fringe target is refused");
+        assert!(error.contains("does not name the requested anchor"));
+        target_shape_ok(&[anchor, BlockHash::new([4; 32])], None)
+            .expect("without an explicit anchor there is no shape rule");
     }
 }

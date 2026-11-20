@@ -101,6 +101,34 @@ class ClaimTests(unittest.TestCase):
                 verdict, reasons = module.check(mutated)
                 self.assertEqual(verdict, "fail", (row["id"], reasons))
 
+    TRACE_MUTATIONS = {
+        "RC-1": ("traces", lambda row: row.update(fork_blocks=["11" * 32]), "fork_ok"),
+        "RC-2": ("finality_traces", lambda row: row.update(quorum_total=100), "denominator_ok"),
+        "RC-3": ("state_traces", lambda row: row.update(computed_pre="ff" * 32), "pre_ok"),
+        "RC-4": ("boot_traces", lambda row: row.update(served_supporting_stake=100),
+                 "verification_ok"),
+        "RC-5": ("admission_traces", lambda row: row.update(retry_after=None),
+                 "retry_signal_ok"),
+        "RC-6": ("audit_traces", lambda row: row.update(target_hashes=["ab" * 32, "cd" * 32]),
+                 "target_shape_ok"),
+        "RC-7": ("format_traces", lambda row: row.update(decision="accept"), "format_ok"),
+    }
+
+    def test_every_fixture_carries_a_trace_and_a_trace_mutation_names_its_predicate(self):
+        for row in self.payload["claims"]:
+            with self.subTest(claim=row["id"]):
+                module = checker.load_test(row)
+                record = module.fixture()
+                key, mutate, predicate = self.TRACE_MUTATIONS[row["id"]]
+                traces = record["observations"].get(key) or []
+                self.assertTrue(traces, f"{row['id']} fixture carries no {key}")
+                mutated = copy.deepcopy(record)
+                mutate(mutated["observations"][key][0])
+                verdict, reasons = module.check(mutated)
+                self.assertEqual(verdict, "fail", (row["id"], reasons))
+                self.assertTrue(any(predicate in reason for reason in reasons),
+                                (row["id"], predicate, reasons))
+
     def test_check_is_deterministic(self):
         for row in self.payload["claims"]:
             module = checker.load_test(row)

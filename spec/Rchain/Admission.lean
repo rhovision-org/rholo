@@ -439,5 +439,80 @@ theorem independent_batches_commute (xs ys : List StateChange)
       ys.foldl mergeChanges (xs.foldl mergeChanges emptyChange) :=
   independent_folds_commute xs ys emptyChange h
 
+/-! ## The admission decision as a phase space
+
+The Rust `AdmissionTrace` records the surface, the refusal class, the wire answer and the retry
+signal, plus the pool and in-flight counts. A safe refusal is a **bounded** class, answered with a
+visible retry signal and never a 5xx; an admitted request holds within its permit and pool bounds. -/
+
+inductive Surface where
+  | http
+  | grpc
+  | internal
+  deriving DecidableEq, Repr
+
+inductive WireResponse where
+  | ok
+  | tooManyRequests
+  | resourceExhausted
+  | serverError
+  | badRequest
+  deriving DecidableEq, Repr
+
+structure AdmissionDecision where
+  surface : Surface
+  refused : Bool
+  refusal : Option Refusal
+  response : WireResponse
+  retrySignal : Bool
+  inFlight : Nat
+  limit : Nat
+  poolCount : Nat
+  poolLimit : Nat
+
+/-- A duplicate is not a bound — the request is well formed and the answer is a client error. The
+    other refusals are bounds. -/
+def boundedClass : Option Refusal → Bool
+  | some .duplicate => false
+  | some _ => true
+  | none => false
+
+/-- **The safe predicate**: a refusal is bounded, carries a retry signal and is not a server error;
+    the permit and pool counts stay within their bounds. -/
+def admissionSafe (d : AdmissionDecision) : Prop :=
+  (d.refused = true →
+      boundedClass d.refusal = true ∧ d.retrySignal = true ∧ d.response ≠ .serverError) ∧
+    d.inFlight ≤ d.limit ∧
+    d.poolCount ≤ d.poolLimit
+
+/-- A safe refusal is bounded and visible. -/
+theorem a_safe_refusal_is_bounded_and_visible (d : AdmissionDecision) (h : admissionSafe d)
+    (hr : d.refused = true) :
+    boundedClass d.refusal = true ∧ d.retrySignal = true :=
+  ⟨(h.1 hr).1, (h.1 hr).2.1⟩
+
+/-- A safe refusal is never a server error. -/
+theorem a_safe_refusal_is_not_a_server_error (d : AdmissionDecision) (h : admissionSafe d)
+    (hr : d.refused = true) : d.response ≠ .serverError :=
+  (h.1 hr).2.2
+
+/-- **Totality**: the refusal bit is the outcome. -/
+theorem admission_decision_is_total (d : AdmissionDecision) :
+    ∃! o : Bool, o = d.refused := by
+  refine ⟨d.refused, rfl, ?_⟩
+  intro o ho
+  exact ho
+
+/-- The unsafe witness: a rate refusal answered without a retry signal. -/
+def rateWithoutRetry : AdmissionDecision :=
+  { surface := .http, refused := true, refusal := some .rate,
+    response := .tooManyRequests, retrySignal := false,
+    inFlight := 0, limit := 1, poolCount := 0, poolLimit := 1 }
+
+theorem a_rate_refusal_without_a_retry_is_unsafe : ¬ admissionSafe rateWithoutRetry := by
+  intro h
+  have hbounded := a_safe_refusal_is_bounded_and_visible rateWithoutRetry h rfl
+  simp [rateWithoutRetry] at hbounded
+
 end Admission
 end Rchain

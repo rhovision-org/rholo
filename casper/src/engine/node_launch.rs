@@ -810,7 +810,10 @@ pub async fn apply<
             &shard_id,
         )
         .await;
+        let outcome = boot_outcome(genesis_only, &acquisition);
         write_boot_trace(&BootTrace {
+            kind: "boot".to_string(),
+            stage: "acquisition".to_string(),
             dag_len: repr.dag_set.len(),
             genesis_only,
             store_head,
@@ -835,6 +838,26 @@ pub async fn apply<
                 .ok()
                 .and_then(|certificate| certificate.as_ref())
                 .map(|certificate| certificate.verified.checkpoint.shard_id.clone()),
+            shard_id: shard_id.clone(),
+            served_supporting_stake: acquisition
+                .as_ref()
+                .ok()
+                .and_then(|certificate| certificate.as_ref())
+                .map(|certificate| certificate.verified.supporting_stake),
+            served_total_stake: acquisition
+                .as_ref()
+                .ok()
+                .and_then(|certificate| certificate.as_ref())
+                .map(|certificate| certificate.verified.total_stake),
+            outcome: match outcome {
+                BootOutcome::Genesis => "genesis".to_string(),
+                BootOutcome::Certified => "certified".to_string(),
+                BootOutcome::Refused(_) => "refused".to_string(),
+            },
+            refusal_coordinate: match outcome {
+                BootOutcome::Refused(coordinate) => Some(coordinate.as_str().to_string()),
+                _ => None,
+            },
             accepted: acquisition.as_ref().ok().is_some_and(Option::is_some) || genesis_only,
         });
         let boot_certificate = acquisition?;
@@ -1696,8 +1719,70 @@ struct BootCertificate {
 
 /// **The boot decision as a trace.** The coordinates a boot failure is read in: what the DAG holds,
 /// what the store held, whether a source was configured, what it answered, and what was adopted.
+/// The coordinate a refused boot is missing. The refusal prose names it in the trace; the enum is
+/// what the Lean `BootCoordinate` and the evaluator's predicates range over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BootCoordinate {
+    NoStoredCertificate,
+    FetchFailed,
+    VerifyFailed,
+    ShardMismatch,
+    StoreConflict,
+}
+
+impl BootCoordinate {
+    fn as_str(self) -> &'static str {
+        match self {
+            BootCoordinate::NoStoredCertificate => "no-stored-certificate",
+            BootCoordinate::FetchFailed => "fetch-failed",
+            BootCoordinate::VerifyFailed => "verify-failed",
+            BootCoordinate::ShardMismatch => "shard-mismatch",
+            BootCoordinate::StoreConflict => "store-conflict",
+        }
+    }
+}
+
+/// The boot decision's outcome type. `Genesis` and `Certified` are the two running outcomes;
+/// `Refused` names the coordinate that was missing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BootOutcome {
+    Genesis,
+    Certified,
+    Refused(BootCoordinate),
+}
+
+fn classify_boot_refusal(error: &str) -> BootCoordinate {
+    if error.contains("no checkpoint certificate is stored and the checkpoint source refused") {
+        BootCoordinate::FetchFailed
+    } else if error.contains("failed re-verification")
+        || error.contains("the fetched checkpoint certificate was refused")
+    {
+        BootCoordinate::VerifyFailed
+    } else if error.contains("names shard") {
+        BootCoordinate::ShardMismatch
+    } else if error.contains("conflicts with") {
+        BootCoordinate::StoreConflict
+    } else {
+        BootCoordinate::NoStoredCertificate
+    }
+}
+
+fn boot_outcome(
+    genesis_only: bool,
+    acquisition: &Result<Option<BootCertificate>, String>,
+) -> BootOutcome {
+    match acquisition {
+        Ok(Some(_)) => BootOutcome::Certified,
+        Ok(None) if genesis_only => BootOutcome::Genesis,
+        Ok(None) => BootOutcome::Refused(BootCoordinate::NoStoredCertificate),
+        Err(error) => BootOutcome::Refused(classify_boot_refusal(error)),
+    }
+}
+
 #[derive(Debug, serde::Serialize)]
 struct BootTrace {
+    kind: String,
+    stage: String,
     dag_len: usize,
     genesis_only: bool,
     store_head: Option<String>,
@@ -1706,27 +1791,18 @@ struct BootTrace {
     served_digest: Option<String>,
     served_anchor: Option<String>,
     served_shard: Option<String>,
+    shard_id: String,
+    served_supporting_stake: Option<i128>,
+    served_total_stake: Option<i128>,
+    outcome: String,
+    refusal_coordinate: Option<String>,
     accepted: bool,
 }
 
 /// Write the boot trace when `RNODE_TRACE_DIR` is set (the local claim harness sets it). A write
 /// failure is not a consensus event and is ignored.
 fn write_boot_trace(trace: &BootTrace) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::OnceLock;
-    static DIR: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let Some(dir) =
-        DIR.get_or_init(|| std::env::var_os("RNODE_TRACE_DIR").map(std::path::PathBuf::from))
-    else {
-        return;
-    };
-    let _ = std::fs::create_dir_all(dir);
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    let name = format!("boot-{}-{seq}.json", std::process::id());
-    if let Ok(bytes) = serde_json::to_vec_pretty(trace) {
-        let _ = std::fs::write(dir.join(name), bytes);
-    }
+    crate::trace::write_trace("boot", trace);
 }
 
 /// **Acquire the boot certificate.** A stored head is re-verified; with none, the configured

@@ -169,4 +169,75 @@ theorem the_whole_bonded_partition_is_unsatisfiable :
     calculateFringe (suppOf [0, 1, 2] [0, 1, 2, 3]) bonds4 bonds4 = true := by
   refine ⟨?_, ?_⟩ <;> decide
 
+/-! ## The finality decision as a phase space
+
+The Rust `FinalityReport` (`block-storage/src/dag/liveness.rs`) records the same coordinates this
+structure names: the whole bonded total, the quorum denominator the gate was given, the live
+partition, and the supporting stake the gate computed. A trace is an inhabitant; the evaluator
+recomputes `finalitySafe` from it.
+-/
+
+/-- The coordinates the finality decision reads. -/
+structure FinalityDecision where
+  /-- The whole bonded stake: the denominator safety needs. -/
+  bondedTotal : Nat
+  /-- The denominator the gate actually used. Equal to `bondedTotal` iff the rule is safe. -/
+  quorumTotal : Nat
+  /-- The live partition: who must have seen a candidate. -/
+  partition : List Sender
+  /-- The bonded senders, so partition membership is checkable. -/
+  bondedSenders : List Sender
+  /-- The stake the gate found behind the candidates. -/
+  supporting : Nat
+  /-- Whether the fringe advanced. -/
+  advanced : Bool
+
+/-- **The safe predicate**: the denominator is the whole bonded map, every partition member is
+    bonded, and an advance carries a strict supermajority of that denominator. -/
+def finalitySafe (d : FinalityDecision) : Prop :=
+  d.quorumTotal = d.bondedTotal ∧
+  (∀ v ∈ d.partition, v ∈ d.bondedSenders) ∧
+  (d.advanced = true → isSuperMajority d.supporting d.quorumTotal)
+
+/-- A safe advance is a supermajority of the whole bonded stake. -/
+theorem a_safe_advance_has_a_supermajority (d : FinalityDecision) (h : finalitySafe d)
+    (ha : d.advanced = true) : isSuperMajority d.supporting d.quorumTotal :=
+  h.2.2 ha
+
+/-- A safe decision's denominator is the whole bonded total. -/
+theorem finality_safe_denominator (d : FinalityDecision) (h : finalitySafe d) :
+    d.quorumTotal = d.bondedTotal := h.1
+
+/-- A safe decision's partition is drawn from the bonded senders. -/
+theorem finality_safe_partition (d : FinalityDecision) (h : finalitySafe d) (v : Sender)
+    (hv : v ∈ d.partition) : v ∈ d.bondedSenders := h.2.1 v hv
+
+/-- The outcome type: advance or refuse, total over the input. -/
+inductive FinalityOutcome where
+  | advanced
+  | refused
+
+/-- The total decision function. -/
+def finalityOutcome (d : FinalityDecision) : FinalityOutcome :=
+  if d.advanced then .advanced else .refused
+
+/-- **Totality**: every input has exactly one outcome. -/
+theorem finality_decision_is_total (d : FinalityDecision) :
+    ∃! o : FinalityOutcome, finalityOutcome d = o := by
+  refine ⟨finalityOutcome d, rfl, ?_⟩
+  intro o ho
+  exact ho.symm
+
+/-- **The unsafe witness**: the same 200-stake side that advances against its own 200 denominator
+    is not safe against the bonded 400, and `the_live_denominator_lets_two_sides_finalise` proves
+    the gate really does advance there. -/
+def liveDenominatorWitness : FinalityDecision :=
+  { bondedTotal := 400, quorumTotal := 200, partition := [0, 1],
+    bondedSenders := [0, 1, 2, 3], supporting := 200, advanced := true }
+
+theorem the_live_denominator_is_the_unsafe_witness : ¬ finalitySafe liveDenominatorWitness := by
+  intro h
+  have hden : (200 : Nat) = 400 := h.1
+  exact absurd hden (by decide)
+
 end Rchain

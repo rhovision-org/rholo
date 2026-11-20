@@ -3077,12 +3077,18 @@ def lawsB : List Law := [
       validator that has stopped producing messages stops being required to have seen the cut",
     status := .provedModel,
     declarations := [`Rchain.supermajorities_overlap, `Rchain.bonds4, `Rchain.bondsAB, `Rchain.bondsCD,
-      `Rchain.suppOf, `Rchain.Participation, `Rchain.Delivery, `Rchain.StalenessBound],
+      `Rchain.suppOf, `Rchain.Participation, `Rchain.Delivery, `Rchain.StalenessBound,
+      `Rchain.FinalityDecision, `Rchain.finalitySafe,
+      `Rchain.a_safe_advance_has_a_supermajority, `Rchain.finality_safe_denominator,
+      `Rchain.finality_safe_partition, `Rchain.finality_decision_is_total,
+      `Rchain.the_live_denominator_is_the_unsafe_witness],
     axioms := [],
     rust := ["block-storage/src/dag/liveness.rs", "block-storage/src/dag/finalizer.rs",
       "casper/src/blocks/proposer/proposer.rs"],
     witness := [`Rchain.supermajorities_overlap, `Rchain.the_live_denominator_lets_two_sides_finalise,
-      `Rchain.the_quorum_is_the_whole_bonded_map],
+      `Rchain.the_quorum_is_the_whole_bonded_map, `Rchain.a_safe_advance_has_a_supermajority,
+      `Rchain.finality_safe_denominator, `Rchain.finality_decision_is_total,
+      `Rchain.the_live_denominator_is_the_unsafe_witness],
     falsifiable := some "the arithmetic is general and the counterexample is its instance on one fixture, \
       and the instance is **two-sided on purpose**: `Rchain.the_live_denominator_lets_two_sides_finalise` \
       shows the two disjoint sides each advancing at their own denominator (200 of 200) and both being \
@@ -4749,13 +4755,24 @@ def lawsC : List Law := [
     declarations := [`Rchain.Admission.Pool, `Rchain.Admission.enqueue,
       `Rchain.Admission.legacyAdmit, `Rchain.Admission.an_empty_slot_admits,
       `Rchain.Admission.a_full_pool_refuses,
-      `Rchain.Admission.the_legacy_gate_refuses_an_empty_slot],
+      `Rchain.Admission.the_legacy_gate_refuses_an_empty_slot,
+      `Rchain.Admission.AdmissionDecision, `Rchain.Admission.admissionSafe,
+      `Rchain.Admission.a_safe_refusal_is_bounded_and_visible,
+      `Rchain.Admission.a_safe_refusal_is_not_a_server_error,
+      `Rchain.Admission.admission_decision_is_total,
+      `Rchain.Admission.a_rate_refusal_without_a_retry_is_unsafe],
     axioms := [],
-    rust := ["casper/src/dag.rs", "casper/src/pool.rs", "node/src/resources/fallback.rs"],
-    rustWitness := [],
+    rust := ["casper/src/dag.rs", "casper/src/pool.rs", "node/src/resources/fallback.rs",
+      "node/src/web/http.rs", "node/src/api/grpc/mod.rs"],
+    rustWitness := [
+      "casper/tests/admission_trace.rs:a_count_refusal_replays_to_the_same_class",
+      "node/src/api/grpc/mod.rs:the_ingress_guard_refuses_over_allowance_as_resource_exhausted"],
     witness := [`Rchain.Admission.an_empty_slot_admits,
       `Rchain.Admission.a_full_pool_refuses,
-      `Rchain.Admission.the_legacy_gate_refuses_an_empty_slot],
+      `Rchain.Admission.the_legacy_gate_refuses_an_empty_slot,
+      `Rchain.Admission.a_safe_refusal_is_bounded_and_visible,
+      `Rchain.Admission.admission_decision_is_total,
+      `Rchain.Admission.a_rate_refusal_without_a_retry_is_unsafe],
     falsifiable := "The live height-1688 state: an empty pool, a free slot, `throttled`, and a 503. \
       `the_legacy_gate_refuses_an_empty_slot` is that state proved; deleting the resource parameter \
       from `enqueue` is the change that would make it unprovable. A rule that admitted only above the \
@@ -6432,13 +6449,30 @@ def lawsC : List Law := [
     status := .provedModel,
     declarations := [`Rchain.Sync.ReplayState.linked_iff_replay_has_a_result,
       `Rchain.Sync.ReplayState.replay_reconstructs_every_produced_state,
-      `Rchain.Sync.ReplayState.a_block_whose_pre_state_is_not_the_previous_post_is_refused],
+      `Rchain.Sync.ReplayState.a_block_whose_pre_state_is_not_the_previous_post_is_refused,
+      `Rchain.Sync.ReplayState.StateDecision, `Rchain.Sync.ReplayState.stateSafe,
+      `Rchain.Sync.ReplayState.a_safe_state_decision_is_the_derived_state,
+      `Rchain.Sync.ReplayState.same_parents_same_state,
+      `Rchain.Sync.ReplayState.state_decision_is_total,
+      `Rchain.Sync.ReplayState.an_accepted_mismatch_is_the_unsafe_witness,
+      `Rchain.Sync.ReplayState.TargetShape, `Rchain.Sync.ReplayState.targetShapeSafe,
+      `Rchain.Sync.ReplayState.an_anchored_target_is_the_only_accepted_shape,
+      `Rchain.Sync.ReplayState.a_whole_fringe_target_is_refused,
+      `Rchain.Sync.ReplayState.target_shape_is_total],
     axioms := [],
     rust := ["casper/src/engine/recovery.rs", "node/src/runtime/audit.rs"],
     rustWitness := [
-      "casper/tests/recovery_replay.rs:independent_recovery_replays_epoch_boundaries_and_refuses_forged_claims"],
+      "casper/tests/recovery_replay.rs:independent_recovery_replays_epoch_boundaries_and_refuses_forged_claims",
+      "casper/src/engine/recovery.rs:an_anchored_target_is_the_only_accepted_shape"],
     witness := [`Rchain.Sync.ReplayState.linked_iff_replay_has_a_result,
-      `Rchain.Sync.ReplayState.a_block_whose_pre_state_is_not_the_previous_post_is_refused],
+      `Rchain.Sync.ReplayState.a_block_whose_pre_state_is_not_the_previous_post_is_refused,
+      `Rchain.Sync.ReplayState.a_safe_state_decision_is_the_derived_state,
+      `Rchain.Sync.ReplayState.same_parents_same_state,
+      `Rchain.Sync.ReplayState.state_decision_is_total,
+      `Rchain.Sync.ReplayState.an_accepted_mismatch_is_the_unsafe_witness,
+      `Rchain.Sync.ReplayState.an_anchored_target_is_the_only_accepted_shape,
+      `Rchain.Sync.ReplayState.a_whole_fringe_target_is_refused,
+      `Rchain.Sync.ReplayState.target_shape_is_total],
     falsifiable := "Break a block's pre-state so it is not the previous post-state: \
       `a_block_whose_pre_state_is_not_the_previous_post_is_refused` fails, and replay would have to \
       fall back to a downloaded value. Give the audit a third external root and the no-fallback half \
@@ -6676,7 +6710,15 @@ def lawsC : List Law := [
       `Rchain.Sync.Anchor.a_genesis_anchor_is_the_pinned_genesis,
       `Rchain.Sync.Anchor.a_checkpoint_anchors_the_fringe_state,
       `Rchain.Sync.Anchor.a_checkpoint_root_is_not_a_blocks_post_state,
-      `Rchain.Sync.Anchor.a_foreign_root_is_not_accepted],
+      `Rchain.Sync.Anchor.a_foreign_root_is_not_accepted,
+      `Rchain.Sync.Anchor.BootEvidence, `Rchain.Sync.Anchor.BootOutcome,
+      `Rchain.Sync.Anchor.BootCoordinate, `Rchain.Sync.Anchor.bootOutcome,
+      `Rchain.Sync.Anchor.bootSafe,
+      `Rchain.Sync.Anchor.only_an_acquisition_runs_a_non_genesis_boot,
+      `Rchain.Sync.Anchor.a_genesis_boot_is_genesis_only,
+      `Rchain.Sync.Anchor.a_refusal_names_a_missing_coordinate,
+      `Rchain.Sync.Anchor.boot_outcome_is_total,
+      `Rchain.Sync.Anchor.an_accepted_boot_below_quorum_is_the_unsafe_witness],
     axioms := [],
     rust := ["casper/src/engine/anchor.rs", "casper/src/engine/node_launch.rs"],
     rustWitness := [
@@ -6688,7 +6730,12 @@ def lawsC : List Law := [
     witness := [`Rchain.Sync.Anchor.running_is_anchored,
       `Rchain.Sync.Anchor.a_checkpoint_anchors_the_fringe_state,
       `Rchain.Sync.Anchor.a_checkpoint_root_is_not_a_blocks_post_state,
-      `Rchain.Sync.Anchor.a_foreign_root_is_not_accepted],
+      `Rchain.Sync.Anchor.a_foreign_root_is_not_accepted,
+      `Rchain.Sync.Anchor.only_an_acquisition_runs_a_non_genesis_boot,
+      `Rchain.Sync.Anchor.a_genesis_boot_is_genesis_only,
+      `Rchain.Sync.Anchor.a_refusal_names_a_missing_coordinate,
+      `Rchain.Sync.Anchor.boot_outcome_is_total,
+      `Rchain.Sync.Anchor.an_accepted_boot_below_quorum_is_the_unsafe_witness],
     falsifiable := "Give `Accepted` a public constructor that omits the root equality and \
       `a_foreign_root_is_not_accepted` fails; let the failed-sync transition reach `running` and \
       `a_refused_sync_is_not_running` fails; identify the checkpoint root with the anchor block's \
@@ -6860,7 +6907,9 @@ def lawsC : List Law := [
       `Rchain.Sync.Claim.a_mismatched_claim_is_refused,
       `Rchain.Sync.Claim.a_reproduced_claim_is_accepted,
       `Rchain.Sync.Claim.an_unchained_claim_is_refused,
-      `Rchain.Sync.Claim.a_chained_claim_extends],
+      `Rchain.Sync.Claim.a_chained_claim_extends,
+      `Rchain.Sync.ReplayState.TargetShape,
+      `Rchain.Sync.ReplayState.an_anchored_target_is_the_only_accepted_shape],
     axioms := [],
     rust := ["models/src/casper/protocol/audit.rs", "casper/src/audit.rs",
       "node/src/runtime/audit.rs"],
@@ -6933,7 +6982,11 @@ def lawsC : List Law := [
       `Rchain.MergeScope.a_finalised_block_is_not_a_fork,
       `Rchain.MergeScope.conflict_scope_is_seen_by_the_merge_fringe,
       `Rchain.MergeScope.guardedForkBlocks,
-      `Rchain.MergeScope.finalising_merge_has_no_forks],
+      `Rchain.MergeScope.finalising_merge_has_no_forks,
+      `Rchain.MergeDecision.Decision, `Rchain.MergeDecision.Outcome,
+      `Rchain.MergeDecision.Safe, `Rchain.MergeDecision.decide,
+      `Rchain.MergeDecision.safe_merge_preserves_every_finalised_deploy,
+      `Rchain.MergeDecision.merge_decision_is_total],
     axioms := [],
     rust := ["casper/src/merging.rs", "casper/src/multi_parent_casper.rs",
       "rspace/src/merger/state_change.rs", "rspace/src/merger/state_change_merger.rs"],
@@ -6948,7 +7001,8 @@ def lawsC : List Law := [
       "casper/src/merging.rs:a_conflict_merge_still_names_a_non_descendant_fork",
       "casper/src/merging.rs:the_finalised_floor_refuses_a_rejected_finalised_host",
       "casper/src/multi_parent_casper.rs:disagreeing_claims_are_refused_not_tie_broken",
-      "casper/src/multi_parent_casper.rs:a_certified_base_wins_over_disagreeing_claims"],
+      "casper/src/multi_parent_casper.rs:a_certified_base_wins_over_disagreeing_claims",
+      "casper/tests/trace_replay.rs:an_agreeing_trace_replays_to_the_agreed_base"],
     witness := [`Rchain.FinalizedMerge.law113_falsifier,
       `Rchain.FinalizedMerge.the_same_fixture_survives_under_the_law,
       `Rchain.FinalizedMerge.pickClaim_mem,
@@ -6965,7 +7019,10 @@ def lawsC : List Law := [
       `Rchain.MergeScope.a_finalised_block_is_not_in_the_conflict_scope,
       `Rchain.MergeScope.a_finalised_block_is_not_a_fork,
       `Rchain.MergeScope.conflict_scope_is_seen_by_the_merge_fringe,
-      `Rchain.MergeScope.finalising_merge_has_no_forks],
+      `Rchain.MergeScope.finalising_merge_has_no_forks,
+      `Rchain.MergeDecision.safe_merge_preserves_every_finalised_deploy,
+      `Rchain.MergeDecision.merge_decision_is_total,
+      `Rchain.MergeDecision.an_unguarded_decision_can_reject_a_finalised_deploy],
     falsifiable := "`law113_mutant` applies the **rejected** half of the scope as well; \
       `law113_falsifier` exhibits a rejected chain's removal dropping a datum the kept slice preserved. \
       The code applies `to_merge` alone, so the mutation is `compute_merged_state(&conflict_set)`. \
@@ -7296,6 +7353,55 @@ def lawsC : List Law := [
       fringe state — `current_checkpoint`'s 400 is this precondition, and the restore test's \
       readiness poll waits it out. The certificate's quorum is Law 104's; the quorum's honesty is \
       Law 85's." },
+
+  { number := 118, layer := "Storage",
+    statement := "**A build opens only a store format it can read.** The data directory carries a \
+      `store-format` marker; the gate maps the marker and this build's version to one of five \
+      outcomes — stamp an absent marker, accept this build's version, advance an older one, or \
+      refuse a newer or unreadable one. The decision is total, and a marker newer than the build is \
+      never opened: reading a format the binary does not know is how a downgrade silently becomes \
+      an advance. The refusal happens **before any store is opened**, so an old build cannot migrate \
+      or read a newer store; a stamp is written durably before the directory is trusted.",
+    status := .provedModel,
+    formal := `Rchain.Casper.StoreFormat.law118_statement,
+    mutant := `Rchain.Casper.StoreFormat.law118_mutant,
+    falsifier := `Rchain.Casper.StoreFormat.law118_falsifier,
+    declarations := [`Rchain.Casper.StoreFormat.Marker,
+      `Rchain.Casper.StoreFormat.Decision,
+      `Rchain.Casper.StoreFormat.decide,
+      `Rchain.Casper.StoreFormat.opens,
+      `Rchain.Casper.StoreFormat.storeSafe,
+      `Rchain.Casper.StoreFormat.decide_is_safe,
+      `Rchain.Casper.StoreFormat.a_newer_store_is_never_opened,
+      `Rchain.Casper.StoreFormat.store_decision_is_total,
+      `Rchain.Casper.StoreFormat.opening_a_newer_store_is_the_unsafe_witness,
+      `Rchain.Casper.StoreFormat.law118_statement,
+      `Rchain.Casper.StoreFormat.law118,
+      `Rchain.Casper.StoreFormat.law118_mutant,
+      `Rchain.Casper.StoreFormat.law118_falsifier],
+    axioms := [],
+    rust := ["node/src/runtime/node_runtime.rs", "casper/src/storage.rs"],
+    rustWitness := [
+      "node/src/runtime/node_runtime.rs:a_store_from_a_newer_build_is_refused_and_this_build_stamps_what_it_opens",
+      "node/src/runtime/node_runtime.rs:a_marker_is_written_before_the_directory_is_trusted",
+      "casper/src/storage.rs:an_older_format_is_an_advance",
+      "casper/src/storage.rs:a_newer_format_is_refused",
+      "casper/tests/store_format_trace.rs:every_recorded_format_trace_replays_to_its_decision"],
+    witness := [`Rchain.Casper.StoreFormat.decide_is_safe,
+      `Rchain.Casper.StoreFormat.a_newer_store_is_never_opened,
+      `Rchain.Casper.StoreFormat.store_decision_is_total,
+      `Rchain.Casper.StoreFormat.opening_a_newer_store_is_the_unsafe_witness,
+      `Rchain.Casper.StoreFormat.law118_falsifier],
+    falsifiable := "Open any present marker (`openAny`): a store written by format 5 under a build \
+      that writes 4 is accepted, which is `law118_mutant` and `law118_falsifier` exhibits it. In \
+      Rust, `decide_store_format(Some(\"5\"), 4)` is `RefuseNewer`, and the probe refuses before \
+      `block_store::create`; deleting the probe makes the store open first.",
+    note := "The marker is not a schema hash and does not derive a version; the number is a promise \
+      about the rows and is bumped by hand (`casper/src/storage.rs`). The gate cannot tell an \
+      absent marker from a pre-marker store, so an absent marker is stamped with this build's \
+      version and read — the model records that as `Stamp`, not as `Advance`. The \
+      v3→v4 disposition-ledger copy is the migration that makes `Advance` safe; it is Laws 66/68 \
+      and `block_disposition`'s own tests, not this law." },
 
 ]
 

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
-use rchain_block_storage::dag::finalizer::{Finalizer, Message};
+use rchain_block_storage::dag::finalizer::{Finalizer, Message, NoAdvance};
 use rchain_block_storage::dag::liveness;
 use rchain_block_storage::dag::message_map;
 use rchain_block_storage::dag::representation::RewindPlan;
@@ -321,6 +321,10 @@ pub enum BaseError {
 /// written for the claim harness so a failure is a point in the model rather than a log line.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MergeTrace {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub parents: Vec<String>,
     pub mode: String,
     pub merge_fringe: Vec<String>,
     pub final_fringe: Vec<String>,
@@ -369,6 +373,7 @@ fn hex_set(set: &BTreeSet<BlockHash>) -> Vec<String> {
 
 fn merge_trace(
     mode: MergeMode,
+    parents: &BTreeSet<BlockHash>,
     merge_fringe: &BTreeSet<BlockHash>,
     final_fringe: &BTreeSet<BlockHash>,
     base_source: &BaseSource,
@@ -402,6 +407,8 @@ fn merge_trace(
     let scope_partition_ok = outcome.report.conflict_chains
         == outcome.report.kept_chains + outcome.report.rejected_chains;
     MergeTrace {
+        kind: "merge".to_string(),
+        parents: hex_set(parents),
         mode: match mode {
             MergeMode::Fringe => "fringe".to_string(),
             MergeMode::Conflict => "conflict".to_string(),
@@ -445,20 +452,91 @@ fn merge_trace(
 /// Write the trace when the node was started with `RNODE_TRACE_DIR` (the local claim harness does;
 /// production does not). A write failure is not a consensus event and is ignored.
 fn write_merge_trace(trace: &MergeTrace) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::OnceLock;
-    static DIR: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let Some(dir) =
-        DIR.get_or_init(|| std::env::var_os("RNODE_TRACE_DIR").map(std::path::PathBuf::from))
-    else {
-        return;
+    crate::trace::write_trace("merge", trace);
+}
+
+/// **The finality decision as a trace.** The whole bonded map (the quorum's denominator), the live
+/// partition the rule derived, the gate's own supporting stake, the previous and new fringe, and the
+/// refusal when it did not advance. RC-2's safety is a property of this input point.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct FinalityTrace {
+    pub kind: String,
+    pub bonded_total: i128,
+    pub live_total: i128,
+    pub quorum_total: i128,
+    pub supporting: i128,
+    pub full_partitions: usize,
+    pub candidates: usize,
+    pub supported_tip: i64,
+    pub partition: Vec<String>,
+    pub bonded_senders: Vec<String>,
+    pub prev_fringe: Vec<String>,
+    pub new_fringe: Vec<String>,
+    pub advanced: bool,
+    pub reason_kind: Option<String>,
+}
+
+fn sender_hex(validator: &Validator) -> String {
+    rchain_shared::base16::encode(validator.as_bytes())
+}
+
+fn finality_trace(
+    prev_fringe: &BTreeSet<Message<BlockHash, Validator>>,
+    new_fringe: &Option<BTreeSet<Message<BlockHash, Validator>>>,
+    report: &liveness::FinalityReport<Validator>,
+) -> FinalityTrace {
+    let bonded_total: i128 = report
+        .bonded
+        .values()
+        .map(|stake| i128::from(i64::from(*stake)))
+        .sum();
+    let live_total: i128 = report
+        .live
+        .values()
+        .map(|stake| i128::from(i64::from(*stake)))
+        .sum();
+    let advanced = new_fringe.is_some();
+    let (reason_kind, supporting, quorum_total) = match &report.reason {
+        None => (
+            None,
+            report
+                .numbers
+                .as_ref()
+                .map_or(0, |numbers| numbers.supporting),
+            report
+                .numbers
+                .as_ref()
+                .map_or(bonded_total, |numbers| numbers.total),
+        ),
+        Some(NoAdvance::Coverage { .. }) => (Some("coverage".to_string()), 0, bonded_total),
+        Some(NoAdvance::Support {
+            supporting, total, ..
+        }) => (Some("support".to_string()), *supporting, *total),
+        Some(NoAdvance::AlreadyPublished) => {
+            (Some("already-published".to_string()), 0, bonded_total)
+        }
     };
-    let _ = std::fs::create_dir_all(dir);
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    let name = format!("merge-{}-{seq}.json", std::process::id());
-    if let Ok(bytes) = serde_json::to_vec_pretty(trace) {
-        let _ = std::fs::write(dir.join(name), bytes);
+    FinalityTrace {
+        kind: "finality".to_string(),
+        bonded_total,
+        live_total,
+        quorum_total,
+        supporting,
+        full_partitions: report.numbers.as_ref().map_or(0, |n| n.full_partitions),
+        candidates: report.numbers.as_ref().map_or(0, |n| n.candidates),
+        supported_tip: i64::from(report.supported_tip),
+        partition: report.live.keys().map(sender_hex).collect(),
+        bonded_senders: report.bonded.keys().map(sender_hex).collect(),
+        prev_fringe: prev_fringe
+            .iter()
+            .map(|message| message.id.to_hex())
+            .collect(),
+        new_fringe: new_fringe
+            .as_ref()
+            .map(|fringe| fringe.iter().map(|message| message.id.to_hex()).collect())
+            .unwrap_or_default(),
+        advanced,
+        reason_kind,
     }
 }
 
@@ -740,8 +818,14 @@ where
     // cannot finalise alone (#70). This is the same call the creator makes, which is what keeps a
     // block's `fringe` and this node's derivation of it the same value.
     let finalizer = Finalizer::new(msg_map);
-    let (_parent_fringe, new_fringe_opt, no_advance) =
-        liveness::calculate_finalization_detailed(&finalizer, &parents, &bonds_map);
+    let (_parent_fringe, new_fringe_opt, no_advance, finality_report) =
+        liveness::calculate_finalization_reported(&finalizer, &parents, &bonds_map);
+    if crate::trace::trace_enabled() {
+        crate::trace::write_trace(
+            "finality",
+            &finality_trace(&_parent_fringe, &new_fringe_opt, &finality_report),
+        );
+    }
     let new_fringe_hashes: Option<BTreeSet<BlockHash>> =
         new_fringe_opt.map(|f| f.iter().map(|m| m.id).collect());
 
@@ -787,6 +871,7 @@ where
                 .map_err(|e| format!("the fringe merge was refused: {e}"))?;
             write_merge_trace(&merge_trace(
                 MergeMode::Fringe,
+                parent_hashes,
                 fringe,
                 &prev_fringe_hashes,
                 &base_source,
@@ -870,6 +955,7 @@ where
         .await?;
         write_merge_trace(&merge_trace(
             MergeMode::Conflict,
+            parent_hashes,
             parent_hashes,
             &new_fringe,
             &base_source,

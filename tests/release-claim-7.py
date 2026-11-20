@@ -53,6 +53,11 @@ def fixture() -> dict:
                 "agreement": True, "refusal": None,
                 "upgrade": {"heads_agree": True, "marker_present": True},
             },
+            "format_traces": [{
+                "kind": "format", "stage": "probe", "present": str(STORE_FORMAT_VERSION + 1),
+                "build": STORE_FORMAT_VERSION, "on_disk": STORE_FORMAT_VERSION + 1,
+                "decision": "refuse_newer", "stamped": False, "durable": False,
+            }],
         },
     }
 
@@ -83,6 +88,7 @@ def check(record: dict) -> tuple[str, list[str]]:
         problems.append("the upgraded node did not reach the same finalised head")
     if upgrade.get("marker_present") is not True:
         problems.append("the marker is absent after the upgrade")
+    problems.extend(common.phase_space_reading(observations, bool(problems)))
     return common.evaluate(record, problems)
 
 
@@ -171,9 +177,12 @@ def _migration(record: dict, out: Path) -> None:
 def _downgrade(record: dict, out: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="rc7-store-") as scratch:
         (Path(scratch) / "store-format").write_text(f"{STORE_FORMAT_VERSION + 1}\n")
+        trace_dir = Path(scratch) / "traces"
+        trace_dir.mkdir(mode=0o777, exist_ok=True)
         # The image entrypoint is `rnode`; `--profile` is a top-level option before the
         # subcommand. Repeating the binary name makes the CLI read it as a subcommand.
         command = ["docker", "run", "--rm", "-v", f"{scratch}:/data",
+                   "-e", "RNODE_TRACE_DIR=/data/traces",
                    "rnode:local", "--profile", "docker", "run", "--data-dir", "/data"]
         try:
             result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True,
@@ -181,6 +190,12 @@ def _downgrade(record: dict, out: Path) -> None:
             stderr = result.stdout + result.stderr
         except subprocess.TimeoutExpired as error:
             stderr = (error.stdout or "") + (error.stderr or "")
+        rows = record["observations"].setdefault("format_traces", [])
+        for path in sorted(trace_dir.glob("format-*.json")):
+            try:
+                rows.append({"file": path.name, **json.loads(path.read_text())})
+            except ValueError:
+                continue
     (out / "downgrade.log").write_text(stderr)
     expected = f"written by a newer build (store format {STORE_FORMAT_VERSION + 1}"
     record["observations"]["downgrade"] = {
@@ -195,6 +210,7 @@ def _mixed(record: dict, out: Path, old_image: str, keep: bool) -> None:
                            grpc_base=44402, node_images={3: old_image})
     try:
         devnet.up()
+        _collect_format_traces(devnet, out / "traces" / "mixed", record)
         target = devnet.target()
         marker = "release-claim:" + str(time.time_ns())
         value = common.MARKER_VALUE
@@ -247,6 +263,7 @@ def _mixed(record: dict, out: Path, old_image: str, keep: bool) -> None:
             "the upgraded node reaches the same finalised head",
             lambda: len({upgraded_target.finalized_head(i) for i in range(4)}) == 1,
             timeout=600)
+        _collect_format_traces(upgraded, out / "traces" / "upgraded", record)
         head_height, head_hash = upgraded_target.finalized_head(3)
         present = common.marker_present(upgraded_target.probe(3, marker, head_hash), value)
         record["observations"]["mixed"]["upgrade"] = {
@@ -255,6 +272,22 @@ def _mixed(record: dict, out: Path, old_image: str, keep: bool) -> None:
     finally:
         if not keep:
             devnet.down()
+
+
+def _collect_format_traces(devnet, dest: Path, record: dict) -> None:
+    """Copy each node's `FormatTrace` files before its container is torn down."""
+    rows = record["observations"].setdefault("format_traces", [])
+    for i in range(4):
+        node_dest = dest / f"node-{i}"
+        try:
+            devnet.copy_traces(i, node_dest)
+        except Exception:  # noqa: BLE001 - an old image may not write traces
+            continue
+        for path in sorted(node_dest.glob("format-*.json")):
+            try:
+                rows.append({"validator": i, "file": path.name, **json.loads(path.read_text())})
+            except ValueError:
+                continue
 
 
 def _binary_sha(container: str):

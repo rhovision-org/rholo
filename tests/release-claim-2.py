@@ -50,6 +50,16 @@ def fixture() -> dict:
                 for v in range(4)
             ],
             "regression": [],
+            "finality_traces": [{
+                "kind": "finality", "validator": 0,
+                "bonded_total": 400, "live_total": 400, "quorum_total": 400,
+                "supporting": 300, "full_partitions": 3, "candidates": 3,
+                "supported_tip": 40,
+                "partition": ["aa", "bb", "cc", "dd"],
+                "bonded_senders": ["aa", "bb", "cc", "dd"],
+                "prev_fringe": [], "new_fringe": ["aa"], "advanced": True,
+                "reason_kind": None,
+            }],
         },
     }
 
@@ -107,6 +117,7 @@ def check(record: dict) -> tuple[str, list[str]]:
                     f"{row.get('hash')} held finalised by {row.get('validator')}")
     if observations.get("regression"):
         problems.append(f"finalised regression observed: {observations['regression']}")
+    problems.extend(common.phase_space_reading(observations, bool(problems)))
     return common.evaluate(record, problems)
 
 
@@ -180,7 +191,7 @@ def run(argv: list[str]) -> int:
             "harness_error": None if result.returncode == 0 else
             (result.stdout + result.stderr)[-1500:],
         })
-        return _containment(devnet.target(), record, out)
+        return _containment(devnet.target(), record, out, devnet)
     except Exception as error:  # noqa: BLE001
         common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
         return common.write_record(out, record)[1]
@@ -196,7 +207,7 @@ def _read_json(path: Path):
         return None
 
 
-def _containment(target, record: dict, out: Path) -> int:
+def _containment(target, record: dict, out: Path, devnet=None) -> int:
     observations = record["observations"]
     try:
         first = [target.finalized_head(i) for i in range(len(target.nodes))]
@@ -228,6 +239,18 @@ def _containment(target, record: dict, out: Path) -> int:
                                 "answers": answers})
         observations["containment"] = containment
         observations["regression"] = regression
+        if devnet is not None:
+            traces = []
+            for i in range(len(target.nodes)):
+                dest = out / "traces" / f"validator-{i}"
+                devnet.copy_traces(i, dest)
+                for path in sorted(dest.glob("finality-*.json")):
+                    try:
+                        row = json.loads(path.read_text())
+                    except ValueError:
+                        continue
+                    traces.append({"validator": i, "file": path.name, **row})
+            observations["finality_traces"] = traces
     except Exception as error:  # noqa: BLE001
         common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
         return common.write_record(out, record)[1]
