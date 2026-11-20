@@ -30,6 +30,7 @@ def trace(**overrides):
         "fork_blocks": [],
         "rejected_deploys": [],
         "rejected_hosts": [],
+        "rejected_user_hosts": [],
         "report": {"conflict_chains": 1, "kept_chains": 0, "rejected_chains": 1,
                    "fork_rejected_chains": 0, "final_scope_rejected_chains": 0},
         # Deliberately the node's own labels, which the evaluator must not trust.
@@ -144,20 +145,20 @@ class MergeTests(unittest.TestCase):
 
     def test_a_rejected_finalising_host_makes_ledger_ok_false(self):
         row = trace(conflict_scope=["ef" * 32], final_scope=["aa" * 32],
-                    rejected_hosts=["ef" * 32], rejected_deploys=["ab" * 32])
+                    rejected_hosts=["ef" * 32], rejected_user_hosts=["ef" * 32])
         report, code = evaluate_tool.evaluate(record([row]))
         self.assertEqual(code, 1)
         self.assertIn("ledger_ok", report["results"][0]["false"])
 
     def test_a_final_scope_only_rejection_is_not_a_ledger_failure(self):
         row = trace(conflict_scope=["aa" * 32], final_scope=["ef" * 32],
-                    rejected_hosts=["ef" * 32], rejected_deploys=["ab" * 32])
+                    rejected_hosts=["ef" * 32], rejected_user_hosts=["ef" * 32])
         report, _ = evaluate_tool.evaluate(record([row]))
         self.assertEqual(report["results"][0]["false"], [])
 
-    def test_a_rejection_with_no_deploy_id_is_not_a_ledger_failure(self):
+    def test_a_system_chain_rejection_is_not_a_ledger_failure(self):
         row = trace(conflict_scope=["ef" * 32], rejected_hosts=["ef" * 32],
-                    rejected_deploys=[])
+                    rejected_user_hosts=[])
         report, _ = evaluate_tool.evaluate(record([row]))
         self.assertEqual(report["results"][0]["false"], [])
 

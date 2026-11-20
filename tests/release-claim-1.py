@@ -61,7 +61,7 @@ def _fixture_baseline(arm: str = "local") -> dict:
                 "claims": [{"height": 3, "id": "ab" * 32, "hash": "cd" * 32}],
                 "certified_base": None, "base_source": "agreed",
                 "conflict_scope": ["ef" * 32], "final_scope": ["ef" * 32],
-                "fork_blocks": [], "rejected_hosts": [],
+                "fork_blocks": [], "rejected_hosts": [], "rejected_user_hosts": [],
                 "report": {"conflict_chains": 1, "kept_chains": 0, "rejected_chains": 1},
             }],
         },

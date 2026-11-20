@@ -516,9 +516,13 @@ pub struct MergeOutcome {
     pub state: Blake2b256Hash,
     pub rejected_deploys: BTreeSet<Vec<u8>>,
     /// **The hosts of the chains this merge rejected.** `rejected_deploys` names the deploy ids; this
-    /// names the blocks they were hosted in, which is what [`finalised_floor`] needs: a fringe merge
-    /// must not reject a chain hosted in a block it is finalising.
+    /// names the blocks they were hosted in.
     pub rejected_hosts: BTreeSet<BlockHash>,
+    /// **The hosts of rejected chains that carry a user deploy.** A CloseBlock system chain
+    /// (`blockHash ++ 02`) is not a user deploy (C344); its rejection is not a finalised-write loss.
+    /// [`finalised_floor`] reads this set, so a fringe merge is refused only when a user deploy is
+    /// dropped.
+    pub rejected_user_hosts: BTreeSet<BlockHash>,
     pub report: MergeReport,
 }
 
@@ -2322,6 +2326,10 @@ impl MergeScope {
         // **The fork rule, applied to the answer.** Every chain of a non-descendant conflict block is
         // rejected, and so is every chain that depends on one. The search cannot keep them, whatever
         // its cost minimisation chose; this is a structural decision, not a conflict to resolve.
+        // **The fork rule, applied to the answer.** Every chain of a non-descendant conflict block
+        // is rejected, and so is every chain that depends on one. The search cannot keep them,
+        // whatever its cost minimisation chose; this is a structural decision, not a conflict to
+        // resolve.
         if !fork_chains.is_empty() {
             let forced = rchain_sdk::dag::merging::with_dependencies(&fork_chains, &dependency_map);
             to_merge = to_merge.difference(&forced).cloned().collect();
@@ -2387,6 +2395,19 @@ impl MergeScope {
         let rejected_hosts: BTreeSet<BlockHash> = rejected
             .iter()
             .map(|c| BlockHash::new(*c.host_block.as_bytes()))
+            .collect();
+        // A user deploy rejection is the finalised-write loss; a close chain's rejection is not
+        // (C344). The floor and the trace read this set, while `rejected_hosts` keeps the full ledger.
+        let rejected_user_hosts: BTreeSet<BlockHash> = rejected
+            .iter()
+            .filter(|chain| {
+                chain
+                    .deploys_with_cost
+                    .iter()
+                    .next()
+                    .is_some_and(|deploy| !is_system_deploy_id(&deploy.id))
+            })
+            .map(|chain| BlockHash::new(*chain.host_block.as_bytes()))
             .collect();
         let report = MergeReport {
             conflict_chains: conflict_set.len(),
@@ -2456,6 +2477,7 @@ impl MergeScope {
             state: new_state,
             rejected_deploys: rejected_ids,
             rejected_hosts,
+            rejected_user_hosts,
             report,
         })
     }
