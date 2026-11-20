@@ -137,23 +137,27 @@ ratchet has an independent floor (`MINIMUM_MET = 47` in the builder).
 ## What this is, and is not
 
 It is a **record measurement**: a `PASS` says an observation document satisfies the principle.
-It also judges each release campaign's record. It is not a gate promotion by itself: a gate still
-needs the witness/control/evidence/pin binding, and the 12 campaigns need their operator evidence
-and criterion PASS. The gate register is 47 current-build gates, all met; the campaign tracker is
-12 open campaigns.
+It is not a gate promotion by itself: a gate still needs the witness/control/evidence/pin binding.
+The gate register is 47 current-build gates, all met.
 
-It does not replace the campaign. A multi-host host-loss arm, a measured soak and a signed
+**Superseded for the release set, 2026-11-20.** The 12 campaigns are seven release claims in
+`spec/audit/release-claims.json`, each with one executable test under `tests/`. A claim's status is
+`pass`, `fail` or `not run`, measured from the newest committed record by the test's own
+`check(record)`; there is no authored status and no `owed` observation. The criteria below remain
+as historical adapters, not as the release tracker.
+
+It does not replace the operator run. A multi-host host-loss arm, a measured soak and a signed
 transfer still need operators and hardware. What changes is that their output is a standard
-observation document that any reviewer or CI job can evaluate; the owner is accountable for the
-evidence, not for the test logic. For the live G584 gates, `tools/gate-collect.py` writes
-`observations.json` and `evidence-pack pack` copies it to `raw/observations.json`; the observation's
-`record.dir` names the committed evidence record (a scratch `target/` run fails the CI re-run).
+observation document any reviewer can evaluate; the owner is accountable for the evidence, not for
+the test logic. For the live G584 gates, `tools/gate-collect.py` writes `observations.json` and
+`evidence-pack pack` copies it to `raw/observations.json`; the observation's `record.dir` names the
+committed evidence record (a scratch `target/` run fails the CI re-run).
 
-`G584-G2/G3/G5` keep their `human-attestation` campaign rows. The executable criterion is the
-campaign's measurement binding; changing a `witness_kind` is a separate governance decision.
-`G428-M3`'s declared witness is `tools/m3-join-chain.py::check_chain`; the campaign stays open until
-its off-host record exists. (`G428-M5` is neither a gate nor a campaign.) The layer records the real
-adapters and does not silently rewrite those rows.
+`G584-G2/G3/G5` keep their `human-attestation` rows in the historical criteria. The executable
+criterion is the campaign's measurement binding; changing a `witness_kind` is a separate governance
+decision. `G428-M3`'s declared witness is `tools/m3-join-chain.py::check_chain`; the off-host
+record remains an out-of-scope observation. (`G428-M5` is neither a gate nor a claim.) The layer
+records the real adapters and does not silently rewrite those rows.
 
 ## Verification
 
@@ -173,8 +177,11 @@ python3 tools/check-mainnet-gates.py --check        # 47 gates, all met, 0 unres
 python3 tools/check-mainnet-gates.py --run-controls --controls python  # 2 CONTROLLED, 45 SKIPPED
 python3 tools/check-mainnet-gates.py --run-controls                    # 47 CONTROLLED
 python3 tools/check-mainnet-gates.py --assert-closeable   # exits 0 (register closed)
-python3 tools/check-release-campaigns.py --assert-ready   # exits 3 (12 campaigns open)
+python3 -m unittest discover -s tests -p test_release_campaigns.py -v
+python3 tools/check-release-campaigns.py --assert-ready   # exits 3 until every claim passes
+python3 tools/release-check.py list                       # measured pass/fail/not run per claim
 ```
 
-Expected after the 2026-11-19 split: 47 current-build gates, all met; 12 open release campaigns;
-the gate register closes and release remains blocked.
+Expected after the 2026-11-20 replacement: 47 current-build gates, all met; seven release claims,
+each with an existing test and a measured status; the gate register closes and release remains
+blocked.

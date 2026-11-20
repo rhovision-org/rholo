@@ -1,0 +1,4 @@
+{
+  "verdict": "FAIL",
+  "error": "validator 1 did not restart with a new bootId"
+}

@@ -1,0 +1,61 @@
+{
+  "claim_id": "RC-6",
+  "claim_title": "Join and audit",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-20T11:39:24Z",
+  "harness": {
+    "command": [
+      "/home/patrick/miniforge3/bin/python3",
+      "/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/n457-mature-join-arm.py",
+      "--supported-recovery",
+      "--min-height",
+      "28",
+      "--timeout",
+      "900",
+      "--out",
+      "target/release-claims/local/RC-6/join"
+    ],
+    "exit_code": 0,
+    "name": "n457-mature-join-arm",
+    "out": "target/release-claims/local/RC-6/join"
+  },
+  "locality": "local-devnet",
+  "observations": {
+    "audit": {
+      "blocks": null,
+      "checkpointDigest": null,
+      "claimedRoot": null,
+      "derivedRoot": null,
+      "error": "Configuration error: `run` subcommand is required to build a node configuration",
+      "exit": 1,
+      "verdict": null
+    },
+    "chain_problems": [],
+    "derived_root_matches": false,
+    "digest_matches": false,
+    "join_result": "pass",
+    "joiner_checkpoint": {
+      "anchor": "9dec31e60a5036b9756d4159f5c25eeb7b4a6f640fb0cf56e858dc809d4d1a63",
+      "anchorHeight": 27,
+      "digest": "7008aa5e97434c214bc603efadad9f8a964930e4ea023e02aaacb72a14948083",
+      "kind": "checkpoint"
+    }
+  },
+  "preconditions": [],
+  "provenance": {
+    "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
+    "devnet_prefix": "n457join",
+    "image_id": "24856783d5e505ffc782f6cdbd21f0dd61fdae705409ae86a4e53a3ba2e0b3b6",
+    "profile": "local-4",
+    "source_dirty": true,
+    "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a"
+  },
+  "reasons": [
+    "rnode audit exited 1: Configuration error: `run` subcommand is required to build a node configuration"
+  ],
+  "schema": 1,
+  "started_at": "2026-11-20T11:38:03Z",
+  "verdict": "fail"
+}

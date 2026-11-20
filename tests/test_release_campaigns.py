@@ -1,15 +1,20 @@
-"""The release claims are observable behaviours, not gates and not campaigns.
+"""The seven release claims each carry an executable test; status is measured, not authored.
 
-A gate is a boolean test of the current build. A release claim is one observable
-node behaviour with one falsifier and one control, re-runnable on the standard
-local devnet or on public testnet-4. The 12 old campaign rows were deleted; their
-fate is mapped in `release-claims.json`'s `superseded` table.
+A gate is a boolean test of the current build. A release claim is one observable node behaviour
+with one test under `tests/`, re-runnable on the standard local devnet or on `testnet-4`. There is
+no `open`/`owed`/`closed` vocabulary: a claim's status is `pass`, `fail` or `not run`, derived from
+the newest committed run record by that test's own `check(record)`.
+
+This suite is offline. It proves the tracker's schema, that every named test exists and passes its
+fixture, that a decisive mutation of each fixture fails, and that status derivation recomputes the
+verdict instead of trusting the stored one.
 """
 import copy
 import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -18,9 +23,24 @@ CHECKER_SPEC = importlib.util.spec_from_file_location(
     "release_claims", ROOT / "tools/check-release-campaigns.py")
 checker = importlib.util.module_from_spec(CHECKER_SPEC)
 CHECKER_SPEC.loader.exec_module(checker)
+BUILDER_SPEC = importlib.util.spec_from_file_location(
+    "build_mainnet_gates", ROOT / "tools/build-mainnet-gates.py")
+builder = importlib.util.module_from_spec(BUILDER_SPEC)
+BUILDER_SPEC.loader.exec_module(builder)
 SOURCE = json.loads((ROOT / "spec/audit/release-claims.json").read_text())
 TRACKER = json.loads((ROOT / "spec/audit/release-campaigns.json").read_text())
 REGISTER = json.loads((ROOT / "spec/audit/mainnet-gates.json").read_text())
+
+MUTATIONS = {
+    "RC-1": lambda record: record["observations"]["finalised"][0].update(marker_present=False),
+    "RC-2": lambda record: record["observations"]["containment"][0]["answers"][0].update(
+        finalized=False),
+    "RC-3": lambda record: record["observations"]["blocks"][0].update(disagreement=True),
+    "RC-4": lambda record: record["observations"]["post_heads"][0].update(marker_present=False),
+    "RC-5": lambda record: record["observations"].update(verdict="FAIL"),
+    "RC-6": lambda record: record["observations"]["audit"].update(verdict="DISAGREE"),
+    "RC-7": lambda record: record["observations"]["downgrade"].update(refused=False),
+}
 
 
 class FakeBuilder:
@@ -43,26 +63,117 @@ class ClaimTests(unittest.TestCase):
     def inspect(self):
         return checker.validate(self.payload, FakeBuilder(self.payload["claims"]))
 
-    def test_the_tracker_validates_and_no_claim_is_closed(self):
+    def test_the_tracker_validates(self):
         out = self.inspect()
         self.assertEqual(out["claims"], 7)
         self.assertEqual(out["old"], 12)
-        self.assertFalse(any(status == "closed" for status in out["statuses"].values()))
 
-    def test_the_tracker_is_current(self):
+    def test_no_claim_authors_a_status_or_a_missing_observation(self):
+        for row in self.payload["claims"]:
+            for forbidden in ("status", "missing", "sub_observations", "tool"):
+                self.assertNotIn(forbidden, row, row["id"])
+
+    def test_every_test_exists_and_defines_the_contract(self):
+        for row in self.payload["claims"]:
+            with self.subTest(claim=row["id"]):
+                module = checker.load_test(row)
+                self.assertEqual(module.CLAIM_ID, row["id"])
+                for name in ("run", "check", "fixture"):
+                    self.assertTrue(callable(getattr(module, name)), name)
+
+    def test_every_test_parses_the_help_surface(self):
+        for row in self.payload["claims"]:
+            with self.subTest(claim=row["id"]):
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / row["test"]), "--help"],
+                    capture_output=True, text=True, timeout=60, cwd=ROOT)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_every_fixture_passes_and_a_decisive_mutation_fails(self):
+        for row in self.payload["claims"]:
+            with self.subTest(claim=row["id"]):
+                module = checker.load_test(row)
+                record = module.fixture()
+                verdict, reasons = module.check(record)
+                self.assertEqual(verdict, "pass", reasons)
+                mutated = copy.deepcopy(record)
+                MUTATIONS[row["id"]](mutated)
+                verdict, reasons = module.check(mutated)
+                self.assertEqual(verdict, "fail", (row["id"], reasons))
+
+    def test_check_is_deterministic(self):
+        for row in self.payload["claims"]:
+            module = checker.load_test(row)
+            self.assertEqual(module.check(module.fixture()),
+                             module.check(module.fixture()))
+
+    def test_a_missing_test_is_refused(self):
+        self.claim()["test"] = "tests/release-claim-does-not-exist.py"
+        with self.assertRaisesRegex(checker.ClaimError, "does not exist"):
+            self.inspect()
+
+    def test_a_test_without_check_is_refused(self):
+        with tempfile.NamedTemporaryFile(
+                "w", suffix=".py", dir=ROOT / "target", delete=False) as handle:
+            handle.write("CLAIM_ID = 'RC-1'\ndef run(argv):\n    return 0\ndef fixture():\n"
+                         "    return {'claim_id': 'RC-1'}\n")
+            path = Path(handle.name)
+        try:
+            self.claim()["test"] = str(path.relative_to(ROOT))
+            with self.assertRaisesRegex(checker.ClaimError, "check"):
+                self.inspect()
+        finally:
+            path.unlink()
+
+    def test_a_wrong_claim_id_is_refused(self):
+        with tempfile.NamedTemporaryFile(
+                "w", suffix=".py", dir=ROOT / "target", delete=False) as handle:
+            handle.write("CLAIM_ID = 'RC-2'\n")
+            path = Path(handle.name)
+        try:
+            self.claim()["test"] = str(path.relative_to(ROOT))
+            with self.assertRaisesRegex(checker.ClaimError, "CLAIM_ID"):
+                self.inspect()
+        finally:
+            path.unlink()
+
+    def test_status_is_derived_from_a_record_not_authored(self):
+        row = next(row for row in SOURCE["claims"] if row["id"] == "RC-1")
+        module = checker.load_test(row)
+        good = module.fixture()
+        good["finished_at"] = "2026-11-20T10:00:00Z"
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "rc1" / "claim.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps(good))
+            derived = builder.derive_claim(row, roots=(Path(root),))
+            self.assertEqual(derived["local"]["status"], "pass")
+            self.assertEqual(derived["public"]["status"], "not run")
+            # A stored pass whose observations fail is a fail, never a pass.
+            bad = copy.deepcopy(good)
+            MUTATIONS["RC-1"](bad)
+            bad["verdict"] = "pass"
+            path.write_text(json.dumps(bad))
+            derived = builder.derive_claim(row, roots=(Path(root),))
+            self.assertEqual(derived["local"]["status"], "fail")
+            path.unlink()
+            derived = builder.derive_claim(row, roots=(Path(root),))
+            self.assertEqual(derived["local"]["status"], "not run")
+
+    def test_the_tracker_is_current_and_not_ready(self):
         result = subprocess.run(
             [sys.executable, str(ROOT / "tools/check-release-campaigns.py"), "--check"],
-            capture_output=True, text=True, timeout=300, cwd=ROOT)
+            capture_output=True, text=True, timeout=600, cwd=ROOT)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("RELEASE_CLAIMS_OPEN", result.stdout)
+        self.assertIn("RELEASE_CLAIMS_NOT_READY", result.stdout)
 
     def test_assert_ready_exits_three(self):
         result = subprocess.run(
             [sys.executable, str(ROOT / "tools/check-release-campaigns.py"),
              "--assert-ready"],
-            capture_output=True, text=True, timeout=300, cwd=ROOT)
+            capture_output=True, text=True, timeout=600, cwd=ROOT)
         self.assertEqual(result.returncode, 3)
-        self.assertIn("RELEASE_CLAIMS_OPEN", result.stdout)
+        self.assertIn("RELEASE_CLAIMS_NOT_READY", result.stdout)
 
     def test_no_claim_is_in_the_gate_register(self):
         register_ids = {row["id"] for row in REGISTER["gates"]}
@@ -93,18 +204,6 @@ class ClaimTests(unittest.TestCase):
     def test_both_rerun_commands_are_required(self):
         self.claim()["rerun"]["local"] = ""
         with self.assertRaisesRegex(checker.ClaimError, "re-run commands"):
-            self.inspect()
-
-    def test_an_owed_observation_must_name_what_is_missing(self):
-        sub = next(s for s in self.claim()["sub_observations"] if s["status"] == "owed")
-        sub.pop("missing")
-        with self.assertRaisesRegex(checker.ClaimError, "missing description"):
-            self.inspect()
-
-    def test_an_open_observation_must_name_a_tool(self):
-        sub = next(s for s in self.claim()["sub_observations"] if s["status"] == "open")
-        sub.pop("tool")
-        with self.assertRaisesRegex(checker.ClaimError, "needs a tool"):
             self.inspect()
 
     def test_the_floor_holds(self):

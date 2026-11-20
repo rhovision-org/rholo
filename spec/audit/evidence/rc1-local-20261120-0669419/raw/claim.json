@@ -1,0 +1,48 @@
+{
+  "claim_id": "RC-1",
+  "claim_title": "Truthful settlement",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-20T10:32:58Z",
+  "harness": {
+    "command": [
+      "/home/patrick/miniforge3/bin/python3",
+      "/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py",
+      "--validators",
+      "4",
+      "--window",
+      "240",
+      "--out",
+      "target/release-claims/local/RC-1/drill",
+      "--local"
+    ],
+    "exit_code": 1,
+    "name": "consensus-acceptance-drill",
+    "out": "target/release-claims/local/RC-1/drill"
+  },
+  "locality": "local-devnet",
+  "observations": {
+    "control_absent_before": false,
+    "deploy_id": null,
+    "drill_error": "r+cZzQLCy7c30/1/eO+m4Xgjvr+2g0338VsAuynSfnojmNOQQFFyXZelWqDXuzU6VIzcYUE40QwUpm2AUo3OYveubA0YZ5d1GA/Gz7pmoMi38cAtmFlHbwWcusR5m8tQuPvdtRJtBJyTOqnlH1dlT9/yzhkGQ=\n=== END ZLIB target/release-claims/local/RC-1/drill/causal/node-3.log ===\nTraceback (most recent call last):\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 487, in <module>\n    main()\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 466, in main\n    drill.run()\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 434, in run\n    final = self.wait(\"finalized marker retained through two further epoch boundaries\",\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 317, in wait\n    value = condition()\n            ^^^^^^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 435, in <lambda>\n    lambda: self.finalized_marker(target, required=True))\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 366, in finalized_marker\n    raise RuntimeError(f\"validator {i} lost or changed the marker in finalized post-state\")\nRuntimeError: validator 0 lost or changed the marker in finalized post-state\n",
+    "drill_result": "fail",
+    "marker": null,
+    "value": 42
+  },
+  "preconditions": [],
+  "provenance": {
+    "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
+    "devnet_prefix": "acceptance",
+    "image_id": "e070229923d997d47079249dc847a9ed23ed5466f557aa603f5badce23f80908",
+    "profile": "local-4",
+    "source_dirty": true,
+    "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a"
+  },
+  "reasons": [
+    "the acceptance drill failed: r+cZzQLCy7c30/1/eO+m4Xgjvr+2g0338VsAuynSfnojmNOQQFFyXZelWqDXuzU6VIzcYUE40QwUpm2AUo3OYveubA0YZ5d1GA/Gz7pmoMi38cAtmFlHbwWcusR5m8tQuPvdtRJtBJyTOqnlH1dlT9/yzhkGQ=\n=== END ZLIB target/release-claims/local/RC-1/drill/causal/node-3.log ===\nTraceback (most recent call last):\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 487, in <module>\n    main()\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 466, in main\n    drill.run()\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 434, in run\n    final = self.wait(\"finalized marker retained through two further epoch boundaries\",\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 317, in wait\n    value = condition()\n            ^^^^^^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 435, in <lambda>\n    lambda: self.finalized_marker(target, required=True))\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 366, in finalized_marker\n    raise RuntimeError(f\"validator {i} lost or changed the marker in finalized post-state\")\nRuntimeError: validator 0 lost or changed the marker in finalized post-state\n"
+  ],
+  "schema": 1,
+  "started_at": "2026-11-20T10:32:07Z",
+  "verdict": "fail"
+}

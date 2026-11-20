@@ -1,0 +1,45 @@
+{
+  "claim_id": "RC-5",
+  "claim_title": "Overload refusal",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-20T11:21:25Z",
+  "harness": {
+    "command": [
+      "/home/patrick/miniforge3/bin/python3",
+      "/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/m2-pressure.py",
+      "check",
+      "--record",
+      "target/release-claims/local/RC-5/record",
+      "--locality",
+      "local-devnet"
+    ],
+    "exit_code": 0,
+    "name": "m2-pressure",
+    "out": "target/release-claims/local/RC-5/record"
+  },
+  "locality": "local-devnet",
+  "observations": {
+    "check_exit": 0,
+    "check_output": "",
+    "not_processed": [],
+    "pressure": "target/release-claims/local/RC-5/record/pressure.json",
+    "verdict": "PASS"
+  },
+  "preconditions": [],
+  "provenance": {
+    "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
+    "binary_source_sha": "91cde81905af7b660c23e19e7db6493500eda592",
+    "binary_version": "rnode 0.1.0 (91cde81905af7b660c23e19e7db6493500eda592)",
+    "devnet_prefix": "m2cap",
+    "image_id": "146de07c41d4a368346229654b8de6042bc38bf3438bbabc3edbf99573c060ed",
+    "profile": "local-1",
+    "source_dirty": true,
+    "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a"
+  },
+  "reasons": [],
+  "schema": 1,
+  "started_at": "2026-11-20T11:20:56Z",
+  "verdict": "pass"
+}

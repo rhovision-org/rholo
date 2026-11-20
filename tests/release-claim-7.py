@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""RC-7 — upgrade compatibility: populated-store migration, downgrade refusal, mixed fleet.
+
+Test: `python3 tools/release-check.py run --claim RC-7 --env local [--old-image rnode:old]`
+
+Three arms:
+
+1. the G520 populated-store copy/rollback/restart drill;
+2. a store stamped with a store-format version this build does not know must be refused;
+3. two binaries in one network: the block produced during the window must have the same state
+   triples on both, or the old node must refuse on the consensus path; after the swap the upgraded
+   node must reach the same finalised head.
+
+The mixed arm needs a separately built prior image. Without one it is `not run`, not a fabricated
+pass; the other two arms still run and are recorded.
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+_spec = importlib.util.spec_from_file_location(
+    "release_claim_common", ROOT / "tests" / "release_claim_common.py")
+common = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(common)
+
+CLAIM_ID = "RC-7"
+TITLE = "Upgrade compatibility"
+STORE_FORMAT_VERSION = 4  # casper/src/storage.rs; the test stamps one higher
+
+
+def fixture() -> dict:
+    return {
+        "schema": 1, "claim_id": CLAIM_ID, "claim_title": TITLE,
+        "environment": "local", "locality": "local-devnet",
+        "provenance": {"source_sha": "0" * 40, "binary_sha256": "1" * 64},
+        "preconditions": [], "verdict": "pass", "reasons": [], "errors": [],
+        "harness": {"name": "populated-store-migration-drill", "exit_code": 0},
+        "observations": {
+            "migration_result": "PASS",
+            "downgrade": {"refused": True, "stderr": "written by a newer build (store format 5"},
+            "mixed": {
+                "old_image": "rnode:old", "old_binary_sha256": "2" * 64,
+                "new_binary_sha256": "3" * 64,
+                "agreement": True, "refusal": None,
+                "upgrade": {"heads_agree": True, "marker_present": True},
+            },
+        },
+    }
+
+
+def check(record: dict) -> tuple[str, list[str]]:
+    if record.get("verdict") == "not run":
+        return "not run", list(record.get("preconditions") or record.get("reasons") or [])
+    problems: list[str] = []
+    observations = record.get("observations")
+    if not isinstance(observations, dict):
+        return "fail", ["observations: missing or not an object"]
+    if observations.get("migration_result") != "PASS":
+        problems.append(f"the populated-store migration drill returned "
+                        f"{observations.get('migration_result')!r}")
+    downgrade = observations.get("downgrade")
+    if not isinstance(downgrade, dict) or downgrade.get("refused") is not True:
+        problems.append("a store written by a newer build was not refused")
+    mixed = observations.get("mixed")
+    if not isinstance(mixed, dict):
+        problems.append("mixed: missing or not an object")
+        return "fail", problems
+    if mixed.get("old_binary_sha256") == mixed.get("new_binary_sha256"):
+        problems.append("the mixed arm did not run two distinct binaries")
+    if mixed.get("agreement") is not True and not mixed.get("refusal"):
+        problems.append("the mixed fleet neither agreed on the block nor refused on the consensus path")
+    upgrade = mixed.get("upgrade") or {}
+    if upgrade.get("heads_agree") is not True:
+        problems.append("the upgraded node did not reach the same finalised head")
+    if upgrade.get("marker_present") is not True:
+        problems.append("the marker is absent after the upgrade")
+    return common.evaluate(record, problems)
+
+
+def run(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--env", choices=("local", "public"), required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--public-manifest")
+    parser.add_argument("--keep", action="store_true")
+    parser.add_argument("--old-image", default=os.environ.get("RNODE_OLD_IMAGE"))
+    args = parser.parse_args(argv)
+    record = common.new_record(CLAIM_ID, TITLE, args.env,
+                               "local-devnet" if args.env == "local" else "public-live")
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    if args.env == "public":
+        manifest = common.load_manifest(args.public_manifest)
+        if not manifest:
+            return common.not_run(out, record, "no --public-manifest for the public fleet")[1]
+        supplied = manifest.get("upgrade_record")
+        if not supplied:
+            return common.not_run(
+                out, record,
+                "the public run needs the operator's migration and mixed-version record")[1]
+        observations = json.loads(Path(supplied).read_text())
+        record["observations"] = observations
+        record["provenance"] = manifest.get("provenance") or {}
+        verdict, reasons = check(record)
+        common.finish(record, verdict, reasons)
+        return common.write_record(out, record)[1]
+
+    try:
+        record["provenance"] = _provenance()
+        _migration(record, out)
+        _downgrade(record, out)
+        if not args.old_image:
+            record["preconditions"].append(
+                "no --old-image/RNODE_OLD_IMAGE: the mixed-version arm needs a separately built "
+                "prior image")
+            common.finish(record, "not run", list(record["preconditions"]))
+            return common.write_record(out, record)[1]
+        _mixed(record, out, args.old_image, args.keep)
+    except Exception as error:  # noqa: BLE001
+        common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
+        return common.write_record(out, record)[1]
+    verdict, reasons = check(record)
+    common.finish(record, verdict, reasons)
+    return common.write_record(out, record)[1]
+
+
+def _provenance() -> dict:
+    def run(*args: str):
+        try:
+            return subprocess.check_output(args, cwd=ROOT, text=True,
+                                           stderr=subprocess.DEVNULL).strip()
+        except Exception:
+            return None
+    image = run("docker", "inspect", "-f", "{{.Id}}", "rnode:local")
+    binary = run("docker", "run", "--rm", "--entrypoint", "sha256sum", "rnode:local",
+                 "/usr/local/bin/rnode")
+    return {"source_sha": run("git", "rev-parse", "HEAD"),
+            "source_dirty": bool(run("git", "status", "--porcelain")),
+            "binary_sha256": binary.split()[0] if binary else None,
+            "image_id": image, "profile": "local-4", "devnet_prefix": "rc7"}
+
+
+def _migration(record: dict, out: Path) -> None:
+    migration_out = out / "migration"
+    command = [sys.executable, str(ROOT / "tools" / "populated-store-migration-drill.py"),
+               "--gate", "--out", str(migration_out)]
+    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=3600)
+    (out / "migration.log").write_text(result.stdout + result.stderr)
+    doc = _read_json(migration_out / "result.json") or {}
+    record["harness"] = {"name": "populated-store-migration-drill", "command": command,
+                         "exit_code": result.returncode, "out": str(migration_out)}
+    record["observations"]["migration_result"] = doc.get("result") or (
+        "PASS" if result.returncode == 0 else "FAIL")
+    record["observations"]["migration_reasons"] = doc.get("reasons") or []
+
+
+def _downgrade(record: dict, out: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="rc7-store-") as scratch:
+        (Path(scratch) / "store-format").write_text(f"{STORE_FORMAT_VERSION + 1}\n")
+        # The image entrypoint is `rnode`; `--profile` is a top-level option before the
+        # subcommand. Repeating the binary name makes the CLI read it as a subcommand.
+        command = ["docker", "run", "--rm", "-v", f"{scratch}:/data",
+                   "rnode:local", "--profile", "docker", "run", "--data-dir", "/data"]
+        try:
+            result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True,
+                                    timeout=120)
+            stderr = result.stdout + result.stderr
+        except subprocess.TimeoutExpired as error:
+            stderr = (error.stdout or "") + (error.stderr or "")
+    (out / "downgrade.log").write_text(stderr)
+    expected = f"written by a newer build (store format {STORE_FORMAT_VERSION + 1}"
+    record["observations"]["downgrade"] = {
+        "refused": expected in stderr,
+        "stderr": stderr[-2000:],
+        "command": command,
+    }
+
+
+def _mixed(record: dict, out: Path, old_image: str, keep: bool) -> None:
+    devnet = common.Devnet("rc7mix", validators=4, http_base=44403, admin_base=44405,
+                           grpc_base=44402, node_images={3: old_image})
+    try:
+        devnet.up()
+        target = devnet.target()
+        marker = "release-claim:" + str(time.time_ns())
+        value = common.MARKER_VALUE
+        deploy_id = devnet.deploy(f'@{json.dumps(marker)}!({value})')
+        common.wait_until(
+            "the mixed fleet finalises the marker on every validator",
+            lambda: all(common.marker_present(
+                target.probe(i, marker, target.finalized_head(i)[1]), value)
+                for i in range(4)), timeout=360)
+        height, block_hash = target.finalized_head(0)
+        old_sha = _binary_sha(devnet.node(3))
+        new_sha = _binary_sha(devnet.node(0))
+        agreement, refusal = False, None
+        try:
+            old_info = target.block_info(3, block_hash)
+            new_info = target.block_info(0, block_hash)
+            triple = lambda row: (row.get("preStateHash"), row.get("postStateHash"),
+                                  tuple(row.get("rejectedDeploys") or []))
+            agreement = triple(old_info) == triple(new_info)
+            record["observations"]["mixed_block"] = {
+                "height": height, "hash": block_hash,
+                "old": triple(old_info), "new": triple(new_info)}
+        except Exception as error:  # noqa: BLE001
+            refusal = f"{type(error).__name__}: {error}"
+        logs = subprocess.run(["docker", "logs", devnet.node(3)], text=True,
+                              capture_output=True, timeout=60)
+        lines = [line for line in (logs.stdout + logs.stderr).splitlines()
+                 if any(word in line.lower() for word in
+                        ("reject", "refus", "fork", "equivocat", "incompatible"))]
+        if lines and not agreement:
+            refusal = "\n".join(lines[-20:])
+        record["observations"]["mixed"] = {
+            "old_image": old_image, "old_binary_sha256": old_sha,
+            "new_binary_sha256": new_sha, "deploy_id": deploy_id,
+            "agreement": agreement, "refusal": refusal,
+            "upgrade": {"heads_agree": False, "marker_present": False},
+        }
+        # Rolling swap: recreate validator 3 on the current image, keeping its store.
+        subprocess.run(["docker", "rm", "-f", devnet.node(3)], text=True,
+                       capture_output=True, timeout=120)
+        upgraded = common.Devnet("rc7mix", validators=4, http_base=44403, admin_base=44405,
+                                 grpc_base=44402)
+        result = upgraded.shell("up", "--validators", "4", timeout=900)
+        (out / "upgrade.log").write_text(result.stdout + result.stderr)
+        common.wait_until(
+            "every validator answers after the swap",
+            lambda: all(upgraded._ready(i) for i in range(4)), timeout=360)
+        upgraded_target = upgraded.target()
+        common.wait_until(
+            "the upgraded node reaches the same finalised head",
+            lambda: len({upgraded_target.finalized_head(i) for i in range(4)}) == 1,
+            timeout=600)
+        head_height, head_hash = upgraded_target.finalized_head(3)
+        present = common.marker_present(upgraded_target.probe(3, marker, head_hash), value)
+        record["observations"]["mixed"]["upgrade"] = {
+            "heads_agree": len({upgraded_target.finalized_head(i) for i in range(4)}) == 1,
+            "marker_present": present, "height": head_height, "hash": head_hash}
+    finally:
+        if not keep:
+            devnet.down()
+
+
+def _binary_sha(container: str):
+    try:
+        return subprocess.check_output(
+            ["docker", "exec", container, "sha256sum", "/usr/local/bin/rnode"],
+            text=True, stderr=subprocess.DEVNULL).split()[0]
+    except Exception:
+        return None
+
+
+def _read_json(path: Path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+if __name__ == "__main__":
+    raise SystemExit(run(sys.argv[1:]))

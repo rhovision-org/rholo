@@ -1,0 +1,47 @@
+{
+  "arms": [],
+  "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 4374,
+      "kind": "json",
+      "path": "raw/claim.json",
+      "sha256": "81bf4abdedffcb59003d480d7bcdaa0a6f965d73bfb141a93ecf92563b159553"
+    },
+    {
+      "bytes": 691,
+      "kind": "jsonl",
+      "path": "raw/decisive-events.jsonl",
+      "sha256": "55d14982b3a824859c661bf5fdfd7c98c2b25f9de38a310f7175e1e90a1f7eba"
+    },
+    {
+      "bytes": 19545,
+      "kind": "log",
+      "path": "raw/drill-tail.log",
+      "sha256": "aa9ae0fc06500310e0d16af908cd2e36e02e22712758f963766e3143d823bb03"
+    },
+    {
+      "bytes": 76258,
+      "kind": "gz",
+      "path": "raw/observations.jsonl.gz",
+      "sha256": "3929a33b5750b6e678934cbf17129ca8b13304bc29bc422d139d43a4aeedc00d"
+    }
+  ],
+  "gate_id": "RC-1",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-20T12:04:56+00:00",
+    "tool": "evidence-pack",
+    "version": 2
+  },
+  "redactions": [],
+  "reference": null,
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a",
+  "verdict": "FAIL"
+}

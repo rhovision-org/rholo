@@ -498,26 +498,81 @@ def build() -> dict:
     }
 
 
-def claim_status(row: dict) -> str:
-    """A claim is closed only when every sub-observation is closed; owed beats open."""
-    statuses = [sub.get("status") for sub in row.get("sub_observations") or []]
-    if statuses and all(status == "closed" for status in statuses):
-        return "closed"
-    if "owed" in statuses:
-        return "owed"
-    return "open"
+EVIDENCE = AUDIT / "evidence"
+ENVIRONMENTS = ("local", "public")
 
 
-def campaigns() -> dict:
-    """The release claims: observable node behaviours with one falsifier and one control.
+def claim_module(row: dict):
+    """Import a claim's test module; it carries run/check/fixture/CLAIM_ID."""
+    path = ROOT / row["test"]
+    spec = importlib.util.spec_from_file_location(
+        "release_claim_" + row["id"].lower().replace("-", "_"), path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def claim_records(roots=(EVIDENCE,)):
+    """Every claim.json under the given roots, newest last by `finished_at`."""
+    found = []
+    for root in roots:
+        if not Path(root).exists():
+            continue
+        for path in sorted(Path(root).rglob("claim.json")):
+            try:
+                record = json.loads(path.read_text())
+            except (OSError, ValueError):
+                continue
+            if isinstance(record, dict) and record.get("claim_id"):
+                found.append((path, record))
+    return found
+
+
+def derive_claim(row: dict, roots=(EVIDENCE,)) -> dict:
+    """The claim's status per environment, from the newest record and its own predicate.
+
+    There is no authored status. A record whose stored verdict says `pass` but whose predicate
+    refutes it is a `fail`: the tracker measures the node, not the file.
+    """
+    module = claim_module(row)
+    derived = {}
+    for environment in ENVIRONMENTS:
+        candidates = [(path, record) for path, record in claim_records(roots)
+                      if record.get("claim_id") == row["id"]
+                      and record.get("environment") == environment]
+        if not candidates:
+            derived[environment] = {"status": "not run", "record": None, "reasons": []}
+            continue
+        path, record = max(candidates, key=lambda pair: str(pair[1].get("finished_at") or ""))
+        try:
+            verdict, reasons = module.check(record)
+        except Exception as error:  # noqa: BLE001 - a broken predicate is a fail
+            verdict, reasons = "fail", [f"{type(error).__name__}: {error}"]
+        if record.get("verdict") == "not run":
+            verdict = "not run"
+        if record.get("verdict") == "pass" and verdict != "pass":
+            verdict = "fail"
+            reasons = list(reasons) + ["the record says pass but its predicate refutes it"]
+        derived[environment] = {
+            "status": verdict,
+            "record": str(path.relative_to(ROOT)) if Path(path).is_relative_to(ROOT) else str(path),
+            "reasons": list(reasons),
+            "finished_at": record.get("finished_at"),
+            "source_sha": (record.get("provenance") or {}).get("source_sha"),
+            "binary_sha256": (record.get("provenance") or {}).get("binary_sha256"),
+        }
+    return derived
+
+
+def campaigns(roots=(EVIDENCE,)) -> dict:
+    """The release claims: observable node behaviours, each with an existing test.
 
     A gate is a boolean test of the current build. A release claim is a product
     behaviour that is re-runnable on the standard local devnet or on public
-    testnet-4. The 12 old campaign rows are deleted; their fate is in
-    `release-claims.json`'s `superseded` table.
+    testnet-4. The status is measured from committed run records; nothing is authored.
     """
     document = json.loads(CLAIMS.read_text())
-    require(document.get("schema") == 1, "release-claims schema must be 1")
+    require(document.get("schema") == 2, "release-claims schema must be 2")
     rows = document.get("claims")
     require(isinstance(rows, list) and len(rows) >= CLAIM_MINIMUM,
             f"only {len(rows) if isinstance(rows, list) else 0} release claims; "
@@ -525,8 +580,7 @@ def campaigns() -> dict:
     ids = [row.get("id") for row in rows]
     require(len(ids) == len(set(ids)), "release claim ids must be unique")
     required = ("title", "claim", "pass_condition", "fail_condition", "observable",
-                "negative_control", "environment", "rerun", "tool",
-                "sub_observations", "owner")
+                "negative_control", "environment", "rerun", "test", "owner")
     for row in rows:
         ident = row.get("id")
         for field in required:
@@ -535,32 +589,23 @@ def campaigns() -> dict:
                 f"{ident}: both environments are required")
         require(row["rerun"].get("local") and row["rerun"].get("public"),
                 f"{ident}: both re-run commands are required")
-        subs = row["sub_observations"]
-        require(isinstance(subs, list) and subs,
-                f"{ident}: at least one sub-observation is required")
-        for sub in subs:
-            require(sub.get("id") and sub.get("name"),
-                    f"{ident}: every sub-observation needs an id and a name")
-            require(sub.get("status") in ("open", "owed", "closed"),
-                    f"{ident}/{sub.get('id')}: bad status")
-            if sub["status"] == "open":
-                require(sub.get("tool"),
-                        f"{ident}/{sub.get('id')}: an open observation needs a tool")
-            if sub["status"] == "owed":
-                require(sub.get("missing"),
-                        f"{ident}/{sub.get('id')}: an owed observation needs a missing description")
+        test = ROOT / row["test"]
+        require(test.is_file(), f"{ident}: test {row['test']} does not exist")
     superseded = document.get("superseded")
     require(isinstance(superseded, list) and superseded,
             "the superseded list must map the old rows")
+    rendered = []
+    for row in rows:
+        rendered.append({**row, "status": derive_claim(row, roots)})
     return {
-        "schema": 1,
-        "generated": "2026-11-19",
+        "schema": 2,
+        "generated": "2026-11-20",
         "source": "spec/audit/release-claims.json",
         "review": document.get("source_review"),
         "rule": document.get("rule"),
-        "campaigns": rows,
+        "campaigns": rendered,
         "superseded": superseded,
-        "missing": document.get("missing") or [],
+        "out_of_scope": document.get("out_of_scope") or [],
     }
 
 
@@ -569,29 +614,35 @@ def render_campaigns_md(document: dict) -> str:
         text = "" if value is None else str(value)
         return text.replace("|", "\\|").replace("\n", " ")
 
+    def state(row: dict, environment: str) -> str:
+        entry = (row.get("status") or {}).get(environment) or {"status": "not run"}
+        status = entry.get("status") or "not run"
+        pin = (entry.get("source_sha") or "")[:7]
+        return f"**{status}**" + (f" `{pin}`" if pin and status != "not run" else "")
+
     lines = [
         "# Release claims",
         "",
         "Emitted from `spec/audit/release-claims.json` by `tools/build-mainnet-gates.py`.",
         "",
         "**These are not gates.** A gate is a boolean test of the current build. A release claim",
-        "is one observable node behaviour with one falsifier and one control, re-runnable on the",
-        "standard local devnet or on `testnet-4`. The 12 old campaign rows are deleted; their fate",
-        "is in the `superseded` table at the end.",
+        "is one observable node behaviour with one executable test, re-runnable on the standard",
+        "local devnet or on `testnet-4`. A claim's status is `pass`, `fail` or `not run`: it is",
+        "measured from that environment's newest committed run record by re-running the test's",
+        "pure `check(record)`. No status is authored, and a claim without an existing test is",
+        "refused. The 12 old campaign rows are deleted; their fate is in the `superseded` table.",
         "",
         f"- generated: {document['generated']}",
         f"- claims: {len(document['campaigns'])}",
         f"- review: `{document.get('review')}`",
         "",
-        "| claim | status | local | public | owner |",
+        "| claim | local | public | test | owner |",
         "|---|---|---|---|---|",
     ]
     for row in document["campaigns"]:
-        env = row["environment"]
         lines.append(
-            f"| `{cell(row['id'])}` — {cell(row['title'])} | **{claim_status(row)}** | "
-            f"{cell(env['local'])[:70]} | {cell(env['public'])[:70]} | "
-            f"{cell(row['owner'])[:40]} |")
+            f"| `{cell(row['id'])}` — {cell(row['title'])} | {state(row, 'local')} | "
+            f"{state(row, 'public')} | `{cell(row['test'])}` | {cell(row['owner'])[:40]} |")
     lines.extend(["", "---", ""])
     for row in document["campaigns"]:
         lines.extend([
@@ -607,6 +658,8 @@ def render_campaigns_md(document: dict) -> str:
             "",
             f"**Control.** {row['negative_control']}",
             "",
+            f"**Test.** `{row['test']}`",
+            "",
             f"**Local.** {row['environment']['local']}",
             "",
             f"**Public.** {row['environment']['public']}",
@@ -615,12 +668,14 @@ def render_campaigns_md(document: dict) -> str:
             "",
             f"**Re-run (public).** `{row['rerun']['public']}`",
             "",
-            f"**Tool.** {row['tool']}",
-            "",
         ])
-        for sub in row["sub_observations"]:
-            detail = sub.get("tool") if sub["status"] == "open" else sub.get("missing") or ""
-            lines.append(f"- `{sub['id']}` {sub['name']} — **{sub['status']}** — {detail}")
+        for environment in ENVIRONMENTS:
+            entry = (row.get("status") or {}).get(environment) or {"status": "not run"}
+            detail = entry.get("record") or "no committed run record"
+            lines.append(f"- **{environment}:** {entry.get('status')} — {detail}")
+            for reason in (entry.get("reasons") or [])[:6]:
+                text = " ".join(str(reason).split())
+                lines.append(f"  - {text[:500]}")
         if row.get("supersedes"):
             lines.extend(["", f"**Supersedes.** {', '.join(row['supersedes'])}"])
         if row.get("does_not_claim"):
@@ -636,13 +691,13 @@ def render_campaigns_md(document: dict) -> str:
         lines.append(
             f"| `{cell(entry.get('id'))}` | {cell(entry.get('fate'))} | "
             f"{cell(entry.get('home'))} |")
-    lines.extend(["", "## Missing observations", ""])
-    for item in document.get("missing") or []:
+    lines.extend(["", "## Not covered by these seven claims", ""])
+    for item in document.get("out_of_scope") or []:
         lines.append(f"- {item}")
     lines.extend([
         "",
-        "`check-release-campaigns.py --assert-ready` exits 3 while any claim or sub-observation",
-        "is not closed, so a closed gate register is never a release authorization.",
+        "`check-release-campaigns.py --assert-ready` exits 3 unless every claim is `pass` in both",
+        "environments, so a closed gate register is never a release authorization.",
         "",
     ])
     return "\n".join(lines)

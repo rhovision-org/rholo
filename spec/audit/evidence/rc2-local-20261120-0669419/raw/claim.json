@@ -1,0 +1,46 @@
+{
+  "claim_id": "RC-2",
+  "claim_title": "Safety",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-20T11:43:11Z",
+  "harness": {
+    "command": [
+      "/home/patrick/miniforge3/bin/python3",
+      "/home/patrick/RNodeRust/.claude/worktrees/pr-567/tests/consensus-partition-rejoin.py",
+      "--validators",
+      "4",
+      "--epoch-length",
+      "10",
+      "--out",
+      "target/release-claims/local/RC-2/partition",
+      "--local",
+      "--producing-victim"
+    ],
+    "exit_code": 1,
+    "name": "consensus-partition-rejoin",
+    "out": "target/release-claims/local/RC-2/partition"
+  },
+  "locality": "local-devnet",
+  "observations": {
+    "harness_error": "the shared acceptance drill did not reach the partition phase: ent call last):\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tests/consensus-partition-rejoin.py\", line 867, in <module>\n    if __name__==\"__main__\":main()\n                            ^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tests/consensus-partition-rejoin.py\", line 679, in main\n    d=WorkloadDrill(args);d.run()\n                          ^^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 429, in run\n    initial = self.wait(\"marker present in finalized state on every validator\",\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tests/consensus-partition-rejoin.py\", line 229, in wait\n    return super().wait(description,condition,drive=True,window=window)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 338, in wait\n    raise WaitTimeout(\nacceptance.WaitTimeout: marker present in finalized state on every validator did not pass within 150s (elapsed=150.6s, polls=72); last read error=None\n"
+  },
+  "preconditions": [
+    "RC-1's settlement-retention precondition failed; no partition was installed"
+  ],
+  "provenance": {
+    "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
+    "devnet_prefix": "acceptance",
+    "image_id": "a2266da7beace2cb8f45c2603622ea392d36d7a9b1558db78f48757cf1a8d212",
+    "profile": "local-4",
+    "source_dirty": true,
+    "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a"
+  },
+  "reasons": [
+    "the shared acceptance drill did not reach the partition phase: ent call last):\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tests/consensus-partition-rejoin.py\", line 867, in <module>\n    if __name__==\"__main__\":main()\n                            ^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tests/consensus-partition-rejoin.py\", line 679, in main\n    d=WorkloadDrill(args);d.run()\n                          ^^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 429, in run\n    initial = self.wait(\"marker present in finalized state on every validator\",\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tests/consensus-partition-rejoin.py\", line 229, in wait\n    return super().wait(description,condition,drive=True,window=window)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/consensus-acceptance-drill.py\", line 338, in wait\n    raise WaitTimeout(\nacceptance.WaitTimeout: marker present in finalized state on every validator did not pass within 150s (elapsed=150.6s, polls=72); last read error=None\n"
+  ],
+  "schema": 1,
+  "started_at": "2026-11-20T11:40:17Z",
+  "verdict": "not run"
+}
