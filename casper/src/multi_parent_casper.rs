@@ -339,6 +339,9 @@ pub struct MergeTrace {
     pub fork_blocks: Vec<String>,
     pub rejected_deploys: Vec<String>,
     pub rejected_hosts: Vec<String>,
+    /// The rejected hosts whose chain carries a user deploy; the finalised floor reads this set.
+    #[serde(default)]
+    pub rejected_user_hosts: Vec<String>,
     pub report: TraceReport,
     pub predicates: TracePredicates,
 }
@@ -402,12 +405,11 @@ fn merge_trace(
     };
     let ledger_ok = match mode {
         // In a fringe merge the conflict scope is the layer this merge finalises (the final scope is
-        // the older layer it prunes); a rejection that carries a deploy id and is hosted in it would
-        // drop a finalised write. A rejected chain with no deploy id loses no deploy.
-        MergeMode::Fringe => {
-            outcome.rejected_deploys.is_empty()
-                || outcome.rejected_hosts.is_disjoint(&scope.conflict_scope)
-        }
+        // the older layer it prunes); a **user deploy** rejection hosted in it would drop a
+        // finalised write. A CloseBlock system chain's rejection loses no user deploy (C344).
+        MergeMode::Fringe => outcome
+            .rejected_user_hosts
+            .is_disjoint(&scope.conflict_scope),
         MergeMode::Conflict => true,
     };
     let scope_partition_ok = outcome.report.conflict_chains
@@ -439,6 +441,7 @@ fn merge_trace(
             .map(|id| rchain_shared::base16::encode(id))
             .collect(),
         rejected_hosts: hex_set(&outcome.rejected_hosts),
+        rejected_user_hosts: hex_set(&outcome.rejected_user_hosts),
         report: TraceReport {
             conflict_chains: outcome.report.conflict_chains,
             kept_chains: outcome.report.kept_chains,
@@ -885,14 +888,12 @@ where
                 base_state,
             ));
             // **The finalised floor.** In a fringe merge the conflict scope *is* the layer being
-            // finalised; a rejection that carries a deploy id and is hosted in one of those blocks
-            // would travel into the next block's `rejectedDeploys` and drop a finalised write
-            // (RC-1). A rejected chain with no deploy id (an empty/native-only chain) loses no
-            // deploy; refusing it stalled every fringe whose blocks carried such a chain.
-            if !result.rejected_deploys.is_empty() {
-                finalised_floor(&m_scope.conflict_scope, &result.rejected_hosts)
-                    .map_err(|e| format!("the fringe merge was refused: {e}"))?;
-            }
+            // finalised; a rejection of a chain carrying a **user deploy** and hosted in one of
+            // those blocks would travel into the next block's `rejectedDeploys` and drop a finalised
+            // write (RC-1). A CloseBlock system chain's rejection is not a user deploy loss (C344),
+            // so the floor reads `rejected_user_hosts`, not every rejected host.
+            finalised_floor(&m_scope.conflict_scope, &result.rejected_user_hosts)
+                .map_err(|e| format!("the fringe merge was refused: {e}"))?;
             Some(result)
         }
         None => None,
@@ -903,6 +904,7 @@ where
         state: prev_fringe_state,
         rejected_deploys: prev_fringe_rejected_deploys,
         rejected_hosts: BTreeSet::new(),
+        rejected_user_hosts: BTreeSet::new(),
         report: MergeReport::default(),
     });
     let (fringe_state, fringe_rejected_deploys) =
@@ -930,6 +932,7 @@ where
             state: Blake2b256Hash::from_byte_array(block.post_state_hash.as_bytes()),
             rejected_deploys: BTreeSet::new(),
             rejected_hosts: BTreeSet::new(),
+            rejected_user_hosts: BTreeSet::new(),
             report: MergeReport::default(),
         }
     } else {
