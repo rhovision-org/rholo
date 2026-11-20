@@ -17,7 +17,7 @@ cannot yet be made. No status is authored.
 
 | claim | arm | env | locality | reading | next action | next PR |
 |---|---|---|---|---|---|---|
-| `RC-1` | `local` | local | local-devnet | **evidence-insufficient** | The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read. | `rc-confirm-local` |
+| `RC-1` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-1` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest and run the settlement/retention reading on testnet-4. | `rc-public-fleet` |
 | `RC-1` | `bond-leave` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-1 --arm bond-leave` and commit its record; the arm's harness lands in `rc-bond-leave`. | `rc-bond-leave` |
 | `RC-2` | `local` | local | local-devnet | **precondition** | RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first. | `rc-confirm-local` |
@@ -87,13 +87,8 @@ cannot yet be made. No status is authored.
 
 **Arm `local`** (local, `local-devnet`) — the acceptance drill retains a confirmed marker through two further epoch boundaries
 
-Reading: `evidence-insufficient` — spec/audit/evidence/rc1-local-20261120-0669419/raw/claim.json
-- `RC-1/local/trace` — no decision trace in the record. **Next:** The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read.
-- Next PR: `rc-confirm-local`
-  - observed: the acceptance drill did not pass (marker retention)
-  - observed: the absent-marker control did not hold before the write
-  - observed: settlements: missing or empty
-  - observed: finalised: missing or empty
+Reading: `safe` — spec/audit/evidence/rc1-local-20261120-2a1bc85/raw/claim.json
+- No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — the same settlement and retention reading on the four-host public fleet
 
