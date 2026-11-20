@@ -401,6 +401,8 @@ fn merge_trace(
         MergeMode::Conflict => true,
     };
     let ledger_ok = match mode {
+        // In a fringe merge the conflict scope is the layer this merge finalises (the final scope is
+        // the older layer it prunes); a rejection in it would drop a finalised write.
         MergeMode::Fringe => outcome.rejected_hosts.is_disjoint(&scope.conflict_scope),
         MergeMode::Conflict => true,
     };
@@ -864,11 +866,9 @@ where
                 DeployChainIndex::deploy_chain_cost,
             )
             .await?;
-            // **The finalised floor.** This merge finalises every block in its conflict scope; a
-            // rejection hosted in one of them would travel into the next block's `rejectedDeploys`
-            // and drop a finalised write (RC-1). Refuse instead.
-            finalised_floor(&m_scope.conflict_scope, &result.rejected_hosts)
-                .map_err(|e| format!("the fringe merge was refused: {e}"))?;
+            // **Write the decision before the refusal.** A refused merge is the most important one
+            // to read: the trace names the rejected hosts and the predicate that refused it. Writing
+            // after the guard left the RC-1 refusal with no trace at all.
             write_merge_trace(&merge_trace(
                 MergeMode::Fringe,
                 parent_hashes,
@@ -880,6 +880,11 @@ where
                 &result,
                 base_state,
             ));
+            // **The finalised floor.** In a fringe merge the conflict scope *is* the layer being
+            // finalised; a rejection hosted in one of those blocks would travel into the next
+            // block's `rejectedDeploys` and drop a finalised write (RC-1). Refuse instead.
+            finalised_floor(&m_scope.conflict_scope, &result.rejected_hosts)
+                .map_err(|e| format!("the fringe merge was refused: {e}"))?;
             Some(result)
         }
         None => None,
