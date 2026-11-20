@@ -1,7 +1,72 @@
 {
+  "action_prs": [
+    {
+      "claims": [
+        "RC-1",
+        "RC-2",
+        "RC-3",
+        "RC-4",
+        "RC-5",
+        "RC-6"
+      ],
+      "id": "rc-confirm-local",
+      "scope": "Re-run the local arms with the current image and commit the records. Read each failure with tools/trace-evaluate.py: unsafe-point names a predicate and its anchor; model-incomplete names a model gap; evidence-insufficient names the missing trace. Close a claim only when both environments read safe."
+    },
+    {
+      "claims": [
+        "RC-7"
+      ],
+      "id": "rc-harness-old-image",
+      "scope": "Build and pin a prior image for the mixed fleet, set RNODE_OLD_IMAGE, and run RC-7 locally. The mixed agreement is a claim-level predicate; the format trace is the decision record."
+    },
+    {
+      "claims": [
+        "RC-1",
+        "RC-2",
+        "RC-3",
+        "RC-4",
+        "RC-5",
+        "RC-6",
+        "RC-7"
+      ],
+      "id": "rc-public-fleet",
+      "scope": "Supply the four-host public manifest (deploy id, marker, provenance) and run every claim with --env public. A public safe is the same reading on the live fleet, not a different test."
+    }
+  ],
   "campaigns": [
     {
+      "action": {
+        "local": {
+          "items": [
+            {
+              "action": "The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read.",
+              "finding": "no decision trace in the record",
+              "item": "RC-1/local/trace"
+            }
+          ],
+          "next_pr": "rc-confirm-local",
+          "reading": "evidence-insufficient"
+        },
+        "public": {
+          "items": [
+            {
+              "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-1 --env public --public-manifest <manifest.json>`.",
+              "finding": "no committed run record",
+              "item": "RC-1/public/observe"
+            }
+          ],
+          "next_pr": "rc-public-fleet",
+          "reading": "not-observed"
+        }
+      },
       "claim": "If the settlement endpoint reports finalizedSuccess and settlementConfirmed for a deploy, that deploy's effect is present at the finalised head on every validator and remains present through two further epoch boundaries.",
+      "close": {
+        "evidence-insufficient": "The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read.",
+        "model-incomplete": "Every merge predicate holds and the write is still absent: add the missing coordinate to `MergeDecision`/`MergeTrace` first; the trace is the model gap.",
+        "not-observed": "Run the local arm with the current image; the record must carry the merge trace (`merge-*.json`).",
+        "precondition": "The acceptance drill did not retain its marker; fix that precondition and re-run, because a partition or settlement read without a retained write cannot be judged.",
+        "unsafe-point": "Fix the false merge predicate at its Rust anchor: `base_ok` -> `choose_base_claim`; `fork_ok` -> `MergeMode::Fringe`; `ledger_ok` -> `finalised_floor`. The trace host ids name the block whose write was dropped."
+      },
       "does_not_claim": "A local pass is a mechanism check; the public claim needs testnet-4.",
       "environment": {
         "local": "local-4 (tools/devnet.sh; 2 GiB per validator, below the documented tier)",
@@ -10,6 +75,10 @@
       "fail_condition": "A confirmed settlement whose effect is absent at the finalised head on any validator; validators disagree on the finalised hash; or the deploy id appears in a later rejectedDeploys.",
       "id": "RC-1",
       "negative_control": "A marker absent before the write; a fixture where the effect is absent at the finalised head; a fixture where the deploy is final-scope rejected.",
+      "next_pr": {
+        "local": "rc-confirm-local",
+        "public": "rc-public-fleet"
+      },
       "observable": "The settlement response, each validator's finalised (height, hash), the marker read at that block, and the per-block rejectedDeploys.",
       "owner": "Aria / operator",
       "pass_condition": "For one deploy id: the settlement response is finalizedSuccess with settlementConfirmed true; every validator reports the same finalised (height, hash); a marker written by the deploy reads back at that finalised block and at every later finalised head sampled; the deploy id never appears in a later block's rejectedDeploys.",
@@ -19,6 +88,17 @@
       },
       "status": {
         "local": {
+          "action": {
+            "items": [
+              {
+                "action": "The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read.",
+                "finding": "no decision trace in the record",
+                "item": "RC-1/local/trace"
+              }
+            ],
+            "next_pr": "rc-confirm-local",
+            "reading": "evidence-insufficient"
+          },
           "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
           "finished_at": "2026-11-20T10:32:58Z",
           "reasons": [
@@ -37,6 +117,17 @@
           "status": "fail"
         },
         "public": {
+          "action": {
+            "items": [
+              {
+                "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-1 --env public --public-manifest <manifest.json>`.",
+                "finding": "no committed run record",
+                "item": "RC-1/public/observe"
+              }
+            ],
+            "next_pr": "rc-public-fleet",
+            "reading": "not-observed"
+          },
           "reasons": [],
           "record": null,
           "status": "not run"
@@ -48,10 +139,42 @@
         "TA-C1"
       ],
       "test": "tests/release-claim-1.py",
-      "title": "Truthful settlement"
+      "title": "Truthful settlement",
+      "trace": "merge"
     },
     {
+      "action": {
+        "local": {
+          "items": [
+            {
+              "action": "RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.",
+              "finding": "RC-1's settlement-retention precondition failed; no partition was installed",
+              "item": "RC-2/local/precondition"
+            }
+          ],
+          "next_pr": "rc-confirm-local",
+          "reading": "precondition"
+        },
+        "public": {
+          "items": [
+            {
+              "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-2 --env public --public-manifest <manifest.json>`.",
+              "finding": "no committed run record",
+              "item": "RC-2/public/observe"
+            }
+          ],
+          "next_pr": "rc-public-fleet",
+          "reading": "not-observed"
+        }
+      },
       "claim": "No two conflicting finalised histories: every finalised block held by one validator is finalised by every validator at or above its height, and no finalised (height, hash) regresses across restart, replay or partition.",
+      "close": {
+        "evidence-insufficient": "Capture `finality-*.json` per validator; the trace is emitted at `get_pre_state_for_parents` when `RNODE_TRACE_DIR` is set.",
+        "model-incomplete": "Containment failed with every node trace safe: add the cross-view coordinate (which finalised block, which validator) to `FinalityDecision` before changing the test.",
+        "not-observed": "Run the local partition drill; the record must carry `finality-*.json` per validator.",
+        "precondition": "RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.",
+        "unsafe-point": "Fix the false finality predicate: `denominator_ok` means the gate used a denominator other than the whole bonded map; `support_ok` means an advance lacked 3*supporting > 2*quorum; `partition_ok` means an unbonded sender entered the partition."
+      },
       "does_not_claim": "The claim assumes the <=1/3 Byzantine/equivocation bound; without it an equivocator can back two quorums.",
       "environment": {
         "local": "local-4 (tools/devnet.sh) with a producing victim",
@@ -60,6 +183,10 @@
       "fail_condition": "A finalised block not finalised by another validator at or above its height; a finalised regression; or two conflicting finalised histories.",
       "id": "RC-2",
       "negative_control": "A producing split (the victim proposes while isolated); an equivocation injection under the allowed Byzantine bound.",
+      "next_pr": {
+        "local": "rc-confirm-local",
+        "public": "rc-public-fleet"
+      },
       "observable": "Per-validator finalised heads at each sample, the cross-node containment answers, and the finalised history over the window.",
       "owner": "Jim / release coordination",
       "pass_condition": "For every sampled finalised block, every validator at or above its height reports it finalised; no finalised (height, hash) regresses; no two conflicting finalised histories are observed; the isolated victim keeps producing while its finalised fence stays frozen.",
@@ -69,6 +196,17 @@
       },
       "status": {
         "local": {
+          "action": {
+            "items": [
+              {
+                "action": "RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.",
+                "finding": "RC-1's settlement-retention precondition failed; no partition was installed",
+                "item": "RC-2/local/precondition"
+              }
+            ],
+            "next_pr": "rc-confirm-local",
+            "reading": "precondition"
+          },
           "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
           "finished_at": "2026-11-20T11:43:11Z",
           "reasons": [
@@ -79,6 +217,17 @@
           "status": "not run"
         },
         "public": {
+          "action": {
+            "items": [
+              {
+                "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-2 --env public --public-manifest <manifest.json>`.",
+                "finding": "no committed run record",
+                "item": "RC-2/public/observe"
+              }
+            ],
+            "next_pr": "rc-public-fleet",
+            "reading": "not-observed"
+          },
           "reasons": [],
           "record": null,
           "status": "not run"
@@ -89,10 +238,36 @@
         "TA-C1"
       ],
       "test": "tests/release-claim-2.py",
-      "title": "Safety"
+      "title": "Safety",
+      "trace": "finality"
     },
     {
+      "action": {
+        "local": {
+          "items": [],
+          "next_pr": null,
+          "reading": "safe"
+        },
+        "public": {
+          "items": [
+            {
+              "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`.",
+              "finding": "no committed run record",
+              "item": "RC-3/public/observe"
+            }
+          ],
+          "next_pr": "rc-public-fleet",
+          "reading": "not-observed"
+        }
+      },
       "claim": "For the same accepted block on the same binary, every validator derives the same preStateHash and postStateHash and the same kept/rejected ledger; kept tuple-space effects are present and rejected effects absent.",
+      "close": {
+        "evidence-insufficient": "Capture `state-*.json` for the common block hashes; the trace is emitted from `validate_block_checkpoint`.",
+        "model-incomplete": "The computed triples agree in the trace but the observable disagrees: add the missing block or ledger coordinate to `StateDecision`; the trace is the gap.",
+        "not-observed": "Run the local state-agreement arm; the record must carry `state-*.json` for the common block hashes.",
+        "precondition": "The marker was not visible at the same block on every validator; fix that precondition and re-run.",
+        "unsafe-point": "A validator accepted a block whose claim was not its derivation: fix `validate_block_checkpoint` (`pre_ok`/`post_ok`/`rejected_ok`) or the mismatch source named by the trace."
+      },
       "does_not_claim": "The claim is conditional on the same binary and conflict scope; block-merge.md records that two binaries can reject different chains at a merge.",
       "environment": {
         "local": "local-4 (tools/devnet.sh)",
@@ -101,6 +276,10 @@
       "fail_condition": "Any preStateHash, postStateHash or rejectedDeploys disagreement for the same block; a same-block marker present on one validator and absent on another.",
       "id": "RC-3",
       "negative_control": "A fixture where the ledger differs; a native-write case (native absolute writes are excluded from FinalizedMerge.lean's unqualified law).",
+      "next_pr": {
+        "local": "rc-confirm-local",
+        "public": "rc-public-fleet"
+      },
       "observable": "The per-block preStateHash, postStateHash and rejectedDeploys from every validator, plus a same-block marker read.",
       "owner": "Jim / release coordination",
       "pass_condition": "Across a defined window, every validator reports the same preStateHash, postStateHash and rejectedDeploys for every accepted block, and a kept marker is readable at the same block on every validator.",
@@ -110,6 +289,11 @@
       },
       "status": {
         "local": {
+          "action": {
+            "items": [],
+            "next_pr": null,
+            "reading": "safe"
+          },
           "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
           "finished_at": "2026-11-20T10:31:58Z",
           "reasons": [],
@@ -118,6 +302,17 @@
           "status": "pass"
         },
         "public": {
+          "action": {
+            "items": [
+              {
+                "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`.",
+                "finding": "no committed run record",
+                "item": "RC-3/public/observe"
+              }
+            ],
+            "next_pr": "rc-public-fleet",
+            "reading": "not-observed"
+          },
           "reasons": [],
           "record": null,
           "status": "not run"
@@ -127,10 +322,42 @@
         "G428-M4"
       ],
       "test": "tests/release-claim-3.py",
-      "title": "State agreement across a merge"
+      "title": "State agreement across a merge",
+      "trace": "state"
     },
     {
+      "action": {
+        "local": {
+          "items": [
+            {
+              "action": "Capture the victim's `boot-*.json`; the reconnect branch emits it when `RNODE_TRACE_DIR` is set.",
+              "finding": "no decision trace in the record",
+              "item": "RC-4/local/trace"
+            }
+          ],
+          "next_pr": "rc-confirm-local",
+          "reading": "evidence-insufficient"
+        },
+        "public": {
+          "items": [
+            {
+              "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-4 --env public --public-manifest <manifest.json>`.",
+              "finding": "no committed run record",
+              "item": "RC-4/public/observe"
+            }
+          ],
+          "next_pr": "rc-public-fleet",
+          "reading": "not-observed"
+        }
+      },
       "claim": "After one validator is stopped and restarted, or a partition heals, the survivors keep finalising; every deploy accepted by a survivor is resolved and its effect is in the post-recovery finalised state; the victim rejoins the same finalised head; no spurious self-replay or own-key halt fires.",
+      "close": {
+        "evidence-insufficient": "Capture the victim's `boot-*.json`; the reconnect branch emits it when `RNODE_TRACE_DIR` is set.",
+        "model-incomplete": "The boot trace is safe and the victim still did not run: add the missing acquisition or window coordinate to `BootEvidence`.",
+        "not-observed": "Run the restart-under-load arm; the record must carry the victim's `boot-*.json`.",
+        "precondition": "The victim did not restart with a new boot id; the trace needs a restart, so fix that precondition first.",
+        "unsafe-point": "`acquisition_ok`/`verification_ok`/`anchor_ok` false: the boot accepted a state it could not attribute. Fix `boot_outcome` or `acquire_boot_certificate`; the refusal coordinate is in the trace."
+      },
       "does_not_claim": "A store loss needs a fresh data dir and a checkpoint join; 'no operator action' covers a verified restart, not a lost store.",
       "environment": {
         "local": "local-4 (tools/devnet.sh; tests/consensus-restart-under-load.py)",
@@ -139,6 +366,10 @@
       "fail_condition": "Finality stalls; accepted work is lost; the rejoiner needs manual surgery; a finalised height regresses; or a spurious halt fires.",
       "id": "RC-4",
       "negative_control": "The wrong-genesis and interrupted-restart arms; a deploy accepted only by the killed validator is not recoverable by design and must be declared, not counted.",
+      "next_pr": {
+        "local": "rc-confirm-local",
+        "public": "rc-public-fleet"
+      },
       "observable": "The survivors' finalised heads, every accepted deploy's resolution and effect at the post-recovery finalised head, the victim's boot ID and finalised head, and the own-key/self-replay counters.",
       "owner": "Jim / release coordination",
       "pass_condition": "With one validator stopped, the survivors finalise past the kill; every deploy submitted to a survivor resolves and its effect is present at the post-recovery finalised head; after restart the victim reports the same finalised (height, hash) at least three heights above the baseline; no finalised height regresses and no fixed height changes hash; no own-key halt or self-replay is observed.",
@@ -148,6 +379,17 @@
       },
       "status": {
         "local": {
+          "action": {
+            "items": [
+              {
+                "action": "Capture the victim's `boot-*.json`; the reconnect branch emits it when `RNODE_TRACE_DIR` is set.",
+                "finding": "no decision trace in the record",
+                "item": "RC-4/local/trace"
+              }
+            ],
+            "next_pr": "rc-confirm-local",
+            "reading": "evidence-insufficient"
+          },
           "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
           "finished_at": "2026-11-20T12:02:39Z",
           "reasons": [
@@ -161,6 +403,17 @@
           "status": "fail"
         },
         "public": {
+          "action": {
+            "items": [
+              {
+                "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-4 --env public --public-manifest <manifest.json>`.",
+                "finding": "no committed run record",
+                "item": "RC-4/public/observe"
+              }
+            ],
+            "next_pr": "rc-public-fleet",
+            "reading": "not-observed"
+          },
           "reasons": [],
           "record": null,
           "status": "not run"
@@ -172,10 +425,36 @@
         "G428-M4"
       ],
       "test": "tests/release-claim-4.py",
-      "title": "Recovery without loss"
+      "title": "Recovery without loss",
+      "trace": "boot"
     },
     {
+      "action": {
+        "local": {
+          "items": [],
+          "next_pr": null,
+          "reading": "safe"
+        },
+        "public": {
+          "items": [
+            {
+              "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-5 --env public --public-manifest <manifest.json>`.",
+              "finding": "no committed run record",
+              "item": "RC-5/public/observe"
+            }
+          ],
+          "next_pr": "rc-public-fleet",
+          "reading": "not-observed"
+        }
+      },
       "claim": "At the configured admission/pool bound, the node refuses new work with HTTP 429 and Retry-After: 1, or gRPC RESOURCE_EXHAUSTED (ingress-rate and pool-bound classes stated separately), returns no 5xx, stays alive, and loses no deploy it accepted.",
+      "close": {
+        "evidence-insufficient": "Capture `admission-*.json` from both devnets before `down()`; the sites are `pool-*`, `http-*` and `grpc-*`.",
+        "model-incomplete": "Every admission predicate holds and an accepted deploy was lost: add the accepted-deploy coordinate to `AdmissionDecision`.",
+        "not-observed": "Run the capped/unset pressure arm; the record must carry `admission-*.json` from both devnets.",
+        "precondition": "The pressure record was not produced; fix the arm precondition and re-run.",
+        "unsafe-point": "`bounded_ok` false means the refusal class is not a bound; `retry_signal_ok` false means a 429/RESOURCE_EXHAUSTED carried no retry signal or a 5xx was used; `permit_ok`/`pool_bound_ok` false means a count overran."
+      },
       "does_not_claim": "The opt-in in-flight cap is not the shipping default; the pool's count/byte/term/share/rate bounds are the intended throttle. Transport correctness across HTTP, direct HTTP, gRPC and a proxy is out of scope.",
       "environment": {
         "local": "local-4 (one node, direct listener and in-process gRPC)",
@@ -184,6 +463,10 @@
       "fail_condition": "A 5xx under pressure; an accepted deploy that later disappears; an unbounded queue; an unset default that refuses; or a refusal class outside the vocabulary.",
       "id": "RC-5",
       "negative_control": "The unset-default arm must admit; the four named queue bounds; a refusal class outside the vocabulary.",
+      "next_pr": {
+        "local": "rc-confirm-local",
+        "public": "rc-public-fleet"
+      },
       "observable": "Accepted/refused counts, refusal class and retry signal, handler reachability after release, and the status of every accepted deploy id.",
       "owner": "Jim / release coordination",
       "pass_condition": "With the bound configured: every permit is held, further probes are refused with the named class and retry signal, no 5xx is returned, the unset/default control admits, the handler is reachable after release, and every accepted deploy id is still readable or explicitly failed.",
@@ -193,6 +476,11 @@
       },
       "status": {
         "local": {
+          "action": {
+            "items": [],
+            "next_pr": null,
+            "reading": "safe"
+          },
           "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
           "finished_at": "2026-11-20T11:21:25Z",
           "reasons": [],
@@ -201,6 +489,17 @@
           "status": "pass"
         },
         "public": {
+          "action": {
+            "items": [
+              {
+                "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-5 --env public --public-manifest <manifest.json>`.",
+                "finding": "no committed run record",
+                "item": "RC-5/public/observe"
+              }
+            ],
+            "next_pr": "rc-public-fleet",
+            "reading": "not-observed"
+          },
           "reasons": [],
           "record": null,
           "status": "not run"
@@ -210,10 +509,42 @@
         "G428-M2"
       ],
       "test": "tests/release-claim-5.py",
-      "title": "Overload refusal"
+      "title": "Overload refusal",
+      "trace": "admission"
     },
     {
+      "action": {
+        "local": {
+          "items": [
+            {
+              "action": "Pass `RNODE_TRACE_DIR` to `docker exec rnode audit` and copy `audit-*.json`; the trace is written after `check_target`.",
+              "finding": "no decision trace in the record",
+              "item": "RC-6/local/trace"
+            }
+          ],
+          "next_pr": "rc-confirm-local",
+          "reading": "evidence-insufficient"
+        },
+        "public": {
+          "items": [
+            {
+              "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-6 --env public --public-manifest <manifest.json>`.",
+              "finding": "no committed run record",
+              "item": "RC-6/public/observe"
+            }
+          ],
+          "next_pr": "rc-public-fleet",
+          "reading": "not-observed"
+        }
+      },
       "claim": "A fresh node joining from a bootstrap receives the certified anchor, applies and hydrates it, and reaches the same finalised head and state; rnode audit reproduces the checkpoint claim from genesis.",
+      "close": {
+        "evidence-insufficient": "Pass `RNODE_TRACE_DIR` to `docker exec rnode audit` and copy `audit-*.json`; the trace is written after `check_target`.",
+        "model-incomplete": "The target is the anchored shape and the replay still disagrees: add the replay coordinate (derived/claimed root, head) to the model.",
+        "not-observed": "Run the join/audit arm; the record must carry `audit-*.json` and the joiner's `boot-*.json`.",
+        "precondition": "The join half did not pass; fix it before the audit, because the audit has nothing to reproduce without an accepted anchor.",
+        "unsafe-point": "`target_shape_ok` false means the audit built a whole-fringe target; `replay_agrees_ok` false means it accepted a different root; `anchor_membership_ok` false means the anchor is outside the fringe."
+      },
       "does_not_claim": "A routable address is setup, not the claim; off-host transport and the loopback refusal are out of scope. Alternative-peer failover (M3-11) is separate and never landed.",
       "environment": {
         "local": "local-4 (genesis-only join and audit)",
@@ -222,6 +553,10 @@
       "fail_condition": "The joiner receives but never applies; the restored state differs from the certified anchor; a certificate with no commitments is accepted; audit returns DISAGREE, a different digest, or a derivation over a different checkpoint.",
       "id": "RC-6",
       "negative_control": "A send-log-only chain; a served/restored hash mismatch; a legacy certificate with no commitments.",
+      "next_pr": {
+        "local": "rc-confirm-local",
+        "public": "rc-public-fleet"
+      },
       "observable": "The six-stage join chain, the certified anchor's post-state root and fringeState, the audited digest, and the audit verdict.",
       "owner": "Aria / evidence work",
       "pass_condition": "The joiner's served, received, restored and walked hashes agree for the certified anchor (equality with the served root is required only for a genesis anchor); a legacy certificate with no commitments is refused; rnode audit returns AGREE, its audited digest equals the accepted digest when the anchor is a checkpoint, and its derived root equals the checkpoint claim.",
@@ -231,6 +566,17 @@
       },
       "status": {
         "local": {
+          "action": {
+            "items": [
+              {
+                "action": "Pass `RNODE_TRACE_DIR` to `docker exec rnode audit` and copy `audit-*.json`; the trace is written after `check_target`.",
+                "finding": "no decision trace in the record",
+                "item": "RC-6/local/trace"
+              }
+            ],
+            "next_pr": "rc-confirm-local",
+            "reading": "evidence-insufficient"
+          },
           "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
           "finished_at": "2026-11-20T11:39:24Z",
           "reasons": [
@@ -245,6 +591,17 @@
           "status": "fail"
         },
         "public": {
+          "action": {
+            "items": [
+              {
+                "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-6 --env public --public-manifest <manifest.json>`.",
+                "finding": "no committed run record",
+                "item": "RC-6/public/observe"
+              }
+            ],
+            "next_pr": "rc-public-fleet",
+            "reading": "not-observed"
+          },
           "reasons": [],
           "record": null,
           "status": "not run"
@@ -254,10 +611,42 @@
         "G428-M3"
       ],
       "test": "tests/release-claim-6.py",
-      "title": "Join and audit"
+      "title": "Join and audit",
+      "trace": "audit"
     },
     {
+      "action": {
+        "local": {
+          "items": [
+            {
+              "action": "The arm did not produce its observation: the mixed arm needs RNODE_OLD_IMAGE set to a separately built prior image, and the downgrade arm needs a store stamped with format 5. Fix that input and re-run.",
+              "finding": "no --old-image/RNODE_OLD_IMAGE: the mixed-version arm needs a separately built prior image",
+              "item": "RC-7/local/precondition"
+            }
+          ],
+          "next_pr": "rc-harness-old-image",
+          "reading": "precondition"
+        },
+        "public": {
+          "items": [
+            {
+              "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-7 --env public --public-manifest <manifest.json>`.",
+              "finding": "no committed run record",
+              "item": "RC-7/public/observe"
+            }
+          ],
+          "next_pr": "rc-public-fleet",
+          "reading": "not-observed"
+        }
+      },
       "claim": "A mixed-version fleet either keeps one finalised chain and one state for a block produced during the window, or refuses on the consensus path; a populated store migrates; a binary refuses a store written by a newer format.",
+      "close": {
+        "evidence-insufficient": "Capture `format-*.json` from the mixed nodes and the downgrade container (pass `RNODE_TRACE_DIR=/data/traces`).",
+        "model-incomplete": "The format decision is safe and the mixed fleet still disagrees: add the mixed-fleet coordinate to `StoreFormat`/`StateDecision`.",
+        "not-observed": "The local mixed arm needs a separately built prior image: set `RNODE_OLD_IMAGE=<image>`; the downgrade arm also writes `format-*.json`.",
+        "precondition": "The arm did not produce its observation: the mixed arm needs RNODE_OLD_IMAGE set to a separately built prior image, and the downgrade arm needs a store stamped with format 5. Fix that input and re-run.",
+        "unsafe-point": "`format_ok` false means a newer marker was opened or the decision is not the arithmetic one; `stamp_ok` false means a stamp was claimed without a durable write."
+      },
       "does_not_claim": "For a fresh-genesis launch this is post-launch; it becomes a launch blocker only over a populated store or a mixed fleet. The mixed arm needs a separately built prior image.",
       "environment": {
         "local": "local-4 (N and N+1 binaries); the G520 populated-store drill",
@@ -266,6 +655,10 @@
       "fail_condition": "Two versions finalise different blocks or derive different post-state hashes without a refusal; the old binary runs on a newer store; or the populated-store drill fails.",
       "id": "RC-7",
       "negative_control": "A fresh-genesis run must not substitute for the populated-store arm; a legacy/no-commitment certificate must be refused.",
+      "next_pr": {
+        "local": "rc-harness-old-image",
+        "public": "rc-public-fleet"
+      },
       "observable": "The mixed-version block's hashes and rejection ledger on both binaries, the store-format refusal, the populated-store drill verdict, and the post-swap finalised head.",
       "owner": "Jim / release coordination",
       "pass_condition": "During a mixed-version window, a block is produced and finalised with both binaries deriving the same postStateHash and rejectedDeploys, or the old node refuses on the consensus path; a populated-store copy/rollback/restart drill passes; a build refuses a store whose format marker is higher than the one it writes; after the swap the upgraded node reaches the same finalised head.",
@@ -275,6 +668,17 @@
       },
       "status": {
         "local": {
+          "action": {
+            "items": [
+              {
+                "action": "The arm did not produce its observation: the mixed arm needs RNODE_OLD_IMAGE set to a separately built prior image, and the downgrade arm needs a store stamped with format 5. Fix that input and re-run.",
+                "finding": "no --old-image/RNODE_OLD_IMAGE: the mixed-version arm needs a separately built prior image",
+                "item": "RC-7/local/precondition"
+              }
+            ],
+            "next_pr": "rc-harness-old-image",
+            "reading": "precondition"
+          },
           "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
           "finished_at": "2026-11-20T11:24:32Z",
           "reasons": [
@@ -285,6 +689,17 @@
           "status": "not run"
         },
         "public": {
+          "action": {
+            "items": [
+              {
+                "action": "Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-7 --env public --public-manifest <manifest.json>`.",
+                "finding": "no committed run record",
+                "item": "RC-7/public/observe"
+              }
+            ],
+            "next_pr": "rc-public-fleet",
+            "reading": "not-observed"
+          },
           "reasons": [],
           "record": null,
           "status": "not run"
@@ -292,7 +707,8 @@
       },
       "supersedes": [],
       "test": "tests/release-claim-7.py",
-      "title": "Upgrade compatibility"
+      "title": "Upgrade compatibility",
+      "trace": "format"
     }
   ],
   "generated": "2026-11-20",

@@ -36,7 +36,11 @@ OLD_IDS = {
 CLAIM_MINIMUM = 7
 FORBIDDEN = ("status", "missing", "sub_observations", "tool")
 REQUIRED = ("id", "title", "claim", "pass_condition", "fail_condition", "observable",
-            "negative_control", "environment", "rerun", "test", "owner")
+            "negative_control", "environment", "rerun", "test", "owner",
+            "trace", "close", "next_pr")
+TRACE_KINDS = ("merge", "finality", "state", "boot", "admission", "audit", "format")
+CLOSE_KEYS = ("not-observed", "precondition", "unsafe-point", "model-incomplete",
+              "evidence-insufficient")
 
 
 class ClaimError(RuntimeError):
@@ -110,6 +114,16 @@ def validate(source: dict, builder) -> dict:
 
     require(isinstance(source.get("out_of_scope"), list),
             "out_of_scope must be a list (it is not a status)")
+    action_prs = source.get("action_prs")
+    require(isinstance(action_prs, list) and action_prs,
+            "action_prs must name the next PRs")
+    pr_ids = set()
+    for entry in action_prs:
+        ident = entry.get("id")
+        require(ident and entry.get("scope") and entry.get("claims"),
+                "every action PR needs an id, a scope and the claims it closes")
+        require(ident not in pr_ids, f"action PR {ident!r} appears twice")
+        pr_ids.add(ident)
     for row in claims:
         ident = row.get("id")
         for field in REQUIRED:
@@ -127,6 +141,16 @@ def validate(source: dict, builder) -> dict:
                 f"{ident}: rerun.local must run tools/release-check.py for this claim")
         require("tools/release-check.py run --claim " + str(ident) in rerun["public"],
                 f"{ident}: rerun.public must run tools/release-check.py for this claim")
+        require(row.get("trace") in TRACE_KINDS,
+                f"{ident}: trace must be one of {TRACE_KINDS}")
+        close = row.get("close") or {}
+        for key in CLOSE_KEYS:
+            require(isinstance(close.get(key), str) and close[key].strip(),
+                    f"{ident}: close.{key} must say what to do")
+        next_pr = row.get("next_pr") or {}
+        for environment in ("local", "public"):
+            require(next_pr.get(environment) in pr_ids,
+                    f"{ident}: next_pr.{environment} must name an action PR")
         supersedes = row.get("supersedes") or []
         require(set(supersedes) <= OLD_IDS,
                 f"{ident}: supersedes an unknown row")
@@ -146,15 +170,16 @@ def validate(source: dict, builder) -> dict:
             "the generated tracker does not carry the authored claims")
     return {
         "claims": len(claims),
+        "actions": {row["id"]: row.get("action") or {} for row in fresh["campaigns"]},
         "statuses": {row["id"]: row.get("status") or {} for row in fresh["campaigns"]},
         "old": len(old),
     }
 
 
 def ready(result: dict) -> bool:
-    for statuses in result["statuses"].values():
+    for actions in result["actions"].values():
         for environment in ("local", "public"):
-            if (statuses.get(environment) or {}).get("status") != "pass":
+            if (actions.get(environment) or {}).get("reading") != "safe":
                 return False
     return True
 
@@ -194,18 +219,22 @@ def main() -> int:
         "result": "RELEASE_CLAIMS_READY" if is_ready else "RELEASE_CLAIMS_NOT_READY",
         "claims": result["claims"],
         "superseded": result["old"],
-        "statuses": {ident: {env: (entry.get("status") or "not run")
-                             for env, entry in statuses.items()}
-                     for ident, statuses in result["statuses"].items()},
+        "readings": {ident: {env: (entry.get("reading") or "not-observed")
+                             for env, entry in actions.items()}
+                     for ident, actions in result["actions"].items()},
+        "open_actions": sum(len(((actions.get(env) or {}).get("items") or []))
+                            for actions in result["actions"].values()
+                            for env in ("local", "public")),
     }
     if args.json:
         print(json.dumps(body, indent=2, sort_keys=True))
     else:
         print(body["result"])
-        print(f"release claims: {result['claims']}; superseded: {result['old']}")
-        for ident, statuses in result["statuses"].items():
-            print(f"  {ident}: local={statuses.get('local', {}).get('status', 'not run')} "
-                  f"public={statuses.get('public', {}).get('status', 'not run')}")
+        print(f"release claims: {result['claims']}; superseded: {result['old']}; "
+              f"open actions: {body['open_actions']}")
+        for ident, readings in body["readings"].items():
+            print(f"  {ident}: local={readings.get('local')} "
+                  f"public={readings.get('public')}")
     if args.assert_ready and not is_ready:
         return 3
     return 0

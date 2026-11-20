@@ -8,10 +8,11 @@
     python3 tools/release-check.py record --claim RC-1 --env local --record target/release-claims/RC-1
     python3 tools/release-check.py --assert-ready
 
-A claim's status is `pass`, `fail` or `not run`, per environment. It is derived from the newest
-committed record under `spec/audit/evidence/` by re-running the claim test's own `check(record)`;
-`target/` runs are shown as scratch and never make the tracker ready. Nothing about a status is
-authored.
+A claim's reading is `safe`, `unsafe-point`, `model-incomplete`, `evidence-insufficient`,
+`precondition` or `not-observed`, per environment. It is derived from the newest committed record
+under `spec/audit/evidence/` by re-running the claim test's own `check(record)` and reading the
+decision traces; `target/` runs are shown as scratch and never make the tracker ready. Each reading
+carries the action that closes it. Nothing about a reading is authored.
 """
 from __future__ import annotations
 
@@ -80,22 +81,22 @@ def cmd_list(args) -> int:
     rows = builder().claim_records((EVIDENCE, SCRATCH))
     committed = statuses((EVIDENCE,))
     scratch = statuses((EVIDENCE, SCRATCH))
-    print(f"{'claim':6} {'local':14} {'public':14}  test")
+    print(f"{'claim':6} {'local':28} {'public':28}  test")
     ready = True
     for row in claims():
         idents = row["id"]
         cells = []
         for environment in ENVIRONMENTS:
             entry = committed[idents][environment]
-            state = entry.get("status") or "not run"
+            state = (entry.get("action") or {}).get("reading") or "not-observed"
             scratch_entry = scratch[idents][environment]
             if (scratch_entry.get("record") or "").startswith("target/"):
                 state += "*"
-            if state != "pass":
+            if not state.startswith("safe"):
                 ready = False
             pin = (entry.get("source_sha") or "")[:7]
-            cells.append(f"{state}{('@' + pin) if pin and state.startswith('pass') else ''}")
-        print(f"{idents:6} {cells[0]:14} {cells[1]:14}  {row['test']}")
+            cells.append(f"{state}{('@' + pin) if pin and state.startswith('safe') else ''}")
+        print(f"{idents:6} {cells[0]:28} {cells[1]:28}  {row['test']}")
     print(f"\n{'RELEASE_CLAIMS_READY' if ready else 'RELEASE_CLAIMS_NOT_READY'} "
           f"(* = a newer scratch record exists; it does not count)")
     if args.json:

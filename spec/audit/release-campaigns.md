@@ -2,26 +2,41 @@
 
 Emitted from `spec/audit/release-claims.json` by `tools/build-mainnet-gates.py`.
 
-**These are not gates.** A gate is a boolean test of the current build. A release claim
-is one observable node behaviour with one executable test, re-runnable on the standard
-local devnet or on `testnet-4`. A claim's status is `pass`, `fail` or `not run`: it is
-measured from that environment's newest committed run record by re-running the test's
-pure `check(record)`. No status is authored, and a claim without an existing test is
-refused. The 12 old campaign rows are deleted; their fate is in the `superseded` table.
+Each claim is a gate with one executable test over a decision trace. Its state is a
+measured **reading** of the newest committed record; its **next action** is what closes
+it. `safe` is the only reading that closes a gate. `unsafe-point` names a false predicate
+and its Rust and Lean anchors; `model-incomplete` names the trace that is the model gap;
+`evidence-insufficient` names the missing trace or coordinate; `precondition` and
+`not-observed` name the run that cannot yet be made. No status is authored.
 
 - generated: 2026-11-20
 - claims: 7
 - review: `spec/audit/release-campaign-red-team-20261119.md`
 
-| claim | local | public | test | owner |
+| claim | env | reading | next action | next PR |
 |---|---|---|---|---|
-| `RC-1` — Truthful settlement | **fail** `0669419` | **not run** | `tests/release-claim-1.py` | Aria / operator |
-| `RC-2` — Safety | **not run** | **not run** | `tests/release-claim-2.py` | Jim / release coordination |
-| `RC-3` — State agreement across a merge | **pass** `0669419` | **not run** | `tests/release-claim-3.py` | Jim / release coordination |
-| `RC-4` — Recovery without loss | **fail** `0669419` | **not run** | `tests/release-claim-4.py` | Jim / release coordination |
-| `RC-5` — Overload refusal | **pass** `0669419` | **not run** | `tests/release-claim-5.py` | Jim / release coordination |
-| `RC-6` — Join and audit | **fail** `0669419` | **not run** | `tests/release-claim-6.py` | Aria / evidence work |
-| `RC-7` — Upgrade compatibility | **not run** | **not run** | `tests/release-claim-7.py` | Jim / release coordination |
+| `RC-1` | local | **evidence-insufficient** | The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read. | `rc-confirm-local` |
+| `RC-1` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-1 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+| `RC-2` | local | **precondition** | RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first. | `rc-confirm-local` |
+| `RC-2` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-2 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+| `RC-3` | local | **safe** | — | `—` |
+| `RC-3` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+| `RC-4` | local | **evidence-insufficient** | Capture the victim's `boot-*.json`; the reconnect branch emits it when `RNODE_TRACE_DIR` is set. | `rc-confirm-local` |
+| `RC-4` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-4 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+| `RC-5` | local | **safe** | — | `—` |
+| `RC-5` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-5 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+| `RC-6` | local | **evidence-insufficient** | Pass `RNODE_TRACE_DIR` to `docker exec rnode audit` and copy `audit-*.json`; the trace is written after `check_target`. | `rc-confirm-local` |
+| `RC-6` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-6 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+| `RC-7` | local | **precondition** | The arm did not produce its observation: the mixed arm needs RNODE_OLD_IMAGE set to a separately built prior image, and the downgrade arm needs a store stamped with format 5. Fix t | `rc-harness-old-image` |
+| `RC-7` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-7 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+
+## Next PRs
+
+| PR | closes | scope |
+|---|---|---|
+| `rc-confirm-local` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6 | Re-run the local arms with the current image and commit the records. Read each failure with tools/trace-evaluate.py: unsafe-point names a predicate and its anchor; model-incomplete names a model gap; evidence-insufficient names the missing trace. Close a claim only when both environments read safe. |
+| `rc-harness-old-image` | RC-7 | Build and pin a prior image for the mixed fleet, set RNODE_OLD_IMAGE, and run RC-7 locally. The mixed agreement is a claim-level predicate; the format trace is the decision record. |
+| `rc-public-fleet` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6, RC-7 | Supply the four-host public manifest (deploy id, marker, provenance) and run every claim with --env public. A public safe is the same reading on the live fleet, not a different test. |
 
 ---
 
@@ -47,14 +62,16 @@ refused. The 12 old campaign rows are deleted; their fate is in the `superseded`
 
 **Re-run (public).** `python3 tools/release-check.py run --claim RC-1 --env public --public-manifest <manifest.json>`
 
-- **local:** fail — spec/audit/evidence/rc1-local-20261120-0669419/raw/claim.json
-  - the acceptance drill did not pass (marker retention)
-  - the absent-marker control did not hold before the write
-  - settlements: missing or empty
-  - finalised: missing or empty
-  - rejected: missing or not a list
-  - no settlement reported finalizedSuccess with settlementConfirmed true
-- **public:** not run — no committed run record
+**Local reading.** `evidence-insufficient` — spec/audit/evidence/rc1-local-20261120-0669419/raw/claim.json
+- `RC-1/local/trace` — no decision trace in the record. **Next:** The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read.
+- Next PR: `rc-confirm-local`
+  - observed: the acceptance drill did not pass (marker retention)
+  - observed: the absent-marker control did not hold before the write
+  - observed: settlements: missing or empty
+  - observed: finalised: missing or empty
+**Public reading.** `not-observed` — no committed run record
+- `RC-1/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-1 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Supersedes.** G584-G2, G584-G3, TA-C1
 
@@ -84,9 +101,13 @@ refused. The 12 old campaign rows are deleted; their fate is in the `superseded`
 
 **Re-run (public).** `python3 tools/release-check.py run --claim RC-2 --env public --public-manifest <manifest.json>`
 
-- **local:** not run — spec/audit/evidence/rc2-local-20261120-0669419/raw/claim.json
-  - RC-1's settlement-retention precondition failed; no partition was installed
-- **public:** not run — no committed run record
+**Local reading.** `precondition` — spec/audit/evidence/rc2-local-20261120-0669419/raw/claim.json
+- `RC-2/local/precondition` — RC-1's settlement-retention precondition failed; no partition was installed. **Next:** RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.
+- Next PR: `rc-confirm-local`
+  - observed: RC-1's settlement-retention precondition failed; no partition was installed
+**Public reading.** `not-observed` — no committed run record
+- `RC-2/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-2 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Supersedes.** G428-M4, TA-C1
 
@@ -116,8 +137,11 @@ refused. The 12 old campaign rows are deleted; their fate is in the `superseded`
 
 **Re-run (public).** `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`
 
-- **local:** pass — spec/audit/evidence/rc3-local-20261120-0669419/raw/claim.json
-- **public:** not run — no committed run record
+**Local reading.** `safe` — spec/audit/evidence/rc3-local-20261120-0669419/raw/claim.json
+- No action: the reading is safe; carry the record forward.
+**Public reading.** `not-observed` — no committed run record
+- `RC-3/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Supersedes.** G428-M4
 
@@ -147,12 +171,16 @@ refused. The 12 old campaign rows are deleted; their fate is in the `superseded`
 
 **Re-run (public).** `python3 tools/release-check.py run --claim RC-4 --env public --public-manifest <manifest.json>`
 
-- **local:** fail — spec/audit/evidence/rc4-local-20261120-0669419/raw/claim.json
-  - the restart harness did not pass: 'FAIL'
-  - post-recovery heads were not read on every validator
-  - the victim was not restarted (its boot time did not change)
-  - evidence-insufficient: the failure carries no decision trace
-- **public:** not run — no committed run record
+**Local reading.** `evidence-insufficient` — spec/audit/evidence/rc4-local-20261120-0669419/raw/claim.json
+- `RC-4/local/trace` — no decision trace in the record. **Next:** Capture the victim's `boot-*.json`; the reconnect branch emits it when `RNODE_TRACE_DIR` is set.
+- Next PR: `rc-confirm-local`
+  - observed: the restart harness did not pass: 'FAIL'
+  - observed: post-recovery heads were not read on every validator
+  - observed: the victim was not restarted (its boot time did not change)
+  - observed: evidence-insufficient: the failure carries no decision trace
+**Public reading.** `not-observed` — no committed run record
+- `RC-4/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-4 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Supersedes.** G584-G4, TA-C2, G428-M4
 
@@ -182,8 +210,11 @@ refused. The 12 old campaign rows are deleted; their fate is in the `superseded`
 
 **Re-run (public).** `python3 tools/release-check.py run --claim RC-5 --env public --public-manifest <manifest.json>`
 
-- **local:** pass — spec/audit/evidence/rc5-local-20261120-0669419/raw/claim.json
-- **public:** not run — no committed run record
+**Local reading.** `safe` — spec/audit/evidence/rc5-local-20261120-0669419/raw/claim.json
+- No action: the reading is safe; carry the record forward.
+**Public reading.** `not-observed` — no committed run record
+- `RC-5/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-5 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Supersedes.** G428-M2
 
@@ -213,13 +244,16 @@ refused. The 12 old campaign rows are deleted; their fate is in the `superseded`
 
 **Re-run (public).** `python3 tools/release-check.py run --claim RC-6 --env public --public-manifest <manifest.json>`
 
-- **local:** fail — spec/audit/evidence/rc6-local-20261120-0669419/raw/claim.json
-  - rnode audit exited 1: Configuration error: `run` subcommand is required to build a node configuration
-  - rnode audit verdict is None, not AGREE
-  - the audit consumed no bodies
-  - the audit's digest does not equal the joiner's accepted digest
-  - evidence-insufficient: the failure carries no decision trace
-- **public:** not run — no committed run record
+**Local reading.** `evidence-insufficient` — spec/audit/evidence/rc6-local-20261120-0669419/raw/claim.json
+- `RC-6/local/trace` — no decision trace in the record. **Next:** Pass `RNODE_TRACE_DIR` to `docker exec rnode audit` and copy `audit-*.json`; the trace is written after `check_target`.
+- Next PR: `rc-confirm-local`
+  - observed: rnode audit exited 1: Configuration error: `run` subcommand is required to build a node configuration
+  - observed: rnode audit verdict is None, not AGREE
+  - observed: the audit consumed no bodies
+  - observed: the audit's digest does not equal the joiner's accepted digest
+**Public reading.** `not-observed` — no committed run record
+- `RC-6/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-6 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Supersedes.** G428-M3
 
@@ -249,9 +283,13 @@ refused. The 12 old campaign rows are deleted; their fate is in the `superseded`
 
 **Re-run (public).** `python3 tools/release-check.py run --claim RC-7 --env public --public-manifest <manifest.json>`
 
-- **local:** not run — spec/audit/evidence/rc7-local-20261120-0669419/raw/claim.json
-  - no --old-image/RNODE_OLD_IMAGE: the mixed-version arm needs a separately built prior image
-- **public:** not run — no committed run record
+**Local reading.** `precondition` — spec/audit/evidence/rc7-local-20261120-0669419/raw/claim.json
+- `RC-7/local/precondition` — no --old-image/RNODE_OLD_IMAGE: the mixed-version arm needs a separately built prior image. **Next:** The arm did not produce its observation: the mixed arm needs RNODE_OLD_IMAGE set to a separately built prior image, and the downgrade arm needs a store stamped with format 5. Fix that input and re-run.
+- Next PR: `rc-harness-old-image`
+  - observed: no --old-image/RNODE_OLD_IMAGE: the mixed-version arm needs a separately built prior image
+**Public reading.** `not-observed` — no committed run record
+- `RC-7/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-7 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Does not claim.** For a fresh-genesis launch this is post-launch; it becomes a launch blocker only over a populated store or a mixed fleet. The mixed arm needs a separately built prior image.
 
@@ -284,5 +322,6 @@ refused. The 12 old campaign rows are deleted; their fate is in the `superseded`
 - Finalised block body and state availability on every validator.
 - Equivocation injection under a validator key.
 
-`check-release-campaigns.py --assert-ready` exits 3 unless every claim is `pass` in both
-environments, so a closed gate register is never a release authorization.
+`check-release-campaigns.py --assert-ready` exits 3 unless every claim reads `safe` in both
+environments; every open reading names its next action and PR. A closed register is still
+not a release authorization.

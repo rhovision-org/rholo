@@ -129,6 +129,61 @@ class ClaimTests(unittest.TestCase):
                 self.assertTrue(any(predicate in reason for reason in reasons),
                                 (row["id"], predicate, reasons))
 
+    def test_every_claim_names_its_trace_close_actions_and_next_pr(self):
+        for row in self.payload["claims"]:
+            with self.subTest(claim=row["id"]):
+                self.assertIn(row.get("trace"), checker.TRACE_KINDS)
+                for key in checker.CLOSE_KEYS:
+                    self.assertTrue((row.get("close") or {}).get(key), (row["id"], key))
+                for environment in ("local", "public"):
+                    self.assertIn((row.get("next_pr") or {}).get(environment),
+                                  {entry["id"] for entry in self.payload["action_prs"]})
+
+    def test_a_false_predicate_action_names_the_predicate_and_anchors(self):
+        row = self.claim("RC-1")
+        module = checker.load_test(row)
+        record = module.fixture()
+        record["verdict"] = "fail"
+        record["observations"]["traces"][0]["fork_blocks"] = ["11" * 32]
+        record["finished_at"] = "2026-11-20T10:00:00Z"
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "rc1" / "claim.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps(record))
+            derived = builder.derive_claim(row, roots=(Path(root),))
+        action = derived["local"]["action"]
+        self.assertEqual(action["reading"], "unsafe-point")
+        item = next(item for item in action["items"] if item["item"].endswith("fork_ok"))
+        self.assertIn("fork_ok", item["finding"])
+        self.assertIn("casper/src/merging.rs", item["anchor"]["rust"])
+        self.assertTrue(item["anchor"]["lean"].startswith("Rchain."))
+
+    def test_a_precondition_action_says_what_to_supply(self):
+        row = self.claim("RC-2")
+        module = checker.load_test(row)
+        record = module.fixture()
+        record["verdict"] = "not run"
+        record["preconditions"] = ["no partition was installed"]
+        record["finished_at"] = "2026-11-20T10:00:00Z"
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "rc2" / "claim.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps(record))
+            derived = builder.derive_claim(row, roots=(Path(root),))
+        action = derived["local"]["action"]
+        self.assertEqual(action["reading"], "precondition")
+        self.assertIn("no partition", action["items"][0]["finding"])
+        self.assertTrue(action["items"][0]["action"])
+
+    def test_a_public_not_observed_action_names_the_manifest(self):
+        row = self.claim("RC-6")
+        with tempfile.TemporaryDirectory() as root:
+            derived = builder.derive_claim(row, roots=(Path(root),))
+        action = derived["public"]["action"]
+        self.assertEqual(action["reading"], "not-observed")
+        self.assertEqual(action["next_pr"], "rc-public-fleet")
+        self.assertIn("four-host public manifest", action["items"][0]["action"])
+
     def test_check_is_deterministic(self):
         for row in self.payload["claims"]:
             module = checker.load_test(row)
@@ -176,7 +231,9 @@ class ClaimTests(unittest.TestCase):
             path.write_text(json.dumps(good))
             derived = builder.derive_claim(row, roots=(Path(root),))
             self.assertEqual(derived["local"]["status"], "pass")
+            self.assertEqual(derived["local"]["action"]["reading"], "safe")
             self.assertEqual(derived["public"]["status"], "not run")
+            self.assertEqual(derived["public"]["action"]["reading"], "not-observed")
             # A stored pass whose observations fail is a fail, never a pass.
             bad = copy.deepcopy(good)
             MUTATIONS["RC-1"](bad)
@@ -184,9 +241,11 @@ class ClaimTests(unittest.TestCase):
             path.write_text(json.dumps(bad))
             derived = builder.derive_claim(row, roots=(Path(root),))
             self.assertEqual(derived["local"]["status"], "fail")
+            self.assertEqual(derived["local"]["action"]["reading"], "model-incomplete")
             path.unlink()
             derived = builder.derive_claim(row, roots=(Path(root),))
             self.assertEqual(derived["local"]["status"], "not run")
+            self.assertEqual(derived["local"]["action"]["reading"], "not-observed")
 
     def test_the_tracker_is_current_and_not_ready(self):
         result = subprocess.run(
