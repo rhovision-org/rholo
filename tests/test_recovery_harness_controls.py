@@ -497,6 +497,8 @@ class HealingWindowTests(unittest.TestCase):
         self.assertTrue(m.finalized_fence_is_frozen(
             before, [{"latest": 34, "finalized_height": 26}] * 3))
         self.assertFalse(m.finalized_fence_is_frozen(
+            before, [{"latest": 34, "finalized_height": 27}] * 3))
+        self.assertFalse(m.finalized_fence_is_frozen(
             before, moving_tip + [{"latest": 36, "finalized_height": 26}]))
         self.assertFalse(m.finalized_fence_is_frozen(before, moving_tip[:2]))
         self.assertFalse(m.finalized_fence_is_frozen(

@@ -121,8 +121,9 @@ def finalized_fence_is_frozen(victim_before, observations):
         window = heights[start:start + DWELL_MIN_SAMPLES]
         if len(set(window)) == 1:
             settled = window[0]
-            # A settle below the pre-cut fence is a regression, not a drain.
-            if type(pre_cut) is int and settled < pre_cut:
+            # A settle below the pre-cut fence is a regression, not a drain. A settle more than one
+            # height above it is more than the one queued pre-cut fringe: the isolation leaked.
+            if type(pre_cut) is int and (settled < pre_cut or settled > pre_cut + 1):
                 return False
             return all(height == settled for height in heights[start:])
     return False
