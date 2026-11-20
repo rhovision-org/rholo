@@ -202,6 +202,7 @@ class ClaimTests(unittest.TestCase):
         record = module.fixture("local")
         trace = record["observations"]["traces"][0]
         trace["rejected_hosts"] = list(trace["conflict_scope"])
+        trace["rejected_deploys"] = ["ab" * 32]
         verdict, reasons = module.check(record)
         self.assertEqual(verdict, "fail")
         self.assertTrue(any("ledger_ok" in reason for reason in reasons), reasons)
@@ -214,6 +215,17 @@ class ClaimTests(unittest.TestCase):
         trace["conflict_scope"] = ["aa" * 32]
         trace["final_scope"] = ["ef" * 32]
         trace["rejected_hosts"] = ["ef" * 32]
+        trace["rejected_deploys"] = ["ab" * 32]
+        verdict, reasons = module.check(record)
+        self.assertEqual(verdict, "pass", reasons)
+
+    def test_a_rejection_with_no_deploy_id_is_not_a_ledger_failure(self):
+        row = self.claim("RC-1")
+        module = checker.load_test(row)
+        record = module.fixture("local")
+        trace = record["observations"]["traces"][0]
+        trace["rejected_hosts"] = list(trace["conflict_scope"])
+        trace["rejected_deploys"] = []
         verdict, reasons = module.check(record)
         self.assertEqual(verdict, "pass", reasons)
 
