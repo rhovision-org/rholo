@@ -2101,6 +2101,13 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
             pooled.get(deployer).copied().unwrap_or(0)
         };
         if let Err(e) = pool::check_admission(&limits, count, held, rate_ok) {
+            if crate::trace::trace_enabled() {
+                pool::AdmissionTrace::new("pool-admit", "internal")
+                    .refusal(e.class_name())
+                    .pool(count, limits.max_deploys)
+                    .deployer(held)
+                    .write();
+            }
             return Err(e.to_string());
         }
 
@@ -2153,17 +2160,40 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         match pool::check_commit(&limits, count, in_use, term_bytes, duplicate) {
             Ok(()) => {}
             Err(PoolError::Duplicate) => {
+                if crate::trace::trace_enabled() {
+                    pool::AdmissionTrace::new("pool-commit", "internal")
+                        .refusal(PoolError::Duplicate.class_name())
+                        .pool(count, limits.max_deploys)
+                        .bytes(in_use, limits.max_bytes)
+                        .write();
+                }
                 return Err(PoolError::duplicate_message(
                     &rchain_shared::base16::encode(&deploy.sig),
-                ))
+                ));
             }
             Err(PoolError::ByteFull) => {
+                if crate::trace::trace_enabled() {
+                    pool::AdmissionTrace::new("pool-commit", "internal")
+                        .refusal(PoolError::ByteFull.class_name())
+                        .pool(count, limits.max_deploys)
+                        .bytes(in_use, limits.max_bytes)
+                        .write();
+                }
                 return Err(PoolError::byte_full_message(
                     in_use,
                     MAX_POOLED_DEPLOY_BYTES,
-                ))
+                ));
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e) => {
+                if crate::trace::trace_enabled() {
+                    pool::AdmissionTrace::new("pool-commit", "internal")
+                        .refusal(e.class_name())
+                        .pool(count, limits.max_deploys)
+                        .bytes(in_use, limits.max_bytes)
+                        .write();
+                }
+                return Err(e.to_string());
+            }
         }
         self.deploy_store
             .put(&[(deploy.sig.clone(), deploy)])

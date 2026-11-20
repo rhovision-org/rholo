@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Validate the release-claims tracker.
+"""Validate the release-claims tracker and derive its statuses.
 
 The 12 old release-campaign rows were deleted and replaced by the seven claims in
-`spec/audit/release-claims.json`. A claim is one observable node behaviour, one
-falsifier and one control, re-runnable on the standard local devnet or on
-`testnet-4`. The 12 old ids are mapped in the source's `superseded` table; none
-may disappear silently.
+`spec/audit/release-claims.json`. A claim is one observable node behaviour with one
+executable test under `tests/`. The tracker stores no status and no `missing`
+observation: a claim's status in an environment is the verdict its own test's
+`check(record)` returns over that environment's newest committed run record.
 
-This checker does not load `gate-criteria.json`. A release claim is not a gate;
-its own observation and tool are the criterion, and `--assert-ready` exits 3
-while any claim or sub-observation is not closed.
+There is no `open`/`owed`/`closed` vocabulary. A claim whose test does not exist,
+does not import, or does not define `CLAIM_ID`, `run`, `check` and `fixture` is
+refused; that is the machine check behind "every test needs to exist".
 """
 from __future__ import annotations
 
@@ -33,8 +33,14 @@ OLD_IDS = {
     "G584-G1", "G584-G2", "G584-G3", "G584-G4", "G584-G5",
     "TA-C1", "TA-C2",
 }
-STATUSES = {"open", "owed", "closed"}
 CLAIM_MINIMUM = 7
+FORBIDDEN = ("status", "missing", "sub_observations", "tool")
+REQUIRED = ("id", "title", "claim", "pass_condition", "fail_condition", "observable",
+            "negative_control", "environment", "rerun", "test", "owner",
+            "trace", "close", "next_pr")
+TRACE_KINDS = ("merge", "finality", "state", "boot", "admission", "audit", "format")
+CLOSE_KEYS = ("not-observed", "precondition", "unsafe-point", "model-incomplete",
+              "evidence-insufficient")
 
 
 class ClaimError(RuntimeError):
@@ -54,18 +60,34 @@ def _builder():
     return module
 
 
-def claim_status(row: dict) -> str:
-    statuses = [sub.get("status") for sub in row.get("sub_observations") or []]
-    if statuses and all(status == "closed" for status in statuses):
-        return "closed"
-    if "owed" in statuses:
-        return "owed"
-    return "open"
+def load_test(row: dict):
+    """Import the claim's test module, refusing anything that cannot be run."""
+    ident = row.get("id")
+    relative = row.get("test")
+    require(isinstance(relative, str) and relative.endswith(".py"),
+            f"{ident}: test must name a .py file")
+    path = ROOT / relative
+    require(path.is_file(), f"{ident}: test {relative} does not exist")
+    spec = importlib.util.spec_from_file_location(
+        "claim_test_" + str(ident).lower().replace("-", "_"), path)
+    try:
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception as error:  # noqa: BLE001 - any import failure is a refusal
+        raise ClaimError(f"{ident}: test {relative} does not import: "
+                         f"{type(error).__name__}: {error}") from error
+    require(getattr(module, "CLAIM_ID", None) == ident,
+            f"{ident}: {relative} declares CLAIM_ID "
+            f"{getattr(module, 'CLAIM_ID', None)!r}")
+    for name in ("run", "check", "fixture"):
+        require(callable(getattr(module, name, None)),
+                f"{ident}: {relative} does not define a callable {name}()")
+    return module
 
 
 def validate(source: dict, builder) -> dict:
     """The authored claims plus the generated tracker, checked together."""
-    require(source.get("schema") == 1, "release-claims schema must be 1")
+    require(source.get("schema") == 2, "release-claims schema must be 2")
     claims = source.get("claims")
     require(isinstance(claims, list) and claims, "claims must be a non-empty list")
     require(len(claims) >= CLAIM_MINIMUM,
@@ -90,49 +112,76 @@ def validate(source: dict, builder) -> dict:
             "every deleted row must be mapped: "
             + ", ".join(sorted(OLD_IDS - set(old))))
 
+    require(isinstance(source.get("out_of_scope"), list),
+            "out_of_scope must be a list (it is not a status)")
+    action_prs = source.get("action_prs")
+    require(isinstance(action_prs, list) and action_prs,
+            "action_prs must name the next PRs")
+    pr_ids = set()
+    for entry in action_prs:
+        ident = entry.get("id")
+        require(ident and entry.get("scope") and entry.get("claims"),
+                "every action PR needs an id, a scope and the claims it closes")
+        require(ident not in pr_ids, f"action PR {ident!r} appears twice")
+        pr_ids.add(ident)
     for row in claims:
         ident = row.get("id")
-        require(row.get("title") and row.get("claim"),
-                f"{ident}: a claim needs a title and a one-sentence claim")
-        require(row.get("pass_condition") and row.get("fail_condition"),
-                f"{ident}: pass and fail conditions are required")
-        require(row.get("observable") and row.get("negative_control"),
-                f"{ident}: an observable and a control are required")
+        for field in REQUIRED:
+            require(row.get(field), f"{ident}: {field} is required")
+        for forbidden in FORBIDDEN:
+            require(forbidden not in row,
+                    f"{ident}: {forbidden!r} is retired; status is measured, not authored")
         env = row.get("environment") or {}
         require(env.get("local") and env.get("public"),
                 f"{ident}: both environments are required")
         rerun = row.get("rerun") or {}
         require(rerun.get("local") and rerun.get("public"),
                 f"{ident}: both re-run commands are required")
-        require(row.get("tool") or row.get("missing_observation"),
-                f"{ident}: name a tool or a missing observation")
+        require("tools/release-check.py run --claim " + str(ident) in rerun["local"],
+                f"{ident}: rerun.local must run tools/release-check.py for this claim")
+        require("tools/release-check.py run --claim " + str(ident) in rerun["public"],
+                f"{ident}: rerun.public must run tools/release-check.py for this claim")
+        require(row.get("trace") in TRACE_KINDS,
+                f"{ident}: trace must be one of {TRACE_KINDS}")
+        close = row.get("close") or {}
+        for key in CLOSE_KEYS:
+            require(isinstance(close.get(key), str) and close[key].strip(),
+                    f"{ident}: close.{key} must say what to do")
+        next_pr = row.get("next_pr") or {}
+        for environment in ("local", "public"):
+            require(next_pr.get(environment) in pr_ids,
+                    f"{ident}: next_pr.{environment} must name an action PR")
         supersedes = row.get("supersedes") or []
         require(set(supersedes) <= OLD_IDS,
                 f"{ident}: supersedes an unknown row")
-        subs = row.get("sub_observations")
-        require(isinstance(subs, list) and subs,
-                f"{ident}: at least one sub-observation is required")
-        for sub in subs:
-            sid = sub.get("id")
-            require(sid and sub.get("name"),
-                    f"{ident}: every sub-observation needs an id and a name")
-            require(sub.get("status") in STATUSES,
-                    f"{ident}/{sid}: status must be open, owed or closed")
-            if sub["status"] == "open":
-                require(sub.get("tool"),
-                        f"{ident}/{sid}: an open observation needs a tool")
-            if sub["status"] == "owed":
-                require(sub.get("missing"),
-                        f"{ident}/{sid}: an owed observation needs a missing description")
+        module = load_test(row)
+        fixture = module.fixture()
+        require(isinstance(fixture, dict), f"{ident}: fixture() must return a record")
+        require(fixture.get("claim_id") == ident,
+                f"{ident}: fixture() is for {fixture.get('claim_id')!r}")
+        verdict, reasons = module.check(fixture)
+        require(verdict == "pass",
+                f"{ident}: fixture() does not pass its own check: {verdict} {reasons}")
+        require(fixture.get("verdict") == "pass",
+                f"{ident}: fixture() must be a passing record")
 
     fresh = builder.campaigns()
     require([row["id"] for row in fresh["campaigns"]] == ids,
             "the generated tracker does not carry the authored claims")
     return {
         "claims": len(claims),
-        "statuses": {row["id"]: claim_status(row) for row in claims},
+        "actions": {row["id"]: row.get("action") or {} for row in fresh["campaigns"]},
+        "statuses": {row["id"]: row.get("status") or {} for row in fresh["campaigns"]},
         "old": len(old),
     }
+
+
+def ready(result: dict) -> bool:
+    for actions in result["actions"].values():
+        for environment in ("local", "public"):
+            if (actions.get(environment) or {}).get("reading") != "safe":
+                return False
+    return True
 
 
 def main() -> int:
@@ -140,7 +189,7 @@ def main() -> int:
     parser.add_argument("--check", action="store_true",
                         help="compare the committed tracker with a fresh build")
     parser.add_argument("--assert-ready", action="store_true",
-                        help="exit 3 while any claim or sub-observation is not closed")
+                        help="exit 3 unless every claim is pass in both environments")
     parser.add_argument("--json", action="store_true", help="print the result as JSON")
     args = parser.parse_args()
 
@@ -165,22 +214,28 @@ def main() -> int:
             print(json.dumps({"result": "STALE", "files": stale}, sort_keys=True))
             return 2
 
-    open_claims = {ident: status for ident, status in result["statuses"].items()
-                   if status != "closed"}
+    is_ready = ready(result)
     body = {
-        "result": "RELEASE_CLAIMS_OPEN" if open_claims else "RELEASE_CLAIMS_CLOSED",
+        "result": "RELEASE_CLAIMS_READY" if is_ready else "RELEASE_CLAIMS_NOT_READY",
         "claims": result["claims"],
-        "open": open_claims,
         "superseded": result["old"],
+        "readings": {ident: {env: (entry.get("reading") or "not-observed")
+                             for env, entry in actions.items()}
+                     for ident, actions in result["actions"].items()},
+        "open_actions": sum(len(((actions.get(env) or {}).get("items") or []))
+                            for actions in result["actions"].values()
+                            for env in ("local", "public")),
     }
     if args.json:
         print(json.dumps(body, indent=2, sort_keys=True))
     else:
         print(body["result"])
-        print(f"release claims: {result['claims']}; superseded: {result['old']}")
-        for ident, status in result["statuses"].items():
-            print(f"  {ident}: {status}")
-    if args.assert_ready and open_claims:
+        print(f"release claims: {result['claims']}; superseded: {result['old']}; "
+              f"open actions: {body['open_actions']}")
+        for ident, readings in body["readings"].items():
+            print(f"  {ident}: local={readings.get('local')} "
+                  f"public={readings.get('public')}")
+    if args.assert_ready and not is_ready:
         return 3
     return 0
 

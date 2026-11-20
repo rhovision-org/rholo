@@ -1,0 +1,77 @@
+{
+  "arms": [],
+  "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 186959,
+      "kind": "log",
+      "path": "raw/audit.log",
+      "sha256": "02899e5052af6039b3e319a808037a0eb6706d655c882f988afcd941ca00d36e"
+    },
+    {
+      "bytes": 0,
+      "kind": "log",
+      "path": "raw/chain.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 1861,
+      "kind": "json",
+      "path": "raw/claim.json",
+      "sha256": "9f8d953bafa72cdf6eee98991ba7ae3c7e2de713c48950ded8c957b30265e826"
+    },
+    {
+      "bytes": 11180,
+      "kind": "log",
+      "path": "raw/join/activated.log",
+      "sha256": "1bc456642af58dabf9e6caf7ba1a9706718ad47becc5d634611ff822682e271d"
+    },
+    {
+      "bytes": 6614,
+      "kind": "json",
+      "path": "raw/join/chain.json",
+      "sha256": "05234c2c077189058315ac31daefe8e1880e1ea2fba473c204a5098b5415560f"
+    },
+    {
+      "bytes": 1799,
+      "kind": "json",
+      "path": "raw/join/mature-join.json",
+      "sha256": "aa28decaf9ac5bb1a698c90ccdea0db6119c75076a170593808b472efbe570bb"
+    },
+    {
+      "bytes": 85687,
+      "kind": "log",
+      "path": "raw/join/passive.log",
+      "sha256": "8029b1d3fd2745e5474d1a0621e439bb82e1ea6b8fb268ca66861a6ad2042541"
+    },
+    {
+      "bytes": 101719,
+      "kind": "log",
+      "path": "raw/join/responder.log",
+      "sha256": "b5a0bf09a7df13d624a6926de7066b743c26e1bcaca03bb49d9206e4d38cef45"
+    },
+    {
+      "bytes": 533,
+      "kind": "log",
+      "path": "raw/join.log",
+      "sha256": "51cc958f1178465a9f40ae10f3005e8316bfb22588c5f42acf1d2f1e4387880e"
+    }
+  ],
+  "gate_id": "RC-6",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-20T12:06:51+00:00",
+    "tool": "evidence-pack",
+    "version": 2
+  },
+  "redactions": [],
+  "reference": null,
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a",
+  "verdict": "FAIL"
+}

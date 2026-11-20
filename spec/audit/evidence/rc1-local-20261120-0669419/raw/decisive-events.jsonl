@@ -1,0 +1,3 @@
+{"node": 0, "finalized_marker_at": "56f611bdd468f2b7544ce6838bb77ababfa5d475576fb77e88f05b79f3b11dd8", "height": 1, "expr": [], "rejectedDeploys": []}
+{"node": 0, "finalized_marker_at": "e97adf3aedf9ea23f9cbaf5cf014c2aaea3ee983e4857b4c6c073886b09197d6", "height": 3, "expr": [{"ExprInt": {"data": 42}}], "rejectedDeploys": []}
+{"node": 0, "finalized_marker_at": "e7926197bd9df8b87f1ca00cd91752513ad77744ee1515afbb9959baf7bb89f0", "height": 24, "expr": [], "rejectedDeploys": ["304402203433f69289b19b5fa80253fa8a90292785b403f5990a9d6b80d5f5cb370cdf410220512d0b8742173fef7745679bd7cd42b2e834fcdcb9b56655238963eebaea3894", "5241aa246542b23bb74d4974233e24976d44bbcb4e3e7f145b7175af5031850d02"]}

@@ -1009,6 +1009,71 @@ fn epoch_boundary_violation_for(
     (boundary != has_close).then_some(BlockStatus::InvalidEpochBoundary)
 }
 
+/// **The state decision as a trace.** A validator's derived pre-state and replayed post-state are
+/// the coordinates RC-3's agreement is read in. The evaluator recomputes `pre_ok`/`post_ok`/
+/// `rejected_ok` from these fields, and groups traces by block for `agreement_ok`; the node's
+/// `verdict` label is never trusted.
+#[derive(Debug, serde::Serialize)]
+struct StateTrace {
+    kind: String,
+    origin: String,
+    block: String,
+    height: i64,
+    sender: String,
+    parents: Vec<String>,
+    claimed_pre: String,
+    computed_pre: String,
+    claimed_post: String,
+    replayed_post: Option<String>,
+    claimed_rejected: Vec<String>,
+    computed_rejected: Vec<String>,
+    verdict: String,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_state_trace(
+    block: &BlockMessage,
+    origin: ValidationOrigin,
+    parents: &BTreeSet<BlockHash>,
+    claimed_pre: Blake2b256Hash,
+    computed_pre: Blake2b256Hash,
+    claimed_post: Blake2b256Hash,
+    replayed_post: Option<Blake2b256Hash>,
+    claimed_rejected: &BTreeSet<Vec<u8>>,
+    computed_rejected: &BTreeSet<Vec<u8>>,
+    verdict: &str,
+) {
+    if !crate::trace::trace_enabled() {
+        return;
+    }
+    let hex_set = |set: &BTreeSet<Vec<u8>>| {
+        set.iter()
+            .map(|id| rchain_shared::base16::encode(id))
+            .collect()
+    };
+    crate::trace::write_trace(
+        "state",
+        &StateTrace {
+            kind: "state".to_string(),
+            origin: match origin {
+                ValidationOrigin::Peer => "peer".to_string(),
+                ValidationOrigin::SelfBuilt => "self-built".to_string(),
+            },
+            block: block.block_hash.to_hex(),
+            height: i64::from(block.block_number),
+            sender: rchain_shared::base16::encode(block.sender.as_bytes()),
+            parents: parents.iter().map(BlockHash::to_hex).collect(),
+            claimed_pre: claimed_pre.to_hex(),
+            computed_pre: computed_pre.to_hex(),
+            claimed_post: claimed_post.to_hex(),
+            replayed_post: replayed_post.map(|hash| hash.to_hex()),
+            claimed_rejected: hex_set(claimed_rejected),
+            computed_rejected: hex_set(computed_rejected),
+            verdict: verdict.to_string(),
+        },
+    );
+}
+
 /// Validate a block by recomputing its pre-state and replaying its deploys (port of
 /// `validateBlockCheckpoint`). Returns the block metadata plus a [`ReplayVerdict`] (what the replay
 /// found) / `BlockStatus` (a pre-replay refusal) outcome.
@@ -1175,6 +1240,8 @@ where
     };
 
     let incoming_pre_state_hash = Blake2b256Hash::from_byte_array(block.pre_state_hash.as_bytes());
+    let claimed_post_hash = Blake2b256Hash::from_byte_array(block.post_state_hash.as_bytes());
+    let mut replayed_post: Option<Blake2b256Hash> = None;
     // **Its own status, not a second way to say `InvalidStateHash`** (#139). `Ok(false)` reaches
     // `multi_parent_casper`'s `InvalidStateHash`, and so did this arm until it was split: an operator
     // could not tell a *pre*-state disagreement — this node's merge over the block's justifications
@@ -1224,6 +1291,18 @@ where
             log.warn(
                 source,
                 &format!("block {} refused: {status}", block.block_hash.to_hex()),
+            );
+            write_state_trace(
+                block,
+                origin,
+                &parents_set,
+                incoming_pre_state_hash,
+                pre_state.pre_state_hash,
+                claimed_post_hash,
+                replayed_post,
+                &block.rejected_deploys,
+                &pre_state.fringe_rejected_deploys,
+                "epoch-boundary",
             );
             let bmd = BlockMetadata {
                 validated: true,
@@ -1318,6 +1397,7 @@ where
         // Read the recomputed hash *before* `handle_errors` consumes the result, so the disagreement
         // can be reported with both sides (#139).
         let recomputed = replay_result.as_ref().ok().cloned();
+        replayed_post = recomputed;
         // **A replay that failed and a replay that disagreed are different faults** (#564), and this
         // is where the variant is still in hand. The line names the block's origin because the same
         // failure means different things on the two paths: a peer's block may be valid under a view
@@ -1344,7 +1424,24 @@ where
                 ),
             );
         }
-        let verdict = handle_errors(&post_state_hash, replay_result)?;
+        let verdict = match handle_errors(&post_state_hash, replay_result) {
+            Ok(verdict) => verdict,
+            Err(error) => {
+                write_state_trace(
+                    block,
+                    origin,
+                    &parents_set,
+                    incoming_pre_state_hash,
+                    pre_state.pre_state_hash,
+                    claimed_post_hash,
+                    replayed_post,
+                    &block.rejected_deploys,
+                    &pre_state.fringe_rejected_deploys,
+                    "replay-error",
+                );
+                return Err(error);
+            }
+        };
         if verdict == ReplayVerdict::PostStateMismatch {
             log.warn(
                 source,
@@ -1368,6 +1465,26 @@ where
     // classifies it as a local fault and never as `Divergence`. The metadata is not stored on that
     // path (`validate_checks` returns `SelfReplayFailed` before writing it), and leaving the cause
     // unset keeps a future caller from reading the old classification back.
+    let state_verdict = match &result {
+        Err(BlockStatus::InvalidPreStateHash) => "pre-mismatch",
+        Err(BlockStatus::InvalidRejectedDeploy) => "rejected-mismatch",
+        Err(_) => "refused",
+        Ok(ReplayVerdict::Matched(_)) => "matched",
+        Ok(ReplayVerdict::PostStateMismatch) => "post-mismatch",
+        Ok(ReplayVerdict::Failed(_)) => "replay-failed",
+    };
+    write_state_trace(
+        block,
+        origin,
+        &parents_set,
+        incoming_pre_state_hash,
+        pre_state.pre_state_hash,
+        claimed_post_hash,
+        replayed_post,
+        &block.rejected_deploys,
+        &pre_state.fringe_rejected_deploys,
+        state_verdict,
+    );
     let failure_cause = match &result {
         Err(_) | Ok(ReplayVerdict::PostStateMismatch) => Some(FailureCause::Divergence),
         Ok(ReplayVerdict::Failed(_)) if origin == ValidationOrigin::Peer => {

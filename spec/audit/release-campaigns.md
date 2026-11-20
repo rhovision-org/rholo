@@ -2,24 +2,41 @@
 
 Emitted from `spec/audit/release-claims.json` by `tools/build-mainnet-gates.py`.
 
-**These are not gates.** A gate is a boolean test of the current build. A release claim
-is one observable node behaviour with one falsifier and one control, re-runnable on the
-standard local devnet or on `testnet-4`. The 12 old campaign rows are deleted; their fate
-is in the `superseded` table at the end.
+Each claim is a gate with one executable test over a decision trace. Its state is a
+measured **reading** of the newest committed record; its **next action** is what closes
+it. `safe` is the only reading that closes a gate. `unsafe-point` names a false predicate
+and its Rust and Lean anchors; `model-incomplete` names the trace that is the model gap;
+`evidence-insufficient` names the missing trace or coordinate; `precondition` and
+`not-observed` name the run that cannot yet be made. No status is authored.
 
-- generated: 2026-11-19
+- generated: 2026-11-20
 - claims: 7
 - review: `spec/audit/release-campaign-red-team-20261119.md`
 
-| claim | status | local | public | owner |
+| claim | env | reading | next action | next PR |
 |---|---|---|---|---|
-| `RC-1` — Truthful settlement | **owed** | local-4 and local-8 (tools/devnet.sh; 4 GiB / 2 GiB per validator, bel | testnet-4: four independent hosts on the selected release | Aria / operator |
-| `RC-2` — Safety | **owed** | local-4 and local-8 (tools/devnet.sh) with a producing victim | testnet-4 with a real partition and the operator window | Jim / release coordination |
-| `RC-3` — State agreement across a merge | **owed** | local-4 and local-8 (tools/devnet.sh) | testnet-4 on the selected release | Jim / release coordination |
-| `RC-4` — Recovery without loss | **owed** | local-4 (tools/devnet.sh; tests/consensus-restart-under-load.py) | testnet-4 with a real host stop | Jim / release coordination |
-| `RC-5` — Overload refusal | **open** | local-4 (one node, direct listener and in-process gRPC) | testnet-4 public endpoint and proxy | Jim / release coordination |
-| `RC-6` — Join and audit | **owed** | local-4 (checkpoint join and genesis-only audit) | testnet-4 with a public join | Aria / evidence work |
-| `RC-7` — Upgrade compatibility | **owed** | local-4 (N and N+1 binaries); the G520 populated-store drill | testnet-4 fleet | Jim / release coordination |
+| `RC-1` | local | **evidence-insufficient** | The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read. | `rc-confirm-local` |
+| `RC-1` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-1 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+| `RC-2` | local | **precondition** | RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first. | `rc-confirm-local` |
+| `RC-2` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-2 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+| `RC-3` | local | **safe** | — | `—` |
+| `RC-3` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+| `RC-4` | local | **evidence-insufficient** | Capture the victim's `boot-*.json`; the reconnect branch emits it when `RNODE_TRACE_DIR` is set. | `rc-confirm-local` |
+| `RC-4` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-4 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+| `RC-5` | local | **safe** | — | `—` |
+| `RC-5` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-5 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+| `RC-6` | local | **evidence-insufficient** | Pass `RNODE_TRACE_DIR` to `docker exec rnode audit` and copy `audit-*.json`; the trace is written after `check_target`. | `rc-confirm-local` |
+| `RC-6` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-6 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+| `RC-7` | local | **precondition** | The arm did not produce its observation: the mixed arm needs RNODE_OLD_IMAGE set to a separately built prior image, and the downgrade arm needs a store stamped with format 5. Fix t | `rc-harness-old-image` |
+| `RC-7` | public | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-7 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
+
+## Next PRs
+
+| PR | closes | scope |
+|---|---|---|
+| `rc-confirm-local` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6 | Re-run the local arms with the current image and commit the records. Read each failure with tools/trace-evaluate.py: unsafe-point names a predicate and its anchor; model-incomplete names a model gap; evidence-insufficient names the missing trace. Close a claim only when both environments read safe. |
+| `rc-harness-old-image` | RC-7 | Build and pin a prior image for the mixed fleet, set RNODE_OLD_IMAGE, and run RC-7 locally. The mixed agreement is a claim-level predicate; the format trace is the decision record. |
+| `rc-public-fleet` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6, RC-7 | Supply the four-host public manifest (deploy id, marker, provenance) and run every claim with --env public. A public safe is the same reading on the live fleet, not a different test. |
 
 ---
 
@@ -27,26 +44,34 @@ is in the `superseded` table at the end.
 
 **Claim.** If the settlement endpoint reports finalizedSuccess and settlementConfirmed for a deploy, that deploy's effect is present at the finalised head on every validator and remains present through two further epoch boundaries.
 
-**Pass.** For one deploy id: the settlement response is finalizedSuccess with settlementConfirmed true; every validator reports the same finalised (height, hash); a marker written by the deploy reads back at that finalised block and at every later finalised head sampled; the inclusion block never appears in a later block's rejectedDeploys.
+**Pass.** For one deploy id: the settlement response is finalizedSuccess with settlementConfirmed true; every validator reports the same finalised (height, hash); a marker written by the deploy reads back at that finalised block and at every later finalised head sampled; the deploy id never appears in a later block's rejectedDeploys.
 
-**Fail.** A confirmed settlement whose effect is absent at the finalised head on any validator; validators disagree on the finalised hash; or the inclusion block appears in a later rejectedDeploys.
+**Fail.** A confirmed settlement whose effect is absent at the finalised head on any validator; validators disagree on the finalised hash; or the deploy id appears in a later rejectedDeploys.
 
 **Observe.** The settlement response, each validator's finalised (height, hash), the marker read at that block, and the per-block rejectedDeploys.
 
-**Control.** A marker absent before the write; a fixture where the effect is absent at the finalised head; a fixture where the inclusion block is final-scope rejected.
+**Control.** A marker absent before the write; a fixture where the effect is absent at the finalised head; a fixture where the deploy is final-scope rejected.
 
-**Local.** local-4 and local-8 (tools/devnet.sh; 4 GiB / 2 GiB per validator, below the documented tier)
+**Test.** `tests/release-claim-1.py`
+
+**Local.** local-4 (tools/devnet.sh; 2 GiB per validator, below the documented tier)
 
 **Public.** testnet-4: four independent hosts on the selected release
 
-**Re-run (local).** `tools/devnet.sh up --validators 4 --fresh; tools/consensus-acceptance-drill.py --local; settlement endpoint sample; finalised-head marker read on all validators`
+**Re-run (local).** `python3 tools/release-check.py run --claim RC-1 --env local`
 
-**Re-run (public).** `same observation on testnet-4 with the selected pins and the operator endpoints`
+**Re-run (public).** `python3 tools/release-check.py run --claim RC-1 --env public --public-manifest <manifest.json>`
 
-**Tool.** tools/live-gate.py::check_g3 (settlement half) + settlement-retention observation (owed)
-
-- `RC-1a` no false settlement — **open** — tools/live-gate.py::check_g3
-- `RC-1b` finalised effect retained — **owed** — The settlement route trusts block finality; a per-validator finalised-head read and the rejectedDeploys invariant are not implemented. This is the check-1 defect.
+**Local reading.** `evidence-insufficient` — spec/audit/evidence/rc1-local-20261120-0669419/raw/claim.json
+- `RC-1/local/trace` — no decision trace in the record. **Next:** The record predates `MergeTrace`: re-run with the current image so `merge-*.json` exists. A failure without it cannot be read.
+- Next PR: `rc-confirm-local`
+  - observed: the acceptance drill did not pass (marker retention)
+  - observed: the absent-marker control did not hold before the write
+  - observed: settlements: missing or empty
+  - observed: finalised: missing or empty
+**Public reading.** `not-observed` — no committed run record
+- `RC-1/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-1 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Supersedes.** G584-G2, G584-G3, TA-C1
 
@@ -58,25 +83,31 @@ is in the `superseded` table at the end.
 
 **Claim.** No two conflicting finalised histories: every finalised block held by one validator is finalised by every validator at or above its height, and no finalised (height, hash) regresses across restart, replay or partition.
 
-**Pass.** For every sampled finalised block, every validator at or above its height reports it finalised; no finalised (height, hash) regresses; no two conflicting finalised histories are observed.
+**Pass.** For every sampled finalised block, every validator at or above its height reports it finalised; no finalised (height, hash) regresses; no two conflicting finalised histories are observed; the isolated victim keeps producing while its finalised fence stays frozen.
 
 **Fail.** A finalised block not finalised by another validator at or above its height; a finalised regression; or two conflicting finalised histories.
 
 **Observe.** Per-validator finalised heads at each sample, the cross-node containment answers, and the finalised history over the window.
 
-**Control.** A producing split (the current harness victim is non-producing); an equivocation injection under the allowed Byzantine bound.
+**Control.** A producing split (the victim proposes while isolated); an equivocation injection under the allowed Byzantine bound.
 
-**Local.** local-4 and local-8 (tools/devnet.sh) with a producing victim
+**Test.** `tests/release-claim-2.py`
+
+**Local.** local-4 (tools/devnet.sh) with a producing victim
 
 **Public.** testnet-4 with a real partition and the operator window
 
-**Re-run (local).** `tools/devnet.sh up --validators 4 --fresh; tests/consensus-partition-rejoin.py --local`
+**Re-run (local).** `python3 tools/release-check.py run --claim RC-2 --env local`
 
-**Re-run (public).** `same observation on testnet-4 with independent hosts`
+**Re-run (public).** `python3 tools/release-check.py run --claim RC-2 --env public --public-manifest <manifest.json>`
 
-**Tool.** tests/consensus-partition-rejoin.py (containment assertion) + a criterion that consumes it (owed)
-
-- `RC-2a` containment and no regression — **owed** — The harness asserts cross-node containment; the campaign criterion reads only finalized_anchor booleans. The criterion must consume the containment evidence, and the victim must be producing.
+**Local reading.** `precondition` — spec/audit/evidence/rc2-local-20261120-0669419/raw/claim.json
+- `RC-2/local/precondition` — RC-1's settlement-retention precondition failed; no partition was installed. **Next:** RC-1's settlement-retention check failed, so no partition was installed; close RC-1's precondition first.
+- Next PR: `rc-confirm-local`
+  - observed: RC-1's settlement-retention precondition failed; no partition was installed
+**Public reading.** `not-observed` — no committed run record
+- `RC-2/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-2 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Supersedes.** G428-M4, TA-C1
 
@@ -96,17 +127,21 @@ is in the `superseded` table at the end.
 
 **Control.** A fixture where the ledger differs; a native-write case (native absolute writes are excluded from FinalizedMerge.lean's unqualified law).
 
-**Local.** local-4 and local-8 (tools/devnet.sh)
+**Test.** `tests/release-claim-3.py`
+
+**Local.** local-4 (tools/devnet.sh)
 
 **Public.** testnet-4 on the selected release
 
-**Re-run (local).** `compare every validator's preStateHash/postStateHash/rejectedDeploys for the same accepted block over a window`
+**Re-run (local).** `python3 tools/release-check.py run --claim RC-3 --env local`
 
-**Re-run (public).** `same comparison on testnet-4`
+**Re-run (public).** `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`
 
-**Tool.** state-agreement observation (owed)
-
-- `RC-3a` same state and ledger — **owed** — No cross-validator live checker exists. The passing merge_determinism tests are fixtures and arrival orders, not a cross-validator run.
+**Local reading.** `safe` — spec/audit/evidence/rc3-local-20261120-0669419/raw/claim.json
+- No action: the reading is safe; carry the record forward.
+**Public reading.** `not-observed` — no committed run record
+- `RC-3/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Supersedes.** G428-M4
 
@@ -126,18 +161,26 @@ is in the `superseded` table at the end.
 
 **Control.** The wrong-genesis and interrupted-restart arms; a deploy accepted only by the killed validator is not recoverable by design and must be declared, not counted.
 
+**Test.** `tests/release-claim-4.py`
+
 **Local.** local-4 (tools/devnet.sh; tests/consensus-restart-under-load.py)
 
 **Public.** testnet-4 with a real host stop
 
-**Re-run (local).** `tools/devnet.sh up --validators 4 --fresh; tests/consensus-restart-under-load.py --validators 4`
+**Re-run (local).** `python3 tools/release-check.py run --claim RC-4 --env local`
 
-**Re-run (public).** `same observation on testnet-4 with an operator-approved host stop`
+**Re-run (public).** `python3 tools/release-check.py run --claim RC-4 --env public --public-manifest <manifest.json>`
 
-**Tool.** tests/consensus-restart-under-load.py + a finalised-effect read (owed)
-
-- `RC-4a` finality and agreement after restart — **open** — tests/consensus-restart-under-load.py
-- `RC-4b` accepted deploy effect at the post-recovery finalised head — **owed** — The harness checks ProcessedWithSuccess, which admission.md says is not settlement. A marker at the post-recovery finalised head on every survivor and the victim is not read.
+**Local reading.** `evidence-insufficient` — spec/audit/evidence/rc4-local-20261120-0669419/raw/claim.json
+- `RC-4/local/trace` — no decision trace in the record. **Next:** Capture the victim's `boot-*.json`; the reconnect branch emits it when `RNODE_TRACE_DIR` is set.
+- Next PR: `rc-confirm-local`
+  - observed: the restart harness did not pass: 'FAIL'
+  - observed: post-recovery heads were not read on every validator
+  - observed: the victim was not restarted (its boot time did not change)
+  - observed: evidence-insufficient: the failure carries no decision trace
+**Public reading.** `not-observed` — no committed run record
+- `RC-4/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-4 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Supersedes.** G584-G4, TA-C2, G428-M4
 
@@ -157,21 +200,25 @@ is in the `superseded` table at the end.
 
 **Control.** The unset-default arm must admit; the four named queue bounds; a refusal class outside the vocabulary.
 
+**Test.** `tests/release-claim-5.py`
+
 **Local.** local-4 (one node, direct listener and in-process gRPC)
 
 **Public.** testnet-4 public endpoint and proxy
 
-**Re-run (local).** `tools/m2-pressure-arm.py phase --mode capped/--mode unset; tools/m2-pressure.py check --locality local-devnet`
+**Re-run (local).** `python3 tools/release-check.py run --claim RC-5 --env local`
 
-**Re-run (public).** `same observation on testnet-4 with a public endpoint and no proxy`
+**Re-run (public).** `python3 tools/release-check.py run --claim RC-5 --env public --public-manifest <manifest.json>`
 
-**Tool.** tools/m2-pressure.py::check_pressure
-
-- `RC-5a` configured bound refuses explicitly, no 5xx, no accepted loss — **open** — tools/m2-pressure.py::check_pressure
+**Local reading.** `safe` — spec/audit/evidence/rc5-local-20261120-0669419/raw/claim.json
+- No action: the reading is safe; carry the record forward.
+**Public reading.** `not-observed` — no committed run record
+- `RC-5/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-5 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Supersedes.** G428-M2
 
-**Does not claim.** The opt-in in-flight cap is not the shipping default; the pool's count/byte/term/share/rate bounds are the intended throttle. Transport correctness across HTTP, direct HTTP, gRPC and a proxy is a separate owed observation.
+**Does not claim.** The opt-in in-flight cap is not the shipping default; the pool's count/byte/term/share/rate bounds are the intended throttle. Transport correctness across HTTP, direct HTTP, gRPC and a proxy is out of scope.
 
 ---
 
@@ -179,59 +226,72 @@ is in the `superseded` table at the end.
 
 **Claim.** A fresh node joining from a bootstrap receives the certified anchor, applies and hydrates it, and reaches the same finalised head and state; rnode audit reproduces the checkpoint claim from genesis.
 
-**Pass.** The joiner's served, received, restored and walked hashes agree for the certified anchor (equality with the served root is required only for a genesis anchor); a legacy certificate with no commitments is refused; rnode audit returns AGREE, its audited digest equals the accepted digest, and its derived root equals the checkpoint claim.
+**Pass.** The joiner's served, received, restored and walked hashes agree for the certified anchor (equality with the served root is required only for a genesis anchor); a legacy certificate with no commitments is refused; rnode audit returns AGREE, its audited digest equals the accepted digest when the anchor is a checkpoint, and its derived root equals the checkpoint claim.
 
 **Fail.** The joiner receives but never applies; the restored state differs from the certified anchor; a certificate with no commitments is accepted; audit returns DISAGREE, a different digest, or a derivation over a different checkpoint.
 
-**Observe.** The six-stage join chain, the certified anchor's post-state root and fringeState, and the audit verdict and digest.
+**Observe.** The six-stage join chain, the certified anchor's post-state root and fringeState, the audited digest, and the audit verdict.
 
 **Control.** A send-log-only chain; a served/restored hash mismatch; a legacy certificate with no commitments.
 
-**Local.** local-4 (checkpoint join and genesis-only audit)
+**Test.** `tests/release-claim-6.py`
+
+**Local.** local-4 (genesis-only join and audit)
 
 **Public.** testnet-4 with a public join
 
-**Re-run (local).** `tools/devnet.sh up --validators 4 --fresh; tools/m3-join-chain.py build/check; rnode audit`
+**Re-run (local).** `python3 tools/release-check.py run --claim RC-6 --env local`
 
-**Re-run (public).** `same observation on testnet-4`
+**Re-run (public).** `python3 tools/release-check.py run --claim RC-6 --env public --public-manifest <manifest.json>`
 
-**Tool.** tools/m3-join-chain.py::check_chain + rnode audit (wrapper owed)
-
-- `RC-6a` join, apply and hydrate — **open** — tools/m3-join-chain.py::check_chain
-- `RC-6b` audit reproduces the checkpoint — **owed** — rnode audit exists; a criterion binding AGREE and the digest equality to the joiner's accepted digest is not written.
+**Local reading.** `evidence-insufficient` — spec/audit/evidence/rc6-local-20261120-0669419/raw/claim.json
+- `RC-6/local/trace` — no decision trace in the record. **Next:** Pass `RNODE_TRACE_DIR` to `docker exec rnode audit` and copy `audit-*.json`; the trace is written after `check_target`.
+- Next PR: `rc-confirm-local`
+  - observed: rnode audit exited 1: Configuration error: `run` subcommand is required to build a node configuration
+  - observed: rnode audit verdict is None, not AGREE
+  - observed: the audit consumed no bodies
+  - observed: the audit's digest does not equal the joiner's accepted digest
+**Public reading.** `not-observed` — no committed run record
+- `RC-6/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-6 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
 **Supersedes.** G428-M3
 
-**Does not claim.** A routable address is setup, not the claim; off-host transport and the loopback refusal are separate owed observations. Alternative-peer failover (M3-11) is separate and never landed.
+**Does not claim.** A routable address is setup, not the claim; off-host transport and the loopback refusal are out of scope. Alternative-peer failover (M3-11) is separate and never landed.
 
 ---
 
 ## RC-7 — Upgrade compatibility
 
-**Claim.** A mixed-version fleet either keeps one finalised chain and one state for a block produced during the window, or refuses on the consensus path; a populated store migrates; a downgrade is refused.
+**Claim.** A mixed-version fleet either keeps one finalised chain and one state for a block produced during the window, or refuses on the consensus path; a populated store migrates; a binary refuses a store written by a newer format.
 
-**Pass.** During a mixed-version window, a block is produced and finalised with both binaries deriving the same postStateHash and rejectedDeploys, or the new binary refuses the old peer; a populated-store copy/rollback/restart drill passes; an old binary refuses a newer store marker.
+**Pass.** During a mixed-version window, a block is produced and finalised with both binaries deriving the same postStateHash and rejectedDeploys, or the old node refuses on the consensus path; a populated-store copy/rollback/restart drill passes; a build refuses a store whose format marker is higher than the one it writes; after the swap the upgraded node reaches the same finalised head.
 
-**Fail.** Two versions finalise different blocks or derive different post-state hashes; the old binary runs on a newer store; or the populated-store drill fails.
+**Fail.** Two versions finalise different blocks or derive different post-state hashes without a refusal; the old binary runs on a newer store; or the populated-store drill fails.
 
-**Observe.** The mixed-version block's hashes and rejection ledger on both binaries, the store-marker refusal, and the populated-store drill verdict.
+**Observe.** The mixed-version block's hashes and rejection ledger on both binaries, the store-format refusal, the populated-store drill verdict, and the post-swap finalised head.
 
 **Control.** A fresh-genesis run must not substitute for the populated-store arm; a legacy/no-commitment certificate must be refused.
+
+**Test.** `tests/release-claim-7.py`
 
 **Local.** local-4 (N and N+1 binaries); the G520 populated-store drill
 
 **Public.** testnet-4 fleet
 
-**Re-run (local).** `tools/populated-store-migration-drill.py --gate; mixed-version devnet run`
+**Re-run (local).** `python3 tools/release-check.py run --claim RC-7 --env local [--old-image rnode:old]`
 
-**Re-run (public).** `same observation on testnet-4`
+**Re-run (public).** `python3 tools/release-check.py run --claim RC-7 --env public --public-manifest <manifest.json>`
 
-**Tool.** tools/populated-store-migration-drill.py::run_gate (migration half) + mixed-version observation (owed)
+**Local reading.** `precondition` — spec/audit/evidence/rc7-local-20261120-0669419/raw/claim.json
+- `RC-7/local/precondition` — no --old-image/RNODE_OLD_IMAGE: the mixed-version arm needs a separately built prior image. **Next:** The arm did not produce its observation: the mixed arm needs RNODE_OLD_IMAGE set to a separately built prior image, and the downgrade arm needs a store stamped with format 5. Fix that input and re-run.
+- Next PR: `rc-harness-old-image`
+  - observed: no --old-image/RNODE_OLD_IMAGE: the mixed-version arm needs a separately built prior image
+**Public reading.** `not-observed` — no committed run record
+- `RC-7/public/observe` — no committed run record. **Next:** Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-7 --env public --public-manifest <manifest.json>`.
+- Next PR: `rc-public-fleet`
 
-- `RC-7a` populated-store migration and downgrade refusal — **open** — tools/populated-store-migration-drill.py::run_gate
-- `RC-7b` mixed-version fork boundary — **owed** — No mixed-version devnet run or criterion exists; block-merge.md records that two binaries can reject different chains at a merge.
-
-**Does not claim.** For a fresh-genesis launch this is post-launch; it becomes a launch blocker only over a populated store or a mixed fleet.
+**Does not claim.** For a fresh-genesis launch this is post-launch; it becomes a launch blocker only over a populated store or a mixed fleet. The mixed arm needs a separately built prior image.
 
 ---
 
@@ -250,9 +310,9 @@ is in the `superseded` table at the end.
 | `G584-G4` | claim RC-4 | release-claims.json RC-4 |
 | `G584-G5` | evidence rule | tools/evidence-pack.py and docs/src/spec/gate-measurement.md |
 | `TA-C1` | claims RC-1 and RC-2; attestation is an evidence rule | release-claims.json RC-1/RC-2 |
-| `TA-C2` | claim RC-4; bond/leave are separate owed observations | release-claims.json RC-4 |
+| `TA-C2` | claim RC-4; bond/leave are out of scope | release-claims.json RC-4 |
 
-## Missing observations
+## Not covered by these seven claims
 
 - Off-host routable transport and the loopback refusal (M3).
 - Alternative-peer failover (M3-11).
@@ -262,5 +322,6 @@ is in the `superseded` table at the end.
 - Finalised block body and state availability on every validator.
 - Equivocation injection under a validator key.
 
-`check-release-campaigns.py --assert-ready` exits 3 while any claim or sub-observation
-is not closed, so a closed gate register is never a release authorization.
+`check-release-campaigns.py --assert-ready` exits 3 unless every claim reads `safe` in both
+environments; every open reading names its next action and PR. A closed register is still
+not a release authorization.

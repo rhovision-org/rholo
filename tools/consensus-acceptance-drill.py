@@ -9,6 +9,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import time
@@ -103,6 +104,7 @@ class Drill:
         self.events = self.out / "observations.jsonl"
         self.marker = "acceptance:" + uuid.uuid4().hex
         self.value = 42
+        self.deploy_id = None
         self.next_drive = 0
 
     def record(self, **event):
@@ -287,7 +289,10 @@ class Drill:
              "--private-key", fuzz.DEPLOYER_PRIV, "--shard-id", status["shardId"],
              "--valid-after-block-number", str(status["latestBlockNumber"]),
              "/tmp/acceptance.rho"], text=True, capture_output=True, timeout=30)
-        self.record(deploy_term=term, exit_code=result.returncode,
+        match = re.search(r"DeployId is: ([0-9a-fA-F]+)", result.stdout + result.stderr)
+        if match:
+            self.deploy_id = match.group(1)
+        self.record(deploy_term=term, exit_code=result.returncode, deploy_id=self.deploy_id,
                     stdout=result.stdout, stderr=result.stderr)
         if result.returncode:
             raise RuntimeError("signed deploy submission failed; see observations.jsonl")
@@ -433,6 +438,7 @@ class Drill:
                    "locality": "local-devnet" if getattr(self.args, "local", False) else "hosted-runner",
                    "initial_finalized": initial, "final_finalized": final,
                    "target_height": target,
+                   "deploy_id": self.deploy_id, "marker": self.marker, "value": self.value,
                    "boundary": "finite devnet witness; no universal safety theorem"}
         (self.out / "workload-result.json").write_text(json.dumps(summary, indent=2) + "\n")
         print(json.dumps(summary), flush=True)

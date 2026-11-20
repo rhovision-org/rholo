@@ -100,16 +100,25 @@ corpus at release time and record it. `tests/test_rust_controls.py` is reached t
 `tests/test_hardfork_51_closeout.py` discovery (the `RustControlTests` wrapper), so no additional
 workflow line is needed; its live case builds a dependency-free toy crate, not the corpus.
 
-## The release-claim tracker (2026-11-19)
+## The release-claim tests (2026-11-20)
 
 The 12 old campaign rows were deleted and replaced by the seven claims in
-`spec/audit/release-claims.json`, emitted to `spec/audit/release-campaigns.json` and `.md`.
+`spec/audit/release-claims.json`, emitted to `spec/audit/release-campaigns.json` and `.md`. The
+tracker stores no status and no `missing` observation: each claim names one executable test under
+`tests/`, and its status in an environment is `pass`, `fail` or `not run`, derived from that
+environment's newest committed run record by re-running the test's pure `check(record)`.
+
 `tests/test_release_campaigns.py` is reached through the existing
 `tests/test_hardfork_51_closeout.py` discovery (`ReleaseClaimTests`), so no workflow line is
-needed; its CI-reached `--check` validates the generated tracker and the superseded mapping.
-`check-release-campaigns.py --assert-ready` (exit 3) is the release checkpoint while any claim or
-sub-observation is not closed. The old criteria self-test is not run here: a release claim's
-observation and tool are its criterion.
+needed. It proves every named test exists, imports, defines `run`/`check`/`fixture`/`CLAIM_ID`,
+passes its fixture, and fails a decisive mutation of it; it also proves the status derivation
+recomputes rather than trusting a stored verdict. `check-release-campaigns.py --assert-ready`
+(exit 3) is the release checkpoint unless every claim is `pass` in both environments.
+
+The live tests boot their own devnet and are **not** CI steps: they need Docker, several minutes
+each, and in some cases a prior image. `tools/release-check.py run --claim RC-N --env local` is the
+operator command; `tools/release-check.py record` packs the result under
+`spec/audit/evidence/rcN-<env>-<date>-<sha7>/`.
 
 ## HF51 provenance (2026-11-19)
 
@@ -133,8 +142,8 @@ or `.github/workflows/*` edit is proposed.
 
 The PR checklist runs the same commands. The gate register is 47 gates, all met, so
 `check-mainnet-gates.py --assert-closeable` exits **0**; release is still blocked by
-`check-release-campaigns.py --assert-ready` (exit 3, seven claims open or owed) and by
-`check-hardfork-51-closeout.py --verify-local-git --assert-closeable` (exit 3).
+`check-release-campaigns.py --assert-ready` (exit 3 until every claim is `pass` in both
+environments) and by `check-hardfork-51-closeout.py --verify-local-git --assert-closeable` (exit 3).
 
 ## The M4 and M2 suites (2026-11-19)
 

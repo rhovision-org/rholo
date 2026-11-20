@@ -12,12 +12,8 @@ qualifier is load-bearing: the unqualified reading ("never removed") is false, a
 `casper/tests/n420_boundary_merge.rs::merging_a_tuple_space_rmw_block_duplicates_its_produce` is the
 existing witness of a kept chain consuming a base datum.
 
-**What this law does not cover, and it is the adversary page's open question.** *Absolute* native writes
-are whole-slot snapshots (`rspace/src/native_store.rs`), and `NativeRelations::fold` never compares a
-kept write against the base. A stale conflict-scope block can therefore overwrite a finalised slot value
-computed without it: the stale-fork trace is recorded in `spec/audit/passes.md` §170, and the missing
-guard is a base-state comparison or a descent check. That is a **refutation of the unqualified law** for
-native absolute writes, not this theorem's claim.
+Scope: tuple-space datums. Absolute native writes are a different state model
+(`rspace/src/native_store.rs`) and are not this law's subject.
 -/
 
 namespace Rchain
@@ -119,6 +115,164 @@ theorem law113_falsifier : law113_mutant := by
 theorem the_same_fixture_survives_under_the_law :
     applyKept (fun _ _ => 1) [] 0 7 > 0 := by
   simp [applyKept, net, cancel, combined]
+
+/-! ### The base selector: agreement is the guard
+
+The Rust reader compares the finalisers' `fringe_state_hash` values and refuses a disagreement
+(`choose_base_claim`, `casper/src/multi_parent_casper.rs`). The model compares the hash, which is
+what the implementation can compare; a disagreement has no `pickBase` result. -/
+
+/-- One finaliser's claim: height, block id, and the state hash it reports for its fringe. -/
+structure Claim where
+  height : Nat
+  id : Nat
+  hash : Nat
+
+/-- The picker's order: greater height wins, then greater id. -/
+def better (a b : Claim) : Bool :=
+  decide (a.height > b.height) ||
+    (decide (a.height = b.height) && decide (a.id > b.id))
+
+/-- The greatest claim under `better`. -/
+def pickClaim : List Claim → Option Claim
+  | [] => none
+  | c :: cs =>
+      match pickClaim cs with
+      | none => some c
+      | some best => if better c best then some c else some best
+
+/-- **The chosen claim is one of the claims.** Selection cannot invent a claim. -/
+theorem pickClaim_mem : ∀ (cs : List Claim) (c : Claim),
+    pickClaim cs = some c → c ∈ cs := by
+  intro cs
+  induction cs with
+  | nil =>
+      intro c h
+      simp [pickClaim] at h
+  | cons x xs ih =>
+      intro c h
+      cases hpc : pickClaim xs with
+      | none =>
+          simp [pickClaim, hpc] at h
+          subst h
+          exact List.mem_cons_self x xs
+      | some best =>
+          simp only [pickClaim, hpc] at h
+          split at h
+          · simp only [Option.some.injEq] at h
+            subst h
+            exact List.mem_cons_self x xs
+          · simp only [Option.some.injEq] at h
+            subst h
+            exact List.mem_cons_of_mem x (ih best hpc)
+
+/-- Every claim in the tail reports `h`. -/
+def allSame (h : Nat) : List Claim → Bool
+  | [] => true
+  | c :: cs => (c.hash == h) && allSame h cs
+
+theorem allSame_sound : ∀ {h : Nat} {cs : List Claim}, allSame h cs = true →
+    ∀ x ∈ cs, x.hash = h := by
+  intro h cs
+  induction cs with
+  | nil =>
+      intro _ x hx
+      simp at hx
+  | cons c cs ih =>
+      intro hb x hx
+      simp only [allSame] at hb
+      rw [Bool.and_eq_true] at hb
+      rcases hb with ⟨hc, hrest⟩
+      rw [beq_iff_eq] at hc
+      rcases List.mem_cons.mp hx with rfl | hx
+      · exact hc
+      · exact ih hrest x hx
+
+/-- **The agreement check.** Every claim's hash equals the first claim's. -/
+def agreeB : List Claim → Bool
+  | [] => true
+  | c :: cs => allSame c.hash cs
+
+/-- Every claim reports the same state hash. -/
+def Agree (claims : List Claim) : Prop := agreeB claims = true
+
+/-- **The guarded selector.** The agreement guard is in the definition: a disagreeing claim list
+has no selected base. This is the function the Rust `choose_base_claim` implements. -/
+def pickBase (claims : List Claim) : Option Claim :=
+  match agreeB claims with
+  | true => pickClaim claims
+  | false => none
+
+/-- The boolean agreement check implies equality of every pair of claim hashes. -/
+theorem agreeB_sound : ∀ {claims : List Claim}, agreeB claims = true →
+    ∀ x ∈ claims, ∀ y ∈ claims, x.hash = y.hash := by
+  intro claims
+  induction claims with
+  | nil =>
+      intro _ x hx
+      simp at hx
+  | cons c cs _ih =>
+      intro hb x hx y hy
+      simp only [agreeB] at hb
+      have hx_c : x.hash = c.hash := by
+        rcases List.mem_cons.mp hx with rfl | hx
+        · rfl
+        · exact allSame_sound hb x hx
+      have hy_c : y.hash = c.hash := by
+        rcases List.mem_cons.mp hy with rfl | hy
+        · rfl
+        · exact allSame_sound hb y hy
+      exact hx_c.trans hy_c.symm
+
+/-- `pickBase` is `none` on disagreement. -/
+theorem pickBase_none_of_disagree {claims : List Claim} (h : ¬ Agree claims) :
+    pickBase claims = none := by
+  unfold Agree at h
+  cases hb : agreeB claims with
+  | true => exact absurd hb h
+  | false => simp [pickBase, hb]
+
+/-- **A selected base agrees with every claim.** This is the theorem the stale-base mutant cannot
+satisfy: the guard, not selection, establishes it. -/
+theorem pickBase_agrees {claims : List Claim} {c : Claim}
+    (h : pickBase claims = some c) : ∀ x ∈ claims, x.hash = c.hash := by
+  cases hb : agreeB claims with
+  | false => simp [pickBase, hb] at h
+  | true =>
+      have hsel : pickClaim claims = some c := by simpa [pickBase, hb] using h
+      have hmem := pickClaim_mem claims c hsel
+      exact fun x hx => agreeB_sound hb x hx c hmem
+
+/-- The selected claim is one of the claims. -/
+theorem pickBase_mem {claims : List Claim} {c : Claim}
+    (h : pickBase claims = some c) : c ∈ claims := by
+  cases hb : agreeB claims with
+  | false => simp [pickBase, hb] at h
+  | true =>
+      have hsel : pickClaim claims = some c := by simpa [pickBase, hb] using h
+      exact pickClaim_mem claims c hsel
+
+/-! ### The rejection ledger
+
+The merge subtracts what the final scope accepted from the rejected set; a finalised deploy is then
+not a value of the guarded ledger. The Rust `finalised_floor` refuses the host-level overlap. -/
+
+/-- The guarded ledger: rejected minus accepted. -/
+def guardedRejected (accepted rejected : Finset Nat) : Finset Nat :=
+  rejected \ accepted
+
+/-- **A finalised deploy is not in the guarded ledger.** -/
+theorem a_finalised_deploy_is_not_in_the_ledger (accepted rejected : Finset Nat) (d : Nat)
+    (h : d ∈ accepted) : d ∉ guardedRejected accepted rejected := by
+  simp [guardedRejected, h]
+
+/-- **The boundary**: without the subtraction, a rejected set that names an accepted deploy is a
+value; the guard removes it. -/
+theorem unguarded_ledger_can_name_a_finalised_deploy :
+    ∃ (accepted rejected : Finset Nat) (d : Nat),
+      d ∈ accepted ∧ d ∈ rejected ∧ d ∉ guardedRejected accepted rejected := by
+  refine ⟨{7}, {7}, 7, by simp, by simp, ?_⟩
+  simp [guardedRejected]
 
 end FinalizedMerge
 end Rchain

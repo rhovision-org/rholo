@@ -472,6 +472,17 @@ impl DeployService for DeployGrpcServiceV1 {
                     .any(|m| rchain_casper::api::block_api::deploy_refusal_is_bounded(m))
                 {
                     let detail = e.messages.join("; ");
+                    if rchain_casper::trace::trace_enabled() {
+                        let class = e
+                            .messages
+                            .iter()
+                            .find_map(|message| rchain_casper::pool::classify(message))
+                            .map_or("pool", rchain_casper::pool::PoolError::class_name);
+                        rchain_casper::pool::AdmissionTrace::new("grpc-deploy", "grpc")
+                            .refusal(class)
+                            .grpc(8, Some(1))
+                            .write();
+                    }
                     let mut status = Status::resource_exhausted(detail);
                     status.metadata_mut().insert(
                         "retry-after",

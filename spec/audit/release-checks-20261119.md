@@ -4,6 +4,22 @@
 declared passed in this document yet; results go in the records, not in prose. No public testnet run
 has happened, and this document does not authorise one.
 
+**Superseded by the seven claims, 2026-11-20.** The release set is
+`spec/audit/release-claims.json`: RC-1 truthful settlement, RC-2 safety, RC-3 state agreement,
+RC-4 recovery without loss, RC-5 overload refusal, RC-6 join and audit, RC-7 upgrade compatibility.
+Each claim names one executable test under `tests/`; this page's five checks map to them as
+finality→RC-1, overload→RC-5, partition→RC-2, state agreement→RC-3, join/upgrade→RC-6/RC-7.
+
+```sh
+python3 tools/release-check.py list                         # measured statuses
+python3 tools/release-check.py run --claim RC-1 --env local # one test, one record
+python3 tools/release-check.py record --claim RC-1 --env local --record target/release-claims/local/RC-1
+```
+
+A status is `pass`, `fail` or `not run`; it is derived by re-running the claim test's
+`check(record)` over the newest committed record. There is no `owed` status and no authored
+placeholder.
+
 ## The rule
 
 A release check is **one sentence about observable behaviour**, plus **one observation that could

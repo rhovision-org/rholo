@@ -98,6 +98,18 @@ def test_incomplete_ancestry_requires_the_missing_fringe_refusal():
     assert controls.incomplete_ancestry_verdict(1, log, True) is not None
 
 
+def test_a_restarted_victim_needs_a_certificate_covering_the_kill():
+    assert controls.certificate_verdict(
+        {"kind": "checkpoint", "digest": "ab", "anchorHeight": 30}, 25) is None
+    assert controls.certificate_verdict(
+        {"kind": "genesis", "digest": None, "anchorHeight": None}, 25) is not None
+    assert controls.certificate_verdict(None, 25) is not None
+    assert controls.certificate_verdict(
+        {"kind": "checkpoint", "digest": "ab", "anchorHeight": 20}, 25) is not None
+    assert controls.certificate_verdict(
+        {"kind": "checkpoint", "digest": "ab"}, 25) is not None
+
+
 def test_interrupted_restart_requires_the_expected_sequence():
     assert controls.interrupted_restart_verdict(["1-1", "2-2", "3-3"], "recovered") is None
     assert controls.interrupted_restart_verdict(["1-1", "2-2"], "recovered") is not None

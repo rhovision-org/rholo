@@ -314,6 +314,101 @@ theorem law117 : law117_statement := by
   · intro s h; exact an_anchor_without_a_finalised_fringe_is_not_well_formed s h
   · intro s h; exact an_anchor_with_a_zero_fringe_state_is_not_well_formed s h
 
+/-! ## The boot decision as a phase space
+
+`acquire_boot_certificate` either runs from the pinned genesis, adopts a verified certificate, or
+refuses with the coordinate it was missing. The trace `BootTrace` records the same coordinates: the
+DAG size, whether it is genesis-only, whether a source was configured, what it served, the signing
+stake, and the outcome. -/
+
+/-- The coordinate a refused boot is missing. -/
+inductive BootCoordinate where
+  | noStoredCertificate
+  | fetchFailed
+  | verifyFailed
+  | shardMismatch
+  | storeConflict
+  deriving DecidableEq
+
+/-- The boot decision's outcome type. -/
+inductive BootOutcome where
+  | genesis
+  | certified
+  | refused (coordinate : BootCoordinate)
+  deriving DecidableEq
+
+/-- The evidence the boot decision reads. `acquisition` is the served certificate's digest when one
+    was adopted; `refusedAt` names the coordinate when the source was asked and failed. -/
+structure BootEvidence where
+  genesisOnly : Bool
+  acquisition : Option Nat
+  refusedAt : Option BootCoordinate
+  supportingStake : Nat
+  totalStake : Nat
+
+/-- The total decision. -/
+def bootOutcome (e : BootEvidence) : BootOutcome :=
+  match e.acquisition with
+  | some _ => .certified
+  | none =>
+      if e.genesisOnly then .genesis
+      else
+        match e.refusedAt with
+        | some coordinate => .refused coordinate
+        | none => .refused .noStoredCertificate
+
+/-- **The safe predicate**: a genesis boot is genesis-only, and a certified boot carries a strict
+    supermajority of the whole bonded stake. A refusal is safe — it did not run. -/
+def bootSafe (e : BootEvidence) : Prop :=
+  match bootOutcome e with
+  | .genesis => e.genesisOnly = true
+  | .certified => e.totalStake = 0 ∨ 3 * e.supportingStake > 2 * e.totalStake
+  | .refused _ => True
+
+/-- **Only an acquisition runs a non-genesis boot.** A `certified` outcome carries a served
+    certificate, never an absent source. -/
+theorem only_an_acquisition_runs_a_non_genesis_boot (e : BootEvidence)
+    (h : bootOutcome e = .certified) : ∃ d, e.acquisition = some d := by
+  cases hacq : e.acquisition with
+  | some d => exact ⟨d, rfl⟩
+  | none =>
+      cases hgen : e.genesisOnly <;> cases href : e.refusedAt <;>
+        simp [bootOutcome, hacq, hgen, href] at h
+
+/-- **A genesis boot is genesis-only.** -/
+theorem a_genesis_boot_is_genesis_only (e : BootEvidence)
+    (h : bootOutcome e = .genesis) : e.genesisOnly = true := by
+  cases hacq : e.acquisition with
+  | some d => simp [bootOutcome, hacq] at h
+  | none =>
+      cases hgen : e.genesisOnly with
+      | true => rfl
+      | false =>
+          cases href : e.refusedAt <;> simp [bootOutcome, hacq, hgen, href] at h
+
+/-- **A refusal names a coordinate and adopted no certificate.** -/
+theorem a_refusal_names_a_missing_coordinate (e : BootEvidence) (c : BootCoordinate)
+    (h : bootOutcome e = .refused c) : e.acquisition = none := by
+  cases hacq : e.acquisition with
+  | some d => simp [bootOutcome, hacq] at h
+  | none => rfl
+
+/-- **Totality**: every evidence has exactly one outcome. -/
+theorem boot_outcome_is_total (e : BootEvidence) : ∃! o : BootOutcome, bootOutcome e = o := by
+  refine ⟨bootOutcome e, rfl, ?_⟩
+  intro o ho
+  exact ho.symm
+
+/-- The accepted certificate's stake is below the quorum. -/
+def belowQuorumWitness : BootEvidence :=
+  { genesisOnly := false, acquisition := some 1, refusedAt := none,
+    supportingStake := 100, totalStake := 400 }
+
+/-- **The unsafe witness**: a certificate adopted with only a quarter of the bonded stake. -/
+theorem an_accepted_boot_below_quorum_is_the_unsafe_witness :
+    ¬ bootSafe belowQuorumWitness := by
+  simp [bootSafe, bootOutcome, belowQuorumWitness]
+
 end Anchor
 end Sync
 

@@ -1,0 +1,558 @@
+{
+  "claim_id": "RC-3",
+  "claim_title": "State agreement across a merge",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-20T10:31:58Z",
+  "harness": {},
+  "locality": "local-devnet",
+  "observations": {
+    "blocks": [
+      {
+        "hash": "4efa23c26185d09a8dee56b84bae47dc6924cfbd5fc8d264004f6164758a6f5b",
+        "height": 0,
+        "postStateHash": "fbb0f0773ac293723d292c048dd4226f9f8893efddadf7b6fc450a16f6707e51",
+        "preStateHash": "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "f8be3c5ca00bf3e08f7cb5959b9c897b8c67a7bd163d9a5dc003da894cc1f9e3",
+        "height": 1,
+        "postStateHash": "eb6f0e6fb328103befeb84af4497a23976dcae404d0776642ca7a495c6eaf3be",
+        "preStateHash": "fbb0f0773ac293723d292c048dd4226f9f8893efddadf7b6fc450a16f6707e51",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "ec53a1c835fb85da136432b5674e0858966a2bb080b89c26c93aef823e313738",
+        "height": 1,
+        "postStateHash": "eb6f0e6fb328103befeb84af4497a23976dcae404d0776642ca7a495c6eaf3be",
+        "preStateHash": "fbb0f0773ac293723d292c048dd4226f9f8893efddadf7b6fc450a16f6707e51",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "b7539012a8dbf1130ce04bc00b1b33bc30c9eaef7b265c112d3984463aa60b61",
+        "height": 1,
+        "postStateHash": "eb6f0e6fb328103befeb84af4497a23976dcae404d0776642ca7a495c6eaf3be",
+        "preStateHash": "fbb0f0773ac293723d292c048dd4226f9f8893efddadf7b6fc450a16f6707e51",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "29d81381b6bc680c5cfeb4414111756eea248295727ca31e9d6e448f6e1aad6f",
+        "height": 1,
+        "postStateHash": "eb6f0e6fb328103befeb84af4497a23976dcae404d0776642ca7a495c6eaf3be",
+        "preStateHash": "fbb0f0773ac293723d292c048dd4226f9f8893efddadf7b6fc450a16f6707e51",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "c910d1dc4fd7d0f6bf5e9ce85d03443a2909271183ea9d4757ed052a283f15ca",
+        "height": 2,
+        "postStateHash": "328029344334aa4bddd6b7f29ea065f86430ca21dae9ccd4aee9c1baf61c2784",
+        "preStateHash": "0632b55901256f63509540b7fb6a88fc393eba9050c756da8709f92ee733da48",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "446926e1ec036f97c408d3bd8475119fdff1b98e609416005cc8ecb757675d17",
+        "height": 2,
+        "postStateHash": "328029344334aa4bddd6b7f29ea065f86430ca21dae9ccd4aee9c1baf61c2784",
+        "preStateHash": "0632b55901256f63509540b7fb6a88fc393eba9050c756da8709f92ee733da48",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "3c033ccddb0331f39c320cc14b78f6a224097ee5c1888a399c2bb57a7af785d1",
+        "height": 2,
+        "postStateHash": "328029344334aa4bddd6b7f29ea065f86430ca21dae9ccd4aee9c1baf61c2784",
+        "preStateHash": "0632b55901256f63509540b7fb6a88fc393eba9050c756da8709f92ee733da48",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "19ab94d10c6a0875a85ed34c2c2ecfc98cf8e80fc937f355d24fd6e6f139d5d0",
+        "height": 2,
+        "postStateHash": "328029344334aa4bddd6b7f29ea065f86430ca21dae9ccd4aee9c1baf61c2784",
+        "preStateHash": "0632b55901256f63509540b7fb6a88fc393eba9050c756da8709f92ee733da48",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "955d44bf84888fc84cd19251466dc1cd4e4a541b0596dd71f2918c048aafe4ec",
+        "height": 3,
+        "postStateHash": "e0a28a2127b33fe68f9f79af539c54c16ec37bf983e52f5523c0663babd49e36",
+        "preStateHash": "2ad0e17b94a966ec59ce75fbaafb7071f3a44b7a6e3fad42306302fd4f1e7c97",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "7329d6622fce9427646e98fb59c2e8df6ac839cf8a061e6b9f8536eae5fab8f1",
+        "height": 3,
+        "postStateHash": "e0a28a2127b33fe68f9f79af539c54c16ec37bf983e52f5523c0663babd49e36",
+        "preStateHash": "2ad0e17b94a966ec59ce75fbaafb7071f3a44b7a6e3fad42306302fd4f1e7c97",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "3fd699d93e3cea9a0bbc6e2240c0b00dc092dee7651d254f9aac63dc8aeba4df",
+        "height": 3,
+        "postStateHash": "1f1c8d5714e239c52956b264db79958bda3251c3f73acd9b545c96312f7322fa",
+        "preStateHash": "2ad0e17b94a966ec59ce75fbaafb7071f3a44b7a6e3fad42306302fd4f1e7c97",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "1cd581c2f6ba78e2c3a732a579bae422cb69409d3b271ee07a790f974851f3cc",
+        "height": 3,
+        "postStateHash": "e0a28a2127b33fe68f9f79af539c54c16ec37bf983e52f5523c0663babd49e36",
+        "preStateHash": "2ad0e17b94a966ec59ce75fbaafb7071f3a44b7a6e3fad42306302fd4f1e7c97",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "dbb6a70e53774d834f7d856f471196031c94c404c778150046de60843cf946f1",
+        "height": 4,
+        "postStateHash": "9704b3cca42a143f9668ae33ef4f36b8385fbb6d74c7ccf9aec5ca43d9ed77da",
+        "preStateHash": "e203ce1d13ed50c2991b2044f7b2d231ec5febb64c8a9744d2fd989d6a0c60b7",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "c624863a2c5dd0506e5bea35f64f0cd1dccde21241ecfa525056c69f0b358b3e",
+        "height": 4,
+        "postStateHash": "9704b3cca42a143f9668ae33ef4f36b8385fbb6d74c7ccf9aec5ca43d9ed77da",
+        "preStateHash": "e203ce1d13ed50c2991b2044f7b2d231ec5febb64c8a9744d2fd989d6a0c60b7",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "788b30eba88d706f7b6ec021d43eff9fe587735b56768a5a97b332e96b2ae6ac",
+        "height": 4,
+        "postStateHash": "9704b3cca42a143f9668ae33ef4f36b8385fbb6d74c7ccf9aec5ca43d9ed77da",
+        "preStateHash": "e203ce1d13ed50c2991b2044f7b2d231ec5febb64c8a9744d2fd989d6a0c60b7",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "5899bb65df370dc2f7545880972587ff4559aa6a012aa7773c989e44e7f84d0d",
+        "height": 4,
+        "postStateHash": "9704b3cca42a143f9668ae33ef4f36b8385fbb6d74c7ccf9aec5ca43d9ed77da",
+        "preStateHash": "e203ce1d13ed50c2991b2044f7b2d231ec5febb64c8a9744d2fd989d6a0c60b7",
+        "rejectedDeploys": [],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "d7b8acb2bfbbe496fe8849e49b86c6dde160d6280d6608a3e9d766ca12dac601",
+        "height": 5,
+        "postStateHash": "7d6d1f722e8e685974b6f55b8ad79e34e74214a3eb0f46a67e13df2d947618d8",
+        "preStateHash": "bd6908f884d008ec66eec0beaef4ffe64eeb13fe84d222a100480e5e5a4f7715",
+        "rejectedDeploys": [
+          "29d81381b6bc680c5cfeb4414111756eea248295727ca31e9d6e448f6e1aad6f02",
+          "30440220599e2ff26b0cddb6524e1df0684bc84a34e8dd00752278fdf6089503c9163b3b022022608d40d0e6c2fbc451341cd377dfb4e1273e87017bd4932a010954e6207b2e"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "cb3a557f2ff2904bbbfbb01ba59484c3aa42b84be0b6400916242f249bce55f4",
+        "height": 5,
+        "postStateHash": "7d6d1f722e8e685974b6f55b8ad79e34e74214a3eb0f46a67e13df2d947618d8",
+        "preStateHash": "bd6908f884d008ec66eec0beaef4ffe64eeb13fe84d222a100480e5e5a4f7715",
+        "rejectedDeploys": [
+          "29d81381b6bc680c5cfeb4414111756eea248295727ca31e9d6e448f6e1aad6f02",
+          "30440220599e2ff26b0cddb6524e1df0684bc84a34e8dd00752278fdf6089503c9163b3b022022608d40d0e6c2fbc451341cd377dfb4e1273e87017bd4932a010954e6207b2e"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "52d130dcbca105af28dc6c37643818cd05e3dd8628605be43f8f79c4964c5ca2",
+        "height": 5,
+        "postStateHash": "7d6d1f722e8e685974b6f55b8ad79e34e74214a3eb0f46a67e13df2d947618d8",
+        "preStateHash": "bd6908f884d008ec66eec0beaef4ffe64eeb13fe84d222a100480e5e5a4f7715",
+        "rejectedDeploys": [
+          "29d81381b6bc680c5cfeb4414111756eea248295727ca31e9d6e448f6e1aad6f02",
+          "30440220599e2ff26b0cddb6524e1df0684bc84a34e8dd00752278fdf6089503c9163b3b022022608d40d0e6c2fbc451341cd377dfb4e1273e87017bd4932a010954e6207b2e"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "2d50b3f68bf414a6ced0a7760093a8c162425ac160961a89cd7d91f334c9018c",
+        "height": 5,
+        "postStateHash": "7d6d1f722e8e685974b6f55b8ad79e34e74214a3eb0f46a67e13df2d947618d8",
+        "preStateHash": "bd6908f884d008ec66eec0beaef4ffe64eeb13fe84d222a100480e5e5a4f7715",
+        "rejectedDeploys": [
+          "29d81381b6bc680c5cfeb4414111756eea248295727ca31e9d6e448f6e1aad6f02",
+          "30440220599e2ff26b0cddb6524e1df0684bc84a34e8dd00752278fdf6089503c9163b3b022022608d40d0e6c2fbc451341cd377dfb4e1273e87017bd4932a010954e6207b2e"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "ecb8d6e8b0ce07dd6e176a3bf2e7c502a6a68bc942fedb06e7f6d7a1682d420a",
+        "height": 6,
+        "postStateHash": "68dd6a54b67d54ff9d38fc6ad062bfb52e4ad816056ceac9b7abb599a67e915d",
+        "preStateHash": "8a48f7ac4dfb1f3f0cff216b9d7f3d61470b73ccc553a460095d68c3ee1acb9c",
+        "rejectedDeploys": [
+          "304402204dc3cea1f663a7036059fb9d82f4108837e120bf5480ae5be61be1208dd3b8ed02206eaa2d4b34282913b955531d2ff055417701cf20b1380cbc3b7d8f0eba2a0985",
+          "3c033ccddb0331f39c320cc14b78f6a224097ee5c1888a399c2bb57a7af785d102"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "cc9ea329d84f8c197b115775e08fc660de427d81f91cc1148e18975b21009d5f",
+        "height": 6,
+        "postStateHash": "68dd6a54b67d54ff9d38fc6ad062bfb52e4ad816056ceac9b7abb599a67e915d",
+        "preStateHash": "8a48f7ac4dfb1f3f0cff216b9d7f3d61470b73ccc553a460095d68c3ee1acb9c",
+        "rejectedDeploys": [
+          "304402204dc3cea1f663a7036059fb9d82f4108837e120bf5480ae5be61be1208dd3b8ed02206eaa2d4b34282913b955531d2ff055417701cf20b1380cbc3b7d8f0eba2a0985",
+          "3c033ccddb0331f39c320cc14b78f6a224097ee5c1888a399c2bb57a7af785d102"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "58f2056ad23d5b1c02c0d67b73cd258c0e0351a472f6b62b6f6fea696d7d6b3c",
+        "height": 6,
+        "postStateHash": "68dd6a54b67d54ff9d38fc6ad062bfb52e4ad816056ceac9b7abb599a67e915d",
+        "preStateHash": "8a48f7ac4dfb1f3f0cff216b9d7f3d61470b73ccc553a460095d68c3ee1acb9c",
+        "rejectedDeploys": [
+          "304402204dc3cea1f663a7036059fb9d82f4108837e120bf5480ae5be61be1208dd3b8ed02206eaa2d4b34282913b955531d2ff055417701cf20b1380cbc3b7d8f0eba2a0985",
+          "3c033ccddb0331f39c320cc14b78f6a224097ee5c1888a399c2bb57a7af785d102"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "027544d9b396ef1e4b4f63ece3fc98c6e2dc38aad97e6bbd5d9b04b17e10af5c",
+        "height": 6,
+        "postStateHash": "68dd6a54b67d54ff9d38fc6ad062bfb52e4ad816056ceac9b7abb599a67e915d",
+        "preStateHash": "8a48f7ac4dfb1f3f0cff216b9d7f3d61470b73ccc553a460095d68c3ee1acb9c",
+        "rejectedDeploys": [
+          "304402204dc3cea1f663a7036059fb9d82f4108837e120bf5480ae5be61be1208dd3b8ed02206eaa2d4b34282913b955531d2ff055417701cf20b1380cbc3b7d8f0eba2a0985",
+          "3c033ccddb0331f39c320cc14b78f6a224097ee5c1888a399c2bb57a7af785d102"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "f9292742795312a303dbaf9f058354b8ac53fca3a5b2a676edfcd3c273953a61",
+        "height": 7,
+        "postStateHash": "ff1da4ab7d527dbe7ba112b89f528338cb6b909f9f926adea25721dacd275438",
+        "preStateHash": "a072916ca36712b83971f88a339a68c596475817738aa8e154f845e76ee2eb5f",
+        "rejectedDeploys": [
+          "304402205af6cb43e05081025ab35c1ec4f865aa319d8242c7892f29284452e770e7a2600220643d128bb1a39657745ef0fd4e4032cd134fd9b9e48c6b8ef6514fadaf991e1d",
+          "3fd699d93e3cea9a0bbc6e2240c0b00dc092dee7651d254f9aac63dc8aeba4df02"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "804251a4bc84fbcf02564279baa5236af70637b070812fccccc070ee7c685d06",
+        "height": 7,
+        "postStateHash": "ff1da4ab7d527dbe7ba112b89f528338cb6b909f9f926adea25721dacd275438",
+        "preStateHash": "a072916ca36712b83971f88a339a68c596475817738aa8e154f845e76ee2eb5f",
+        "rejectedDeploys": [
+          "304402205af6cb43e05081025ab35c1ec4f865aa319d8242c7892f29284452e770e7a2600220643d128bb1a39657745ef0fd4e4032cd134fd9b9e48c6b8ef6514fadaf991e1d",
+          "3fd699d93e3cea9a0bbc6e2240c0b00dc092dee7651d254f9aac63dc8aeba4df02"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "5d0079e1518a461cbafda6e91a1db830f27868cf6b6fc8bcf94bfc2067e6b80c",
+        "height": 7,
+        "postStateHash": "ff1da4ab7d527dbe7ba112b89f528338cb6b909f9f926adea25721dacd275438",
+        "preStateHash": "a072916ca36712b83971f88a339a68c596475817738aa8e154f845e76ee2eb5f",
+        "rejectedDeploys": [
+          "304402205af6cb43e05081025ab35c1ec4f865aa319d8242c7892f29284452e770e7a2600220643d128bb1a39657745ef0fd4e4032cd134fd9b9e48c6b8ef6514fadaf991e1d",
+          "3fd699d93e3cea9a0bbc6e2240c0b00dc092dee7651d254f9aac63dc8aeba4df02"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "43d1b1b47b718a2b9f74248092db741d257ca08cf8d4737bf5ce25b49c41971c",
+        "height": 7,
+        "postStateHash": "ff1da4ab7d527dbe7ba112b89f528338cb6b909f9f926adea25721dacd275438",
+        "preStateHash": "a072916ca36712b83971f88a339a68c596475817738aa8e154f845e76ee2eb5f",
+        "rejectedDeploys": [
+          "304402205af6cb43e05081025ab35c1ec4f865aa319d8242c7892f29284452e770e7a2600220643d128bb1a39657745ef0fd4e4032cd134fd9b9e48c6b8ef6514fadaf991e1d",
+          "3fd699d93e3cea9a0bbc6e2240c0b00dc092dee7651d254f9aac63dc8aeba4df02"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "c61831a0b0ef80d5785584c4a73e26e248c311caa406f71cc11c6faf26761c30",
+        "height": 8,
+        "postStateHash": "de53226d97659ec00798a2326c4df86470875166af833a4bdee3d793fc31a1ca",
+        "preStateHash": "4339ac02a30b41577613bc2e6da5636d0e74000fce240214e69acc6161595a6e",
+        "rejectedDeploys": [
+          "3045022100b741166e6a405028a7ca125eb55794a4f4ef11238d7d00b6a0ef3c31b4755371022070db6ce654e6bc31620677e5cec751f4bcc8b9ac0a53021c18c58d4aef8cc493",
+          "788b30eba88d706f7b6ec021d43eff9fe587735b56768a5a97b332e96b2ae6ac02"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "7ed58dd746d2a34ebd4ebc8d84b3e9fb2e580a6f9ec7bfef077cd549b5fe7fe4",
+        "height": 8,
+        "postStateHash": "de53226d97659ec00798a2326c4df86470875166af833a4bdee3d793fc31a1ca",
+        "preStateHash": "4339ac02a30b41577613bc2e6da5636d0e74000fce240214e69acc6161595a6e",
+        "rejectedDeploys": [
+          "3045022100b741166e6a405028a7ca125eb55794a4f4ef11238d7d00b6a0ef3c31b4755371022070db6ce654e6bc31620677e5cec751f4bcc8b9ac0a53021c18c58d4aef8cc493",
+          "788b30eba88d706f7b6ec021d43eff9fe587735b56768a5a97b332e96b2ae6ac02"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "5b6613f7c00c228a6b7068eecaf6d8a99bf2613e71aa61613d16e8f8ad691e0f",
+        "height": 8,
+        "postStateHash": "de53226d97659ec00798a2326c4df86470875166af833a4bdee3d793fc31a1ca",
+        "preStateHash": "4339ac02a30b41577613bc2e6da5636d0e74000fce240214e69acc6161595a6e",
+        "rejectedDeploys": [
+          "3045022100b741166e6a405028a7ca125eb55794a4f4ef11238d7d00b6a0ef3c31b4755371022070db6ce654e6bc31620677e5cec751f4bcc8b9ac0a53021c18c58d4aef8cc493",
+          "788b30eba88d706f7b6ec021d43eff9fe587735b56768a5a97b332e96b2ae6ac02"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "040f8082ab7de1faaa37e82f481e4d1f414d7f29b6b89791def430a6a7354b93",
+        "height": 8,
+        "postStateHash": "de53226d97659ec00798a2326c4df86470875166af833a4bdee3d793fc31a1ca",
+        "preStateHash": "4339ac02a30b41577613bc2e6da5636d0e74000fce240214e69acc6161595a6e",
+        "rejectedDeploys": [
+          "3045022100b741166e6a405028a7ca125eb55794a4f4ef11238d7d00b6a0ef3c31b4755371022070db6ce654e6bc31620677e5cec751f4bcc8b9ac0a53021c18c58d4aef8cc493",
+          "788b30eba88d706f7b6ec021d43eff9fe587735b56768a5a97b332e96b2ae6ac02"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "c5ef0a038bee5b151236b2cbc5d09df2daed013c9ec78b74723d20d6410c2278",
+        "height": 9,
+        "postStateHash": "533db78bc6bd99fea1ad2df1289a86e053c1f1203f508aa185c4b0c0612ace24",
+        "preStateHash": "9aa1dd4362acb15fd2fb3096e50ded84f5699c7eea86c9c2c503f83aaac0d226",
+        "rejectedDeploys": [
+          "304402204334c092ead4492e14e263698ec2a7e358378f2b6665f992d067f1e52a6d15050220066617fdcea47e47e765bf487d174a23d9a8a6c4493ee5ae87ebe2b0e5a46667",
+          "d7b8acb2bfbbe496fe8849e49b86c6dde160d6280d6608a3e9d766ca12dac60102"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "hash": "114625dd4e6e1a18d61c82dc873cb060bc46c02d9ba7b771ad3a4c20cde7550e",
+        "height": 9,
+        "postStateHash": "533db78bc6bd99fea1ad2df1289a86e053c1f1203f508aa185c4b0c0612ace24",
+        "preStateHash": "9aa1dd4362acb15fd2fb3096e50ded84f5699c7eea86c9c2c503f83aaac0d226",
+        "rejectedDeploys": [
+          "304402204334c092ead4492e14e263698ec2a7e358378f2b6665f992d067f1e52a6d15050220066617fdcea47e47e765bf487d174a23d9a8a6c4493ee5ae87ebe2b0e5a46667",
+          "d7b8acb2bfbbe496fe8849e49b86c6dde160d6280d6608a3e9d766ca12dac60102"
+        ],
+        "validators": [
+          0,
+          1,
+          2,
+          3
+        ]
+      }
+    ],
+    "deploy_id": "304402205af6cb43e05081025ab35c1ec4f865aa319d8242c7892f29284452e770e7a2600220643d128bb1a39657745ef0fd4e4032cd134fd9b9e48c6b8ef6514fadaf991e1d",
+    "marker": "release-claim:1795170711496981796",
+    "marker_block": "3fd699d93e3cea9a0bbc6e2240c0b00dc092dee7651d254f9aac63dc8aeba4df",
+    "marker_present": [
+      {
+        "present": true,
+        "validator": 0
+      },
+      {
+        "present": true,
+        "validator": 1
+      },
+      {
+        "present": true,
+        "validator": 2
+      },
+      {
+        "present": true,
+        "validator": 3
+      }
+    ],
+    "value": 42
+  },
+  "preconditions": [],
+  "provenance": {
+    "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
+    "devnet_prefix": "releaserc3",
+    "image_id": "f24aafc38cc2957dc64ac99cca9c08fee4784e7c7999fa80daa73d34d32ca255",
+    "profile": "local-4",
+    "source_dirty": true,
+    "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a"
+  },
+  "reasons": [],
+  "schema": 1,
+  "started_at": "2026-11-20T10:31:36Z",
+  "verdict": "pass"
+}

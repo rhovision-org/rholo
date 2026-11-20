@@ -1,0 +1,25 @@
+{
+ "admitted": 4,
+ "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
+ "cap": null,
+ "direct": {
+  "after_status_line": "HTTP/1.1 400",
+  "retry_after": null,
+  "status_line": "HTTP/1.1 400",
+  "transcript": "direct-unset.txt"
+ },
+ "endpoint": "http://127.0.0.1:56403",
+ "handler_reached_after_release": true,
+ "held": 0,
+ "mode": "unset",
+ "probe": 4,
+ "refusal": {
+  "class": "none",
+  "message": ""
+ },
+ "refused": 0,
+ "requests_per_second": 6.59,
+ "retry_after": 0,
+ "server_errors": 0,
+ "transcript": "http-unset.jsonl"
+}

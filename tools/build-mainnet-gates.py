@@ -498,26 +498,183 @@ def build() -> dict:
     }
 
 
-def claim_status(row: dict) -> str:
-    """A claim is closed only when every sub-observation is closed; owed beats open."""
-    statuses = [sub.get("status") for sub in row.get("sub_observations") or []]
-    if statuses and all(status == "closed" for status in statuses):
-        return "closed"
-    if "owed" in statuses:
-        return "owed"
-    return "open"
+EVIDENCE = AUDIT / "evidence"
+ENVIRONMENTS = ("local", "public")
 
 
-def campaigns() -> dict:
-    """The release claims: observable node behaviours with one falsifier and one control.
+def claim_module(row: dict):
+    """Import a claim's test module; it carries run/check/fixture/CLAIM_ID."""
+    path = ROOT / row["test"]
+    spec = importlib.util.spec_from_file_location(
+        "release_claim_" + row["id"].lower().replace("-", "_"), path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def claim_records(roots=(EVIDENCE,)):
+    """Every claim.json under the given roots, newest last by `finished_at`."""
+    found = []
+    for root in roots:
+        if not Path(root).exists():
+            continue
+        for path in sorted(Path(root).rglob("claim.json")):
+            try:
+                record = json.loads(path.read_text())
+            except (OSError, ValueError):
+                continue
+            if isinstance(record, dict) and record.get("claim_id"):
+                found.append((path, record))
+    return found
+
+
+def _claim_common():
+    spec = importlib.util.spec_from_file_location(
+        "release_claim_common", ROOT / "tests" / "release_claim_common.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _trace_anchors() -> dict:
+    spec = importlib.util.spec_from_file_location(
+        "trace_evaluate", ROOT / "tools" / "trace-evaluate.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.ANCHORS
+
+
+def _reading_and_items(row: dict, entry: dict, record: dict | None) -> dict:
+    """The measured reading and the actions that close it.
+
+    A status says whether the predicate holds; a reading says what to do next. `unsafe-point` names
+    the false predicate and its anchors; `model-incomplete` names the trace that is the gap;
+    `evidence-insufficient` names the missing trace or coordinate. `safe` has no action.
+    """
+    ident = row["id"]
+    close = row.get("close") or {}
+    next_pr = (row.get("next_pr") or {}).get(entry.get("_environment"))
+    reasons = list(entry.get("reasons") or [])
+    if entry.get("status") == "pass":
+        return {"reading": "safe", "items": [], "next_pr": None}
+    if record is None:
+        if entry.get("_environment") == "public":
+            action = ("Supply the four-host public manifest (deploy id, marker, provenance) and "
+                      f"run `{(row.get('rerun') or {}).get('public', 'the public command')}`.")
+        else:
+            action = close.get("not-observed", "run the claim's test")
+        return {
+            "reading": "not-observed",
+            "items": [{"item": f"{ident}/{entry.get('_environment')}/observe",
+                       "finding": "no committed run record",
+                       "action": action}],
+            "next_pr": next_pr,
+        }
+    if record.get("verdict") == "not run" or entry.get("status") == "not run":
+        return {
+            "reading": "precondition",
+            "items": [{"item": f"{ident}/{entry.get('_environment')}/precondition",
+                       "finding": "; ".join(reasons) or "the record is not run",
+                       "action": close.get("precondition", "supply the precondition and re-run")}],
+            "next_pr": next_pr,
+        }
+    common = _claim_common()
+    traces = common.traces_from(record)
+    evaluations = [(trace, common.evaluate_trace(trace)) for trace in traces]
+    false = [(trace, evaluation) for trace, evaluation in evaluations if evaluation["false"]]
+    if false:
+        anchors = _trace_anchors()
+        items = []
+        for trace, evaluation in false:
+            for predicate in evaluation["false"]:
+                anchor = anchors.get((evaluation["kind"], predicate)) or {}
+                items.append({
+                    "item": f"{ident}/{entry.get('_environment')}/{predicate}",
+                    "finding": (f"{evaluation['kind']} trace (validator "
+                                f"{trace.get('validator')}, site "
+                                f"{trace.get('site') or trace.get('mode') or '-'}): "
+                                f"predicate {predicate} false"),
+                    "action": close.get("unsafe-point", "fix the false predicate at its anchor"),
+                    "anchor": anchor,
+                })
+        return {"reading": "unsafe-point", "items": items, "next_pr": next_pr}
+    missing = sorted({name for _, evaluation in evaluations for name in evaluation["missing"]})
+    if not traces or missing:
+        return {
+            "reading": "evidence-insufficient",
+            "items": [{"item": f"{ident}/{entry.get('_environment')}/trace",
+                       "finding": ("no decision trace in the record" if not traces
+                                   else "trace lacks coordinate(s): " + ", ".join(missing)),
+                       "action": close.get("evidence-insufficient",
+                                           "capture the decision trace")}],
+            "next_pr": next_pr,
+        }
+    return {
+        "reading": "model-incomplete",
+        "items": [{"item": f"{ident}/{entry.get('_environment')}/model",
+                   "finding": (f"every predicate holds on {len(traces)} trace(s), yet the claim "
+                               "failed"),
+                   "action": close.get("model-incomplete",
+                                       "extend the model before changing the test")}],
+        "next_pr": next_pr,
+    }
+
+
+def derive_claim(row: dict, roots=(EVIDENCE,)) -> dict:
+    """The claim's reading and close action per environment, from the newest record.
+
+    There is no authored status. A record whose stored verdict says `pass` but whose predicate
+    refutes it is a `fail`: the tracker measures the node, not the file. The `action` is derived
+    from the same record: a false predicate names its anchors, a model gap names the trace, and a
+    missing observation names the run to make.
+    """
+    module = claim_module(row)
+    derived = {}
+    for environment in ENVIRONMENTS:
+        candidates = [(path, record) for path, record in claim_records(roots)
+                      if record.get("claim_id") == row["id"]
+                      and record.get("environment") == environment]
+        if not candidates:
+            entry = {"status": "not run", "record": None, "reasons": [],
+                     "_environment": environment}
+            entry["action"] = _reading_and_items(row, entry, None)
+            derived[environment] = entry
+            continue
+        path, record = max(candidates, key=lambda pair: str(pair[1].get("finished_at") or ""))
+        try:
+            verdict, reasons = module.check(record)
+        except Exception as error:  # noqa: BLE001 - a broken predicate is a fail
+            verdict, reasons = "fail", [f"{type(error).__name__}: {error}"]
+        if record.get("verdict") == "not run":
+            verdict = "not run"
+        if record.get("verdict") == "pass" and verdict != "pass":
+            verdict = "fail"
+            reasons = list(reasons) + ["the record says pass but its predicate refutes it"]
+        entry = {
+            "status": verdict,
+            "record": str(path.relative_to(ROOT)) if Path(path).is_relative_to(ROOT) else str(path),
+            "reasons": list(reasons),
+            "finished_at": record.get("finished_at"),
+            "source_sha": (record.get("provenance") or {}).get("source_sha"),
+            "binary_sha256": (record.get("provenance") or {}).get("binary_sha256"),
+            "_environment": environment,
+        }
+        entry["action"] = _reading_and_items(row, entry, record)
+        derived[environment] = entry
+    for entry in derived.values():
+        entry.pop("_environment", None)
+    return derived
+
+
+def campaigns(roots=(EVIDENCE,)) -> dict:
+    """The release claims: observable node behaviours, each with an existing test.
 
     A gate is a boolean test of the current build. A release claim is a product
     behaviour that is re-runnable on the standard local devnet or on public
-    testnet-4. The 12 old campaign rows are deleted; their fate is in
-    `release-claims.json`'s `superseded` table.
+    testnet-4. The status is measured from committed run records; nothing is authored.
     """
     document = json.loads(CLAIMS.read_text())
-    require(document.get("schema") == 1, "release-claims schema must be 1")
+    require(document.get("schema") == 2, "release-claims schema must be 2")
     rows = document.get("claims")
     require(isinstance(rows, list) and len(rows) >= CLAIM_MINIMUM,
             f"only {len(rows) if isinstance(rows, list) else 0} release claims; "
@@ -525,8 +682,7 @@ def campaigns() -> dict:
     ids = [row.get("id") for row in rows]
     require(len(ids) == len(set(ids)), "release claim ids must be unique")
     required = ("title", "claim", "pass_condition", "fail_condition", "observable",
-                "negative_control", "environment", "rerun", "tool",
-                "sub_observations", "owner")
+                "negative_control", "environment", "rerun", "test", "owner")
     for row in rows:
         ident = row.get("id")
         for field in required:
@@ -535,32 +691,30 @@ def campaigns() -> dict:
                 f"{ident}: both environments are required")
         require(row["rerun"].get("local") and row["rerun"].get("public"),
                 f"{ident}: both re-run commands are required")
-        subs = row["sub_observations"]
-        require(isinstance(subs, list) and subs,
-                f"{ident}: at least one sub-observation is required")
-        for sub in subs:
-            require(sub.get("id") and sub.get("name"),
-                    f"{ident}: every sub-observation needs an id and a name")
-            require(sub.get("status") in ("open", "owed", "closed"),
-                    f"{ident}/{sub.get('id')}: bad status")
-            if sub["status"] == "open":
-                require(sub.get("tool"),
-                        f"{ident}/{sub.get('id')}: an open observation needs a tool")
-            if sub["status"] == "owed":
-                require(sub.get("missing"),
-                        f"{ident}/{sub.get('id')}: an owed observation needs a missing description")
+        test = ROOT / row["test"]
+        require(test.is_file(), f"{ident}: test {row['test']} does not exist")
     superseded = document.get("superseded")
     require(isinstance(superseded, list) and superseded,
             "the superseded list must map the old rows")
+    rendered = []
+    for row in rows:
+        derived = derive_claim(row, roots)
+        rendered.append({
+            **row,
+            "status": derived,
+            "action": {environment: derived[environment].get("action")
+                       for environment in ENVIRONMENTS},
+        })
     return {
-        "schema": 1,
-        "generated": "2026-11-19",
+        "schema": 2,
+        "generated": "2026-11-20",
         "source": "spec/audit/release-claims.json",
         "review": document.get("source_review"),
         "rule": document.get("rule"),
-        "campaigns": rows,
+        "campaigns": rendered,
+        "action_prs": document.get("action_prs") or [],
         "superseded": superseded,
-        "missing": document.get("missing") or [],
+        "out_of_scope": document.get("out_of_scope") or [],
     }
 
 
@@ -569,29 +723,50 @@ def render_campaigns_md(document: dict) -> str:
         text = "" if value is None else str(value)
         return text.replace("|", "\\|").replace("\n", " ")
 
+    def reading(row: dict, environment: str) -> str:
+        action = (row.get("action") or {}).get(environment) or {}
+        return action.get("reading") or "not-observed"
+
+    def next_action(row: dict, environment: str) -> str:
+        items = ((row.get("action") or {}).get(environment) or {}).get("items") or []
+        return items[0]["action"] if items else "—"
+
+    def next_pr(row: dict, environment: str) -> str:
+        action = (row.get("action") or {}).get(environment) or {}
+        return action.get("next_pr") or "—"
+
     lines = [
         "# Release claims",
         "",
         "Emitted from `spec/audit/release-claims.json` by `tools/build-mainnet-gates.py`.",
         "",
-        "**These are not gates.** A gate is a boolean test of the current build. A release claim",
-        "is one observable node behaviour with one falsifier and one control, re-runnable on the",
-        "standard local devnet or on `testnet-4`. The 12 old campaign rows are deleted; their fate",
-        "is in the `superseded` table at the end.",
+        "Each claim is a gate with one executable test over a decision trace. Its state is a",
+        "measured **reading** of the newest committed record; its **next action** is what closes",
+        "it. `safe` is the only reading that closes a gate. `unsafe-point` names a false predicate",
+        "and its Rust and Lean anchors; `model-incomplete` names the trace that is the model gap;",
+        "`evidence-insufficient` names the missing trace or coordinate; `precondition` and",
+        "`not-observed` name the run that cannot yet be made. No status is authored.",
         "",
         f"- generated: {document['generated']}",
         f"- claims: {len(document['campaigns'])}",
         f"- review: `{document.get('review')}`",
         "",
-        "| claim | status | local | public | owner |",
+        "| claim | env | reading | next action | next PR |",
         "|---|---|---|---|---|",
     ]
     for row in document["campaigns"]:
-        env = row["environment"]
-        lines.append(
-            f"| `{cell(row['id'])}` — {cell(row['title'])} | **{claim_status(row)}** | "
-            f"{cell(env['local'])[:70]} | {cell(env['public'])[:70]} | "
-            f"{cell(row['owner'])[:40]} |")
+        for environment in ENVIRONMENTS:
+            lines.append(
+                f"| `{cell(row['id'])}` | {environment} | **{cell(reading(row, environment))}** | "
+                f"{cell(next_action(row, environment))[:180]} | "
+                f"`{cell(next_pr(row, environment))}` |")
+    if document.get("action_prs"):
+        lines.extend(["", "## Next PRs", "",
+                      "| PR | closes | scope |", "|---|---|---|"])
+        for entry in document["action_prs"]:
+            lines.append(
+                f"| `{cell(entry.get('id'))}` | {', '.join(entry.get('claims') or [])} | "
+                f"{cell(entry.get('scope'))} |")
     lines.extend(["", "---", ""])
     for row in document["campaigns"]:
         lines.extend([
@@ -607,6 +782,8 @@ def render_campaigns_md(document: dict) -> str:
             "",
             f"**Control.** {row['negative_control']}",
             "",
+            f"**Test.** `{row['test']}`",
+            "",
             f"**Local.** {row['environment']['local']}",
             "",
             f"**Public.** {row['environment']['public']}",
@@ -615,12 +792,33 @@ def render_campaigns_md(document: dict) -> str:
             "",
             f"**Re-run (public).** `{row['rerun']['public']}`",
             "",
-            f"**Tool.** {row['tool']}",
-            "",
         ])
-        for sub in row["sub_observations"]:
-            detail = sub.get("tool") if sub["status"] == "open" else sub.get("missing") or ""
-            lines.append(f"- `{sub['id']}` {sub['name']} — **{sub['status']}** — {detail}")
+        for environment in ENVIRONMENTS:
+            entry = (row.get("status") or {}).get(environment) or {"status": "not run"}
+            action = (row.get("action") or {}).get(environment) or {}
+            detail = entry.get("record") or "no committed run record"
+            lines.append(
+                f"**{environment.capitalize()} reading.** `{action.get('reading', 'not-observed')}` "
+                f"— {detail}")
+            for item in action.get("items") or []:
+                anchor = item.get("anchor") or {}
+                suffix = ""
+                if anchor.get("rust"):
+                    suffix += f" Rust: `{anchor['rust']}`."
+                if anchor.get("lean"):
+                    suffix += f" Lean: `{anchor['lean']}`."
+                lines.append(
+                    f"- `{item.get('item')}` — {item.get('finding')}. "
+                    f"**Next:** {item.get('action')}{suffix}")
+            if not action.get("items"):
+                lines.append("- No action: the reading is safe; carry the record forward.")
+            if action.get("next_pr"):
+                lines.append(f"- Next PR: `{action['next_pr']}`")
+            observed = [reason for reason in (entry.get("reasons") or [])
+                        if action.get("reading") != "safe"]
+            for reason in observed[:4]:
+                text = " ".join(str(reason).split())
+                lines.append(f"  - observed: {text[:500]}")
         if row.get("supersedes"):
             lines.extend(["", f"**Supersedes.** {', '.join(row['supersedes'])}"])
         if row.get("does_not_claim"):
@@ -636,13 +834,14 @@ def render_campaigns_md(document: dict) -> str:
         lines.append(
             f"| `{cell(entry.get('id'))}` | {cell(entry.get('fate'))} | "
             f"{cell(entry.get('home'))} |")
-    lines.extend(["", "## Missing observations", ""])
-    for item in document.get("missing") or []:
+    lines.extend(["", "## Not covered by these seven claims", ""])
+    for item in document.get("out_of_scope") or []:
         lines.append(f"- {item}")
     lines.extend([
         "",
-        "`check-release-campaigns.py --assert-ready` exits 3 while any claim or sub-observation",
-        "is not closed, so a closed gate register is never a release authorization.",
+        "`check-release-campaigns.py --assert-ready` exits 3 unless every claim reads `safe` in both",
+        "environments; every open reading names its next action and PR. A closed register is still",
+        "not a release authorization.",
         "",
     ])
     return "\n".join(lines)

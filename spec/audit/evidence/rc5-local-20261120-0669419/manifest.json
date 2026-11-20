@@ -1,0 +1,233 @@
+{
+  "arms": [],
+  "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 258,
+      "kind": "log",
+      "path": "raw/assemble.log",
+      "sha256": "af1f65d947dde4062e64d9449e653eead1a3cc5b8d5ff9b2d682c6102e048017"
+    },
+    {
+      "bytes": 14481,
+      "kind": "json",
+      "path": "raw/capped/capped-inspect.json",
+      "sha256": "a4d0f4583c64bfe500643185efb53c1522efabb89081c1da079b3969eb446c19"
+    },
+    {
+      "bytes": 55,
+      "kind": "txt",
+      "path": "raw/capped/capped-version.txt",
+      "sha256": "722dc3533e02d2004fc78141f7804a8935355c2bfeb2ee32085e0b9f3d0d1258"
+    },
+    {
+      "bytes": 522,
+      "kind": "txt",
+      "path": "raw/capped/direct-capped.txt",
+      "sha256": "5edba2bb1d2d872bd8d442047e83f427df9bdbce844b0b2d2cf126b18188e85e"
+    },
+    {
+      "bytes": 745,
+      "kind": "jsonl",
+      "path": "raw/capped/http-capped.jsonl",
+      "sha256": "40d5f45343c46d4070b1d72965400c710ec837bada8244002f5fdf28044027bb"
+    },
+    {
+      "bytes": 590,
+      "kind": "json",
+      "path": "raw/capped/phase.json",
+      "sha256": "b43c7758080b33b1d4bb60915e96650b635f4e51f79057b63a0051b63956e2da"
+    },
+    {
+      "bytes": 590,
+      "kind": "log",
+      "path": "raw/capped.log",
+      "sha256": "b43c7758080b33b1d4bb60915e96650b635f4e51f79057b63a0051b63956e2da"
+    },
+    {
+      "bytes": 0,
+      "kind": "log",
+      "path": "raw/check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 1376,
+      "kind": "json",
+      "path": "raw/claim.json",
+      "sha256": "d5e6dd7ed19e5fb2c004d886a9a19eb6995a23ca473b8ae0308d62c9745642ba"
+    },
+    {
+      "bytes": 328,
+      "kind": "json",
+      "path": "raw/grpc/grpc-candidate.json",
+      "sha256": "4faebe5c629eef90273c0d563d2a00e832dd96ca46b81fab22d1e4b75fe91e65"
+    },
+    {
+      "bytes": 261,
+      "kind": "jsonl",
+      "path": "raw/grpc/grpc-capped.jsonl",
+      "sha256": "a6e59b1d67f82fe29512377e65311c943c09a77c386f4451c8516a943985a3b2"
+    },
+    {
+      "bytes": 128,
+      "kind": "jsonl",
+      "path": "raw/grpc/grpc-permissive.jsonl",
+      "sha256": "4fdb1490aacd0fcdf5878bd0e1ac7115711e55fb12ab5406ba30da180d4b4b41"
+    },
+    {
+      "bytes": 175,
+      "kind": "json",
+      "path": "raw/grpc/grpc-summary.json",
+      "sha256": "9e2dafbb966419a78baa538260db553e3d93ca6d68a37af24f31232e35e71be9"
+    },
+    {
+      "bytes": 690,
+      "kind": "log",
+      "path": "raw/grpc.log",
+      "sha256": "27a4db3b83b31fe7177e100afc64528086aedef591b51a9541ce4b4f2e32516e"
+    },
+    {
+      "bytes": 338,
+      "kind": "md",
+      "path": "raw/record/README.md",
+      "sha256": "ea9d24468cdc7f80dbe380117b7d769ef42297445daa58dd801b5c99cfe5c97e"
+    },
+    {
+      "bytes": 1259,
+      "kind": "json",
+      "path": "raw/record/SHA256SUMS.json",
+      "sha256": "35f60defc75f2171b90d25dd3ee75a07478fe5a094ac325241c84630238cb0c4"
+    },
+    {
+      "bytes": 14481,
+      "kind": "json",
+      "path": "raw/record/capped-inspect.json",
+      "sha256": "a4d0f4583c64bfe500643185efb53c1522efabb89081c1da079b3969eb446c19"
+    },
+    {
+      "bytes": 55,
+      "kind": "txt",
+      "path": "raw/record/capped-version.txt",
+      "sha256": "722dc3533e02d2004fc78141f7804a8935355c2bfeb2ee32085e0b9f3d0d1258"
+    },
+    {
+      "bytes": 522,
+      "kind": "txt",
+      "path": "raw/record/direct-capped.txt",
+      "sha256": "5edba2bb1d2d872bd8d442047e83f427df9bdbce844b0b2d2cf126b18188e85e"
+    },
+    {
+      "bytes": 549,
+      "kind": "txt",
+      "path": "raw/record/direct-unset.txt",
+      "sha256": "da96039261b56a3ea93ae90b67e43be1df7d5589ae1a997c4d2f3ad05f489c58"
+    },
+    {
+      "bytes": 328,
+      "kind": "json",
+      "path": "raw/record/grpc-candidate.json",
+      "sha256": "4faebe5c629eef90273c0d563d2a00e832dd96ca46b81fab22d1e4b75fe91e65"
+    },
+    {
+      "bytes": 261,
+      "kind": "jsonl",
+      "path": "raw/record/grpc-capped.jsonl",
+      "sha256": "a6e59b1d67f82fe29512377e65311c943c09a77c386f4451c8516a943985a3b2"
+    },
+    {
+      "bytes": 128,
+      "kind": "jsonl",
+      "path": "raw/record/grpc-permissive.jsonl",
+      "sha256": "4fdb1490aacd0fcdf5878bd0e1ac7115711e55fb12ab5406ba30da180d4b4b41"
+    },
+    {
+      "bytes": 745,
+      "kind": "jsonl",
+      "path": "raw/record/http-capped.jsonl",
+      "sha256": "40d5f45343c46d4070b1d72965400c710ec837bada8244002f5fdf28044027bb"
+    },
+    {
+      "bytes": 771,
+      "kind": "jsonl",
+      "path": "raw/record/http-unset.jsonl",
+      "sha256": "b5123f169e194ac1db89eac946eb3bb3e8d0969b90535ed7d546bc18df0a98d6"
+    },
+    {
+      "bytes": 135,
+      "kind": "json",
+      "path": "raw/record/observations.json",
+      "sha256": "ea87aecb589212a3c41e6a84863efd0dbe134387e31ffd2ff10088c312eec2eb"
+    },
+    {
+      "bytes": 2294,
+      "kind": "json",
+      "path": "raw/record/pressure.json",
+      "sha256": "468c34ad1b61d2ae50a9822f57a826ad5bd74a788cc82dbf2690f18a2b3bd5bc"
+    },
+    {
+      "bytes": 14429,
+      "kind": "json",
+      "path": "raw/record/unset-inspect.json",
+      "sha256": "fe7071329dc81c5f2725c369fc989a6bf114ad388832596e209046c01295911e"
+    },
+    {
+      "bytes": 55,
+      "kind": "txt",
+      "path": "raw/record/unset-version.txt",
+      "sha256": "722dc3533e02d2004fc78141f7804a8935355c2bfeb2ee32085e0b9f3d0d1258"
+    },
+    {
+      "bytes": 549,
+      "kind": "txt",
+      "path": "raw/unset/direct-unset.txt",
+      "sha256": "da96039261b56a3ea93ae90b67e43be1df7d5589ae1a997c4d2f3ad05f489c58"
+    },
+    {
+      "bytes": 771,
+      "kind": "jsonl",
+      "path": "raw/unset/http-unset.jsonl",
+      "sha256": "b5123f169e194ac1db89eac946eb3bb3e8d0969b90535ed7d546bc18df0a98d6"
+    },
+    {
+      "bytes": 561,
+      "kind": "json",
+      "path": "raw/unset/phase.json",
+      "sha256": "9533a78f62c0726e1c9cb61659d8628bb91e80e1636fd2fd1519885d89023294"
+    },
+    {
+      "bytes": 14429,
+      "kind": "json",
+      "path": "raw/unset/unset-inspect.json",
+      "sha256": "fe7071329dc81c5f2725c369fc989a6bf114ad388832596e209046c01295911e"
+    },
+    {
+      "bytes": 55,
+      "kind": "txt",
+      "path": "raw/unset/unset-version.txt",
+      "sha256": "722dc3533e02d2004fc78141f7804a8935355c2bfeb2ee32085e0b9f3d0d1258"
+    },
+    {
+      "bytes": 561,
+      "kind": "log",
+      "path": "raw/unset.log",
+      "sha256": "9533a78f62c0726e1c9cb61659d8628bb91e80e1636fd2fd1519885d89023294"
+    }
+  ],
+  "gate_id": "RC-5",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-20T11:53:38+00:00",
+    "tool": "evidence-pack",
+    "version": 2
+  },
+  "redactions": [],
+  "reference": null,
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a",
+  "verdict": "PASS"
+}

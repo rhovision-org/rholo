@@ -41,6 +41,131 @@ pub const STORE_FORMAT_MARKER: &str = "store-format";
 // The re-scan then adopts only bodies that still have no disposition.
 pub const STORE_FORMAT_VERSION: u32 = 4;
 
+/// **The store-format decision, typed.** The marker on disk and this build's version determine one
+/// of five outcomes. `RefuseNewer` and `RefuseUnreadable` are the only refusals; `Stamp`, `Accept`
+/// and `Advance` open the store (the first two are written back only when the stamp is missing or
+/// older). This is the `StoreSafe` phase space's input type, and the Rust trace records it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StoreFormatDecision {
+    /// No marker: this build stamps its own version.
+    Stamp { from: Option<u32> },
+    /// The marker equals this build's version; the store is opened unchanged.
+    Accept,
+    /// The marker is older; the store is opened and re-stamped.
+    Advance { from: u32 },
+    /// The marker is newer than this build can read: a downgrade must refuse.
+    RefuseNewer { on_disk: u32 },
+    /// The marker is not a number this build can read: refuse rather than guess.
+    RefuseUnreadable { marker: String },
+}
+
+impl StoreFormatDecision {
+    /// The stable name the trace and the evaluator share.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StoreFormatDecision::Stamp { .. } => "stamp",
+            StoreFormatDecision::Accept => "accept",
+            StoreFormatDecision::Advance { .. } => "advance",
+            StoreFormatDecision::RefuseNewer { .. } => "refuse_newer",
+            StoreFormatDecision::RefuseUnreadable { .. } => "refuse_unreadable",
+        }
+    }
+
+    /// The format the marker named, when it named one.
+    pub fn on_disk(&self) -> Option<u32> {
+        match self {
+            StoreFormatDecision::Stamp { from } => *from,
+            StoreFormatDecision::Accept => Some(STORE_FORMAT_VERSION),
+            StoreFormatDecision::Advance { from } => Some(*from),
+            StoreFormatDecision::RefuseNewer { on_disk } => Some(*on_disk),
+            StoreFormatDecision::RefuseUnreadable { .. } => None,
+        }
+    }
+
+    pub fn refused(&self) -> bool {
+        matches!(
+            self,
+            StoreFormatDecision::RefuseNewer { .. } | StoreFormatDecision::RefuseUnreadable { .. }
+        )
+    }
+
+    /// Whether the marker must be (re)written: absent or older.
+    pub fn needs_stamp(&self) -> bool {
+        matches!(
+            self,
+            StoreFormatDecision::Stamp { .. } | StoreFormatDecision::Advance { .. }
+        )
+    }
+}
+
+/// The pure decision. `present` is the marker's contents (trimmed by this function); `build` is
+/// [`STORE_FORMAT_VERSION`]. Every input maps to exactly one [`StoreFormatDecision`].
+pub fn decide_store_format(present: Option<&str>, build: u32) -> StoreFormatDecision {
+    let Some(marker) = present else {
+        return StoreFormatDecision::Stamp { from: None };
+    };
+    let Ok(on_disk) = marker.trim().parse::<u32>() else {
+        return StoreFormatDecision::RefuseUnreadable {
+            marker: marker.to_string(),
+        };
+    };
+    if on_disk > build {
+        StoreFormatDecision::RefuseNewer { on_disk }
+    } else if on_disk == build {
+        StoreFormatDecision::Accept
+    } else {
+        StoreFormatDecision::Advance { from: on_disk }
+    }
+}
+
+#[cfg(test)]
+mod store_format_tests {
+    use super::*;
+
+    #[test]
+    fn an_absent_marker_is_a_stamp() {
+        assert_eq!(
+            decide_store_format(None, 4),
+            StoreFormatDecision::Stamp { from: None }
+        );
+    }
+
+    #[test]
+    fn the_builds_own_format_is_accepted() {
+        assert_eq!(
+            decide_store_format(Some("4"), 4),
+            StoreFormatDecision::Accept
+        );
+    }
+
+    #[test]
+    fn an_older_format_is_an_advance() {
+        assert_eq!(
+            decide_store_format(Some("3\n"), 4),
+            StoreFormatDecision::Advance { from: 3 }
+        );
+    }
+
+    #[test]
+    fn a_newer_format_is_refused() {
+        assert_eq!(
+            decide_store_format(Some("5"), 4),
+            StoreFormatDecision::RefuseNewer { on_disk: 5 }
+        );
+        assert!(decide_store_format(Some("5"), 4).refused());
+    }
+
+    #[test]
+    fn an_unreadable_marker_is_refused() {
+        assert_eq!(
+            decide_store_format(Some("four"), 4),
+            StoreFormatDecision::RefuseUnreadable {
+                marker: "four".to_string()
+            }
+        );
+    }
+}
+
 /// **Where a shard records the blocks it still owes an outcome** (U19, `block_disposition`). Holds
 /// only `Pending`/`Faulted` rows — accepted and refused blocks are the DAG metadata — so it is
 /// bounded by in-flight work, not by chain height. Shares the body's environment so ingestion

@@ -569,6 +569,39 @@ pub async fn apply<
                                                 verified.checkpoint.anchor_height
                                             ),
                                         );
+                                        // **Persist it before the engine uses it.** A spoke whose
+                                        // collector never reaches quorum had nothing in the store, so
+                                        // its next boot refused; the certificate the sync already
+                                        // trusts is the one the store must re-verify then. A record
+                                        // conflict is an equivocation at this anchor and is refused,
+                                        // not adopted.
+                                        if let rchain_block_storage::checkpoint_store::Recorded::Conflict {
+                                            existing_digest,
+                                        } = checkpoint_store
+                                            .record(&verified.digest, &certificate)
+                                            .await?
+                                        {
+                                            return Err(format!(
+                                                "the served checkpoint certificate conflicts with \
+                                                 an already recorded statement at its anchor \
+                                                 (existing {})",
+                                                existing_digest.to_hex()
+                                            ));
+                                        }
+                                        if let rchain_block_storage::checkpoint_store::Adoption::Conflict {
+                                            head_digest,
+                                            incoming_digest,
+                                        } = checkpoint_store
+                                            .adopt(&verified.digest, &certificate, false)
+                                            .await?
+                                        {
+                                            return Err(format!(
+                                                "the served checkpoint certificate conflicts with \
+                                                 the adopted head (head {:?}, incoming {})",
+                                                head_digest.map(|digest| digest.to_hex()),
+                                                incoming_digest.to_hex()
+                                            ));
+                                        }
                                         // **The same statement the anchor came from** goes with the
                                         // engine: the sync task verifies it rather than fetching a
                                         // newer one, so the signed statement and the served fringe
@@ -753,22 +786,96 @@ pub async fn apply<
         // must not turn a corrupted or replaced certificate into an accepted history. Only a
         // certificate naming *this* fringe is evidence for it — an older certificate is what the
         // node held when it last certified, and the accepted fringe may legitimately be newer.
-        if let Some(certificate) = checkpoint_store.latest().await? {
-            let verified = crate::checkpoint::verify_genesis_rooted_certificate(
-                &certificate,
-                &runtime_manager.genesis_pos().bonds,
-            )
-            .map_err(|e| {
-                format!(
-                    "the stored checkpoint certificate failed re-verification at boot, so the \
-                     accepted fringe cannot be attributed: {e}"
-                )
-            })?;
-            if verified.checkpoint.shard_id != spec.shard_id.to_string() {
-                return Err(format!(
-                    "the stored checkpoint certificate names shard {:?}, not this node's {:?}",
-                    verified.checkpoint.shard_id, spec.shard_id
-                ));
+        // **A node that synced before the certificate was persisted has none stored.** Pull the
+        // configured source's verified certificate and adopt it; this is the same bootstrap pull
+        // the sync branch trusts. No stored certificate and no source leaves `None`; a non-genesis
+        // DAG then refuses by name below.
+        let shard_id = spec.shard_id.to_string();
+        let genesis_only = repr.dag_set.len() == 1
+            && repr
+                .height_map
+                .keys()
+                .next()
+                .map(|height| i64::from(*height))
+                == Some(0);
+        let store_head = checkpoint_store.latest().await?.map(|certificate| {
+            crate::checkpoint::checkpoint_digest(&certificate.checkpoint)
+                .map(|digest| digest.to_hex())
+                .unwrap_or_else(|_| "malformed".to_string())
+        });
+        let acquisition = acquire_boot_certificate(
+            &checkpoint_store,
+            checkpoint_source.as_ref(),
+            &runtime_manager.genesis_pos().bonds,
+            &shard_id,
+        )
+        .await;
+        let outcome = boot_outcome(genesis_only, &acquisition);
+        write_boot_trace(&BootTrace {
+            kind: "boot".to_string(),
+            stage: "acquisition".to_string(),
+            dag_len: repr.dag_set.len(),
+            genesis_only,
+            store_head,
+            source_configured: checkpoint_source.is_some(),
+            acquisition: match &acquisition {
+                Ok(Some(_)) => "certificate".to_string(),
+                Ok(None) => "none".to_string(),
+                Err(error) => format!("refused: {error}"),
+            },
+            served_digest: acquisition
+                .as_ref()
+                .ok()
+                .and_then(|certificate| certificate.as_ref())
+                .map(|certificate| certificate.verified.digest.to_hex()),
+            served_anchor: acquisition
+                .as_ref()
+                .ok()
+                .and_then(|certificate| certificate.as_ref())
+                .map(|certificate| certificate.verified.checkpoint.anchor.clone()),
+            served_shard: acquisition
+                .as_ref()
+                .ok()
+                .and_then(|certificate| certificate.as_ref())
+                .map(|certificate| certificate.verified.checkpoint.shard_id.clone()),
+            shard_id: shard_id.clone(),
+            served_supporting_stake: acquisition
+                .as_ref()
+                .ok()
+                .and_then(|certificate| certificate.as_ref())
+                .map(|certificate| certificate.verified.supporting_stake),
+            served_total_stake: acquisition
+                .as_ref()
+                .ok()
+                .and_then(|certificate| certificate.as_ref())
+                .map(|certificate| certificate.verified.total_stake),
+            outcome: match outcome {
+                BootOutcome::Genesis => "genesis".to_string(),
+                BootOutcome::Certified => "certified".to_string(),
+                BootOutcome::Refused(_) => "refused".to_string(),
+            },
+            refusal_coordinate: match outcome {
+                BootOutcome::Refused(coordinate) => Some(coordinate.as_str().to_string()),
+                _ => None,
+            },
+            accepted: acquisition.as_ref().ok().is_some_and(Option::is_some) || genesis_only,
+        });
+        let boot_certificate = acquisition?;
+        if let Some(BootCertificate {
+            verified,
+            source: certificate_source,
+            ..
+        }) = boot_certificate
+        {
+            if certificate_source == BootCertificateSource::Fetched {
+                log.warn(
+                    source,
+                    &format!(
+                        "boot: no checkpoint certificate was stored; fetched and adopted the \
+                         configured source's verified certificate {}",
+                        verified.digest.to_hex()
+                    ),
+                );
             }
             let recorded = approved_store
                 .get(&[rchain_block_storage::approved_store::FINALIZED_FRINGE_KEY])
@@ -802,7 +909,12 @@ pub async fn apply<
                     // state at the fringe the anchor itself finalised, which is where a post-anchor
                     // block's merge starts — so the approved fringe's state and the certificate's
                     // root agree by construction rather than being two different claims.
-                    let window = rebuild_window_from_dag(dag.as_ref(), &verified).await?;
+                    let window = rebuild_window_for_boot(
+                        dag.as_ref(),
+                        &verified,
+                        certificate_source == BootCertificateSource::Fetched,
+                    )
+                    .await?;
                     accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
                         verified.clone(),
                         window,
@@ -838,7 +950,12 @@ pub async fn apply<
                                  adopting the certificate as the base and re-deriving the window"
                             ),
                         );
-                        let window = rebuild_window_from_dag(dag.as_ref(), &verified).await?;
+                        let window = rebuild_window_for_boot(
+                            dag.as_ref(),
+                            &verified,
+                            certificate_source == BootCertificateSource::Fetched,
+                        )
+                        .await?;
                         accepted_state =
                             Some(crate::engine::anchor::AcceptedState::from_certificate(
                                 verified.clone(),
@@ -867,7 +984,12 @@ pub async fn apply<
                         "boot: no accepted fringe is recorded; adopting the verified stored \
                          checkpoint certificate as the anchor",
                     );
-                    let window = rebuild_window_from_dag(dag.as_ref(), &verified).await?;
+                    let window = rebuild_window_for_boot(
+                        dag.as_ref(),
+                        &verified,
+                        certificate_source == BootCertificateSource::Fetched,
+                    )
+                    .await?;
                     accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
                         verified.clone(),
                         window,
@@ -875,6 +997,13 @@ pub async fn apply<
                 }
             }
         } else {
+            if !genesis_only {
+                return Err(format!(
+                    "this node's DAG holds {} block(s) but no checkpoint certificate is stored and \
+                     no checkpoint source is configured; the accepted state cannot be attributed",
+                    repr.dag_set.len()
+                ));
+            }
             log.info(
                 source,
                 "boot: no checkpoint certificate is stored for the accepted fringe; a genesis-only \
@@ -1574,6 +1703,200 @@ fn stored_fringe_agreement(
     }
 }
 
+/// Where the boot certificate came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BootCertificateSource {
+    Stored,
+    Fetched,
+}
+
+/// The certificate the reconnect branch runs from, and where it was found.
+#[derive(Debug)]
+struct BootCertificate {
+    verified: crate::checkpoint::VerifiedCheckpoint,
+    source: BootCertificateSource,
+}
+
+/// **The boot decision as a trace.** The coordinates a boot failure is read in: what the DAG holds,
+/// what the store held, whether a source was configured, what it answered, and what was adopted.
+/// The coordinate a refused boot is missing. The refusal prose names it in the trace; the enum is
+/// what the Lean `BootCoordinate` and the evaluator's predicates range over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BootCoordinate {
+    NoStoredCertificate,
+    FetchFailed,
+    VerifyFailed,
+    ShardMismatch,
+    StoreConflict,
+}
+
+impl BootCoordinate {
+    fn as_str(self) -> &'static str {
+        match self {
+            BootCoordinate::NoStoredCertificate => "no-stored-certificate",
+            BootCoordinate::FetchFailed => "fetch-failed",
+            BootCoordinate::VerifyFailed => "verify-failed",
+            BootCoordinate::ShardMismatch => "shard-mismatch",
+            BootCoordinate::StoreConflict => "store-conflict",
+        }
+    }
+}
+
+/// The boot decision's outcome type. `Genesis` and `Certified` are the two running outcomes;
+/// `Refused` names the coordinate that was missing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BootOutcome {
+    Genesis,
+    Certified,
+    Refused(BootCoordinate),
+}
+
+fn classify_boot_refusal(error: &str) -> BootCoordinate {
+    if error.contains("no checkpoint certificate is stored and the checkpoint source refused") {
+        BootCoordinate::FetchFailed
+    } else if error.contains("failed re-verification")
+        || error.contains("the fetched checkpoint certificate was refused")
+    {
+        BootCoordinate::VerifyFailed
+    } else if error.contains("names shard") {
+        BootCoordinate::ShardMismatch
+    } else if error.contains("conflicts with") {
+        BootCoordinate::StoreConflict
+    } else {
+        BootCoordinate::NoStoredCertificate
+    }
+}
+
+fn boot_outcome(
+    genesis_only: bool,
+    acquisition: &Result<Option<BootCertificate>, String>,
+) -> BootOutcome {
+    match acquisition {
+        Ok(Some(_)) => BootOutcome::Certified,
+        Ok(None) if genesis_only => BootOutcome::Genesis,
+        Ok(None) => BootOutcome::Refused(BootCoordinate::NoStoredCertificate),
+        Err(error) => BootOutcome::Refused(classify_boot_refusal(error)),
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct BootTrace {
+    kind: String,
+    stage: String,
+    dag_len: usize,
+    genesis_only: bool,
+    store_head: Option<String>,
+    source_configured: bool,
+    acquisition: String,
+    served_digest: Option<String>,
+    served_anchor: Option<String>,
+    served_shard: Option<String>,
+    shard_id: String,
+    served_supporting_stake: Option<i128>,
+    served_total_stake: Option<i128>,
+    outcome: String,
+    refusal_coordinate: Option<String>,
+    accepted: bool,
+}
+
+/// Write the boot trace when `RNODE_TRACE_DIR` is set (the local claim harness sets it). A write
+/// failure is not a consensus event and is ignored.
+fn write_boot_trace(trace: &BootTrace) {
+    crate::trace::write_trace("boot", trace);
+}
+
+/// **Acquire the boot certificate.** A stored head is re-verified; with none, the configured
+/// checkpoint source is pulled, verified against the genesis bonds, shard-checked, recorded and
+/// adopted. `Ok(None)` means there is no stored certificate *and* no source to ask — the caller
+/// decides whether a genesis-only DAG can still proceed. A source that answers badly is a named
+/// refusal, not a silent fall-through to the generic no-certificate sentence.
+async fn acquire_boot_certificate(
+    store: &rchain_block_storage::checkpoint_store::CheckpointStore,
+    source: Option<&Arc<dyn crate::engine::checkpoint_source::CheckpointSource>>,
+    bonds: &BTreeMap<rchain_models::validator::Validator, NonNegI64>,
+    shard_id: &str,
+) -> Result<Option<BootCertificate>, String> {
+    acquire_boot_certificate_with(store, source, bonds, shard_id, &|certificate, bonds| {
+        crate::checkpoint::verify_genesis_rooted_certificate(certificate, bonds)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// The acquisition with an injectable verifier, so the record/adopt mechanics are testable without
+/// minting a quorum-signed certificate.
+async fn acquire_boot_certificate_with(
+    store: &rchain_block_storage::checkpoint_store::CheckpointStore,
+    source: Option<&Arc<dyn crate::engine::checkpoint_source::CheckpointSource>>,
+    bonds: &BTreeMap<rchain_models::validator::Validator, NonNegI64>,
+    shard_id: &str,
+    verify: &(dyn Fn(
+        &rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
+        &BTreeMap<rchain_models::validator::Validator, NonNegI64>,
+    ) -> Result<crate::checkpoint::VerifiedCheckpoint, String>
+          + Send
+          + Sync),
+) -> Result<Option<BootCertificate>, String> {
+    if let Some(certificate) = store.latest().await? {
+        let verified = verify(&certificate, bonds).map_err(|e| {
+            format!(
+                "the stored checkpoint certificate failed re-verification at boot, so the \
+                 accepted fringe cannot be attributed: {e}"
+            )
+        })?;
+        if verified.checkpoint.shard_id != shard_id {
+            return Err(format!(
+                "the stored checkpoint certificate names shard {:?}, not this node's {:?}",
+                verified.checkpoint.shard_id, shard_id
+            ));
+        }
+        return Ok(Some(BootCertificate {
+            verified,
+            source: BootCertificateSource::Stored,
+        }));
+    }
+
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    let certificate = source.fetch_certificate().await.map_err(|e| {
+        format!("no checkpoint certificate is stored and the checkpoint source refused: {e}")
+    })?;
+    let verified = verify(&certificate, bonds)
+        .map_err(|e| format!("the fetched checkpoint certificate was refused: {e}"))?;
+    if verified.checkpoint.shard_id != shard_id {
+        return Err(format!(
+            "the fetched checkpoint certificate names shard {:?}, not this node's {:?}",
+            verified.checkpoint.shard_id, shard_id
+        ));
+    }
+    if let rchain_block_storage::checkpoint_store::Recorded::Conflict { existing_digest } =
+        store.record(&verified.digest, &certificate).await?
+    {
+        return Err(format!(
+            "the fetched checkpoint certificate conflicts with an already recorded statement at \
+             its anchor (existing {})",
+            existing_digest.to_hex()
+        ));
+    }
+    if let rchain_block_storage::checkpoint_store::Adoption::Conflict {
+        head_digest,
+        incoming_digest,
+    } = store.adopt(&verified.digest, &certificate, false).await?
+    {
+        return Err(format!(
+            "the fetched checkpoint certificate conflicts with the adopted head (head {:?}, \
+             incoming {})",
+            head_digest.map(|digest| digest.to_hex()),
+            incoming_digest.to_hex()
+        ));
+    }
+    Ok(Some(BootCertificate {
+        verified,
+        source: BootCertificateSource::Fetched,
+    }))
+}
+
 /// **Is every recorded fringe member the anchor or one of its descendants?** The DAG's message map
 /// carries each block's `seen` set, so this is a lookup, not a walk. A member the DAG does not hold
 /// is not evidence of descent and refuses the adoption (safe default).
@@ -1618,6 +1941,28 @@ async fn anchor_closure(
         stack.extend(metadata.justifications.iter().copied());
     }
     Ok(headers)
+}
+
+/// The boot rebuild, naming the missing input when the certificate was **fetched** and this node's
+/// DAG does not hold its anchor closure. A stored certificate is the node's own history, so its
+/// rebuild failure keeps the underlying reason.
+async fn rebuild_window_for_boot(
+    dag: &dyn BlockDagStorage,
+    verified: &crate::checkpoint::VerifiedCheckpoint,
+    fetched: bool,
+) -> Result<BTreeSet<Blake2b256Hash>, String> {
+    rebuild_window_from_dag(dag, verified)
+        .await
+        .map_err(|error| {
+            if fetched {
+                format!(
+                "fetched-certificate-anchor-not-held: the fetched certificate's anchor is not in \
+                 this node's DAG: {error}"
+            )
+            } else {
+                error
+            }
+        })
 }
 
 /// **Rebuild and verify the certified validation window at boot** (review R2). The stored
@@ -2215,5 +2560,146 @@ mod tests {
         )
         .await
         .expect("the late peer must release the wait");
+    }
+
+    struct FakeSource(
+        Result<rchain_models::casper::protocol::checkpoint::CheckpointCertificate, String>,
+    );
+
+    #[async_trait::async_trait]
+    impl crate::engine::checkpoint_source::CheckpointSource for FakeSource {
+        async fn fetch_certificate(
+            &self,
+        ) -> Result<rchain_models::casper::protocol::checkpoint::CheckpointCertificate, String>
+        {
+            self.0.clone()
+        }
+    }
+
+    fn a_certificate() -> rchain_models::casper::protocol::checkpoint::CheckpointCertificate {
+        use rchain_models::casper::protocol::checkpoint::{Checkpoint, CheckpointCertificate};
+        CheckpointCertificate {
+            checkpoint: Checkpoint {
+                shard_id: "root".to_string(),
+                anchor: "11".repeat(32),
+                anchor_height: 1,
+                anchor_post_state: "22".repeat(32),
+                fringe_state: None,
+                fringe_hashes: vec!["11".repeat(32)],
+                parent_digest: None,
+                epoch: 0,
+                metadata_root: None,
+                history_root: None,
+                fringe_headers_root: None,
+            },
+            attestations: Vec::new(),
+        }
+    }
+
+    async fn an_empty_store() -> rchain_block_storage::checkpoint_store::CheckpointStore {
+        rchain_block_storage::checkpoint_store::CheckpointStore::open(
+            &rchain_shared::store_manager::InMemoryStoreManager::default(),
+        )
+        .await
+        .expect("an in-memory checkpoint store")
+    }
+
+    #[tokio::test]
+    async fn no_stored_certificate_and_no_source_leaves_the_decision_to_the_dag() {
+        let store = an_empty_store().await;
+        let bonds: BTreeMap<rchain_models::validator::Validator, NonNegI64> = BTreeMap::new();
+        let acquired = acquire_boot_certificate(&store, None, &bonds, "root")
+            .await
+            .expect("the absence of both inputs is not an error here");
+        assert!(acquired.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_source_error_is_named_not_reduced_to_the_generic_refusal() {
+        let store = an_empty_store().await;
+        let bonds: BTreeMap<rchain_models::validator::Validator, NonNegI64> = BTreeMap::new();
+        let source: Arc<dyn crate::engine::checkpoint_source::CheckpointSource> =
+            Arc::new(FakeSource(Err("connection refused".to_string())));
+        let error = acquire_boot_certificate(&store, Some(&source), &bonds, "root")
+            .await
+            .expect_err("a failed fetch is a refusal");
+        assert!(error.contains("checkpoint source refused"));
+        assert!(error.contains("connection refused"));
+    }
+
+    #[tokio::test]
+    async fn a_malformed_served_certificate_is_refused_by_name() {
+        let store = an_empty_store().await;
+        let bonds: BTreeMap<rchain_models::validator::Validator, NonNegI64> = BTreeMap::new();
+        let source: Arc<dyn crate::engine::checkpoint_source::CheckpointSource> =
+            Arc::new(FakeSource(Ok(a_certificate())));
+        let error = acquire_boot_certificate(&store, Some(&source), &bonds, "root")
+            .await
+            .expect_err("an unverified certificate is a refusal");
+        assert!(error.contains("fetched checkpoint certificate was refused"));
+    }
+
+    fn verified_of(
+        certificate: &rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
+    ) -> crate::checkpoint::VerifiedCheckpoint {
+        crate::checkpoint::VerifiedCheckpoint {
+            checkpoint: certificate.checkpoint.clone(),
+            digest: Blake2b256Hash::from_byte_array(&[7u8; 32]),
+            supporting_stake: 3,
+            total_stake: 3,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_fetched_certificate_is_recorded_and_adopted() {
+        let store = an_empty_store().await;
+        let bonds: BTreeMap<rchain_models::validator::Validator, NonNegI64> = BTreeMap::new();
+        let certificate = a_certificate();
+        let expected = verified_of(&certificate);
+        let source: Arc<dyn crate::engine::checkpoint_source::CheckpointSource> =
+            Arc::new(FakeSource(Ok(certificate.clone())));
+        let acquired =
+            acquire_boot_certificate_with(&store, Some(&source), &bonds, "root", &|_, _| {
+                Ok(expected.clone())
+            })
+            .await
+            .expect("the fetched certificate is adopted");
+        assert!(matches!(
+            acquired,
+            Some(BootCertificate {
+                source: BootCertificateSource::Fetched,
+                ..
+            })
+        ));
+        let head = store.latest().await.unwrap().expect("a stored head");
+        assert_eq!(head.checkpoint, certificate.checkpoint);
+    }
+
+    #[tokio::test]
+    async fn a_stored_certificate_is_reverified_without_a_fetch() {
+        let store = an_empty_store().await;
+        let bonds: BTreeMap<rchain_models::validator::Validator, NonNegI64> = BTreeMap::new();
+        let certificate = a_certificate();
+        let expected = verified_of(&certificate);
+        store
+            .record(&expected.digest, &certificate)
+            .await
+            .expect("the certificate is recorded");
+        store
+            .adopt(&expected.digest, &certificate, false)
+            .await
+            .expect("the certificate is adopted as the head");
+        let acquired = acquire_boot_certificate_with(&store, None, &bonds, "root", &|_, _| {
+            Ok(expected.clone())
+        })
+        .await
+        .expect("the stored head is re-verified");
+        assert!(matches!(
+            acquired,
+            Some(BootCertificate {
+                source: BootCertificateSource::Stored,
+                ..
+            })
+        ));
     }
 }

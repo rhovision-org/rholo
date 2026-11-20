@@ -1,0 +1,59 @@
+{
+  "claim_id": "RC-7",
+  "claim_title": "Upgrade compatibility",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-20T11:24:32Z",
+  "harness": {
+    "command": [
+      "/home/patrick/miniforge3/bin/python3",
+      "/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/populated-store-migration-drill.py",
+      "--gate",
+      "--out",
+      "target/release-claims/local/RC-7/migration"
+    ],
+    "exit_code": 0,
+    "name": "populated-store-migration-drill",
+    "out": "target/release-claims/local/RC-7/migration"
+  },
+  "locality": "local-devnet",
+  "observations": {
+    "downgrade": {
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "-v",
+        "/tmp/rc7-store-par0jgeu:/data",
+        "rnode:local",
+        "--profile",
+        "docker",
+        "run",
+        "--data-dir",
+        "/data"
+      ],
+      "refused": true,
+      "stderr": "            1            0       0               5       5               0       0               0       0               2       2               0         0               0           0\n                     ---\n                 640  17         20480            32      32             0       0              1         1        1           32            1              0   32   5      1            1       1            0       0            1            0       0               5       5               0       0               0       0               2       2               0         0               0           0\n                     ---\nlarge:          size ind    allocated      nmalloc (#/sec)      ndalloc (#/sec)    nrequests (#/sec)  curlextents\n                     ---\nextents:        size ind       ndirty        dirty       nmuzzy        muzzy    nretained     retained       ntotal        total\n                     ---\nBytes in small extent cache: 0\nTotal hits in small extent cache: 0\nTotal misses in small extent cache: 0\nDalloc calls without flush in small extent cache: 0\nDalloc calls with flush in small extent cache: 0\nsec_fill calls that went over max_bytes: 0\nHPA shard stats:\n  Pageslabs: 0 (0 huge, 0 nonhuge)\n  Active pages: 0 (0 huge, 0 nonhuge)\n  Dirty pages: 0 (0 huge, 0 nonhuge)\n  Retained pages: 0\n  Purge passes: 0 (0 / sec)\n  Purges: 0 (0 / sec)\n  Hugeifies: 0 (0 / sec)\n  Hugify failures: 0 (0 / sec)\n  Dehugifies: 0 (0 / sec)\n\n  In full slabs:\n      npageslabs: 0 huge, 0 nonhuge\n      nactive: 0 huge, 0 nonhuge \n      ndirty: 0 huge, 0 nonhuge \n      nretained: 0 huge, 0 nonhuge \n  In empty slabs:\n      npageslabs: 0 huge, 0 nonhuge\n      nactive: 0 huge, 0 nonhuge \n      ndirty: 0 huge, 0 nonhuge \n      nretained: 0 huge, 0 nonhuge \n  In nonfull slabs:\n                size ind npageslabs_huge    nactive_huge     ndirty_huge  npageslabs_nonhuge     nactive_nonhuge      ndirty_nonhuge   nretained_nonhuge\n                     ---\n--- End jemalloc statistics ---\n"
+    },
+    "migration_reasons": [],
+    "migration_result": "PASS"
+  },
+  "preconditions": [
+    "no --old-image/RNODE_OLD_IMAGE: the mixed-version arm needs a separately built prior image"
+  ],
+  "provenance": {
+    "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
+    "devnet_prefix": "rc7",
+    "image_id": "sha256:32f28ab5b0d97378d47c10accb6d592d66185d27c7afcfebc256917132b09655",
+    "profile": "local-4",
+    "source_dirty": true,
+    "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a"
+  },
+  "reasons": [
+    "no --old-image/RNODE_OLD_IMAGE: the mixed-version arm needs a separately built prior image"
+  ],
+  "schema": 1,
+  "started_at": "2026-11-20T11:23:31Z",
+  "verdict": "not run"
+}

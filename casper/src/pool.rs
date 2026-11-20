@@ -57,6 +57,18 @@ impl PoolError {
         format!("deploy pool is full: {in_use} of {max_bytes} term bytes in use")
     }
 
+    /// The stable class name a trace and the evaluator share. `inflight` is the HTTP surface's own
+    /// bound; it has no `PoolError` variant.
+    pub fn class_name(self) -> &'static str {
+        match self {
+            PoolError::Full => "full",
+            PoolError::ByteFull => "byte-full",
+            PoolError::DeployerShare => "deployer-share",
+            PoolError::RateLimited => "rate-limited",
+            PoolError::Duplicate => "duplicate",
+        }
+    }
+
     /// A deploy already committed to the pool.
     pub fn duplicate_message(id: &str) -> String {
         format!("deploy {id} is already in the pool")
@@ -188,6 +200,97 @@ pub fn check_commit(
 /// and the rate are submitter bounds, not pool capacity.
 pub fn has_room(limits: &PoolLimits, count: usize, bytes: usize) -> bool {
     count < limits.max_deploys && bytes < limits.max_bytes
+}
+
+/// **An admission decision as a trace.** One site per decision — the early pool admission, the
+/// committed pool, the HTTP in-flight and rate gates, the gRPC ingress and pool gates. The evaluator
+/// recomputes `bounded_ok`, `retry_signal_ok`, `permit_ok` and `pool_bound_ok` from these
+/// coordinates; the node's `bounded` label is not trusted.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct AdmissionTrace {
+    pub kind: String,
+    pub site: String,
+    pub surface: String,
+    pub refused: bool,
+    pub class: Option<String>,
+    pub status: Option<u16>,
+    pub grpc_code: Option<i32>,
+    pub retry_after: Option<u64>,
+    pub inflight: Option<usize>,
+    pub inflight_limit: Option<usize>,
+    pub pool_count: Option<usize>,
+    pub pool_limit: Option<usize>,
+    pub pool_bytes: Option<usize>,
+    pub byte_limit: Option<usize>,
+    pub deployer_held: Option<usize>,
+}
+
+impl AdmissionTrace {
+    pub fn new(site: &str, surface: &str) -> Self {
+        AdmissionTrace {
+            kind: "admission".to_string(),
+            site: site.to_string(),
+            surface: surface.to_string(),
+            refused: false,
+            class: None,
+            status: None,
+            grpc_code: None,
+            retry_after: None,
+            inflight: None,
+            inflight_limit: None,
+            pool_count: None,
+            pool_limit: None,
+            pool_bytes: None,
+            byte_limit: None,
+            deployer_held: None,
+        }
+    }
+
+    pub fn refusal(mut self, class: &str) -> Self {
+        self.refused = true;
+        self.class = Some(class.to_string());
+        self
+    }
+
+    pub fn http_status(mut self, status: u16, retry_after: Option<u64>) -> Self {
+        self.status = Some(status);
+        self.retry_after = retry_after;
+        self
+    }
+
+    pub fn grpc(mut self, code: i32, retry_after: Option<u64>) -> Self {
+        self.grpc_code = Some(code);
+        self.retry_after = retry_after;
+        self
+    }
+
+    pub fn pool(mut self, count: usize, limit: usize) -> Self {
+        self.pool_count = Some(count);
+        self.pool_limit = Some(limit);
+        self
+    }
+
+    pub fn bytes(mut self, in_use: usize, limit: usize) -> Self {
+        self.pool_bytes = Some(in_use);
+        self.byte_limit = Some(limit);
+        self
+    }
+
+    pub fn deployer(mut self, held: usize) -> Self {
+        self.deployer_held = Some(held);
+        self
+    }
+
+    pub fn inflight(mut self, in_flight: usize, limit: usize) -> Self {
+        self.inflight = Some(in_flight);
+        self.inflight_limit = Some(limit);
+        self
+    }
+
+    /// Write when tracing is on. A write failure must not change the admission decision.
+    pub fn write(self) {
+        crate::trace::write_trace("admission", &self);
+    }
 }
 
 #[cfg(test)]

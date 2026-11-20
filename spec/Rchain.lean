@@ -94,7 +94,9 @@ import Rchain.Casper.Lifecycle
 import Rchain.Casper.FringeState
 import Rchain.Casper.MergeAccounting
 import Rchain.Casper.FinalizedMerge
+import Rchain.Casper.MergeDecision
 import Rchain.Casper.MergeScope
+import Rchain.Casper.StoreFormat
 import Rchain.Bounded
 import Rchain.Admission
 import Rchain.Decimal

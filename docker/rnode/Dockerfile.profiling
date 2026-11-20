@@ -41,6 +41,10 @@ RUN ${JEMALLOC_SYS_WITH_MALLOC_CONF:+export JEMALLOC_SYS_WITH_MALLOC_CONF="$JEMA
 # --- Runtime stage -------------------------------------------------------------
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 
+# The same provenance label as the shipped image, for the same preflight reason.
+ARG GIT_HEAD_COMMIT=""
+LABEL org.opencontainers.image.revision=$GIT_HEAD_COMMIT
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*

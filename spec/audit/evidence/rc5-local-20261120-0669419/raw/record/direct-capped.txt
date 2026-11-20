@@ -1,0 +1,18 @@
+HTTP/1.1 429 Too Many Requests
+content-type: application/json
+retry-after: 1
+access-control-expose-headers: *
+access-control-allow-origin: *
+content-length: 35
+date: Fri, 20 Nov 2026 11:21:05 GMT
+
+"HTTP in-flight capacity exhausted"
+-- release --
+HTTP/1.1 400 Bad Request
+content-type: text/plain; charset=utf-8
+access-control-expose-headers: *
+access-control-allow-origin: *
+content-length: 75
+date: Fri, 20 Nov 2026 11:21:05 GMT
+
+Failed to parse the request body as JSON: expected value at line 1 column 1

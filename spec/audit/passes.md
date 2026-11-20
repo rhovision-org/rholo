@@ -14195,3 +14195,55 @@ public deployment, real key or transfer.
 **State.** 47 registered gates, all met, 0 unresolved; **seven release claims** (RC-1..RC-7), all
 open or owed; `check-mainnet-gates.py --assert-closeable` exits 0;
 `check-release-campaigns.py --assert-ready` exits 3; the #51 closeout still opens.
+
+## 188. Every release claim carries an existing test — 2026-11-20
+
+**Subject.** The seven claims in `spec/audit/release-claims.json` still carried the vocabulary
+`open`/`owed`/`closed` and six `missing` strings naming observations that did not exist. A tracker
+whose status means "not written yet" measures the author, not the node. The instruction was exact:
+"every test needs to exist."
+
+**Change.**
+
+- **The status vocabulary is gone.** `STATUSES`, `claim_status()`, `sub_observations`, `status`,
+  `missing` and the `RELEASE_CLAIMS_OPEN`/`CLOSED` tokens are deleted. A claim's status is `pass`,
+  `fail` or `not run`, per environment, derived from that environment's newest committed evidence
+  record by importing the claim's test and re-running its pure `check(record)`. No status is
+  authored; a stored `pass` the predicate refutes is a `fail`.
+- **Seven executable tests exist**, one per claim: `tests/release-claim-1.py` … `-7.py`, sharing
+  `tests/release_claim_common.py`. Each defines `CLAIM_ID`, `run(argv)`, `check(record)` and
+  `fixture()`; `tools/release-check.py` is the one operator surface (`list`, `run`, `check`,
+  `record`, `--assert-ready`).
+- **The checker refuses a claim without a test.** It requires the path to exist, import, and define
+  the contract; the suite proves each fixture passes and a decisive mutation fails. This is the
+  machine check behind "every test needs to exist"; a prose gap or a tool symbol is not enough.
+- **The harnesses were extended only where the test needed a fact.** The acceptance drill now
+  records the deploy id, marker and value (it previously discarded them); the partition harness has
+  an opt-in `--producing-victim` mode that requires a moving tip and a frozen finalised fence.
+- **Statuses are measured, not asserted.** The first local runs are committed as records under
+  `spec/audit/evidence/rcN-local-20261120-0669419/`.
+
+**What the first runs found.** RC-3 (state agreement) and RC-5 (overload refusal) pass locally.
+RC-1 fails: a marker finalised at block 3 was absent from validator 0's state at finalised block 24,
+and block 24's `rejectedDeploys` names the marker deploy. RC-6's join half passed; `rnode audit`
+then exited 1 with `Configuration error: run subcommand is required to build a node configuration`
+— `Configuration::build` accepts only `run`, so the documented audit CLI cannot run. RC-2 and RC-4
+are `not run`: the shared acceptance drill cannot establish the retained finalised marker, so no
+partition or restart observation was taken. RC-7 is `not run`: migration passed and a
+`store-format` 5 store was refused, but no separately built prior image was supplied for the mixed
+fleet.
+
+**Why believed.** `build-mainnet-gates.py --check` is CURRENT with 47 gates and 7 claims; the
+register is 47/47/0; `check-release-campaigns.py --check` is CURRENT; `--assert-ready` exits 3;
+`tests/test_release_campaigns.py` passes 21 offline tests; the five packed records verify with
+`tools/evidence-pack.py verify`.
+
+**What it does not claim.** No node defect is fixed. RC-1's retention loss and RC-6's audit CLI are
+recorded as failures, not tuned away. No public testnet run, no announcement, no gate promotion, no
+workflow edit. The seven `out_of_scope` behaviours (off-host transport, failover, host loss,
+bond/leave, transport correctness, finalised-body availability, equivocation) remain outside these
+claims.
+
+**State.** 47 registered gates, all met, 0 unresolved; seven release claims with measured statuses
+(two pass, two fail, three not run locally); `check-mainnet-gates.py --assert-closeable` exits 0;
+`check-release-campaigns.py --assert-ready` exits 3; the #51 closeout still opens.

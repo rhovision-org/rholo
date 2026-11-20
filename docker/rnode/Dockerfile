@@ -50,6 +50,12 @@ RUN cargo build --release --locked -p rchain-node --bin rnode
 # Must match the builder's glibc (rust:1.95.0 = Debian trixie / glibc 2.41).
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 
+# **The runtime stage carries the revision too.** The builder's `ARG` is visible only there; a
+# preflight that inspects the image cannot read an `oci` label that was never emitted, and a run
+# against an unlabelled image is exactly the "which binary failed?" question this label answers.
+ARG GIT_HEAD_COMMIT=""
+LABEL org.opencontainers.image.revision=$GIT_HEAD_COMMIT
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*

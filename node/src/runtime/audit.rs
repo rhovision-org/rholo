@@ -115,6 +115,25 @@ fn audit_batches(last_height: i64) -> Vec<(i64, i64)> {
     batches
 }
 
+/// **The anchored replay target.** A recovery reply for a named anchor carries exactly that block
+/// (`hashes: vec![anchor]`) and its post-state; `check_target` guards that shape. A certificate's
+/// `fringe_hashes` is the whole finalised fringe, so copying it here asks `check_target` for a
+/// shape the protocol never sends — the `recovery reply does not name the requested anchor`
+/// disagreement. The certificate's own digest check already refuses an anchor outside its fringe.
+fn anchored_target(
+    certificate: &CheckpointCertificate,
+    anchor: BlockHash,
+) -> Result<FinalizedFringe, String> {
+    let claimed_root = base16::decode(&certificate.checkpoint.anchor_post_state)
+        .ok_or_else(|| "the checkpoint's post-state is not base16".to_string())?;
+    Ok(FinalizedFringe {
+        hashes: vec![anchor],
+        state_hash: rchain_models::block::state_hash::StateHash::try_from(claimed_root.as_slice())
+            .map_err(|e| format!("the checkpoint's post-state is not a state root: {e}"))?,
+        ancestry: Vec::new(),
+    })
+}
+
 /// The bodies for `[from, to]` from the history service, when the node serves one complete range.
 /// `Ok(None)` means "use the per-height route": an older node, a refusal, or a gap. `Err` is a
 /// transport or decode failure, which the caller also answers by the per-height route — but it keeps
@@ -516,7 +535,7 @@ pub async fn run(
                     certificate.checkpoint.anchor_height,
                     format!("the anchor's ancestor {} has no body", hash.to_hex()),
                 );
-                write_report(&request.out, &report).await?;
+                write_report(&request.out, &report, None).await?;
                 return Ok(report);
             }
         };
@@ -577,7 +596,7 @@ pub async fn run(
                          served"
                     )),
                 };
-                write_report(&request.out, &report).await?;
+                write_report(&request.out, &report, None).await?;
                 return Ok(report);
             }
             let mut fringe = BTreeSet::new();
@@ -633,7 +652,7 @@ pub async fn run(
                 window_committed,
                 reason: Some(format!("the committed header set is inconsistent: {e}")),
             };
-            write_report(&request.out, &report).await?;
+            write_report(&request.out, &report, None).await?;
             return Ok(report);
         }
         // **The genesis header is checked against its body separately.** Genesis is excluded from
@@ -683,7 +702,7 @@ pub async fn run(
                     window_committed,
                     reason: Some(format!("the genesis header is refused: {e}")),
                 };
-                write_report(&request.out, &report).await?;
+                write_report(&request.out, &report, None).await?;
                 return Ok(report);
             }
         }
@@ -710,7 +729,7 @@ pub async fn run(
                         "the metadata commitment does not match the served headers: {e}"
                     )),
                 };
-                write_report(&request.out, &report).await?;
+                write_report(&request.out, &report, None).await?;
                 return Ok(report);
             }
         }
@@ -737,31 +756,16 @@ pub async fn run(
                         "the validation-window commitment does not match the served headers: {e}"
                     )),
                 };
-                write_report(&request.out, &report).await?;
+                write_report(&request.out, &report, None).await?;
                 return Ok(report);
             }
         }
     }
 
-    let fringe_hashes: Vec<BlockHash> = certificate
-        .checkpoint
-        .fringe_hashes
-        .iter()
-        .map(|hex| {
-            let bytes = base16::decode(hex)
-                .ok_or_else(|| format!("checkpoint fringe hash {hex} is not base16"))?;
-            BlockHash::try_from(bytes.as_slice())
-                .map_err(|e| format!("checkpoint fringe hash {hex} is not a hash: {e}"))
-        })
-        .collect::<Result<_, String>>()?;
-    let claimed_root = base16::decode(&certificate.checkpoint.anchor_post_state)
-        .ok_or_else(|| "the checkpoint's post-state is not base16".to_string())?;
-    let target = FinalizedFringe {
-        hashes: fringe_hashes,
-        state_hash: rchain_models::block::state_hash::StateHash::try_from(claimed_root.as_slice())
-            .map_err(|e| format!("the checkpoint's post-state is not a state root: {e}"))?,
-        ancestry: Vec::new(),
-    };
+    // **The anchored reply shape**, not the certificate's whole fringe: `check_target` accepts an
+    // anchored target as `[anchor]`, and the certificate's digest check (`AnchorNotInFringe`) is
+    // what proves the anchor is a member of the fringe it names.
+    let target = anchored_target(&certificate, anchor)?;
 
     let replay = RecoveryReplay {
         runtime: parts.runtime_manager.clone(),
@@ -809,7 +813,7 @@ pub async fn run(
             reason: Some(reason),
         },
     };
-    write_report(&request.out, &report).await?;
+    write_report(&request.out, &report, Some(&target)).await?;
     log.info(
         source,
         &format!(
@@ -961,7 +965,30 @@ fn incomplete(
     }
 }
 
-async fn write_report(out: &std::path::Path, report: &AuditReport) -> Result<(), String> {
+/// **The audit target decision as a trace.** Written only when the audit reached the replay target
+/// (`target` is `Some`); the earlier reports are refusals before that decision and carry no target
+/// to evaluate. The evaluator recomputes `anchor_membership_ok`, `target_shape_ok` and
+/// `replay_agrees_ok` from these coordinates.
+#[derive(Debug, serde::Serialize)]
+struct AuditTrace {
+    kind: String,
+    checkpoint_digest: String,
+    anchor: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anchor_in_fringe: Option<bool>,
+    target_hashes: Vec<String>,
+    target_state: Option<String>,
+    anchor_post_state: String,
+    verdict: String,
+    derived_root: Option<String>,
+    claimed_root: String,
+}
+
+async fn write_report(
+    out: &std::path::Path,
+    report: &AuditReport,
+    target: Option<&FinalizedFringe>,
+) -> Result<(), String> {
     tokio::fs::create_dir_all(out)
         .await
         .map_err(|e| format!("cannot create {}: {e}", out.display()))?;
@@ -969,7 +996,27 @@ async fn write_report(out: &std::path::Path, report: &AuditReport) -> Result<(),
     let path = out.join("audit.json");
     tokio::fs::write(&path, bytes)
         .await
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    if let Some(target) = target {
+        if rchain_casper::trace::trace_enabled() {
+            rchain_casper::trace::write_trace(
+                "audit",
+                &AuditTrace {
+                    kind: "audit".to_string(),
+                    checkpoint_digest: report.checkpoint_digest.clone(),
+                    anchor: report.anchor.clone(),
+                    anchor_in_fringe: Some(true),
+                    target_hashes: target.hashes.iter().map(|hash| hash.to_hex()).collect(),
+                    target_state: Some(base16::encode(target.state_hash.as_bytes())),
+                    anchor_post_state: report.claimed_root.clone(),
+                    verdict: report.verdict.clone(),
+                    derived_root: report.derived_root.clone(),
+                    claimed_root: report.claimed_root.clone(),
+                },
+            );
+        }
+    }
+    Ok(())
 }
 
 /// GET a JSON body with a 64 MiB cap. A body page of light infos is small; the cap is a bound on a
@@ -1165,5 +1212,47 @@ mod tests {
             Err(sibling.block_hash),
             "a missing ancestor is INCOMPLETE evidence, not a disagreement"
         );
+    }
+
+    fn certificate_with_fringe(fringe: Vec<String>) -> CheckpointCertificate {
+        CheckpointCertificate {
+            checkpoint: rchain_models::casper::protocol::checkpoint::Checkpoint {
+                shard_id: "root".to_string(),
+                anchor: base16::encode(&[1u8; 32]),
+                anchor_height: 9,
+                anchor_post_state: base16::encode(&[2u8; 32]),
+                fringe_state: None,
+                fringe_hashes: fringe,
+                parent_digest: None,
+                epoch: 0,
+                metadata_root: None,
+                history_root: None,
+                fringe_headers_root: None,
+            },
+            attestations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_multi_member_fringe_targets_the_anchor_alone() {
+        let anchor = BlockHash::new([1u8; 32]);
+        let certificate =
+            certificate_with_fringe(vec![base16::encode(&[1u8; 32]), base16::encode(&[3u8; 32])]);
+        let target = anchored_target(&certificate, anchor).expect("a well-formed certificate");
+        assert_eq!(
+            target.hashes,
+            vec![anchor],
+            "an anchored reply names the anchor, not the whole fringe"
+        );
+        assert!(target.ancestry.is_empty());
+    }
+
+    #[test]
+    fn a_post_state_that_is_not_base16_is_refused() {
+        let mut certificate = certificate_with_fringe(vec![base16::encode(&[1u8; 32])]);
+        certificate.checkpoint.anchor_post_state = "not-hex".to_string();
+        let error = anchored_target(&certificate, BlockHash::new([1u8; 32]))
+            .expect_err("a malformed root is not a target");
+        assert!(error.contains("not base16"));
     }
 }

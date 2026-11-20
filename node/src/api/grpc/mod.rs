@@ -97,9 +97,20 @@ impl ::tonic::service::interceptor::Interceptor for DeployIngressGuard {
         if self.limiter.allow(&key) {
             Ok(request)
         } else {
-            Err(::tonic::Status::resource_exhausted(
-                rchain_casper::pool::RATE_LIMITED_MESSAGE,
-            ))
+            if rchain_casper::trace::trace_enabled() {
+                rchain_casper::pool::AdmissionTrace::new("grpc-ingress", "grpc")
+                    .refusal("rate-limited")
+                    .grpc(8, Some(1))
+                    .write();
+            }
+            // RESOURCE_EXHAUSTED + a retry signal: the gRPC spelling of the HTTP 429.
+            let mut status =
+                ::tonic::Status::resource_exhausted(rchain_casper::pool::RATE_LIMITED_MESSAGE);
+            status.metadata_mut().insert(
+                "retry-after",
+                ::tonic::metadata::MetadataValue::from_static("1"),
+            );
+            Err(status)
         }
     }
 }
@@ -275,5 +286,13 @@ mod tests {
             .expect_err("the second call is over it");
         assert_eq!(error.code(), ::tonic::Code::ResourceExhausted);
         assert_eq!(error.message(), rchain_casper::pool::RATE_LIMITED_MESSAGE);
+        // A bounded refusal carries a retry signal (Law 86a); the ingress guard used to omit it.
+        assert_eq!(
+            error
+                .metadata()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok()),
+            Some("1")
+        );
     }
 }

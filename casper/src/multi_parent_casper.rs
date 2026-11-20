@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
-use rchain_block_storage::dag::finalizer::{Finalizer, Message};
+use rchain_block_storage::dag::finalizer::{Finalizer, Message, NoAdvance};
 use rchain_block_storage::dag::liveness;
 use rchain_block_storage::dag::message_map;
 use rchain_block_storage::dag::representation::RewindPlan;
@@ -25,8 +25,8 @@ use crate::interpreter_util::{
     ValidationOrigin,
 };
 use crate::merging::{
-    is_system_deploy_id, BlockIndex, DeployChainIndex, MergeOutcome, MergeReport, MergeScope,
-    ParentsMergedState, RejectionsMap,
+    finalised_floor, is_system_deploy_id, BlockIndex, DeployChainIndex, MergeMode, MergeOutcome,
+    MergeReport, MergeScope, ParentsMergedState, RejectionsMap,
 };
 use crate::rholang::ReplayFailure;
 use crate::runtime_manager::RuntimeManager;
@@ -267,6 +267,311 @@ pub async fn final_scope_rejections(
     Ok(map)
 }
 
+/// **One finaliser's claim**: the block, its height, and the state it reports at the fringe it
+/// finalised. The merge base is derived from these, so they are the coordinates a disagreement is
+/// read in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Claim {
+    pub height: i64,
+    pub id: BlockHash,
+    pub state: Blake2b256Hash,
+}
+
+/// **Where the merge base came from.** `Agreed` has no constructor over disagreeing claims: every
+/// claim's state equals the selected state, so a silently-picked stale base is not a value of this
+/// type. `Certified` carries the certificate's signed base and is authoritative regardless of the
+/// parent claims.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BaseSource {
+    Certified {
+        base: Blake2b256Hash,
+        claims: Vec<Claim>,
+    },
+    Agreed {
+        state: Blake2b256Hash,
+        claims: Vec<Claim>,
+    },
+}
+
+impl BaseSource {
+    pub fn state(&self) -> Blake2b256Hash {
+        match self {
+            BaseSource::Certified { base, .. } => *base,
+            BaseSource::Agreed { state, .. } => *state,
+        }
+    }
+
+    pub fn claims(&self) -> &[Claim] {
+        match self {
+            BaseSource::Certified { claims, .. } | BaseSource::Agreed { claims, .. } => claims,
+        }
+    }
+}
+
+/// Why a base could not be chosen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BaseError {
+    /// No parent finalises the previous fringe.
+    NoClaim,
+    /// Two finalisers claim different states and no certified base settles it.
+    Disagree(Vec<Claim>),
+}
+
+/// **The merge decision as a trace.** Every coordinate the Lean `MergeSafe` predicate ranges over,
+/// written for the claim harness so a failure is a point in the model rather than a log line.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct MergeTrace {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub parents: Vec<String>,
+    pub mode: String,
+    pub merge_fringe: Vec<String>,
+    pub final_fringe: Vec<String>,
+    pub claims: Vec<TraceClaim>,
+    pub certified_base: Option<String>,
+    pub base_source: String,
+    pub base_state: String,
+    pub pre_state: String,
+    pub post_state: String,
+    pub conflict_scope: Vec<String>,
+    pub final_scope: Vec<String>,
+    pub fork_blocks: Vec<String>,
+    pub rejected_deploys: Vec<String>,
+    pub rejected_hosts: Vec<String>,
+    pub report: TraceReport,
+    pub predicates: TracePredicates,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct TraceClaim {
+    pub height: i64,
+    pub id: String,
+    pub hash: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct TraceReport {
+    pub conflict_chains: usize,
+    pub kept_chains: usize,
+    pub rejected_chains: usize,
+    pub fork_rejected_chains: usize,
+    pub final_scope_rejected_chains: usize,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct TracePredicates {
+    pub base_ok: bool,
+    pub fork_ok: bool,
+    pub ledger_ok: bool,
+    pub scope_partition_ok: bool,
+}
+
+fn hex_set(set: &BTreeSet<BlockHash>) -> Vec<String> {
+    set.iter().map(|h| h.to_hex()).collect()
+}
+
+fn merge_trace(
+    mode: MergeMode,
+    parents: &BTreeSet<BlockHash>,
+    merge_fringe: &BTreeSet<BlockHash>,
+    final_fringe: &BTreeSet<BlockHash>,
+    base_source: &BaseSource,
+    certified_base: Option<Blake2b256Hash>,
+    scope: &MergeScope,
+    outcome: &MergeOutcome,
+    pre_state: Blake2b256Hash,
+) -> MergeTrace {
+    let claims = base_source
+        .claims()
+        .iter()
+        .map(|c| TraceClaim {
+            height: c.height,
+            id: c.id.to_hex(),
+            hash: c.state.to_hex(),
+        })
+        .collect::<Vec<_>>();
+    let base_ok = certified_base.is_some()
+        || base_source
+            .claims()
+            .first()
+            .is_none_or(|first| base_source.claims().iter().all(|c| c.state == first.state));
+    let fork_ok = match mode {
+        MergeMode::Fringe => scope.fork_blocks.is_empty(),
+        MergeMode::Conflict => true,
+    };
+    let ledger_ok = match mode {
+        MergeMode::Fringe => outcome.rejected_hosts.is_disjoint(&scope.conflict_scope),
+        MergeMode::Conflict => true,
+    };
+    let scope_partition_ok = outcome.report.conflict_chains
+        == outcome.report.kept_chains + outcome.report.rejected_chains;
+    MergeTrace {
+        kind: "merge".to_string(),
+        parents: hex_set(parents),
+        mode: match mode {
+            MergeMode::Fringe => "fringe".to_string(),
+            MergeMode::Conflict => "conflict".to_string(),
+        },
+        merge_fringe: hex_set(merge_fringe),
+        final_fringe: hex_set(final_fringe),
+        claims,
+        certified_base: certified_base.map(|h| h.to_hex()),
+        base_source: match base_source {
+            BaseSource::Certified { .. } => "certified".to_string(),
+            BaseSource::Agreed { .. } => "agreed".to_string(),
+        },
+        base_state: base_source.state().to_hex(),
+        pre_state: pre_state.to_hex(),
+        post_state: outcome.state.to_hex(),
+        conflict_scope: hex_set(&scope.conflict_scope),
+        final_scope: hex_set(&scope.final_scope),
+        fork_blocks: hex_set(&scope.fork_blocks),
+        rejected_deploys: outcome
+            .rejected_deploys
+            .iter()
+            .map(|id| rchain_shared::base16::encode(id))
+            .collect(),
+        rejected_hosts: hex_set(&outcome.rejected_hosts),
+        report: TraceReport {
+            conflict_chains: outcome.report.conflict_chains,
+            kept_chains: outcome.report.kept_chains,
+            rejected_chains: outcome.report.rejected_chains,
+            fork_rejected_chains: outcome.report.fork_rejected_chains,
+            final_scope_rejected_chains: outcome.report.final_scope_rejected_chains,
+        },
+        predicates: TracePredicates {
+            base_ok,
+            fork_ok,
+            ledger_ok,
+            scope_partition_ok,
+        },
+    }
+}
+
+/// Write the trace when the node was started with `RNODE_TRACE_DIR` (the local claim harness does;
+/// production does not). A write failure is not a consensus event and is ignored.
+fn write_merge_trace(trace: &MergeTrace) {
+    crate::trace::write_trace("merge", trace);
+}
+
+/// **The finality decision as a trace.** The whole bonded map (the quorum's denominator), the live
+/// partition the rule derived, the gate's own supporting stake, the previous and new fringe, and the
+/// refusal when it did not advance. RC-2's safety is a property of this input point.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct FinalityTrace {
+    pub kind: String,
+    pub bonded_total: i128,
+    pub live_total: i128,
+    pub quorum_total: i128,
+    pub supporting: i128,
+    pub full_partitions: usize,
+    pub candidates: usize,
+    pub supported_tip: i64,
+    pub partition: Vec<String>,
+    pub bonded_senders: Vec<String>,
+    pub prev_fringe: Vec<String>,
+    pub new_fringe: Vec<String>,
+    pub advanced: bool,
+    pub reason_kind: Option<String>,
+}
+
+fn sender_hex(validator: &Validator) -> String {
+    rchain_shared::base16::encode(validator.as_bytes())
+}
+
+fn finality_trace(
+    prev_fringe: &BTreeSet<Message<BlockHash, Validator>>,
+    new_fringe: &Option<BTreeSet<Message<BlockHash, Validator>>>,
+    report: &liveness::FinalityReport<Validator>,
+) -> FinalityTrace {
+    let bonded_total: i128 = report
+        .bonded
+        .values()
+        .map(|stake| i128::from(i64::from(*stake)))
+        .sum();
+    let live_total: i128 = report
+        .live
+        .values()
+        .map(|stake| i128::from(i64::from(*stake)))
+        .sum();
+    let advanced = new_fringe.is_some();
+    let (reason_kind, supporting, quorum_total) = match &report.reason {
+        None => (
+            None,
+            report
+                .numbers
+                .as_ref()
+                .map_or(0, |numbers| numbers.supporting),
+            report
+                .numbers
+                .as_ref()
+                .map_or(bonded_total, |numbers| numbers.total),
+        ),
+        Some(NoAdvance::Coverage { .. }) => (Some("coverage".to_string()), 0, bonded_total),
+        Some(NoAdvance::Support {
+            supporting, total, ..
+        }) => (Some("support".to_string()), *supporting, *total),
+        Some(NoAdvance::AlreadyPublished) => {
+            (Some("already-published".to_string()), 0, bonded_total)
+        }
+    };
+    FinalityTrace {
+        kind: "finality".to_string(),
+        bonded_total,
+        live_total,
+        quorum_total,
+        supporting,
+        full_partitions: report.numbers.as_ref().map_or(0, |n| n.full_partitions),
+        candidates: report.numbers.as_ref().map_or(0, |n| n.candidates),
+        supported_tip: i64::from(report.supported_tip),
+        partition: report.live.keys().map(sender_hex).collect(),
+        bonded_senders: report.bonded.keys().map(sender_hex).collect(),
+        prev_fringe: prev_fringe
+            .iter()
+            .map(|message| message.id.to_hex())
+            .collect(),
+        new_fringe: new_fringe
+            .as_ref()
+            .map(|fringe| fringe.iter().map(|message| message.id.to_hex()).collect())
+            .unwrap_or_default(),
+        advanced,
+        reason_kind,
+    }
+}
+
+fn describe_claims(claims: &[Claim]) -> String {
+    claims
+        .iter()
+        .map(|c| {
+            format!(
+                "block {} (height {}) claims {}",
+                c.id.to_hex(),
+                c.height,
+                c.state.to_hex()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// **The base-claim guard.** The certified base wins; otherwise every finaliser's claim must agree.
+/// The old reader logged a disagreement and took `max_by_key((height, id))`, which is how a stale
+/// base can be chosen silently (RC-1's R1 route).
+pub fn choose_base_claim(
+    claims: Vec<Claim>,
+    certified: Option<Blake2b256Hash>,
+) -> Result<BaseSource, BaseError> {
+    if let Some(base) = certified {
+        return Ok(BaseSource::Certified { base, claims });
+    }
+    let state = claims.first().ok_or(BaseError::NoClaim)?.state;
+    if claims.iter().any(|claim| claim.state != state) {
+        return Err(BaseError::Disagree(claims));
+    }
+    Ok(BaseSource::Agreed { state, claims })
+}
+
 /// Compute the merged pre-state for a set of parent blocks (port of `getPreStateForParents`).
 ///
 /// `trusted` is the checkpoint's signed merge base, present only when replay runs on a node whose
@@ -434,24 +739,31 @@ where
                 .join("; "),
         );
     }
-    let prev_fringe_state = match certified_base {
-        Some(base) => base,
-        None => match claims.into_iter().max_by_key(|(h, id, _)| (*h, *id)) {
-            Some((_, _, state)) => state,
-            // **A parent set always has a finaliser**: `latest_fringe` returns the max-fringe parent's own
-            // `fringe`, so that parent is itself in the set this loop filters for. An empty set therefore
-            // means the message map and the metadata store disagree about the parents — not that the fringe
-            // is empty, which is a case with a finaliser like any other (a parent that finalised nothing has
-            // `fringe = ∅`, and is its own finaliser).
-            None => {
-                return Err(format!(
-                    "no parent finalises the previous fringe {:?}: the parent set {:?} and the message map \
-                     disagree",
-                    prev_fringe_hashes, parent_hashes
-                ))
-            }
-        },
-    };
+    // **The base-claim guard** (`Rchain.FinalizedMerge.pickBase`). A certified base is
+    // authoritative; without one, disagreement is refused rather than settled by the greatest
+    // `(height, id)`. A parent set always has a finaliser (`latest_fringe` returns the max-fringe
+    // parent's own `fringe`), so `NoClaim` means the message map and the metadata store disagree
+    // about the parents.
+    let base_source = choose_base_claim(
+        claims
+            .into_iter()
+            .map(|(height, id, state)| Claim { height, id, state })
+            .collect(),
+        certified_base,
+    )
+    .map_err(|e| match e {
+        BaseError::NoClaim => format!(
+            "no parent finalises the previous fringe {:?}: the parent set {:?} and the message map \
+             disagree",
+            prev_fringe_hashes, parent_hashes
+        ),
+        BaseError::Disagree(claims) => format!(
+            "the finalisers of fringe {:?} disagree on the merge base: {}",
+            prev_fringe_hashes,
+            describe_claims(&claims)
+        ),
+    })?;
+    let prev_fringe_state = base_source.state();
     // Captured here rather than at the struct literal, because `prev_fringe_hashes` is moved into
     // `new_fringe` below (#139). These two are what a state disagreement is reported with: the fringe
     // the node began from, and the key it looked that fringe up under.
@@ -506,15 +818,26 @@ where
     // cannot finalise alone (#70). This is the same call the creator makes, which is what keeps a
     // block's `fringe` and this node's derivation of it the same value.
     let finalizer = Finalizer::new(msg_map);
-    let (_parent_fringe, new_fringe_opt, no_advance) =
-        liveness::calculate_finalization_detailed(&finalizer, &parents, &bonds_map);
+    let (_parent_fringe, new_fringe_opt, no_advance, finality_report) =
+        liveness::calculate_finalization_reported(&finalizer, &parents, &bonds_map);
+    if crate::trace::trace_enabled() {
+        crate::trace::write_trace(
+            "finality",
+            &finality_trace(&_parent_fringe, &new_fringe_opt, &finality_report),
+        );
+    }
     let new_fringe_hashes: Option<BTreeSet<BlockHash>> =
         new_fringe_opt.map(|f| f.iter().map(|m| m.id).collect());
 
     let new_fringe_result = match &new_fringe_hashes {
         Some(fringe) => {
-            let (m_scope, base_opt) =
-                MergeScope::from_dag(fringe, &prev_fringe_hashes, &dag_repr.child_map, msg_map)?;
+            let (m_scope, base_opt) = MergeScope::from_dag_guarded(
+                MergeMode::Fringe,
+                fringe,
+                &prev_fringe_hashes,
+                &dag_repr.child_map,
+                msg_map,
+            )?;
             let base_state = match base_opt {
                 Some(h) => Blake2b256Hash::from_byte_array(
                     get_block_unsafe(block_store, &h)
@@ -541,6 +864,22 @@ where
                 DeployChainIndex::deploy_chain_cost,
             )
             .await?;
+            // **The finalised floor.** This merge finalises every block in its conflict scope; a
+            // rejection hosted in one of them would travel into the next block's `rejectedDeploys`
+            // and drop a finalised write (RC-1). Refuse instead.
+            finalised_floor(&m_scope.conflict_scope, &result.rejected_hosts)
+                .map_err(|e| format!("the fringe merge was refused: {e}"))?;
+            write_merge_trace(&merge_trace(
+                MergeMode::Fringe,
+                parent_hashes,
+                fringe,
+                &prev_fringe_hashes,
+                &base_source,
+                certified_base,
+                &m_scope,
+                &result,
+                base_state,
+            ));
             Some(result)
         }
         None => None,
@@ -550,6 +889,7 @@ where
     let fringe_merge = new_fringe_result.unwrap_or(MergeOutcome {
         state: prev_fringe_state,
         rejected_deploys: prev_fringe_rejected_deploys,
+        rejected_hosts: BTreeSet::new(),
         report: MergeReport::default(),
     });
     let (fringe_state, fringe_rejected_deploys) =
@@ -576,11 +916,17 @@ where
         MergeOutcome {
             state: Blake2b256Hash::from_byte_array(block.post_state_hash.as_bytes()),
             rejected_deploys: BTreeSet::new(),
+            rejected_hosts: BTreeSet::new(),
             report: MergeReport::default(),
         }
     } else {
-        let (m_scope, base_opt) =
-            MergeScope::from_dag(parent_hashes, &new_fringe, &dag_repr.child_map, msg_map)?;
+        let (m_scope, base_opt) = MergeScope::from_dag_guarded(
+            MergeMode::Conflict,
+            parent_hashes,
+            &new_fringe,
+            &dag_repr.child_map,
+            msg_map,
+        )?;
         let base_state = match base_opt {
             Some(h) => Blake2b256Hash::from_byte_array(
                 get_block_unsafe(block_store, &h)
@@ -598,7 +944,7 @@ where
             &causal_past,
         )
         .await?;
-        MergeScope::merge(
+        let result = MergeScope::merge(
             &m_scope,
             base_state,
             &rejections,
@@ -606,7 +952,19 @@ where
             block_index,
             DeployChainIndex::deploy_chain_cost,
         )
-        .await?
+        .await?;
+        write_merge_trace(&merge_trace(
+            MergeMode::Conflict,
+            parent_hashes,
+            parent_hashes,
+            &new_fringe,
+            &base_source,
+            certified_base,
+            &m_scope,
+            &result,
+            base_state,
+        ));
+        result
     };
     let (pre_state_hash, cs_rejected_deploys) = (
         conflict_merge.state,
@@ -3009,5 +3367,48 @@ mod mark_failed_tests {
         );
         assert_eq!(map.get(&validator(1)), Some(&height(12)));
         assert_eq!(map.get(&validator(4)), Some(&height(7)));
+    }
+}
+
+#[cfg(test)]
+mod base_claim_tests {
+    use super::*;
+
+    fn claim(id: u8, height: i64, state: u8) -> Claim {
+        Claim {
+            height,
+            id: BlockHash::new([id; 32]),
+            state: Blake2b256Hash::from_byte_array(&[state; 32]),
+        }
+    }
+
+    #[test]
+    fn agreeing_claims_select_the_common_state() {
+        let claims = vec![claim(1, 3, 7), claim(2, 4, 7)];
+        let chosen = choose_base_claim(claims.clone(), None).expect("agreement");
+        assert_eq!(chosen.state(), claims[0].state);
+        assert_eq!(chosen.claims().len(), 2);
+        assert!(matches!(chosen, BaseSource::Agreed { .. }));
+    }
+
+    #[test]
+    fn disagreeing_claims_are_refused_not_tie_broken() {
+        let claims = vec![claim(1, 3, 7), claim(2, 4, 9)];
+        let refused = choose_base_claim(claims.clone(), None).expect_err("disagreement");
+        assert_eq!(refused, BaseError::Disagree(claims));
+    }
+
+    #[test]
+    fn a_certified_base_wins_over_disagreeing_claims() {
+        let certified = Blake2b256Hash::from_byte_array(&[0xAA; 32]);
+        let chosen = choose_base_claim(vec![claim(1, 3, 7), claim(2, 4, 9)], Some(certified))
+            .expect("a certificate settles the base");
+        assert_eq!(chosen.state(), certified);
+        assert!(matches!(chosen, BaseSource::Certified { .. }));
+    }
+
+    #[test]
+    fn no_claim_without_a_certificate_is_an_error() {
+        assert_eq!(choose_base_claim(Vec::new(), None), Err(BaseError::NoClaim));
     }
 }

@@ -1,0 +1,29 @@
+{
+  "arms": [],
+  "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 20503,
+      "kind": "json",
+      "path": "raw/claim.json",
+      "sha256": "179ebf284034f4aff19aae632d2388d0d800c501d451e9061fbbfc99a2b8e6b2"
+    }
+  ],
+  "gate_id": "RC-3",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-20T11:53:16+00:00",
+    "tool": "evidence-pack",
+    "version": 2
+  },
+  "redactions": [],
+  "reference": null,
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a",
+  "verdict": "PASS"
+}

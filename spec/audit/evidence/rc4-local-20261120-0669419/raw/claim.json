@@ -1,0 +1,88 @@
+{
+  "claim_id": "RC-4",
+  "claim_title": "Recovery without loss",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-20T12:02:39Z",
+  "harness": {
+    "command": [
+      "/home/patrick/miniforge3/bin/python3",
+      "/home/patrick/RNodeRust/.claude/worktrees/pr-567/tests/consensus-restart-under-load.py",
+      "--validators",
+      "4",
+      "--cycles",
+      "2",
+      "--window",
+      "240",
+      "--load-seconds",
+      "20",
+      "--out",
+      "target/release-claims/local/RC-4/restart"
+    ],
+    "exit_code": 1,
+    "name": "consensus-restart-under-load",
+    "out": "target/release-claims/local/RC-4/restart"
+  },
+  "locality": "local-devnet",
+  "observations": {
+    "boot_ids": {
+      "after": {
+        "0": "2026-11-20T11:53:12.300827765Z",
+        "1": "2026-11-20T11:58:38.837676745Z",
+        "2": "2026-11-20T11:53:19.900560797Z",
+        "3": "2026-11-20T11:53:21.019017408Z"
+      },
+      "before": {
+        "0": "2026-11-20T11:53:12.300827765Z",
+        "1": "2026-11-20T11:53:18.6598058Z",
+        "2": "2026-11-20T11:53:19.900560797Z",
+        "3": "2026-11-20T11:53:21.019017408Z"
+      }
+    },
+    "checkpoint_certificates": {
+      "0": {
+        "anchorHeight": 217,
+        "digest": "8be61706eabe2de0425232dad2e80b2a4cdeb52701e2e07ea23255d5d42b05fa",
+        "kind": "checkpoint"
+      },
+      "1": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      },
+      "2": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      },
+      "3": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      }
+    },
+    "deploy_id": "304402200f685d745d56f40edd00bea16b4b7c2d02ba00411b3fc1cb36c530badacf5e9a02204811bc6af5f2320b8b7ff71c0413af2bb86371a0d501073d41b672ee03ca77ef",
+    "harness_error": "{\"verdict\": \"FAIL\", \"error\": \"validator 1 did not restart with a new bootId\"}\n",
+    "harness_result": "FAIL",
+    "marker": "release-claim:1795175605861757835",
+    "value": 42,
+    "victim": 3,
+    "victim_refusal": "2026-11-20T12:02:27.335Z WARN  [coop.rchain.node.runtime.CheckpointCollector] /root: no checkpoint certificate this tick: the certificate is not quorate: 100 of 400 bonded stake signed (strictly more than two thirds is required)\n2026-11-20T12:02:29.570Z WARN  [coop.rchain.node.runtime.CheckpointCollector] /root: no checkpoint certificate this tick: the certificate is not quorate: 100 of 400 bonded stake signed (strictly more than two thirds is required)\n2026-11-20T12:02:31.796Z WARN  [coop.rchain.node.runtime.CheckpointCollector] /root: no checkpoint certificate this tick: the certificate is not quorate: 100 of 400 bonded stake signed (strictly more than two thirds is required)\n2026-11-20T12:02:34.008Z WARN  [coop.rchain.node.runtime.CheckpointCollector] /root: no checkpoint certificate this tick: the certificate is not quorate: 100 of 400 bonded stake signed (strictly more than two thirds is required)\n2026-11-20T12:02:36.249Z WARN  [coop.rchain.node.runtime.CheckpointCollector] /root: no checkpoint certificate this tick: the certificate is not quorate: 100 of 400 bonded stake signed (strictly more than two thirds is required)\n2026-11-20T12:02:38.501Z WARN  [coop.rchain.node.runtime.CheckpointCollector] /root: no checkpoint certificate this tick: the certificate is not quorate: 200 of 400 bonded stake signed (strictly more than two thirds is required)"
+  },
+  "preconditions": [],
+  "provenance": {
+    "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
+    "devnet_prefix": "restartload",
+    "image_id": "70248b7cca62ac0dabb7bb2c2559a45918cee8052319c1cf1ce69dad06d91003",
+    "profile": "local-4",
+    "source_dirty": true,
+    "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a"
+  },
+  "reasons": [
+    "the restart harness failed: validator 1 did not restart with a new bootId \u2014 2026-11-20T12:02:38.501Z WARN  [coop.rchain.node.runtime.CheckpointCollector] /root: no checkpoint certificate this tick: the certificate is not quorate: 200 of 400 bonded stake signed (strictly more than two thirds is required)"
+  ],
+  "schema": 1,
+  "started_at": "2026-11-20T11:53:11Z",
+  "verdict": "fail"
+}

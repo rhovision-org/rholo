@@ -86,6 +86,24 @@ def verify_isolated_tip_dwell(victim, observations, *, max_extra_samples=30):
     return False
 
 
+def verify_producing_isolation(observations):
+    """A producing victim advances its own tip while its finalized fence stays frozen.
+
+    This is the producing-split control: with autopropose on, the isolated minority keeps proposing,
+    so a stable tip is the wrong predicate. The sound one is that the tip moves (production) while
+    the finalized fence cannot (no quorum), over the same three-poll dwell.
+    """
+    last = observations[-DWELL_MIN_SAMPLES:]
+    if len(last) != DWELL_MIN_SAMPLES:
+        return False
+    tips = [row.get("tip") for row in last]
+    heights = [row.get("finalized_height") for row in last]
+    return (all(type(value) is int for value in tips)
+            and all(type(value) is int for value in heights)
+            and len(set(tips)) > 1
+            and len(set(heights)) == 1)
+
+
 def finalized_fence_is_frozen(victim_before, observations):
     """The isolated victim may hold a rising tip; it may not advance its finalized fence.
 
@@ -643,6 +661,10 @@ def main():
     ap.add_argument("--out",required=True)
     ap.add_argument("--local",action="store_true",
                     help="single-host local-devnet mechanism check; never multi-host evidence")
+    ap.add_argument("--producing-victim",action="store_true",dest="producing_victim",
+                    help="the victim runs with autopropose on; require a moving tip and a frozen "
+                         "finalised fence while isolated (the producing-split control). The default "
+                         "rig is --no-autopropose and its stable-tip dwell is unchanged")
     args=ap.parse_args();args.window=150
     if args.local:
         # A local run is the same mechanism on one Docker host. It is recorded as
@@ -687,8 +709,13 @@ def main():
                 if leaked:raise AssertionError(f"partition leaked: consensus port(s) {leaked} published")
                 lifecycle=container_lifecycle(victim)
                 victim_before=victim_sample(victim)
-                if victim_before.get("autopropose") is not False:
-                    raise AssertionError("victim is not on a no-autopropose rig")
+                producing = bool(getattr(args, "producing_victim", False))
+                expected_autopropose = True if producing else False
+                if victim_before.get("autopropose") is not expected_autopropose:
+                    raise AssertionError(
+                        "victim is on the wrong rig: "
+                        f"autopropose={victim_before.get('autopropose')!r}, "
+                        f"expected {expected_autopropose!r}")
                 record["victim_view_at_install"]=victim_before
                 record["container_lifecycle_at_install"]=lifecycle
                 # Two 16-second escape/cadence cycles per N=8 sender plus margin:
@@ -726,8 +753,14 @@ def main():
                 if not advanced:
                     raise AssertionError("online supermajority did not advance in 300s")
                 # Drain already-queued pre-cut messages before judging the frozen
-                # state. The three distinct stable polls are still mandatory.
-                if not verify_isolated_tip_dwell(victim, frozen):
+                # state. A no-autopropose victim must show a stable tip; a producing
+                # victim must show the opposite — a moving tip with a frozen fence.
+                if producing:
+                    if not verify_producing_isolation(frozen):
+                        raise AssertionError(
+                            "the isolated victim did not keep producing while its finalized "
+                            "fence stayed frozen")
+                elif not verify_isolated_tip_dwell(victim, frozen):
                     raise AssertionError("partition leaked or the victim view was unobservable")
                 # The tip dwell is the practical settling check; the finalized fence is the
                 # sound one — finality cannot advance without a quorum the isolated node lacks.
