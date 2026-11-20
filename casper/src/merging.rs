@@ -304,6 +304,15 @@ pub struct MergeReport {
     /// `ProcessedWithSuccess` deploy to the merge that dropped it. Deduplicated, because a deploy can
     /// appear in more than one chain's cost set.
     pub final_scope_rejected_deploys: Vec<Vec<u8>>,
+    /// **Rejected chains whose deploy id is also carried by a kept chain.** The merge kept another
+    /// copy; the rejection is a dedup, not a lost write. Counted so a reader can tell it from a loss.
+    pub duplicate_rejections: usize,
+    /// **Rejected chains that carry no state effect** (an autopropose dummy `Nil`). No write can be
+    /// lost. Counted for the same reason.
+    pub effect_free_rejections: usize,
+    /// **Rejected chains whose first deploy is a system id** (`blockHash ++ prefix`, C344). A close
+    /// chain is not a user loss; counted so the two ledgers cannot be conflated.
+    pub system_rejections: usize,
     /// The native slots the **rejected** chains would have written, with the host that wrote each:
     /// the effects of a rejection, named. They had no name before this.
     pub dropped_native_slots: Vec<(Blake2b256Hash, (u8, Blake2b256Hash))>,
@@ -548,6 +557,63 @@ pub fn finalised_floor(
             describe_ids(&clash)
         ))
     }
+}
+
+/// **Does this chain carry a state effect?** A deploy that produces, consumes, or writes a native
+/// slot can lose a write when it is rejected; an empty/`Nil` deploy cannot. The autopropose dummy is
+/// a signed `Nil` (`node/src/runtime/node_runtime.rs:2596-2598`) and must not be read as a loss.
+fn chain_has_effects(chain: &DeployChainIndex) -> bool {
+    let log = &chain.event_log_index;
+    let changes = &chain.state_changes;
+    !chain.native_effects.is_empty()
+        || !changes.datums_changes.is_empty()
+        || !changes.kont_changes.is_empty()
+        || !changes.consume_channels_to_join_serialized_map.is_empty()
+        || !log.produces_linear.is_empty()
+        || !log.produces_persistent.is_empty()
+        || !log.produces_consumed.is_empty()
+        || !log.produces_peeked.is_empty()
+        || !log.produces_copied_by_peek.is_empty()
+        || !log.produces_touching_base_joins.is_empty()
+        || !log.consumes_linear_and_peeks.is_empty()
+        || !log.consumes_persistent.is_empty()
+        || !log.consumes_produced.is_empty()
+        || !log.produces_mergeable.is_empty()
+        || !log.consumes_mergeable.is_empty()
+}
+
+/// Every deploy id the kept chains carry. A rejected chain whose first id is in this set is a
+/// **duplicate**, not a lost deploy: the merge kept another copy of the same deploy.
+fn kept_deploy_ids(kept: &BTreeSet<Arc<DeployChainIndex>>) -> BTreeSet<Vec<u8>> {
+    kept.iter()
+        .flat_map(|chain| chain.deploys_with_cost.iter().map(|deploy| deploy.id.clone()))
+        .collect()
+}
+
+/// **A rejection is a loss only when it is a user deploy, not a duplicate, and it has effects.** The
+/// finalised floor reads this classification; a duplicate or effect-free rejection is normal conflict
+/// resolution (the shared-id rule), not a dropped finalised write.
+fn rejection_is_loss(chain: &DeployChainIndex, kept_ids: &BTreeSet<Vec<u8>>) -> bool {
+    chain
+        .deploys_with_cost
+        .iter()
+        .next()
+        .is_some_and(|deploy| {
+            !is_system_deploy_id(&deploy.id) && !kept_ids.contains(&deploy.id)
+        })
+        && chain_has_effects(chain)
+}
+
+fn rejected_user_loss_hosts(
+    rejected: &BTreeSet<Arc<DeployChainIndex>>,
+    kept: &BTreeSet<Arc<DeployChainIndex>>,
+) -> BTreeSet<BlockHash> {
+    let kept_ids = kept_deploy_ids(kept);
+    rejected
+        .iter()
+        .filter(|chain| rejection_is_loss(chain, &kept_ids))
+        .map(|chain| BlockHash::new(*chain.host_block.as_bytes()))
+        .collect()
 }
 
 /// A list of `(prefix, key)` slots, first four then a count.
@@ -2385,8 +2451,40 @@ impl MergeScope {
             Some(&mut coverage),
         )
         .await?;
+        let kept_ids = kept_deploy_ids(&to_merge);
+        let duplicate_rejections = rejected
+            .iter()
+            .filter(|chain| {
+                chain.deploys_with_cost.iter().next().is_some_and(|deploy| {
+                    !is_system_deploy_id(&deploy.id) && kept_ids.contains(&deploy.id)
+                })
+            })
+            .count();
+        let effect_free_rejections = rejected
+            .iter()
+            .filter(|chain| {
+                chain.deploys_with_cost.iter().next().is_some_and(|deploy| {
+                    !is_system_deploy_id(&deploy.id)
+                        && !kept_ids.contains(&deploy.id)
+                        && !chain_has_effects(chain)
+                })
+            })
+            .count();
+        let system_rejections = rejected
+            .iter()
+            .filter(|chain| {
+                chain
+                    .deploys_with_cost
+                    .iter()
+                    .next()
+                    .is_some_and(|deploy| is_system_deploy_id(&deploy.id))
+            })
+            .count();
+        // **The lossy ledger.** A rejected chain whose deploy is a duplicate (kept elsewhere) or has
+        // no effect is not a lost write; it must not enter `rejectedDeploys` or the finalised floor.
         let rejected_ids: BTreeSet<Vec<u8>> = rejected
             .iter()
+            .filter(|chain| rejection_is_loss(chain, &kept_ids))
             .flat_map(|d| d.deploys_with_cost.iter().map(|x| x.id.clone()))
             .collect();
         // **What this merge did, for the caller that holds a logger** (#280). Computed here rather
@@ -2396,19 +2494,10 @@ impl MergeScope {
             .iter()
             .map(|c| BlockHash::new(*c.host_block.as_bytes()))
             .collect();
-        // A user deploy rejection is the finalised-write loss; a close chain's rejection is not
-        // (C344). The floor and the trace read this set, while `rejected_hosts` keeps the full ledger.
-        let rejected_user_hosts: BTreeSet<BlockHash> = rejected
-            .iter()
-            .filter(|chain| {
-                chain
-                    .deploys_with_cost
-                    .iter()
-                    .next()
-                    .is_some_and(|deploy| !is_system_deploy_id(&deploy.id))
-            })
-            .map(|chain| BlockHash::new(*chain.host_block.as_bytes()))
-            .collect();
+        // A genuine user deploy rejection is the finalised-write loss; a duplicate, an effect-free
+        // dummy, or a close chain's rejection is not. The floor and the trace read this set, while
+        // `rejected_hosts` keeps the full ledger.
+        let rejected_user_hosts = rejected_user_loss_hosts(&rejected, &to_merge);
         let report = MergeReport {
             conflict_chains: conflict_set.len(),
             kept_chains: to_merge.len(),
@@ -2424,6 +2513,9 @@ impl MergeScope {
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect(),
+            duplicate_rejections,
+            effect_free_rejections,
+            system_rejections,
             dropped_native_slots: rejected
                 .iter()
                 .flat_map(|c| {
@@ -6055,5 +6147,67 @@ mod rc1_guard_tests {
         let error = finalised_floor(&finalised, &clash).expect_err("the overlap is refused");
         assert!(error.contains(&BlockHash::new([1; 32]).to_hex()));
         assert!(error.contains("finalised deploy cannot be rejected"));
+    }
+
+    fn chain_with(host: u8, deploy_id: Vec<u8>, effects: bool) -> Arc<DeployChainIndex> {
+        Arc::new(DeployChainIndex {
+            host_block: Blake2b256Hash::from_bytes([host; 32]),
+            deploys_with_cost: BTreeSet::from([DeployIdWithCost { id: deploy_id, cost: 0 }]),
+            pre_state_hash: Blake2b256Hash::from_bytes([0u8; 32]),
+            post_state_hash: Blake2b256Hash::from_bytes([0u8; 32]),
+            event_log_index: EventLogIndex::empty(),
+            state_changes: StateChange::empty(),
+            cost_moves: BTreeMap::new(),
+            executor: String::new(),
+            native_effects: if effects {
+                vec![NativeStoreAction::Put {
+                    prefix: rchain_rspace::native_store::PREFIX_POS,
+                    key: Blake2b256Hash::from_bytes([host; 32]),
+                    value: vec![1],
+                }]
+            } else {
+                Vec::new()
+            },
+            first_deploy_ordinal: 0,
+        })
+    }
+
+    /// **The RC-2 duplicate.** The same user deploy id is in a kept chain and a rejected chain; the
+    /// merge kept a copy, so the rejection is a dedup, not a lost write. The floor must not fire.
+    #[test]
+    fn a_duplicate_rejection_is_not_a_loss() {
+        let kept = BTreeSet::from([chain_with(1, vec![7], true)]);
+        let rejected = BTreeSet::from([chain_with(2, vec![7], true)]);
+        assert!(rejected_user_loss_hosts(&rejected, &kept).is_empty());
+    }
+
+    /// The negative half: a unique user deploy that is not in the kept set and carries an effect is
+    /// a genuine loss; the floor's input must name its host.
+    #[test]
+    fn a_unique_user_rejection_is_a_loss() {
+        let kept = BTreeSet::from([chain_with(1, vec![7], true)]);
+        let rejected = BTreeSet::from([chain_with(2, vec![8], true)]);
+        assert_eq!(
+            rejected_user_loss_hosts(&rejected, &kept),
+            BTreeSet::from([BlockHash::new([2; 32])])
+        );
+    }
+
+    /// The autopropose dummy: a rejected effect-free deploy cannot lose a write.
+    #[test]
+    fn an_effect_free_rejection_is_not_a_loss() {
+        let kept = BTreeSet::from([chain_with(1, vec![7], true)]);
+        let rejected = BTreeSet::from([chain_with(2, vec![9], false)]);
+        assert!(rejected_user_loss_hosts(&rejected, &kept).is_empty());
+    }
+
+    /// A system chain (33-byte `blockHash ++ prefix`) is not a user deploy (C344).
+    #[test]
+    fn a_system_rejection_is_not_a_loss() {
+        let kept = BTreeSet::from([chain_with(1, vec![7], true)]);
+        let mut system_id = vec![2u8; 32];
+        system_id.push(2);
+        let rejected = BTreeSet::from([chain_with(2, system_id, true)]);
+        assert!(rejected_user_loss_hosts(&rejected, &kept).is_empty());
     }
 }

@@ -1126,9 +1126,20 @@ async fn sibling_hot_cell_merges_keep_one_value_and_name_a_rejection() {
     );
     if report.rejected_chains > 0 {
         assert!(
-            !outcome.rejected_deploys.is_empty(),
-            "a rejected sibling must name the deploy it carried"
+            !outcome.rejected_hosts.is_empty(),
+            "a rejected sibling must name the chain it carried"
         );
+        // A duplicate, effect-free or system chain is not a user-deploy loss (Law 119/C344). The
+        // lossy ledger names a user deploy only when a rejected chain is none of those.
+        let non_lossy = report.duplicate_rejections
+            + report.effect_free_rejections
+            + report.system_rejections;
+        if report.rejected_chains > non_lossy {
+            assert!(
+                !outcome.rejected_deploys.is_empty(),
+                "a lossy rejected chain must name the deploy it carried"
+            );
+        }
     }
 
     // **M5-11: the report is not an input to the state.** Re-running the same merge produces the

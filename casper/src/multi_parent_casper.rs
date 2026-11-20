@@ -360,6 +360,12 @@ pub struct TraceReport {
     pub rejected_chains: usize,
     pub fork_rejected_chains: usize,
     pub final_scope_rejected_chains: usize,
+    #[serde(default)]
+    pub duplicate_rejections: usize,
+    #[serde(default)]
+    pub effect_free_rejections: usize,
+    #[serde(default)]
+    pub system_rejections: usize,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -448,6 +454,9 @@ fn merge_trace(
             rejected_chains: outcome.report.rejected_chains,
             fork_rejected_chains: outcome.report.fork_rejected_chains,
             final_scope_rejected_chains: outcome.report.final_scope_rejected_chains,
+            duplicate_rejections: outcome.report.duplicate_rejections,
+            effect_free_rejections: outcome.report.effect_free_rejections,
+            system_rejections: outcome.report.system_rejections,
         },
         predicates: TracePredicates {
             base_ok,
@@ -999,6 +1008,12 @@ where
             + conflict_merge.report.fork_rejected_chains,
         final_scope_rejected_chains: fringe_merge.report.final_scope_rejected_chains
             + conflict_merge.report.final_scope_rejected_chains,
+        duplicate_rejections: fringe_merge.report.duplicate_rejections
+            + conflict_merge.report.duplicate_rejections,
+        effect_free_rejections: fringe_merge.report.effect_free_rejections
+            + conflict_merge.report.effect_free_rejections,
+        system_rejections: fringe_merge.report.system_rejections
+            + conflict_merge.report.system_rejections,
         final_scope_rejected_deploys: {
             let mut ids = fringe_merge.report.final_scope_rejected_deploys.clone();
             ids.extend(

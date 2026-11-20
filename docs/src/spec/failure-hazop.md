@@ -850,6 +850,47 @@ attribute.
 | U24-17 | not a law — **R1 by construction** | the bad dispatch is a type error once the run and audit builders are distinct; there is no state relation to prove |
 | U24-18 | Law 106's replay soundness assumes a complete history; **no law covers the fetch protocol** | the deviation is the transport that supplies the history, not the verdict relation the law proves |
 
+### U25 — The RC-2 fringe/dedup node (2026-11-20)
+
+**Design intent.** A fringe merge finalises a layer only when every user deploy in it either survives
+in the merged state or was a duplicate of a kept deploy (or an effect-free dummy); a duplicate
+rejection is not a lost write, and a genuine finalised write is never dropped. The node must not turn
+a harmless dedup into a halt, and must not hide a genuine loss behind an exemption.
+
+**Why this node exists.** RC-2's local arm stalled deterministically at the height-30→31 fringe. The
+same signed `Nil` deploy (an autopropose dummy, `3045022100933e…`) was gossiped into several
+validators' pools and included in more than one concurrent block. The merge correctly deduplicated
+it; `finalised_floor` classified the duplicate's host as a finalised-write loss and refused every
+retry (129 identical merge traces). RC-1 local passes at the same source; the failure is RC-2's.
+
+**Guide words.** row: OTHER THAN, AS WELL AS, PART OF · folded: NO → MORE, EARLY/LATE → BEFORE/AFTER ·
+vacuous: LESS (the resolution is a set difference, not a quantity), REVERSE (the merge is a pure
+function of the parent set).
+
+| ID | Guide word | Deviation | RCA → causal chain | Current behaviour | Class | Disposition | Falsifier |
+|---|---|---|---|---|---|---|---|
+| **F-U25-01** | OTHER THAN | A **duplicate** rejection (the deploy id is also in a kept chain) is classified as a user-write loss | `rejected_user_hosts` tests only `!is_system_deploy_id(first_id)` (`casper/src/merging.rs:2401-2411`); it never checks the kept deploy set; `DeployChainIndex::deploys_are_conflicting` treats a shared id as a conflict (`:797-801`) → the merge keeps one copy and rejects the other | loud, but the floor reads it as a loss; the chain halts | Terminal | **R1 after the duplicate exemption; today R2** | a fringe fixture with one deploy id in two blocks: `rejected_user_hosts` empty, floor `Ok`, `ledger_ok=true` |
+| **F-U25-02** | MORE / AS WELL AS | The floor refuses **more** than the invariant: host overlap is refused even when the rejected effect survives | `finalised_floor(&conflict_scope, &rejected_user_hosts)` (`casper/src/multi_parent_casper.rs:895`; `merging.rs:533-551`) consumes the duplicate-blind set | every fringe merge over the duplicate refuses; no block produced | Terminal | R2 + R3 | the same fixture with a **unique** conflicting user deploy still refuses |
+| **F-U25-03** | OTHER THAN | `ledger_ok=false` reports a false ledger violation | same duplicate-blind set (`multi_parent_casper.rs:406-414`) | operators and the evaluator read a safety failure where the merge is safe | Drift | R2 | a safe duplicate trace reads `ledger_ok=true`; a genuine loss reads `false` |
+| **F-U25-04** | AS WELL AS | A fringe rejection is also written into the next block's `rejectedDeploys`; a duplicate becomes a historical row | `casper/src/blocks/proposer/block_creator.rs:91` copies `fringe_rejected_deploys` wholesale; `casper/src/interpreter_util.rs:1265` compares the block's ledger | downstream `final_scope_rejections` could derive a false `rejected_finally` row | Drift | R2/R3 | duplicate rejection absent from the next block's `rejectedDeploys`; a unique loss present |
+| **F-U25-05** | NO / NOT | The floor calls D933 “a finalised deploy” though it is an autopropose dummy `Nil`, never settled or finalised | `node/src/runtime/node_runtime.rs:2596-2598` injects the signed `Nil`; `casper/src/blocks/proposer/proposer.rs:2693-2725` signs it; `is_system_deploy_id` only excludes 33-byte ids (`merging.rs:1237-1239`) | the guard protects a speculative, no-effect deploy; the message is untrue | Terminal | **R1 after the effect-free exemption** | a dummy `Nil` rejection does not trip the floor |
+| **F-U25-06** | AS WELL AS | RC-2's “shared” drill runs autopropose; RC-1's does not | `tools/devnet.sh:86-87` defaults autopropose on; `tests/release-claim-2.py` does not pass `--no-autopropose`; `tests/release-claim-1.py` does | the two claims exercise different rigs; the dummy path is RC-2-only | Drift | R4 | the RC-2 drill uses the RC-1 rig; the victim autopropose is on only in the partition phase |
+| **F-U25-07** | OTHER THAN | A node stall is recorded as `not run / precondition`, not as a safety/consensus failure | `tests/release-claim-2.py:236-244` maps any drill failure with no cycles to the precondition verdict | RC-2's fail condition is never exercised; the defect is laundered | Drift | R4 | a stalled fringe trace records `unsafe-point` naming `finalised_floor`; a genuine drill failure is `precondition` |
+| **F-U25-08** | PART OF | RC-1's `rejectedDeploys` scan is id-level, not effect-level | `tests/release-claim-1.py:117-120` fails on `found=True` without checking the effect; the marker id appears in conflict-mode `rejectedDeploys` with the effect retained | a correct rejoin can false-fail RC-1 | Drift | R4 (scope, no new claim id) | a duplicate-included marker with its effect retained does not fail RC-1 |
+| **F-U25-09** | BEFORE / AFTER | The precondition path does not attach the merge traces it already has | `tests/release-claim-2.py` copies only the stdout/stderr tail on the drill failure; the traces are in `RNODE_TRACE_DIR` | the failure reads as evidence-insufficient about the real defect | Drift | R2/R4 | the RC-2 record on a stall carries `merge-*.json` |
+| **F-U25-10** | NO / NOT | A fringe may co-finalise mutually deploy-incompatible blocks; there is no descent/compatibility predicate | `block-storage/src/dag/finalizer.rs:319-376` checks sender coverage + supermajority only; `finalitySafe` (`spec/Rchain/Casper/Liveness.lean:197-200`) has no such clause | a **unique** user-deploy conflict in a fringe would still halt at the floor | Drift | R1/R2 after the follow-up; model gap | the finality trace names the compatibility predicate; a unique conflict does not reach the floor |
+| **F-U25-11** | EARLY / LATE | Finality is granted early (whole layer), the conflict is discovered late (merge), the refusal is last (floor) | `casper/src/multi_parent_casper.rs:838-896`; `MergeDecision.Safe` (`spec/Rchain/Casper/MergeDecision.lean:40-43`) has no `finalising` set | no forward path once the conflict is known | Drift | R3 owed; Law 120 | `Safe` carries `finalising`; the RC-2 trace is its unsafe witness |
+| **F-U25-12** | REVERSE | The user-host floor ignores system chains; a rejected CloseBlock chain may drop the liveness anchor | the floor reads `rejected_user_hosts` only; the conflict-scope resolution has no system filter (`merging.rs:2250-2252` is the final-scope loop) | C344 regression while fixing RC-1 | Drift | R2; must test | the finalising-close-chain fixture keeps the close chain; C344's test stays green |
+
+**Table C — law coverage**
+
+| deviation | law that captures it, or the law owed | why |
+|---|---|---|
+| U25-01, U25-02, U25-03, U25-05 | **Law 119 (owed)** — a duplicate or effect-free rejection is not a lost deploy | the existing `a_finalised_deploy_is_not_in_the_ledger` proves the accepted set is subtracted from the ledger; it does not say a rejected deploy whose id is in a kept chain is not a loss. The theorem is `a_duplicate_rejection_does_not_drop_a_kept_effect`; the Rust witness is the narrowed `rejected_user_hosts`. |
+| U25-10, U25-11 | **Law 120 (owed)** — a finalising merge rejects no finalising user chain | `MergeDecision.Safe` lacks the `finalising` coordinate; the theorem is `a_safe_decision_rejects_no_finalising_deploy`, with the RC-2 trace as the unsafe witness. This is the finality/merge order follow-up, not the duplicate exemption. |
+| U25-12 | Law 113 and C344 | a finalised close chain is consensus-mandated; the user/system split and the existing C344 tests are the guard. |
+| U25-06, U25-07, U25-08, U25-09 | not a law — **R4 / R2** | the deviations are in the harness, claim scope and evidence capture; the falsifiers are the rig assertion, the trace-derived verdict, and the scoped scan. |
+
 ## 4. The fault tree
 
 ```

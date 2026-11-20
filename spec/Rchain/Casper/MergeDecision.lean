@@ -89,5 +89,44 @@ theorem the_unguarded_witness_is_unsafe :
   have hmem : (7 : Nat) ∈ ({7} : Finset Nat) := by simp
   exact (Finset.disjoint_left.mp hdisjoint hmem) hmem
 
+/-! ### Law 119 — a duplicate rejection is not a lost deploy
+
+The RC-2 fringe carried the same autopropose `Nil` deploy id in several concurrent blocks. The merge
+kept one copy and rejected the others (the shared-id rule); the finalised floor read the rejection as
+a lost write and halted. The law's subject is the **deploy set**, not the chain set: a rejected
+deploy whose id is also in a kept chain, or which has no effect, is not a loss. -/
+
+/-- The kept and rejected deploy sets. `effectFree` are the no-effect deploys (the autopropose dummy). -/
+structure DeployLedger where
+  kept : Finset Nat
+  rejected : Finset Nat
+  effectFree : Finset Nat
+
+/-- The lossy ledger: a rejected deploy is a loss only when it is neither kept nor effect-free. -/
+def lossyRejected (l : DeployLedger) : Finset Nat :=
+  l.rejected \ (l.kept ∪ l.effectFree)
+
+/-- The unguarded ledger — every rejected deploy, the pre-fix behavior. -/
+def lossyRejectedUnfiltered (l : DeployLedger) : Finset Nat :=
+  l.rejected
+
+/-- **Law 119** — a duplicate or effect-free rejection is not a lost deploy. -/
+def law119_statement : Prop :=
+  ∀ (l : DeployLedger) (x : Nat), x ∈ l.kept ∪ l.effectFree → x ∉ lossyRejected l
+
+theorem law119 : law119_statement := by
+  intro l x hx
+  simp [lossyRejected, hx]
+
+/-- The unguarded ledger names a duplicate. -/
+def law119_mutant : Prop :=
+  ∃ (l : DeployLedger) (x : Nat), x ∈ l.kept ∪ l.effectFree ∧ x ∈ lossyRejectedUnfiltered l
+
+/-- The falsifier: keep and reject the same id; the unfiltered ledger calls it rejected. -/
+theorem law119_falsifier : law119_mutant := by
+  refine ⟨{ kept := {7}, rejected := {7}, effectFree := ∅ }, 7, ?_, ?_⟩
+  · simp
+  · simp [lossyRejectedUnfiltered]
+
 end MergeDecision
 end Rchain
