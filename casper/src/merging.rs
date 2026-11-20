@@ -586,7 +586,12 @@ fn chain_has_effects(chain: &DeployChainIndex) -> bool {
 /// **duplicate**, not a lost deploy: the merge kept another copy of the same deploy.
 fn kept_deploy_ids(kept: &BTreeSet<Arc<DeployChainIndex>>) -> BTreeSet<Vec<u8>> {
     kept.iter()
-        .flat_map(|chain| chain.deploys_with_cost.iter().map(|deploy| deploy.id.clone()))
+        .flat_map(|chain| {
+            chain
+                .deploys_with_cost
+                .iter()
+                .map(|deploy| deploy.id.clone())
+        })
         .collect()
 }
 
@@ -598,9 +603,7 @@ fn rejection_is_loss(chain: &DeployChainIndex, kept_ids: &BTreeSet<Vec<u8>>) -> 
         .deploys_with_cost
         .iter()
         .next()
-        .is_some_and(|deploy| {
-            !is_system_deploy_id(&deploy.id) && !kept_ids.contains(&deploy.id)
-        })
+        .is_some_and(|deploy| !is_system_deploy_id(&deploy.id) && !kept_ids.contains(&deploy.id))
         && chain_has_effects(chain)
 }
 
@@ -6152,7 +6155,10 @@ mod rc1_guard_tests {
     fn chain_with(host: u8, deploy_id: Vec<u8>, effects: bool) -> Arc<DeployChainIndex> {
         Arc::new(DeployChainIndex {
             host_block: Blake2b256Hash::from_bytes([host; 32]),
-            deploys_with_cost: BTreeSet::from([DeployIdWithCost { id: deploy_id, cost: 0 }]),
+            deploys_with_cost: BTreeSet::from([DeployIdWithCost {
+                id: deploy_id,
+                cost: 0,
+            }]),
             pre_state_hash: Blake2b256Hash::from_bytes([0u8; 32]),
             post_state_hash: Blake2b256Hash::from_bytes([0u8; 32]),
             event_log_index: EventLogIndex::empty(),
