@@ -97,6 +97,7 @@ import Rchain.Casper.FinalizedMerge
 import Rchain.Casper.MergeDecision
 import Rchain.Casper.MergeScope
 import Rchain.Casper.StoreFormat
+import Rchain.Casper.ProducingPartition
 import Rchain.Bounded
 import Rchain.Admission
 import Rchain.Decimal

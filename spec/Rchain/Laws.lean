@@ -7437,6 +7437,39 @@ def lawsC : List Law := [
       rejected. What changes is the loss classification: a rejection whose deploy is kept elsewhere \
       is a dedup, and an effect-free rejection cannot drop a write. The finalised floor remains \
       fail-closed for a unique user deploy with effects; the negative test is the guard." },
+  { number := 120, layer := "Casper",
+    statement := "The live escape parent set sees the live partition: when every live sender's \
+      latest message contains its own sender, a block built from every live latest message carries \
+      the whole live partition in its seen set. The own-only escape (the sender's own latest plus \
+      the frozen round's stale peers) does not, which is the RC-2 cycle-2 finality stall.",
+    status := .provedModel,
+    formal := `Rchain.ProducingPartition.law120_statement,
+    mutant := `Rchain.ProducingPartition.law120_mutant,
+    falsifier := `Rchain.ProducingPartition.law120_falsifier,
+    declarations := [`Rchain.ProducingPartition.Sender,
+      `Rchain.ProducingPartition.liveEscapeSeen,
+      `Rchain.ProducingPartition.law120_statement,
+      `Rchain.ProducingPartition.law120,
+      `Rchain.ProducingPartition.ownOnlySeen,
+      `Rchain.ProducingPartition.law120_mutant,
+      `Rchain.ProducingPartition.law120_falsifier],
+    axioms := [],
+    rust := ["block-storage/src/dag/message_state.rs"],
+    rustWitness := [
+      "block-storage/src/dag/message_state.rs:escape_uses_each_senders_live_latest_message"],
+    witness := [`Rchain.ProducingPartition.law120,
+      `Rchain.ProducingPartition.law120_falsifier],
+    falsifiable := "The own-only policy (`ownOnlySeen`) names one sender's latest and misses the \
+      other live senders: with `latest s = {s}` and partition `{0, 1}`, sender 0's own-only set \
+      `{0}` does not contain 1. `law120_mutant` and `law120_falsifier` exhibit it. In Rust, the \
+      `escape_uses_each_senders_live_latest_message` test is red on the frozen-round policy and \
+      green on the live-latest policy; the existing `escape_preserves_each_prior_justification_view` \
+      keeps the regression repair.",
+    note := "This is the parent-policy half of the RC-2 liveness defect, not the finality gate's \
+      arithmetic. The quorum (whole bonded map, strict `3s > 2t`) and `sees_the_whole_partition` \
+      are unchanged; the law says the producer's escape must supply the justifications the gate \
+      needs. The frozen `advance_round` snapshot remains a residual if a node's live view lags; \
+      the law does not claim a liveness bound." },
 
 ]
 
