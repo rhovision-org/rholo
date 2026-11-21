@@ -2072,8 +2072,15 @@ pub fn within_proposal_finality_bound(tip_height: i64, finalized_height: i64) ->
 /// thirds of the **active** bond map. A silent peer therefore cannot hold this gate closed — the live
 /// majority's messages set the supported height — while a node whose own message state is behind the
 /// blocks it has received is held until it catches up.
-pub fn view_is_caught_up(observed_tip: i64, supported: BlockHeight) -> bool {
-    observed_tip - i64::from(supported) <= liveness::LIVENESS_WINDOW
+///
+/// **`view_tip` is the highest latest message, not the DAG's height maximum.** The DAG's height map
+/// counts metadata the node has not validated — under the drill's burst it stood six heights above
+/// every validator's message state, and a metadata-based tip held *all four* proposers closed with
+/// nothing left to drain the gap (measured 2026-11-21: latest messages 269, metadata 275, every
+/// proposer waiting). The stale-view condition is about the messages finality is derived from, so
+/// both sides of the comparison must come from that state.
+pub fn view_is_caught_up(view_tip: i64, supported: BlockHeight) -> bool {
+    view_tip - i64::from(supported) <= liveness::LIVENESS_WINDOW
 }
 
 /// **The height the gate measures from when the view has no finalised block** (C351).
@@ -2326,35 +2333,36 @@ where
     // isolation halt that stops propose and attest until an operator resumes. That latch, firing
     // for every proposer once finality froze, was the deadlock the drill measured.
     {
+        let bonds = runtime
+            .compute_bonds(&StateHash::from_slice(pre_state_hash.as_bytes()))
+            .await?;
         let repr = dag.get_representation().await;
-        let observed_tip = {
-            let latest = repr.latest_block_number();
-            if latest > 0 {
-                latest - 1
-            } else {
-                0
-            }
-        };
+        // **Only the active set's messages set the tip**, for the same reason they set the quorum: a
+        // jailed or unbonded sender's last message is frozen where it stopped, and letting it stand
+        // as the highest latest message would hold every proposer closed with nothing to advance it.
         let heights = liveness::latest_heights(
             repr.dag_message_state
                 .latest_msgs
                 .values()
+                .filter(|message| bonds.contains_key(&message.sender))
                 .map(|message| (message.sender.clone(), message.height)),
         );
-        let bonds = runtime
-            .compute_bonds(&StateHash::from_slice(pre_state_hash.as_bytes()))
-            .await?;
+        let view_tip = heights
+            .values()
+            .copied()
+            .max()
+            .unwrap_or_else(BlockHeight::zero);
         let supported = liveness::quorum_supported_height(&bonds, &heights);
-        if !view_is_caught_up(observed_tip, supported) {
+        if !view_is_caught_up(i64::from(view_tip), supported) {
             log.warn(
                 LogSource::new("casper.blocks.Proposer"),
                 &format!(
-                    "waiting to propose at height {}: the node's latest messages support height {} \
-                     while it has observed {} (more than {} heights behind); a proposal from this \
-                     view would publish a fringe no closed set can include",
+                    "waiting to propose at height {}: the node's highest latest message is {} while \
+                     a quorum supports {} (more than {} heights behind); a proposal from this view \
+                     would publish a fringe no closed set can include",
                     i64::from(next_block_num),
+                    i64::from(view_tip),
                     i64::from(supported),
-                    observed_tip,
                     liveness::LIVENESS_WINDOW
                 ),
             );
@@ -2863,7 +2871,7 @@ mod tests {
             tip,
             height(tip - liveness::LIVENESS_WINDOW - 1)
         ));
-        // The drill's arm: observed 253, a quorum stuck at 223.
+        // The drill's arm: the highest latest message at 253, a quorum stuck at 223.
         assert!(!view_is_caught_up(253, height(223)));
         // A fresh chain is not held: nothing observed, nothing supported.
         assert!(view_is_caught_up(0, BlockHeight::zero()));
