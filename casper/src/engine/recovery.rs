@@ -346,26 +346,12 @@ pub(super) async fn publish_certified_metadata(
     entries: &[(BlockHash, BlockMetadata)],
 ) -> Result<(), String> {
     let certified_hashes: BTreeSet<_> = entries.iter().map(|(hash, _)| *hash).collect();
-    // **A populated store is not an empty one** (join ladder, RC-4). The walk names the certified
-    // history from its fringe back to genesis; a restarting node also holds blocks it validated
-    // **above** that history's highest block — its own unfinalised view from before it stopped.
-    // Those are not covered by the certificate and are not a fork, so requiring the whole DAG to be
-    // a subset refused every populated-store join ("the existing DAG is not a prefix of the
-    // certified metadata history"), which is the stall this path exists to end. The guard is kept
-    // at and below the certified ceiling: an existing block there that the certificate does not
-    // name **is** a contradiction, and is refused.
-    let ceiling = entries.iter().map(|(_, meta)| meta.block_num).max();
-    let representation = dag.get_representation().await;
-    let below: BTreeSet<BlockHash> = match ceiling {
-        Some(ceiling) => representation
-            .height_map
-            .iter()
-            .filter(|(height, _)| **height <= ceiling)
-            .flat_map(|(_, hashes)| hashes.iter().copied())
-            .collect(),
-        None => BTreeSet::new(),
-    };
-    if !below.is_subset(&certified_hashes) {
+    if !dag
+        .get_representation()
+        .await
+        .dag_set
+        .is_subset(&certified_hashes)
+    {
         return Err(
             "the existing DAG is not a prefix of the certified metadata history".to_string(),
         );
@@ -467,78 +453,6 @@ mod tests {
         assert!(compare_claim(&local, &claim)
             .unwrap_err()
             .contains("disagrees"));
-    }
-
-    fn block_at(
-        height: i64,
-        byte: u8,
-    ) -> rchain_models::casper::protocol::casper_message::BlockMessage {
-        rchain_models::casper::protocol::casper_message::BlockMessage {
-            version: 1,
-            shard_id: "root".to_string(),
-            block_hash: BlockHash::new([byte; 32]),
-            block_number: rchain_shared::refined::BlockHeight::try_from(height).unwrap(),
-            sender: rchain_models::validator::Validator::new([0; 65]),
-            // One sender, one block per height: the DAG's equivocation guard keys on the pair.
-            seq_num: height.try_into().unwrap(),
-            pre_state_hash: StateHash::new([0; 32]),
-            post_state_hash: StateHash::new([0; 32]),
-            justifications: Vec::new(),
-            bonds: BTreeMap::new(),
-            rejected_deploys: BTreeSet::new(),
-            rejected_blocks: BTreeSet::new(),
-            rejected_senders: BTreeSet::new(),
-            state: rchain_models::casper::protocol::casper_message::RholangState::default(),
-            sig_algorithm: "secp256k1".to_string(),
-            sig: Vec::new(),
-            timestamp: 0,
-        }
-    }
-
-    async fn insert_block(
-        dag: &BlockDagKeyValueStorage,
-        height: i64,
-        byte: u8,
-    ) -> (BlockHash, BlockMetadata) {
-        let block = block_at(height, byte);
-        let mut meta = BlockMetadata::from_block(&block);
-        // The publisher's agreement check asks that the local row was validated; `from_block` is a
-        // shape derivation, so the fixture states the fact the real insert path records.
-        meta.validated = true;
-        let hash = meta.block_hash;
-        dag.insert(meta.clone(), block).await.expect("insert");
-        (hash, meta)
-    }
-
-    /// **A populated store joins** (RC-4). A restarting node holds blocks it validated above the
-    /// certified history's ceiling; the certificate does not cover them, and they are not a fork.
-    #[tokio::test]
-    async fn a_local_block_above_the_certified_ceiling_is_allowed() {
-        let dag = staging_dag().await.expect("dag");
-        let certified = vec![
-            insert_block(&dag, 8, 8).await,
-            insert_block(&dag, 9, 9).await,
-        ];
-        insert_block(&dag, 10, 10).await;
-        publish_certified_metadata(&dag, &certified)
-            .await
-            .expect("a block above the ceiling is the node's own unfinalised view");
-    }
-
-    /// An existing block at or below the ceiling that the certificate does not name is a
-    /// contradiction, and is still refused.
-    #[tokio::test]
-    async fn a_local_block_below_the_certified_ceiling_is_refused() {
-        let dag = staging_dag().await.expect("dag");
-        insert_block(&dag, 7, 7).await;
-        let certified = vec![
-            insert_block(&dag, 8, 8).await,
-            insert_block(&dag, 9, 9).await,
-        ];
-        let error = publish_certified_metadata(&dag, &certified)
-            .await
-            .expect_err("a local block below the ceiling is not in the certified history");
-        assert!(error.contains("not a prefix"), "{error}");
     }
 
     #[test]
