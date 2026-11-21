@@ -111,3 +111,64 @@ agreement and deploy checks pass. A victim that cannot close the gap must leave 
 record naming `quorumSupportedHeight`, the peers' tip and the last deferral — never a silent freeze;
 a victim whose key has equivocated must leave the refusal and the sequence it refused, as this run
 did.
+
+## §8 Addendum — the remedials (#640, 2026-11-21)
+
+The ladder merged at `5ecf63aef`; the drill runs `062b4140c`, `87b9aedf2` and `e3f5195c9` then
+measured three edges this study named. This addendum records their closures. The study above is kept
+as written: it is the state the ladder was reviewed at.
+
+### J1/J3/J4 — the disarm, closed by continuity (Law 123)
+
+The watchdog observed once, at boot, and exited at `Running`; a joined validator finished its walk at
+198 while the network ran to 335. A continuous supervisor now samples the node's validated tip and a
+peer's reported frontier, re-enters `CatchingUp` on a confirmed stale view, and wakes the running
+loop to restart the walk. `Running` is no longer a terminal state of the catch-up machinery;
+`Blocked` is. The proposer already read the shard's phase — the missing half was a phase that could
+be entered again.
+
+**The predicate was wrong in both directions (J9, new).** The window compared the node's validated
+tip with the quorum-supported height computed from the *same* validated messages, so the frozen node
+read `0` against itself. The same shape used as a global proposer gate froze a healthy network on a
+six-height skew (the leaders' quorum height sat at the laggards' height; run `565c8dec6`, removed in
+`5524f2b25`). The corrected view compares `peerTip - own`; `supported` is a diagnostic. Both
+directions are theorems in Law 121, and both are Rust witnesses.
+
+**A second frontier bug (same row).** The walk started from `latest_block_number() - 1`, the metadata
+maximum, which counts headers a light join restored without validating. A node holding blocks above
+an unvalidated run would walk from above it and never fetch the gap. The walk now starts from the
+validated frontier (the highest latest message it validated) and waits on validation, not receipt.
+
+### J10 — the announcement race, closed by the claims cell (Law 124)
+
+Law 122 closes the re-sign; it cannot close the window between the signature and the hash
+announcement. The network's copy of this key's block at the same sequence arrived during the
+multi-second replay and the announcement made both blocks network-visible. `ReceivedClaims` is fed at
+signature-verified receipt, before validation: the block creator refuses to sign through a claim, the
+insert path refuses with `SelfEquivocation` (no own-key verdict is latched for a block never
+announced), and `do_propose` re-reads the cell immediately before the announcement. The residual race
+— a block still in transport buffering at the last check — is narrowed to microseconds and remains
+covered by H-1 and the durable own-key verdict.
+
+### J11 — the deferral cascade, closed at admission (Law 116's deferral arm)
+
+Blocks 261–262 were condemned as `UncertifiedPreState` divergences because their justifications had
+never been validated; every descendant then inherited a failed parent and was condemned in turn. A
+divergence verdict requires the inputs to be available. The pre-replay gate now defers a block whose
+nonempty justification set names an absent, unvalidated or failed block: the row is `Deferred` in the
+durable ledger, the missing hashes are requested, and the sweep re-offers it once the parents
+validate. A deferral is **not** a pipeline fault — that latch halts production process-wide. The
+re-offer predicate is "validated and not failed", not "present in the DAG", so a condemned record
+cannot look satisfiable.
+
+### The coordinates
+
+`/health.catchUp` now publishes `{supported, own, peerTip}` while catching up, and
+`deferredBlocks`/`lastDeferralReason` name the ancestry obligation. A sustained inability to close
+the gap still ends in `Blocked` with the coordinates; a deferral that cannot be satisfied stays
+visible and is never converted into a fabricated verdict.
+
+### Scope
+
+No migration: failed metadata written by older binaries is not re-opened; the RC-4 arm runs on a
+fresh devnet. The public/off-host/failover arms remain host-gated and are not claimed here.
