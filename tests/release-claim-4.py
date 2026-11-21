@@ -45,6 +45,9 @@ def _fixture_baseline(arm: str = "local") -> dict:
                  "marker_present": True, "inclusion_finalized": True}
                 for i in range(4)
             ],
+            "post_common_head": {
+                "height": 40, "hash": "cd" * 32, "on_every_validator": True,
+            },
             "boot_ids": {"before": {str(i): "a" for i in range(4)},
                          "after": {str(i): ("b" if i == 1 else "a") for i in range(4)}},
             "victim": 1,
@@ -75,7 +78,16 @@ def _check_baseline(record: dict) -> tuple[str, list[str]]:
         heads = []
     identities = {(row.get("height"), row.get("hash")) for row in heads if isinstance(row, dict)}
     if len(identities) > 1:
-        problems.append(f"validators disagree on the post-recovery finalised head: {identities}")
+        # **A live chain advances between four sequential reads.** The claim is that the validators
+        # agree on a finalised head, not that they are sampled at the same instant: the lowest head
+        # read must be reported finalised by every validator. A differing *higher* head is a node
+        # that has finalised one more block while the reads were in flight, not a split.
+        common = observations.get("post_common_head") or {}
+        if common.get("on_every_validator") is not True:
+            problems.append(
+                f"validators disagree on the post-recovery finalised head: {identities} "
+                f"(the lowest head {common.get('height')}:{common.get('hash')} is not finalised on "
+                "every validator)")
     for row in heads:
         if not isinstance(row, dict):
             problems.append("post-head row is not an object")
@@ -392,6 +404,20 @@ def _post_reads(target, record: dict, out: Path) -> int:
                 "inclusion_finalized": target.is_finalized(i, block_hash),
             })
         observations["post_heads"] = heads
+        # **The common finalised head.** The four reads are sequential on a producing chain; the
+        # lowest one is the height every node must at least have finalised. Verify it on every node
+        # so a genuine split (a head that later differs) is still caught, while a node that simply
+        # advanced between reads is not reported as disagreement.
+        if heads:
+            lowest = min(heads, key=lambda row: row["height"])
+            observations["post_common_head"] = {
+                "height": lowest["height"],
+                "hash": lowest["hash"],
+                "on_every_validator": all(
+                    target.is_finalized(i, lowest["hash"])
+                    for i in range(len(target.nodes))
+                ),
+            }
     except Exception as error:  # noqa: BLE001
         common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
         return common.write_record(out, record)[1]
