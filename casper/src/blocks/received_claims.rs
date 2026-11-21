@@ -25,6 +25,7 @@ use std::sync::Mutex;
 
 use rchain_models::block_hash::BlockHash;
 use rchain_models::validator::Validator;
+use rchain_shared::lock::Unpoison;
 use rchain_shared::refined::SeqNum;
 
 /// How many of this validator's own sequences the cell remembers. A claim that matters is near the
@@ -55,7 +56,9 @@ impl ReceivedClaims {
     /// wins: a second, different hash is the equivocation itself, and it is the processor's job (the
     /// H-1 gate) to name it — this cell only keeps what the network showed first.
     pub fn record(&self, seq: SeqNum, hash: BlockHash) {
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        // The crate's sanctioned poison policy (`Unpoison`): the map is a cache of observed
+        // claims, not a lock whose poison changes what any reader may conclude.
+        let mut inner = self.inner.lock().unpoison();
         if inner.len() >= CLAIM_WINDOW && !inner.contains_key(&seq) {
             while inner.len() >= CLAIM_WINDOW {
                 let Some(oldest) = inner.keys().next().copied() else {
@@ -69,11 +72,7 @@ impl ReceivedClaims {
 
     /// The hash claimed at `seq`, if any.
     pub fn conflict_any(&self, seq: SeqNum) -> Option<BlockHash> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&seq)
-            .copied()
+        self.inner.lock().unpoison().get(&seq).copied()
     }
 
     /// A claim at `seq` that is **not** `our_hash`. `None` when the sequence is unclaimed or the
