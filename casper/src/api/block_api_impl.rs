@@ -1443,6 +1443,34 @@ impl BlockApi for BlockApiImpl {
         })
     }
 
+    async fn checkpoint_certificate_at_anchor(
+        &self,
+        anchor: &str,
+    ) -> ApiErr<CheckpointCertificate> {
+        let bytes = base16::decode(anchor)
+            .ok_or_else(|| format!("checkpoint anchor is not valid hex: {anchor}"))?;
+        if bytes.len() != 32 {
+            return Err(format!("a block hash is 32 bytes, got {}", bytes.len()));
+        }
+        let anchor = Blake2b256Hash::from_byte_array(bytes.as_slice());
+        let digest = self
+            .checkpoint_store
+            .find_by_anchor(&anchor)
+            .await?
+            .ok_or_else(|| {
+                format!(
+                    "this node holds no certificate for anchor {}",
+                    anchor.to_hex()
+                )
+            })?;
+        self.checkpoint_store.get(&digest).await?.ok_or_else(|| {
+            format!(
+                "this node holds no certificate for checkpoint {}",
+                digest.to_hex()
+            )
+        })
+    }
+
     async fn verify_checkpoint_certificate(
         &self,
         certificate: &CheckpointCertificate,

@@ -113,32 +113,48 @@ impl HttpCheckpointSource {
 #[async_trait::async_trait]
 impl CheckpointSource for HttpCheckpointSource {
     async fn fetch_certificate(&self) -> Result<CheckpointCertificate, String> {
+        self.get_certificate(&self.url).await
+    }
+
+    async fn fetch_certificate_at_anchor(
+        &self,
+        anchor: &str,
+    ) -> Result<CheckpointCertificate, String> {
+        // The anchor route is a sibling of the head route, on the same client port and with the
+        // same body shape. A node that restarted behind its peers asks for the certificate that
+        // anchors *its* accepted fringe rather than the head.
+        let url = format!("{}/anchor/{}", self.url, anchor);
+        self.get_certificate(&url).await
+    }
+}
+
+impl HttpCheckpointSource {
+    async fn get_certificate(&self, url: &str) -> Result<CheckpointCertificate, String> {
         let response = self
             .client
-            .get(&self.url)
+            .get(url)
             .send()
             .await
-            .map_err(|e| format!("GET {}: {e}", self.url))?;
+            .map_err(|e| format!("GET {url}: {e}"))?;
         if !response.status().is_success() {
-            return Err(format!("GET {}: status {}", self.url, response.status()));
+            return Err(format!("GET {url}: status {}", response.status()));
         }
         let mut response = response;
         let mut body = Vec::new();
         while let Some(chunk) = response
             .chunk()
             .await
-            .map_err(|e| format!("GET {}: {e}", self.url))?
+            .map_err(|e| format!("GET {url}: {e}"))?
         {
             if body.len() + chunk.len() > MAX_CERTIFICATE_BYTES {
                 return Err(format!(
-                    "GET {}: the certificate exceeds the {MAX_CERTIFICATE_BYTES}-byte cap",
-                    self.url
+                    "GET {url}: the certificate exceeds the {MAX_CERTIFICATE_BYTES}-byte cap"
                 ));
             }
             body.extend_from_slice(&chunk);
         }
         serde_json::from_slice(&body)
-            .map_err(|e| format!("GET {}: not a checkpoint certificate: {e}", self.url))
+            .map_err(|e| format!("GET {url}: not a checkpoint certificate: {e}"))
     }
 }
 

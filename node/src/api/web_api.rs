@@ -134,6 +134,17 @@ pub trait WebApi: Send + Sync {
         ))
     }
 
+    /// `GET /api/v1/checkpoint/anchor/{anchor}` — the stored certificate for a named anchor block.
+    /// A validator restarting behind its peers names an anchor from its own accepted fringe.
+    async fn checkpoint_certificate_at_anchor(
+        &self,
+        _anchor: &str,
+    ) -> Result<CheckpointCertificate, BlockApiException> {
+        Err(BlockApiException::client(
+            "this surface holds no checkpoint certificate by anchor".to_string(),
+        ))
+    }
+
     /// `POST /api/v1/checkpoint/verify` — this node's verifier applied to a caller-supplied
     /// certificate. A refusal is an error; a verdict names the recomputed digest and the stake that
     /// signed it.

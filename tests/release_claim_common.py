@@ -663,7 +663,10 @@ def evaluate_boot_trace(trace: dict) -> dict:
     supporting = _integer(trace.get("served_supporting_stake")) or 0
     total = _integer(trace.get("served_total_stake")) or 0
     verification_ok = genesis_only or not accepted or total <= 0 or 3 * supporting > 2 * total
-    if stage == "decision" and accepted and not genesis_only:
+    if stage == "decision" and not genesis_only:
+        # **A decision trace is written after the agreement decision, so its `accepted` is the
+        # outcome, not an input.** Read the anchor predicates even when the boot refused: a quorate
+        # certificate that does not anchor the accepted fringe is an unsafe point, not a model gap.
         anchor_ok = (trace.get("anchor_closure_present") is True
                      and trace.get("fringe_agrees") is True)
     else:

@@ -99,7 +99,12 @@ def _check_baseline(record: dict) -> tuple[str, list[str]]:
                       if isinstance(t, dict) and str(t.get("validator")) == victim]
                      if isinstance(boot_traces, list) else [])
     if victim_traces:
-        trace = victim_traces[-1]
+        # **The decision trace, not merely the last filename.** The boot writes an acquisition
+        # trace and then a decision trace; the decision is the one that says whether the accepted
+        # fringe was anchored. Trace filenames carry a per-process sequence, so "last by name" can
+        # pick the acquisition trace once the sequence grows past a digit boundary.
+        trace = next((t for t in reversed(victim_traces)
+                      if t.get("stage") == "decision"), victim_traces[-1])
         if str(trace.get("acquisition", "")).startswith("refused"):
             problems.append(
                 f"victim {victim}: the boot decision refused: {trace['acquisition']} "
@@ -275,8 +280,12 @@ def run(argv: list[str]) -> int:
                     reason += " — victim log tail: " + " | ".join(tail[-3:])
             if (certificates_after.get(str(victim)) or {}).get("kind") != "checkpoint":
                 reason += f"; victim {victim} restarted without a verified checkpoint certificate"
-            victim_trace = next((t for t in reversed(boot_traces)
-                                 if str(t.get("validator")) == str(victim)), None)
+            victim_trace = next(
+                (t for t in reversed(boot_traces)
+                 if str(t.get("validator")) == str(victim)
+                 and t.get("stage") == "decision"),
+                next((t for t in reversed(boot_traces)
+                      if str(t.get("validator")) == str(victim)), None))
             if victim_trace:
                 if str(victim_trace.get("acquisition", "")).startswith("refused"):
                     reason += (f"; victim {victim} boot trace: {victim_trace['acquisition']} "
