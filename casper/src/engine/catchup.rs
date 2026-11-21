@@ -125,6 +125,12 @@ pub struct CatchupWindow {
     /// has answered yet" from "the peer is at or behind me": both leave `observed_tip` at/below
     /// `own_tip`, but only the latter is a current view.
     probe_answers: AtomicU64,
+    /// **The floor a deferral-driven walk must start at** (Law 116's deferral arm; RC-4 item C).
+    /// A deferred block can sit *below* the validated frontier — the node validated peers' high
+    /// blocks while its own earlier block was lost — so a walk from the frontier would skip the gap.
+    /// The supervisor records the deferred block's height here before waking the running loop; the
+    /// walk takes it (and clears it) as its starting frontier. `-1` means "no deferral floor".
+    requested_floor: AtomicI64,
 }
 
 impl CatchupWindow {
@@ -135,7 +141,36 @@ impl CatchupWindow {
             own_tip: AtomicI64::new(-1),
             observed_tip: AtomicI64::new(-1),
             probe_answers: AtomicU64::new(0),
+            requested_floor: AtomicI64::new(-1),
         }
+    }
+
+    /// **Request a walk from `floor`** — used when a deferred block's ancestry lies below the
+    /// validated frontier. Keeps the lowest outstanding floor.
+    pub fn request_walk(&self, floor: i64) {
+        let mut current = self.requested_floor.load(Ordering::Relaxed);
+        loop {
+            let next = if current < 0 {
+                floor
+            } else {
+                current.min(floor)
+            };
+            match self.requested_floor.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(now) => current = now,
+            }
+        }
+    }
+
+    /// Take the outstanding deferral floor, if any. The walk is the only reader.
+    pub(crate) fn take_requested_floor(&self) -> Option<i64> {
+        let floor = self.requested_floor.swap(-1, Ordering::Relaxed);
+        (floor >= 0).then_some(floor)
     }
 
     /// A `BlockRange` answer arrived (a probe or a walk answer). The supervisor's boot wait uses the
@@ -241,7 +276,14 @@ pub async fn run_catchup(
     // **The validated frontier, not the metadata maximum.** `latest_block_number` counts every header
     // the node has stored, including blocks a light join restored without validating; a walk that
     // started above them would skip exactly the run it exists to fetch (RC-4 item C, 2026-11-21).
-    let mut frontier = validated_frontier_of(dag.as_ref()).await;
+    //
+    // **A deferral can name a lower floor.** A node that validated peers' high blocks while its own
+    // earlier block was lost reads a high validated frontier; the deferred block's ancestry lies
+    // below it. The supervisor records that floor before waking this walk, and it wins.
+    let mut frontier = match window.take_requested_floor() {
+        Some(floor) => floor,
+        None => validated_frontier_of(dag.as_ref()).await,
+    };
     window.set_own_tip(frontier);
     window.hold(frontier);
     log.info(

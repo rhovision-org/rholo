@@ -256,11 +256,27 @@ async fn validation_within_deadline<T: Send + 'static>(
 /// resolve; that failure is named, so an operator (and the retry sweep) can tell it from a store or
 /// runtime fault. The verdict is unchanged — the block still fails and is still retried.
 fn internal_fault_stage(reason: &str) -> &'static str {
-    if reason.starts_with("missing justification") {
+    // The lookup's own error is wrapped by the summary ("block summary failed: missing
+    // justification <hex>"), so the marker is matched anywhere in the sentence, not at its start.
+    if reason.contains("missing justification") {
         "missing justification"
     } else {
         "validation internal"
     }
+}
+
+/// **The hash a missing-justification error names.** The error text is the only carrier the replay
+/// path provides; the sentence is fixed ("... missing justification <hex>") and the last hex run is
+/// the block. A parse failure returns `None`, and the caller keeps the fault arm — an unparsable
+/// message must still be visible rather than silently deferred.
+fn missing_justification_hash(reason: &str) -> Option<BlockHash> {
+    let marker = "missing justification ";
+    let start = reason.rfind(marker)? + marker.len();
+    let hex: String = reason[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+    BlockHash::try_from_hex(&hex).ok()
 }
 
 /// **A deferral is an obligation, not a fault** (Law 116's deferral arm; RC-4 item C). The body stays
@@ -832,12 +848,30 @@ pub async fn apply<F, Fut>(
                     continue;
                 }
                 Err(ValidateError::Internal(e)) => {
+                    // **A missing justification is a deferral, not a pipeline fault** (Law 116's
+                    // deferral arm; RC-4 item C). It can arrive here when a parent disappears
+                    // between the receiver's dependency check and the replay (a rewind, or a
+                    // re-offer of a stored body), and the fault latch would halt production
+                    // process-wide for a block whose input is merely late. The error names the hash;
+                    // defer, request it, and let the sweep re-offer.
+                    if internal_fault_stage(&e) == "missing justification" {
+                        if let Some(hash) = missing_justification_hash(&e) {
+                            record_deferral(
+                                &disposition,
+                                retriever.as_ref(),
+                                &block,
+                                &[hash],
+                                &log,
+                                source,
+                            )
+                            .await;
+                            continue;
+                        }
+                    }
                     // An `Internal` failure is retryable by the disposition ledger's schedule, not
-                    // droppable. **A `missing justification` should not arrive here** — the
-                    // receiver releases a block only when every parent is in the DAG — but if one
-                    // does, it is named for what it is rather than folded into "validation
-                    // internal", where it is indistinguishable from a store or runtime fault
-                    // (Law 88d).
+                    // droppable. A `missing justification` that cannot name its hash is kept here
+                    // rather than folded into "validation internal", where it is indistinguishable
+                    // from a store or runtime fault (Law 88d).
                     record_block_fault(
                         &disposition,
                         &block,
@@ -1673,6 +1707,22 @@ mod tests {
     /// The pre-replay gate returns the deferral, the durable row is `Deferred`, the process gauge
     /// names the missing hash — and crucially, no pipeline fault is raised: that latch halts
     /// production process-wide, and a transient ancestor gap is an obligation to fetch, not a fault.
+    /// **The missing-justification sentence names the hash the deferral must request.** A parse
+    /// failure keeps the fault arm, so this must be exact.
+    #[test]
+    fn a_missing_justification_error_names_its_hash() {
+        let hash = BlockHash::new([0xab; 32]);
+        let text = format!(
+            "block summary failed: missing justification {}",
+            hash.to_hex()
+        );
+        assert_eq!(missing_justification_hash(&text), Some(hash));
+        assert_eq!(
+            missing_justification_hash("validation internal: store"),
+            None
+        );
+    }
+
     #[tokio::test]
     async fn a_missing_justification_is_deferred_not_failed() {
         use crate::block_disposition::{BlockDisposition, BlockDispositionCodec, PendingStage};

@@ -735,6 +735,27 @@ impl BlockDispositionStore {
         Ok(rows)
     }
 
+    /// **The lowest deferred block height** (Law 116's deferral arm; RC-4 item C), or `None` when
+    /// nothing is deferred. The catch-up supervisor uses it as a walk floor: a deferred block can lie
+    /// *below* the validated frontier (a node that validated peers' high blocks while its own earlier
+    /// block was lost), and a walk from the frontier would skip the gap.
+    pub async fn deferred_floor(&self) -> Result<Option<BlockHeight>, String> {
+        Ok(self
+            .store
+            .to_map()
+            .await?
+            .into_iter()
+            .filter_map(|(_, disposition)| match disposition {
+                BlockDisposition::Pending {
+                    block_number,
+                    stage: PendingStage::Deferred,
+                    ..
+                } => Some(block_number),
+                _ => None,
+            })
+            .min())
+    }
+
     /// The rows whose retry window has opened and whose budget is not spent.
     pub async fn due_retries(
         &self,

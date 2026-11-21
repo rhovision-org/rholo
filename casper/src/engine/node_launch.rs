@@ -1426,6 +1426,7 @@ pub async fn apply<
         comm_util.clone(),
         rp_conf.clone(),
         connections.clone(),
+        block_disposition.clone(),
         log.clone(),
         walk_wake.clone(),
         needs_sync,
@@ -1927,6 +1928,7 @@ fn spawn_catchup_supervisor(
     comm_util: Arc<CommUtil>,
     rp_conf: RPConf,
     connections: ConnectionsCell,
+    ledger: crate::block_disposition::BlockDispositionStore,
     log: Arc<dyn Log>,
     walk_wake: Arc<tokio::sync::Notify>,
     await_first_probe: bool,
@@ -1940,6 +1942,7 @@ fn spawn_catchup_supervisor(
         let mut probe_ticks: u32 = 0;
         let mut boot_probe_ticks: u32 = 0;
         let mut boot_wait_expired = false;
+        let mut deferral_ticks: u32 = 0;
         let mut tick = tokio::time::interval(CATCH_UP_TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -1989,6 +1992,36 @@ fn spawn_catchup_supervisor(
                             },
                         )
                         .await;
+                }
+            }
+
+            // **A deferral is a walk floor** (Law 116's deferral arm; RC-4 item C). A deferred
+            // block's ancestry can lie *below* the validated frontier — a node that validated
+            // peers' high blocks while its own earlier block was lost reads a high `own` — so the
+            // view predicate alone would never ask for the gap. The ledger is the durable signal;
+            // retry the walk every ten ticks while the deferral stands.
+            deferral_ticks = deferral_ticks.saturating_add(1);
+            if !window.is_active() && deferral_ticks >= CATCH_UP_PROBE_TICKS {
+                match ledger.deferred_floor().await {
+                    Ok(Some(height)) => {
+                        deferral_ticks = 0;
+                        window.request_walk(i64::from(height).saturating_sub(1));
+                        log.info(
+                            source,
+                            &format!(
+                                "a deferred block at height {} names ancestry this node lacks; \
+                                 requesting a walk from {}",
+                                i64::from(height),
+                                i64::from(height).saturating_sub(1)
+                            ),
+                        );
+                        walk_wake.notify_one();
+                    }
+                    Ok(None) => deferral_ticks = 0,
+                    Err(e) => log.warn(
+                        source,
+                        &format!("could not read the deferred floor from the ledger: {e}"),
+                    ),
                 }
             }
 
