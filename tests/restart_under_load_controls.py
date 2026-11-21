@@ -165,3 +165,70 @@ def interrupted_restart_verdict(boot_ids, expect, ready_error=None):
             return "the interrupted restart was not detected as a readiness failure"
         return None
     return f"unknown expectation {expect!r}"
+
+
+LIVENESS_WINDOW = 5
+
+
+def catchup_verdict(body):
+    """None iff a health body's catch-up coordinates are internally consistent.
+
+    While `nodePhase` is `catching-up`, `catchUp` must name the node's validated tip (`own`), the
+    observed peer tip (`peerTip`) and the quorum-supported height (`supported`), and the view must
+    be genuinely stale — a catching-up phase whose coordinates are current is a phase that cannot
+    say why it is not serving. A `peerTip` of `-1` means no peer has answered the probe yet (a
+    joined boot before its first probe); it is unknown, not current, and the consistency test is
+    skipped until one arrives.
+    """
+    if not isinstance(body, dict):
+        return "the health body is not an object"
+    if body.get("nodePhase") != "catching-up":
+        return None
+    catchup = body.get("catchUp")
+    if not isinstance(catchup, dict):
+        return "catching-up without a catchUp coordinate"
+    for name in ("own", "peerTip", "supported"):
+        if name not in catchup:
+            return f"the catchUp coordinate is missing {name}"
+        if type(catchup[name]) is not int:
+            return f"catchUp.{name} is not an integer"
+    own = catchup["own"]
+    peer_tip = catchup["peerTip"]
+    if peer_tip < 0:
+        return None
+    if peer_tip - own <= LIVENESS_WINDOW:
+        return (
+            f"catching-up with a current view (own {own}, peerTip {peer_tip}): the phase must "
+            "name a stale view or serve"
+        )
+    return None
+
+
+def catchup_progress_verdict(samples):
+    """None iff a victim that entered catch-up progressed and reached the window.
+
+    `samples` are `{phase, own, peer_height}` taken after the restart. A victim that was ever
+    `catching-up` must have a non-decreasing validated tip, and if the samples end while it is
+    still catching up, its last tip must be within the window of the highest survivor height seen.
+    A victim that reached `running` passes: the phase's own proof is the window. A victim that
+    never entered catch-up passes — an ordinary restart at the tip has nothing to fetch.
+    """
+    caught_up = [s for s in samples if s.get("phase") == "catching-up"]
+    if not caught_up:
+        return None
+    owns = [s.get("own", -1) for s in caught_up]
+    if owns != sorted(owns):
+        return f"the victim's validated tip regressed during catch-up: {owns}"
+    if samples and samples[-1].get("phase") != "catching-up":
+        return None
+    peer_height = max((s.get("peer_height", -1) for s in samples), default=-1)
+    if peer_height < 0:
+        return "no survivor height was sampled"
+    own = caught_up[-1].get("own", -1)
+    if own < 0:
+        return "the catch-up sample named no validated tip"
+    if peer_height - own > LIVENESS_WINDOW:
+        return (
+            f"the victim did not reach the window: own {own} against survivors {peer_height}"
+        )
+    return None

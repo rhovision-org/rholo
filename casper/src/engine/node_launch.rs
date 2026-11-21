@@ -1373,10 +1373,13 @@ pub async fn apply<
                      {supported}"
                 ),
             );
+            // `peer_tip` is `-1` until a probe answer arrives: "no peer has answered" is not the
+            // same as "the peer is at my tip", and `/health` must not claim a coordinate it has
+            // not observed. The supervisor's first probe is load-bearing for a joined boot.
             crate::engine::node_phase::NodePhase::CatchingUp {
                 supported,
                 own,
-                peer_tip: own,
+                peer_tip: -1,
             }
         } else {
             crate::engine::node_phase::NodePhase::Running

@@ -20,7 +20,7 @@ only collects and feeds them.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Event, Thread
 import importlib.util
 import json
 import re
@@ -303,6 +303,32 @@ def run_cycle(args, victim, cycle, events):
         restarted_boot = wait_new_boot(victim, victim_boot, deadline, events)
         record(events, cycle=cycle, killed=victim, killed_at=started_utc, restarted_at=restarted_utc,
                container=before.stdout.strip(), restarted_boot_id=restarted_boot)
+
+        # **The victim's catch-up coordinates, sampled while it rejoins** (RC-4 item A). The phase
+        # must be consistent whenever it says `catching-up`, and a catch-up that does not close is
+        # the silent freeze the continuous supervisor exists to remove. The survivor height is the
+        # validated-height proxy (`height` is one past the observed tip); the predicate only uses it
+        # as a sanity floor on the victim's own validated tip.
+        catchup_samples = []
+        stop_sampling = Event()
+
+        def sample_catchup():
+            while not stop_sampling.is_set():
+                body = health(victim)
+                peer_heights = []
+                for i in range(args.validators):
+                    if i == victim:
+                        continue
+                    peer = health(i)
+                    if isinstance(peer, dict) and type(peer.get("height")) is int:
+                        peer_heights.append(peer["height"] - 1)
+                catchup_samples.append(
+                    {"body": body, "peer_height": max(peer_heights, default=-1)}
+                )
+                time.sleep(1)
+
+        sampler = Thread(target=sample_catchup, daemon=True)
+        sampler.start()
         submitted = []
         for future in futures:
             submitted.extend(future.result(timeout=max(1, deadline - time.monotonic())))
@@ -318,6 +344,27 @@ def run_cycle(args, victim, cycle, events):
     wait_deploys_resolved(args.validators, submitted, deadline, events, last)
     identities = wait_agreement(args.validators, base_height + 3, deadline, events, last)
     record(events, cycle=cycle, final_agreement=identities)
+
+    stop_sampling.set()
+    sampler.join(timeout=5)
+    reading = []
+    for index, sample in enumerate(catchup_samples):
+        body = sample["body"]
+        verdict = controls.catchup_verdict(body)
+        if verdict is not None:
+            raise RuntimeError(f"victim {victim} catch-up sample {index}: {verdict}")
+        catchup = body.get("catchUp") if isinstance(body, dict) else None
+        reading.append(
+            {
+                "phase": body.get("nodePhase") if isinstance(body, dict) else None,
+                "own": catchup.get("own", -1) if isinstance(catchup, dict) else -1,
+                "peer_height": sample["peer_height"],
+            }
+        )
+    progress = controls.catchup_progress_verdict(reading)
+    if progress is not None:
+        raise RuntimeError(f"victim {victim}: {progress}")
+    record(events, cycle=cycle, catchup_samples=reading)
 
     pipelines = {}
     for i in range(args.validators):
