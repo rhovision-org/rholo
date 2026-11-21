@@ -214,12 +214,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "bc260d70d03da98dfcf0694a23b143731b6a36c0a7d8ac6fbf2152bc7ccd4db7",
-          "finished_at": "2026-11-20T19:16:45Z",
+          "binary_sha256": "88a4c7614df98dd3fb6fc0a8039897032f33dd89266321ae21c40bd5eccd61c0",
+          "finished_at": "2026-11-21T09:53:18Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc1-local-20261120-2a1bc85/raw/claim.json",
+          "record": "spec/audit/evidence/rc1-local-20261121-e9508f5/raw/claim.json",
           "required": true,
-          "source_sha": "2a1bc85bb3d3b4a49f6599ebaacbbfbb5d6a235b",
+          "source_sha": "e9508f58c613e87e839de831f08c30cfe3685c59",
           "status": "pass"
         },
         "public": {
@@ -407,12 +407,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "cba8680143aeb7e408f3a9fac68a5472d7efd88aebf572eb9f30310467acded4",
-          "finished_at": "2026-11-20T23:03:23Z",
+          "binary_sha256": "88a4c7614df98dd3fb6fc0a8039897032f33dd89266321ae21c40bd5eccd61c0",
+          "finished_at": "2026-11-21T09:57:45Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc2-local-20261120-81ee948/raw/claim.json",
+          "record": "spec/audit/evidence/rc2-local-20261121-e9508f5/raw/claim.json",
           "required": true,
-          "source_sha": "81ee9480bc4873ea9a1d35ab27e8c267b23d1bd0",
+          "source_sha": "e9508f58c613e87e839de831f08c30cfe3685c59",
           "status": "pass"
         },
         "multi-host": {
@@ -593,12 +593,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
-          "finished_at": "2026-11-20T10:31:58Z",
+          "binary_sha256": "88a4c7614df98dd3fb6fc0a8039897032f33dd89266321ae21c40bd5eccd61c0",
+          "finished_at": "2026-11-21T09:58:32Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc3-local-20261120-0669419/raw/claim.json",
+          "record": "spec/audit/evidence/rc3-local-20261121-e9508f5/raw/claim.json",
           "required": true,
-          "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a",
+          "source_sha": "e9508f58c613e87e839de831f08c30cfe3685c59",
           "status": "pass"
         },
         "public": {
@@ -644,13 +644,13 @@
         "local": {
           "items": [
             {
-              "action": "Capture the victim's `boot-*.json`; the reconnect branch emits it when `RNODE_TRACE_DIR` is set.",
-              "finding": "no decision trace in the record",
-              "item": "RC-4/local/trace"
+              "action": "The boot trace is safe and the victim still did not run: add the missing acquisition or window coordinate to `BootEvidence`.",
+              "finding": "every predicate holds on 1 trace(s), yet the claim failed",
+              "item": "RC-4/local/model"
             }
           ],
           "next_pr": "rc-confirm-local",
-          "reading": "evidence-insufficient",
+          "reading": "model-incomplete",
           "required": true
         },
         "multi-host": {
@@ -787,26 +787,26 @@
           "action": {
             "items": [
               {
-                "action": "Capture the victim's `boot-*.json`; the reconnect branch emits it when `RNODE_TRACE_DIR` is set.",
-                "finding": "no decision trace in the record",
-                "item": "RC-4/local/trace"
+                "action": "The boot trace is safe and the victim still did not run: add the missing acquisition or window coordinate to `BootEvidence`.",
+                "finding": "every predicate holds on 1 trace(s), yet the claim failed",
+                "item": "RC-4/local/model"
               }
             ],
             "next_pr": "rc-confirm-local",
-            "reading": "evidence-insufficient",
+            "reading": "model-incomplete",
             "required": true
           },
-          "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
-          "finished_at": "2026-11-20T12:02:39Z",
+          "binary_sha256": "88a4c7614df98dd3fb6fc0a8039897032f33dd89266321ae21c40bd5eccd61c0",
+          "finished_at": "2026-11-21T10:13:06Z",
           "reasons": [
             "the restart harness did not pass: 'FAIL'",
             "post-recovery heads were not read on every validator",
-            "the victim was not restarted (its boot time did not change)",
-            "evidence-insufficient: the failure carries no decision trace"
+            "victim 1 has no verified checkpoint certificate after restart",
+            "model-incomplete: every predicate holds on the captured traces, yet the bad outcome was observed; the trace is the model gap"
           ],
-          "record": "spec/audit/evidence/rc4-local-20261120-0669419/raw/claim.json",
+          "record": "spec/audit/evidence/rc4-local-20261121-e9508f5/raw/claim.json",
           "required": true,
-          "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a",
+          "source_sha": "e9508f58c613e87e839de831f08c30cfe3685c59",
           "status": "fail"
         },
         "multi-host": {
@@ -970,12 +970,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
-          "finished_at": "2026-11-20T11:21:25Z",
+          "binary_sha256": "88a4c7614df98dd3fb6fc0a8039897032f33dd89266321ae21c40bd5eccd61c0",
+          "finished_at": "2026-11-21T10:01:00Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc5-local-20261120-0669419/raw/claim.json",
+          "record": "spec/audit/evidence/rc5-local-20261121-e9508f5/raw/claim.json",
           "required": true,
-          "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a",
+          "source_sha": "e9508f58c613e87e839de831f08c30cfe3685c59",
           "status": "pass"
         },
         "public": {
@@ -1037,15 +1037,9 @@
           "required": true
         },
         "local": {
-          "items": [
-            {
-              "action": "Pass `RNODE_TRACE_DIR` to `docker exec rnode audit` and copy `audit-*.json`; the trace is written after `check_target`.",
-              "finding": "no decision trace in the record",
-              "item": "RC-6/local/trace"
-            }
-          ],
-          "next_pr": "rc-confirm-local",
-          "reading": "evidence-insufficient",
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
           "required": true
         },
         "off-host": {
@@ -1162,30 +1156,18 @@
         },
         "local": {
           "action": {
-            "items": [
-              {
-                "action": "Pass `RNODE_TRACE_DIR` to `docker exec rnode audit` and copy `audit-*.json`; the trace is written after `check_target`.",
-                "finding": "no decision trace in the record",
-                "item": "RC-6/local/trace"
-              }
-            ],
-            "next_pr": "rc-confirm-local",
-            "reading": "evidence-insufficient",
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
             "required": true
           },
-          "binary_sha256": "d664fc030f1d4bc3d35ddd3414ea39b3aeff8638b14453f2e07460be0e16c0b8",
-          "finished_at": "2026-11-20T11:39:24Z",
-          "reasons": [
-            "rnode audit exited 1: Configuration error: `run` subcommand is required to build a node configuration",
-            "rnode audit verdict is None, not AGREE",
-            "the audit consumed no bodies",
-            "the audit's digest does not equal the joiner's accepted digest",
-            "evidence-insufficient: the failure carries no decision trace"
-          ],
-          "record": "spec/audit/evidence/rc6-local-20261120-0669419/raw/claim.json",
+          "binary_sha256": "88a4c7614df98dd3fb6fc0a8039897032f33dd89266321ae21c40bd5eccd61c0",
+          "finished_at": "2026-11-21T10:03:25Z",
+          "reasons": [],
+          "record": "spec/audit/evidence/rc6-local-20261121-e9508f5/raw/claim.json",
           "required": true,
-          "source_sha": "066941917e1b066b2a704141d1904be8329e1f7a",
-          "status": "fail"
+          "source_sha": "e9508f58c613e87e839de831f08c30cfe3685c59",
+          "status": "pass"
         },
         "off-host": {
           "action": {
