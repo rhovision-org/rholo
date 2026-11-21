@@ -82,12 +82,12 @@ def _check_baseline(record: dict) -> tuple[str, list[str]]:
         # agree on a finalised head, not that they are sampled at the same instant: the lowest head
         # read must be reported finalised by every validator. A differing *higher* head is a node
         # that has finalised one more block while the reads were in flight, not a split.
-        common = observations.get("post_common_head") or {}
-        if common.get("on_every_validator") is not True:
+        common_head = observations.get("post_common_head") or {}
+        if common_head.get("on_every_validator") is not True:
             problems.append(
                 f"validators disagree on the post-recovery finalised head: {identities} "
-                f"(the lowest head {common.get('height')}:{common.get('hash')} is not finalised on "
-                "every validator)")
+                f"(the lowest head {common_head.get('height')}:{common_head.get('hash')} is not "
+                "finalised on every validator)")
     for row in heads:
         if not isinstance(row, dict):
             problems.append("post-head row is not an object")
