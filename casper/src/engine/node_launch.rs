@@ -1438,9 +1438,9 @@ pub async fn apply<
         rp_conf.clone(),
         block_store.clone(),
         dag.clone(),
-        block_retriever,
+        block_retriever.clone(),
         log.clone(),
-        validator_identity_opt,
+        validator_identity_opt.clone(),
         incoming_blocks,
         exporter,
         disable_state_exporter,
@@ -1450,6 +1450,20 @@ pub async fn apply<
     ));
     let consumer_slots =
         std::sync::Arc::new(tokio::sync::Semaphore::new(max_message_consumers.max(1)));
+    // **A signature the DAG forgot is reconciled from the network** (Law 122, RC-4 HAZOP J8). The
+    // durable record names the block that carried the validator's last signed sequence; a rewind
+    // may have dropped it. Asking the peers for exactly that block either re-adopts it (the
+    // snapshot then reaches the record and the proposer proceeds) or establishes that the network
+    // dropped that branch — in which case the record protects nothing and is retired, rather than
+    // halting the validator for ever.
+    if let Some(identity) = validator_identity_opt.as_ref() {
+        spawn_own_record_reconciler(
+            dag.clone(),
+            block_retriever.clone(),
+            rchain_models::validator::Validator::from_slice(identity.public_key.bytes()),
+            log.clone(),
+        );
+    }
     log.info(source, "Making a transition to Running state.");
 
     // **The anchor this running phase walks to**: the operator's at boot, or the one a reset rewound to.
@@ -1890,6 +1904,102 @@ fn spawn_catch_up_watchdog(
                 phase.set_phase(crate::engine::node_phase::NodePhase::Blocked(reason));
                 return;
             }
+        }
+    });
+}
+
+/// How often the own-record reconciler asks the peers for the block it signed.
+const OWN_RECORD_TICK: Duration = Duration::from_secs(2);
+
+/// **How many asks before the record is retired.** At 2 s an ask, this is a minute of the peers'
+/// answers — long enough for a catch-up walk and a gossip round to deliver a block any peer holds,
+/// short enough that a validator whose branch the network dropped resumes instead of halting.
+const OWN_RECORD_ATTEMPTS: u32 = 30;
+
+/// **Reconcile the durable own-sequence record with the network** (Law 122; RC-4 HAZOP J8).
+///
+/// The record names the block that carried this validator's last signed sequence. After a rewind
+/// that block may be gone locally. Three outcomes, all bounded and named:
+///
+/// * the DAG already holds it (the catch-up walk re-adopted it) → nothing to do;
+/// * a peer serves it → the DAG adopts it, the round snapshot reaches the record, and the proposer
+///   resumes above it — this is the case where re-signing would have been a slashable duplicate;
+/// * no answering peer serves it → the signature is on a branch the network dropped. The record
+///   protects nothing; it is **retired** and the proposer derives from the snapshot. The residual
+///   risk is a peer that holds the block but never answered (disconnected for the whole minute);
+///   the alternative — waiting on a record the network cannot satisfy — is a permanent halt, which
+///   the RC-4 drill measured as "the victim did not propose after restart".
+fn spawn_own_record_reconciler(
+    dag: Arc<dyn BlockDagStorage>,
+    retriever: Arc<BlockRetriever>,
+    validator: rchain_models::validator::Validator,
+    log: Arc<dyn Log>,
+) {
+    tokio::spawn(async move {
+        let source = LogSource::new("casper.engine.NodeLaunch");
+        let record = match dag.read_own_latest().await {
+            Ok(record) => record,
+            Err(error) => {
+                log.error(
+                    source,
+                    &format!("the own-latest record could not be read at boot: {error}"),
+                );
+                return;
+            }
+        };
+        let Some((height, seq, hash)) = record else {
+            return;
+        };
+        let own_seen = {
+            let repr = dag.get_representation().await;
+            repr.dag_message_state
+                .latest_msgs
+                .get(&validator)
+                .map(|message| message.sender_seq)
+        };
+        if own_seen.is_some_and(|seen| seq <= seen) {
+            return;
+        }
+        for _ in 0..OWN_RECORD_ATTEMPTS {
+            if dag.get_representation().await.dag_set.contains(&hash) {
+                log.info(
+                    source,
+                    &format!(
+                        "own record reconciled: the block signed at sequence {} (height {}) is in \
+                         the DAG",
+                        i64::from(seq),
+                        i64::from(height)
+                    ),
+                );
+                return;
+            }
+            retriever.request_missing_dependency(&hash).await;
+            tokio::time::sleep(OWN_RECORD_TICK).await;
+        }
+        if dag.get_representation().await.dag_set.contains(&hash) {
+            return;
+        }
+        match dag.clear_own_latest().await {
+            Ok(()) => log.warn(
+                source,
+                &format!(
+                    "own record retired: sequence {} (height {}, block {}) was asked of every \
+                     answering peer for {} attempts and none serves it; the network dropped that \
+                     branch, so the proposer derives from the round snapshot",
+                    i64::from(seq),
+                    i64::from(height),
+                    hash.to_hex(),
+                    OWN_RECORD_ATTEMPTS
+                ),
+            ),
+            Err(error) => log.error(
+                source,
+                &format!(
+                    "own record could not be retired ({error}); the proposer will keep waiting on \
+                     sequence {}",
+                    i64::from(seq)
+                ),
+            ),
         }
     });
 }

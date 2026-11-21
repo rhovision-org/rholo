@@ -1495,7 +1495,7 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
 
     /// **The validator's own signed sequence** (Law 122), `"height:seq"` under its own key in the
     /// durable-records store. Monotone by construction: the writer only ever raises it.
-    async fn read_own_latest(&self) -> Result<Option<(BlockHeight, SeqNum)>, String> {
+    async fn read_own_latest(&self) -> Result<Option<(BlockHeight, SeqNum, BlockHash)>, String> {
         let Some(store) = &self.reset_marker else {
             return Ok(None);
         };
@@ -1510,22 +1510,33 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         };
         let text = String::from_utf8(bytes)
             .map_err(|e| format!("the own-latest record is not UTF-8: {e}"))?;
-        let (height, seq) = text
-            .split_once(':')
-            .ok_or_else(|| format!("the own-latest record is malformed: {text:?}"))?;
+        let mut fields = text.split(':');
+        let (Some(height), Some(seq), Some(hash), None) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            return Err(format!("the own-latest record is malformed: {text:?}"));
+        };
         let height = height
             .parse::<i64>()
             .map_err(|e| format!("the own-latest height is not an integer: {e}"))?;
         let seq = seq
             .parse::<i64>()
             .map_err(|e| format!("the own-latest sequence is not an integer: {e}"))?;
+        let hash = BlockHash::try_from_hex(hash)
+            .map_err(|e| format!("the own-latest block hash is malformed: {e}"))?;
         Ok(Some((
             BlockHeight::try_from(height).map_err(|e| e.to_string())?,
             SeqNum::try_from(seq).map_err(|e| e.to_string())?,
+            hash,
         )))
     }
 
-    async fn write_own_latest(&self, height: BlockHeight, seq: SeqNum) -> Result<(), String> {
+    async fn write_own_latest(
+        &self,
+        height: BlockHeight,
+        seq: SeqNum,
+        hash: BlockHash,
+    ) -> Result<(), String> {
         let Some(store) = &self.reset_marker else {
             return Err(
                 "this DAG storage has no durable-records store attached, so this validator cannot \
@@ -1533,11 +1544,23 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
                     .to_string(),
             );
         };
-        let record = format!("{}:{}", i64::from(height), i64::from(seq)).into_bytes();
+        let record =
+            format!("{}:{}:{}", i64::from(height), i64::from(seq), hash.to_hex()).into_bytes();
         store
             .put(&[(OWN_LATEST_KEY.to_vec(), record)])
             .await
             .map_err(|e| format!("the own-latest record could not be written: {e}"))
+    }
+
+    async fn clear_own_latest(&self) -> Result<(), String> {
+        let Some(store) = &self.reset_marker else {
+            return Ok(());
+        };
+        store
+            .delete(&[OWN_LATEST_KEY.to_vec()])
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("the own-latest record could not be cleared: {e}"))
     }
 
     async fn read_legacy_body_scan_marker(&self) -> Result<Option<u8>, String> {
@@ -2412,6 +2435,37 @@ mod tests {
 
     async fn build_storage() -> Arc<BlockDagKeyValueStorage> {
         build_storage_over(empty_metadata_store().await).await
+    }
+
+    /// **The own-sequence record round-trips and clears** (Law 122). It is the one memory a rewind
+    /// cannot drop: `height:seq:hash` under its own key. The reconciliation clears it only after
+    /// every answering peer has failed to serve the block — the retirement the drill required when
+    /// the record's branch was the one the network dropped.
+    #[tokio::test]
+    async fn the_own_sequence_record_round_trips_and_clears() {
+        let height = |v: i64| BlockHeight::try_from(v).expect("non-negative");
+        let seq = |v: i64| SeqNum::try_from(v).expect("non-negative");
+        let storage = build_storage().await;
+        assert_eq!(
+            storage.read_own_latest().await.expect("read"),
+            None,
+            "an empty store has no record"
+        );
+        let hash = BlockHash::new([7u8; 32]);
+        storage
+            .write_own_latest(height(155), seq(152), hash)
+            .await
+            .expect("write");
+        assert_eq!(
+            storage.read_own_latest().await.expect("read"),
+            Some((height(155), seq(152), hash))
+        );
+        storage.clear_own_latest().await.expect("clear");
+        assert_eq!(
+            storage.read_own_latest().await.expect("read"),
+            None,
+            "a retired record is gone, not zeroed"
+        );
     }
 
     /// **A rewind takes the node back to the anchor, in the view every dependency check reads.**

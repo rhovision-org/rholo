@@ -685,23 +685,36 @@ pub trait BlockDagStorage: Send + Sync {
         Ok(())
     }
 
-    /// **The highest `(height, seq)` this validator has signed** (Law 122). The default answers
-    /// `None` — a fixture with no durable store never signed with this backend.
-    async fn read_own_latest(&self) -> Result<Option<(BlockHeight, SeqNum)>, String> {
+    /// **The highest `(height, seq, block)` this validator has signed** (Law 122). The default
+    /// answers `None` — a fixture with no durable store never signed with this backend.
+    async fn read_own_latest(&self) -> Result<Option<(BlockHeight, SeqNum, BlockHash)>, String> {
         Ok(None)
     }
 
-    /// **Record the sequence before the proposal is broadcast.** The default **refuses**, for
+    /// **Record the signature before the proposal is broadcast.** The default **refuses**, for
     /// `write_reset_marker`'s reason and one sharper: a node that cannot remember selecting this
     /// sequence would derive it from the round snapshot again after a rewind, and the network would
     /// see two blocks at one sequence — an equivocation, deliberately slashable. Refusing to sign
     /// is the safe answer.
-    async fn write_own_latest(&self, _height: BlockHeight, _seq: SeqNum) -> Result<(), String> {
+    async fn write_own_latest(
+        &self,
+        _height: BlockHeight,
+        _seq: SeqNum,
+        _hash: BlockHash,
+    ) -> Result<(), String> {
         Err(
             "this DAG storage cannot record the validator's own signed sequence, so it must not \
              propose (Law 122)"
                 .to_string(),
         )
+    }
+
+    /// **Forget the record when its block is unreachable.** A signature on a branch the network
+    /// dropped is not a sequence that can ever be used again; once every peer has been asked for
+    /// that block and none serves it, the record protects nothing and waiting on it is a permanent
+    /// halt. The default does nothing — a backend with no record has nothing to clear.
+    async fn clear_own_latest(&self) -> Result<(), String> {
+        Ok(())
     }
 
     /// **Has this store been walked for pre-ledger bodies?** The default answers *no*: a backend

@@ -123,7 +123,7 @@ impl BlockCreator {
             signed,
             signed_height,
             snapshot,
-        } = own_seq_decision(durable, snapshot_seq)
+        } = own_seq_decision(durable.map(|(height, seq, _)| (height, seq)), snapshot_seq)
         {
             return Ok(BlockCreatorResult::OwnSeqNotReconciled {
                 signed,
@@ -241,8 +241,11 @@ impl BlockCreator {
                     .map_err(|e| e.to_string())?;
                 // **The record is written before the block leaves this function** (Law 122). The
                 // proposer validates and broadcasts what is returned, so a write failure refuses
-                // the proposal rather than allowing a signature the node cannot remember.
-                dag.write_own_latest(block_num, seq_num).await?;
+                // the proposal rather than allowing a signature the node cannot remember. The
+                // block's hash travels with it: the boot reconciles by asking peers for exactly
+                // this block, and can retire the record when no peer serves it.
+                dag.write_own_latest(block_num, seq_num, signed_block.block_hash)
+                    .await?;
                 Ok(BlockCreatorResult::Created(signed_block))
             }
         }

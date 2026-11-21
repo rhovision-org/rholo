@@ -7550,7 +7550,8 @@ def lawsC : List Law := [
     rust := ["casper/src/blocks/proposer/block_creator.rs",
       "block-storage/src/dag/dag_storage.rs"],
     rustWitness := [
-      "casper/src/blocks/proposer/block_creator.rs:the_own_sequence_record_refuses_a_sequence_already_signed"],
+      "casper/src/blocks/proposer/block_creator.rs:the_own_sequence_record_refuses_a_sequence_already_signed",
+      "casper/src/dag.rs:the_own_sequence_record_round_trips_and_clears"],
     witness := [`Rchain.OwnSeq.law122, `Rchain.OwnSeq.law122_falsifier],
     falsifiable := "Use `nextSeqUnchecked` — the round snapshot alone, which is the Rust derivation \
       before this law. With the record at sequence 152 and the snapshot at 151 it returns 152: a \
