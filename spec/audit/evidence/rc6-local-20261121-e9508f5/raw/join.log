@@ -1,0 +1,5 @@
+chain at {'n457join-bootstrap': 28, 'n457join-validator-1': 28, 'n457join-validator-2': 28}; bootstrap finalized 24 (9bf8e1f6e44a)
+== reset n457join-validator-3 (empty store, passive replicator, no key)
+== passive replica caught up in 19.7s; activating its key
+(passive-then-activate) in 4.4s: round=31, anchor 26 (d397eebce7ed, held by bootstrap=True); sync=None; sync failures=0; self-equivocations=0; halted=False; proposed=2; after-halt=0; late-after-halt=0
+ok: evidence at target/rc-confirm/RC-6/join/mature-join.json

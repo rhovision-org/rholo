@@ -1,0 +1,44 @@
+
+running 1 test
+test api::grpc::tonic::tests::m2_grpc_pressure_observes_the_ingress_and_pool_bounds ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 444 filtered out; finished in 0.01s
+
+ing icu_provider v2.3.0
+   Compiling x509-parser v0.18.1
+   Compiling icu_properties v2.3.0
+   Compiling icu_normalizer v2.3.0
+   Compiling futures-executor v0.3.34
+   Compiling futures v0.3.34
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling url v2.5.8
+   Compiling tokio-util v0.7.19
+   Compiling rchain-shared v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/shared)
+   Compiling tokio-stream v0.1.19
+   Compiling tokio-rustls v0.26.6
+   Compiling tower-http v0.7.1
+   Compiling tokio-tungstenite v0.30.0
+   Compiling h2 v0.4.16
+   Compiling tower v0.5.3
+   Compiling rchain-crypto v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/crypto)
+   Compiling rchain-sdk v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/sdk)
+   Compiling tower-http v0.6.11
+   Compiling rchain-rspace v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rspace)
+   Compiling hyper v1.11.0
+   Compiling hyper-util v0.1.21
+   Compiling axum v0.8.9
+   Compiling hyper-timeout v0.5.2
+   Compiling hyper-rustls v0.27.9
+   Compiling reqwest v0.12.28
+   Compiling tonic v0.14.9
+   Compiling tonic-prost v0.14.9
+   Compiling rchain-block-storage v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/block-storage)
+   Compiling rchain-comm v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/comm)
+   Compiling rchain-rholang v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/rholang)
+   Compiling rchain-ocapn v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/ocapn)
+   Compiling rchain-casper v0.1.0 (/home/patrick/RNodeRust/.claude/worktrees/pr-567/casper)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 59s
+warning: the following packages contain code that will be rejected by a future version of Rust: nom v4.2.3
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/debug/deps/rchain_node-af3286a78d2d4963)

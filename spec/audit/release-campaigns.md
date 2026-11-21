@@ -28,7 +28,7 @@ cannot yet be made. No status is authored.
 | `RC-3` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-3` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
 | `RC-3` | `availability` | public | public-live | **not-observed** | Run the finalised-block availability sweep on the public fleet: every finalised body and finalised-head state from every validator. | `rc-public-fleet` |
-| `RC-4` | `local` | local | local-devnet | **evidence-insufficient** | Capture the victim's `boot-*.json`; the reconnect branch emits it when `RNODE_TRACE_DIR` is set. | `rc-confirm-local` |
+| `RC-4` | `local` | local | local-devnet | **model-incomplete** | The boot trace is safe and the victim still did not run: add the missing acquisition or window coordinate to `BootEvidence`. | `rc-confirm-local` |
 | `RC-4` | `public` | public | public-live | **not-observed** | Run the operator's real host stop on the public fleet. | `rc-public-fleet` |
 | `RC-4` | `multi-host` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm multi-host` and commit its record; the arm's harness lands in `rc-multi-host`. | `rc-multi-host` |
 | `RC-4` | `failover` | local | off-host-claim | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm failover` and commit its record; the arm's harness lands in `rc-failover`. | `rc-failover` |
@@ -36,7 +36,7 @@ cannot yet be made. No status is authored.
 | `RC-5` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-5` | `public` | public | public-live | **not-observed** | Supply the capped/unset pressure record from the public endpoint and proxy. | `rc-public-fleet` |
 | `RC-5` | `transport` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-5 --arm transport` and commit its record; the arm's harness lands in `rc-transport`. | `rc-transport` |
-| `RC-6` | `local` | local | local-devnet | **evidence-insufficient** | Pass `RNODE_TRACE_DIR` to `docker exec rnode audit` and copy `audit-*.json`; the trace is written after `check_target`. | `rc-confirm-local` |
+| `RC-6` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-6` | `public` | public | public-live | **not-observed** | Supply the operator's completed public join record. | `rc-public-fleet` |
 | `RC-6` | `off-host` | local | off-host-claim | **not-observed** | Run `python3 tools/release-check.py run --claim RC-6 --arm off-host` and commit its record; the arm's harness lands in `rc-offhost`. | `rc-offhost` |
 | `RC-6` | `availability` | public | public-live | **not-observed** | Bootstrap a joiner from a non-producer on the public fleet, restore the served anchor and audit it. | `rc-public-fleet` |
@@ -87,7 +87,7 @@ cannot yet be made. No status is authored.
 
 **Arm `local`** (local, `local-devnet`) — the acceptance drill retains a confirmed marker through two further epoch boundaries
 
-Reading: `safe` — spec/audit/evidence/rc1-local-20261120-2a1bc85/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc1-local-20261121-e9508f5/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — the same settlement and retention reading on the four-host public fleet
@@ -134,7 +134,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — partition/rejoin with a producing victim; containment and no regression
 
-Reading: `safe` — spec/audit/evidence/rc2-local-20261120-81ee948/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc2-local-20261121-e9508f5/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — the operator's partition window on the public fleet
@@ -193,7 +193,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — state agreement across a merge on the local four-validator devnet
 
-Reading: `safe` — spec/audit/evidence/rc3-local-20261120-0669419/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc3-local-20261121-e9508f5/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — state agreement on the public fleet
@@ -240,13 +240,13 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — restart under load: accepted work survives and the victim rejoins
 
-Reading: `evidence-insufficient` — spec/audit/evidence/rc4-local-20261120-0669419/raw/claim.json
-- `RC-4/local/trace` — no decision trace in the record. **Next:** Capture the victim's `boot-*.json`; the reconnect branch emits it when `RNODE_TRACE_DIR` is set.
+Reading: `model-incomplete` — spec/audit/evidence/rc4-local-20261121-e9508f5/raw/claim.json
+- `RC-4/local/model` — every predicate holds on 1 trace(s), yet the claim failed. **Next:** The boot trace is safe and the victim still did not run: add the missing acquisition or window coordinate to `BootEvidence`.
 - Next PR: `rc-confirm-local`
   - observed: the restart harness did not pass: 'FAIL'
   - observed: post-recovery heads were not read on every validator
-  - observed: the victim was not restarted (its boot time did not change)
-  - observed: evidence-insufficient: the failure carries no decision trace
+  - observed: victim 1 has no verified checkpoint certificate after restart
+  - observed: model-incomplete: every predicate holds on the captured traces, yet the bad outcome was observed; the trace is the model gap
 
 **Arm `public`** (public, `public-live`) — a real host stop on the public fleet
 
@@ -304,7 +304,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — capped and unset pressure on the local node
 
-Reading: `safe` — spec/audit/evidence/rc5-local-20261120-0669419/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc5-local-20261121-e9508f5/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — pressure on the public endpoint and proxy
@@ -351,13 +351,8 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — genesis join and audit on the local devnet
 
-Reading: `evidence-insufficient` — spec/audit/evidence/rc6-local-20261120-0669419/raw/claim.json
-- `RC-6/local/trace` — no decision trace in the record. **Next:** Pass `RNODE_TRACE_DIR` to `docker exec rnode audit` and copy `audit-*.json`; the trace is written after `check_target`.
-- Next PR: `rc-confirm-local`
-  - observed: rnode audit exited 1: Configuration error: `run` subcommand is required to build a node configuration
-  - observed: rnode audit verdict is None, not AGREE
-  - observed: the audit consumed no bodies
-  - observed: the audit's digest does not equal the joiner's accepted digest
+Reading: `safe` — spec/audit/evidence/rc6-local-20261121-e9508f5/raw/claim.json
+- No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — a public join and audit
 

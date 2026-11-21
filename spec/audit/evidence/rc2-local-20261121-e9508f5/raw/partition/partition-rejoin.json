@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "gate_id": "G428-M4",
+  "validators": 4,
+  "cycles": [
+    {
+      "cycle": 1,
+      "victim_index": 3,
+      "producing_victim": true,
+      "anchor": {
+        "hash": "ad48d27881b7c2e356bcb3f057462060d6eae823247010fa6caa6bc706fa0ec9",
+        "height": 42
+      },
+      "dwell": {
+        "samples": 3,
+        "stable": true
+      },
+      "window": {
+        "seconds": 270
+      },
+      "anchor_retention": [
+        {
+          "node": 0,
+          "finalized_anchor": true
+        },
+        {
+          "node": 1,
+          "finalized_anchor": true
+        },
+        {
+          "node": 2,
+          "finalized_anchor": true
+        },
+        {
+          "node": 3,
+          "finalized_anchor": true
+        }
+      ],
+      "validators": [
+        {
+          "node": 0,
+          "finalized_anchor": true
+        },
+        {
+          "node": 1,
+          "finalized_anchor": true
+        },
+        {
+          "node": 2,
+          "finalized_anchor": true
+        },
+        {
+          "node": 3,
+          "finalized_anchor": true
+        }
+      ],
+      "rejoined": true,
+      "epoch_boundary_crossed": true,
+      "phase": "retention",
+      "failure_class": null
+    },
+    {
+      "cycle": 2,
+      "victim_index": 1,
+      "producing_victim": true,
+      "anchor": {
+        "hash": "942037a9bfc87d269c9f612f02958361a63d5e6ffc3b3cb5bce35fdd604a9c82",
+        "height": 60
+      },
+      "dwell": {
+        "samples": 3,
+        "stable": true
+      },
+      "window": {
+        "seconds": 270
+      },
+      "anchor_retention": [
+        {
+          "node": 0,
+          "finalized_anchor": true
+        },
+        {
+          "node": 1,
+          "finalized_anchor": true
+        },
+        {
+          "node": 2,
+          "finalized_anchor": true
+        },
+        {
+          "node": 3,
+          "finalized_anchor": true
+        }
+      ],
+      "validators": [
+        {
+          "node": 0,
+          "finalized_anchor": true
+        },
+        {
+          "node": 1,
+          "finalized_anchor": true
+        },
+        {
+          "node": 2,
+          "finalized_anchor": true
+        },
+        {
+          "node": 3,
+          "finalized_anchor": true
+        }
+      ],
+      "rejoined": true,
+      "epoch_boundary_crossed": true,
+      "phase": "retention",
+      "failure_class": null
+    }
+  ]
+}

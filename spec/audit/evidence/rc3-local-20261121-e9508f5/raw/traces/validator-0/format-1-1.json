@@ -1,0 +1,11 @@
+{
+  "kind": "format",
+  "stage": "check",
+  "present": null,
+  "build": 4,
+  "on_disk": null,
+  "decision": "stamp",
+  "stamped": true,
+  "durable": true,
+  "marker_path": "/var/lib/rnode/store-format"
+}
