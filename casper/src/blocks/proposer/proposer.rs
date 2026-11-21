@@ -777,6 +777,23 @@ impl Proposer {
                 },
                 None,
             )),
+            // **Never sign below the record** (Law 122). A durable sequence the DAG no longer holds
+            // means the catch-up has not re-adopted this validator's own block; waiting is the only
+            // safe transition — the duplicate would be an equivocation the network slashes.
+            BlockCreatorResult::OwnSeqNotReconciled {
+                signed,
+                signed_height,
+                snapshot,
+            } => Ok((
+                ProposeResult {
+                    propose_status: ProposeStatus::OwnSeqNotReconciled {
+                        signed,
+                        signed_height,
+                        snapshot,
+                    },
+                },
+                None,
+            )),
             // **No private chain.** A node that has fallen more than the policy bound behind
             // finality must not keep extending a chain no peer has accepted. The status is the one
             // that already existed but had no producer; the node-level gate turns it into a halt

@@ -92,6 +92,7 @@ import Rchain.Pos
 import Rchain.Liveness
 import Rchain.Join
 import Rchain.JoinCatchUp
+import Rchain.OwnSeq
 import Rchain.Casper.Lifecycle
 import Rchain.Casper.FringeState
 import Rchain.Casper.MergeAccounting

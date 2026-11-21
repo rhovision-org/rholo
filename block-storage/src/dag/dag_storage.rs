@@ -12,7 +12,7 @@ use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
 use rchain_shared::lock::Unpoison;
-use rchain_shared::refined::BlockHeight;
+use rchain_shared::refined::{BlockHeight, SeqNum};
 
 use super::representation::DagRepresentation;
 
@@ -59,6 +59,16 @@ pub enum ResetPhase {
 /// The reset marker's one key: a literal, not a block hash, so it cannot collide with a block entry
 /// (LMDB refuses an empty key, which is why it is not the empty string).
 pub const RESET_MARKER_KEY: &[u8] = b"last-reset";
+
+/// **The validator's own signed-sequence record** (Law 122): `"height:seq"`, the highest sequence
+/// this node has signed, written before the proposal is broadcast.
+///
+/// It exists because a rewind is allowed to drop the block that carried the signature. The round
+/// snapshot then names an older sequence, and a proposer deriving from it alone signs the same
+/// number twice — which the network, correctly, reads as an equivocation and slashes. Measured on
+/// the RC-4 drill (2026-11-21): a light-joined validator re-signed sequence 152, was slashed 100%,
+/// and the chain lost a bond.
+pub const OWN_LATEST_KEY: &[u8] = b"own-latest";
 
 impl ResetMarker {
     /// Anchor (32) ++ height (big-endian i64, 8) ++ phase (1). Fixed width, so a decode cannot be
@@ -673,6 +683,25 @@ pub trait BlockDagStorage: Send + Sync {
     /// same reason the read answers `None`: a backend with no marker has nothing to clear.
     async fn clear_reset_marker(&self) -> Result<(), String> {
         Ok(())
+    }
+
+    /// **The highest `(height, seq)` this validator has signed** (Law 122). The default answers
+    /// `None` — a fixture with no durable store never signed with this backend.
+    async fn read_own_latest(&self) -> Result<Option<(BlockHeight, SeqNum)>, String> {
+        Ok(None)
+    }
+
+    /// **Record the sequence before the proposal is broadcast.** The default **refuses**, for
+    /// `write_reset_marker`'s reason and one sharper: a node that cannot remember selecting this
+    /// sequence would derive it from the round snapshot again after a rewind, and the network would
+    /// see two blocks at one sequence — an equivocation, deliberately slashable. Refusing to sign
+    /// is the safe answer.
+    async fn write_own_latest(&self, _height: BlockHeight, _seq: SeqNum) -> Result<(), String> {
+        Err(
+            "this DAG storage cannot record the validator's own signed sequence, so it must not \
+             propose (Law 122)"
+                .to_string(),
+        )
     }
 
     /// **Has this store been walked for pre-ledger bodies?** The default answers *no*: a backend

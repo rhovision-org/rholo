@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use rchain_block_storage::dag::dag_storage::{
     BlockDagStorage, DeployId, DeployIdPermit, DeployPermit, DeployerLookup, HaltRecord,
     HealthCounters, ResetMarker, SelfReplayRecord, HALT_RECORD_KEY, HEALTH_COUNTERS_KEY,
-    LEGACY_BODY_SCAN_KEY, RESET_MARKER_KEY, SELF_REPLAY_RECORD_KEY,
+    LEGACY_BODY_SCAN_KEY, OWN_LATEST_KEY, RESET_MARKER_KEY, SELF_REPLAY_RECORD_KEY,
 };
 
 use rchain_block_storage::dag::finalizer::Message;
@@ -1491,6 +1491,53 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         let marker = raw.map(|bytes| ResetMarker::decode(&bytes)).transpose()?;
         crate::interpreter_util::note_reset_marker(marker.clone());
         Ok(marker)
+    }
+
+    /// **The validator's own signed sequence** (Law 122), `"height:seq"` under its own key in the
+    /// durable-records store. Monotone by construction: the writer only ever raises it.
+    async fn read_own_latest(&self) -> Result<Option<(BlockHeight, SeqNum)>, String> {
+        let Some(store) = &self.reset_marker else {
+            return Ok(None);
+        };
+        let raw = store
+            .get(&[OWN_LATEST_KEY.to_vec()])
+            .await?
+            .into_iter()
+            .next()
+            .flatten();
+        let Some(bytes) = raw else {
+            return Ok(None);
+        };
+        let text = String::from_utf8(bytes)
+            .map_err(|e| format!("the own-latest record is not UTF-8: {e}"))?;
+        let (height, seq) = text
+            .split_once(':')
+            .ok_or_else(|| format!("the own-latest record is malformed: {text:?}"))?;
+        let height = height
+            .parse::<i64>()
+            .map_err(|e| format!("the own-latest height is not an integer: {e}"))?;
+        let seq = seq
+            .parse::<i64>()
+            .map_err(|e| format!("the own-latest sequence is not an integer: {e}"))?;
+        Ok(Some((
+            BlockHeight::try_from(height).map_err(|e| e.to_string())?,
+            SeqNum::try_from(seq).map_err(|e| e.to_string())?,
+        )))
+    }
+
+    async fn write_own_latest(&self, height: BlockHeight, seq: SeqNum) -> Result<(), String> {
+        let Some(store) = &self.reset_marker else {
+            return Err(
+                "this DAG storage has no durable-records store attached, so this validator cannot \
+                 remember the sequence it signed — refusing to propose (Law 122)"
+                    .to_string(),
+            );
+        };
+        let record = format!("{}:{}", i64::from(height), i64::from(seq)).into_bytes();
+        store
+            .put(&[(OWN_LATEST_KEY.to_vec(), record)])
+            .await
+            .map_err(|e| format!("the own-latest record could not be written: {e}"))
     }
 
     async fn read_legacy_body_scan_marker(&self) -> Result<Option<u8>, String> {

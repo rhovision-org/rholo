@@ -41,6 +41,42 @@ type StateTransitionResult = (
     Vec<SystemDeployRuntimeResult>,
 );
 
+/// **The own-sequence decision** (Law 122), pure so the boundary is testable without a runtime.
+///
+/// `durable` is the highest `(height, seq)` this validator has signed, from the DAG's durable
+/// record; `snapshot` is the sequence the round snapshot holds for this validator. The proposer may
+/// proceed only when the snapshot has caught up to the record — otherwise its next number would
+/// duplicate a signature the network already has, and the network slashes a duplicate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OwnSeqDecision {
+    Proceed,
+    Wait {
+        signed: i64,
+        signed_height: i64,
+        snapshot: Option<i64>,
+    },
+}
+
+pub(crate) fn own_seq_decision(
+    durable: Option<(BlockHeight, SeqNum)>,
+    snapshot: Option<SeqNum>,
+) -> OwnSeqDecision {
+    match durable {
+        None => OwnSeqDecision::Proceed,
+        Some((height, seq)) => {
+            if snapshot.is_some_and(|seen| seq <= seen) {
+                OwnSeqDecision::Proceed
+            } else {
+                OwnSeqDecision::Wait {
+                    signed: i64::from(seq),
+                    signed_height: i64::from(height),
+                    snapshot: snapshot.map(i64::from),
+                }
+            }
+        }
+    }
+}
+
 impl BlockCreator {
     /// Create (and sign) a block from the merged pre-state + a set of pooled deploys (port of
     /// `BlockCreator.create`).
@@ -71,11 +107,32 @@ impl BlockCreator {
             .unwrap_or_else(BlockHeight::zero);
         let creators_pk = self.id.public_key.clone();
         let creators_validator = Validator::from_slice(creators_pk.bytes());
-        let seq_num = pre_state
+        let snapshot_seq = pre_state
             .justifications
             .iter()
             .find(|m| m.sender == creators_validator)
-            .map(|m| m.seq_num + NonNegI64::one())
+            .map(|m| m.seq_num);
+        // **The own-sequence floor** (Law 122; RC-4 HAZOP J8). The snapshot names the last sequence
+        // this key signed *that the DAG still holds*. A rewind or a light join can drop the block
+        // that carried a later one, and deriving from the snapshot alone then signs a duplicate —
+        // which the network, correctly, reads as an equivocation and slashes (measured 2026-11-21:
+        // a rejoined validator re-signed sequence 152 and lost its bond). The durable record is the
+        // one memory that survives the rewind; while it is ahead, the node waits.
+        let durable = dag.read_own_latest().await?;
+        if let OwnSeqDecision::Wait {
+            signed,
+            signed_height,
+            snapshot,
+        } = own_seq_decision(durable, snapshot_seq)
+        {
+            return Ok(BlockCreatorResult::OwnSeqNotReconciled {
+                signed,
+                signed_height,
+                snapshot,
+            });
+        }
+        let seq_num = snapshot_seq
+            .map(|seq| seq + NonNegI64::one())
             .unwrap_or_else(SeqNum::zero);
         // Informational block timestamp: the proposer's wall clock, chosen once and used both for
         // the block header and for `rho:block:data` during evaluation, so a contract that reads it
@@ -182,6 +239,10 @@ impl BlockCreator {
                     .id
                     .sign_block(&unsigned_block)
                     .map_err(|e| e.to_string())?;
+                // **The record is written before the block leaves this function** (Law 122). The
+                // proposer validates and broadcasts what is returned, so a write failure refuses
+                // the proposal rather than allowing a signature the node cannot remember.
+                dag.write_own_latest(block_num, seq_num).await?;
                 Ok(BlockCreatorResult::Created(signed_block))
             }
         }
@@ -245,13 +306,14 @@ fn seed_at(rand: &Blake2b512Random, position: usize) -> Result<Blake2b512Random,
 
 #[cfg(test)]
 mod block_system_deploy_tests {
-    use super::block_system_deploys;
+    use super::{block_system_deploys, own_seq_decision, OwnSeqDecision};
     use crate::blocks::proposer::proposer::ProposedSlash;
     use crate::system_deploy::NativeSystemDeployOp;
     use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
     use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
     use rchain_models::block_metadata::SlashSeverity;
     use rchain_models::validator::Validator;
+    use rchain_shared::refined::{BlockHeight, SeqNum};
     use std::collections::BTreeMap;
 
     fn offender(
@@ -359,5 +421,43 @@ mod block_system_deploy_tests {
             deploys[0].op,
             Some(NativeSystemDeployOp::CloseBlock { .. })
         ));
+    }
+
+    /// **The own-sequence floor is the drill's own record** (Law 122, RC-4 HAZOP J8). The pre-fix
+    /// derivation — the snapshot alone — signs sequence 152 again from a snapshot stuck at 151; the
+    /// durable record refuses and names what was signed. At the boundary, where the catch-up has
+    /// re-adopted the block, the node proceeds.
+    #[test]
+    fn the_own_sequence_record_refuses_a_sequence_already_signed() {
+        let height = |v: i64| BlockHeight::try_from(v).expect("non-negative");
+        let seq = |v: i64| SeqNum::try_from(v).expect("non-negative");
+        // No record: a node that has never signed here derives from the snapshot as before.
+        assert_eq!(
+            own_seq_decision(None, Some(seq(151))),
+            OwnSeqDecision::Proceed
+        );
+        // The record is ahead of the snapshot: the block that carried 152 was dropped by a rewind.
+        assert_eq!(
+            own_seq_decision(Some((height(155), seq(152))), Some(seq(151))),
+            OwnSeqDecision::Wait {
+                signed: 152,
+                signed_height: 155,
+                snapshot: Some(151),
+            }
+        );
+        // The record with no own entry in the snapshot is the same hazard, named.
+        assert_eq!(
+            own_seq_decision(Some((height(155), seq(152))), None),
+            OwnSeqDecision::Wait {
+                signed: 152,
+                signed_height: 155,
+                snapshot: None,
+            }
+        );
+        // The catch-up re-adopted the block: the snapshot reaches the record and the node signs 153.
+        assert_eq!(
+            own_seq_decision(Some((height(155), seq(152))), Some(seq(152))),
+            OwnSeqDecision::Proceed
+        );
     }
 }

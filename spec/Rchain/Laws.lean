@@ -7522,6 +7522,50 @@ def lawsC : List Law := [
       every proposer closed in the drill's earlier run. The Rust phase decision and its witness are \
       the companion commit; the HAZOP is `spec/audit/evidence/rc4-join-catch-up/hazop.md`." },
 
+  { number := 122, layer := "Sync",
+    statement := "**A validator never re-signs a sequence it has signed.** The proposer derives its \
+      next sequence from a durable record of the highest sequence this node has ever signed, \
+      written before the proposal is broadcast. While the round snapshot is behind that record — \
+      the block that carried the signature was dropped by a rewind or a light join — the proposer \
+      waits and names the record and the snapshot. A proceed therefore signs strictly above every \
+      recorded sequence; the record only rises; and a rewind leaves both the record and the \
+      decision unchanged. The snapshot alone is the mutant: it re-signs the sequence the record \
+      already holds, which the network reads as an equivocation and slashes.",
+    status := .provedModel,
+    formal := `Rchain.OwnSeq.law122_statement,
+    mutant := `Rchain.OwnSeq.law122_mutant,
+    falsifier := `Rchain.OwnSeq.law122_falsifier,
+    declarations := [`Rchain.OwnSeq.Record,
+      `Rchain.OwnSeq.Snapshot,
+      `Rchain.OwnSeq.Decision,
+      `Rchain.OwnSeq.nextSeqUnchecked,
+      `Rchain.OwnSeq.nextSeq,
+      `Rchain.OwnSeq.raise,
+      `Rchain.OwnSeq.afterRewind,
+      `Rchain.OwnSeq.law122_statement,
+      `Rchain.OwnSeq.law122,
+      `Rchain.OwnSeq.law122_mutant,
+      `Rchain.OwnSeq.law122_falsifier],
+    axioms := [],
+    rust := ["casper/src/blocks/proposer/block_creator.rs",
+      "block-storage/src/dag/dag_storage.rs"],
+    rustWitness := [
+      "casper/src/blocks/proposer/block_creator.rs:the_own_sequence_record_refuses_a_sequence_already_signed"],
+    witness := [`Rchain.OwnSeq.law122, `Rchain.OwnSeq.law122_falsifier],
+    falsifiable := "Use `nextSeqUnchecked` — the round snapshot alone, which is the Rust derivation \
+      before this law. With the record at sequence 152 and the snapshot at 151 it returns 152: a \
+      sequence already signed. `law122_mutant` and `law122_falsifier` exhibit it, and the Rust \
+      witness pins both sides of the guard (record ahead: wait, naming 152/155/151; record \
+      reached: proceed).",
+    note := "**The drill's own slashing** (RC-4, 2026-11-21): a light-joined validator restored its \
+      state, caught up to height 165, and signed block #155 at sequence 152 again. The network \
+      slashed its key 100% (Malicious tier); the pool dropped from four validators to three, after \
+      which every checkpoint collector refused on bond-set drift and the burst's deploys never \
+      resolved. The rewind had dropped the block that carried the signature, and nothing durable \
+      remembered it. The record is written before the block leaves `BlockCreator::create`, so a \
+      write failure refuses the proposal rather than allowing a signature the node cannot \
+      remember; the HAZOP row is J8 in `spec/audit/evidence/rc4-join-catch-up/hazop.md`." },
+
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC
