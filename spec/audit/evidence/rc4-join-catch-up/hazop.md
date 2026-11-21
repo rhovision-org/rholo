@@ -65,9 +65,49 @@ Starting ──launch──▶ Syncing ──restored──▶ CatchingUp(suppor
 fence can close. The transition to `Running` is the only one that requires a proof, and Law 121 makes
 the unproved form unrepresentable.
 
-## §5 What the next drill must show
+## §5 What the drill showed (2026-11-21, `b9dfdd959`)
+
+The phase machine ran: the victim joined at anchor 153, the catch-up walk reported "catch-up
+finished" at height 165, and the phase reached `Running`. Then **the victim equivocated against
+itself**:
+
+```
+[pos] slashing 1 bonded validator(s) whose block failed validation here (tier and share):
+      04dbe32c Malicious/10000bps (equivocation evidence)
+ERROR [casper.blocks.BlockProcessor] this validator's key equivocated: block #155 5da5e58d… (sequence
+      152) was refused because the DAG holds a different block by this key at that sequence
+```
+
+The rewind drops the node's own signed messages above the cut; the catch-up window is measured over
+network heights, not over the node's own sequence history; so the proposer signed seq 152 again,
+duplicating the block it had signed before the crash. The network's verdict is correct — two blocks
+at one sequence is an equivocation, and it cannot tell an accident from an attack. The slash removed
+the key from the pool (4 → 3), after which every collector refuses to mint (bond-set drift, §J7's
+message) and the burst's deploys never resolve. **The join ladder's sharpest hazard is J8: the
+rewound node has forgotten what it signed, and nothing durable remembers for it.**
+
+The peer tips were what made this legible (the victim's own last block was among them), which is the
+diagnostics lesson: the node's own signed history is a coordinate, not an implementation detail.
+
+## §6 J8 — the guard this study now requires
+
+**The rule.** The proposer's next sequence is `max(durable own-latest, DAG own-latest) + 1`, where
+the durable record is written **before** a proposal is broadcast. A validator that has signed seq N
+cannot sign N again across any rewind, restart or join — the duplicate is unrepresentable locally,
+so the network never sees one.
+
+**The Lean statement.** A sequence the proposer signs is strictly greater than every sequence in its
+durable history; the durable history is monotone; the rewind changes neither.
+
+**The fallback.** If the durable record and the DAG disagree (a crash between the write and the
+broadcast), the higher one wins and the node signs above it — an unused sequence is a gap, which the
+protocol allows; a reused one is a slash.
+
+## §7 What the next drill must show
 
 The victim joins, passes through `CatchingUp` with the coordinates exposed, reaches `Running` with
-its fence within the window, and the harness's agreement and deploy checks pass. A victim that cannot
-close the gap must leave a `CatchingUp` record naming `quorumSupportedHeight`, the peers' tip and the
-last deferral — never a silent freeze.
+its fence within the window **and its own latest signed sequence reconciled**, and the harness's
+agreement and deploy checks pass. A victim that cannot close the gap must leave a `CatchingUp`
+record naming `quorumSupportedHeight`, the peers' tip and the last deferral — never a silent freeze;
+a victim whose key has equivocated must leave the refusal and the sequence it refused, as this run
+did.
