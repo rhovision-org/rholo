@@ -2056,7 +2056,7 @@ pub fn within_proposal_finality_bound(tip_height: i64, finalized_height: i64) ->
 }
 
 /// **How far the node's own quorum-supported view may trail the tip it has observed** before it
-/// proposes.
+/// proposes — the shared catch-up window (`crate::engine::catchup::within_window`, Law 121).
 ///
 /// Finality advances only on a closed fringe of the **latest messages**. A validator that proposes
 /// while its DAG has not yet accepted the other validators' recent blocks publishes a message whose
@@ -2072,15 +2072,9 @@ pub fn within_proposal_finality_bound(tip_height: i64, finalized_height: i64) ->
 /// thirds of the **active** bond map. A silent peer therefore cannot hold this gate closed — the live
 /// majority's messages set the supported height — while a node whose own message state is behind the
 /// blocks it has received is held until it catches up.
-///
-/// **`view_tip` is the highest latest message, not the DAG's height maximum.** The DAG's height map
-/// counts metadata the node has not validated — under the drill's burst it stood six heights above
-/// every validator's message state, and a metadata-based tip held *all four* proposers closed with
-/// nothing left to drain the gap (measured 2026-11-21: latest messages 269, metadata 275, every
-/// proposer waiting). The stale-view condition is about the messages finality is derived from, so
-/// both sides of the comparison must come from that state.
 pub fn view_is_caught_up(view_tip: i64, supported: BlockHeight) -> bool {
-    view_tip - i64::from(supported) <= liveness::LIVENESS_WINDOW
+    let tip = BlockHeight::try_from(view_tip).unwrap_or_else(|_| BlockHeight::zero());
+    crate::engine::catchup::within_window(tip, supported)
 }
 
 /// **The height the gate measures from when the view has no finalised block** (C351).
@@ -2340,20 +2334,14 @@ where
         // **Only the active set's messages set the tip**, for the same reason they set the quorum: a
         // jailed or unbonded sender's last message is frozen where it stopped, and letting it stand
         // as the highest latest message would hold every proposer closed with nothing to advance it.
-        let heights = liveness::latest_heights(
+        let (view_tip, supported) = crate::engine::catchup::view(
             repr.dag_message_state
                 .latest_msgs
                 .values()
-                .filter(|message| bonds.contains_key(&message.sender))
                 .map(|message| (message.sender.clone(), message.height)),
+            &bonds,
         );
-        let view_tip = heights
-            .values()
-            .copied()
-            .max()
-            .unwrap_or_else(BlockHeight::zero);
-        let supported = liveness::quorum_supported_height(&bonds, &heights);
-        if !view_is_caught_up(i64::from(view_tip), supported) {
+        if !crate::engine::catchup::within_window(view_tip, supported) {
             log.warn(
                 LogSource::new("casper.blocks.Proposer"),
                 &format!(

@@ -49,6 +49,10 @@ pub const PUBLIC_HEALTH_KEYS: &[&str] = &[
     "acceptsDeploys",
     "blockPipeline",
     "bootId",
+    // **The catch-up coordinate** (Law 121, RC-4): `{supported}` while the shard is catching up,
+    // null otherwise. A joined node that is behind reads `catching-up` with this coordinate instead
+    // of `running`/ready.
+    "catchUp",
     "degraded",
     "diagVersion",
     "finalityStallEpisodes",

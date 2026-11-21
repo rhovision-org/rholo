@@ -34,6 +34,13 @@ pub enum NodePhase {
     Starting,
     /// The shard is restoring the last finalized state; it serves no chain and proposes nothing.
     Syncing,
+    /// **A joined node whose fence has not caught up** (Law 121, RC-4). The engine runs — it
+    /// receives, validates and backfills — but the shard does not serve or propose: its own
+    /// quorum-supported height is outside the catch-up window of the highest latest message it
+    /// holds. `supported` is the coordinate a reader compares with the peer tip; the phase cannot
+    /// be `Running` without the window being satisfied, which is the state the pre-fix launcher
+    /// allowed (a live, silent freeze at tip 183 while peers were at 306).
+    CatchingUp { supported: i64 },
     /// Launch reached the running engine: the DAG is the shard's served chain.
     Running,
     /// Launch refused to serve (a terminal sync failure, or a named launch failure).
@@ -46,6 +53,7 @@ impl NodePhase {
         match self {
             NodePhase::Starting => "starting",
             NodePhase::Syncing => "syncing",
+            NodePhase::CatchingUp { .. } => "catching-up",
             NodePhase::Running => "running",
             NodePhase::Blocked(_) => "blocked",
         }
@@ -60,7 +68,10 @@ impl NodePhase {
     /// integration test hit exactly that window). `/health`'s `ready` is still false in `Starting`;
     /// admission and readiness answer different questions.
     pub fn admits_work(&self) -> bool {
-        !matches!(self, NodePhase::Syncing | NodePhase::Blocked(_))
+        !matches!(
+            self,
+            NodePhase::Syncing | NodePhase::CatchingUp { .. } | NodePhase::Blocked(_)
+        )
     }
 
     /// **The fail-closed phase.** An outstanding durable pipeline fault is reported as `Blocked`
@@ -192,6 +203,21 @@ mod tests {
         cell.set_phase(NodePhase::Blocked("terminal sync".to_string()));
         assert!(!cell.admits_work());
         assert_eq!(cell.phase().label(), "blocked");
+    }
+
+    /// **A catching-up shard is live and serves nothing** (Law 121, RC-4). It names the height a
+    /// reader compares with the peer tip, refuses work, and is not `Running` — the pre-fix state
+    /// reported `running`/ready at tip 183 against peers at 306.
+    #[test]
+    fn a_catching_up_shard_names_its_coordinate_and_serves_nothing() {
+        let phase = NodePhase::CatchingUp { supported: 181 };
+        assert_eq!(phase.label(), "catching-up");
+        assert!(!phase.admits_work());
+        assert!(!matches!(phase.effective(0), NodePhase::Running));
+        let cell = NodePhaseCell::new();
+        cell.set_phase(phase);
+        assert!(!cell.is_running());
+        assert!(!cell.admits_work());
     }
 
     #[test]

@@ -1365,6 +1365,52 @@ pub async fn apply<
             }
         ),
     );
+    // **A joined node is not `Running` while it is behind** (Law 121, `spec/Rchain/JoinCatchUp.lean`;
+    // HAZOP J3/J4 in `spec/audit/evidence/rc4-join-catch-up/hazop.md`). The start-up audit above
+    // wrote `Running`; this launch takes it back when the node's own message state has not reached
+    // the catch-up window. `CatchingUp` runs the engine — it receives, validates and backfills — but
+    // serves nothing and names the supported height a reader compares with the peer tip. The
+    // watchdog is the only exit: it moves the phase to `Running` once the gap closes, or fails
+    // closed with the coordinate when it does not.
+    {
+        let bonds = runtime_manager
+            .compute_bonds(&rchain_models::block::state_hash::StateHash::from_slice(
+                accepted.root().as_bytes(),
+            ))
+            .await?;
+        let (view_tip, supported) = catchup::view(
+            dag.get_representation()
+                .await
+                .dag_message_state
+                .latest_msgs
+                .values()
+                .map(|message| (message.sender.clone(), message.height)),
+            &bonds,
+        );
+        if !catchup::within_window(view_tip, supported) {
+            log.warn(
+                source,
+                &format!(
+                    "this node has not caught up: highest latest message {}, quorum-supported {} \
+                     (more than {} heights behind); serving waits on the catch-up walk",
+                    i64::from(view_tip),
+                    i64::from(supported),
+                    rchain_block_storage::dag::liveness::LIVENESS_WINDOW
+                ),
+            );
+            phase.set_phase(crate::engine::node_phase::NodePhase::CatchingUp {
+                supported: i64::from(supported),
+            });
+            spawn_catch_up_watchdog(
+                phase.clone(),
+                dag.clone(),
+                bonds,
+                log.clone(),
+                i64::from(supported),
+            );
+        }
+    }
+
     // **The consumer pool** (max-message-consumers). `NodeRunning::handle` takes `&self`, so the
     // engine is shared behind an `Arc` and each packet is handled by its own task under a permit.
     // The permit is acquired *before* the spawn, which is the backpressure: a full pool parks the
@@ -1759,6 +1805,93 @@ fn hex(hash: StateHash) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// How often the catch-up watchdog re-reads the node's view.
+const CATCH_UP_TICK: Duration = Duration::from_secs(2);
+
+/// **How many ticks without progress the catch-up watchdog tolerates** before failing closed.
+///
+/// Progress is the *quorum-supported height* rising, not the DAG's height maximum (metadata can grow
+/// while validation does not). Thirty seconds is the model's `watchdogAfter` in ticks
+/// (`spec/Rchain/JoinCatchUp.lean`): long enough that a window of blocks can land, short enough that
+/// a frozen node names its coordinate instead of sitting silent for a release run's window.
+const CATCH_UP_STALL_TICKS: u32 = 15;
+
+/// **The catch-up watchdog** (Law 121; RC-4 HAZOP J3/J4).
+///
+/// The launch leaves the phase `CatchingUp { supported }` instead of `Running` when the node's own
+/// message state is outside the catch-up window. This task is the only transition out of it:
+///
+/// * the view is inside the window → `Running`, with the coordinates logged;
+/// * the supported height stops rising for `CATCH_UP_STALL_TICKS` → `Blocked`, with the coordinates
+///   in the reason. That is the safe fallback: a node that cannot close the gap stops serving and
+///   says so, rather than reading `running`/ready while frozen — the state the RC-4 drill measured
+///   at tip 183 against peers at 306.
+///
+/// It never overwrites a phase another writer moved (a fault's `Blocked`, or a shutdown).
+fn spawn_catch_up_watchdog(
+    phase: crate::engine::node_phase::NodePhaseCell,
+    dag: Arc<dyn BlockDagStorage>,
+    bonds: BTreeMap<rchain_models::validator::Validator, NonNegI64>,
+    log: Arc<dyn Log>,
+    initial_supported: i64,
+) {
+    tokio::spawn(async move {
+        let source = LogSource::new("casper.engine.NodeLaunch");
+        let mut last_supported = initial_supported;
+        let mut stalled: u32 = 0;
+        let mut tick = tokio::time::interval(CATCH_UP_TICK);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            if !matches!(
+                phase.phase(),
+                crate::engine::node_phase::NodePhase::CatchingUp { .. }
+            ) {
+                return;
+            }
+            let (tip, supported) = crate::engine::catchup::view(
+                dag.get_representation()
+                    .await
+                    .dag_message_state
+                    .latest_msgs
+                    .values()
+                    .map(|message| (message.sender.clone(), message.height)),
+                &bonds,
+            );
+            if crate::engine::catchup::within_window(tip, supported) {
+                phase.set_phase(crate::engine::node_phase::NodePhase::Running);
+                log.info(
+                    source,
+                    &format!(
+                        "catch-up complete: highest latest message {}, quorum-supported {}",
+                        i64::from(tip),
+                        i64::from(supported)
+                    ),
+                );
+                return;
+            }
+            if i64::from(supported) > last_supported {
+                last_supported = i64::from(supported);
+                stalled = 0;
+            } else {
+                stalled += 1;
+            }
+            if stalled > CATCH_UP_STALL_TICKS {
+                let reason = format!(
+                    "catch-up stalled: quorum-supported height {} against the highest latest \
+                     message {} for {stalled} ticks; a node that cannot close the gap stops serving \
+                     rather than reporting `running`",
+                    i64::from(supported),
+                    i64::from(tip)
+                );
+                log.error(source, &reason);
+                phase.set_phase(crate::engine::node_phase::NodePhase::Blocked(reason));
+                return;
+            }
+        }
+    });
 }
 
 /// Start the catch-up walk for a running phase, if that phase has an anchor and a peer to walk against.

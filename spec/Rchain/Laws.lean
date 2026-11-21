@@ -7478,6 +7478,50 @@ def lawsC : List Law := [
       previous active set and the quorum-agreed participation map — no local view and no wall \
       clock, so every node classifies the same way." },
 
+  { number := 121, layer := "Sync",
+    statement := "**A joined node is never `running` while it is behind.** The phase that admits \
+      serving carries a proof that the node's quorum-supported height is within the catch-up window \
+      of the highest latest message it holds. A view outside the window is `catchingUp supported`, \
+      which names the coordinate a reader compares with the peer tip; there is no third \
+      constructor, so a running-and-behind state is not writable. The watchdog is the safe \
+      fallback: a catch-up that observes more than `watchdogAfter` attempts without progress \
+      re-enters `syncing` — the node's checkpoint-sync path, which rewinds and adopts a newer \
+      certified anchor — while a running phase is never touched by it. Timing is counted in \
+      observed attempts, not wall clock.",
+    status := .provedModel,
+    formal := `Rchain.JoinCatchUp.law121_statement,
+    mutant := `Rchain.JoinCatchUp.law121_mutant,
+    falsifier := `Rchain.JoinCatchUp.law121_falsifier,
+    declarations := [`Rchain.JoinCatchUp.View,
+      `Rchain.JoinCatchUp.withinWindow,
+      `Rchain.JoinCatchUp.Phase,
+      `Rchain.JoinCatchUp.Phase.isRunning,
+      `Rchain.JoinCatchUp.Phase.blocker,
+      `Rchain.JoinCatchUp.afterRestore,
+      `Rchain.JoinCatchUp.watchdog,
+      `Rchain.JoinCatchUp.law121_statement,
+      `Rchain.JoinCatchUp.law121,
+      `Rchain.JoinCatchUp.LoosePhase,
+      `Rchain.JoinCatchUp.afterRestoreUnchecked,
+      `Rchain.JoinCatchUp.law121_mutant,
+      `Rchain.JoinCatchUp.law121_falsifier],
+    axioms := [],
+    rust := ["casper/src/engine/node_phase.rs", "casper/src/engine/node_launch.rs"],
+    rustWitness := [
+      "casper/src/engine/catchup.rs:the_catch_up_window_refuses_the_drills_frozen_view"],
+    witness := [`Rchain.JoinCatchUp.law121, `Rchain.JoinCatchUp.law121_falsifier],
+    falsifiable := "The pre-fix launcher — `afterRestoreUnchecked`, the Rust enum without the \
+      running proof — returns `running` for the drill's own view (306 supported at 181); \
+      `law121_mutant` and `law121_falsifier` exhibit it. The typed phase cannot express that value, \
+      which is the closure: the bad state is unwritable, not merely refused.",
+    note := "**The silent freeze this law removes** (RC-4, 2026-11-21): the light-joined victim at \
+      `84d43d8fe` restored the certified state, entered `running` at tip 183 while the other \
+      validators were at 306, and stayed there for the harness's whole window — pipeline clean, \
+      attestation licensed, nothing named. Both sides of the window come from the message state, \
+      not the DAG's metadata maximum: a metadata tip counts blocks no node has validated and held \
+      every proposer closed in the drill's earlier run. The Rust phase decision and its witness are \
+      the companion commit; the HAZOP is `spec/audit/evidence/rc4-join-catch-up/hazop.md`." },
+
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC
