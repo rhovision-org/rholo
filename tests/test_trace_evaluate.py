@@ -276,6 +276,24 @@ class BootTests(unittest.TestCase):
         report, code = evaluate_tool.evaluate(record([row], verdict="pass"))
         self.assertEqual((code, report["reading"]), (0, "safe"))
 
+    def test_a_light_join_decision_is_safe(self):
+        # The accepted fringe does not agree with the certificate, but the node did not run from
+        # it: the sync restored the certified anchor. The predicate is the run state, and
+        # `recovery` is what says so.
+        row = boot(stage="decision", fringe_agrees=False, anchor_closure_present=True,
+                   recovery="light-join", fringe_agreement="mismatch")
+        report, code = evaluate_tool.evaluate(record([row], verdict="pass"))
+        self.assertEqual((code, report["reading"]), (0, "safe"))
+
+    def test_a_failed_light_join_is_unsafe_at_its_terminal_coordinate(self):
+        row = boot(stage="decision", accepted=False, fringe_agrees=False,
+                   anchor_closure_present=False, recovery="light-join-failed",
+                   refusal_coordinate="sync-terminal")
+        report, code = evaluate_tool.evaluate(record([row]))
+        self.assertEqual(code, 1)
+        self.assertEqual(report["reading"], "unsafe-point")
+        self.assertIn("anchor_ok", report["results"][0]["false"])
+
     def test_a_legacy_boot_trace_is_still_read(self):
         legacy = {"validator": 0, "acquisition": "certificate", "accepted": True,
                   "dag_len": 4, "store_head": None, "source_configured": True}

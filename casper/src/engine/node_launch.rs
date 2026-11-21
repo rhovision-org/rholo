@@ -459,7 +459,20 @@ pub async fn apply<
     // **The accepted state this boot will run from** (Law 108). Each branch must set it; the boot
     // refuses to run without one, so there is no heuristic root fallback.
     let mut accepted_state: Option<crate::engine::anchor::AcceptedState> = None;
+    // **The join ladder's boot side** (RC-4). An empty DAG, a pending recovery, and a reconnect
+    // whose accepted fringe no certificate anchors all enter the *same* checkpoint sync; the flag
+    // is set here and cleared when a boot has an anchor it can run from. The sync body below is the
+    // one engine loop — a light join is not a fourth sync path.
+    let mut needs_sync = repr.dag_set.is_empty() || pending_recovery.is_some();
+    // A reconnect behind its peers: the sync restores the certified anchor and the node runs from
+    // that, not from the stale fence. Eligibility is decided by the agreement below; the sync
+    // fetches and verifies the statement itself.
+    let mut light_join = false;
+    let mut light_join_eligible = false;
+    // Written only once the sync's outcome is known (`light-join` or `light-join-failed`).
+    let mut pending_decision: Option<BootDecision> = None;
     if repr.dag_set.is_empty() && standalone && pending_recovery.is_none() {
+        needs_sync = false;
         if expected_genesis_hash.is_some() {
             return Err(
                 "a pinned network genesis cannot be created by a standalone node".to_string(),
@@ -506,8 +519,455 @@ pub async fn apply<
             pin,
             &genesis_block,
         )?);
-    } else if repr.dag_set.is_empty() || pending_recovery.is_some() {
-        log.info(source, "Starting from bootstrap node, syncing LFS...");
+    } else if !repr.dag_set.is_empty() && pending_recovery.is_none() {
+        // **A node that reset itself is not simply reconnecting** (F-U5-01's crash window, register
+        // C274; law 72). Its DAG was deliberately truncated to an anchor, so running on what it holds
+        // would be running on a chain it chose to leave — and if the process died part-way through the
+        // reset's durable effects, its block store holds bodies the DAG does not, which the receiver
+        // reads as *"stored but not yet validated"* and re-injects above the anchor. `resume_after_reset`
+        // re-applies **every** effect the completion record brackets — the two stores and the runtime
+        // root — and names the anchor the catch-up walk below must start from. With no marker this is the
+        // ordinary reconnection it has always been.
+        if let Some(anchor) = crate::engine::reset::resume_after_reset(
+            &dag,
+            &block_store,
+            &runtime_manager,
+            &log,
+            source,
+        )
+        .await?
+        {
+            // **A contradicting pair is refused, not resolved with a warning** (W-N11-01): see
+            // [`crate::engine::reset::boot_anchor_after_reset`] for why the record wins and why
+            // picking in silence is the defect — on a store the operator did not create, the record
+            // is a planted restore point.
+            boot_anchor = Some(crate::engine::reset::boot_anchor_after_reset(
+                boot_anchor,
+                anchor,
+            )?);
+        } else {
+            log.info(source, "Reconnecting to existing network...");
+        }
+
+        // **The accepted fringe is re-verified against its stored certificate at boot**
+        // (sync/verification separation). The state on disk was accepted under a quorum; a restart
+        // must not turn a corrupted or replaced certificate into an accepted history. Only a
+        // certificate naming *this* fringe is evidence for it — an older certificate is what the
+        // node held when it last certified, and the accepted fringe may legitimately be newer.
+        // **A node that synced before the certificate was persisted has none stored.** Pull the
+        // configured source's verified certificate and adopt it; this is the same bootstrap pull
+        // the sync branch trusts. No stored certificate and no source leaves `None`; a non-genesis
+        // DAG then refuses by name below.
+        let shard_id = spec.shard_id.to_string();
+        let genesis_only = repr.dag_set.len() == 1
+            && repr
+                .height_map
+                .keys()
+                .next()
+                .map(|height| i64::from(*height))
+                == Some(0);
+        let store_head = checkpoint_store.latest().await?.map(|certificate| {
+            crate::checkpoint::checkpoint_digest(&certificate.checkpoint)
+                .map(|digest| digest.to_hex())
+                .unwrap_or_else(|_| "malformed".to_string())
+        });
+        // **The accepted fringe the boot must anchor** (Law 108). It is also the hint a restart
+        // behind its peers gives the source: the head certificate may be *ahead* of this fringe,
+        // and a certificate for an anchor in it is what the agreement below can accept.
+        let recorded_fringe: Option<BTreeSet<BlockHash>> = approved_store
+            .get(&[rchain_block_storage::approved_store::FINALIZED_FRINGE_KEY])
+            .await?
+            .into_iter()
+            .next()
+            .flatten()
+            .map(|accepted| accepted.hashes.iter().copied().collect());
+        let acquisition = acquire_boot_certificate(
+            &checkpoint_store,
+            checkpoint_source.as_ref(),
+            &runtime_manager.genesis_pos().bonds,
+            &shard_id,
+            recorded_fringe.as_ref(),
+        )
+        .await;
+        let outcome = boot_outcome(genesis_only, &acquisition);
+        write_boot_trace(&BootTrace {
+            kind: "boot".to_string(),
+            stage: "acquisition".to_string(),
+            dag_len: repr.dag_set.len(),
+            genesis_only,
+            store_head: store_head.clone(),
+            source_configured: checkpoint_source.is_some(),
+            acquisition: match &acquisition {
+                Ok(Some(_)) => "certificate".to_string(),
+                Ok(None) => "none".to_string(),
+                Err(error) => format!("refused: {error}"),
+            },
+            served_digest: acquisition
+                .as_ref()
+                .ok()
+                .and_then(|certificate| certificate.as_ref())
+                .map(|certificate| certificate.verified.digest.to_hex()),
+            served_anchor: acquisition
+                .as_ref()
+                .ok()
+                .and_then(|certificate| certificate.as_ref())
+                .map(|certificate| certificate.verified.checkpoint.anchor.clone()),
+            served_shard: acquisition
+                .as_ref()
+                .ok()
+                .and_then(|certificate| certificate.as_ref())
+                .map(|certificate| certificate.verified.checkpoint.shard_id.clone()),
+            shard_id: shard_id.clone(),
+            served_supporting_stake: acquisition
+                .as_ref()
+                .ok()
+                .and_then(|certificate| certificate.as_ref())
+                .map(|certificate| certificate.verified.supporting_stake),
+            served_total_stake: acquisition
+                .as_ref()
+                .ok()
+                .and_then(|certificate| certificate.as_ref())
+                .map(|certificate| certificate.verified.total_stake),
+            outcome: match outcome {
+                BootOutcome::Genesis => "genesis".to_string(),
+                BootOutcome::Certified => "certified".to_string(),
+                BootOutcome::Refused(_) => "refused".to_string(),
+            },
+            refusal_coordinate: match outcome {
+                BootOutcome::Refused(coordinate) => Some(coordinate.as_str().to_string()),
+                _ => None,
+            },
+            accepted: acquisition.as_ref().ok().is_some_and(Option::is_some) || genesis_only,
+            fringe_agrees: None,
+            anchor_closure_present: None,
+            fringe_agreement: None,
+            accepted_fringe: None,
+            certified_fringe: None,
+            recovery: None,
+        });
+        // **The acquisition is not the decision.** Keep what the decision trace needs before the
+        // certificate is consumed; `accepted` on the acquisition trace says only that a verified
+        // certificate was found, not that the accepted fringe is anchored by it.
+        let acquisition_summary = match &acquisition {
+            Ok(Some(_)) => "certificate".to_string(),
+            Ok(None) => "none".to_string(),
+            Err(error) => format!("refused: {error}"),
+        };
+        let served_digest = acquisition
+            .as_ref()
+            .ok()
+            .and_then(|certificate| certificate.as_ref())
+            .map(|certificate| certificate.verified.digest.to_hex());
+        let served_anchor = acquisition
+            .as_ref()
+            .ok()
+            .and_then(|certificate| certificate.as_ref())
+            .map(|certificate| certificate.verified.checkpoint.anchor.clone());
+        let served_shard = acquisition
+            .as_ref()
+            .ok()
+            .and_then(|certificate| certificate.as_ref())
+            .map(|certificate| certificate.verified.checkpoint.shard_id.clone());
+        let served_supporting_stake = acquisition
+            .as_ref()
+            .ok()
+            .and_then(|certificate| certificate.as_ref())
+            .map(|certificate| certificate.verified.supporting_stake);
+        let served_total_stake = acquisition
+            .as_ref()
+            .ok()
+            .and_then(|certificate| certificate.as_ref())
+            .map(|certificate| certificate.verified.total_stake);
+        let mut fringe_agreement: Option<String> = if genesis_only {
+            Some("genesis".to_string())
+        } else {
+            None
+        };
+        let mut accepted_fringe: Option<usize> = None;
+        let mut certified_fringe: Option<usize> = None;
+        let boot_certificate = acquisition?;
+        if let Some(BootCertificate {
+            verified,
+            source: certificate_source,
+            ..
+        }) = boot_certificate
+        {
+            if certificate_source == BootCertificateSource::Fetched {
+                log.warn(
+                    source,
+                    &format!(
+                        "boot: no checkpoint certificate was stored; fetched and adopted the \
+                         configured source's verified certificate {}",
+                        verified.digest.to_hex()
+                    ),
+                );
+            }
+            let recorded = recorded_fringe;
+            let certified_set: BTreeSet<_> = verified
+                .checkpoint
+                .fringe_hashes
+                .iter()
+                .filter_map(|hex| {
+                    rchain_shared::base16::decode(hex)
+                        .and_then(|bytes| BlockHash::try_from(bytes.as_slice()).ok())
+                })
+                .collect();
+            accepted_fringe = recorded.as_ref().map(BTreeSet::len);
+            certified_fringe = Some(certified_set.len());
+            match stored_fringe_agreement(recorded.as_ref(), &certified_set) {
+                StoredFringeAgreement::Reverified => {
+                    fringe_agreement = Some("reverified".to_string());
+                    log.info(
+                        source,
+                        &format!(
+                            "boot: the accepted fringe ({} block(s)) is re-verified by its stored \
+                             checkpoint certificate at anchor {}",
+                            certified_set.len(),
+                            verified.checkpoint.anchor_height
+                        ),
+                    );
+                    // **The stored certificate is the anchor** (Law 108): its checkpoint root is the
+                    // root this node runs from. Since the merge-base correction, that root is the **merge base** — the
+                    // state at the fringe the anchor itself finalised, which is where a post-anchor
+                    // block's merge starts — so the approved fringe's state and the certificate's
+                    // root agree by construction rather than being two different claims.
+                    let window = rebuild_window_for_boot(
+                        dag.as_ref(),
+                        &verified,
+                        certificate_source == BootCertificateSource::Fetched,
+                    )
+                    .await?;
+                    accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
+                        verified.clone(),
+                        window,
+                    )?);
+                }
+                StoredFringeAgreement::Mismatch {
+                    certified,
+                    accepted,
+                } => {
+                    // **A newer accepted fringe is not a disagreement when it descends from the
+                    // certificate's anchor.** The certificate is a snapshot; the approved store
+                    // records the tip at shutdown. Refusing every later tip is the in-place-restart
+                    // stall: the validator can never boot again. The certificate still anchors the
+                    // history (its closure and commitments are re-verified below), and
+                    // `seed_derived_roots` re-seeds the validated blocks above it. A recorded
+                    // fringe that does **not** descend from the anchor is a fork and is refused.
+                    let anchor =
+                        BlockHash::try_from_hex(&verified.checkpoint.anchor).map_err(|e| {
+                            format!("the stored certificate's anchor is not a block hash: {e}")
+                        })?;
+                    let descends = match recorded.as_ref() {
+                        Some(recorded) => {
+                            fringe_descends_from(dag.as_ref(), recorded, anchor).await?
+                        }
+                        None => false,
+                    };
+                    if descends {
+                        fringe_agreement = Some("descendant".to_string());
+                        log.warn(
+                            source,
+                            &format!(
+                                "boot: the accepted fringe ({accepted} block(s)) is a validated \
+                                 descendant of the certificate's fringe ({certified} block(s)); \
+                                 adopting the certificate as the base and re-deriving the window"
+                            ),
+                        );
+                        let window = rebuild_window_for_boot(
+                            dag.as_ref(),
+                            &verified,
+                            certificate_source == BootCertificateSource::Fetched,
+                        )
+                        .await?;
+                        accepted_state =
+                            Some(crate::engine::anchor::AcceptedState::from_certificate(
+                                verified.clone(),
+                                window,
+                            )?);
+                    } else {
+                        fringe_agreement = Some("mismatch".to_string());
+                        log.warn(
+                            source,
+                            &format!(
+                                "boot: the stored checkpoint certificate names another fringe than \
+                                 the accepted fringe ({certified} certified, {accepted} accepted) \
+                                 and the accepted fringe does not descend from its anchor; the \
+                                 accepted state is not re-verified by it"
+                            ),
+                        );
+                        // **A fetched certificate that does not anchor the fence is the light-join
+                        // case** (RC-4): the node's own statement cannot be re-verified, but the
+                        // network's quorum statement can be adopted. A *stored* certificate is the
+                        // node's own history; its disagreement is a local inconsistency and stays a
+                        // refusal.
+                        if certificate_source == BootCertificateSource::Fetched {
+                            light_join_eligible = true;
+                        }
+                    }
+                }
+                StoredFringeAgreement::Absent => {
+                    fringe_agreement = Some("absent".to_string());
+                    // **No accepted fringe is recorded, but a verified certificate is.** A genesis
+                    // master — and a node whose approved-fringe write was interrupted — has no
+                    // fringe to compare against; the certificate is the only accepted-state record
+                    // and is adopted as the anchor (Law 108). The DAG must still hold the anchor's
+                    // closure, which the window rebuild verifies.
+                    log.warn(
+                        source,
+                        "boot: no accepted fringe is recorded; adopting the verified stored \
+                         checkpoint certificate as the anchor",
+                    );
+                    let window = rebuild_window_for_boot(
+                        dag.as_ref(),
+                        &verified,
+                        certificate_source == BootCertificateSource::Fetched,
+                    )
+                    .await?;
+                    accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
+                        verified.clone(),
+                        window,
+                    )?);
+                }
+            }
+        } else {
+            if !genesis_only {
+                return Err(format!(
+                    "this node's DAG holds {} block(s) but no checkpoint certificate is stored and \
+                     no checkpoint source is configured; the accepted state cannot be attributed",
+                    repr.dag_set.len()
+                ));
+            }
+            log.info(
+                source,
+                "boot: no checkpoint certificate is stored for the accepted fringe; a genesis-only \
+                 DAG can still be anchored by its pinned genesis",
+            );
+        }
+
+        // **The decision is what the trace must carry.** The acquisition trace above says a
+        // verified certificate was found; it does not say the accepted fringe is anchored by it.
+        // A quorate certificate whose anchor is ahead of the accepted fringe (a restart that was
+        // down while the fence moved) refuses here, and `accepted` on the acquisition trace alone
+        // would read as a safe boot.
+        let decision = BootDecision {
+            dag_len: repr.dag_set.len(),
+            genesis_only,
+            store_head: store_head.clone(),
+            source_configured: checkpoint_source.is_some(),
+            acquisition: acquisition_summary.clone(),
+            served_digest: served_digest.clone(),
+            served_anchor: served_anchor.clone(),
+            served_shard: served_shard.clone(),
+            shard_id: shard_id.clone(),
+            served_supporting_stake,
+            served_total_stake,
+            fringe_agreement: fringe_agreement.clone(),
+            accepted_fringe,
+            certified_fringe,
+        };
+
+        // **No verified certificate: only a genesis-only DAG has an anchor left.** A DAG with any
+        // block above genesis and no certificate is an unattributed state; the node refuses to run
+        // rather than serve it (Law 108).
+        if accepted_state.is_none() {
+            let genesis_only = repr.dag_set.len() == 1
+                && repr
+                    .height_map
+                    .keys()
+                    .next()
+                    .map(|height| i64::from(*height))
+                    == Some(0);
+            if genesis_only {
+                let genesis_hash = repr
+                    .height_map
+                    .values()
+                    .next()
+                    .and_then(|hashes| hashes.iter().next().copied())
+                    .ok_or_else(|| "the DAG names no genesis block".to_string())?;
+                let genesis_post = genesis_post_state_hash(dag.as_ref(), &block_store)
+                    .await?
+                    .ok_or_else(|| {
+                        "the genesis block has no recorded post-state, so it cannot anchor this \
+                         node"
+                            .to_string()
+                    })?;
+                let genesis_block = block_store
+                    .get(&[genesis_hash])
+                    .await?
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| "the genesis block has no stored body".to_string())?;
+                // **The operator's pin is checked before any accepted state exists** (review R5).
+                // `from_genesis` also refuses a body that is not the pin, but it words that refusal
+                // differently; the canonical `differs from pinned genesis` sentence belongs to the
+                // pin check, so the check runs first and the state then carries the proven identity.
+                if let Some(expected) = expected_genesis_hash {
+                    check_expected_genesis(dag.as_ref(), &expected).await?;
+                }
+                let pin = crate::engine::anchor::GenesisPin {
+                    block: expected_genesis_hash.unwrap_or(genesis_hash),
+                    post_state: genesis_post,
+                };
+                accepted_state = Some(crate::engine::anchor::AcceptedState::from_genesis(
+                    pin,
+                    &genesis_block,
+                )?);
+            } else if light_join_eligible {
+                // **A restart behind its peers joins light** (RC-4, the join ladder). The fetched
+                // certificate verified but does not anchor the accepted fringe: the fence is behind
+                // the network's finality, or on a branch the network's quorum statement does not
+                // contain. Running from it would violate Law 108; refusing is the stall the RC-4
+                // drill measured. The certified anchor is the attribution — sync to it and catch
+                // up, and never serve the stale fence. The sync fetches the certificate itself, so
+                // the statement it verifies is the one it syncs from.
+                log.warn(
+                    source,
+                    &format!(
+                        "boot: the accepted fringe ({} block(s)) is not anchored by the fetched \
+                         certificate; joining light and catching up",
+                        repr.dag_set.len()
+                    ),
+                );
+                light_join = true;
+                needs_sync = true;
+                pending_decision = Some(decision.clone());
+            } else {
+                let coordinate = if matches!(fringe_agreement.as_deref(), Some("mismatch")) {
+                    BootCoordinate::FringeMismatch
+                } else {
+                    BootCoordinate::NoStoredCertificate
+                };
+                decision.write(false, None, Some(coordinate));
+                return Err(format!(
+                    "this node's DAG holds {} block(s) but no verified checkpoint certificate; the \
+                     accepted state cannot be attributed, so the node refuses to run (a genesis \
+                     anchor is only for a genesis-only DAG)",
+                    repr.dag_set.len()
+                ));
+            }
+        }
+        // **A light join has accepted nothing yet**: its trace is written by the sync's outcome,
+        // not here. Every attributable boot writes the decision now.
+        if !light_join {
+            decision.write(true, None, None);
+        }
+    }
+
+    // **The one checkpoint sync** (join ladder, RC-4). An empty DAG and a pending recovery
+    // enter it as they always have; so does a reconnect whose accepted fringe no fetched
+    // certificate anchors. The node then runs from the certified anchor and never from the
+    // stale fence — one sync body, one engine loop, one terminal signal.
+    if needs_sync {
+        if light_join {
+            log.warn(
+                source,
+                "the accepted fringe is not anchored by any checkpoint certificate; joining light \
+                 from the certified anchor and catching up to the fence",
+            );
+        } else {
+            log.info(source, "Starting from bootstrap node, syncing LFS...");
+        }
         phase.set_phase(crate::engine::node_phase::NodePhase::Syncing);
         let engine = Arc::new(tokio::sync::Mutex::new(
             NodeSyncing::new(
@@ -738,6 +1198,15 @@ pub async fn apply<
                     phase.set_phase(crate::engine::node_phase::NodePhase::Blocked(
                         "LFS state sync is terminal".to_string(),
                     ));
+                    // **The decision trace is written with the outcome**, so a light join that
+                    // could not restore the approved state is an unsafe point, not a model gap.
+                    if let Some(decision) = pending_decision.take() {
+                        decision.write(
+                            false,
+                            Some("light-join-failed"),
+                            Some(BootCoordinate::SyncTerminal),
+                        );
+                    }
                     return Err(message);
                 }
             }
@@ -751,426 +1220,11 @@ pub async fn apply<
                 "LFS sync signalled success without an accepted state; refusing to run".to_string(),
             );
         }
-    } else {
-        // **A node that reset itself is not simply reconnecting** (F-U5-01's crash window, register
-        // C274; law 72). Its DAG was deliberately truncated to an anchor, so running on what it holds
-        // would be running on a chain it chose to leave — and if the process died part-way through the
-        // reset's durable effects, its block store holds bodies the DAG does not, which the receiver
-        // reads as *"stored but not yet validated"* and re-injects above the anchor. `resume_after_reset`
-        // re-applies **every** effect the completion record brackets — the two stores and the runtime
-        // root — and names the anchor the catch-up walk below must start from. With no marker this is the
-        // ordinary reconnection it has always been.
-        if let Some(anchor) = crate::engine::reset::resume_after_reset(
-            &dag,
-            &block_store,
-            &runtime_manager,
-            &log,
-            source,
-        )
-        .await?
-        {
-            // **A contradicting pair is refused, not resolved with a warning** (W-N11-01): see
-            // [`crate::engine::reset::boot_anchor_after_reset`] for why the record wins and why
-            // picking in silence is the defect — on a store the operator did not create, the record
-            // is a planted restore point.
-            boot_anchor = Some(crate::engine::reset::boot_anchor_after_reset(
-                boot_anchor,
-                anchor,
-            )?);
-        } else {
-            log.info(source, "Reconnecting to existing network...");
+        // **A light join succeeded**: the accepted state is the certified anchor the sync restored,
+        // so the decision is safe and the stale fence was never served.
+        if let Some(decision) = pending_decision.take() {
+            decision.write(true, Some("light-join"), None);
         }
-
-        // **The accepted fringe is re-verified against its stored certificate at boot**
-        // (sync/verification separation). The state on disk was accepted under a quorum; a restart
-        // must not turn a corrupted or replaced certificate into an accepted history. Only a
-        // certificate naming *this* fringe is evidence for it — an older certificate is what the
-        // node held when it last certified, and the accepted fringe may legitimately be newer.
-        // **A node that synced before the certificate was persisted has none stored.** Pull the
-        // configured source's verified certificate and adopt it; this is the same bootstrap pull
-        // the sync branch trusts. No stored certificate and no source leaves `None`; a non-genesis
-        // DAG then refuses by name below.
-        let shard_id = spec.shard_id.to_string();
-        let genesis_only = repr.dag_set.len() == 1
-            && repr
-                .height_map
-                .keys()
-                .next()
-                .map(|height| i64::from(*height))
-                == Some(0);
-        let store_head = checkpoint_store.latest().await?.map(|certificate| {
-            crate::checkpoint::checkpoint_digest(&certificate.checkpoint)
-                .map(|digest| digest.to_hex())
-                .unwrap_or_else(|_| "malformed".to_string())
-        });
-        // **The accepted fringe the boot must anchor** (Law 108). It is also the hint a restart
-        // behind its peers gives the source: the head certificate may be *ahead* of this fringe,
-        // and a certificate for an anchor in it is what the agreement below can accept.
-        let recorded_fringe: Option<BTreeSet<BlockHash>> = approved_store
-            .get(&[rchain_block_storage::approved_store::FINALIZED_FRINGE_KEY])
-            .await?
-            .into_iter()
-            .next()
-            .flatten()
-            .map(|accepted| accepted.hashes.iter().copied().collect());
-        let acquisition = acquire_boot_certificate(
-            &checkpoint_store,
-            checkpoint_source.as_ref(),
-            &runtime_manager.genesis_pos().bonds,
-            &shard_id,
-            recorded_fringe.as_ref(),
-        )
-        .await;
-        let outcome = boot_outcome(genesis_only, &acquisition);
-        write_boot_trace(&BootTrace {
-            kind: "boot".to_string(),
-            stage: "acquisition".to_string(),
-            dag_len: repr.dag_set.len(),
-            genesis_only,
-            store_head: store_head.clone(),
-            source_configured: checkpoint_source.is_some(),
-            acquisition: match &acquisition {
-                Ok(Some(_)) => "certificate".to_string(),
-                Ok(None) => "none".to_string(),
-                Err(error) => format!("refused: {error}"),
-            },
-            served_digest: acquisition
-                .as_ref()
-                .ok()
-                .and_then(|certificate| certificate.as_ref())
-                .map(|certificate| certificate.verified.digest.to_hex()),
-            served_anchor: acquisition
-                .as_ref()
-                .ok()
-                .and_then(|certificate| certificate.as_ref())
-                .map(|certificate| certificate.verified.checkpoint.anchor.clone()),
-            served_shard: acquisition
-                .as_ref()
-                .ok()
-                .and_then(|certificate| certificate.as_ref())
-                .map(|certificate| certificate.verified.checkpoint.shard_id.clone()),
-            shard_id: shard_id.clone(),
-            served_supporting_stake: acquisition
-                .as_ref()
-                .ok()
-                .and_then(|certificate| certificate.as_ref())
-                .map(|certificate| certificate.verified.supporting_stake),
-            served_total_stake: acquisition
-                .as_ref()
-                .ok()
-                .and_then(|certificate| certificate.as_ref())
-                .map(|certificate| certificate.verified.total_stake),
-            outcome: match outcome {
-                BootOutcome::Genesis => "genesis".to_string(),
-                BootOutcome::Certified => "certified".to_string(),
-                BootOutcome::Refused(_) => "refused".to_string(),
-            },
-            refusal_coordinate: match outcome {
-                BootOutcome::Refused(coordinate) => Some(coordinate.as_str().to_string()),
-                _ => None,
-            },
-            accepted: acquisition.as_ref().ok().is_some_and(Option::is_some) || genesis_only,
-            fringe_agrees: None,
-            anchor_closure_present: None,
-            fringe_agreement: None,
-            accepted_fringe: None,
-            certified_fringe: None,
-        });
-        // **The acquisition is not the decision.** Keep what the decision trace needs before the
-        // certificate is consumed; `accepted` on the acquisition trace says only that a verified
-        // certificate was found, not that the accepted fringe is anchored by it.
-        let acquisition_summary = match &acquisition {
-            Ok(Some(_)) => "certificate".to_string(),
-            Ok(None) => "none".to_string(),
-            Err(error) => format!("refused: {error}"),
-        };
-        let served_digest = acquisition
-            .as_ref()
-            .ok()
-            .and_then(|certificate| certificate.as_ref())
-            .map(|certificate| certificate.verified.digest.to_hex());
-        let served_anchor = acquisition
-            .as_ref()
-            .ok()
-            .and_then(|certificate| certificate.as_ref())
-            .map(|certificate| certificate.verified.checkpoint.anchor.clone());
-        let served_shard = acquisition
-            .as_ref()
-            .ok()
-            .and_then(|certificate| certificate.as_ref())
-            .map(|certificate| certificate.verified.checkpoint.shard_id.clone());
-        let served_supporting_stake = acquisition
-            .as_ref()
-            .ok()
-            .and_then(|certificate| certificate.as_ref())
-            .map(|certificate| certificate.verified.supporting_stake);
-        let served_total_stake = acquisition
-            .as_ref()
-            .ok()
-            .and_then(|certificate| certificate.as_ref())
-            .map(|certificate| certificate.verified.total_stake);
-        let mut fringe_agreement: Option<String> = if genesis_only {
-            Some("genesis".to_string())
-        } else {
-            None
-        };
-        let mut accepted_fringe: Option<usize> = None;
-        let mut certified_fringe: Option<usize> = None;
-        let boot_certificate = acquisition?;
-        if let Some(BootCertificate {
-            verified,
-            source: certificate_source,
-            ..
-        }) = boot_certificate
-        {
-            if certificate_source == BootCertificateSource::Fetched {
-                log.warn(
-                    source,
-                    &format!(
-                        "boot: no checkpoint certificate was stored; fetched and adopted the \
-                         configured source's verified certificate {}",
-                        verified.digest.to_hex()
-                    ),
-                );
-            }
-            let recorded = recorded_fringe;
-            let certified_set: BTreeSet<_> = verified
-                .checkpoint
-                .fringe_hashes
-                .iter()
-                .filter_map(|hex| {
-                    rchain_shared::base16::decode(hex)
-                        .and_then(|bytes| BlockHash::try_from(bytes.as_slice()).ok())
-                })
-                .collect();
-            accepted_fringe = recorded.as_ref().map(BTreeSet::len);
-            certified_fringe = Some(certified_set.len());
-            match stored_fringe_agreement(recorded.as_ref(), &certified_set) {
-                StoredFringeAgreement::Reverified => {
-                    fringe_agreement = Some("reverified".to_string());
-                    log.info(
-                        source,
-                        &format!(
-                            "boot: the accepted fringe ({} block(s)) is re-verified by its stored \
-                             checkpoint certificate at anchor {}",
-                            certified_set.len(),
-                            verified.checkpoint.anchor_height
-                        ),
-                    );
-                    // **The stored certificate is the anchor** (Law 108): its checkpoint root is the
-                    // root this node runs from. Since the merge-base correction, that root is the **merge base** — the
-                    // state at the fringe the anchor itself finalised, which is where a post-anchor
-                    // block's merge starts — so the approved fringe's state and the certificate's
-                    // root agree by construction rather than being two different claims.
-                    let window = rebuild_window_for_boot(
-                        dag.as_ref(),
-                        &verified,
-                        certificate_source == BootCertificateSource::Fetched,
-                    )
-                    .await?;
-                    accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
-                        verified.clone(),
-                        window,
-                    )?);
-                }
-                StoredFringeAgreement::Mismatch {
-                    certified,
-                    accepted,
-                } => {
-                    // **A newer accepted fringe is not a disagreement when it descends from the
-                    // certificate's anchor.** The certificate is a snapshot; the approved store
-                    // records the tip at shutdown. Refusing every later tip is the in-place-restart
-                    // stall: the validator can never boot again. The certificate still anchors the
-                    // history (its closure and commitments are re-verified below), and
-                    // `seed_derived_roots` re-seeds the validated blocks above it. A recorded
-                    // fringe that does **not** descend from the anchor is a fork and is refused.
-                    let anchor =
-                        BlockHash::try_from_hex(&verified.checkpoint.anchor).map_err(|e| {
-                            format!("the stored certificate's anchor is not a block hash: {e}")
-                        })?;
-                    let descends = match recorded.as_ref() {
-                        Some(recorded) => {
-                            fringe_descends_from(dag.as_ref(), recorded, anchor).await?
-                        }
-                        None => false,
-                    };
-                    if descends {
-                        fringe_agreement = Some("descendant".to_string());
-                        log.warn(
-                            source,
-                            &format!(
-                                "boot: the accepted fringe ({accepted} block(s)) is a validated \
-                                 descendant of the certificate's fringe ({certified} block(s)); \
-                                 adopting the certificate as the base and re-deriving the window"
-                            ),
-                        );
-                        let window = rebuild_window_for_boot(
-                            dag.as_ref(),
-                            &verified,
-                            certificate_source == BootCertificateSource::Fetched,
-                        )
-                        .await?;
-                        accepted_state =
-                            Some(crate::engine::anchor::AcceptedState::from_certificate(
-                                verified.clone(),
-                                window,
-                            )?);
-                    } else {
-                        fringe_agreement = Some("mismatch".to_string());
-                        log.warn(
-                            source,
-                            &format!(
-                                "boot: the stored checkpoint certificate names another fringe than \
-                                 the accepted fringe ({certified} certified, {accepted} accepted) \
-                                 and the accepted fringe does not descend from its anchor; the \
-                                 accepted state is not re-verified by it"
-                            ),
-                        );
-                    }
-                }
-                StoredFringeAgreement::Absent => {
-                    fringe_agreement = Some("absent".to_string());
-                    // **No accepted fringe is recorded, but a verified certificate is.** A genesis
-                    // master — and a node whose approved-fringe write was interrupted — has no
-                    // fringe to compare against; the certificate is the only accepted-state record
-                    // and is adopted as the anchor (Law 108). The DAG must still hold the anchor's
-                    // closure, which the window rebuild verifies.
-                    log.warn(
-                        source,
-                        "boot: no accepted fringe is recorded; adopting the verified stored \
-                         checkpoint certificate as the anchor",
-                    );
-                    let window = rebuild_window_for_boot(
-                        dag.as_ref(),
-                        &verified,
-                        certificate_source == BootCertificateSource::Fetched,
-                    )
-                    .await?;
-                    accepted_state = Some(crate::engine::anchor::AcceptedState::from_certificate(
-                        verified.clone(),
-                        window,
-                    )?);
-                }
-            }
-        } else {
-            if !genesis_only {
-                return Err(format!(
-                    "this node's DAG holds {} block(s) but no checkpoint certificate is stored and \
-                     no checkpoint source is configured; the accepted state cannot be attributed",
-                    repr.dag_set.len()
-                ));
-            }
-            log.info(
-                source,
-                "boot: no checkpoint certificate is stored for the accepted fringe; a genesis-only \
-                 DAG can still be anchored by its pinned genesis",
-            );
-        }
-
-        // **The decision is what the trace must carry.** The acquisition trace above says a
-        // verified certificate was found; it does not say the accepted fringe is anchored by it.
-        // A quorate certificate whose anchor is ahead of the accepted fringe (a restart that was
-        // down while the fence moved) refuses here, and `accepted` on the acquisition trace alone
-        // would read as a safe boot.
-        let write_decision = |accepted: bool, refusal: Option<BootCoordinate>| {
-            let fringe_agrees = !matches!(fringe_agreement.as_deref(), Some("mismatch"));
-            write_boot_trace(&BootTrace {
-                kind: "boot".to_string(),
-                stage: "decision".to_string(),
-                dag_len: repr.dag_set.len(),
-                genesis_only,
-                store_head: store_head.clone(),
-                source_configured: checkpoint_source.is_some(),
-                acquisition: acquisition_summary.clone(),
-                served_digest: served_digest.clone(),
-                served_anchor: served_anchor.clone(),
-                served_shard: served_shard.clone(),
-                shard_id: shard_id.clone(),
-                served_supporting_stake,
-                served_total_stake,
-                outcome: (if accepted {
-                    if genesis_only {
-                        "genesis"
-                    } else {
-                        "certified"
-                    }
-                } else {
-                    "refused"
-                })
-                .to_string(),
-                refusal_coordinate: refusal.map(|coordinate| coordinate.as_str().to_string()),
-                accepted,
-                fringe_agrees: Some(fringe_agrees),
-                anchor_closure_present: Some(accepted),
-                fringe_agreement: fringe_agreement.clone(),
-                accepted_fringe,
-                certified_fringe,
-            });
-        };
-
-        // **No verified certificate: only a genesis-only DAG has an anchor left.** A DAG with any
-        // block above genesis and no certificate is an unattributed state; the node refuses to run
-        // rather than serve it (Law 108).
-        if accepted_state.is_none() {
-            let genesis_only = repr.dag_set.len() == 1
-                && repr
-                    .height_map
-                    .keys()
-                    .next()
-                    .map(|height| i64::from(*height))
-                    == Some(0);
-            if genesis_only {
-                let genesis_hash = repr
-                    .height_map
-                    .values()
-                    .next()
-                    .and_then(|hashes| hashes.iter().next().copied())
-                    .ok_or_else(|| "the DAG names no genesis block".to_string())?;
-                let genesis_post = genesis_post_state_hash(dag.as_ref(), &block_store)
-                    .await?
-                    .ok_or_else(|| {
-                        "the genesis block has no recorded post-state, so it cannot anchor this \
-                         node"
-                            .to_string()
-                    })?;
-                let genesis_block = block_store
-                    .get(&[genesis_hash])
-                    .await?
-                    .into_iter()
-                    .flatten()
-                    .next()
-                    .ok_or_else(|| "the genesis block has no stored body".to_string())?;
-                // **The operator's pin is checked before any accepted state exists** (review R5).
-                // `from_genesis` also refuses a body that is not the pin, but it words that refusal
-                // differently; the canonical `differs from pinned genesis` sentence belongs to the
-                // pin check, so the check runs first and the state then carries the proven identity.
-                if let Some(expected) = expected_genesis_hash {
-                    check_expected_genesis(dag.as_ref(), &expected).await?;
-                }
-                let pin = crate::engine::anchor::GenesisPin {
-                    block: expected_genesis_hash.unwrap_or(genesis_hash),
-                    post_state: genesis_post,
-                };
-                accepted_state = Some(crate::engine::anchor::AcceptedState::from_genesis(
-                    pin,
-                    &genesis_block,
-                )?);
-            } else {
-                let coordinate = if matches!(fringe_agreement.as_deref(), Some("mismatch")) {
-                    BootCoordinate::FringeMismatch
-                } else {
-                    BootCoordinate::NoStoredCertificate
-                };
-                write_decision(false, Some(coordinate));
-                return Err(format!(
-                    "this node's DAG holds {} block(s) but no verified checkpoint certificate; the \
-                     accepted state cannot be attributed, so the node refuses to run (a genesis \
-                     anchor is only for a genesis-only DAG)",
-                    repr.dag_set.len()
-                ));
-            }
-        }
-        write_decision(true, None);
     }
 
     // **The derived-index audit, at every boot** (B39, HAZOP F-U17-11). It is independent of the reset
@@ -1835,6 +1889,10 @@ enum BootCoordinate {
     /// The certificate verified, but the accepted fringe is not anchored by it (the agreement
     /// stage, not the acquisition). A node that cannot attribute its accepted state refuses.
     FringeMismatch,
+    /// A light join was attempted and the checkpoint sync stopped: the approved state could not be
+    /// restored and the retries are spent. This is the join ladder's timeout rung, named so the
+    /// decision trace says what the node did after the agreement refused it.
+    SyncTerminal,
 }
 
 impl BootCoordinate {
@@ -1846,6 +1904,7 @@ impl BootCoordinate {
             BootCoordinate::ShardMismatch => "shard-mismatch",
             BootCoordinate::StoreConflict => "store-conflict",
             BootCoordinate::FringeMismatch => "fringe-mismatch",
+            BootCoordinate::SyncTerminal => "sync-terminal",
         }
     }
 }
@@ -1920,12 +1979,81 @@ struct BootTrace {
     accepted_fringe: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     certified_fringe: Option<usize>,
+    // **What the boot did after the agreement refused the local fringe** (join ladder, RC-4).
+    // `"light-join"` means the node did not run from the accepted fringe at all; it ran from the
+    // certified anchor the sync restored, and the stale fence was never served. The evaluator
+    // reads this with `accepted` so a join is not mistaken for the refusal it replaced.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery: Option<String>,
 }
 
 /// Write the boot trace when `RNODE_TRACE_DIR` is set (the local claim harness sets it). A write
 /// failure is not a consensus event and is ignored.
 fn write_boot_trace(trace: &BootTrace) {
     crate::trace::write_trace("boot", trace);
+}
+
+/// **The decision trace's coordinates, kept from the acquisition until the outcome is known.**
+///
+/// A light join decides *before* the checkpoint sync has run; writing the decision there would
+/// record an intention (`accepted: true`) for a boot that may still stop at the sync's terminal
+/// signal. The coordinates are captured here and written once — after the sync produces an
+/// accepted state, or after it names its terminal coordinate.
+#[derive(Debug, Clone)]
+struct BootDecision {
+    dag_len: usize,
+    genesis_only: bool,
+    store_head: Option<String>,
+    source_configured: bool,
+    acquisition: String,
+    served_digest: Option<String>,
+    served_anchor: Option<String>,
+    served_shard: Option<String>,
+    shard_id: String,
+    served_supporting_stake: Option<i128>,
+    served_total_stake: Option<i128>,
+    fringe_agreement: Option<String>,
+    accepted_fringe: Option<usize>,
+    certified_fringe: Option<usize>,
+}
+
+impl BootDecision {
+    fn write(&self, accepted: bool, recovery: Option<&str>, refusal: Option<BootCoordinate>) {
+        let fringe_agrees = !matches!(self.fringe_agreement.as_deref(), Some("mismatch"));
+        write_boot_trace(&BootTrace {
+            kind: "boot".to_string(),
+            stage: "decision".to_string(),
+            dag_len: self.dag_len,
+            genesis_only: self.genesis_only,
+            store_head: self.store_head.clone(),
+            source_configured: self.source_configured,
+            acquisition: self.acquisition.clone(),
+            served_digest: self.served_digest.clone(),
+            served_anchor: self.served_anchor.clone(),
+            served_shard: self.served_shard.clone(),
+            shard_id: self.shard_id.clone(),
+            served_supporting_stake: self.served_supporting_stake,
+            served_total_stake: self.served_total_stake,
+            outcome: (if accepted {
+                if self.genesis_only {
+                    "genesis"
+                } else {
+                    "certified"
+                }
+            } else {
+                "refused"
+            })
+            .to_string(),
+            refusal_coordinate: refusal.map(|coordinate| coordinate.as_str().to_string()),
+            accepted,
+            fringe_agrees: Some(fringe_agrees),
+            anchor_closure_present: Some(accepted),
+            fringe_agreement: self.fringe_agreement.clone(),
+            accepted_fringe: self.accepted_fringe,
+            certified_fringe: self.certified_fringe,
+            recovery: recovery.map(str::to_string),
+        });
+    }
 }
 
 /// **Acquire the boot certificate.** A stored head is re-verified; with none, the configured

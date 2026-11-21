@@ -667,8 +667,15 @@ def evaluate_boot_trace(trace: dict) -> dict:
         # **A decision trace is written after the agreement decision, so its `accepted` is the
         # outcome, not an input.** Read the anchor predicates even when the boot refused: a quorate
         # certificate that does not anchor the accepted fringe is an unsafe point, not a model gap.
+        #
+        # **A light join is the safe way out of that mismatch** (join ladder, RC-4): the node did
+        # not run from the unanchored fringe; the sync restored the certified anchor, so
+        # `anchor_closure_present` is true and `recovery` names the join. The predicate is the
+        # *run state*, not which fringe the agreement preferred — a mismatch with no recovery is
+        # still unsafe.
+        recovery = (trace.get("recovery") or "").lower()
         anchor_ok = (trace.get("anchor_closure_present") is True
-                     and trace.get("fringe_agrees") is True)
+                     and (trace.get("fringe_agrees") is True or recovery == "light-join"))
     else:
         anchor_ok = True
     return _predicate_result({
