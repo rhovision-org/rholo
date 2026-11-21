@@ -7438,6 +7438,135 @@ def lawsC : List Law := [
       is a dedup, and an effect-free rejection cannot drop a write. The finalised floor remains \
       fail-closed for a unique user deploy with effects; the negative test is the guard." },
 
+  { number := 120, layer := "PoS",
+    statement := "**A joining validator is not drawn into the active set until it participates.** At \
+      an armed epoch boundary, a bonded validator that is not in the previous active set and is \
+      absent from the participation map at the quorum tip (no entry, or strictly more than the \
+      absence threshold behind it) is excluded from the active draw, so it is not in the finality \
+      denominator. It enters at the first boundary after it participates. An unarmed network \
+      (`jailAfter = 0` — the shipped format-2 record) excludes nobody and the draw is unchanged. \
+      The bond and the staged withdrawal are untouched. The rule without the absence conjunct — \
+      outside the previous active set alone — is the mutant: it excludes a joiner that has already \
+      spoken, which is the wrong rule.",
+    status := .provedModel,
+    formal := `Rchain.Join.law120_statement,
+    mutant := `Rchain.Join.law120_mutant,
+    falsifier := `Rchain.Join.law120_falsifier,
+    declarations := [`Rchain.Join.joining,
+      `Rchain.Join.joiningUnfiltered,
+      `Rchain.Join.joining_mem,
+      `Rchain.Join.law120_statement,
+      `Rchain.Join.law120,
+      `Rchain.Join.law120_mutant,
+      `Rchain.Join.law120_falsifier],
+    axioms := [],
+    rust := ["rholang/src/native_state.rs"],
+    rustWitness := [
+      "rholang/src/native_state.rs:a_joining_validator_is_excluded_from_the_active_draw_until_it_participates"],
+    witness := [`Rchain.Join.law120, `Rchain.Join.law120_falsifier],
+    falsifiable := "Use `joiningUnfiltered` (not-active alone): a validator that bonded and authored \
+      a block is outside the previous active set and present, and the unfiltered rule excludes it \
+      from the next boundary. `law120_mutant` and `law120_falsifier` exhibit the witness; the Rust \
+      arm's first assertion is the joiner excluded while absent, its second is the same joiner \
+      drawn after it speaks.",
+    note := "**The ladder's second rung, on the existing timing.** Law 89 covers a validator that was \
+      active and went silent; this law covers the one that has never been in the draw. \
+      `apply_liveness_prelude` counts absence only for the previous active set, so a joiner is not \
+      jailed — it must instead be kept out of the draw until it can participate. No new genesis \
+      field is added: arming is the five RCHIP #55 parameters, and with them off the record is \
+      format 2 and the draw is byte-for-byte the old one. The check reads the pool key set, the \
+      previous active set and the quorum-agreed participation map — no local view and no wall \
+      clock, so every node classifies the same way." },
+
+  { number := 121, layer := "Sync",
+    statement := "**A joined node is never `running` while it is behind.** The phase that admits \
+      serving carries a proof that the node's quorum-supported height is within the catch-up window \
+      of the highest latest message it holds. A view outside the window is `catchingUp supported`, \
+      which names the coordinate a reader compares with the peer tip; there is no third \
+      constructor, so a running-and-behind state is not writable. The watchdog is the safe \
+      fallback: a catch-up that observes more than `watchdogAfter` attempts without progress \
+      re-enters `syncing` — the node's checkpoint-sync path, which rewinds and adopts a newer \
+      certified anchor — while a running phase is never touched by it. Timing is counted in \
+      observed attempts, not wall clock.",
+    status := .provedModel,
+    formal := `Rchain.JoinCatchUp.law121_statement,
+    mutant := `Rchain.JoinCatchUp.law121_mutant,
+    falsifier := `Rchain.JoinCatchUp.law121_falsifier,
+    declarations := [`Rchain.JoinCatchUp.View,
+      `Rchain.JoinCatchUp.withinWindow,
+      `Rchain.JoinCatchUp.Phase,
+      `Rchain.JoinCatchUp.Phase.isRunning,
+      `Rchain.JoinCatchUp.Phase.blocker,
+      `Rchain.JoinCatchUp.afterRestore,
+      `Rchain.JoinCatchUp.watchdog,
+      `Rchain.JoinCatchUp.law121_statement,
+      `Rchain.JoinCatchUp.law121,
+      `Rchain.JoinCatchUp.LoosePhase,
+      `Rchain.JoinCatchUp.afterRestoreUnchecked,
+      `Rchain.JoinCatchUp.law121_mutant,
+      `Rchain.JoinCatchUp.law121_falsifier],
+    axioms := [],
+    rust := ["casper/src/engine/node_phase.rs", "casper/src/engine/node_launch.rs"],
+    rustWitness := [
+      "casper/src/engine/catchup.rs:the_catch_up_window_refuses_the_drills_frozen_view"],
+    witness := [`Rchain.JoinCatchUp.law121, `Rchain.JoinCatchUp.law121_falsifier],
+    falsifiable := "The pre-fix launcher — `afterRestoreUnchecked`, the Rust enum without the \
+      running proof — returns `running` for the drill's own view (306 supported at 181); \
+      `law121_mutant` and `law121_falsifier` exhibit it. The typed phase cannot express that value, \
+      which is the closure: the bad state is unwritable, not merely refused.",
+    note := "**The silent freeze this law removes** (RC-4, 2026-11-21): the light-joined victim at \
+      `84d43d8fe` restored the certified state, entered `running` at tip 183 while the other \
+      validators were at 306, and stayed there for the harness's whole window — pipeline clean, \
+      attestation licensed, nothing named. Both sides of the window come from the message state, \
+      not the DAG's metadata maximum: a metadata tip counts blocks no node has validated and held \
+      every proposer closed in the drill's earlier run. The Rust phase decision and its witness are \
+      the companion commit; the HAZOP is `spec/audit/evidence/rc4-join-catch-up/hazop.md`." },
+
+  { number := 122, layer := "Sync",
+    statement := "**A validator never re-signs a sequence it has signed.** The proposer derives its \
+      next sequence from a durable record of the highest sequence this node has ever signed, \
+      written before the proposal is broadcast. While the round snapshot is behind that record — \
+      the block that carried the signature was dropped by a rewind or a light join — the proposer \
+      waits and names the record and the snapshot. A proceed therefore signs strictly above every \
+      recorded sequence; the record only rises; and a rewind leaves both the record and the \
+      decision unchanged. The snapshot alone is the mutant: it re-signs the sequence the record \
+      already holds, which the network reads as an equivocation and slashes.",
+    status := .provedModel,
+    formal := `Rchain.OwnSeq.law122_statement,
+    mutant := `Rchain.OwnSeq.law122_mutant,
+    falsifier := `Rchain.OwnSeq.law122_falsifier,
+    declarations := [`Rchain.OwnSeq.Record,
+      `Rchain.OwnSeq.Snapshot,
+      `Rchain.OwnSeq.Decision,
+      `Rchain.OwnSeq.nextSeqUnchecked,
+      `Rchain.OwnSeq.nextSeq,
+      `Rchain.OwnSeq.raise,
+      `Rchain.OwnSeq.afterRewind,
+      `Rchain.OwnSeq.law122_statement,
+      `Rchain.OwnSeq.law122,
+      `Rchain.OwnSeq.law122_mutant,
+      `Rchain.OwnSeq.law122_falsifier],
+    axioms := [],
+    rust := ["casper/src/blocks/proposer/block_creator.rs",
+      "block-storage/src/dag/dag_storage.rs"],
+    rustWitness := [
+      "casper/src/blocks/proposer/block_creator.rs:the_own_sequence_record_refuses_a_sequence_already_signed",
+      "casper/src/dag.rs:the_own_sequence_record_round_trips_and_clears"],
+    witness := [`Rchain.OwnSeq.law122, `Rchain.OwnSeq.law122_falsifier],
+    falsifiable := "Use `nextSeqUnchecked` — the round snapshot alone, which is the Rust derivation \
+      before this law. With the record at sequence 152 and the snapshot at 151 it returns 152: a \
+      sequence already signed. `law122_mutant` and `law122_falsifier` exhibit it, and the Rust \
+      witness pins both sides of the guard (record ahead: wait, naming 152/155/151; record \
+      reached: proceed).",
+    note := "**The drill's own slashing** (RC-4, 2026-11-21): a light-joined validator restored its \
+      state, caught up to height 165, and signed block #155 at sequence 152 again. The network \
+      slashed its key 100% (Malicious tier); the pool dropped from four validators to three, after \
+      which every checkpoint collector refused on bond-set drift and the burst's deploys never \
+      resolved. The rewind had dropped the block that carried the signature, and nothing durable \
+      remembered it. The record is written before the block leaves `BlockCreator::create`, so a \
+      write failure refuses the proposal rather than allowing a signature the node cannot \
+      remember; the HAZOP row is J8 in `spec/audit/evidence/rc4-join-catch-up/hazop.md`." },
+
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

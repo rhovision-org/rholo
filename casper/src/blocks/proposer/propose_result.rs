@@ -33,6 +33,16 @@ pub enum ProposeStatus {
     /// transient fault, and `POST /api/v1/autopropose/resume` does not clear it. The reason names
     /// the refused block.
     KeyEquivocationHalted(String),
+    /// **The durable record of this validator's own signatures is ahead of the round snapshot**
+    /// (Law 122). A rewind or a light join dropped the block that carried a later sequence, so the
+    /// snapshot's next number would duplicate one the network already has — an equivocation the
+    /// network slashes. The node waits for the catch-up to re-adopt the block; it never signs below
+    /// the record.
+    OwnSeqNotReconciled {
+        signed: i64,
+        signed_height: i64,
+        snapshot: Option<i64>,
+    },
 }
 
 /// **What a proposal attempt is allowed to carry** (#564).
@@ -67,6 +77,16 @@ impl fmt::Display for ProposeStatus {
                     "Proposal halted: this validator's key equivocated ({reason})"
                 )
             }
+            ProposeStatus::OwnSeqNotReconciled {
+                signed,
+                signed_height,
+                snapshot,
+            } => write!(
+                f,
+                "Proposal deferred: this validator's own signature is recorded at sequence {signed} \
+                 (height {signed_height}) but the round snapshot shows {snapshot:?}; waiting for the \
+                 catch-up to re-adopt it rather than sign a duplicate (Law 122)"
+            ),
             ProposeStatus::AwaitingFinality => {
                 write!(f, "Proposal deferred: unfinalized work awaits its retry")
             }
@@ -126,6 +146,14 @@ pub enum BlockCreatorResult {
     /// extend a chain no peer has accepted; the proposer returns
     /// [`ProposeStatus::TooFarAheadOfLastFinalized`] and the node stops proposing/attesting.
     TooFarAheadOfLastFinalized,
+    /// The validator's own signed-sequence record is ahead of the round snapshot (Law 122): the
+    /// DAG no longer holds a block this key signed, so the snapshot's next sequence would duplicate
+    /// one the network already has. The proposer waits for the catch-up to re-adopt it.
+    OwnSeqNotReconciled {
+        signed: i64,
+        signed_height: i64,
+        snapshot: Option<i64>,
+    },
     /// A self-replay fault is latched: every proposal trigger is stopped until an operator resumes.
     SelfReplayFaultHalted,
     Created(BlockMessage),

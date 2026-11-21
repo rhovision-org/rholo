@@ -1208,6 +1208,42 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
         .map_err(|e| format!("the checkpoint state's bonded pool is unavailable: {e}"))?;
     check_bond_set_unchanged(&trusted_bonds, &anchor_bonds).map_err(|e| e.to_string())?;
 
+    // **A join adopts the certified history** (join ladder, RC-4). A restarting node's DAG holds
+    // blocks the certificate does not name: its own unfinalised view from before it stopped, and
+    // any fork the network did not finalise. They are not evidence — the certificate is signed by
+    // strictly more than two thirds of the bonded stake and these blocks are not in it — and
+    // keeping them makes the local DAG something the certified history contradicts at those
+    // heights, which the publisher refuses. Rewind to the last height whose local blocks are all
+    // certified; the published entries supply the certified blocks above it. The recovery path (a
+    // DAG that is already a partial certified history) finds no divergence and rewinds nothing.
+    let certified_hashes: BTreeSet<BlockHash> = entries.iter().map(|(hash, _)| *hash).collect();
+    let divergence = dag
+        .get_representation()
+        .await
+        .height_map
+        .iter()
+        .filter(|(_, hashes)| !hashes.is_subset(&certified_hashes))
+        .map(|(height, _)| *height)
+        .min();
+    if let Some(height) = divergence {
+        let floor =
+            rchain_shared::refined::BlockHeight::try_from(i64::from(height) - 1).map_err(|_| {
+                "the node's genesis block is not part of the certified history; the network's \
+                 genesis differs from this store's, so this node cannot join"
+                    .to_string()
+            })?;
+        log.warn(
+            source,
+            &format!(
+                "the existing DAG holds blocks the certified history does not name from height {}; \
+                 rewinding to {} and adopting the certified history",
+                i64::from(height),
+                i64::from(floor)
+            ),
+        );
+        crate::engine::reset::rewind_and_purge(&dag, &block_store, floor).await?;
+    }
+
     mark_recovery_pending(approved_store, fringe).await?;
     super::recovery::publish_certified_metadata(dag.as_ref(), &entries).await?;
     // **Record the first height whose body is missing** (sync/verification separation). Only the

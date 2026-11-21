@@ -186,9 +186,11 @@ def run(argv: list[str]) -> int:
                                        "victim": manifest.get("victim", 3)})
         return _post_reads(target, record, out)
 
-    # The known-good restart arm uses 4 GiB per validator; 2 GiB fails the resource preflight and
-    # would confound the certificate refusal with a memory refusal.
-    devnet = common.Devnet("restartload", validators=4, memory="4g")
+    # **The floor scales with the store.** The arm used 4 GiB until 2026-11-21; at 1,139 persisted
+    # blocks a 4 GiB node reads 4,087 MiB available against the 4,096 floor and refuses the resource
+    # preflight, which would confound the boot decision with a memory refusal. 6 GiB leaves headroom
+    # for the restart's populated store; 2 GiB fails the preflight outright.
+    devnet = common.Devnet("restartload", validators=4, memory="6g")
     try:
         devnet.up()
         record["provenance"] = devnet.provenance()

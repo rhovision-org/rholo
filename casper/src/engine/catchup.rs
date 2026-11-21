@@ -367,6 +367,54 @@ async fn wait_for_frontier(dag: &dyn BlockDagStorage, target: i64, current: i64)
     frontier
 }
 
+/// **The catch-up window's view** (Law 121): the highest latest message among the active set and the
+/// quorum-supported height over those messages.
+///
+/// Both sides come from the **message state**, never from the DAG's metadata maximum: a metadata tip
+/// counts blocks no node has validated, and on 2026-11-21 a metadata-based window held every proposer
+/// closed at supported 269 / metadata 275 with nothing left to drain the gap. A sender outside the
+/// active set is excluded for the same reason the quorum excludes it — a jailed or unbonded
+/// validator's last message is frozen where it stopped.
+pub fn view(
+    latest: impl IntoIterator<
+        Item = (
+            rchain_models::validator::Validator,
+            rchain_shared::refined::BlockHeight,
+        ),
+    >,
+    bonds: &std::collections::BTreeMap<
+        rchain_models::validator::Validator,
+        rchain_shared::refined::NonNegI64,
+    >,
+) -> (
+    rchain_shared::refined::BlockHeight,
+    rchain_shared::refined::BlockHeight,
+) {
+    use rchain_block_storage::dag::liveness;
+    let heights = liveness::latest_heights(
+        latest
+            .into_iter()
+            .filter(|(sender, _)| bonds.contains_key(sender)),
+    );
+    let tip = heights
+        .values()
+        .copied()
+        .max()
+        .unwrap_or_else(rchain_shared::refined::BlockHeight::zero);
+    let supported = liveness::quorum_supported_height(bonds, &heights);
+    (tip, supported)
+}
+
+/// **The catch-up window.** A node may serve only when its quorum-supported height is within
+/// `LIVENESS_WINDOW` heights of the highest latest message it holds; otherwise it is catching up and
+/// names the supported height. See [`view`] and Law 121.
+pub fn within_window(
+    tip: rchain_shared::refined::BlockHeight,
+    supported: rchain_shared::refined::BlockHeight,
+) -> bool {
+    i64::from(tip) - i64::from(supported) <= rchain_block_storage::dag::liveness::LIVENESS_WINDOW
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,5 +532,59 @@ mod tests {
             "the turnover is 128 bonded validators at a window of 8 heights and a 1024-block pending \
              bound; a change here changes what the driver's shard warning means"
         );
+    }
+
+    /// **The catch-up window refuses the drill's frozen view** (Law 121, RC-4). The pre-fix launcher
+    /// served a node at supported 181 while its own latest message was at 306; the window refuses
+    /// that and admits the boundary. A sender outside the active set cannot set the tip — a jailed
+    /// validator frozen at 999 would otherwise hold every proposer closed.
+    #[test]
+    fn the_catch_up_window_refuses_the_drills_frozen_view() {
+        use rchain_models::validator::Validator;
+        use rchain_shared::refined::{BlockHeight, NonNegI64};
+        let height = |v: i64| BlockHeight::try_from(v).expect("non-negative");
+        let stake = |v: i64| NonNegI64::try_from(v).expect("non-negative");
+        let a = Validator::new([1; 65]);
+        let b = Validator::new([2; 65]);
+        let c = Validator::new([3; 65]);
+        let d = Validator::new([4; 65]);
+        let bonds: std::collections::BTreeMap<_, _> = [
+            (a, stake(100)),
+            (b, stake(100)),
+            (c, stake(100)),
+            (d, stake(100)),
+        ]
+        .into_iter()
+        .collect();
+
+        // The drill: the node's own message at 306, the quorum of peers stuck at 181.
+        let latest = [
+            (a, height(306)),
+            (b, height(181)),
+            (c, height(181)),
+            (d, height(181)),
+        ];
+        let (tip, supported) = view(latest, &bonds);
+        assert_eq!((i64::from(tip), i64::from(supported)), (306, 181));
+        assert!(!within_window(tip, supported));
+
+        // The boundary itself is admitted, one height beyond it is not.
+        assert!(within_window(height(60), height(60 - 5)));
+        assert!(!within_window(height(60), height(60 - 5 - 1)));
+
+        // A jailed sender is not in the active map, and its frozen message cannot set the tip.
+        let jailed = [
+            (a, height(306)),
+            (b, height(306)),
+            (c, height(306)),
+            (d, height(999)),
+        ];
+        let bonds_without_d: std::collections::BTreeMap<_, _> =
+            [(a, stake(100)), (b, stake(100)), (c, stake(100))]
+                .into_iter()
+                .collect();
+        let (tip, supported) = view(jailed, &bonds_without_d);
+        assert_eq!((i64::from(tip), i64::from(supported)), (306, 306));
+        assert!(within_window(tip, supported));
     }
 }

@@ -767,6 +767,27 @@ impl Proposer {
                 },
                 None,
             )),
+            // **A transient wait, not an isolation.** The node has observed blocks its own message
+            // state has not caught up to; the next tick re-derives and proposes once it has. The
+            // status is the existing "wait for more blocks" one, so an operator sees a wait rather
+            // than a fault.
+            // **Never sign below the record** (Law 122). A durable sequence the DAG no longer holds
+            // means the catch-up has not re-adopted this validator's own block; waiting is the only
+            // safe transition — the duplicate would be an equivocation the network slashes.
+            BlockCreatorResult::OwnSeqNotReconciled {
+                signed,
+                signed_height,
+                snapshot,
+            } => Ok((
+                ProposeResult {
+                    propose_status: ProposeStatus::OwnSeqNotReconciled {
+                        signed,
+                        signed_height,
+                        snapshot,
+                    },
+                },
+                None,
+            )),
             // **No private chain.** A node that has fallen more than the policy bound behind
             // finality must not keep extending a chain no peer has accepted. The status is the one
             // that already existed but had no producer; the node-level gate turns it into a halt
@@ -2289,6 +2310,17 @@ where
         .iter()
         .map(|m| m.block_hash)
         .collect();
+
+    // **The catch-up gate is the joined node's phase, not every proposer's** (Law 121, RC-4). The
+    // launch leaves a node that restored at an anchor and has not caught up in `CatchingUp`; the
+    // watchdog moves it to `Running` only when its view is inside the window, and `/health` names
+    // the coordinate meanwhile. A global proposer gate here was measured to do harm: when two
+    // validators fell nine heights behind under the burst, the leaders' quorum-supported height sat
+    // at the laggards' height, every proposer waited, and production stopped exactly where the
+    // laggards needed it to continue (2026-11-21). The duplicate-signature hazard that made the
+    // stale view dangerous is closed by the own-sequence record (Law 122), and a joined node does
+    // not propose until its own block is reconciled, so a stale proposal from a rejoin cannot be
+    // built.
 
     // **The private-chain bound.** A node whose tip is this far beyond its own last finalized
     // block has no evidence that any peer accepts its chain; continuing to propose is how A ran

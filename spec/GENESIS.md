@@ -269,6 +269,14 @@ arms them starts a **new genesis**; arming an existing chain without one is a se
 `PosParams::validate` refuses a half-configured rule at genesis and at decode. See
 [RCHIP #55](rchip-55-liveness-enforcement.md) for the mechanism and its residuals.
 
+**Arming them also arms the joining admission.** At an armed boundary, a validator that is in the
+bonded pool but **not** in the active set and is absent from the quorum-supported tip has not joined
+yet: the epoch's active draw excludes it, so its stake is not in the finality denominator until it
+participates. It enters at the first boundary after it speaks; the bond is untouched (this is
+membership, not a penalty). That is the ladder's "no full voting rights until the validator has
+caught up", and it is why a light-joined validator cannot cap finality while it catches up. With the
+five parameters off, the draw is the pre-change one and an unarmed network's post-state is unchanged.
+
 ### Test-only and example sources (explicitly not candidates)
 
 `legacy/rholang/examples/**` (76 files — the `tut-*` teaching programs, `old/**`, `linking/**`,

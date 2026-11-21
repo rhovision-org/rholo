@@ -968,6 +968,13 @@ pub struct PosGenesis {
 pub struct LivenessOutcome {
     pub jailed: BTreeSet<Validator>,
     pub slashed: Vec<Validator>,
+    /// **Pool members that have not joined yet.** They are in the bonded pool but not in the active
+    /// set and are absent from the quorum-supported tip, so the boundary must not draw them into the
+    /// active set: the active set is the finality denominator, and a validator that has never
+    /// spoken must not weigh on it. They enter at the first boundary after they participate. This is
+    /// the ladder's "no full voting rights until the validator has caught up"; it is distinct from a
+    /// *served* validator going quiet, which keeps its place until the absence/jail rule removes it.
+    pub joining: BTreeSet<Validator>,
 }
 
 impl PosGenesis {
@@ -2330,7 +2337,13 @@ impl NativeSystemState {
         // seed yet is a genesis-installed one before its first boundary, and falls back to the
         // genesis constant.
         let seed = self.epoch_seed().await?.unwrap_or_else(genesis_epoch_seed);
-        let active = select_active_excluding(&pool, &withdrawers, &liveness.jailed, &params, &seed);
+        // **The draw excludes jailed validators and validators that have not joined.** A joining
+        // validator is a pool member absent from the tip that was never in the active set; drawing it
+        // would put stake with no participation behind the finality denominator. It re-enters on the
+        // boundary after it participates — the ladder's admission step.
+        let mut excluded = liveness.jailed.clone();
+        excluded.extend(liveness.joining.iter().copied());
+        let active = select_active_excluding(&pool, &withdrawers, &excluded, &params, &seed);
         self.set_bonds(&pool);
         self.set_withdrawers(&withdrawers);
         self.set_pending_withdrawers(&pending);
@@ -2539,6 +2552,24 @@ impl NativeSystemState {
         let tip = crate::pos_liveness::quorum_tip(&active, participation);
         if tip == 0 {
             return Ok(outcome);
+        }
+        // **The joining admission rule.** A pool member that is not in the active set and is absent
+        // has not joined yet — it is not a validator that served and went quiet (that one keeps its
+        // place until the absence/jail rule removes it). Do not draw it into the active set, which is
+        // the finality denominator, until it speaks; it enters at the first boundary after it does.
+        // Computed before the anchor/progress guard: it is this boundary's membership decision, not a
+        // jail clock, so a frozen tip still applies it (with the same evidence the tip used).
+        {
+            let pool = self.bonds().await?;
+            let threshold = params.liveness_absence_threshold;
+            outcome.joining = pool
+                .keys()
+                .filter(|validator| {
+                    !active.contains_key(*validator)
+                        && crate::pos_liveness::is_absent(participation, tip, threshold, *validator)
+                })
+                .copied()
+                .collect();
         }
         let Some(anchor) = self.liveness_anchor().await? else {
             // The first armed boundary establishes the comparison point; it judges nobody.
@@ -5944,6 +5975,101 @@ mod tests {
             Some(10),
             "with the rule off, an absent validator is paid for being drawn — exactly as Pos.rhox \\
              does: the only drawn validator takes the whole pot, never having signed a block"
+        );
+    }
+
+    /// **A validator that has not joined is not drawn into the active set** (the ladder's admission
+    /// rule, Law 89). A newly bonded validator is in the pool but has never spoken; the boundary must
+    /// not put its stake behind the finality denominator until it participates. The bond is untouched
+    /// — this is a membership decision, not a penalty — and one message puts it back in the draw at
+    /// the next boundary.
+    #[tokio::test]
+    async fn a_joining_validator_is_excluded_from_the_active_draw_until_it_participates() {
+        let params = PosParams {
+            minimum_bond: NonNegI64::try_from(1).unwrap(),
+            epoch_length: 1,
+            liveness_absence_threshold: 1,
+            liveness_jail_after_boundaries: 2,
+            liveness_jail_epochs: 3,
+            liveness_vote_window: 0,
+            liveness_slash_severity: 0,
+            ..PosParams::default()
+        };
+        let native = native_with(
+            &[validator(1), validator(2), validator(3), validator(4)],
+            params.clone(),
+            &[(validator(1), 4), (validator(2), 4), (validator(3), 4)],
+        )
+        .await;
+        // Validator 4 bonds after genesis: it is trusted and in the pool, but not in the active set
+        // and has never spoken. The bond moves REV out of its vault.
+        native.set_vault_balance(&vault_address_of(&validator(4)), nn(10));
+        native.bond(&validator(4), nn(4), 1).await.unwrap().unwrap();
+
+        // The three serving validators are at the tip; validator 4 has no entry at all.
+        let serving = BTreeMap::from([
+            (validator(1), BlockHeight::try_from(10).unwrap()),
+            (validator(2), BlockHeight::try_from(10).unwrap()),
+            (validator(3), BlockHeight::try_from(10).unwrap()),
+        ]);
+        native
+            .close_block(12, fringe_state(12), &serving)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !native.active().await.unwrap().contains_key(&validator(4)),
+            "a bonded validator that has never spoken is not in the finality denominator"
+        );
+        assert!(
+            native.bonds().await.unwrap().contains_key(&validator(4)),
+            "its bond is untouched — exclusion is membership, not a slash"
+        );
+
+        // When it speaks inside the threshold, the next boundary draws it in.
+        let with_fourth = BTreeMap::from([
+            (validator(1), BlockHeight::try_from(13).unwrap()),
+            (validator(2), BlockHeight::try_from(13).unwrap()),
+            (validator(3), BlockHeight::try_from(13).unwrap()),
+            (validator(4), BlockHeight::try_from(13).unwrap()),
+        ]);
+        native
+            .close_block(14, fringe_state(14), &with_fourth)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            native.active().await.unwrap().contains_key(&validator(4)),
+            "a validator that speaks re-enters the draw at the next boundary"
+        );
+
+        // **The rule is part of the armed configuration**, exactly like the jail clocks. With the
+        // liveness configuration off the draw is the pre-change one: a bonded validator is drawn
+        // immediately, absent or not. That keeps an unarmed network's genesis post-state unchanged.
+        let unarmed = native_with(
+            &[validator(1), validator(2), validator(3), validator(4)],
+            PosParams {
+                minimum_bond: NonNegI64::try_from(1).unwrap(),
+                epoch_length: 1,
+                ..PosParams::default()
+            },
+            &[(validator(1), 4), (validator(2), 4), (validator(3), 4)],
+        )
+        .await;
+        unarmed.set_vault_balance(&vault_address_of(&validator(4)), nn(10));
+        unarmed
+            .bond(&validator(4), nn(4), 1)
+            .await
+            .unwrap()
+            .unwrap();
+        unarmed
+            .close_block(12, fringe_state(12), &serving)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            unarmed.active().await.unwrap().contains_key(&validator(4)),
+            "with the liveness configuration off the draw is the pre-change one"
         );
     }
 

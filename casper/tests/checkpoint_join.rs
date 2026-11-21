@@ -45,8 +45,8 @@ use rchain_rspace::rspace::RSpace;
 use rchain_shared::base16;
 use rchain_shared::log::{Log, NopLog};
 use rchain_shared::refined::NonNegI64;
-use rchain_shared::store_manager::{database, InMemoryStoreManager};
-use rchain_shared::typed_store::BytesCodec;
+use rchain_shared::store_manager::{database, InMemoryStoreManager, KeyValueStoreManager};
+use rchain_shared::typed_store::{BytesCodec, KeyValueTypedStore, KeyValueTypedStoreCodec};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -77,6 +77,16 @@ async fn dag() -> BlockDagKeyValueStorage {
     )
     .await
     .unwrap();
+    // **The durable-records store is attached because `BlockCreator::create` writes the validator's
+    // own signed sequence before it returns** (Law 122): the whole point of that write is that a
+    // node which cannot record the signature must not produce a block, so a fixture that drives
+    // the creator has to give it somewhere to record — the same reason the node attaches it.
+    let records: Arc<dyn KeyValueTypedStore<Vec<u8>, Vec<u8>>> =
+        Arc::new(KeyValueTypedStoreCodec::new(
+            manager.store("records").await.unwrap(),
+            Arc::new(BytesCodec),
+            Arc::new(BytesCodec),
+        ));
     BlockDagKeyValueStorage::create(
         Arc::new(
             BlockMetadataStore::create(Arc::new(metadata))
@@ -88,6 +98,7 @@ async fn dag() -> BlockDagKeyValueStorage {
     )
     .await
     .unwrap()
+    .with_reset_marker(records)
 }
 
 async fn blocks() -> BlockStore {

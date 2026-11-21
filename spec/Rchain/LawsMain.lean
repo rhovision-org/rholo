@@ -68,7 +68,7 @@ conservation and its withdrawal — the four the port did not implement when the
 48 is the fee consequence of a denied deploy, which the plan's Programme B opened as a row because it
 is a rule neither this port nor the Scala it was ported from implements, and 49 is the gas a matched
 deploy is charged — the first row about cost rather than state." -/
-def lawCeiling : Nat := 119
+def lawCeiling : Nat := 122
 
 /-- **The ceiling the completeness check requires: the number of *entries*, hand-maintained for
 `lawCeiling`'s own reason.** The numbering check above validates *numbers* (1..`lawCeiling`) and
@@ -79,7 +79,7 @@ check stayed green, while the emitter's summary read "57 entries" against a base
 C80). Pinned by hand rather than derived, because a check that counted the rows would compare the
 register to itself and a dropped row would take its own evidence along. **Adding a row means bumping
 this** — the same tax `lawCeiling` already carries. -/
-def entryCeiling : Nat := 178
+def entryCeiling : Nat := 181
 
 /-- **The layers a row may name.** `layer` is not prose: it is the key the emitted `LAWS.md` groups by,
 so a note pasted into it silently becomes a table heading — which happened to laws 3, 4a and 16a and

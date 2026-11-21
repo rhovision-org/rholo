@@ -76,7 +76,8 @@ shard's reading must say which.
 | `ok` | readiness | bool | A | P | ≤1 s | equals `ready`; carried for older clients |
 | `ready` | readiness | bool | A | P | ≤1 s | the conjunction of the four gates below; false always names a reason |
 | `readyReasons` | readiness | string[] | A | P | ≤1 s | closed vocabulary; empty iff `ready` |
-| `phase` / `nodePhase` | readiness | string | G | S | ≤1 s | the primary shard's **effective** `NodePhase` label: `blocked` while a durable pipeline fault is outstanding, even if the launch cell says `running` |
+| `phase` / `nodePhase` | readiness | string | G | S | ≤1 s | the primary shard's **effective** `NodePhase` label: `blocked` while a durable pipeline fault is outstanding, even if the launch cell says `running`; `catching-up` for a joined node whose fence has not reached the catch-up window (Law 121) |
+| `catchUp` | readiness | object? | G | S | ≤1 s | `{supported}` while the primary shard is `catching-up`: the quorum-supported height the node's own message state can see, the coordinate a reader compares with the peer tip. `null` otherwise; a catching-up shard is never `ready` |
 | `shardPhases` | readiness | map | G | S | ≤1 s | one entry per member shard, each its effective phase; an absent shard is not claimed running |
 | `pipelineFaults` | ingestion | integer | C | P | at read | monotone since process start; evidence, never a gate |
 | `pipelineFaultsOutstanding` | ingestion | integer | L | P | at read | current obligation; **zero iff no block owes a verdict**; seeded from the durable ledger at boot, unreadable ledger fails closed |

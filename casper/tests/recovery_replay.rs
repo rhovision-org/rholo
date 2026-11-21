@@ -33,8 +33,8 @@ use rchain_rspace::hot_store::InMemHotStore;
 use rchain_rspace::rspace::RSpace;
 use rchain_shared::log::{Log, NopLog};
 use rchain_shared::refined::NonNegI64;
-use rchain_shared::store_manager::{database, InMemoryStoreManager};
-use rchain_shared::typed_store::BytesCodec;
+use rchain_shared::store_manager::{database, InMemoryStoreManager, KeyValueStoreManager};
+use rchain_shared::typed_store::{BytesCodec, KeyValueTypedStoreCodec};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -75,6 +75,14 @@ async fn dag() -> BlockDagKeyValueStorage {
     )
     .await
     .unwrap()
+    // **`BlockCreator::create` writes the validator's own signed sequence before returning**
+    // (Law 122), and a node that cannot record the signature must not produce a block — so a
+    // fixture that drives the creator attaches the durable-records store, as the node does.
+    .with_reset_marker(Arc::new(KeyValueTypedStoreCodec::new(
+        manager.store("records").await.unwrap(),
+        Arc::new(BytesCodec),
+        Arc::new(BytesCodec),
+    )))
 }
 
 // A separate verifier runtime over the received content, with empty sidecar stores.
