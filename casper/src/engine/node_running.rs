@@ -1464,6 +1464,12 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                 .await;
             }
             CasperMessage::BlockRange(answer) => {
+                // **The peer tip is observed here, before the answer is handed to a walk.** The
+                // supervisor's probe asks for one height and reads only `tip`; the walk's own
+                // answers carry the same coordinate. Both are the peer's reported frontier, which
+                // is Law 121's `peerTip` — the coordinate the pre-fix model lacked (RC-4 item A).
+                self.catchup.observe_probe_answer();
+                self.catchup.observe_peer_tip(answer.tip);
                 // The answer to a window this node asked for: hand it to the catch-up driver, which
                 // owns the receiver. A closed or full channel is not an error — it means the walk that
                 // asked for it has ended, and the answer is then simply stale.
@@ -1482,13 +1488,16 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                     ),
                 );
                 // The door is read per answer rather than held, because `apply` swaps it when a walk
-                // ends (a full channel is not an error: it means nobody is walking).
+                // ends (a full channel is not an error: it means nobody is walking — and a probe
+                // answer is exactly that case, so it is not warned about).
+                let active = self.catchup.is_active();
                 if self
                     .block_range_tx
                     .lock()
                     .await
                     .try_send(answer.clone())
                     .is_err()
+                    && active
                 {
                     self.log.warn(
                         self.log_source,

@@ -1131,12 +1131,17 @@ pub struct StartupAuditOutcome {
     pub drain: DrainOutcome,
 }
 
-/// **The start-up audit, then `Running`.** Scan (unit 4), re-offer, drain bounded, then move the
-/// shard's phase. The phase transition is here rather than in launch so the law's `startup` and the
-/// code's one path are the same shape. A ledger/store error is logged and does not refuse boot: the
-/// rows are durable and the periodic count audit still withholds readiness for a real orphan.
+/// **The start-up audit, then the launch's decided phase.** Scan (unit 4), re-offer, drain bounded,
+/// then move the shard's phase to `decided` — `Running` for a node whose restored view is current, or
+/// `CatchingUp` for a node that restored below its peers (Law 121/123, RC-4 item A). The phase
+/// transition is here rather than in launch so the law's `startup` and the code's one path are the
+/// same shape, and the decision is made **before** this call: there is no window in which the audit
+/// writes `Running` for a view the launch has already found stale. A ledger/store error is logged
+/// and does not refuse boot: the rows are durable and the periodic count audit still withholds
+/// readiness for a real orphan.
 pub async fn startup_audit_then_running(
     phase: &NodePhaseCell,
+    decided: crate::engine::node_phase::NodePhase,
     ledger: &BlockDispositionStore,
     block_store: &BlockStore,
     dag: &Arc<dyn BlockDagStorage>,
@@ -1178,7 +1183,7 @@ pub async fn startup_audit_then_running(
             ),
         );
     }
-    phase.set_phase(crate::engine::node_phase::NodePhase::Running);
+    phase.set_phase(decided);
     StartupAuditOutcome {
         scan,
         reoffer,
@@ -1334,7 +1339,9 @@ pub async fn retry_ready_stored_pending(
     log: Arc<dyn Log>,
 ) {
     let source = LogSource::new("casper.blocks.BlockDisposition");
-    phase.wait_until_running().await;
+    if !phase.wait_until_live().await {
+        return;
+    }
     let mut interval = tokio::time::interval(RETRY_SWEEP_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // The boot sweep gets the first immediate tick; this loop starts after one interval.
@@ -1409,7 +1416,9 @@ pub async fn retry_faulted_blocks(
     log: Arc<dyn Log>,
 ) {
     let source = LogSource::new("casper.blocks.BlockDisposition");
-    phase.wait_until_running().await;
+    if !phase.wait_until_live().await {
+        return;
+    }
     let mut interval = tokio::time::interval(RETRY_SWEEP_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -1626,7 +1635,9 @@ pub async fn audit_stored_bodies(
     log: Arc<dyn Log>,
 ) {
     let source = LogSource::new("casper.blocks.BlockDisposition");
-    phase.wait_until_running().await;
+    if !phase.wait_until_live().await {
+        return;
+    }
     let mut interval = tokio::time::interval(ORPHAN_AUDIT_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut streak = OrphanStreak::default();
@@ -2937,6 +2948,7 @@ mod tests {
         let task = tokio::spawn(async move {
             startup_audit_then_running(
                 &runner,
+                crate::engine::node_phase::NodePhase::Running,
                 &ledger,
                 &block_store,
                 &dag,

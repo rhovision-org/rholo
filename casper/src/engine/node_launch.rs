@@ -23,7 +23,7 @@ use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::private_key::PrivateKey;
 use rchain_crypto::public_key::PublicKey;
 use rchain_models::casper::protocol::casper_message::{
-    BlockMessage, CasperMessage, FinalizedFringe,
+    BlockMessage, BlockRangeRequest, CasperMessage, FinalizedFringe,
 };
 use rchain_models::casper::protocol::packet_type_tag::ToPacket;
 use rchain_rspace::state::{RSpaceExporter, RSpaceImporter};
@@ -1335,12 +1335,54 @@ pub async fn apply<
     let block_range_door: crate::engine::node_running::BlockRangeDoor =
         Arc::new(tokio::sync::Mutex::new(tokio::sync::mpsc::channel(4).0));
 
-    // Transition to running mode. **The start-up disposition audit runs first**, and the phase
-    // moves to `Running` when its bounded drain closes; a row that cannot be settled stays visible
-    // rather than holding boot. The phase still moves before the engine is constructed, so a
-    // disposition loop waiting on `Running` cannot start between construction and the first packet.
+    // **The launch decides the phase before the audit writes it** (Laws 121/123, RC-4 item A). The
+    // audit's `Running` write used to precede this decision, leaving a multi-await window in which a
+    // propose was admitted on a view the launch was about to reject. A node that restored through
+    // the sync/join path is behind by construction — its restored view is the anchor it adopted, not
+    // the network's tip — so it is not served until a peer probe confirms the window. Every other
+    // boot trusts its restored view; the supervisor observes it from then on and re-enters catch-up
+    // if the view leaves the window (Law 123).
+    let walk_wake = Arc::new(tokio::sync::Notify::new());
+    let (decided_phase, catchup_bonds) = {
+        let bonds = runtime_manager
+            .compute_bonds(&rchain_models::block::state_hash::StateHash::from_slice(
+                accepted.root().as_bytes(),
+            ))
+            .await?;
+        let own = catchup::validated_frontier_of(dag.as_ref()).await;
+        catchup.set_own_tip(own);
+        let (_, supported) = catchup::view(
+            dag.get_representation()
+                .await
+                .dag_message_state
+                .latest_msgs
+                .values()
+                .map(|message| (message.sender.clone(), message.height)),
+            &bonds,
+        );
+        let supported = i64::from(supported);
+        let decided = if needs_sync {
+            log.warn(
+                source,
+                &format!(
+                    "this node restored through the sync path and is not served until a peer probe \
+                     confirms the catch-up window: own validated tip {own}, quorum-supported \
+                     {supported}"
+                ),
+            );
+            crate::engine::node_phase::NodePhase::CatchingUp {
+                supported,
+                own,
+                peer_tip: own,
+            }
+        } else {
+            crate::engine::node_phase::NodePhase::Running
+        };
+        (decided, bonds)
+    };
     let audit = crate::block_disposition::startup_audit_then_running(
         &phase,
+        decided_phase,
         &block_disposition,
         &block_store,
         &dag,
@@ -1365,51 +1407,23 @@ pub async fn apply<
             }
         ),
     );
-    // **A joined node is not `Running` while it is behind** (Law 121, `spec/Rchain/JoinCatchUp.lean`;
-    // HAZOP J3/J4 in `spec/audit/evidence/rc4-join-catch-up/hazop.md`). The start-up audit above
-    // wrote `Running`; this launch takes it back when the node's own message state has not reached
-    // the catch-up window. `CatchingUp` runs the engine — it receives, validates and backfills — but
-    // serves nothing and names the supported height a reader compares with the peer tip. The
-    // watchdog is the only exit: it moves the phase to `Running` once the gap closes, or fails
-    // closed with the coordinate when it does not.
-    {
-        let bonds = runtime_manager
-            .compute_bonds(&rchain_models::block::state_hash::StateHash::from_slice(
-                accepted.root().as_bytes(),
-            ))
-            .await?;
-        let (view_tip, supported) = catchup::view(
-            dag.get_representation()
-                .await
-                .dag_message_state
-                .latest_msgs
-                .values()
-                .map(|message| (message.sender.clone(), message.height)),
-            &bonds,
-        );
-        if !catchup::within_window(view_tip, supported) {
-            log.warn(
-                source,
-                &format!(
-                    "this node has not caught up: highest latest message {}, quorum-supported {} \
-                     (more than {} heights behind); serving waits on the catch-up walk",
-                    i64::from(view_tip),
-                    i64::from(supported),
-                    rchain_block_storage::dag::liveness::LIVENESS_WINDOW
-                ),
-            );
-            phase.set_phase(crate::engine::node_phase::NodePhase::CatchingUp {
-                supported: i64::from(supported),
-            });
-            spawn_catch_up_watchdog(
-                phase.clone(),
-                dag.clone(),
-                bonds,
-                log.clone(),
-                i64::from(supported),
-            );
-        }
-    }
+    // **The continuous catch-up supervisor** (Laws 121/123; HAZOP J3/J4). It is the shard's only
+    // phase observer after launch: it samples the node's own validated tip, probes a connected peer
+    // for its frontier (a bounded `BlockRange` answer), and re-enters `CatchingUp` on a confirmed
+    // stale view. A walk request wakes the running loop, which owns the walk so there is at most
+    // one. The boot flag makes the first probe load-bearing for a joined node.
+    spawn_catchup_supervisor(
+        phase.clone(),
+        dag.clone(),
+        catchup_bonds,
+        catchup.clone(),
+        comm_util.clone(),
+        rp_conf.clone(),
+        connections.clone(),
+        log.clone(),
+        walk_wake.clone(),
+        needs_sync,
+    );
 
     // **The consumer pool** (max-message-consumers). `NodeRunning::handle` takes `&self`, so the
     // engine is shared behind an `Arc` and each packet is handled by its own task under a permit.
@@ -1488,9 +1502,17 @@ pub async fn apply<
         )
         .await;
 
-        // **Three exits, not two** (#320). The stream ending is the node shutting down; the reset is a
-        // state this node decided it needs, and it is the only one that loops.
-        let requested = tokio::select! {
+        /// Why the running loop woke up. The stream ending is the node shutting down; the reset is a
+        /// state this node decided it needs; a walk request is the catch-up supervisor asking for a
+        /// fresh walk (Law 123). Only the last two loop.
+        enum RunningWake {
+            Shutdown,
+            Reset,
+            Walk,
+        }
+        // **Three exits, not two** (#320), plus the walk request. The stream ending is the node
+        // shutting down; the reset and the walk both return to the top.
+        let wake = tokio::select! {
             _ = async {
                 let mut tip_refresh = tokio::time::interval(RUNNING_TIP_REFRESH_INTERVAL);
                 tip_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1549,11 +1571,44 @@ pub async fn apply<
                         }
                     }
                 }
-            } => None,
-            _ = reset_wake.notified() => Some(()),
+            } => RunningWake::Shutdown,
+            _ = reset_wake.notified() => RunningWake::Reset,
+            _ = walk_wake.notified() => RunningWake::Walk,
         };
-        if requested.is_none() {
-            return Ok(());
+        match wake {
+            RunningWake::Shutdown => return Ok(()),
+            RunningWake::Walk => {
+                // One walk at a time: a reset's walk or a previous request may still be running.
+                if catchup.is_active() {
+                    log.info(
+                        source,
+                        "a catch-up walk is already active; the new request is coalesced",
+                    );
+                } else {
+                    match catch_up_walk_peer(&rp_conf, &connections).await {
+                        Some(peer) => {
+                            start_walk(
+                                peer,
+                                &block_range_door,
+                                &catchup,
+                                &transport,
+                                &rp_conf,
+                                &connections,
+                                &dag,
+                                &self_replay_resume,
+                                &log,
+                            )
+                            .await;
+                        }
+                        None => log.warn(
+                            source,
+                            "a catch-up walk was requested with no peer to walk against",
+                        ),
+                    }
+                }
+                continue;
+            }
+            RunningWake::Reset => {}
         }
 
         // The arm's body, extracted: what a running node does when the waker fires belongs in
@@ -1822,51 +1877,79 @@ fn hex(hash: StateHash) -> String {
         .collect()
 }
 
-/// How often the catch-up watchdog re-reads the node's view.
+/// How often the catch-up supervisor samples the node's view.
 const CATCH_UP_TICK: Duration = Duration::from_secs(2);
 
-/// **How many ticks without progress the catch-up watchdog tolerates** before failing closed.
-///
-/// Progress is the *quorum-supported height* rising, not the DAG's height maximum (metadata can grow
-/// while validation does not). Thirty seconds is the model's `watchdogAfter` in ticks
-/// (`spec/Rchain/JoinCatchUp.lean`): long enough that a window of blocks can land, short enough that
-/// a frozen node names its coordinate instead of sitting silent for a release run's window.
-const CATCH_UP_STALL_TICKS: u32 = 15;
+/// How often the supervisor probes a peer's frontier. The first probe of a joined boot is sent on
+/// the first tick, and every tick until an answer arrives (bounded by the boot wait).
+const CATCH_UP_PROBE_TICKS: u32 = 5;
 
-/// **The catch-up watchdog** (Law 121; RC-4 HAZOP J3/J4).
+/// How many ticks a joined boot waits for its first probe answer before running on the restored
+/// view. Ten seconds: long enough for a connection and a range round trip, short enough that a node
+/// whose peer is unreachable does not sit in `CatchingUp` for the harness's whole window.
+const CATCH_UP_BOOT_PROBE_TICKS: u32 = 5;
+
+/// How many connected peers a probe round asks (the bootstrap first).
+const CATCH_UP_PROBE_PEERS: usize = 3;
+
+/// **The continuous catch-up supervisor** (Laws 121/123; RC-4 HAZOP J3/J4).
 ///
-/// The launch leaves the phase `CatchingUp { supported }` instead of `Running` when the node's own
-/// message state is outside the catch-up window. This task is the only transition out of it:
+/// The launch decides the boot phase; this task is the shard's only phase observer afterwards. On
+/// every tick it:
 ///
-/// * the view is inside the window → `Running`, with the coordinates logged;
-/// * the supported height stops rising for `CATCH_UP_STALL_TICKS` → `Blocked`, with the coordinates
-///   in the reason. That is the safe fallback: a node that cannot close the gap stops serving and
-///   says so, rather than reading `running`/ready while frozen — the state the RC-4 drill measured
-///   at tip 183 against peers at 306.
+/// * samples the node's **own validated tip** (the highest latest message it has validated) and
+///   publishes it on the catch-up cell;
+/// * probes a connected peer, preferring the bootstrap, with a one-height `BlockRangeRequest`; the
+///   answer's `tip` is the peer's frontier (`node_running.rs` observes it before the door);
+/// * applies [`catchup::supervise_phase`]: a confirmed stale view re-enters `CatchingUp`, a current
+///   view returns to `Running`, and a transition into catch-up wakes the running loop to start a
+///   walk;
+/// * fails closed to `Blocked` after [`catchup::CATCH_UP_STALL_TICKS`] without the node's own tip
+///   rising. That is the safe fallback: a node that cannot close the gap stops serving and names
+///   the coordinates, rather than reading `running`/ready while frozen.
 ///
-/// It never overwrites a phase another writer moved (a fault's `Blocked`, or a shutdown).
-fn spawn_catch_up_watchdog(
+/// It never overwrites a phase another writer moved (`Blocked`, `Syncing`, shutdown).
+#[allow(clippy::too_many_arguments)]
+fn spawn_catchup_supervisor(
     phase: crate::engine::node_phase::NodePhaseCell,
     dag: Arc<dyn BlockDagStorage>,
     bonds: BTreeMap<rchain_models::validator::Validator, NonNegI64>,
+    window: Arc<CatchupWindow>,
+    comm_util: Arc<CommUtil>,
+    rp_conf: RPConf,
+    connections: ConnectionsCell,
     log: Arc<dyn Log>,
-    initial_supported: i64,
+    walk_wake: Arc<tokio::sync::Notify>,
+    await_first_probe: bool,
 ) {
     tokio::spawn(async move {
+        use crate::engine::node_phase::NodePhase;
         let source = LogSource::new("casper.engine.NodeLaunch");
-        let mut last_supported = initial_supported;
-        let mut stalled: u32 = 0;
+        let mut stale_ticks: u32 = 0;
+        let mut stall_ticks: u32 = 0;
+        let mut last_own = i64::MIN;
+        let mut probe_ticks: u32 = 0;
+        let mut boot_probe_ticks: u32 = 0;
+        let mut boot_wait_expired = false;
         let mut tick = tokio::time::interval(CATCH_UP_TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
-            if !matches!(
-                phase.phase(),
-                crate::engine::node_phase::NodePhase::CatchingUp { .. }
-            ) {
-                return;
+            let current = phase.phase();
+            match current {
+                NodePhase::Starting | NodePhase::Syncing | NodePhase::Blocked(_) => return,
+                NodePhase::Running | NodePhase::CatchingUp { .. } => {}
             }
-            let (tip, supported) = crate::engine::catchup::view(
+
+            let own = catchup::validated_frontier_of(dag.as_ref()).await;
+            window.set_own_tip(own);
+            if own > last_own {
+                last_own = own;
+                stall_ticks = 0;
+            } else {
+                stall_ticks = stall_ticks.saturating_add(1);
+            }
+            let (_, supported) = catchup::view(
                 dag.get_representation()
                     .await
                     .dag_message_state
@@ -1875,38 +1958,147 @@ fn spawn_catch_up_watchdog(
                     .map(|message| (message.sender.clone(), message.height)),
                 &bonds,
             );
-            if crate::engine::catchup::within_window(tip, supported) {
-                phase.set_phase(crate::engine::node_phase::NodePhase::Running);
-                log.info(
+            let supported = i64::from(supported);
+
+            // **Probe.** A walk holds the door, so a probe answer would be mistaken for a window;
+            // probe only while no walk is active. The boot probe is sent every tick until an answer
+            // arrives; afterwards the interval is `CATCH_UP_PROBE_TICKS`.
+            probe_ticks = probe_ticks.saturating_add(1);
+            let boot_waiting = await_first_probe
+                && !boot_wait_expired
+                && window.probe_answers() == 0
+                && window.peer_tip() < 0;
+            if !window.is_active() && (probe_ticks >= CATCH_UP_PROBE_TICKS || boot_waiting) {
+                probe_ticks = 0;
+                for peer in catch_up_probe_peers(&rp_conf, &connections).await {
+                    comm_util
+                        .request_block_range(
+                            &peer,
+                            &BlockRangeRequest {
+                                from: own.saturating_add(1),
+                                to: own.saturating_add(1),
+                            },
+                        )
+                        .await;
+                }
+            }
+
+            // A peer at or behind this node says nothing about a gap; `peer_tip.max(own)` keeps the
+            // comparison total before the first answer.
+            let peer_tip = window.peer_tip().max(own);
+            let boot_pending = await_first_probe
+                && !boot_wait_expired
+                && window.probe_answers() == 0
+                && matches!(current, NodePhase::CatchingUp { .. })
+                && boot_probe_ticks < CATCH_UP_BOOT_PROBE_TICKS;
+            if boot_pending {
+                boot_probe_ticks = boot_probe_ticks.saturating_add(1);
+            }
+            if await_first_probe
+                && !boot_wait_expired
+                && window.probe_answers() == 0
+                && boot_probe_ticks >= CATCH_UP_BOOT_PROBE_TICKS
+            {
+                // The wait is over and nobody answered: run on the restored view, name the absence,
+                // and keep probing. One expiry, not one per cycle.
+                boot_wait_expired = true;
+                log.warn(
                     source,
                     &format!(
-                        "catch-up complete: highest latest message {}, quorum-supported {}",
-                        i64::from(tip),
-                        i64::from(supported)
+                        "no peer answered the catch-up probe within {CATCH_UP_BOOT_PROBE_TICKS} \
+                         ticks; running on the restored view (own {own}) and continuing to probe"
                     ),
                 );
-                return;
             }
-            if i64::from(supported) > last_supported {
-                last_supported = i64::from(supported);
-                stalled = 0;
+
+            let stale = !catchup::within_window_i64(own, peer_tip);
+            if stale {
+                stale_ticks = stale_ticks.saturating_add(1);
             } else {
-                stalled += 1;
+                stale_ticks = 0;
             }
-            if stalled > CATCH_UP_STALL_TICKS {
+            let next = if boot_pending {
+                current.clone()
+            } else {
+                catchup::supervise_phase(&current, supported, own, peer_tip, stale_ticks)
+            };
+            if next != current {
+                match &next {
+                    NodePhase::CatchingUp { .. } => {
+                        log.warn(
+                            source,
+                            &format!(
+                                "catch-up re-entered: own validated tip {own}, peer tip \
+                                 {peer_tip}, quorum-supported {supported} (window {})",
+                                rchain_block_storage::dag::liveness::LIVENESS_WINDOW
+                            ),
+                        );
+                        stall_ticks = 0;
+                        walk_wake.notify_one();
+                    }
+                    NodePhase::Running => log.info(
+                        source,
+                        &format!(
+                            "catch-up complete: own validated tip {own}, peer tip {peer_tip}; the \
+                             shard is serving again"
+                        ),
+                    ),
+                    _ => {}
+                }
+                phase.set_phase(next.clone());
+            }
+
+            // A walk that ended without closing the gap is retried every few ticks, so a single
+            // silent peer or a lost window is not the end of the catch-up.
+            if matches!(next, NodePhase::CatchingUp { .. })
+                && !window.is_active()
+                && stale
+                && stall_ticks > 0
+                && stall_ticks % CATCH_UP_PROBE_TICKS == 0
+            {
+                walk_wake.notify_one();
+            }
+
+            if matches!(next, NodePhase::CatchingUp { .. })
+                && stall_ticks > catchup::CATCH_UP_STALL_TICKS
+            {
                 let reason = format!(
-                    "catch-up stalled: quorum-supported height {} against the highest latest \
-                     message {} for {stalled} ticks; a node that cannot close the gap stops serving \
-                     rather than reporting `running`",
-                    i64::from(supported),
-                    i64::from(tip)
+                    "catch-up stalled: own validated tip {own} against peer tip {peer_tip} for \
+                     {stall_ticks} ticks; a node that cannot close the gap stops serving rather \
+                     than reporting `running`"
                 );
                 log.error(source, &reason);
-                phase.set_phase(crate::engine::node_phase::NodePhase::Blocked(reason));
+                phase.set_phase(NodePhase::Blocked(reason));
                 return;
             }
         }
     });
+}
+
+/// The peers a probe round asks: the bootstrap first, then up to [`CATCH_UP_PROBE_PEERS`]-1
+/// connected peers, deduplicated by endpoint.
+async fn catch_up_probe_peers(rp_conf: &RPConf, connections: &ConnectionsCell) -> Vec<PeerNode> {
+    let mut peers: Vec<PeerNode> = Vec::new();
+    if let Some(bootstrap) = rp_conf.bootstrap.as_ref() {
+        peers.push(bootstrap.clone());
+    }
+    for peer in connections.read().await.iter() {
+        if peers.len() >= CATCH_UP_PROBE_PEERS {
+            break;
+        }
+        if !peers.iter().any(|known| known.endpoint == peer.endpoint) {
+            peers.push(peer.clone());
+        }
+    }
+    peers
+}
+
+/// The peer a continuous walk runs against: the bootstrap, or the first connection.
+async fn catch_up_walk_peer(rp_conf: &RPConf, connections: &ConnectionsCell) -> Option<PeerNode> {
+    if let Some(bootstrap) = rp_conf.bootstrap.clone() {
+        return Some(bootstrap);
+    }
+    connections.read().await.first().cloned()
 }
 
 /// How often the own-record reconciler asks the peers for the block it signed.
@@ -2070,6 +2262,35 @@ async fn start_catchup_if_anchored(
         );
         return;
     };
+    start_walk(
+        peer,
+        block_range_door,
+        catchup,
+        transport,
+        rp_conf,
+        connections,
+        dag,
+        resume,
+        log,
+    )
+    .await;
+}
+
+/// **Start one catch-up walk against `peer`.** The engine's door is swapped for the new walk's
+/// channel first, which drops the previous sender — and *that* is how the walk that ended learns to
+/// stop (`run_catchup` breaks on a closed channel), so two walks cannot interleave.
+#[allow(clippy::too_many_arguments)]
+async fn start_walk(
+    peer: PeerNode,
+    block_range_door: &crate::engine::node_running::BlockRangeDoor,
+    catchup: &Arc<CatchupWindow>,
+    transport: &Arc<dyn TransportLayer>,
+    rp_conf: &RPConf,
+    connections: &ConnectionsCell,
+    dag: &Arc<dyn BlockDagStorage>,
+    resume: &Arc<dyn crate::engine::reset::SelfReplayResume>,
+    log: &Arc<dyn Log>,
+) {
     let (block_range_tx, block_range_rx) = tokio::sync::mpsc::channel(4);
     *block_range_door.lock().await = block_range_tx;
     let (transport, conf, connections, dag, log, catchup, resume) = (
