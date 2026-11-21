@@ -378,6 +378,9 @@ pub async fn apply<
     // request behind it. `0` is clamped to 1 (serial, the old behaviour).
     max_message_consumers: usize,
     validator_identity_opt: Option<ValidatorIdentity>,
+    // **The sequences this node's key has observed on the network** (Law 124). Shared with the
+    // proposer, which refuses to sign or announce through a claim; `None` for a non-validator.
+    received_claims: Option<Arc<crate::blocks::received_claims::ReceivedClaims>>,
     standalone: bool,
     // **Whether the node was started in dev mode.** Consulted only at the genesis-creation branch
     // below, and only to decide whether an unset `dev-tax-address` is a refusal (Law 78). Devnets run
@@ -1455,6 +1458,9 @@ pub async fn apply<
         block_retriever.clone(),
         log.clone(),
         validator_identity_opt.clone(),
+        // The claims cell is fed by the engine at signature-verified receipt (Law 124); the
+        // proposer holds the same clone.
+        received_claims,
         incoming_blocks,
         exporter,
         disable_state_exporter,

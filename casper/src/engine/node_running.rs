@@ -1103,6 +1103,9 @@ pub struct NodeRunning<E: RSpaceExporter> {
     log: Arc<dyn Log>,
     log_source: LogSource,
     validator_id: Option<ValidatorIdentity>,
+    /// **The sequences this node's key has observed on the network** (Law 124). Fed at
+    /// signature-verified receipt, read by the block creator and the proposer's broadcast guard.
+    received_claims: Option<Arc<crate::blocks::received_claims::ReceivedClaims>>,
     incoming_blocks: tokio::sync::mpsc::Sender<BlockMessage>,
     block_request_limit: Arc<PeerRateLimiter>,
     exporter: E,
@@ -1139,6 +1142,7 @@ impl<E: RSpaceExporter> NodeRunning<E> {
         block_retriever: Arc<BlockRetriever>,
         log: Arc<dyn Log>,
         validator_id: Option<ValidatorIdentity>,
+        received_claims: Option<Arc<crate::blocks::received_claims::ReceivedClaims>>,
         incoming_blocks: tokio::sync::mpsc::Sender<BlockMessage>,
         exporter: E,
         disable_state_exporter: bool,
@@ -1155,6 +1159,7 @@ impl<E: RSpaceExporter> NodeRunning<E> {
             log,
             log_source: LogSource::new("casper.engine.NodeRunning"),
             validator_id,
+            received_claims,
             incoming_blocks,
             catchup,
             block_range_tx,
@@ -1235,6 +1240,19 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                                  Or did you restart your node?"
                             ),
                         );
+                        // **The claim cell** (Law 124; RC-4 item B). A block naming this node's key
+                        // is recorded only after the field/hash/signature checks pass, so a peer
+                        // cannot forge a claim and hold a proposal closed. Recording happens here,
+                        // before validation, because the copy that arrives during a multi-second
+                        // replay is exactly the one the replay-time duplicate check cannot see.
+                        if let Some(claims) = self.received_claims.as_ref() {
+                            if crate::validate::format_of_fields(b)
+                                && crate::validate::block_hash(b)
+                                && crate::validate::block_signature(b)
+                            {
+                                claims.record(b.seq_num, b.block_hash);
+                            }
+                        }
                     }
                 }
                 let known = match block_is_known(&self.block_store, &b.block_hash).await {
@@ -2323,6 +2341,7 @@ mod tests {
             retriever,
             Arc::new(NopLog),
             None,
+            None,
             incoming_tx,
             MockExporter,
             false,
@@ -2392,6 +2411,7 @@ mod tests {
             retriever,
             Arc::new(NopLog),
             None,
+            None,
             incoming_tx,
             MockExporter,
             false,
@@ -2451,6 +2471,7 @@ mod tests {
             build_dag().await,
             retriever,
             Arc::new(NopLog),
+            None,
             None,
             incoming_tx,
             MockExporter,

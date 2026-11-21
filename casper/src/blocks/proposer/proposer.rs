@@ -37,6 +37,7 @@ use rchain_shared::refined::{BlockHeight, NonNegI64};
 use super::block_creator::BlockCreator;
 use super::propose_result::{BlockCreatorResult, ProposalMode, ProposeResult, ProposeStatus};
 use crate::api::block_api::SelfValidationRefusalSink;
+use crate::blocks::received_claims::ReceivedClaims;
 use crate::conf::SelfReplayInjection;
 use crate::interpreter_util::{ShardHealth, ValidationOrigin};
 use crate::merging::BlockIndex;
@@ -532,6 +533,10 @@ pub struct Proposer {
     /// closure so the exclusions reach selection; `new` starts an empty tracker and `apply` installs
     /// it with [`Self::with_self_replay_tracker`].
     self_replay: Arc<Mutex<SelfReplayTracker>>,
+    /// **The sequences this node's key has observed on the network** (Law 124). The broadcast guard
+    /// re-reads it immediately before the hash announcement; the creator and the insert path hold
+    /// the same clone through the closures.
+    received_claims: Option<Arc<crate::blocks::received_claims::ReceivedClaims>>,
     /// **The reset request a self-replay fault raises** after the attestation fallback also fails
     /// (#564). `apply` wires it to the DAG's finalised anchor and the reset-request cell; `new`
     /// gets a no-op so the proposer unit tests need no DAG. It takes the record so the request and
@@ -596,6 +601,7 @@ impl Proposer {
             equivocation_injection,
             block_store,
             batch_cap: 1,
+            received_claims: None,
             self_replay: Arc::new(Mutex::new(SelfReplayTracker::default())),
             self_replay_reset: Arc::new(|_| Box::pin(async { SelfReplayResetOutcome::NoAnchor })),
             self_replay_persist: Arc::new(|_| Box::pin(async { Ok(()) })),
@@ -606,6 +612,16 @@ impl Proposer {
     /// Set the execution batch cap (a node builder; `new` defaults to 1).
     pub fn with_batch_cap(mut self, cap: usize) -> Self {
         self.batch_cap = cap.max(1);
+        self
+    }
+
+    /// Attach the claims this node's key has observed (Law 124). The node wires the same cell into
+    /// `NodeRunning`, which feeds it at signature-verified receipt.
+    fn with_received_claims(
+        mut self,
+        claims: Option<Arc<crate::blocks::received_claims::ReceivedClaims>>,
+    ) -> Self {
+        self.received_claims = claims;
         self
     }
 
@@ -814,6 +830,37 @@ impl Proposer {
                         let mut tracker = self.self_replay.lock().unpoison();
                         tracker.clear_attempts();
                         tracker.forget_selected(&self_replay_block_key(&block));
+                    }
+                    // **The broadcast-time claim check** (Law 124; RC-4 item B). The network's copy
+                    // can arrive during the replay; the insert gate sees a claim only if it arrived
+                    // before the insert, so re-read the cell at the last local moment before the
+                    // hash announcement. Refusing here leaves the block unannounced; the named
+                    // status is the operator's coordinate. The residual race (a block still in
+                    // transport buffering) is named in the HAZOP.
+                    if let Some(claims) = self.received_claims.as_ref() {
+                        if let Some(claimed) = claims.conflict_with(block.seq_num, block.block_hash)
+                        {
+                            self.log.warn(
+                                LogSource::new("casper.blocks.Proposer"),
+                                &format!(
+                                    "refusing to announce this node's block #{} (seq {}): the \
+                                     network already carries {} at that sequence (Law 124)",
+                                    block.block_number,
+                                    block.seq_num,
+                                    claimed.to_hex()
+                                ),
+                            );
+                            return Ok((
+                                ProposeResult {
+                                    propose_status: ProposeStatus::OwnSeqNotReconciled {
+                                        signed: i64::from(block.seq_num),
+                                        signed_height: i64::from(block.block_number),
+                                        snapshot: None,
+                                    },
+                                },
+                                None,
+                            ));
+                        }
                     }
                     (self.propose_effect)(&block).await;
                     // **The equivocation injection**, when armed: a second, equally valid block at the
@@ -1418,6 +1465,9 @@ impl Proposer {
         // **The runtime's admissible pre-state window** (review R2): this node's own validated
         // blocks derive roots that its peers' children may build on, so the proposer notes them.
         accepted_window: crate::engine::anchor::SharedAcceptedWindow,
+        // **The sequences this node's key has observed on the network** (Law 124; RC-4 item B).
+        // The same cell `NodeRunning` feeds at signature-verified receipt.
+        received_claims: Option<Arc<crate::blocks::received_claims::ReceivedClaims>>,
     ) -> Proposer
     where
         F: Fn(BlockHash) -> Fut + Send + Sync + 'static,
@@ -1508,6 +1558,7 @@ impl Proposer {
             // finality advances, so the local map stays bounded by the unfinalized region (#583).
             let work_seen_pruned: Arc<Mutex<Option<BlockHash>>> = Arc::new(Mutex::new(None));
             let accepted_window_for_create = accepted_window.clone();
+            let received_claims_for_create = received_claims.clone();
             Arc::new(
                 move |vi: &ValidatorIdentity,
                       source: ProposeSource,
@@ -1529,6 +1580,7 @@ impl Proposer {
                     let health = health.clone();
                     let self_replay = self_replay_for_create.clone();
                     let accepted_window = accepted_window_for_create.clone();
+                    let received_claims = received_claims_for_create.clone();
                     let max_number_of_parents = max_number_of_parents;
                     Box::pin(async move {
                         create_block(
@@ -1554,6 +1606,7 @@ impl Proposer {
                             &work_seen_pruned,
                             batch_limit,
                             Some(&accepted_window),
+                            received_claims.as_ref(),
                         )
                         .await
                     })
@@ -1573,6 +1626,7 @@ impl Proposer {
             let health = health.clone();
             // **The injector's one-shot budget** (#564), shared by every call in this process.
             let injected = Arc::new(AtomicUsize::new(0));
+            let received_claims_for_validate = received_claims.clone();
             Arc::new(move |block: &BlockMessage| {
                 let runtime = runtime.clone();
                 let dag = dag.clone();
@@ -1586,6 +1640,7 @@ impl Proposer {
                 // The async block is `move`; the outer closure is `Fn`, so hand the future its own
                 // `Arc` rather than moving the captured one.
                 let accepted_window = accepted_window.clone();
+                let received_claims = received_claims_for_validate.clone();
                 let max_number_of_parents = max_number_of_parents;
                 Box::pin(async move {
                     // **The devnet injector** (#564): a refusal on this node's own block, through the
@@ -1637,6 +1692,30 @@ impl Proposer {
                     .await
                     {
                         Ok(meta) => {
+                            // **A claim observed during the replay** (Law 124; RC-4 item B). The
+                            // signing-time check and the creator's check read the claim cell before
+                            // the replay started; the network's copy can arrive while it runs. This
+                            // is the last local gate before the block enters the DAG — refuse with
+                            // the not-a-failure arm, so no own-key verdict is latched for a block
+                            // this node never announces.
+                            if let Some(claims) = received_claims.as_ref() {
+                                if let Some(claimed) =
+                                    claims.conflict_with(block.seq_num, block.block_hash)
+                                {
+                                    log.warn(
+                                        LogSource::new("casper.blocks.Proposer"),
+                                        &format!(
+                                            "refusing to insert this node's block #{} (seq {}): \
+                                             the network already carries {} at that sequence \
+                                             (Law 124)",
+                                            block.block_number,
+                                            block.seq_num,
+                                            claimed.to_hex()
+                                        ),
+                                    );
+                                    return Err(ValidateError::SelfEquivocation);
+                                }
+                            }
                             let accepted_post = block.post_state_hash;
                             let accepted_height = meta.block_num;
                             // Persist the block body BEFORE recording it in the DAG. `insert`
@@ -1861,6 +1940,7 @@ impl Proposer {
             block_store,
         )
         .with_batch_cap(batch_cap)
+        .with_received_claims(received_claims)
         .with_self_validation_refusal(self_validation_refusal)
         .with_self_replay_tracker(self_replay)
         .with_self_replay_reset(self_replay_reset)
@@ -2216,6 +2296,9 @@ async fn create_block<'a, F, Fut>(
     work_seen_pruned: &Mutex<Option<BlockHash>>,
     batch_limit: Option<usize>,
     accepted_window: Option<&crate::engine::anchor::SharedAcceptedWindow>,
+    // **The sequences this node's key has observed** (Law 124). The creator refuses to sign through
+    // a claim; the claim is fed at signature-verified receipt.
+    received_claims: Option<&Arc<ReceivedClaims>>,
 ) -> Result<BlockCreatorResult, String>
 where
     F: Fn(BlockHash) -> Fut + Sync,
@@ -2777,6 +2860,7 @@ where
     BlockCreator {
         id: validator_identity.clone(),
         shard_id: shard_id.to_string(),
+        received_claims: received_claims.cloned(),
     }
     .create(
         runtime,
@@ -5689,6 +5773,107 @@ mod equivocation_injection_tests {
             stored[0].as_ref().map(|b| b.block_hash.clone()),
             Some(twin.block_hash.clone()),
             "the twin's body is in the block store, not only its hash on the wire"
+        );
+    }
+
+    /// **The broadcast guard refuses a claim that arrived after signing** (Law 124; RC-4 item B).
+    /// The block is created and validated; the claim cell already holds the network's copy of this
+    /// key's block at the same sequence (the cell is fed at receipt, before validation, which is the
+    /// timing the drill measured). The announcement is refused, the named status carries the
+    /// sequence, and the effect never sees the block.
+    #[tokio::test]
+    async fn the_broadcast_guard_refuses_a_claim_that_arrived_after_signing() {
+        use crate::multi_parent_casper::ValidateError;
+        use rchain_block_storage::block_store::BlockStore;
+        use rchain_block_storage::dag::codecs::{BlockHashCodec, BlockMessageCodec};
+        use rchain_shared::log::NopLog;
+        use rchain_shared::store::InMemoryKeyValueStore;
+        use rchain_shared::typed_store::KeyValueTypedStoreCodec;
+        use std::sync::atomic::AtomicU64;
+        use std::sync::Arc;
+
+        let store: BlockStore = Arc::new(KeyValueTypedStoreCodec::new(
+            Arc::new(tokio::sync::Mutex::new(Box::new(
+                InMemoryKeyValueStore::default(),
+            ))),
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockMessageCodec),
+        ));
+        let id = identity();
+        let created = block(&id);
+        let claims = Arc::new(super::ReceivedClaims::new(Validator::from_slice(
+            id.public_key.bytes(),
+        )));
+        // The network's copy of this key's block at the same sequence — a different block.
+        claims.record(created.seq_num, BlockHash::new([9u8; 32]));
+        let created_for_create = created.clone();
+
+        let get_seq: Arc<dyn Fn(Validator) -> super::BoxFuture<i64> + Send + Sync> =
+            Arc::new(|_v| Box::pin(async { 0 }));
+        let check_active: Arc<
+            dyn Fn(&ValidatorIdentity) -> super::BoxFuture<Result<bool, String>> + Send + Sync,
+        > = Arc::new(|_id| Box::pin(async { Ok(true) }));
+        let create: Arc<
+            dyn Fn(
+                    &ValidatorIdentity,
+                    super::ProposeSource,
+                    super::ProposalMode,
+                    Option<usize>,
+                ) -> super::BoxFuture<Result<super::BlockCreatorResult, String>>
+                + Send
+                + Sync,
+        > = Arc::new(move |_v, _s, _mode, _limit| {
+            let created = created_for_create.clone();
+            Box::pin(async move { Ok(super::BlockCreatorResult::Created(created)) })
+        });
+        let validate: Arc<
+            dyn Fn(&BlockMessage) -> super::BoxFuture<Result<(), ValidateError>> + Send + Sync,
+        > = Arc::new(|_b| Box::pin(async { Ok(()) }));
+        let announced = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let effect: Arc<dyn Fn(&BlockMessage) -> super::BoxFuture<()> + Send + Sync> = {
+            let announced = announced.clone();
+            Arc::new(move |_b| {
+                announced.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Box::pin(async {})
+            })
+        };
+        let proposer = super::Proposer::new(
+            get_seq,
+            check_active,
+            create,
+            validate,
+            effect,
+            id.clone(),
+            Arc::new(NopLog),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            false,
+            store,
+        )
+        .with_received_claims(Some(claims));
+
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let (result, block_opt) = proposer
+            .propose(ProposeSource::Explicit { is_async: false }, tx)
+            .await
+            .expect("the proposal runs");
+        assert!(
+            block_opt.is_none(),
+            "a claimed block is not returned for announcement"
+        );
+        assert!(
+            matches!(
+                result.propose_status,
+                super::ProposeStatus::OwnSeqNotReconciled { signed, .. }
+                    if signed == i64::from(created.seq_num)
+            ),
+            "the refusal names the claimed sequence: {:?}",
+            result.propose_status
+        );
+        assert_eq!(
+            announced.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the propose effect never sees the block"
         );
     }
 }
