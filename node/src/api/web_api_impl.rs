@@ -1671,6 +1671,16 @@ impl WebApi for WebApiImpl {
             .map_err(BlockApiException::client)
     }
 
+    async fn checkpoint_certificate_at_anchor(
+        &self,
+        anchor: &str,
+    ) -> Result<CheckpointCertificate, BlockApiException> {
+        self.block_api
+            .checkpoint_certificate_at_anchor(anchor)
+            .await
+            .map_err(BlockApiException::client)
+    }
+
     async fn verify_checkpoint_certificate(
         &self,
         certificate: &CheckpointCertificate,

@@ -803,11 +803,22 @@ pub async fn apply<
                 .map(|digest| digest.to_hex())
                 .unwrap_or_else(|_| "malformed".to_string())
         });
+        // **The accepted fringe the boot must anchor** (Law 108). It is also the hint a restart
+        // behind its peers gives the source: the head certificate may be *ahead* of this fringe,
+        // and a certificate for an anchor in it is what the agreement below can accept.
+        let recorded_fringe: Option<BTreeSet<BlockHash>> = approved_store
+            .get(&[rchain_block_storage::approved_store::FINALIZED_FRINGE_KEY])
+            .await?
+            .into_iter()
+            .next()
+            .flatten()
+            .map(|accepted| accepted.hashes.iter().copied().collect());
         let acquisition = acquire_boot_certificate(
             &checkpoint_store,
             checkpoint_source.as_ref(),
             &runtime_manager.genesis_pos().bonds,
             &shard_id,
+            recorded_fringe.as_ref(),
         )
         .await;
         let outcome = boot_outcome(genesis_only, &acquisition);
@@ -816,7 +827,7 @@ pub async fn apply<
             stage: "acquisition".to_string(),
             dag_len: repr.dag_set.len(),
             genesis_only,
-            store_head,
+            store_head: store_head.clone(),
             source_configured: checkpoint_source.is_some(),
             acquisition: match &acquisition {
                 Ok(Some(_)) => "certificate".to_string(),
@@ -859,7 +870,52 @@ pub async fn apply<
                 _ => None,
             },
             accepted: acquisition.as_ref().ok().is_some_and(Option::is_some) || genesis_only,
+            fringe_agrees: None,
+            anchor_closure_present: None,
+            fringe_agreement: None,
+            accepted_fringe: None,
+            certified_fringe: None,
         });
+        // **The acquisition is not the decision.** Keep what the decision trace needs before the
+        // certificate is consumed; `accepted` on the acquisition trace says only that a verified
+        // certificate was found, not that the accepted fringe is anchored by it.
+        let acquisition_summary = match &acquisition {
+            Ok(Some(_)) => "certificate".to_string(),
+            Ok(None) => "none".to_string(),
+            Err(error) => format!("refused: {error}"),
+        };
+        let served_digest = acquisition
+            .as_ref()
+            .ok()
+            .and_then(|certificate| certificate.as_ref())
+            .map(|certificate| certificate.verified.digest.to_hex());
+        let served_anchor = acquisition
+            .as_ref()
+            .ok()
+            .and_then(|certificate| certificate.as_ref())
+            .map(|certificate| certificate.verified.checkpoint.anchor.clone());
+        let served_shard = acquisition
+            .as_ref()
+            .ok()
+            .and_then(|certificate| certificate.as_ref())
+            .map(|certificate| certificate.verified.checkpoint.shard_id.clone());
+        let served_supporting_stake = acquisition
+            .as_ref()
+            .ok()
+            .and_then(|certificate| certificate.as_ref())
+            .map(|certificate| certificate.verified.supporting_stake);
+        let served_total_stake = acquisition
+            .as_ref()
+            .ok()
+            .and_then(|certificate| certificate.as_ref())
+            .map(|certificate| certificate.verified.total_stake);
+        let mut fringe_agreement: Option<String> = if genesis_only {
+            Some("genesis".to_string())
+        } else {
+            None
+        };
+        let mut accepted_fringe: Option<usize> = None;
+        let mut certified_fringe: Option<usize> = None;
         let boot_certificate = acquisition?;
         if let Some(BootCertificate {
             verified,
@@ -877,13 +933,7 @@ pub async fn apply<
                     ),
                 );
             }
-            let recorded = approved_store
-                .get(&[rchain_block_storage::approved_store::FINALIZED_FRINGE_KEY])
-                .await?
-                .into_iter()
-                .next()
-                .flatten()
-                .map(|accepted| accepted.hashes.iter().copied().collect());
+            let recorded = recorded_fringe;
             let certified_set: BTreeSet<_> = verified
                 .checkpoint
                 .fringe_hashes
@@ -893,8 +943,11 @@ pub async fn apply<
                         .and_then(|bytes| BlockHash::try_from(bytes.as_slice()).ok())
                 })
                 .collect();
+            accepted_fringe = recorded.as_ref().map(BTreeSet::len);
+            certified_fringe = Some(certified_set.len());
             match stored_fringe_agreement(recorded.as_ref(), &certified_set) {
                 StoredFringeAgreement::Reverified => {
+                    fringe_agreement = Some("reverified".to_string());
                     log.info(
                         source,
                         &format!(
@@ -942,6 +995,7 @@ pub async fn apply<
                         None => false,
                     };
                     if descends {
+                        fringe_agreement = Some("descendant".to_string());
                         log.warn(
                             source,
                             &format!(
@@ -962,6 +1016,7 @@ pub async fn apply<
                                 window,
                             )?);
                     } else {
+                        fringe_agreement = Some("mismatch".to_string());
                         log.warn(
                             source,
                             &format!(
@@ -974,6 +1029,7 @@ pub async fn apply<
                     }
                 }
                 StoredFringeAgreement::Absent => {
+                    fringe_agreement = Some("absent".to_string());
                     // **No accepted fringe is recorded, but a verified certificate is.** A genesis
                     // master — and a node whose approved-fringe write was interrupted — has no
                     // fringe to compare against; the certificate is the only accepted-state record
@@ -1010,6 +1066,47 @@ pub async fn apply<
                  DAG can still be anchored by its pinned genesis",
             );
         }
+
+        // **The decision is what the trace must carry.** The acquisition trace above says a
+        // verified certificate was found; it does not say the accepted fringe is anchored by it.
+        // A quorate certificate whose anchor is ahead of the accepted fringe (a restart that was
+        // down while the fence moved) refuses here, and `accepted` on the acquisition trace alone
+        // would read as a safe boot.
+        let write_decision = |accepted: bool, refusal: Option<BootCoordinate>| {
+            let fringe_agrees = !matches!(fringe_agreement.as_deref(), Some("mismatch"));
+            write_boot_trace(&BootTrace {
+                kind: "boot".to_string(),
+                stage: "decision".to_string(),
+                dag_len: repr.dag_set.len(),
+                genesis_only,
+                store_head: store_head.clone(),
+                source_configured: checkpoint_source.is_some(),
+                acquisition: acquisition_summary.clone(),
+                served_digest: served_digest.clone(),
+                served_anchor: served_anchor.clone(),
+                served_shard: served_shard.clone(),
+                shard_id: shard_id.clone(),
+                served_supporting_stake,
+                served_total_stake,
+                outcome: (if accepted {
+                    if genesis_only {
+                        "genesis"
+                    } else {
+                        "certified"
+                    }
+                } else {
+                    "refused"
+                })
+                .to_string(),
+                refusal_coordinate: refusal.map(|coordinate| coordinate.as_str().to_string()),
+                accepted,
+                fringe_agrees: Some(fringe_agrees),
+                anchor_closure_present: Some(accepted),
+                fringe_agreement: fringe_agreement.clone(),
+                accepted_fringe,
+                certified_fringe,
+            });
+        };
 
         // **No verified certificate: only a genesis-only DAG has an anchor left.** A DAG with any
         // block above genesis and no certificate is an unattributed state; the node refuses to run
@@ -1059,6 +1156,12 @@ pub async fn apply<
                     &genesis_block,
                 )?);
             } else {
+                let coordinate = if matches!(fringe_agreement.as_deref(), Some("mismatch")) {
+                    BootCoordinate::FringeMismatch
+                } else {
+                    BootCoordinate::NoStoredCertificate
+                };
+                write_decision(false, Some(coordinate));
                 return Err(format!(
                     "this node's DAG holds {} block(s) but no verified checkpoint certificate; the \
                      accepted state cannot be attributed, so the node refuses to run (a genesis \
@@ -1067,6 +1170,7 @@ pub async fn apply<
                 ));
             }
         }
+        write_decision(true, None);
     }
 
     // **The derived-index audit, at every boot** (B39, HAZOP F-U17-11). It is independent of the reset
@@ -1728,6 +1832,9 @@ enum BootCoordinate {
     VerifyFailed,
     ShardMismatch,
     StoreConflict,
+    /// The certificate verified, but the accepted fringe is not anchored by it (the agreement
+    /// stage, not the acquisition). A node that cannot attribute its accepted state refuses.
+    FringeMismatch,
 }
 
 impl BootCoordinate {
@@ -1738,6 +1845,7 @@ impl BootCoordinate {
             BootCoordinate::VerifyFailed => "verify-failed",
             BootCoordinate::ShardMismatch => "shard-mismatch",
             BootCoordinate::StoreConflict => "store-conflict",
+            BootCoordinate::FringeMismatch => "fringe-mismatch",
         }
     }
 }
@@ -1797,6 +1905,21 @@ struct BootTrace {
     outcome: String,
     refusal_coordinate: Option<String>,
     accepted: bool,
+    // **The agreement decision** (`stage: "decision"`). `accepted` on the acquisition trace means
+    // "a verified certificate was acquired"; it does not mean the boot ran. A certificate can be
+    // quorate and still not anchor the accepted fringe (a restart whose fence is *behind* the
+    // certificate's anchor), and the node then refuses. Without these the trace says a refused
+    // boot was safe — the model gap the RC-4 run at `e9508f5` exhibited.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fringe_agrees: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anchor_closure_present: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fringe_agreement: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accepted_fringe: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    certified_fringe: Option<usize>,
 }
 
 /// Write the boot trace when `RNODE_TRACE_DIR` is set (the local claim harness sets it). A write
@@ -1815,21 +1938,31 @@ async fn acquire_boot_certificate(
     source: Option<&Arc<dyn crate::engine::checkpoint_source::CheckpointSource>>,
     bonds: &BTreeMap<rchain_models::validator::Validator, NonNegI64>,
     shard_id: &str,
+    recorded_fringe: Option<&BTreeSet<BlockHash>>,
 ) -> Result<Option<BootCertificate>, String> {
-    acquire_boot_certificate_with(store, source, bonds, shard_id, &|certificate, bonds| {
-        crate::checkpoint::verify_genesis_rooted_certificate(certificate, bonds)
-            .map_err(|e| e.to_string())
-    })
+    acquire_boot_certificate_with(
+        store,
+        source,
+        bonds,
+        shard_id,
+        recorded_fringe,
+        &|certificate, bonds| {
+            crate::checkpoint::verify_genesis_rooted_certificate(certificate, bonds)
+                .map_err(|e| e.to_string())
+        },
+    )
     .await
 }
 
 /// The acquisition with an injectable verifier, so the record/adopt mechanics are testable without
 /// minting a quorum-signed certificate.
+#[allow(clippy::too_many_arguments)]
 async fn acquire_boot_certificate_with(
     store: &rchain_block_storage::checkpoint_store::CheckpointStore,
     source: Option<&Arc<dyn crate::engine::checkpoint_source::CheckpointSource>>,
     bonds: &BTreeMap<rchain_models::validator::Validator, NonNegI64>,
     shard_id: &str,
+    recorded_fringe: Option<&BTreeSet<BlockHash>>,
     verify: &(dyn Fn(
         &rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
         &BTreeMap<rchain_models::validator::Validator, NonNegI64>,
@@ -1859,42 +1992,79 @@ async fn acquire_boot_certificate_with(
     let Some(source) = source else {
         return Ok(None);
     };
-    let certificate = source.fetch_certificate().await.map_err(|e| {
-        format!("no checkpoint certificate is stored and the checkpoint source refused: {e}")
-    })?;
-    let verified = verify(&certificate, bonds)
-        .map_err(|e| format!("the fetched checkpoint certificate was refused: {e}"))?;
-    if verified.checkpoint.shard_id != shard_id {
+    // **Ask for a certificate that anchors the accepted fringe before asking for the head.** A
+    // restart that was down while the fence moved has a recorded fringe *behind* the served head;
+    // the head cannot anchor it (its anchor is newer than every recorded member), and refusing on
+    // that mismatch is the lagging-restart stall the RC-4 drill measured. The caller names anchors
+    // from its own accepted fringe, so the source serves a stored certificate rather than choosing
+    // the history. The head stays the fallback: a fresh joiner has no recorded fringe, and a peer
+    // that predates the anchor route simply answers nothing here.
+    let mut candidates: Vec<rchain_models::casper::protocol::checkpoint::CheckpointCertificate> =
+        Vec::new();
+    if let Some(fringe) = recorded_fringe {
+        for anchor in fringe {
+            if let Ok(certificate) = source.fetch_certificate_at_anchor(&anchor.to_hex()).await {
+                candidates.push(certificate);
+            }
+        }
+    }
+    let mut head_error: Option<String> = None;
+    match source.fetch_certificate().await {
+        Ok(certificate) => candidates.push(certificate),
+        Err(e) => head_error = Some(e),
+    }
+    if candidates.is_empty() {
         return Err(format!(
-            "the fetched checkpoint certificate names shard {:?}, not this node's {:?}",
-            verified.checkpoint.shard_id, shard_id
+            "no checkpoint certificate is stored and the checkpoint source refused: {}",
+            head_error.unwrap_or_else(|| "no certificate served".to_string())
         ));
     }
-    if let rchain_block_storage::checkpoint_store::Recorded::Conflict { existing_digest } =
-        store.record(&verified.digest, &certificate).await?
-    {
-        return Err(format!(
-            "the fetched checkpoint certificate conflicts with an already recorded statement at \
-             its anchor (existing {})",
-            existing_digest.to_hex()
-        ));
+
+    let mut last_error: Option<String> = None;
+    for certificate in candidates {
+        let verified = match verify(&certificate, bonds) {
+            Ok(verified) => verified,
+            Err(e) => {
+                last_error = Some(format!(
+                    "the fetched checkpoint certificate was refused: {e}"
+                ));
+                continue;
+            }
+        };
+        if verified.checkpoint.shard_id != shard_id {
+            last_error = Some(format!(
+                "the fetched checkpoint certificate names shard {:?}, not this node's {:?}",
+                verified.checkpoint.shard_id, shard_id
+            ));
+            continue;
+        }
+        if let rchain_block_storage::checkpoint_store::Recorded::Conflict { existing_digest } =
+            store.record(&verified.digest, &certificate).await?
+        {
+            return Err(format!(
+                "the fetched checkpoint certificate conflicts with an already recorded statement \
+                 at its anchor (existing {})",
+                existing_digest.to_hex()
+            ));
+        }
+        if let rchain_block_storage::checkpoint_store::Adoption::Conflict {
+            head_digest,
+            incoming_digest,
+        } = store.adopt(&verified.digest, &certificate, false).await?
+        {
+            return Err(format!(
+                "the fetched checkpoint certificate conflicts with the adopted head (head {:?}, \
+                 incoming {})",
+                head_digest.map(|digest| digest.to_hex()),
+                incoming_digest.to_hex()
+            ));
+        }
+        return Ok(Some(BootCertificate {
+            verified,
+            source: BootCertificateSource::Fetched,
+        }));
     }
-    if let rchain_block_storage::checkpoint_store::Adoption::Conflict {
-        head_digest,
-        incoming_digest,
-    } = store.adopt(&verified.digest, &certificate, false).await?
-    {
-        return Err(format!(
-            "the fetched checkpoint certificate conflicts with the adopted head (head {:?}, \
-             incoming {})",
-            head_digest.map(|digest| digest.to_hex()),
-            incoming_digest.to_hex()
-        ));
-    }
-    Ok(Some(BootCertificate {
-        verified,
-        source: BootCertificateSource::Fetched,
-    }))
+    Err(last_error.unwrap_or_else(|| "no checkpoint certificate could be verified".to_string()))
 }
 
 /// **Is every recorded fringe member the anchor or one of its descendants?** The DAG's message map
@@ -2576,6 +2746,36 @@ mod tests {
         }
     }
 
+    /// A source that serves a certificate only for a named anchor, and refuses the head. The
+    /// lagging-restart path asks for the anchor first; the head is the fallback.
+    struct AnchorSource {
+        anchor: String,
+        certificate:
+            Result<rchain_models::casper::protocol::checkpoint::CheckpointCertificate, String>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::engine::checkpoint_source::CheckpointSource for AnchorSource {
+        async fn fetch_certificate(
+            &self,
+        ) -> Result<rchain_models::casper::protocol::checkpoint::CheckpointCertificate, String>
+        {
+            Err("the head is unavailable".to_string())
+        }
+
+        async fn fetch_certificate_at_anchor(
+            &self,
+            anchor: &str,
+        ) -> Result<rchain_models::casper::protocol::checkpoint::CheckpointCertificate, String>
+        {
+            if anchor.eq_ignore_ascii_case(&self.anchor) {
+                self.certificate.clone()
+            } else {
+                Err(format!("no certificate for anchor {anchor}"))
+            }
+        }
+    }
+
     fn a_certificate() -> rchain_models::casper::protocol::checkpoint::CheckpointCertificate {
         use rchain_models::casper::protocol::checkpoint::{Checkpoint, CheckpointCertificate};
         CheckpointCertificate {
@@ -2608,7 +2808,7 @@ mod tests {
     async fn no_stored_certificate_and_no_source_leaves_the_decision_to_the_dag() {
         let store = an_empty_store().await;
         let bonds: BTreeMap<rchain_models::validator::Validator, NonNegI64> = BTreeMap::new();
-        let acquired = acquire_boot_certificate(&store, None, &bonds, "root")
+        let acquired = acquire_boot_certificate(&store, None, &bonds, "root", None)
             .await
             .expect("the absence of both inputs is not an error here");
         assert!(acquired.is_none());
@@ -2620,7 +2820,7 @@ mod tests {
         let bonds: BTreeMap<rchain_models::validator::Validator, NonNegI64> = BTreeMap::new();
         let source: Arc<dyn crate::engine::checkpoint_source::CheckpointSource> =
             Arc::new(FakeSource(Err("connection refused".to_string())));
-        let error = acquire_boot_certificate(&store, Some(&source), &bonds, "root")
+        let error = acquire_boot_certificate(&store, Some(&source), &bonds, "root", None)
             .await
             .expect_err("a failed fetch is a refusal");
         assert!(error.contains("checkpoint source refused"));
@@ -2633,7 +2833,7 @@ mod tests {
         let bonds: BTreeMap<rchain_models::validator::Validator, NonNegI64> = BTreeMap::new();
         let source: Arc<dyn crate::engine::checkpoint_source::CheckpointSource> =
             Arc::new(FakeSource(Ok(a_certificate())));
-        let error = acquire_boot_certificate(&store, Some(&source), &bonds, "root")
+        let error = acquire_boot_certificate(&store, Some(&source), &bonds, "root", None)
             .await
             .expect_err("an unverified certificate is a refusal");
         assert!(error.contains("fetched checkpoint certificate was refused"));
@@ -2659,11 +2859,51 @@ mod tests {
         let source: Arc<dyn crate::engine::checkpoint_source::CheckpointSource> =
             Arc::new(FakeSource(Ok(certificate.clone())));
         let acquired =
-            acquire_boot_certificate_with(&store, Some(&source), &bonds, "root", &|_, _| {
+            acquire_boot_certificate_with(&store, Some(&source), &bonds, "root", None, &|_, _| {
                 Ok(expected.clone())
             })
             .await
             .expect("the fetched certificate is adopted");
+        assert!(matches!(
+            acquired,
+            Some(BootCertificate {
+                source: BootCertificateSource::Fetched,
+                ..
+            })
+        ));
+        let head = store.latest().await.unwrap().expect("a stored head");
+        assert_eq!(head.checkpoint, certificate.checkpoint);
+    }
+
+    /// **A restart whose accepted fringe is behind the served head asks for its own anchor.**
+    /// The head is the wrong certificate for this node (its anchor is newer than every recorded
+    /// member); the certificate that anchors the recorded fringe is the one the boot agreement can
+    /// accept, and the source serves it because the caller named the anchor.
+    #[tokio::test]
+    async fn a_recorded_fringe_fetches_the_certificate_that_anchors_it() {
+        let store = an_empty_store().await;
+        let bonds: BTreeMap<rchain_models::validator::Validator, NonNegI64> = BTreeMap::new();
+        let certificate = a_certificate();
+        let expected = verified_of(&certificate);
+        let anchor = "11".repeat(32);
+        let mut fringe = BTreeSet::new();
+        fringe
+            .insert(BlockHash::try_from_hex(&anchor).expect("the fixture anchor is a block hash"));
+        let source: Arc<dyn crate::engine::checkpoint_source::CheckpointSource> =
+            Arc::new(AnchorSource {
+                anchor,
+                certificate: Ok(certificate.clone()),
+            });
+        let acquired = acquire_boot_certificate_with(
+            &store,
+            Some(&source),
+            &bonds,
+            "root",
+            Some(&fringe),
+            &|_, _| Ok(expected.clone()),
+        )
+        .await
+        .expect("the anchor's certificate is adopted");
         assert!(matches!(
             acquired,
             Some(BootCertificate {
@@ -2689,11 +2929,12 @@ mod tests {
             .adopt(&expected.digest, &certificate, false)
             .await
             .expect("the certificate is adopted as the head");
-        let acquired = acquire_boot_certificate_with(&store, None, &bonds, "root", &|_, _| {
-            Ok(expected.clone())
-        })
-        .await
-        .expect("the stored head is re-verified");
+        let acquired =
+            acquire_boot_certificate_with(&store, None, &bonds, "root", None, &|_, _| {
+                Ok(expected.clone())
+            })
+            .await
+            .expect("the stored head is re-verified");
         assert!(matches!(
             acquired,
             Some(BootCertificate {

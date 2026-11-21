@@ -644,13 +644,17 @@
         "local": {
           "items": [
             {
-              "action": "The boot trace is safe and the victim still did not run: add the missing acquisition or window coordinate to `BootEvidence`.",
-              "finding": "every predicate holds on 1 trace(s), yet the claim failed",
-              "item": "RC-4/local/model"
+              "action": "`acquisition_ok`/`verification_ok`/`anchor_ok` false: the boot accepted a state it could not attribute. Fix `boot_outcome` or `acquire_boot_certificate`; the refusal coordinate is in the trace.",
+              "anchor": {
+                "lean": "Rchain.Sync.Anchor.running_is_anchored",
+                "rust": "casper/src/engine/node_launch.rs:rebuild_window_for_boot"
+              },
+              "finding": "boot trace (validator 1, site -): predicate anchor_ok false",
+              "item": "RC-4/local/anchor_ok"
             }
           ],
           "next_pr": "rc-confirm-local",
-          "reading": "model-incomplete",
+          "reading": "unsafe-point",
           "required": true
         },
         "multi-host": {
@@ -787,26 +791,31 @@
           "action": {
             "items": [
               {
-                "action": "The boot trace is safe and the victim still did not run: add the missing acquisition or window coordinate to `BootEvidence`.",
-                "finding": "every predicate holds on 1 trace(s), yet the claim failed",
-                "item": "RC-4/local/model"
+                "action": "`acquisition_ok`/`verification_ok`/`anchor_ok` false: the boot accepted a state it could not attribute. Fix `boot_outcome` or `acquire_boot_certificate`; the refusal coordinate is in the trace.",
+                "anchor": {
+                  "lean": "Rchain.Sync.Anchor.running_is_anchored",
+                  "rust": "casper/src/engine/node_launch.rs:rebuild_window_for_boot"
+                },
+                "finding": "boot trace (validator 1, site -): predicate anchor_ok false",
+                "item": "RC-4/local/anchor_ok"
               }
             ],
             "next_pr": "rc-confirm-local",
-            "reading": "model-incomplete",
+            "reading": "unsafe-point",
             "required": true
           },
-          "binary_sha256": "88a4c7614df98dd3fb6fc0a8039897032f33dd89266321ae21c40bd5eccd61c0",
-          "finished_at": "2026-11-21T10:13:06Z",
+          "binary_sha256": "b6ada1e3278f17d640400a762b42913ab93a65a1208095f0ff7d0ac2f68ac7cf",
+          "finished_at": "2026-11-21T10:47:05Z",
           "reasons": [
             "the restart harness did not pass: 'FAIL'",
             "post-recovery heads were not read on every validator",
             "victim 1 has no verified checkpoint certificate after restart",
-            "model-incomplete: every predicate holds on the captured traces, yet the bad outcome was observed; the trace is the model gap"
+            "victim 1: the boot decision did not accept (acquisition certificate)",
+            "boot trace (validator 1, site decision): predicate(s) anchor_ok false"
           ],
-          "record": "spec/audit/evidence/rc4-local-20261121-e9508f5/raw/claim.json",
+          "record": "spec/audit/evidence/rc4-local-20261121-20501f4/raw/claim.json",
           "required": true,
-          "source_sha": "e9508f58c613e87e839de831f08c30cfe3685c59",
+          "source_sha": "20501f4820df02f8d58d33d6cb9dba19769cae6c",
           "status": "fail"
         },
         "multi-host": {

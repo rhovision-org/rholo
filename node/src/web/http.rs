@@ -1095,6 +1095,21 @@ async fn api_checkpoint_by_digest(
     json_result(state.web_api.checkpoint_certificate(Some(&digest)).await)
 }
 
+/// `GET /api/v1/checkpoint/anchor/{anchor}` — the certificate this node holds for a named anchor
+/// block. A validator restarting behind its peers names an anchor from its own accepted fringe, so
+/// the certificate it receives anchors *its* history rather than the head its peers now serve.
+async fn api_checkpoint_by_anchor(
+    State(state): State<HttpState>,
+    Path(anchor): Path<String>,
+) -> Response {
+    json_result(
+        state
+            .web_api
+            .checkpoint_certificate_at_anchor(&anchor)
+            .await,
+    )
+}
+
 /// `POST /api/v1/checkpoint/verify` — apply **this node's verifier** to a caller-supplied
 /// certificate: the digest is recomputed, every signature over it is checked against bonded stake,
 /// and the strict quorum rule is applied. A consumer that cannot verify secp256k1 reads this
@@ -2841,6 +2856,10 @@ pub fn router(state: HttpState) -> Router {
         )
         .route("/api/v1/checkpoint", get(api_checkpoint))
         .route("/api/v1/checkpoint/{digest}", get(api_checkpoint_by_digest))
+        .route(
+            "/api/v1/checkpoint/anchor/{anchor}",
+            get(api_checkpoint_by_anchor),
+        )
         .route("/api/v1/checkpoint/verify", post(api_verify_checkpoint))
         .route("/api/v1/archives", get(api_archives))
         .route("/api/v1/history/challenge", get(api_history_challenge))
@@ -3686,6 +3705,22 @@ mod tests {
                         .unwrap_or_default(),
                 },
             )
+        }
+
+        async fn checkpoint_certificate_at_anchor(
+            &self,
+            anchor: &str,
+        ) -> Result<
+            rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
+            BlockApiException,
+        > {
+            if anchor.eq_ignore_ascii_case(&"00".repeat(32)) {
+                self.checkpoint_certificate(None).await
+            } else {
+                Err(BlockApiException::client(format!(
+                    "this node holds no certificate for anchor {anchor}"
+                )))
+            }
         }
 
         async fn verify_checkpoint_certificate(
@@ -5195,6 +5230,21 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["checkpointDigest"], "22".repeat(32));
         assert_eq!(json["sigAlgorithm"], "secp256k1");
+    }
+
+    /// **A restarting validator asks for the anchor it holds, not the head.** The route serves the
+    /// stored certificate for a named anchor and refuses an unknown one; the caller names the
+    /// anchor from its own accepted fringe, so the peer does not choose the history.
+    #[tokio::test]
+    async fn the_checkpoint_anchor_route_serves_by_anchor_and_refuses_unknown() {
+        let response = api_checkpoint_by_anchor(State(state()), Path("00".repeat(32))).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["checkpoint"]["anchorHeight"], 7);
+
+        let response = api_checkpoint_by_anchor(State(state()), Path("99".repeat(32))).await;
+        assert_ne!(response.status(), StatusCode::OK);
     }
 
     /// **The verifier is on the public surface** (the mature-join benchmark consumes it): the route

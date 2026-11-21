@@ -260,6 +260,22 @@ class BootTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("anchor_ok", report["results"][0]["false"])
 
+    def test_a_refused_decision_names_the_anchor_predicate(self):
+        # A quorate certificate that does not anchor the accepted fringe refuses the boot. The
+        # decision trace must read as an unsafe point on `anchor_ok`; treating it as a model gap
+        # would hide a refused restart behind a trace that says `accepted: true` at acquisition.
+        row = boot(stage="decision", accepted=False, fringe_agrees=False,
+                   anchor_closure_present=False, refusal_coordinate="fringe-mismatch")
+        report, code = evaluate_tool.evaluate(record([row]))
+        self.assertEqual(code, 1)
+        self.assertEqual(report["reading"], "unsafe-point")
+        self.assertIn("anchor_ok", report["results"][0]["false"])
+
+    def test_a_decision_with_an_agreeing_fringe_is_safe(self):
+        row = boot(stage="decision", fringe_agrees=True, anchor_closure_present=True)
+        report, code = evaluate_tool.evaluate(record([row], verdict="pass"))
+        self.assertEqual((code, report["reading"]), (0, "safe"))
+
     def test_a_legacy_boot_trace_is_still_read(self):
         legacy = {"validator": 0, "acquisition": "certificate", "accepted": True,
                   "dag_len": 4, "store_head": None, "source_configured": True}

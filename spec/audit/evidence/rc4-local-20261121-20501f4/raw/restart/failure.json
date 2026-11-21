@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "verdict": "FAIL",
+  "failure": {
+    "class": "timeout",
+    "arm": "restart-under-load",
+    "phase": "restart-under-load",
+    "node": null,
+    "first_error": "validator 1 did not restart with a new bootId (exit=1, last=URLError(ConnectionRefusedError(111, 'Connection refused'))); log tail:       0               0       0               4       4               0         0               0           0\n                     ---\nlarge:          size ind    allocated      nmalloc (#/sec)      ndalloc (#/sec)    nrequests (#/sec)  curlextents\n                     ---\nextents:        size ind       ndirty        dirty       nmuzzy        muzzy    nretained     retained       ntotal        total\n                     ---\nBytes in small extent cache: 0\nTotal hits in small extent cache: 0\nTotal misses in small extent cache: 0\nDalloc calls without flush in small extent cache: 0\nDalloc calls with flush in small extent cache: 0\nsec_fill calls that went over max_bytes: 0\nHPA shard stats:\n  Pageslabs: 0 (0 huge, 0 nonhuge)\n  Active pages: 0 (0 huge, 0 nonhuge)\n  Dirty pages: 0 (0 huge, 0 nonhuge)\n  Retained pages: 0\n  Purge passes: 0 (0 / sec)\n  Purges: 0 (0 / sec)\n  Hugeifies: 0 (0 / sec)\n  Hugify failures: 0 (0 / sec)\n  Dehugifies: 0 (0 / sec)\n\n  In full slabs:\n      npageslabs: 0 huge, 0 nonhuge\n      nactive: 0 huge, 0 nonhuge \n      ndirty: 0 huge, 0 nonhuge \n      nretained: 0 huge, 0 nonhuge \n  In empty slabs:\n      npageslabs: 0 huge, 0 nonhuge\n      nactive: 0 huge, 0 nonhuge \n      ndirty: 0 huge, 0 nonhuge \n      nretained: 0 huge, 0 nonhuge \n  In nonfull slabs:\n                size ind npageslabs_huge    nactive_huge     ndirty_huge  npageslabs_nonhuge     nactive_nonhuge      ndirty_nonhuge   nretained_nonhuge\n                     ---\n--- End jemalloc statistics ---\n",
+    "health": [
+      {
+        "acceptsDeploys": true,
+        "blockPipeline": {
+          "capacity": 1024,
+          "incomingQueue": 0,
+          "pending": 0,
+          "sampledPeak": 2,
+          "validatedQueue": 0
+        },
+        "bootId": "1-1795257775499",
+        "degraded": "normal",
+        "diagVersion": 2,
+        "finalityStallEpisodes": 3,
+        "finalityStalled": false,
+        "finalizedHeight": 331,
+        "finalizedHeightError": null,
+        "finalizedLag": 3,
+        "height": 335,
+        "lastBlockAgeMs": 866,
+        "lastFinalityAgeMs": 200,
+        "lastPeerAgeMs": 3,
+        "lastPipelineFault": null,
+        "maxObservedHeight": 334,
+        "nodePhase": "running",
+        "ok": true,
+        "orphanBodies": 0,
+        "orphanDetections": 0,
+        "phase": "running",
+        "pipelineFaults": 0,
+        "pipelineFaultsOutstanding": 0,
+        "pool": {
+          "bytes": 0,
+          "deploys": 0,
+          "maxBytes": 67108864,
+          "maxDeploys": 10000
+        },
+        "proposalHaltReason": null,
+        "proposalHalted": false,
+        "ready": true,
+        "readyReasons": [],
+        "selfValidationRefusal": null,
+        "shardPhases": {
+          "/root": "running"
+        }
+      }
+    ],
+    "last_events": [
+      "{\"utc\": 1795257793.9950774, \"cycle\": 0, \"stream\": 1, \"deploy\": \"30450221009362f46d14f9efffc1555493df7a9691981126ce3c547cf9b5dc1da3ee85c1f5022069900b8de82a423c2494b858f6ffe7fc4c37b37498478bad6d12f922815d100b\", \"marker\": \"restart-under-load:0:1:fcfc0be40b2842efa9b24710deb90c74\", \"target\": 3}",
+      "{\"utc\": 1795257793.9951684, \"cycle\": 0, \"stream\": 2, \"deploy\": \"3045022100f92037dce47a1dbea4549b31be2e1e621bb3707cecaf932a518c869f0ff7183702201fd9744f1b54c21ba93861b4ab33a3ad3c981b091864a6bd52fa88f03e9532cc\", \"marker\": \"restart-under-load:0:2:2e5651cddaa84d088f0d4ff51f8acc59\", \"target\": 0}",
+      "{\"utc\": 1795257793.9982865, \"cycle\": 0, \"stream\": 0, \"deploy\": \"3044022014662804af5abd187c36f9783b567d90a2c0f924d126c528e4e2be8cf6bd02d902203a3276fa3c508cf9ac51936c9aaf246012967349c36a6ff7416fc96949720679\", \"marker\": \"restart-under-load:0:0:8d38dc2450d5429884a14cc62cd77aee\", \"target\": 2}",
+      "{\"utc\": 1795257794.3840384, \"cycle\": 0, \"stream\": 1, \"deploy\": \"304402206f59177e059cbe6eb84b0eddaff96a2b401a70b92f17264b8f0000b721c2d930022078ab70af5af2d703974702cea93c912da2d368730e5ab20a27e2f18fe3b3e3f9\", \"marker\": \"restart-under-load:0:1:c95e7482e95042b693ae96679ac7c3ac\", \"target\": 3}",
+      "{\"utc\": 1795257794.3876173, \"cycle\": 0, \"stream\": 0, \"deploy\": \"30440220041955cfc8dd848119fd52c72e78e30104b73d845a05657dba8f35e49be4aac10220418c20b00d740bf6ca6311331b8ee721402e40a0c000a07f8b1ca8991883b463\", \"marker\": \"restart-under-load:0:0:8352a4960b074ad7a13b547c16f53ec0\", \"target\": 2}",
+      "{\"utc\": 1795257794.3938093, \"cycle\": 0, \"stream\": 2, \"deploy\": \"30440220719353889742af4bb3417a46a4e74cc9c2b7b07610498491245c3bf154ce45ca022063d04370bde88dfb4897a3423b9bd8f18d8f1c24c7fe9381fb2a6a4880c22b9c\", \"marker\": \"restart-under-load:0:2:3b5ca4c402b64a36b1c6696c64393384\", \"target\": 0}",
+      "{\"utc\": 1795257794.3949385, \"cycle\": 0, \"stream\": 3, \"deploy\": \"3044022052eedd0f055fcef96a9c7eac54d370093bf88d5c7d6ec4f93bc0bad70e97838d02202fbf496091f5b12f1074be6acd7f88aa66f043342e593e4ce17cec4abab399f9\", \"marker\": \"restart-under-load:0:3:9f20955922f34d1286c04029daba0084\", \"target\": 2}",
+      "{\"utc\": 1795257794.7818534, \"cycle\": 0, \"stream\": 2, \"deploy\": \"3045022100de2063bf17f50f6540e38a2a594788921344efa96de019ca94b60bdcd7cd921902205a6718527647de098de086c74afd575b315bef9ceda887b6afabe7cf644ceb0b\", \"marker\": \"restart-under-load:0:2:e02ad073f731433380d5b162567f164d\", \"target\": 0}",
+      "{\"utc\": 1795257794.7829509, \"cycle\": 0, \"stream\": 3, \"deploy\": \"30450221008bdf4a5669a23135a9266365921b9d774fda2fa07ebb283bb47786f7b64c48b002200950cdc85de09a68c4523922daad05ad171c33502f9d0f5cffc31a0925238b92\", \"marker\": \"restart-under-load:0:3:371bf84c582c4872a759789e946de889\", \"target\": 2}",
+      "{\"utc\": 1795257794.7896035, \"cycle\": 0, \"stream\": 0, \"deploy\": \"304402203ad14fa395082e6f3b3fd93368cef3ada8ba58edd361cdc38a171b537e59f561022004111ee1246daed1b1e952ba095a40253a62125a52d352d380484797493e18dc\", \"marker\": \"restart-under-load:0:0:487cfee7b5d44368a32d43927ef190ff\", \"target\": 2}",
+      "{\"utc\": 1795257794.790288, \"cycle\": 0, \"stream\": 1, \"deploy\": \"304402207310bda574c50c0250ea2390ab21daa8819aec8b55b117c1c969b1cffd74d6660220195d27e90a76e927403084a551ec903929be7e4bb6e15c80018abb19c18f2f5b\", \"marker\": \"restart-under-load:0:1:d19f9f34cf1442d69eb2084185c08419\", \"target\": 3}",
+      "{\"utc\": 1795257795.1717117, \"cycle\": 0, \"stream\": 1, \"deploy\": \"304402206b97b510fa9ef615b163f3fe827e99512747c9767f0e837081570bdde2dff50a0220237fa4a62e71abdb43e440c59ac56438670bc391924a6004de12f91638c3b01c\", \"marker\": \"restart-under-load:0:1:6436c9d3cd5743d0ab543568995fa978\", \"target\": 3}",
+      "{\"utc\": 1795257795.1727138, \"cycle\": 0, \"stream\": 0, \"deploy\": \"304402205f93db79dff4be485478c9ce32bacf7ce48ab235b0a1bcd91b980ed0e4dd6f7502206ceac60fb93cc6f6bfd69962b830467dc7a285b378d629ad298ed80c9f262803\", \"marker\": \"restart-under-load:0:0:a65cdce384684373be8097febb347960\", \"target\": 2}",
+      "{\"utc\": 1795257795.184028, \"cycle\": 0, \"stream\": 3, \"deploy\": \"304402205ddadd3c1352ca17ded683b98e0a7845ca6aa73f872c06675995dcbe616886ea02202442ae588a0d99b5982109984a3585badb9057549e19aa78994c8de6981f427e\", \"marker\": \"restart-under-load:0:3:d2555122f9fc4fa3b0d51ab768687e5a\", \"target\": 2}",
+      "{\"utc\": 1795257795.1852646, \"cycle\": 0, \"stream\": 2, \"deploy\": \"3045022100ca4e5a4ff5edac4969c4af027f4b15380952a30343f2875994926fec364a07ad02203b5552c70b477131597738771c8410e7b18a6322659fc25b56f27c4b5f1977a6\", \"marker\": \"restart-under-load:0:2:31072ebc20c042aeaa6af7f0926351e5\", \"target\": 0}",
+      "{\"utc\": 1795257795.578661, \"cycle\": 0, \"stream\": 1, \"deploy\": \"3045022100e4b8882df0030a66533ea04ec151d323535a2c45a3696dfa2067bff6342f34c302204a423c4eab0dd776c44bf283f60cb08794e9e66e3c3042975aa223efc12c4e2f\", \"marker\": \"restart-under-load:0:1:f8a20af41498405ab0ac4b8ac90f771e\", \"target\": 3}",
+      "{\"utc\": 1795257795.579374, \"cycle\": 0, \"stream\": 0, \"deploy\": \"3045022100af1d8c59f9ded157515055b81e8a59ae58b0d09bd562d2bcd5261c415771379a022050e7ec86a89343284c01a4a0e8a7e89b9eb22d59f9c63d7e6131e3605cc199b3\", \"marker\": \"restart-under-load:0:0:28ea9225d4f74c858915c22e96b60401\", \"target\": 2}",
+      "{\"utc\": 1795257795.5800807, \"cycle\": 0, \"stream\": 2, \"deploy\": \"3045022100e18bd57bcfe3993e87116c31e7daec8ec4df5fe90c9e30515454571959aa690f0220223d806509fb7498f8505b557730808d66d52347de41ab30aa9ff443ec0d2926\", \"marker\": \"restart-under-load:0:2:3c3c72c3c535461fb112271e98c4569d\", \"target\": 0}",
+      "{\"utc\": 1795257795.584515, \"cycle\": 0, \"stream\": 3, \"deploy\": \"30450221008a8a1af99590700af8b228df3d1fcf361b911e176c7c3891733caeae0ad35cbe02203b88fb0f38ff04ec71a089809b5ca82052779e205c2939a3599a399598af1030\", \"marker\": \"restart-under-load:0:3:95e06e71c31b455997b89360c3970a1f\", \"target\": 2}",
+      "{\"utc\": 1795258021.9248774, \"wait_new_boot\": 1, \"previous\": \"1-1795257775501\", \"last\": \"URLError(ConnectionRefusedError(111, 'Connection refused'))\"}"
+    ],
+    "missing": [],
+    "artifact_refs": [],
+    "capture_error": "URLError: <urlopen error [Errno 111] Connection refused>"
+  }
+}

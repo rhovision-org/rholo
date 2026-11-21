@@ -994,6 +994,17 @@ pub trait BlockApi: Send + Sync {
         Err("this surface holds no checkpoint certificate".to_string())
     }
 
+    /// **The certificate this node holds for an anchor block** (hex block hash). A validator that
+    /// restarts behind its peers asks for the certificate that anchors its own accepted fringe;
+    /// the caller names the anchor, so the peer serves a stored certificate rather than choosing
+    /// one. Default refuses.
+    async fn checkpoint_certificate_at_anchor(
+        &self,
+        _anchor: &str,
+    ) -> ApiErr<CheckpointCertificate> {
+        Err("this surface holds no checkpoint certificate by anchor".to_string())
+    }
+
     /// **Verify a certificate with this node's own verifier.** The digest is recomputed, every
     /// signature over it is checked against the signer's bonded stake, and the strict quorum rule is
     /// applied. A refusal is an error; a success names the stake that signed. Default refuses.

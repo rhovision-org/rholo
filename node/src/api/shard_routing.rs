@@ -412,6 +412,15 @@ impl BlockApi for ShardRoutingBlockApi {
         self.primary_api().checkpoint_certificate(digest).await
     }
 
+    async fn checkpoint_certificate_at_anchor(
+        &self,
+        anchor: &str,
+    ) -> ApiErr<rchain_models::casper::protocol::checkpoint::CheckpointCertificate> {
+        self.primary_api()
+            .checkpoint_certificate_at_anchor(anchor)
+            .await
+    }
+
     async fn verify_checkpoint_certificate(
         &self,
         certificate: &rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
