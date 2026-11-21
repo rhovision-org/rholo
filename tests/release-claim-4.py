@@ -248,10 +248,16 @@ def run(argv: list[str]) -> int:
                 ["docker", "logs", devnet.node(victim)],
                 text=True, capture_output=True, timeout=60)
             text = victim_log.stdout + victim_log.stderr
+            # **The refusal is the line that names the decision, and the terminal-sync sentence
+            # is the one that names a boot that never served.** The old scan looked for
+            # "checkpoint certificate" and so printed the collector's per-tick warning while the
+            # actual stop — "LFS state sync is terminal: the approved state could not be restored
+            # and the retries are spent" — was filtered out. Read the stop, not the tick.
             refusal = [line for line in text.splitlines()
                        if any(word in line.lower() for word in
                               ("checkpoint certificate", "setup error", "refuses to run",
-                               "cannot be attributed", "fatal:"))]
+                               "cannot be attributed", "fatal:", "state sync is terminal",
+                               "retries are spent", "could not be restored", "blocked"))]
             record["observations"]["harness_error"] = (
                 (result.stdout + result.stderr)[-1500:])
             record["observations"]["victim_refusal"] = "\n".join(refusal[-6:])
@@ -260,6 +266,13 @@ def run(argv: list[str]) -> int:
                           or record["observations"]["harness_error"]))
             if refusal:
                 reason += " — " + refusal[-1]
+            else:
+                # A failed restart that names no refusal is still an observation: keep the tail so
+                # the next reader does not have to re-run the drill to see where the node stopped.
+                tail = [line for line in text.splitlines() if line.strip()][-8:]
+                if tail:
+                    record["observations"]["victim_log_tail"] = "\n".join(tail)
+                    reason += " — victim log tail: " + " | ".join(tail[-3:])
             if (certificates_after.get(str(victim)) or {}).get("kind") != "checkpoint":
                 reason += f"; victim {victim} restarted without a verified checkpoint certificate"
             victim_trace = next((t for t in reversed(boot_traces)
