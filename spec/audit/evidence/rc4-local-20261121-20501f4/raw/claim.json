@@ -1,0 +1,158 @@
+{
+  "arm": "local",
+  "claim_id": "RC-4",
+  "claim_title": "Recovery without loss",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-21T10:47:05Z",
+  "harness": {
+    "command": [
+      "/home/patrick/miniforge3/bin/python3",
+      "/home/patrick/RNodeRust/.claude/worktrees/pr-567/tests/consensus-restart-under-load.py",
+      "--validators",
+      "4",
+      "--cycles",
+      "2",
+      "--window",
+      "240",
+      "--load-seconds",
+      "20",
+      "--out",
+      "target/rc4-fix/RC-4/restart"
+    ],
+    "exit_code": 1,
+    "name": "consensus-restart-under-load",
+    "out": "target/rc4-fix/RC-4/restart"
+  },
+  "locality": "local-devnet",
+  "observations": {
+    "boot_ids": {
+      "after": {
+        "0": "2026-11-21T10:37:30.977566386Z",
+        "1": "2026-11-21T10:43:01.344228933Z",
+        "2": "2026-11-21T10:37:38.407712026Z",
+        "3": "2026-11-21T10:37:39.458012411Z"
+      },
+      "before": {
+        "0": "2026-11-21T10:37:30.977566386Z",
+        "1": "2026-11-21T10:37:37.34660516Z",
+        "2": "2026-11-21T10:37:38.407712026Z",
+        "3": "2026-11-21T10:37:39.458012411Z"
+      }
+    },
+    "boot_traces": [
+      {
+        "accepted": true,
+        "acquisition": "certificate",
+        "dag_len": 789,
+        "file": "boot-1-2.json",
+        "genesis_only": false,
+        "kind": "boot",
+        "outcome": "certified",
+        "refusal_coordinate": null,
+        "served_anchor": "897f0456fe01644cad8bda3578e4e3583864c2f024e79efdc3e0fde30cdb01b6",
+        "served_digest": "1d248293086c1153d9522a7c18ff5fa75c2086b4912e5e7502728c1e534ac6ff",
+        "served_shard": "/root",
+        "served_supporting_stake": 300,
+        "served_total_stake": 400,
+        "shard_id": "/root",
+        "source_configured": true,
+        "stage": "acquisition",
+        "store_head": null,
+        "validator": 1
+      },
+      {
+        "accepted": false,
+        "accepted_fringe": 1,
+        "acquisition": "certificate",
+        "anchor_closure_present": false,
+        "certified_fringe": 4,
+        "dag_len": 789,
+        "file": "boot-1-3.json",
+        "fringe_agreement": "mismatch",
+        "fringe_agrees": false,
+        "genesis_only": false,
+        "kind": "boot",
+        "outcome": "refused",
+        "refusal_coordinate": "fringe-mismatch",
+        "served_anchor": "897f0456fe01644cad8bda3578e4e3583864c2f024e79efdc3e0fde30cdb01b6",
+        "served_digest": "1d248293086c1153d9522a7c18ff5fa75c2086b4912e5e7502728c1e534ac6ff",
+        "served_shard": "/root",
+        "served_supporting_stake": 300,
+        "served_total_stake": 400,
+        "shard_id": "/root",
+        "source_configured": true,
+        "stage": "decision",
+        "store_head": null,
+        "validator": 1
+      }
+    ],
+    "certificates_after": {
+      "0": {
+        "anchorHeight": 330,
+        "digest": "6fbd91f70fb7341ed774d56d654876645788c980d9f3a73244aa1cb7da411a13",
+        "kind": "checkpoint"
+      },
+      "1": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      },
+      "2": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      },
+      "3": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      }
+    },
+    "checkpoint_certificates": {
+      "0": {
+        "anchorHeight": 190,
+        "digest": "7890a35e41942c48b78d421bebedb5ee3f05909c704468742f426a3ade6f54c0",
+        "kind": "checkpoint"
+      },
+      "1": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      },
+      "2": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      },
+      "3": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      }
+    },
+    "deploy_id": "30440220748f3b693ca973cbd7a1a71e39fdf256222f1a4a87eab008ab03cefce59b9e2b02200a01a4b155202bd6859ddbd2f3291b3f6ec28dc7a6f96f14801f0ae869b5298a",
+    "harness_error": "      4       4               0         0               0           0\\n                     ---\\nlarge:          size ind    allocated      nmalloc (#/sec)      ndalloc (#/sec)    nrequests (#/sec)  curlextents\\n                     ---\\nextents:        size ind       ndirty        dirty       nmuzzy        muzzy    nretained     retained       ntotal        total\\n                     ---\\nBytes in small extent cache: 0\\nTotal hits in small extent cache: 0\\nTotal misses in small extent cache: 0\\nDalloc calls without flush in small extent cache: 0\\nDalloc calls with flush in small extent cache: 0\\nsec_fill calls that went over max_bytes: 0\\nHPA shard stats:\\n  Pageslabs: 0 (0 huge, 0 nonhuge)\\n  Active pages: 0 (0 huge, 0 nonhuge)\\n  Dirty pages: 0 (0 huge, 0 nonhuge)\\n  Retained pages: 0\\n  Purge passes: 0 (0 / sec)\\n  Purges: 0 (0 / sec)\\n  Hugeifies: 0 (0 / sec)\\n  Hugify failures: 0 (0 / sec)\\n  Dehugifies: 0 (0 / sec)\\n\\n  In full slabs:\\n      npageslabs: 0 huge, 0 nonhuge\\n      nactive: 0 huge, 0 nonhuge \\n      ndirty: 0 huge, 0 nonhuge \\n      nretained: 0 huge, 0 nonhuge \\n  In empty slabs:\\n      npageslabs: 0 huge, 0 nonhuge\\n      nactive: 0 huge, 0 nonhuge \\n      ndirty: 0 huge, 0 nonhuge \\n      nretained: 0 huge, 0 nonhuge \\n  In nonfull slabs:\\n                size ind npageslabs_huge    nactive_huge     ndirty_huge  npageslabs_nonhuge     nactive_nonhuge      ndirty_nonhuge   nretained_nonhuge\\n                     ---\\n--- End jemalloc statistics ---\\n\"}\n",
+    "harness_result": "FAIL",
+    "marker": "release-claim:1795257464177495748",
+    "value": 42,
+    "victim": 1,
+    "victim_refusal": "2026-11-21T10:42:58.049Z WARN  [coop.rchain.node.runtime.CheckpointCollector] /root: no checkpoint certificate this tick: the certificate is not quorate: 0 of 400 bonded stake signed (strictly more than two thirds is required)\n2026-11-21T10:43:00.284Z WARN  [coop.rchain.node.runtime.CheckpointCollector] /root: no checkpoint certificate this tick: the certificate is not quorate: 200 of 400 bonded stake signed (strictly more than two thirds is required)\n2026-11-21T10:43:04.992Z WARN  [casper.engine.NodeLaunch] boot: no checkpoint certificate was stored; fetched and adopted the configured source's verified certificate 1d248293086c1153d9522a7c18ff5fa75c2086b4912e5e7502728c1e534ac6ff\n2026-11-21T10:43:04.992Z WARN  [casper.engine.NodeLaunch] boot: the stored checkpoint certificate names another fringe than the accepted fringe (4 certified, 1 accepted) and the accepted fringe does not descend from its anchor; the accepted state is not re-verified by it\n2026-11-21T10:43:04.993Z ERROR [coop.rchain.node.runtime.Setup] NodeLaunch exited with error: this node's DAG holds 789 block(s) but no verified checkpoint certificate; the accepted state cannot be attributed, so the node refuses to run (a genesis anchor is only for a genesis-only DAG)\nFatal: NodeLaunch exited with error: this node's DAG holds 789 block(s) but no verified checkpoint certificate; the accepted state cannot be attributed, so the node refuses to run (a genesis anchor is only for a genesis-only DAG)"
+  },
+  "preconditions": [],
+  "provenance": {
+    "binary_sha256": "b6ada1e3278f17d640400a762b42913ab93a65a1208095f0ff7d0ac2f68ac7cf",
+    "devnet_prefix": "restartload",
+    "image_id": "814539e1e58feee8301196f8ab794b1c8ecbdc72fd68c60ea5165547cd027f7a",
+    "profile": "local-4",
+    "source_dirty": false,
+    "source_sha": "20501f4820df02f8d58d33d6cb9dba19769cae6c"
+  },
+  "reasons": [
+    "the restart harness failed: validator 1 did not restart with a new bootId (exit=1, last=URLError(ConnectionRefusedError(111, 'Connection refused'))); log tail:       0               0       0               4       4               0         0               0           0\n                     ---\nlarge:          size ind    allocated      nmalloc (#/sec)      ndalloc (#/sec)    nrequests (#/sec)  curlextents\n                     ---\nextents:        size ind       ndirty        dirty       nmuzzy        muzzy    nretained     retained       ntotal        total\n                     ---\nBytes in small extent cache: 0\nTotal hits in small extent cache: 0\nTotal misses in small extent cache: 0\nDalloc calls without flush in small extent cache: 0\nDalloc calls with flush in small extent cache: 0\nsec_fill calls that went over max_bytes: 0\nHPA shard stats:\n  Pageslabs: 0 (0 huge, 0 nonhuge)\n  Active pages: 0 (0 huge, 0 nonhuge)\n  Dirty pages: 0 (0 huge, 0 nonhuge)\n  Retained pages: 0\n  Purge passes: 0 (0 / sec)\n  Purges: 0 (0 / sec)\n  Hugeifies: 0 (0 / sec)\n  Hugify failures: 0 (0 / sec)\n  Dehugifies: 0 (0 / sec)\n\n  In full slabs:\n      npageslabs: 0 huge, 0 nonhuge\n      nactive: 0 huge, 0 nonhuge \n      ndirty: 0 huge, 0 nonhuge \n      nretained: 0 huge, 0 nonhuge \n  In empty slabs:\n      npageslabs: 0 huge, 0 nonhuge\n      nactive: 0 huge, 0 nonhuge \n      ndirty: 0 huge, 0 nonhuge \n      nretained: 0 huge, 0 nonhuge \n  In nonfull slabs:\n                size ind npageslabs_huge    nactive_huge     ndirty_huge  npageslabs_nonhuge     nactive_nonhuge      ndirty_nonhuge   nretained_nonhuge\n                     ---\n--- End jemalloc statistics ---\n \u2014 Fatal: NodeLaunch exited with error: this node's DAG holds 789 block(s) but no verified checkpoint certificate; the accepted state cannot be attributed, so the node refuses to run (a genesis anchor is only for a genesis-only DAG); victim 1 restarted without a verified checkpoint certificate; victim 1 boot trace: accepted=false (acquisition certificate)"
+  ],
+  "schema": 1,
+  "started_at": "2026-11-21T10:37:29Z",
+  "verdict": "fail"
+}

@@ -28,7 +28,7 @@ cannot yet be made. No status is authored.
 | `RC-3` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-3` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
 | `RC-3` | `availability` | public | public-live | **not-observed** | Run the finalised-block availability sweep on the public fleet: every finalised body and finalised-head state from every validator. | `rc-public-fleet` |
-| `RC-4` | `local` | local | local-devnet | **model-incomplete** | The boot trace is safe and the victim still did not run: add the missing acquisition or window coordinate to `BootEvidence`. | `rc-confirm-local` |
+| `RC-4` | `local` | local | local-devnet | **unsafe-point** | `acquisition_ok`/`verification_ok`/`anchor_ok` false: the boot accepted a state it could not attribute. Fix `boot_outcome` or `acquire_boot_certificate`; the refusal coordinate is  | `rc-confirm-local` |
 | `RC-4` | `public` | public | public-live | **not-observed** | Run the operator's real host stop on the public fleet. | `rc-public-fleet` |
 | `RC-4` | `multi-host` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm multi-host` and commit its record; the arm's harness lands in `rc-multi-host`. | `rc-multi-host` |
 | `RC-4` | `failover` | local | off-host-claim | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm failover` and commit its record; the arm's harness lands in `rc-failover`. | `rc-failover` |
@@ -240,13 +240,13 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — restart under load: accepted work survives and the victim rejoins
 
-Reading: `model-incomplete` — spec/audit/evidence/rc4-local-20261121-e9508f5/raw/claim.json
-- `RC-4/local/model` — every predicate holds on 1 trace(s), yet the claim failed. **Next:** The boot trace is safe and the victim still did not run: add the missing acquisition or window coordinate to `BootEvidence`.
+Reading: `unsafe-point` — spec/audit/evidence/rc4-local-20261121-20501f4/raw/claim.json
+- `RC-4/local/anchor_ok` — boot trace (validator 1, site -): predicate anchor_ok false. **Next:** `acquisition_ok`/`verification_ok`/`anchor_ok` false: the boot accepted a state it could not attribute. Fix `boot_outcome` or `acquire_boot_certificate`; the refusal coordinate is in the trace. Rust: `casper/src/engine/node_launch.rs:rebuild_window_for_boot`. Lean: `Rchain.Sync.Anchor.running_is_anchored`.
 - Next PR: `rc-confirm-local`
   - observed: the restart harness did not pass: 'FAIL'
   - observed: post-recovery heads were not read on every validator
   - observed: victim 1 has no verified checkpoint certificate after restart
-  - observed: model-incomplete: every predicate holds on the captured traces, yet the bad outcome was observed; the trace is the model gap
+  - observed: victim 1: the boot decision did not accept (acquisition certificate)
 
 **Arm `public`** (public, `public-live`) — a real host stop on the public fleet
 
