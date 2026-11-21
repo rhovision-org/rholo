@@ -677,6 +677,18 @@ def main():
         (out / "campaign.json").write_text(json.dumps(
             {"gate_id": "n4-restart-under-load", "provenance": pin, "cycles": arms}, indent=2))
     except Exception as error:  # noqa: BLE001 - the verdict is the output
+        # **The node logs are the post-mortem** (RC-4 item C): the harness normally runs after the
+        # devnet is torn down, so a failure leaves only the health rows. Copy every node's log beside
+        # the evidence while the containers still exist; a copy failure is not the primary error.
+        try:
+            log_dir = out / "logs"
+            log_dir.mkdir(exist_ok=True)
+            for i in range(args.validators):
+                logs = docker("logs", node_name(i))
+                if logs.returncode == 0:
+                    (log_dir / f"validator-{i}.log").write_text(logs.stdout + logs.stderr)
+        except OSError:
+            pass
         # **The structured envelope** (M): class, arm, phase, the health rows at the failure and the
         # last observations. A capture failure is data, never a replacement for the primary error.
         rows, capture_error = drill.failure_envelope.best_effort_health(
