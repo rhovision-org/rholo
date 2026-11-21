@@ -771,12 +771,6 @@ impl Proposer {
             // state has not caught up to; the next tick re-derives and proposes once it has. The
             // status is the existing "wait for more blocks" one, so an operator sees a wait rather
             // than a fault.
-            BlockCreatorResult::ViewNotCaughtUp => Ok((
-                ProposeResult {
-                    propose_status: ProposeStatus::NotEnoughNewBlocks,
-                },
-                None,
-            )),
             // **Never sign below the record** (Law 122). A durable sequence the DAG no longer holds
             // means the catch-up has not re-adopted this validator's own block; waiting is the only
             // safe transition — the duplicate would be an equivocation the network slashes.
@@ -2072,28 +2066,6 @@ pub fn within_proposal_finality_bound(tip_height: i64, finalized_height: i64) ->
     tip_height.saturating_sub(finalized_height) <= MAX_PROPOSAL_FINALITY_LAG
 }
 
-/// **How far the node's own quorum-supported view may trail the tip it has observed** before it
-/// proposes — the shared catch-up window (`crate::engine::catchup::within_window`, Law 121).
-///
-/// Finality advances only on a closed fringe of the **latest messages**. A validator that proposes
-/// while its DAG has not yet accepted the other validators' recent blocks publishes a message whose
-/// seen set is an old fringe: no fence above it can close until that message ages out, so one
-/// alive-but-stale latest message caps the **whole** partition's finality. Measured on the RC-4 join
-/// drill (2026-11-21): a rejoined validator proposed from a view ~30 heights behind the blocks it had
-/// already observed; the fence froze at 223 while tips reached 255, and
-/// [`MAX_PROPOSAL_FINALITY_LAG`] then stopped every proposer — the network deadlocked, and stopping
-/// the rejoined validator afterwards did not recover it.
-///
-/// The supported height is the same primitive the liveness partition uses
-/// ([`liveness::quorum_supported_height`]): the greatest height reached by strictly more than two
-/// thirds of the **active** bond map. A silent peer therefore cannot hold this gate closed — the live
-/// majority's messages set the supported height — while a node whose own message state is behind the
-/// blocks it has received is held until it catches up.
-pub fn view_is_caught_up(view_tip: i64, supported: BlockHeight) -> bool {
-    let tip = BlockHeight::try_from(view_tip).unwrap_or_else(|_| BlockHeight::zero());
-    crate::engine::catchup::within_window(tip, supported)
-}
-
 /// **The height the gate measures from when the view has no finalised block** (C351).
 ///
 /// `last_finalized_block_hash()` is `None` on a view with no fringe, and the gate used to be wrapped
@@ -2339,41 +2311,16 @@ where
         .map(|m| m.block_hash)
         .collect();
 
-    // **The view gate** (join ladder, RC-4): see `view_is_caught_up`. It comes *before* the
-    // private-chain bound on purpose: a node that is catching up must **wait**, not latch the
-    // isolation halt that stops propose and attest until an operator resumes. That latch, firing
-    // for every proposer once finality froze, was the deadlock the drill measured.
-    {
-        let bonds = runtime
-            .compute_bonds(&StateHash::from_slice(pre_state_hash.as_bytes()))
-            .await?;
-        let repr = dag.get_representation().await;
-        // **Only the active set's messages set the tip**, for the same reason they set the quorum: a
-        // jailed or unbonded sender's last message is frozen where it stopped, and letting it stand
-        // as the highest latest message would hold every proposer closed with nothing to advance it.
-        let (view_tip, supported) = crate::engine::catchup::view(
-            repr.dag_message_state
-                .latest_msgs
-                .values()
-                .map(|message| (message.sender.clone(), message.height)),
-            &bonds,
-        );
-        if !crate::engine::catchup::within_window(view_tip, supported) {
-            log.warn(
-                LogSource::new("casper.blocks.Proposer"),
-                &format!(
-                    "waiting to propose at height {}: the node's highest latest message is {} while \
-                     a quorum supports {} (more than {} heights behind); a proposal from this view \
-                     would publish a fringe no closed set can include",
-                    i64::from(next_block_num),
-                    i64::from(view_tip),
-                    i64::from(supported),
-                    liveness::LIVENESS_WINDOW
-                ),
-            );
-            return Ok(BlockCreatorResult::ViewNotCaughtUp);
-        }
-    }
+    // **The catch-up gate is the joined node's phase, not every proposer's** (Law 121, RC-4). The
+    // launch leaves a node that restored at an anchor and has not caught up in `CatchingUp`; the
+    // watchdog moves it to `Running` only when its view is inside the window, and `/health` names
+    // the coordinate meanwhile. A global proposer gate here was measured to do harm: when two
+    // validators fell nine heights behind under the burst, the leaders' quorum-supported height sat
+    // at the laggards' height, every proposer waited, and production stopped exactly where the
+    // laggards needed it to continue (2026-11-21). The duplicate-signature hazard that made the
+    // stale view dangerous is closed by the own-sequence record (Law 122), and a joined node does
+    // not propose until its own block is reconciled, so a stale proposal from a rejoin cannot be
+    // built.
 
     // **The private-chain bound.** A node whose tip is this far beyond its own last finalized
     // block has no evidence that any peer accepts its chain; continuing to propose is how A ran
@@ -2859,27 +2806,6 @@ mod tests {
             0
         ));
         assert!(within_proposal_finality_bound(4, 0));
-    }
-
-    /// **The view gate passes at the window and refuses one height beyond it** (join ladder,
-    /// RC-4). The arm the drill measured — a 30-height gap between the observed tip and the
-    /// node's own quorum-supported height — must refuse; the boundary itself must not.
-    #[test]
-    fn the_view_gate_refuses_a_view_a_window_behind_the_observed_tip() {
-        let height = |v: i64| BlockHeight::try_from(v).expect("non-negative");
-        let tip = 60;
-        assert!(view_is_caught_up(
-            tip,
-            height(tip - liveness::LIVENESS_WINDOW)
-        ));
-        assert!(!view_is_caught_up(
-            tip,
-            height(tip - liveness::LIVENESS_WINDOW - 1)
-        ));
-        // The drill's arm: the highest latest message at 253, a quorum stuck at 223.
-        assert!(!view_is_caught_up(253, height(223)));
-        // A fresh chain is not held: nothing observed, nothing supported.
-        assert!(view_is_caught_up(0, BlockHeight::zero()));
     }
 
     /// **The epoch trigger is the on-chain length, and a divergent local value is refused**

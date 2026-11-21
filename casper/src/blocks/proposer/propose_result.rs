@@ -146,12 +146,6 @@ pub enum BlockCreatorResult {
     /// extend a chain no peer has accepted; the proposer returns
     /// [`ProposeStatus::TooFarAheadOfLastFinalized`] and the node stops proposing/attesting.
     TooFarAheadOfLastFinalized,
-    /// The node has observed blocks above its own latest messages — its view is behind the DAG it
-    /// holds. A proposal from that view would publish a message no closed fringe can include, and
-    /// one stale latest message caps the whole partition's fence. The proposer waits (the
-    /// [`ProposeStatus::NotEnoughNewBlocks`] wait, not the isolation latch) until its view catches
-    /// up. See `view_is_caught_up`.
-    ViewNotCaughtUp,
     /// The validator's own signed-sequence record is ahead of the round snapshot (Law 122): the
     /// DAG no longer holds a block this key signed, so the snapshot's next sequence would duplicate
     /// one the network already has. The proposer waits for the catch-up to re-adopt it.
