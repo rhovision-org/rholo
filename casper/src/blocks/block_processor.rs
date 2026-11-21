@@ -733,16 +733,14 @@ pub async fn apply<F, Fut>(
                     .await;
             let committed_history =
                 is_committed_history(dag.as_ref(), window.as_ref(), &block).await;
-            let refusal = match classify_ancestry(dag.as_ref(), window.as_ref(), &block).await {
-                Ok(ancestry) => pre_replay_refusal(
-                    window.as_ref(),
-                    &block,
-                    justifications_committed,
-                    committed_history,
-                    &ancestry,
-                ),
-                Err(e) => Some(Err(e)),
-            };
+            let ancestry = classify_ancestry(window.as_ref(), &block);
+            let refusal = pre_replay_refusal(
+                window.as_ref(),
+                &block,
+                justifications_committed,
+                committed_history,
+                &ancestry,
+            );
             handles.push(tokio::spawn(async move {
                 if let Some(refusal) = refusal {
                     return refusal;
@@ -978,40 +976,32 @@ enum Ancestry {
 
 /// **Classify a block's justifications as inputs this node can replay from.**
 ///
-/// A justification is available when it is the anchor block or the DAG holds a **validated** record
-/// for it. An absent hash and a failed record are both unavailable: the first is a gap to fetch, the
-/// second is a record this node cannot build on. A store error is an `Internal` fault — never a
-/// missing input — so a broken store still reaches the pipeline-fault surface.
-async fn classify_ancestry(
-    dag: &dyn BlockDagStorage,
+/// The predicate is the accepted window's own (`permits_justifications`): a justification is
+/// available when it is the anchor or in `validated` — *blocks this node validated*. Mirroring the
+/// window rather than the DAG's `validation_failed` flags matters: a block validated before a
+/// restart is in the DAG and in the boot-seeded window, and a fetched block justifying it must be
+/// admitted, not condemned. Everything else (absent, unvalidated, failed) is unavailable and the
+/// block is deferred. A missing window is the gate's retryable `Internal` arm, not a classification.
+fn classify_ancestry(
     window: Option<&crate::engine::anchor::AcceptedWindow>,
     block: &BlockMessage,
-) -> Result<Ancestry, ValidateError> {
+) -> Ancestry {
     if block.justifications.is_empty() {
-        return Ok(Ancestry::Empty);
+        return Ancestry::Empty;
     }
-    let anchor = window.map(|window| window.anchor_block());
-    let mut unavailable = Vec::new();
-    for justification in &block.justifications {
-        if Some(*justification) == anchor {
-            continue;
-        }
-        match dag.lookup(justification).await {
-            Ok(Some(meta)) if !meta.validation_failed => {}
-            Ok(Some(_)) => unavailable.push(*justification),
-            Ok(None) => unavailable.push(*justification),
-            Err(e) => {
-                return Err(ValidateError::Internal(format!(
-                    "ancestry lookup for {} failed: {e}",
-                    justification.to_hex()
-                )))
-            }
-        }
-    }
+    let Some(window) = window else {
+        return Ancestry::Ready;
+    };
+    let unavailable: Vec<BlockHash> = block
+        .justifications
+        .iter()
+        .copied()
+        .filter(|justification| !window.permits_justifications(std::slice::from_ref(justification)))
+        .collect();
     if unavailable.is_empty() {
-        Ok(Ancestry::Ready)
+        Ancestry::Ready
     } else {
-        Ok(Ancestry::Unavailable(unavailable))
+        Ancestry::Unavailable(unavailable)
     }
 }
 

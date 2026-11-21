@@ -744,8 +744,8 @@ impl BlockDispositionStore {
             .store
             .to_map()
             .await?
-            .into_iter()
-            .filter_map(|(_, disposition)| match disposition {
+            .into_values()
+            .filter_map(|disposition| match disposition {
                 BlockDisposition::Pending {
                     block_number,
                     stage: PendingStage::Deferred,

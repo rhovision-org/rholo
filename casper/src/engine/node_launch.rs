@@ -2878,12 +2878,6 @@ async fn seed_derived_roots(
         }
     };
     let anchor_block = anchor.block();
-    let mut seeded = BTreeSet::new();
-    if let crate::engine::anchor::TrustAnchor::Checkpoint { fringe, .. } = anchor {
-        // The certificate's finalized fringe is committed at the anchor height. A post-checkpoint
-        // block may justify one of these siblings even though it is not an ancestor of the anchor.
-        seeded.extend(fringe.iter().copied());
-    }
 
     // The anchor's ancestor closure: certified history the first post-anchor block may justify.
     let mut seen = BTreeSet::new();
@@ -2900,12 +2894,17 @@ async fn seed_derived_roots(
             )
         })?;
         window.note_roots(&metadata);
-        seeded.insert(hash);
         stack.extend(metadata.justifications.iter().copied());
     }
 
-    // The descendants above the anchor, in topological order. A block that is not rooted in the
-    // seeded closure is not a descendant and is not admitted.
+    // **Every validated post-anchor block in the store is part of this node's own validation
+    // record.** The window's `validated` set means "blocks this node validated", and a restart's
+    // store holds blocks it validated before the crash — including siblings and stale blocks the
+    // anchor had not seen. The pre-fix seed admitted only blocks whose justifications were all in
+    // the anchor's descendant closure, so a validated sibling above the anchor was not seeded, and
+    // a fetched block justifying it was refused as an `UncertifiedPreState` *divergence* — the
+    // cascade the RC-4 drill measured (block 249 refused on the restart, blocks 250+ deferred on
+    // it). `note_roots` itself refuses a failed record, so the failed set stays out.
     let representation = dag.get_representation().await;
     let topo = representation
         .topo_sort_unsafe(anchor_height + 1, None)
@@ -2915,12 +2914,7 @@ async fn seed_derived_roots(
             let Some(metadata) = dag.lookup(&hash).await? else {
                 continue;
             };
-            if !metadata.justifications.is_empty()
-                && metadata.justifications.iter().all(|j| seeded.contains(j))
-            {
-                window.note_roots(&metadata);
-                seeded.insert(hash);
-            }
+            window.note_roots(&metadata);
         }
     }
     Ok(())
@@ -3133,7 +3127,7 @@ mod tests {
     /// anchor height.** A fork at the anchor height whose child is above the anchor must not become
     /// an admissible justification.
     #[tokio::test]
-    async fn the_boot_seeds_only_the_anchor_closure_and_its_descendants() {
+    async fn the_boot_seeds_every_validated_post_anchor_block_and_never_a_failed_one() {
         use rchain_models::casper::protocol::checkpoint as model;
 
         let genesis = header_meta(1, 0, &[], &[], 1, 1, 1);
@@ -3141,6 +3135,9 @@ mod tests {
         let fork = header_meta(4, 1, &[1], &[4], 1, 4, 5);
         let descendant = header_meta(5, 2, &[2], &[2], 2, 5, 6);
         let fork_child = header_meta(3, 2, &[4], &[4], 4, 3, 4);
+        let mut failed = header_meta(6, 2, &[2], &[2], 2, 7, 8);
+        failed.validated = true;
+        failed.validation_failed = true;
 
         let checkpoint = model::Checkpoint {
             shard_id: "seed-test".to_string(),
@@ -3172,6 +3169,7 @@ mod tests {
                 (fork.block_hash, fork.clone()),
                 (descendant.block_hash, descendant.clone()),
                 (fork_child.block_hash, fork_child.clone()),
+                (failed.block_hash, failed.clone()),
             ]),
         };
 
@@ -3184,16 +3182,17 @@ mod tests {
             "the anchor and its descendant are seeded"
         );
         assert!(
+            window.permits_justifications(&[fork_child.block_hash]),
+            "a validated block above the anchor is a block this node validated, whatever its parent"
+        );
+        assert!(
             !window.permits_justifications(&[fork.block_hash]),
-            "a fork at the anchor height is not in the anchor's closure or fringe"
+            "a sibling at the anchor height is committed history, not a post-anchor validated block \
+             (the gate's committed-justification arm owns it)"
         );
         assert!(
-            !window.permits_justifications(&[fork_child.block_hash]),
-            "a child of the fork does not descend from the anchor"
-        );
-        assert!(
-            !window.permits_justifications(&[descendant.block_hash, fork_child.block_hash]),
-            "one non-descendant evidence is enough to refuse the set"
+            !window.permits_justifications(&[failed.block_hash]),
+            "a failed record is not a block this node validated, whatever the flag beside it"
         );
     }
 
