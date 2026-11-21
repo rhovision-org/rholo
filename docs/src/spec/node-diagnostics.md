@@ -82,6 +82,8 @@ shard's reading must say which.
 | `pipelineFaults` | ingestion | integer | C | P | at read | monotone since process start; evidence, never a gate |
 | `pipelineFaultsOutstanding` | ingestion | integer | L | P | at read | current obligation; **zero iff no block owes a verdict**; seeded from the durable ledger at boot, unreadable ledger fails closed |
 | `lastPipelineFault` | ingestion | string? | G | P | at read | the last fault's block and stage; null until one fires |
+| `deferredBlocks` | ingestion | integer | L | P | at read | blocks held because a justification is not yet validated — an obligation to fetch the missing ancestry, not a fault or a verdict; the disposition sweep re-offers them and a successful insert clears the entry (Law 116, RC-4 item C). Not a readiness term |
+| `lastDeferralReason` | ingestion | string? | G | P | at read | the last deferred block's hash and height and its first missing justification; null until one is deferred |
 | `orphanBodies` | ingestion | integer | L | P | ≤5 s | confirmed on three consecutive audit samples; zero clears readiness |
 | `orphanDetections` | ingestion | integer | C | P | ≤5 s | monotone; the history beside the current count |
 | `proposalHalted` | consensus | bool | L | S | ≤1 s | set when the proposer is isolated; cleared by restart or operator resume |

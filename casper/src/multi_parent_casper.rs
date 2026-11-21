@@ -53,6 +53,14 @@ pub enum ValidateError {
     /// cost or COMM-event failure are different faults. Only [`ValidationOrigin::SelfBuilt`] produces
     /// this; the peer path still classifies the same failure as `Divergence` and never constructs it.
     SelfReplayFailed(ReplayFailure),
+    /// **A justification is not yet an available input** (Law 116's deferral arm; RC-4 item C). The
+    /// block names ancestry this node has not validated — absent, or present as a failed record — so
+    /// it is deferred in the durable ledger and the missing hashes are requested. This is **not** a
+    /// verdict: a block whose inputs are unavailable cannot be condemned for disagreeing about them.
+    /// Only the pre-replay gate constructs it; `validate_checks` does not.
+    MissingAncestry {
+        missing: Vec<BlockHash>,
+    },
     Internal(String),
 }
 
@@ -1556,6 +1564,13 @@ fn revalidated_record(
             restore_attempts: stored.restore_attempts + 1,
             ..stored.clone()
         }),
+        // A missing input is a retryable fault of the *view*, not a verdict about the block: the
+        // record's attempt is spent and the ledger's backoff asks again (Law 116, RC-4 item C).
+        Err(ValidateError::MissingAncestry { missing }) => Revalidation::Fault(format!(
+            "the block's ancestry is not yet available ({} missing justification(s)); the block is \
+             deferred rather than condemned",
+            missing.len()
+        )),
         Err(ValidateError::Internal(e)) => Revalidation::Fault(e),
         // `validate_checks` does not produce this — only the proposer's self-insert does — but if it
         // ever did, it would be a fact about this node's view rather than about the block, which is
@@ -2916,6 +2931,9 @@ mod tests {
             }
             ValidateError::SelfReplayFailed(_) => {
                 panic!("a validation failure must not read as a self-replay failure")
+            }
+            ValidateError::MissingAncestry { .. } => {
+                panic!("a validation failure must not read as a missing-ancestry deferral")
             }
         }
 

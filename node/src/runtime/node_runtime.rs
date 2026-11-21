@@ -1179,6 +1179,9 @@ fn wire_block_processing_observed(
         parts.block_disposition.clone(),
         parts.runtime_manager.clone(),
         comm_state.comm_util.clone(),
+        // **A deferred block's ancestry is requested from peers** (Law 116's deferral arm; RC-4
+        // item C). The retriever bounds the fan-out and its retry cadence.
+        Some(comm_state.block_retriever.clone()),
         block_index,
         log,
         health,

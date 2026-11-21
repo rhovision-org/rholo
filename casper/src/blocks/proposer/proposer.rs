@@ -1333,6 +1333,28 @@ impl Proposer {
                         seq = block.seq_num,
                     ))
                 }
+                // A parent vanished or was not validated between the parent-set read and the replay
+                // (a reset or a re-offer raced this build). Not a failure of the block: re-derive
+                // next round, and do not count it toward the halt (Law 116's deferral arm; RC-4
+                // item C).
+                Err(ValidateError::MissingAncestry { missing }) => {
+                    self.log.warn(
+                        LogSource::new("casper.blocks.Proposer"),
+                        &format!(
+                            "self-created block #{} (seq {}) is missing {} ancestor(s) at replay \
+                             time; re-deriving rather than failing (Law 116)",
+                            block.block_number,
+                            block.seq_num,
+                            missing.len()
+                        ),
+                    );
+                    Ok((
+                        ProposeResult {
+                            propose_status: ProposeStatus::NotEnoughNewBlocks,
+                        },
+                        None,
+                    ))
+                }
                 Err(ValidateError::SelfEquivocation) => {
                     // A stale-snapshot self-equivocation (§48): the DAG advanced between the
                     // parent-set read and the insert, so the node's own earlier block already holds

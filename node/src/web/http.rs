@@ -883,6 +883,10 @@ async fn api_health(State(state): State<HttpState>) -> Response {
                 "orphanBodies": orphan_bodies,
                 "orphanDetections": rchain_casper::block_disposition::orphan_detections(),
                 "lastPipelineFault": rchain_casper::blocks::block_processor::last_pipeline_fault(),
+                // **Ancestry deferrals** (Law 116's deferral arm; RC-4 item C): blocks held because a
+                // justification is not yet validated — a gap to fetch, not a fault or a verdict.
+                "deferredBlocks": rchain_casper::blocks::block_processor::deferred_blocks(),
+                "lastDeferralReason": rchain_casper::blocks::block_processor::last_deferral_reason(),
                 "proposalHalted": proposal_isolated,
                 "proposalHaltReason": rchain_casper::blocks::proposer::proposer::proposal_isolation_reason(),
                 // #485: the reason a self-created block was refused, and which block. The counter is
@@ -2163,6 +2167,8 @@ pub const OPENAPI_JSON: &str = r##"{
           "pipelineFaults": { "type": "integer", "format": "int64", "description": "Pipeline faults since process start. Evidence, not a gate: read pipelineFaultsOutstanding for the current obligation" },
           "pipelineFaultsOutstanding": { "type": "integer", "format": "int64", "description": "Blocks this process still owes a verdict for. Zero clears the readiness term; a fault is removed when its verdict settles, and a restart seeds the set from the durable disposition ledger (an unreadable ledger fails closed)" },
           "lastPipelineFault": { "type": "string", "nullable": true, "description": "The last pipeline fault's block and stage, as the public route renders it; null until one fires" },
+          "deferredBlocks": { "type": "integer", "format": "int64", "description": "Blocks held because a justification is not yet validated. A deferral is an obligation to fetch the missing ancestry, not a fault: it does not gate readiness and it is re-offered by the disposition sweep (Law 116, RC-4 item C)" },
+          "lastDeferralReason": { "type": "string", "nullable": true, "description": "The last deferred block's height and first missing justification; null until one is deferred" },
           "orphanBodies": { "type": "integer", "format": "int64", "description": "Confirmed orphan bodies: a stored block body with no DAG owner, confirmed over three consecutive audit samples rather than one look. Non-zero withholds readiness" },
           "orphanDetections": { "type": "integer", "format": "int64", "description": "Orphan detections, monotone — the history beside the current count" },
           "proposalHalted": { "type": "boolean", "description": "The proposer is isolated from the chain it can finalize on; production needs an operator resume" },

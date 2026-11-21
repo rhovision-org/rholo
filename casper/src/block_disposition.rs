@@ -68,6 +68,9 @@ pub enum PendingStage {
     Validating,
     /// A faulted block was re-offered by the retry loop.
     Retry,
+    /// **The block's justifications are not yet available** (Law 116's deferral arm; RC-4 item C).
+    /// Not a fault and not a verdict: the row is re-offered by the sweep once the ancestry validates.
+    Deferred,
 }
 
 impl PendingStage {
@@ -76,6 +79,7 @@ impl PendingStage {
             PendingStage::Stored => 0,
             PendingStage::Validating => 1,
             PendingStage::Retry => 2,
+            PendingStage::Deferred => 3,
         }
     }
 
@@ -84,6 +88,7 @@ impl PendingStage {
             0 => Ok(PendingStage::Stored),
             1 => Ok(PendingStage::Validating),
             2 => Ok(PendingStage::Retry),
+            3 => Ok(PendingStage::Deferred),
             other => Err(format!("unknown pending stage {other}")),
         }
     }
@@ -1199,14 +1204,21 @@ pub const PENDING_PARENT_RECHECK_AGE_MS: u64 = 60_000;
 /// Whether a row is a `Stored` pending body old enough for the re-offer sweep. `Validating` and
 /// `Retry` rows are already in flight; `Faulted` rows belong to the backoff loop.
 pub fn eligible_stored_pending(disposition: &BlockDisposition, now_ms: u64) -> bool {
-    matches!(
-        disposition,
+    match disposition {
         BlockDisposition::Pending {
             stage: PendingStage::Stored,
             since_unix_ms,
             ..
-        } if now_ms.saturating_sub(*since_unix_ms) >= PENDING_PARENT_RECHECK_AGE_MS
-    )
+        } => now_ms.saturating_sub(*since_unix_ms) >= PENDING_PARENT_RECHECK_AGE_MS,
+        // **A deferral is re-offered on the next sweep, not after the ingress age floor** (Law 116's
+        // deferral arm; RC-4 item C). Its parent set was already resolved once; the missing inputs
+        // are the only reason it is not in flight, and the sweep is what asks again.
+        BlockDisposition::Pending {
+            stage: PendingStage::Deferred,
+            ..
+        } => true,
+        _ => false,
+    }
 }
 
 /// Identify any justifications absent from the local DAG. A child stored
@@ -1282,7 +1294,36 @@ pub async fn reoffer_ready_stored_pending_once(
             );
             continue;
         };
-        let missing = missing_justifications(&block, |parent| repr.contains(parent));
+        // **A parent counts only when it is validated** (Law 116's deferral arm; RC-4 item C).
+        // `repr.contains` also counts a failed record: a block condemned once would then look
+        // satisfiable, the re-offer would dispatch it, and it would be refused again. The deferral
+        // means "the inputs are not available yet", so the predicate must be the processor's.
+        let mut validated = BTreeSet::new();
+        let mut lookup_failed = false;
+        for parent in &block.justifications {
+            match dag.lookup(parent).await {
+                Ok(Some(meta)) if !meta.validation_failed => {
+                    validated.insert(*parent);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    log.error(
+                        source,
+                        &format!(
+                            "could not read the ancestry of pending body {}: {e}; retaining the \
+                             obligation",
+                            hash.to_hex()
+                        ),
+                    );
+                    lookup_failed = true;
+                    break;
+                }
+            }
+        }
+        if lookup_failed {
+            continue;
+        }
+        let missing = missing_justifications(&block, |parent| validated.contains(parent));
         if !missing.is_empty() {
             // A persistent child is a request for its ancestors. The original
             // announcements might have been lost during a network partition.
