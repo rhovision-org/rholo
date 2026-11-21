@@ -7438,6 +7438,46 @@ def lawsC : List Law := [
       is a dedup, and an effect-free rejection cannot drop a write. The finalised floor remains \
       fail-closed for a unique user deploy with effects; the negative test is the guard." },
 
+  { number := 120, layer := "PoS",
+    statement := "**A joining validator is not drawn into the active set until it participates.** At \
+      an armed epoch boundary, a bonded validator that is not in the previous active set and is \
+      absent from the participation map at the quorum tip (no entry, or strictly more than the \
+      absence threshold behind it) is excluded from the active draw, so it is not in the finality \
+      denominator. It enters at the first boundary after it participates. An unarmed network \
+      (`jailAfter = 0` — the shipped format-2 record) excludes nobody and the draw is unchanged. \
+      The bond and the staged withdrawal are untouched. The rule without the absence conjunct — \
+      outside the previous active set alone — is the mutant: it excludes a joiner that has already \
+      spoken, which is the wrong rule.",
+    status := .provedModel,
+    formal := `Rchain.Join.law120_statement,
+    mutant := `Rchain.Join.law120_mutant,
+    falsifier := `Rchain.Join.law120_falsifier,
+    declarations := [`Rchain.Join.joining,
+      `Rchain.Join.joiningUnfiltered,
+      `Rchain.Join.joining_mem,
+      `Rchain.Join.law120_statement,
+      `Rchain.Join.law120,
+      `Rchain.Join.law120_mutant,
+      `Rchain.Join.law120_falsifier],
+    axioms := [],
+    rust := ["rholang/src/native_state.rs"],
+    rustWitness := [
+      "rholang/src/native_state.rs:a_joining_validator_is_excluded_from_the_active_draw_until_it_participates"],
+    witness := [`Rchain.Join.law120, `Rchain.Join.law120_falsifier],
+    falsifiable := "Use `joiningUnfiltered` (not-active alone): a validator that bonded and authored \
+      a block is outside the previous active set and present, and the unfiltered rule excludes it \
+      from the next boundary. `law120_mutant` and `law120_falsifier` exhibit the witness; the Rust \
+      arm's first assertion is the joiner excluded while absent, its second is the same joiner \
+      drawn after it speaks.",
+    note := "**The ladder's second rung, on the existing timing.** Law 89 covers a validator that was \
+      active and went silent; this law covers the one that has never been in the draw. \
+      `apply_liveness_prelude` counts absence only for the previous active set, so a joiner is not \
+      jailed — it must instead be kept out of the draw until it can participate. No new genesis \
+      field is added: arming is the five RCHIP #55 parameters, and with them off the record is \
+      format 2 and the draw is byte-for-byte the old one. The check reads the pool key set, the \
+      previous active set and the quorum-agreed participation map — no local view and no wall \
+      clock, so every node classifies the same way." },
+
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC
