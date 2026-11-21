@@ -1458,6 +1458,7 @@ pub async fn apply<
     // halting the validator for ever.
     if let Some(identity) = validator_identity_opt.as_ref() {
         spawn_own_record_reconciler(
+            phase.clone(),
             dag.clone(),
             block_retriever.clone(),
             rchain_models::validator::Validator::from_slice(identity.public_key.bytes()),
@@ -1930,6 +1931,7 @@ const OWN_RECORD_ATTEMPTS: u32 = 30;
 ///   the alternative — waiting on a record the network cannot satisfy — is a permanent halt, which
 ///   the RC-4 drill measured as "the victim did not propose after restart".
 fn spawn_own_record_reconciler(
+    phase: crate::engine::node_phase::NodePhaseCell,
     dag: Arc<dyn BlockDagStorage>,
     retriever: Arc<BlockRetriever>,
     validator: rchain_models::validator::Validator,
@@ -1937,6 +1939,33 @@ fn spawn_own_record_reconciler(
 ) {
     tokio::spawn(async move {
         let source = LogSource::new("casper.engine.NodeLaunch");
+        // **The record is reconciled only after the node has caught up.** The catch-up walk is what
+        // delivers the blocks this validator signed before it stopped; retiring on a timer that
+        // starts at boot cut the walk off (measured: the recorded block arrived after the retire,
+        // and the next proposal duplicated it locally). The phase is the signal: `Running` means
+        // the walk has reached the window, so a block still absent then is genuinely absent from
+        // what the peers serve.
+        let wait_deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+        loop {
+            if matches!(phase.phase(), crate::engine::node_phase::NodePhase::Running) {
+                break;
+            }
+            if matches!(
+                phase.phase(),
+                crate::engine::node_phase::NodePhase::Blocked(_)
+            ) {
+                return;
+            }
+            if tokio::time::Instant::now() >= wait_deadline {
+                log.warn(
+                    source,
+                    "own record: the node did not reach `Running` within five minutes; reconciling \
+                     anyway",
+                );
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
         let record = match dag.read_own_latest().await {
             Ok(record) => record,
             Err(error) => {

@@ -235,6 +235,29 @@ impl BlockCreator {
                     state,
                     block_timestamp,
                 );
+                // **The last line against a duplicate signature** (Law 122). The round snapshot is
+                // read before the block is built, and the catch-up (or gossip) can deliver this
+                // validator's own older block between that read and this point — the race the
+                // drill measured when the record had been retired a second before the block
+                // arrived. Asking the message map **now** is what makes "broadcast two blocks at
+                // one sequence" unrepresentable: if the DAG already holds a message by this key
+                // at `seq_num`, this block is not signed at all.
+                let duplicate = dag
+                    .get_representation()
+                    .await
+                    .dag_message_state
+                    .msg_map
+                    .values()
+                    .any(|message| {
+                        message.sender == creators_validator && message.sender_seq == seq_num
+                    });
+                if duplicate {
+                    return Ok(BlockCreatorResult::OwnSeqNotReconciled {
+                        signed: i64::from(seq_num),
+                        signed_height: i64::from(block_num),
+                        snapshot: snapshot_seq.map(i64::from),
+                    });
+                }
                 let signed_block = self
                     .id
                     .sign_block(&unsigned_block)
