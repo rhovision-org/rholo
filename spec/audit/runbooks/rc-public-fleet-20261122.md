@@ -4,6 +4,16 @@
 four-validator dress rehearsal is the pre-window test of the driver and the predicates; it is not
 evidence and cannot close an arm.
 
+**Rehearsal record (2026-11-22).** Four validators at 6 GiB with `RNODE_TRACE_DIR` set, fresh
+genesis. Both public claim paths ran through `tools/fleet-run.py`: RC-1 submitted its own deploy and
+sampled retention at two epoch boundaries; RC-4 chose validator-3, stopped it, waited for the
+survivors to finalise past the kill and a survivor deploy to settle, restarted it, captured a new
+process boot id and a rejoin three heights above the baseline. Both driver runs read `PASS`; both
+records read `not run` because they are rehearsals. Read without the rehearsal marker, both
+predicates pass. The rehearsal found and fixed four collector defects: the deploy-status enum was
+not decoded, boot traces were pushed out of the record by merge history, the victim's boot trace was
+not filtered by kind, and a single finalised-head snapshot raced a producing chain.
+
 **Arms this window closes:** **RC-1/public** (truthful settlement) and **RC-4/public** (recovery
 without loss). Every other public arm keeps `rc-public-fleet` as its next PR and is not claimed
 here.

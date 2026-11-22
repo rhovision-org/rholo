@@ -80,6 +80,20 @@ class RehearsalTests(unittest.TestCase):
             record = json.loads((self.work / claim / "claim.json").read_text())
             self.assertTrue(record.get("rehearsal"))
             self.assertEqual(record.get("locality"), "local-devnet")
+            self._predicate_passes(claim, record)
+
+    def _predicate_passes(self, claim: str, record: dict) -> None:
+        """The observations, read without the rehearsal marker, satisfy the claim's own check."""
+        import importlib.util
+        record = json.loads(json.dumps(record))
+        record.pop("rehearsal", None)
+        record["verdict"] = "pass"
+        spec = importlib.util.spec_from_file_location(
+            "rehearsal_claim", ROOT / "tests" / f"release-claim-{claim[-1]}.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        verdict, reasons = module.check(record)
+        self.assertEqual(verdict, "pass", reasons)
 
 
 if __name__ == "__main__":
