@@ -1406,29 +1406,34 @@
       "id": "G428-M4"
     },
     {
-      "fate": "setup precondition",
-      "home": "the preflight before every live claim",
+      "fate": "retired as a closing criterion; a public campaign precondition",
+      "home": "release-claims.json RC-1/public and RC-4/public (the manifest each run must record)",
       "id": "G584-G1"
     },
     {
-      "fate": "claim RC-1",
+      "fate": "retired as a closing criterion; claim RC-1/public",
       "home": "release-claims.json RC-1",
       "id": "G584-G2"
     },
     {
-      "fate": "claim RC-1",
+      "fate": "retired as a closing criterion; claim RC-1/public",
       "home": "release-claims.json RC-1",
       "id": "G584-G3"
     },
     {
-      "fate": "claim RC-4",
+      "fate": "retired as a closing criterion; claim RC-4/public",
       "home": "release-claims.json RC-4",
       "id": "G584-G4"
     },
     {
-      "fate": "evidence rule",
+      "fate": "retired as a closing criterion; the evidence rule",
       "home": "tools/evidence-pack.py and docs/src/spec/gate-measurement.md",
       "id": "G584-G5"
+    },
+    {
+      "fate": "retired; the claim reading is the verdict, not a named reviewer",
+      "home": "tools/release-check.py --assert-ready and release-claims.json RC-1/RC-4",
+      "id": "G584-G6"
     },
     {
       "fate": "claims RC-1 and RC-2; attestation is an evidence rule",

@@ -30,7 +30,7 @@ TRACKER_MD = AUDIT / "release-campaigns.md"
 OLD_IDS = {
     "C343",
     "G428-M1", "G428-M2", "G428-M3", "G428-M4",
-    "G584-G1", "G584-G2", "G584-G3", "G584-G4", "G584-G5",
+    "G584-G1", "G584-G2", "G584-G3", "G584-G4", "G584-G5", "G584-G6",
     "TA-C1", "TA-C2",
 }
 CLAIM_MINIMUM = 7
