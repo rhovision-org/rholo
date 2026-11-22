@@ -118,7 +118,8 @@ def _check_baseline(record: dict) -> tuple[str, list[str]]:
                 f"victim {victim} has no verified checkpoint certificate after restart")
     boot_traces = observations.get("boot_traces")
     victim_traces = ([t for t in boot_traces
-                      if isinstance(t, dict) and str(t.get("validator")) == victim]
+                      if isinstance(t, dict) and common.trace_kind(t) == "boot"
+                      and str(t.get("validator")) == victim]
                      if isinstance(boot_traces, list) else [])
     if victim_traces:
         # **The decision trace, not merely the last filename.** The boot writes an acquisition
@@ -417,6 +418,8 @@ def _map_recovery(record: dict, result: dict, target) -> None:
     })
     traces = []
     for row in result.get("boot_traces") or []:
+        if common.trace_kind(row) != "boot":
+            continue
         index = row.get("validator")
         name = (target.name(index)
                 if isinstance(index, int) and 0 <= index < len(target.nodes) else str(index))

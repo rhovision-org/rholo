@@ -22,6 +22,9 @@ def environment():
     env.update({
         "DEVNET_PREFIX": PREFIX,
         "DEVNET_NODE_ENV": "RNODE_TRACE_DIR=/var/lib/rnode/traces",
+        # A populated store at ~1,600 blocks reads 4,087 MiB against the 4,096 floor at 2 GiB;
+        # the local RC-4 arm uses 6 GiB for the same reason.
+        "DEVNET_NODE_MEMORY": "6g",
     })
     return env
 

@@ -423,8 +423,12 @@ class SshSystemdTransport(Transport):
     def collect_traces(self, index: int, dest: Path | None = None) -> list[dict]:
         node = self.nodes[index]
         directory = str(Path(node["data_dir"]) / "traces")
-        listing = self._run(index, f"ls -1 {shlex.quote(directory)} 2>/dev/null "
-                                   "| grep -E '^(merge|boot)-.*\\.json$' | tail -n 200")
+        # Boot traces first and separately: they are few, and a single `tail` over both prefixes
+        # let a long merge history push the victim's restart decision out of the record.
+        command = (f"ls -1 {shlex.quote(directory)} 2>/dev/null | grep -E '^boot-.*\\.json$' "
+                   f"| tail -n 50; ls -1 {shlex.quote(directory)} 2>/dev/null "
+                   "| grep -E '^merge-.*\\.json$' | tail -n 200")
+        listing = self._run(index, command)
         rows = []
         for name in listing.stdout.split():
             content = self._run(index, f"cat {shlex.quote(directory + '/' + name)}")
@@ -516,10 +520,25 @@ class DockerTransport(Transport):
         node = self.nodes[index]
         requested = utc_now()
         result = self._run(index, ["start", node["unit"]], timeout=timeout)
+        # `docker start` returns 0 even when the container exits immediately (a resource-preflight
+        # refusal does exactly that). Report what the container did, not what the command returned.
+        active = result.returncode == 0
+        if active:
+            deadline = time.monotonic() + min(timeout, 30)
+            while True:
+                state = self._run(index, ["inspect", "-f", "{{.State.Running}}",
+                                          node["unit"]]).stdout.strip()
+                if state == "true":
+                    break
+                if state == "false" and time.monotonic() >= deadline:
+                    active = False
+                    break
+                time.sleep(1)
         return {"node": node["name"], "unit": node["unit"], "action": "start",
                 "exit_code": result.returncode, "requested_at_utc": requested,
-                "active": result.returncode == 0,
-                "stderr": result.stderr[-300:] if result.returncode else ""}
+                "active": active,
+                "stderr": (result.stderr or result.stdout)[-300:] if result.returncode else "",
+                "log_tail": "" if active else self.journal_tail(index, 20)}
 
     def host_boot_id(self, index: int) -> str | None:
         result = self._exec(index, "cat /proc/sys/kernel/random/boot_id")
@@ -535,8 +554,10 @@ class DockerTransport(Transport):
     def collect_traces(self, index: int, dest: Path | None = None) -> list[dict]:
         node = self.nodes[index]
         directory = str(Path(node["data_dir"]) / "traces")
-        listing = self._exec(index, f"ls -1 {shlex.quote(directory)} 2>/dev/null "
-                                    "| grep -E '^(merge|boot)-.*\\.json$' | tail -n 200")
+        command = (f"ls -1 {shlex.quote(directory)} 2>/dev/null | grep -E '^boot-.*\\.json$' "
+                   f"| tail -n 50; ls -1 {shlex.quote(directory)} 2>/dev/null "
+                   "| grep -E '^merge-.*\\.json$' | tail -n 200")
+        listing = self._exec(index, command)
         rows = []
         for name in listing.stdout.split():
             content = self._exec(index, f"cat {shlex.quote(directory + '/' + name)}")
@@ -629,13 +650,28 @@ def resolve_term(manifest: dict) -> str:
 
 
 def _status_text(response) -> str | None:
-    if isinstance(response, dict):
-        for key in ("status", "deployStatus", "stage"):
-            value = response.get(key)
-            if isinstance(value, str):
-                return value.lower()
+    """Normalise the deploy status.
+
+    The route returns the execution enum directly — `{"ProcessedWithSuccess": {...}}`,
+    `{"NotProcessed": {"status": "pooled", …}}` — not a `status` field. Reading only `status` made
+    every admitted deploy look unknown and turned a healthy run into a timeout.
+    """
     if isinstance(response, str):
         return response.lower()
+    if not isinstance(response, dict):
+        return None
+    for key in ("status", "deployStatus", "stage"):
+        value = response.get(key)
+        if isinstance(value, str):
+            return value.lower()
+    for key, value in response.items():
+        lowered = key.lower()
+        if lowered == "notprocessed":
+            inner = value if isinstance(value, dict) else {}
+            status = inner.get("status")
+            return str(status).lower() if status else "notprocessed"
+        if lowered in ("processedwithsuccess", "processederror", "processedsuccess"):
+            return lowered
     return None
 
 
@@ -670,9 +706,13 @@ def submit_and_admit(manifest: dict, transport: Transport, target: FleetTarget,
                     f"the deploy was rejected by {row['validator']}: {row['status']}")
         return rows if all(row["status"] in ADMITTED_STATUSES for row in rows) else None
 
-    rows = wait_until(
-        "every validator admits the deploy (a deploy that reaches one pool is not the campaign)",
-        admitted, timeout, interval=3.0)
+    try:
+        rows = wait_until(
+            "every validator admits the deploy (a deploy that reaches one pool is not the campaign)",
+            admitted, timeout, interval=3.0)
+    except Precondition as error:
+        receipts = deploy_status_rows(target, deploy_id, only=only)
+        raise Precondition(f"{error}; receipts: {json.dumps(receipts)}") from error
     return {"deploy_id": deploy_id, "from": manifest["deploy"]["from"], "marker": marker,
             "value": value, "term_sha256": sha256_bytes(term.encode()),
             "submitted_at_utc": utc_now(), "valid_after_block_number":
@@ -867,9 +907,16 @@ class RecoveryRun:
         if not preflight["ok"]:
             raise Precondition("preflight: " + "; ".join(preflight["errors"] or ["failed"]))
 
-        heads, lowest, on_every = _common_head(self.target)
-        if not on_every:
-            raise Precondition("baseline: the validators do not share a finalised head")
+        def baseline():
+            try:
+                heads, lowest, on_every = _common_head(self.target)
+            except (FleetError, OSError, subprocess.SubprocessError):
+                return None
+            return (heads, lowest, on_every) if on_every else None
+
+        heads, lowest, _ = wait_until(
+            "the baseline finalised head is available on every validator", baseline,
+            self.timeouts["preflight_s"], interval=2.0, error=Precondition)
         self.result["baseline"] = {"per_node": heads, "common_height": lowest["height"],
                                    "common_hash": lowest["hash"]}
         self._sample("baseline")

@@ -70,7 +70,8 @@ victim's boot trace. A run without the trace reads `evidence-insufficient`.
 The same public path runs against four local validators:
 
 ```sh
-tools/devnet.sh up --validators 4 --fresh
+DEVNET_NODE_MEMORY=6g DEVNET_NODE_ENV=RNODE_TRACE_DIR=/var/lib/rnode/traces \
+  tools/devnet.sh up --validators 4 --fresh
 python3 tools/fleet-run.py manifest --prefix rcfleet --transport docker \
   --out target/rc-public-fleet/rehearsal/manifest.json
 python3 tools/release-check.py run --claim RC-1 --env public --rehearse \

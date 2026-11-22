@@ -289,7 +289,8 @@ def _fleet_traces(args, out: Path) -> list[dict]:
     document, code = _fleet("traces", args, out / "fleet-traces")
     if code != 0:
         return []
-    return [row for row in (document.get("traces") or []) if isinstance(row, dict)]
+    return [row for row in (document.get("traces") or [])
+            if isinstance(row, dict) and common.trace_kind(row) == "merge"]
 
 
 def _reason(document: dict, fallback: str) -> str:
@@ -298,9 +299,23 @@ def _reason(document: dict, fallback: str) -> str:
 
 
 def _control_absent(target, marker: str, value: int) -> None:
-    """The marker must be absent before the write; a pre-existing marker is not a control."""
-    for index in range(len(target.nodes)):
-        _, block_hash = target.finalized_head(index)
+    """The marker must be absent before the write; a pre-existing marker is not a control.
+
+    A fresh genesis has no finalised fringe for the first moments; the control waits for it rather
+    than reading a 400 as a claim failure.
+    """
+    def heads():
+        rows = []
+        for index in range(len(target.nodes)):
+            try:
+                rows.append(target.finalized_head(index))
+            except common.ClaimError:
+                return None
+        return rows
+
+    finalised = common.wait_until(
+        "every validator has a finalised head at the baseline", heads, timeout=300)
+    for index, (_, block_hash) in enumerate(finalised):
         if common.marker_present(target.probe(index, marker, block_hash), value):
             raise common.ClaimError(
                 f"the marker {marker!r} is already present on {target.name(index)} before the "
@@ -330,13 +345,25 @@ def _retention_samples(target, settlements: list[dict], marker: str, value: int,
                 raise common.ClaimError(
                     f"retention: no finalised head reached the epoch boundary {boundary}")
             time.sleep(5)
-        for index, (height, block_hash) in enumerate(heads):
-            samples.append({
-                "validator": index, "boundary": boundary, "height": height,
-                "hash": block_hash,
-                "marker_present": common.marker_present(
-                    target.probe(index, marker, block_hash), value),
-            })
+        # A producing chain advances between the four sequential probes; a miss that resolves is
+        # a read race, not a lost write. Sample until every validator reports the marker or the
+        # bounded window closes, and record the last read.
+        sample_deadline = time.monotonic() + 120
+        while True:
+            rows = []
+            for index in range(validators):
+                height, block_hash = target.finalized_head(index)
+                rows.append({
+                    "validator": index, "boundary": boundary, "height": height,
+                    "hash": block_hash,
+                    "marker_present": common.marker_present(
+                        target.probe(index, marker, block_hash), value),
+                })
+            if all(row["marker_present"] for row in rows) \
+                    or time.monotonic() >= sample_deadline:
+                samples.extend(rows)
+                break
+            time.sleep(3)
     return samples
 
 
@@ -401,14 +428,23 @@ def _observe(target, record: dict, source: dict, out: Path, validators: int,
             if time.monotonic() >= deadline:
                 break
             time.sleep(3)
-        for i in range(validators):
-            height, block_hash = target.finalized_head(i)
-            response = target.probe(i, marker, block_hash)
-            finalised.append({
-                "validator": i, "height": height, "hash": block_hash,
-                "marker_present": common.marker_present(response, value),
-                "inclusion_finalized": all(target.is_finalized(i, h) for h in inclusion if h),
-            })
+        # The same race applies here: read the four finalised heads until the marker is present on
+        # every one or the bounded window closes. The last read is the observation.
+        marker_deadline = time.monotonic() + 180
+        while True:
+            finalised = []
+            for i in range(validators):
+                height, block_hash = target.finalized_head(i)
+                response = target.probe(i, marker, block_hash)
+                finalised.append({
+                    "validator": i, "height": height, "hash": block_hash,
+                    "marker_present": common.marker_present(response, value),
+                    "inclusion_finalized": all(target.is_finalized(i, h) for h in inclusion if h),
+                })
+            if all(row["marker_present"] and row["inclusion_finalized"] for row in finalised) \
+                    or time.monotonic() >= marker_deadline:
+                break
+            time.sleep(3)
         if actions is not None:
             # The public arm has no drill summary: retention is sampled from the live chain, at
             # two further epoch boundaries, and `drill_result` is derived from those reads.
