@@ -921,6 +921,11 @@ async fn api_health(State(state): State<HttpState>) -> Response {
                 },
                 "finalityStalled": state.peer_liveness.finality_stall_sustained(),
                 "finalityStallEpisodes": state.peer_liveness.stall_episodes(),
+                // **The gate's current numbers, immediate.** The boolean above waits for a run of
+                // refusals; this is what the last derivation saw — including the senders whose
+                // candidate was not seen by the whole partition. Counts only on the public route;
+                // the identities are on the operator surface and in the finality trace.
+                "finalityGate": state.peer_liveness.finality_gate().as_ref().map(finality_gate_json),
                 // **How long since each progress signal last moved.** Null until this shard observes
                 // one, never zero: a fresh node has not observed anything. This is the field that
                 // tells "slow" from "stopped" without a second probe (the §5 gap, closed).
@@ -1490,10 +1495,24 @@ async fn api_v1_deploy_status(
     json_result(state.web_api.deploy_status(&deploy_signature).await)
 }
 
+fn finality_gate_json(gate: &rchain_casper::interpreter_util::FinalityGate) -> serde_json::Value {
+    serde_json::json!({
+        "reason": gate.reason,
+        "supporting": gate.supporting,
+        "total": gate.total,
+        "fullPartitions": gate.full_partitions,
+        "candidates": gate.candidates,
+        "partition": gate.partition,
+        "notFullCount": gate.not_full.len(),
+        "missingCount": gate.missing.len(),
+    })
+}
+
 /// A single node can report a finalized frontier, not the availability of network quorum.
 fn finality_observation(
     status: Option<&crate::api::dto::PublicStatus>,
     finalized: Option<&rchain_models::casper::protocol::deploy_service::BlockInfo>,
+    gate: Option<&rchain_casper::interpreter_util::FinalityGate>,
     observed_at_unix_ms: u64,
 ) -> serde_json::Value {
     let tip = status.map(|s| s.latest_block_number);
@@ -1519,6 +1538,7 @@ fn finality_observation(
         "finalizedBlockNumber": height,
         "finalizedBlockHash": hash,
         "observedFinalityLag": lag,
+        "finalityGate": gate.map(finality_gate_json),
     })
 }
 
@@ -1539,7 +1559,13 @@ async fn api_finality_observation(State(state): State<HttpState>) -> Response {
     let (status, finalized) =
         tokio::join!(state.web_api.status(), state.web_api.last_finalized_block(),);
     let complete = status.is_ok() && finalized.is_ok();
-    let body = finality_observation(status.as_ref().ok(), finalized.as_ref().ok(), observed_at);
+    let gate = state.peer_liveness.finality_gate();
+    let body = finality_observation(
+        status.as_ref().ok(),
+        finalized.as_ref().ok(),
+        gate.as_ref(),
+        observed_at,
+    );
     (
         if complete {
             StatusCode::OK
@@ -1777,7 +1803,7 @@ pub const OPENAPI_JSON: &str = r##"{
     "/finality-observation": {
       "get": {
         "summary": "Node-local finalized frontier and observed lag (network availability unknown)",
-        "description": "A sampled node-local frontier; not a claim about network quorum. A missing source returns HTTP 503 with null fields.",
+        "description": "A sampled node-local frontier; not a claim about network quorum. Carries the current finalityGate (reason, supporting/total, full partitions, candidates, partition size, not-full/missing counts) so a stall is attributable. A missing source returns HTTP 503 with null fields.",
         "responses": {
           "200": {"description": "Local frontier observation", "content": {"application/json": {"schema": {"type": "object"}}}},
           "503": {"description": "Incomplete local observation (unknown)"}
@@ -3641,17 +3667,30 @@ mod tests {
             },
             deploys: Vec::new(),
         };
-        let reading = finality_observation(Some(&status), Some(&frontier), 127);
+        let gate = rchain_casper::interpreter_util::FinalityGate {
+            reason: "support".to_string(),
+            supporting: 200,
+            total: 300,
+            full_partitions: 3,
+            candidates: 4,
+            partition: 4,
+            not_full: vec!["aa".to_string()],
+            missing: Vec::new(),
+        };
+        let reading = finality_observation(Some(&status), Some(&frontier), Some(&gate), 127);
         assert_eq!(reading["observedFinalityLag"], 34);
         assert_eq!(reading["availability"], "unknown");
         assert_eq!(reading["scope"], "nodeLocal");
+        assert_eq!(reading["finalityGate"]["supporting"], 200);
+        assert_eq!(reading["finalityGate"]["total"], 300);
+        assert_eq!(reading["finalityGate"]["notFullCount"], 1);
         assert!(status.accepts_deploys);
-        let missing = finality_observation(Some(&status), None, 128);
+        let missing = finality_observation(Some(&status), None, None, 128);
         assert!(missing["observedFinalityLag"].is_null());
         assert!(missing["finalizedBlockHash"].is_null());
         let mut inconsistent = frontier;
         inconsistent.block_info.block_number = 1800;
-        let reading = finality_observation(Some(&status), Some(&inconsistent), 129);
+        let reading = finality_observation(Some(&status), Some(&inconsistent), None, 129);
         assert!(reading["observedFinalityLag"].is_null());
     }
 
@@ -4959,6 +4998,7 @@ mod tests {
             full_partitions: 0,
             candidates: 1,
             partition: 1,
+            not_full: Default::default(),
         };
         health.note_finality_stall(Some(&reason));
         assert!(

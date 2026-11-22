@@ -290,6 +290,68 @@ const STALL_LOG_INTERVAL: i64 = 100;
 /// writer here is shard-*bearing* and already holds the shard it is validating (`validate_checks` takes
 /// `shard_id`), so a process-wide map would put a lock on the block-validation path to re-derive a key
 /// that was about to be dropped anyway.
+/// **The gate's current observation**, with the coordinates the refusal was made of.
+///
+/// The boolean `finalityStalled` answers "has the run outlasted a round"; this answers "what did the
+/// last derivation see". It is written on **every** observation (an advance clears it), so a stall
+/// is attributable from the first refusal rather than after `2 × partition` of them. A bond-leave
+/// stall that read `200 of 300 (3 full partitions of 4)` was invisible on every production surface;
+/// this is that reading, and `not_full` names the sender that was one stake short.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FinalityGate {
+    /// `coverage`, `support`, or `already-published` (the last is not a refusal).
+    pub reason: String,
+    pub supporting: i128,
+    pub total: i128,
+    pub full_partitions: usize,
+    pub candidates: usize,
+    pub partition: usize,
+    /// Base16 sender ids: the candidates not seen by the whole partition (`support`).
+    pub not_full: Vec<String>,
+    /// Base16 sender ids: partition members with no message in the region (`coverage`).
+    pub missing: Vec<String>,
+}
+
+fn gate_sender(validator: &Validator) -> String {
+    rchain_shared::base16::encode(validator.as_bytes())
+}
+
+impl FinalityGate {
+    fn from_reason(reason: Option<&NoAdvance<Validator>>) -> Option<Self> {
+        Some(match reason? {
+            NoAdvance::Coverage {
+                missing, partition, ..
+            } => Self {
+                reason: "coverage".to_string(),
+                partition: *partition,
+                missing: missing.iter().map(gate_sender).collect(),
+                ..Self::default()
+            },
+            NoAdvance::Support {
+                supporting,
+                total,
+                full_partitions,
+                candidates,
+                partition,
+                not_full,
+            } => Self {
+                reason: "support".to_string(),
+                supporting: *supporting,
+                total: *total,
+                full_partitions: *full_partitions,
+                candidates: *candidates,
+                partition: *partition,
+                not_full: not_full.iter().map(gate_sender).collect(),
+                missing: Vec::new(),
+            },
+            NoAdvance::AlreadyPublished => Self {
+                reason: "already-published".to_string(),
+                ..Self::default()
+            },
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ShardHealth {
     /// The last finality verdict this shard observed, for the **machine-readable** surface — C249's
@@ -309,6 +371,9 @@ pub struct ShardHealth {
     /// Every field is an `Arc`, so `Clone` **shares the cells** rather than copying them — the same
     /// property `ProposeHealth` relies on, and the reason a cloned handle is the same shard's health.
     current_stall_reason: Arc<std::sync::Mutex<Option<String>>>,
+    /// The gate's current numbers and the not-full/missing senders. Written on **every**
+    /// observation, unlike the sustained-stall boolean, so the first refusal is already attributable.
+    current_gate: Arc<std::sync::Mutex<Option<FinalityGate>>>,
     /// Refusals seen **consecutively** since the derivation last advanced. Reset by an advance, and by a
     /// verdict that is not a refusal at all (see [`ShardHealth::note_finality_stall`]).
     consecutive_refusals: Arc<AtomicU64>,
@@ -364,6 +429,7 @@ impl ShardHealth {
     pub fn new() -> Self {
         Self {
             current_stall_reason: Arc::new(std::sync::Mutex::new(None)),
+            current_gate: Arc::new(std::sync::Mutex::new(None)),
             consecutive_refusals: Arc::new(AtomicU64::new(0)),
             current_stall_sustained: Arc::new(AtomicBool::new(false)),
             stall_episodes: Arc::new(AtomicU64::new(0)),
@@ -494,7 +560,14 @@ impl ShardHealth {
             }
         }
         *self.current_stall_reason.lock().unpoison() = rendered;
+        *self.current_gate.lock().unpoison() = FinalityGate::from_reason(reason);
         episode
+    }
+
+    /// The gate's current observation, with the numbers the last refusal was made of. `None` when the
+    /// last derivation advanced; the sustained-stall boolean is [`Self::finality_stall_sustained`].
+    pub fn finality_gate(&self) -> Option<FinalityGate> {
+        self.current_gate.lock().unpoison().clone()
     }
 
     /// The reason the gate last refused the derivation, as this shard observed it.
@@ -950,10 +1023,16 @@ fn describe_no_advance(reason: &NoAdvance<Validator>) -> String {
             full_partitions,
             candidates,
             partition,
+            not_full,
         } => format!(
             "a layer exists but its supporting stake is not a supermajority — {supporting} of {total} \
              ({full_partitions} full partition(s) among {candidates} candidate(s) of a {partition}-sender \
-             partition)"
+             partition); not full: {}",
+            not_full
+                .iter()
+                .map(short_id)
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         NoAdvance::AlreadyPublished => {
             "the derivation would publish the fringe that is already finalized".to_string()
@@ -1973,6 +2052,7 @@ mod tests {
             full_partitions: 1,
             candidates: 1,
             partition: 4,
+            not_full: Default::default(),
         };
         health.note_finality_stall(Some(&refusal));
         assert_eq!(
@@ -2017,6 +2097,7 @@ mod tests {
             full_partitions: 1,
             candidates: 1,
             partition,
+            not_full: Default::default(),
         };
         let health = ShardHealth::new();
 
@@ -2154,6 +2235,7 @@ mod tests {
             full_partitions: 1,
             candidates: 1,
             partition: 4,
+            not_full: Default::default(),
         };
 
         for _ in 0..8 {
@@ -2189,6 +2271,7 @@ mod tests {
                 full_partitions: 1,
                 candidates: 1,
                 partition: 4,
+                not_full: Default::default(),
             }));
         }
         before.note_non_quiet_merge_report();

@@ -57,6 +57,10 @@ ANCHORS = {
         "rust": "block-storage/src/dag/liveness.rs:live_weight_set",
         "lean": "Rchain.finality_safe_partition",
     },
+    ("finality", "attributable_ok"): {
+        "rust": "casper/src/multi_parent_casper.rs:finality_trace",
+        "lean": "Rchain.traceRefines",
+    },
     ("state", "pre_ok"): {
         "rust": "casper/src/interpreter_util.rs:validate_block_checkpoint",
         "lean": "Rchain.Sync.ReplayState.stateSafe",

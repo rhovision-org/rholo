@@ -3067,7 +3067,8 @@ def lawsB : List Law := [
       clauses (the receiver re-offer and the fault classification) extend it." },
   { number := 52, clause := "a", layer := "Casper",
     rustWitness := [
-      "casper/src/blocks/proposer/proposer.rs:the_quorum_is_measured_against_the_whole_bonded_map_not_the_live_one"],
+      "casper/src/blocks/proposer/proposer.rs:the_quorum_is_measured_against_the_whole_bonded_map_not_the_live_one",
+      "block-storage/src/dag/finalizer.rs:the_support_refusal_names_the_not_full_sender"],
     statement := "**Finality's quorum denominator is the whole bonded stake, and only the partition may \
       shrink.** Two disjoint groups cannot each hold a strict supermajority of one total \
       (`supermajorities_overlap`: `3·s₁ > 2·t` and `3·s₂ > 2·t` force `t < s₁ + s₂`), so a denominator \
@@ -3076,18 +3077,32 @@ def lawsB : List Law := [
       finalise its own history. Shrinking the **partition** is what restores liveness, because a \
       validator that has stopped producing messages stops being required to have seen the cut",
     status := .provedModel,
+    formal := some `Rchain.finalityDenominatorLaw,
+    mutant := some `Rchain.staleJoinDenominator,
+    falsifier := some `Rchain.staleJoinDenominator_is_not_safe,
     declarations := [`Rchain.supermajorities_overlap, `Rchain.bonds4, `Rchain.bondsAB, `Rchain.bondsCD,
       `Rchain.suppOf, `Rchain.Participation, `Rchain.Delivery, `Rchain.StalenessBound,
       `Rchain.FinalityDecision, `Rchain.finalitySafe,
       `Rchain.a_safe_advance_has_a_supermajority, `Rchain.finality_safe_denominator,
       `Rchain.finality_safe_partition, `Rchain.finality_decision_is_total,
+      `Rchain.NoAdvance, `Rchain.noAdvance, `Rchain.gateDecision,
+      `Rchain.the_support_is_the_full_partition_stake,
+      `Rchain.the_gate_denominator_is_the_active_snapshot, `Rchain.the_gate_decision_is_safe,
+      `Rchain.a_refusal_carries_the_gates_numbers, `Rchain.a_refusal_is_not_a_supermajority,
+      `Rchain.the_join_layer_is_exactly_two_thirds, `Rchain.the_join_layer_refuses,
+      `Rchain.the_join_layer_names_sender_one, `Rchain.the_join_layer_advances_once_all_see,
+      `Rchain.finalityDenominatorLaw, `Rchain.finalityDenominatorLaw_holds,
+      `Rchain.staleJoinDenominator, `Rchain.staleJoinDenominator_is_not_safe,
       `Rchain.the_live_denominator_is_the_unsafe_witness],
     axioms := [],
     rust := ["block-storage/src/dag/liveness.rs", "block-storage/src/dag/finalizer.rs",
-      "casper/src/blocks/proposer/proposer.rs"],
+      "casper/src/blocks/proposer/proposer.rs", "casper/src/multi_parent_casper.rs"],
     witness := [`Rchain.supermajorities_overlap, `Rchain.the_live_denominator_lets_two_sides_finalise,
       `Rchain.the_quorum_is_the_whole_bonded_map, `Rchain.a_safe_advance_has_a_supermajority,
       `Rchain.finality_safe_denominator, `Rchain.finality_decision_is_total,
+      `Rchain.the_join_layer_is_exactly_two_thirds, `Rchain.the_join_layer_refuses,
+      `Rchain.the_join_layer_names_sender_one, `Rchain.the_join_layer_advances_once_all_see,
+      `Rchain.a_refusal_is_not_a_supermajority, `Rchain.staleJoinDenominator_is_not_safe,
       `Rchain.the_live_denominator_is_the_unsafe_witness],
     falsifiable := some "the arithmetic is general and the counterexample is its instance on one fixture, \
       and the instance is **two-sided on purpose**: `Rchain.the_live_denominator_lets_two_sides_finalise` \
@@ -3115,7 +3130,8 @@ def lawsB : List Law := [
     rustWitness := [
       "casper/tests/finalization.rs:a_silent_bonded_validator_does_not_cap_the_fringe",
       "block-storage/src/dag/liveness.rs:the_window_is_heights_behind_the_tip",
-      "block-storage/src/dag/finalizer.rs:a_seer_outside_the_live_partition_does_not_void_a_candidate"],
+      "block-storage/src/dag/finalizer.rs:a_seer_outside_the_live_partition_does_not_void_a_candidate",
+      "casper/src/multi_parent_casper.rs:a_finality_trace_names_the_not_full_sender"],
     statement := "**The requirement must be one a reachable state can satisfy.** With the whole bonded set \
       as the *partition*, a validator that produces no message makes the full-partition filter \
       unsatisfiable — not slow, **empty**: `allBonded` demands that every seer's seen set contain the \
@@ -3126,15 +3142,28 @@ def lawsB : List Law := [
       live partition — a stopped validator that last spoke after the candidate — does not void a \
       candidate the whole partition has seen (`Rchain.a_seer_outside_the_partition_does_not_void_a_candidate`)",
     status := .provedModel,
+    formal := some `Rchain.attributableRefusalLaw,
+    mutant := some `Rchain.silentRefusal,
+    falsifier := some `Rchain.silentRefusal_is_not_a_refinement,
     declarations := [`Rchain.allBonded_false_of_a_silent_seer,
       `Rchain.allBonded_false_of_seers_omitting,
       `Rchain.fullPartitionStake_eq_zero_of_a_silent_bonded,
-      `Rchain.a_seer_outside_the_partition_does_not_void_a_candidate],
+      `Rchain.a_seer_outside_the_partition_does_not_void_a_candidate,
+      `Rchain.a_safe_refusal_names_its_reason, `Rchain.a_refusal_always_names_its_coordinates,
+      `Rchain.a_refusal_names_the_not_full_senders, `Rchain.FinalityTrace, `Rchain.RefusalKind,
+      `Rchain.traceRefines, `Rchain.a_refusal_trace_carries_its_reason,
+      `Rchain.a_reasonless_refusal_is_not_a_refinement, `Rchain.attributableRefusalLaw,
+      `Rchain.attributableRefusalLaw_holds, `Rchain.silentRefusal,
+      `Rchain.silentRefusal_is_not_a_refinement],
     axioms := [],
     rust := ["block-storage/src/dag/liveness.rs", "block-storage/src/dag/finalizer.rs",
-      "casper/tests/finalization.rs"],
+      "casper/tests/finalization.rs", "casper/src/multi_parent_casper.rs"],
     witness := [`Rchain.fullPartitionStake_eq_zero_of_a_silent_bonded,
-      `Rchain.the_whole_bonded_partition_is_unsatisfiable],
+      `Rchain.the_whole_bonded_partition_is_unsatisfiable,
+      `Rchain.a_safe_refusal_names_its_reason,
+      `Rchain.a_refusal_always_names_its_coordinates,
+      `Rchain.a_reasonless_refusal_is_not_a_refinement,
+      `Rchain.silentRefusal_is_not_a_refinement],
     falsifiable := some "the general theorem is an induction over the support map whose step is \
       `Rchain.allBonded_false_of_a_silent_seer` — a seer whose seen set omits a bonded validator cannot \
       contain the bonded set — so a filter that kept such a candidate would falsify it. Its fixture instance \

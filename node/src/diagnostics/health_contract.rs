@@ -23,9 +23,11 @@
 //! owes (the gaps the review found) are in §5 and are counted there rather than implied.
 
 /// **The schema version of `GET /health`.** v1 was the unversioned body; v2 adds `diagVersion`,
-/// `readyReasons`, `finalizedHeight` and `finalizedLag`. Every change is additive: a v1 reader sees
-/// the fields it knew, with their old names and types.
-pub const DIAG_VERSION: u32 = 2;
+/// `readyReasons`, `finalizedHeight` and `finalizedLag`; v3 adds `finalityGate`, the gate's current
+/// support/quorum/partition numbers and the not-full/missing counts, so a stall is attributable on
+/// the first refusal rather than after the sustained-stall threshold. Every change is additive: a v1
+/// reader sees the fields it knew, with their old names and types.
+pub const DIAG_VERSION: u32 = 3;
 
 /// **The process's own identity**, stable within a process and different after a restart.
 ///
@@ -58,6 +60,9 @@ pub const PUBLIC_HEALTH_KEYS: &[&str] = &[
     "deferredBlocks",
     "degraded",
     "diagVersion",
+    // The gate's current numbers and reason (immediate, unlike the sustained-stall boolean below).
+    // Counts only on the public route; identities are on the operator surface and the trace.
+    "finalityGate",
     "finalityStallEpisodes",
     "finalityStalled",
     "finalizedHeight",

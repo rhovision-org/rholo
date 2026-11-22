@@ -101,6 +101,11 @@ pub enum NoAdvance<S> {
         /// last block of a round rather than a fault. Without the partition in the payload, that
         /// reading and a genuinely stuck one were the same string.
         partition: usize,
+        /// The justification senders whose candidates were **not** seen by the whole partition. A
+        /// support refusal that reads `200 of 300` says the stake was one short; this set says
+        /// *which* sender was short, so a stall at a validator-set change is attributable from the
+        /// refusal itself rather than from a trace that may not exist in production.
+        not_full: BTreeSet<S>,
     },
     /// The progress guard: the derivation would publish exactly what is already finalised.
     AlreadyPublished,
@@ -244,48 +249,50 @@ where
         partition_bonds: &BTreeMap<S, NonNegI64>,
         quorum_bonds: &BTreeMap<S, NonNegI64>,
     ) -> bool {
-        let must_be_seen: BTreeSet<S> = partition_bonds.keys().cloned().collect();
-        let mut full_partition_stake: i128 = 0;
-        for (sender, seen_by) in next_fringe_support_map {
-            let all_bonded = sees_the_whole_partition(seen_by, &must_be_seen);
-            // Only bonded senders contribute stake. A non-bonded justification sender must not
-            // index the bonds map (it would panic) — skip it instead.
-            if all_bonded {
-                if let Some(stake) = quorum_bonds.get(sender) {
-                    full_partition_stake += i128::from(i64::from(*stake));
-                }
-            }
-        }
-        let total_stake: i128 = quorum_bonds
-            .values()
-            .map(|v| i128::from(i64::from(*v)))
-            .sum();
-        is_super_majority(full_partition_stake, total_stake)
+        let (supporting, total, _, _, _) =
+            self.support_scan(next_fringe_support_map, partition_bonds, quorum_bonds);
+        is_super_majority(supporting, total)
     }
 
     /// **The gate's arithmetic, once** — what `calculate_fringe` decides on, returned rather than only
-    /// compared: `(full_partition_stake, total_stake, full_partitions, candidates)`.
+    /// compared: `(full_partition_stake, total_stake, full_partitions, candidates, not_full)`.
     ///
     /// A refusal has to name the numbers it was made of ([`NoAdvance::Support`]), and computing them
     /// *beside* the gate would be two implementations of one rule — the disagreement `Split` (Law 51b)
     /// names, in the one place the node's finality needs a single answer. `calculate_fringe` is this
-    /// function's comparison, and the refusal site reads the same tuple.
+    /// function's comparison, and the refusal site reads the same tuple. `not_full` names the
+    /// justification senders whose candidates were not seen by the whole partition: without it a
+    /// support refusal says "200 of 300" but not **who** was one stake short.
     pub fn calculate_fringe_numbers(
         &self,
         next_fringe_support_map: &BTreeMap<S, BTreeMap<S, BTreeSet<S>>>,
         partition_bonds: &BTreeMap<S, NonNegI64>,
         quorum_bonds: &BTreeMap<S, NonNegI64>,
-    ) -> (i128, i128, usize, usize) {
+    ) -> (i128, i128, usize, usize, BTreeSet<S>) {
+        self.support_scan(next_fringe_support_map, partition_bonds, quorum_bonds)
+    }
+
+    fn support_scan(
+        &self,
+        next_fringe_support_map: &BTreeMap<S, BTreeMap<S, BTreeSet<S>>>,
+        partition_bonds: &BTreeMap<S, NonNegI64>,
+        quorum_bonds: &BTreeMap<S, NonNegI64>,
+    ) -> (i128, i128, usize, usize, BTreeSet<S>) {
         let must_be_seen: BTreeSet<S> = partition_bonds.keys().cloned().collect();
         let mut full_partition_stake: i128 = 0;
         let mut full_partitions: usize = 0;
+        let mut not_full: BTreeSet<S> = BTreeSet::new();
         for (sender, seen_by) in next_fringe_support_map {
             let all_bonded = sees_the_whole_partition(seen_by, &must_be_seen);
+            // Only bonded senders contribute stake. A non-bonded justification sender must not
+            // index the bonds map (it would panic) — skip it instead.
             if all_bonded {
                 full_partitions += 1;
                 if let Some(stake) = quorum_bonds.get(sender) {
                     full_partition_stake += i128::from(i64::from(*stake));
                 }
+            } else {
+                not_full.insert(sender.clone());
             }
         }
         let total_stake: i128 = quorum_bonds
@@ -297,6 +304,7 @@ where
             total_stake,
             full_partitions,
             next_fringe_support_map.len(),
+            not_full,
         )
     }
 
@@ -351,7 +359,7 @@ where
             // The numbers the refusal is made of, from the gate's own arithmetic — never a second
             // implementation of it (`Split`, Law 51b). Paid for only on a refusal, which is the path a
             // capture exists to explain rather than the path a chain takes.
-            let (supporting, total, full_partitions, candidates) =
+            let (supporting, total, full_partitions, candidates, not_full) =
                 self.calculate_fringe_numbers(&fringe_support_map, partition_bonds, quorum_bonds);
             return Err(NoAdvance::Support {
                 supporting,
@@ -359,9 +367,10 @@ where
                 full_partitions,
                 candidates,
                 partition: partition_bonds.len(),
+                not_full,
             });
         }
-        let (supporting, total, full_partitions, candidates) =
+        let (supporting, total, full_partitions, candidates, _not_full) =
             self.calculate_fringe_numbers(&fringe_support_map, partition_bonds, quorum_bonds);
         Ok((
             next_layer.values().cloned().collect(),
@@ -844,10 +853,10 @@ mod tests {
         // Exactly the partition, and the partition plus a non-live bonded seer: both 200 of 250.
         assert!(finalizer.calculate_fringe(&support(&[0, 1]), &partition, &quorum));
         assert!(finalizer.calculate_fringe(&support(&[0, 1, 2]), &partition, &quorum));
-        assert_eq!(
-            finalizer.calculate_fringe_numbers(&support(&[0, 1, 2]), &partition, &quorum),
-            (200, 250, 2, 2)
-        );
+        let (supporting, total, full, candidates, not_full) =
+            finalizer.calculate_fringe_numbers(&support(&[0, 1, 2]), &partition, &quorum);
+        assert_eq!((supporting, total, full, candidates), (200, 250, 2, 2));
+        assert!(not_full.is_empty());
         // A partition member missing from the seers: refused, with or without the extra seer.
         assert!(!finalizer.calculate_fringe(&support(&[0]), &partition, &quorum));
         assert!(!finalizer.calculate_fringe(&support(&[0, 2]), &partition, &quorum));
@@ -856,6 +865,41 @@ mod tests {
         let alone: BTreeMap<i32, NonNegI64> = [(0, NonNegI64::try_from(100).unwrap())].into();
         let one = [(0, [(0, [0, 2].into_iter().collect())].into_iter().collect())].into();
         assert!(!finalizer.calculate_fringe(&one, &alone, &quorum));
+    }
+
+    /// **The bond-leave shape.** A four-sender layer at 100/100/50/50 whose newcomer's candidate was
+    /// not seen by sender 1 credits 100+50+50 = 200 of 300 — exactly two thirds — and the refusal must
+    /// name sender 1. The join stall produced exactly this layer and could not say who was short.
+    #[test]
+    fn the_support_refusal_names_the_not_full_sender() {
+        let map: BTreeMap<i32, Message<i32, i32>> = BTreeMap::new();
+        let finalizer: Finalizer<i32, i32> = Finalizer::new(&map);
+        let quorum: BTreeMap<i32, NonNegI64> = [(0, 100), (1, 100), (2, 50), (3, 50)]
+            .into_iter()
+            .map(|(k, v)| (k, NonNegI64::try_from(v).unwrap()))
+            .collect();
+        let all: BTreeSet<i32> = [0, 1, 2, 3].into_iter().collect();
+        let mut support: BTreeMap<i32, BTreeMap<i32, BTreeSet<i32>>> = BTreeMap::new();
+        for sender in 0..4 {
+            support.insert(
+                sender,
+                (0..4).map(|candidate| (candidate, all.clone())).collect(),
+            );
+        }
+        // Sender 1's candidate 0 was built before the newcomer's block existed at sender 3.
+        support.get_mut(&1).unwrap().get_mut(&0).unwrap().remove(&3);
+        let (supporting, total, full, candidates, not_full) =
+            finalizer.calculate_fringe_numbers(&support, &quorum, &quorum);
+        assert_eq!((supporting, total, full, candidates), (200, 300, 3, 4));
+        assert_eq!(not_full, [1].into_iter().collect::<BTreeSet<_>>());
+        assert!(!finalizer.calculate_fringe(&support, &quorum, &quorum));
+        // The positive twin: once sender 1 sees the newcomer, the same layer is 300 of 300.
+        support.get_mut(&1).unwrap().get_mut(&0).unwrap().insert(3);
+        let (supporting, _, full, _, not_full) =
+            finalizer.calculate_fringe_numbers(&support, &quorum, &quorum);
+        assert_eq!((supporting, full), (300, 4));
+        assert!(not_full.is_empty());
+        assert!(finalizer.calculate_fringe(&support, &quorum, &quorum));
     }
 
     #[test]

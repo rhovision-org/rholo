@@ -3521,6 +3521,7 @@ mod tests {
             full_partitions: 0,
             candidates: 1,
             partition: 1,
+            not_full: Default::default(),
         };
         health.note_finality_stall(Some(&reason));
         health.note_finality_stall(Some(&reason));

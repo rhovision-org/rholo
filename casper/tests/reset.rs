@@ -985,6 +985,7 @@ async fn the_shard_health_counters_survive_a_restart() {
         full_partitions: 1,
         candidates: 1,
         partition: 4,
+        not_full: Default::default(),
     };
     // Seven refusals are *pacing* on a four-sender net, so nothing is written yet: the transition is
     // what the rule persists, and the store must still be empty. This drives the rule the validation
