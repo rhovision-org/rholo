@@ -1,72 +1,75 @@
 {
   "binary": {
     "build_command": "cargo build --release -p rchain-node --bin rnode",
-    "bytes": 49317360,
-    "mtime": 1793391636,
-    "path": "/home/patrick/RNodeRust/.claude/worktrees/docs-clean-2026-10-30/target/release/rnode",
+    "bytes": 57428080,
+    "mtime": 1795391463,
+    "path": "target/release/rnode",
     "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
-    "sha256": "446dbaf13e24930fe4067ec97390959e328c62dc7a6e0e631dc83de846ad34bf",
+    "sha256": "935dd03e3facc851cbe9fe9691278d116afac4fd1201d5729d5b5768049d15bf",
     "stale": "false",
     "strip": "not stripped"
   },
   "code_dirty": false,
-  "date": "2026-11-01",
-  "git_commit": "61d8c6e1e",
+  "date": "2026-11-22",
+  "git_commit": "b8bbdd7bf",
   "git_dirty": false,
   "known_stale": [
     "39102784",
     "47065056",
+    "49317360",
     "189725",
     "197000",
     "203000",
     "226974",
     "231044",
+    "232773",
     "43.6",
     "461",
     "467",
     "474",
     "508",
-    "513"
+    "513",
+    "515"
   ],
   "legacy": {
     "bytes": 27425437,
-    "citation_paths": 162,
-    "citation_refs": 249,
+    "citation_paths": 165,
+    "citation_refs": 257,
     "files": 1596
   },
   "members": 14,
   "per_crate": {
     "block-storage": {
-      "files": 17,
-      "lines": 5225
+      "files": 21,
+      "lines": 7891
     },
     "casper": {
-      "files": 98,
-      "lines": 75362
+      "files": 117,
+      "lines": 100449
     },
     "comm": {
       "files": 39,
-      "lines": 9530
+      "lines": 9632
     },
     "crypto": {
-      "files": 27,
-      "lines": 4744
+      "files": 28,
+      "lines": 4977
     },
     "graphz": {
       "files": 1,
       "lines": 837
     },
     "models": {
-      "files": 37,
-      "lines": 12832
+      "files": 39,
+      "lines": 14089
     },
     "node": {
-      "files": 100,
-      "lines": 44234
+      "files": 110,
+      "lines": 52397
     },
     "ocapn": {
       "files": 30,
-      "lines": 12007
+      "lines": 12016
     },
     "qucalc": {
       "files": 4,
@@ -74,11 +77,11 @@
     },
     "rholang": {
       "files": 54,
-      "lines": 41658
+      "lines": 43367
     },
     "rspace": {
-      "files": 59,
-      "lines": 16506
+      "files": 60,
+      "lines": 16765
     },
     "rspace-bench": {
       "files": 1,
@@ -90,14 +93,14 @@
     },
     "shared": {
       "files": 34,
-      "lines": 4864
+      "lines": 4904
     }
   },
   "schema": 1,
-  "tracked_rs_files": 515,
-  "tracked_rs_lines": 232773,
+  "tracked_rs_files": 561,
+  "tracked_rs_lines": 275478,
   "workspace": {
-    "files": 2,
-    "lines": 281
+    "files": 11,
+    "lines": 3461
   }
 }
