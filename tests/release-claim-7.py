@@ -291,8 +291,16 @@ def _mixed(record: dict, out: Path, old_image: str, keep: bool) -> None:
             lambda: len({upgraded_target.finalized_head(i) for i in range(4)}) == 1,
             timeout=600)
         _collect_format_traces(upgraded, out / "traces" / "upgraded", record)
-        head_height, head_hash = upgraded_target.finalized_head(3)
-        present = common.marker_present(upgraded_target.probe(3, marker, head_hash), value)
+        # The upgraded node reaches the head as soon as its store opens; the state read at that
+        # head can lag the finality read. Give the marker a bounded window rather than a single
+        # snapshot (the same race the RC-1 finalised-head read has).
+        deadline = time.monotonic() + 120
+        while True:
+            head_height, head_hash = upgraded_target.finalized_head(3)
+            present = common.marker_present(upgraded_target.probe(3, marker, head_hash), value)
+            if present or time.monotonic() >= deadline:
+                break
+            time.sleep(3)
         record["observations"]["mixed"]["upgrade"] = {
             "heads_agree": len({upgraded_target.finalized_head(i) for i in range(4)}) == 1,
             "marker_present": present, "height": head_height, "hash": head_hash}
