@@ -1,0 +1,15 @@
+2026-11-22T16:03:44.729215130Z 2026-11-22T16:03:44.728Z INFO  [coop.rchain.node.runtime.NodeRuntime] trying to open ports using UPnP....
+2026-11-22T16:03:44.729286657Z 2026-11-22T16:03:44.729Z INFO  [coop.rchain.node.runtime.NodeRuntime] INFO - No gateway devices found
+2026-11-22T16:03:44.729292508Z 2026-11-22T16:03:44.729Z INFO  [coop.rchain.node.runtime.NodeRuntime] No need to open any port
+2026-11-22T16:03:44.734633252Z 2026-11-22T16:03:44.734Z INFO  [operator-risk] validator operator risk notice: an invalid block or proven equivocation can cost a stated share of your bond; an absent validator is not currently slashed but forfeits income and can stall finality, and enough silence stops the >2/3 quorum. Read TERMS.md.
+2026-11-22T16:03:44.734658580Z 2026-11-22T16:03:44.734Z INFO  [resource-preflight] host resources: 24945 MiB available, cgroup v2, data dir 126000 MiB free, 1 rnode process(es), 24 CPU(s), 12 persisted block(s)
+2026-11-22T16:03:44.734664061Z 2026-11-22T16:03:44.734Z WARN  [resource-preflight] no CPU quota is set for the node's cgroup; a busy host can starve it
+2026-11-22T16:03:44.740481964Z replay complete — starting listeners; the API answers once they are up
+2026-11-22T16:03:44.740695050Z 2026-11-22T16:03:44.740Z INFO  [casper.engine.NodeLaunch] Reconnecting to existing network...
+2026-11-22T16:03:44.741288892Z 2026-11-22T16:03:44.741Z WARN  [casper.engine.NodeLaunch] boot: the accepted fringe (0 block(s)) is a validated descendant of the certificate's fringe (1 block(s)); adopting the certificate as the base and re-deriving the window
+2026-11-22T16:03:44.742440455Z 2026-11-22T16:03:44.742Z WARN  [coop.rchain.node.runtime.CheckpointCollector] /root: two checkpoint statements at one anchor (head c561c1d0cf30ca7c030da02cfe8cd48943e569350a05aa4fca251cb35e0f10f2, incoming dfb985b94c7362f86f717d796d2cc681126999aa39ea9b690f86616e550be1f4); the head was not replaced
+2026-11-22T16:03:44.747356260Z 2026-11-22T16:03:44.747Z INFO  [casper.engine.NodeLaunch] published CURRENT_ROOT from the accepted anchor
+2026-11-22T16:03:44.748630227Z 2026-11-22T16:03:44.748Z INFO  [casper.blocks.BlockDisposition] start-up disposition audit: 0 unsettled block(s) re-offered, 0 skipped for missing parents, 0 already inserted, 0 quarantined, 0 unreadable
+2026-11-22T16:03:44.748641619Z 2026-11-22T16:03:44.748Z INFO  [casper.engine.NodeLaunch] start-up disposition audit: 0 pre-ledger body/bodies adopted, 0 re-offered, 0 skipped for missing parents, 0 still pending when the drain closed
+2026-11-22T16:03:44.748689410Z 2026-11-22T16:03:44.748Z INFO  [casper.engine.NodeLaunch] Making a transition to Running state.
+2026-11-22T16:03:44.748765956Z 2026-11-22T16:03:44.748Z INFO  [casper.blocks.BlockRetriever] Adding 1efd8de042746d2591840c81df789f46f73a8d5296cedfa1d6fe75a8eef4ccc5 hash to RequestedBlocks because of MissingDependencyRequested.

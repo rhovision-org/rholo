@@ -1,0 +1,5 @@
+{"reasons": [], "result": "PASS"}
+c339: GET /api/last-finalized-block did not answer: HTTP Error 400: Bad Request
+c339: GET /api/v1/checkpoint did not answer: HTTP Error 400: Bad Request
+c339: GET /api/v1/checkpoint did not answer: HTTP Error 400: Bad Request
+c339: GET /api/v1/checkpoint did not answer: HTTP Error 400: Bad Request
