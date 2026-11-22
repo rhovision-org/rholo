@@ -861,11 +861,19 @@ async fn api_health(State(state): State<HttpState>) -> Response {
                 "readyReasons": ready_reasons,
                 "phase": primary_phase.label(),
                 "nodePhase": primary_phase.label(),
-                // **The catch-up coordinate** (Law 121, RC-4): present only while the shard is
-                // catching up, so a frozen node is legible instead of reading `running`/ready.
+                // **The catch-up coordinates** (Laws 121/123, RC-4): present only while the shard
+                // is catching up, so a frozen node is legible instead of reading `running`/ready.
+                // `own` is the node's validated tip; `peerTip` is the frontier a connected peer
+                // reported; `supported` is the quorum-supported height over the node's own messages.
                 "catchUp": match &primary_phase {
-                    NodePhase::CatchingUp { supported } => Some(json!({
+                    NodePhase::CatchingUp {
+                        supported,
+                        own,
+                        peer_tip,
+                    } => Some(json!({
                         "supported": supported,
+                        "own": own,
+                        "peerTip": peer_tip,
                     })),
                     _ => None,
                 },
@@ -875,6 +883,10 @@ async fn api_health(State(state): State<HttpState>) -> Response {
                 "orphanBodies": orphan_bodies,
                 "orphanDetections": rchain_casper::block_disposition::orphan_detections(),
                 "lastPipelineFault": rchain_casper::blocks::block_processor::last_pipeline_fault(),
+                // **Ancestry deferrals** (Law 116's deferral arm; RC-4 item C): blocks held because a
+                // justification is not yet validated — a gap to fetch, not a fault or a verdict.
+                "deferredBlocks": rchain_casper::blocks::block_processor::deferred_blocks(),
+                "lastDeferralReason": rchain_casper::blocks::block_processor::last_deferral_reason(),
                 "proposalHalted": proposal_isolated,
                 "proposalHaltReason": rchain_casper::blocks::proposer::proposer::proposal_isolation_reason(),
                 // #485: the reason a self-created block was refused, and which block. The counter is

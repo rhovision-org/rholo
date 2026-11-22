@@ -68,6 +68,9 @@ pub enum PendingStage {
     Validating,
     /// A faulted block was re-offered by the retry loop.
     Retry,
+    /// **The block's justifications are not yet available** (Law 116's deferral arm; RC-4 item C).
+    /// Not a fault and not a verdict: the row is re-offered by the sweep once the ancestry validates.
+    Deferred,
 }
 
 impl PendingStage {
@@ -76,6 +79,7 @@ impl PendingStage {
             PendingStage::Stored => 0,
             PendingStage::Validating => 1,
             PendingStage::Retry => 2,
+            PendingStage::Deferred => 3,
         }
     }
 
@@ -84,6 +88,7 @@ impl PendingStage {
             0 => Ok(PendingStage::Stored),
             1 => Ok(PendingStage::Validating),
             2 => Ok(PendingStage::Retry),
+            3 => Ok(PendingStage::Deferred),
             other => Err(format!("unknown pending stage {other}")),
         }
     }
@@ -730,6 +735,27 @@ impl BlockDispositionStore {
         Ok(rows)
     }
 
+    /// **The lowest deferred block height** (Law 116's deferral arm; RC-4 item C), or `None` when
+    /// nothing is deferred. The catch-up supervisor uses it as a walk floor: a deferred block can lie
+    /// *below* the validated frontier (a node that validated peers' high blocks while its own earlier
+    /// block was lost), and a walk from the frontier would skip the gap.
+    pub async fn deferred_floor(&self) -> Result<Option<BlockHeight>, String> {
+        Ok(self
+            .store
+            .to_map()
+            .await?
+            .into_values()
+            .filter_map(|disposition| match disposition {
+                BlockDisposition::Pending {
+                    block_number,
+                    stage: PendingStage::Deferred,
+                    ..
+                } => Some(block_number),
+                _ => None,
+            })
+            .min())
+    }
+
     /// The rows whose retry window has opened and whose budget is not spent.
     pub async fn due_retries(
         &self,
@@ -1131,12 +1157,17 @@ pub struct StartupAuditOutcome {
     pub drain: DrainOutcome,
 }
 
-/// **The start-up audit, then `Running`.** Scan (unit 4), re-offer, drain bounded, then move the
-/// shard's phase. The phase transition is here rather than in launch so the law's `startup` and the
-/// code's one path are the same shape. A ledger/store error is logged and does not refuse boot: the
-/// rows are durable and the periodic count audit still withholds readiness for a real orphan.
+/// **The start-up audit, then the launch's decided phase.** Scan (unit 4), re-offer, drain bounded,
+/// then move the shard's phase to `decided` — `Running` for a node whose restored view is current, or
+/// `CatchingUp` for a node that restored below its peers (Law 121/123, RC-4 item A). The phase
+/// transition is here rather than in launch so the law's `startup` and the code's one path are the
+/// same shape, and the decision is made **before** this call: there is no window in which the audit
+/// writes `Running` for a view the launch has already found stale. A ledger/store error is logged
+/// and does not refuse boot: the rows are durable and the periodic count audit still withholds
+/// readiness for a real orphan.
 pub async fn startup_audit_then_running(
     phase: &NodePhaseCell,
+    decided: crate::engine::node_phase::NodePhase,
     ledger: &BlockDispositionStore,
     block_store: &BlockStore,
     dag: &Arc<dyn BlockDagStorage>,
@@ -1178,7 +1209,7 @@ pub async fn startup_audit_then_running(
             ),
         );
     }
-    phase.set_phase(crate::engine::node_phase::NodePhase::Running);
+    phase.set_phase(decided);
     StartupAuditOutcome {
         scan,
         reoffer,
@@ -1194,14 +1225,21 @@ pub const PENDING_PARENT_RECHECK_AGE_MS: u64 = 60_000;
 /// Whether a row is a `Stored` pending body old enough for the re-offer sweep. `Validating` and
 /// `Retry` rows are already in flight; `Faulted` rows belong to the backoff loop.
 pub fn eligible_stored_pending(disposition: &BlockDisposition, now_ms: u64) -> bool {
-    matches!(
-        disposition,
+    match disposition {
         BlockDisposition::Pending {
             stage: PendingStage::Stored,
             since_unix_ms,
             ..
-        } if now_ms.saturating_sub(*since_unix_ms) >= PENDING_PARENT_RECHECK_AGE_MS
-    )
+        } => now_ms.saturating_sub(*since_unix_ms) >= PENDING_PARENT_RECHECK_AGE_MS,
+        // **A deferral is re-offered on the next sweep, not after the ingress age floor** (Law 116's
+        // deferral arm; RC-4 item C). Its parent set was already resolved once; the missing inputs
+        // are the only reason it is not in flight, and the sweep is what asks again.
+        BlockDisposition::Pending {
+            stage: PendingStage::Deferred,
+            ..
+        } => true,
+        _ => false,
+    }
 }
 
 /// Identify any justifications absent from the local DAG. A child stored
@@ -1277,7 +1315,36 @@ pub async fn reoffer_ready_stored_pending_once(
             );
             continue;
         };
-        let missing = missing_justifications(&block, |parent| repr.contains(parent));
+        // **A parent counts only when it is validated** (Law 116's deferral arm; RC-4 item C).
+        // `repr.contains` also counts a failed record: a block condemned once would then look
+        // satisfiable, the re-offer would dispatch it, and it would be refused again. The deferral
+        // means "the inputs are not available yet", so the predicate must be the processor's.
+        let mut validated = BTreeSet::new();
+        let mut lookup_failed = false;
+        for parent in &block.justifications {
+            match dag.lookup(parent).await {
+                Ok(Some(meta)) if !meta.validation_failed => {
+                    validated.insert(*parent);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    log.error(
+                        source,
+                        &format!(
+                            "could not read the ancestry of pending body {}: {e}; retaining the \
+                             obligation",
+                            hash.to_hex()
+                        ),
+                    );
+                    lookup_failed = true;
+                    break;
+                }
+            }
+        }
+        if lookup_failed {
+            continue;
+        }
+        let missing = missing_justifications(&block, |parent| validated.contains(parent));
         if !missing.is_empty() {
             // A persistent child is a request for its ancestors. The original
             // announcements might have been lost during a network partition.
@@ -1334,7 +1401,9 @@ pub async fn retry_ready_stored_pending(
     log: Arc<dyn Log>,
 ) {
     let source = LogSource::new("casper.blocks.BlockDisposition");
-    phase.wait_until_running().await;
+    if !phase.wait_until_live().await {
+        return;
+    }
     let mut interval = tokio::time::interval(RETRY_SWEEP_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // The boot sweep gets the first immediate tick; this loop starts after one interval.
@@ -1409,7 +1478,9 @@ pub async fn retry_faulted_blocks(
     log: Arc<dyn Log>,
 ) {
     let source = LogSource::new("casper.blocks.BlockDisposition");
-    phase.wait_until_running().await;
+    if !phase.wait_until_live().await {
+        return;
+    }
     let mut interval = tokio::time::interval(RETRY_SWEEP_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -1626,7 +1697,9 @@ pub async fn audit_stored_bodies(
     log: Arc<dyn Log>,
 ) {
     let source = LogSource::new("casper.blocks.BlockDisposition");
-    phase.wait_until_running().await;
+    if !phase.wait_until_live().await {
+        return;
+    }
     let mut interval = tokio::time::interval(ORPHAN_AUDIT_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut streak = OrphanStreak::default();
@@ -2937,6 +3010,7 @@ mod tests {
         let task = tokio::spawn(async move {
             startup_audit_then_running(
                 &runner,
+                crate::engine::node_phase::NodePhase::Running,
                 &ledger,
                 &block_store,
                 &dag,

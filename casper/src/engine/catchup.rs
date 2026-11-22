@@ -32,7 +32,7 @@
 //! Nothing above the anchor is *installed*: every block the walk delivers goes through the ordinary
 //! validation path, so only the anchor's state is adopted — #287's first invariant.
 
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -43,6 +43,7 @@ use rchain_comm::transport::transport_layer::TransportLayer;
 use rchain_models::casper::protocol::casper_message::{BlockRange, BlockRangeRequest};
 use rchain_shared::log::{Log, LogSource};
 
+use crate::engine::node_phase::NodePhase;
 use crate::engine::node_running::{MAX_BLOCK_RANGE, MAX_PENDING_BLOCKS};
 use crate::protocol::comm_util::{CommUtil, ConnectionsCell};
 
@@ -89,10 +90,25 @@ const WINDOW_TIMEOUT: Duration = Duration::from_secs(45);
 /// walk (and the gate) alive without bound.
 const MAX_WINDOWS: u32 = 4096;
 
+/// **The largest forward gap an observed peer tip may represent.** The walk's own reach is
+/// `MAX_WINDOWS × WINDOW_HEIGHTS`, so a legitimate post-outage gap can be that large; a value above it
+/// is not a tip this node can ever close and is ignored rather than allowed to hold the phase shut.
+/// The multiplication is compile-time so the bound cannot drift from the walk.
+pub const CATCH_UP_MAX_GAP: i64 = MAX_WINDOWS as i64 * WINDOW_HEIGHTS;
+
+/// How many consecutive stale observations confirm a regression (Law 123). A single sample is not a
+/// phase change.
+pub const CATCH_UP_ENTER_TICKS: u32 = 2;
+
+/// How many ticks without the node's own validated tip rising before the supervisor fails closed.
+/// Longer than one window timeout, so a slow window is not mistaken for a stall.
+pub const CATCH_UP_STALL_TICKS: u32 = 30;
+
 /// How often the driver looks at its own frontier while a window is in flight.
 const FRONTIER_POLL: Duration = Duration::from_millis(200);
 
-/// The temporary ingest window a node holds while it catches up.
+/// The temporary ingest window a node holds while it catches up, and the coordinates the catch-up
+/// supervisor reads.
 ///
 /// **Released is the ordinary node.** `top` is `i64::MAX` unless a driver is walking, so an
 /// unattended node admits everything exactly as it did before this module existed, and the gate can
@@ -100,6 +116,21 @@ const FRONTIER_POLL: Duration = Duration::from_millis(200);
 pub struct CatchupWindow {
     top: AtomicI64,
     width: i64,
+    /// The highest latest message this node has validated (Law 121's `own`).
+    own_tip: AtomicI64,
+    /// The highest block number a connected peer has reported through a `BlockRange` answer
+    /// (Law 121's `peerTip`). `-1` until the first probe answer.
+    observed_tip: AtomicI64,
+    /// How many `BlockRange` answers have arrived. The supervisor uses this to distinguish "no peer
+    /// has answered yet" from "the peer is at or behind me": both leave `observed_tip` at/below
+    /// `own_tip`, but only the latter is a current view.
+    probe_answers: AtomicU64,
+    /// **The floor a deferral-driven walk must start at** (Law 116's deferral arm; RC-4 item C).
+    /// A deferred block can sit *below* the validated frontier — the node validated peers' high
+    /// blocks while its own earlier block was lost — so a walk from the frontier would skip the gap.
+    /// The supervisor records the deferred block's height here before waking the running loop; the
+    /// walk takes it (and clears it) as its starting frontier. `-1` means "no deferral floor".
+    requested_floor: AtomicI64,
 }
 
 impl CatchupWindow {
@@ -107,7 +138,85 @@ impl CatchupWindow {
         CatchupWindow {
             top: AtomicI64::new(i64::MAX),
             width,
+            own_tip: AtomicI64::new(-1),
+            observed_tip: AtomicI64::new(-1),
+            probe_answers: AtomicU64::new(0),
+            requested_floor: AtomicI64::new(-1),
         }
+    }
+
+    /// **Request a walk from `floor`** — used when a deferred block's ancestry lies below the
+    /// validated frontier. Keeps the lowest outstanding floor.
+    pub fn request_walk(&self, floor: i64) {
+        let mut current = self.requested_floor.load(Ordering::Relaxed);
+        loop {
+            let next = if current < 0 {
+                floor
+            } else {
+                current.min(floor)
+            };
+            match self.requested_floor.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(now) => current = now,
+            }
+        }
+    }
+
+    /// Take the outstanding deferral floor, if any. The walk is the only reader.
+    pub(crate) fn take_requested_floor(&self) -> Option<i64> {
+        let floor = self.requested_floor.swap(-1, Ordering::Relaxed);
+        (floor >= 0).then_some(floor)
+    }
+
+    /// A `BlockRange` answer arrived (a probe or a walk answer). The supervisor's boot wait uses the
+    /// count to tell "no peer has spoken" from "the peer is at my tip".
+    pub fn observe_probe_answer(&self) {
+        self.probe_answers.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn probe_answers(&self) -> u64 {
+        self.probe_answers.load(Ordering::Relaxed)
+    }
+
+    /// Publish this node's own validated tip. The supervisor and the walk are the writers.
+    pub fn set_own_tip(&self, own: i64) {
+        self.own_tip.store(own, Ordering::Relaxed);
+    }
+
+    pub fn own_tip(&self) -> i64 {
+        self.own_tip.load(Ordering::Relaxed)
+    }
+
+    /// **Record a peer's reported frontier** from a `BlockRange` answer. Only a forward observation
+    /// within the walk's reach is stored: a height at or below this node's own tip says nothing, and
+    /// a height beyond [`CATCH_UP_MAX_GAP`] is one no walk could close and must not hold the phase
+    /// shut. The compare-exchange keeps the maximum without a lock.
+    pub fn observe_peer_tip(&self, tip: i64) {
+        let own = self.own_tip.load(Ordering::Relaxed);
+        if tip <= own || tip > own.saturating_add(CATCH_UP_MAX_GAP) {
+            return;
+        }
+        let mut current = self.observed_tip.load(Ordering::Relaxed);
+        while tip > current {
+            match self.observed_tip.compare_exchange_weak(
+                current,
+                tip,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(now) => current = now,
+            }
+        }
+    }
+
+    pub fn peer_tip(&self) -> i64 {
+        self.observed_tip.load(Ordering::Relaxed)
     }
 
     /// **The one question the ingest asks**: may a block at this height be pended *now*?
@@ -164,7 +273,18 @@ pub async fn run_catchup(
 ) -> i64 {
     let source = LogSource::new("casper.engine.Catchup");
     let comm = CommUtil::new(transport, conf, connections, log.clone());
-    let mut frontier = frontier_of(dag.as_ref()).await;
+    // **The validated frontier, not the metadata maximum.** `latest_block_number` counts every header
+    // the node has stored, including blocks a light join restored without validating; a walk that
+    // started above them would skip exactly the run it exists to fetch (RC-4 item C, 2026-11-21).
+    //
+    // **A deferral can name a lower floor.** A node that validated peers' high blocks while its own
+    // earlier block was lost reads a high validated frontier; the deferred block's ancestry lies
+    // below it. The supervisor records that floor before waking this walk, and it wins.
+    let mut frontier = match window.take_requested_floor() {
+        Some(floor) => floor,
+        None => validated_frontier_of(dag.as_ref()).await,
+    };
+    window.set_own_tip(frontier);
     window.hold(frontier);
     log.info(
         source,
@@ -213,8 +333,26 @@ pub async fn run_catchup(
             Ok(Some(answer)) => answer,
             Ok(None) => break,
             Err(_) => {
-                // A silent peer is the end of the walk, not a failure of the node: the gate opens and
-                // the ordinary ingest resumes exactly where it was.
+                // **A slow window is not a stalled one.** Under the deploy burst validation can take
+                // longer than one window timeout; if the node's own validated frontier rose while
+                // the window was in flight, continue from where it got to. Only a window that made
+                // no progress at all ends the walk — and then the gate opens and the ordinary
+                // ingest resumes exactly where it was.
+                let now = validated_frontier_of(dag.as_ref()).await;
+                if now > frontier {
+                    log.info(
+                        source,
+                        &format!(
+                            "no window arrived for heights {from}..={} in {WINDOW_TIMEOUT:?}, but \
+                             the validated frontier rose {frontier} -> {now}; continuing",
+                            req.to
+                        ),
+                    );
+                    frontier = now;
+                    window.set_own_tip(frontier);
+                    window.hold(frontier);
+                    continue;
+                }
                 log.warn(
                     source,
                     &format!("no window arrived for heights {from}..={} in {WINDOW_TIMEOUT:?}: stopping the catch-up at height {frontier}", req.to),
@@ -270,6 +408,7 @@ pub async fn run_catchup(
         };
         let reached = wait_for_frontier(dag.as_ref(), target, frontier).await;
         frontier = reached;
+        window.set_own_tip(frontier);
         window.hold(frontier);
     }
     window.release();
@@ -347,22 +486,31 @@ pub async fn run_catchup(
     frontier
 }
 
-/// The node's own frontier: the highest height in its DAG. `latest_block_number` is one past it, and
-/// an empty DAG reads as -1 so a caller can always say "the next height is frontier + 1".
-async fn frontier_of(dag: &dyn BlockDagStorage) -> i64 {
+/// **The node's validated frontier**: the highest height among the latest messages it has validated.
+/// `latest_msgs` is populated only by `insert_msg_mut` (a validated block); failed or header-only
+/// blocks never enter it. An empty DAG reads as -1 so a caller can always say "the next height is
+/// frontier + 1".
+pub(crate) async fn validated_frontier_of(dag: &dyn BlockDagStorage) -> i64 {
     let repr = dag.get_representation().await;
-    repr.latest_block_number() - 1
+    repr.dag_message_state
+        .latest_msgs
+        .values()
+        .map(|message| i64::from(message.height))
+        .max()
+        .unwrap_or(-1)
 }
 
-/// Wait until the DAG has reached `target`, bounded by [`WINDOW_TIMEOUT`]; returns the frontier it
-/// saw. A window that never arrives in time yields the frontier as it stands — the walk then asks
-/// again for the heights it still lacks, which is the pace, not a failure.
+/// Wait until the **validated** frontier has reached `target`, bounded by [`WINDOW_TIMEOUT`]; returns
+/// the frontier it saw. A window that never arrives in time yields the frontier as it stands — the
+/// walk then asks again for the heights it still lacks, which is the pace, not a failure. The wait is
+/// on validation, not on receipt: a metadata maximum would advance when the bodies arrived and let
+/// the next window pile up behind an unvalidated gap.
 async fn wait_for_frontier(dag: &dyn BlockDagStorage, target: i64, current: i64) -> i64 {
     let deadline = tokio::time::Instant::now() + WINDOW_TIMEOUT;
     let mut frontier = current;
     while frontier < target && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(FRONTIER_POLL).await;
-        frontier = frontier_of(dag).await;
+        frontier = validated_frontier_of(dag).await;
     }
     frontier
 }
@@ -405,14 +553,68 @@ pub fn view(
     (tip, supported)
 }
 
-/// **The catch-up window.** A node may serve only when its quorum-supported height is within
-/// `LIVENESS_WINDOW` heights of the highest latest message it holds; otherwise it is catching up and
-/// names the supported height. See [`view`] and Law 121.
+/// **The catch-up window.** A node may serve only when its own validated tip is within
+/// `LIVENESS_WINDOW` heights of the peer tip it has observed; otherwise it is catching up. This is
+/// Law 121's corrected predicate (RC-4 item A, 2026-11-21): the pre-fix form compared the validated
+/// tip with the quorum-supported height over the same stale messages, which read a frozen node as
+/// current and froze a healthy leader on a six-height skew.
 pub fn within_window(
-    tip: rchain_shared::refined::BlockHeight,
-    supported: rchain_shared::refined::BlockHeight,
+    own: rchain_shared::refined::BlockHeight,
+    peer_tip: rchain_shared::refined::BlockHeight,
 ) -> bool {
-    i64::from(tip) - i64::from(supported) <= rchain_block_storage::dag::liveness::LIVENESS_WINDOW
+    within_window_i64(i64::from(own), i64::from(peer_tip))
+}
+
+/// The integer form the supervisor's atomics use; `own` and `peer_tip` are non-negative.
+pub fn within_window_i64(own: i64, peer_tip: i64) -> bool {
+    peer_tip - own <= rchain_block_storage::dag::liveness::LIVENESS_WINDOW
+}
+
+/// **The supervisor's pure step** (Law 123). It is a function of the current phase, the coordinates
+/// sampled this tick, and the run of consecutive stale observations. The caller ticks a clock and
+/// sends the walk request; this decides the phase.
+///
+/// * `Running` + current → `Running`;
+/// * `Running` + stale, confirmed → `CatchingUp` at the sampled coordinates;
+/// * `Running` + stale, below the confirmation bound → `Running` (bounded hysteresis);
+/// * `CatchingUp` + current → `Running`;
+/// * `CatchingUp` + stale → `CatchingUp` with the *fresh* coordinates (so `/health` never reports a
+///   stale coordinate once the node has moved);
+/// * every other phase → unchanged (`Blocked` is terminal).
+pub fn supervise_phase(
+    current: &NodePhase,
+    supported: i64,
+    own: i64,
+    peer_tip: i64,
+    stale_ticks: u32,
+) -> NodePhase {
+    match current {
+        NodePhase::Running => {
+            if within_window_i64(own, peer_tip) {
+                NodePhase::Running
+            } else if stale_ticks >= CATCH_UP_ENTER_TICKS {
+                NodePhase::CatchingUp {
+                    supported,
+                    own,
+                    peer_tip,
+                }
+            } else {
+                NodePhase::Running
+            }
+        }
+        NodePhase::CatchingUp { .. } => {
+            if within_window_i64(own, peer_tip) {
+                NodePhase::Running
+            } else {
+                NodePhase::CatchingUp {
+                    supported,
+                    own,
+                    peer_tip,
+                }
+            }
+        }
+        other => other.clone(),
+    }
 }
 
 #[cfg(test)]
@@ -534,21 +736,24 @@ mod tests {
         );
     }
 
-    /// **The catch-up window refuses the drill's frozen view** (Law 121, RC-4). The pre-fix launcher
-    /// served a node at supported 181 while its own latest message was at 306; the window refuses
-    /// that and admits the boundary. A sender outside the active set cannot set the tip — a jailed
-    /// validator frozen at 999 would otherwise hold every proposer closed.
-    #[test]
-    fn the_catch_up_window_refuses_the_drills_frozen_view() {
+    fn heights() -> (
+        rchain_models::validator::Validator,
+        rchain_models::validator::Validator,
+        rchain_models::validator::Validator,
+        rchain_models::validator::Validator,
+        std::collections::BTreeMap<
+            rchain_models::validator::Validator,
+            rchain_shared::refined::NonNegI64,
+        >,
+    ) {
         use rchain_models::validator::Validator;
-        use rchain_shared::refined::{BlockHeight, NonNegI64};
-        let height = |v: i64| BlockHeight::try_from(v).expect("non-negative");
+        use rchain_shared::refined::NonNegI64;
         let stake = |v: i64| NonNegI64::try_from(v).expect("non-negative");
         let a = Validator::new([1; 65]);
         let b = Validator::new([2; 65]);
         let c = Validator::new([3; 65]);
         let d = Validator::new([4; 65]);
-        let bonds: std::collections::BTreeMap<_, _> = [
+        let bonds = [
             (a, stake(100)),
             (b, stake(100)),
             (c, stake(100)),
@@ -556,21 +761,66 @@ mod tests {
         ]
         .into_iter()
         .collect();
+        (a, b, c, d, bonds)
+    }
 
-        // The drill: the node's own message at 306, the quorum of peers stuck at 181.
+    /// **The catch-up window refuses the drill's frozen view** (Law 121, RC-4 item A). The node's
+    /// own validated tip is 198 — it has validated nothing above it — while a connected peer reports
+    /// 335. The pre-fix predicate compared 198 with the quorum-supported height over the same stale
+    /// messages (also 198) and read current; the corrected predicate compares the peer tip with the
+    /// node's own. The boundary is five heights; one more is the gap.
+    #[test]
+    fn the_catch_up_window_refuses_the_drills_frozen_view() {
+        use rchain_shared::refined::BlockHeight;
+        let height = |v: i64| BlockHeight::try_from(v).expect("non-negative");
+        assert!(
+            !within_window(height(198), height(335)),
+            "validated 198 against a peer at 335 is the drill's freeze"
+        );
+        assert!(
+            within_window(height(198), height(203)),
+            "the window is five heights"
+        );
+        assert!(
+            !within_window(height(198), height(204)),
+            "six heights behind is the gap"
+        );
+        assert!(
+            within_window(height(306), height(306)),
+            "a peer at the node's own tip is current"
+        );
+        assert!(
+            within_window(height(306), height(181)),
+            "a peer behind the node is never a reason to hold"
+        );
+    }
+
+    /// **The removed global gate's view is not frozen** (Law 121's second direction). On the
+    /// six-height skew the leaders had validated 207 and the quorum-supported height over the
+    /// laggards' messages was 201; `view` reports that diagnostic coordinate, but the node's own tip
+    /// and the peer tip are both 207. The pre-fix predicate (`own - supported`) read this as stale
+    /// and stopped every leader; the corrected one does not.
+    #[test]
+    fn a_leader_with_a_lagging_quorum_is_not_frozen() {
+        use rchain_shared::refined::BlockHeight;
+        let height = |v: i64| BlockHeight::try_from(v).expect("non-negative");
+        let (a, b, c, d, bonds) = heights();
         let latest = [
-            (a, height(306)),
-            (b, height(181)),
-            (c, height(181)),
-            (d, height(181)),
+            (a, height(207)),
+            (b, height(201)),
+            (c, height(201)),
+            (d, height(201)),
         ];
         let (tip, supported) = view(latest, &bonds);
-        assert_eq!((i64::from(tip), i64::from(supported)), (306, 181));
-        assert!(!within_window(tip, supported));
-
-        // The boundary itself is admitted, one height beyond it is not.
-        assert!(within_window(height(60), height(60 - 5)));
-        assert!(!within_window(height(60), height(60 - 5 - 1)));
+        assert_eq!(
+            (i64::from(tip), i64::from(supported)),
+            (207, 201),
+            "the leader's tip and the lagging quorum are the two different coordinates"
+        );
+        assert!(
+            within_window(tip, height(207)),
+            "the leader's own validated tip is the peer tip, so it is current"
+        );
 
         // A jailed sender is not in the active map, and its frozen message cannot set the tip.
         let jailed = [
@@ -580,11 +830,70 @@ mod tests {
             (d, height(999)),
         ];
         let bonds_without_d: std::collections::BTreeMap<_, _> =
-            [(a, stake(100)), (b, stake(100)), (c, stake(100))]
+            [(a, bonds[&a]), (b, bonds[&b]), (c, bonds[&c])]
                 .into_iter()
                 .collect();
         let (tip, supported) = view(jailed, &bonds_without_d);
         assert_eq!((i64::from(tip), i64::from(supported)), (306, 306));
-        assert!(within_window(tip, supported));
+    }
+
+    /// **The supervisor re-enters catch-up on a confirmed stale view** (Law 123). One stale sample
+    /// is not a phase change; the confirmation bound is. A current observation restores service, a
+    /// stale catch-up refreshes its coordinates, and a blocked phase is terminal.
+    #[test]
+    fn a_running_phase_reenters_catching_up_on_a_stale_observation() {
+        let stale = || NodePhase::CatchingUp {
+            supported: 198,
+            own: 198,
+            peer_tip: 335,
+        };
+        assert_eq!(
+            supervise_phase(&NodePhase::Running, 198, 198, 335, 1),
+            NodePhase::Running,
+            "one stale sample is not a phase change"
+        );
+        assert_eq!(
+            supervise_phase(&NodePhase::Running, 198, 198, 335, CATCH_UP_ENTER_TICKS),
+            stale(),
+            "the confirmed stale view re-enters catch-up with its coordinates"
+        );
+        assert_eq!(
+            supervise_phase(&stale(), 335, 335, 335, 0),
+            NodePhase::Running,
+            "a current view returns to service"
+        );
+        assert_eq!(
+            supervise_phase(&stale(), 300, 200, 335, 5),
+            NodePhase::CatchingUp {
+                supported: 300,
+                own: 200,
+                peer_tip: 335,
+            },
+            "a stale catch-up refreshes its coordinates"
+        );
+        assert_eq!(
+            supervise_phase(&NodePhase::Blocked("terminal".to_string()), 0, 0, 100, 99),
+            NodePhase::Blocked("terminal".to_string()),
+            "blocked is terminal"
+        );
+    }
+
+    /// **An observed peer tip is forward-only, bounded and monotone.** A tip at or below the node's
+    /// own says nothing; a tip beyond the walk's reach cannot be closed and must not hold the phase
+    /// shut; a lower later answer does not lower the observation.
+    #[test]
+    fn an_observed_peer_tip_is_forward_bounded_and_monotone() {
+        let w = CatchupWindow::new(WINDOW_HEIGHTS);
+        w.set_own_tip(100);
+        w.observe_peer_tip(100);
+        assert_eq!(w.peer_tip(), -1, "the node's own tip is not a peer tip");
+        w.observe_peer_tip(150);
+        assert_eq!(w.peer_tip(), 150);
+        w.observe_peer_tip(120);
+        assert_eq!(w.peer_tip(), 150, "the observation is monotone");
+        w.observe_peer_tip(100 + CATCH_UP_MAX_GAP + 1);
+        assert_eq!(w.peer_tip(), 150, "beyond the walk's reach is ignored");
+        w.observe_peer_tip(100 + CATCH_UP_MAX_GAP);
+        assert_eq!(w.peer_tip(), 100 + CATCH_UP_MAX_GAP);
     }
 }

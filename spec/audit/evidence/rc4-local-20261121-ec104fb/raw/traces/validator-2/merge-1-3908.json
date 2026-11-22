@@ -1,0 +1,75 @@
+{
+  "kind": "merge",
+  "parents": [
+    "392c56aca8c4c71904c5624b17f8d5b645ca9f7843310cdd197f7104e73e15ea",
+    "631752608ff902f360dbf1c8684ce29ae997831da13e9efe0081c9c24ba02b57",
+    "82b672c9a2174db029507a3c302adca68ceb2402b3b3ba6c3e0d47f224854ca1",
+    "c4f0d89c8dad8bd6515ecca78ac31a301d23f52b12c4a5f4560bdda044f976ad"
+  ],
+  "mode": "fringe",
+  "merge_fringe": [
+    "43664d818e2e188a8ba1e240935286c3da51ef2b0bc78b58b39012b430c52cf7",
+    "bba09c43ca905375c9fd528962a0cdd30b08799071689a28f34d844a8a5a00d5",
+    "c6488439fb05193a1b122300d36d5acce6793196c05acdcee365a059d3644181"
+  ],
+  "final_fringe": [
+    "1d176a9498944aaf31d61c9bbfbe8f014306bbe0e5b1d01bfcd4a9a1042a327d",
+    "63f066137489ef75b83e7496680d45c9b377e63c2491ee1f1c8110289949527d",
+    "71a52e9af33e162eb9a1d2e05bb954a7c71ba6b305259c58eb5f469e3a75784f"
+  ],
+  "claims": [
+    {
+      "height": 214,
+      "id": "392c56aca8c4c71904c5624b17f8d5b645ca9f7843310cdd197f7104e73e15ea",
+      "hash": "80ff6e7085ddca3b234e95322e64c994a65d16513519a0c08943e1e33139495c"
+    },
+    {
+      "height": 214,
+      "id": "631752608ff902f360dbf1c8684ce29ae997831da13e9efe0081c9c24ba02b57",
+      "hash": "80ff6e7085ddca3b234e95322e64c994a65d16513519a0c08943e1e33139495c"
+    },
+    {
+      "height": 214,
+      "id": "82b672c9a2174db029507a3c302adca68ceb2402b3b3ba6c3e0d47f224854ca1",
+      "hash": "80ff6e7085ddca3b234e95322e64c994a65d16513519a0c08943e1e33139495c"
+    }
+  ],
+  "certified_base": null,
+  "base_source": "agreed",
+  "base_state": "80ff6e7085ddca3b234e95322e64c994a65d16513519a0c08943e1e33139495c",
+  "pre_state": "80ff6e7085ddca3b234e95322e64c994a65d16513519a0c08943e1e33139495c",
+  "post_state": "d183264ba9d596e046d700fe28fe37e7138db1a7e3a0eef58793d626696bbcf1",
+  "conflict_scope": [
+    "43664d818e2e188a8ba1e240935286c3da51ef2b0bc78b58b39012b430c52cf7",
+    "bba09c43ca905375c9fd528962a0cdd30b08799071689a28f34d844a8a5a00d5",
+    "c6488439fb05193a1b122300d36d5acce6793196c05acdcee365a059d3644181"
+  ],
+  "final_scope": [
+    "1cbf4e59596e3bb5ec71f6cad85b6bb8663f99e72477fd5850cb53ef21607dd1",
+    "1d176a9498944aaf31d61c9bbfbe8f014306bbe0e5b1d01bfcd4a9a1042a327d",
+    "63f066137489ef75b83e7496680d45c9b377e63c2491ee1f1c8110289949527d",
+    "71a52e9af33e162eb9a1d2e05bb954a7c71ba6b305259c58eb5f469e3a75784f",
+    "b3d3b47a0eddc8de0f02cc715eea8b803abc081e23e774f2ffe1bf9552afe823",
+    "f94a63290b05233bf2055b36401fb051c0038e4e0fa4b9d0b3df5256ec5c11fc"
+  ],
+  "fork_blocks": [],
+  "rejected_deploys": [],
+  "rejected_hosts": [],
+  "rejected_user_hosts": [],
+  "report": {
+    "conflict_chains": 6,
+    "kept_chains": 6,
+    "rejected_chains": 0,
+    "fork_rejected_chains": 0,
+    "final_scope_rejected_chains": 0,
+    "duplicate_rejections": 0,
+    "effect_free_rejections": 0,
+    "system_rejections": 0
+  },
+  "predicates": {
+    "base_ok": true,
+    "fork_ok": true,
+    "ledger_ok": true,
+    "scope_partition_ok": true
+  }
+}

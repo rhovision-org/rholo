@@ -17,6 +17,14 @@ to replay iff it is **not** committed history and either
 A block whose pre-state is **certified but not derived** is named by the certificate but its state
 is not held; it is not a replay base, so it is refused with `UncertifiedPreState` — not faulted.
 The model separates the three predicates rather than collapsing them into one `held` set.
+
+**The deferral arm (RC-4 item C, 2026-11-21).** The drill measured a cascade: the bootstrap missed a
+run of broadcasts, a later block's justifications were never validated, and the gate recorded that
+block as an `UncertifiedPreState` *divergence*. Its children then inherited a failed parent and were
+condemned in turn. A divergence verdict requires the inputs to be **available**: a block is deferred,
+not condemned, when a nonempty justification set names a block that is neither the anchor nor
+validated. The pre-fix gate (`admissionRefusingMissing`) is the mutant; the empty shape remains the
+only refusal.
 -/
 
 namespace Rchain
@@ -40,11 +48,13 @@ structure Window where
   held : Finset Nat
 
 /-- The verdict of the pre-replay gate. `faultUnknownRoot` is the retryable internal fault (no
-    window installed); the other three are the Rust's statuses. -/
+    window installed); `deferredAncestry` is a missing input (a nonempty justification set with a
+    block that is neither the anchor nor validated); the others are the Rust's statuses. -/
 inductive Verdict where
   | replay
   | refusedCommittedHistory
   | refusedUncertifiedPreState
+  | deferredAncestry
   | faultUnknownRoot
   deriving DecidableEq, Repr
 
@@ -63,6 +73,13 @@ def permits (w : Window) (pre : Nat) : Prop :=
 def permits_justifications (w : Window) (js : Finset Nat) : Prop :=
   js ≠ ∅ ∧ ∀ j ∈ js, j = w.anchorBlock ∨ j ∈ w.validated
 
+/-- **Every justification is an available replay input** — the ancestor rule without the nonempty
+    requirement. This is the predicate the deferral arm reads: a divergence verdict is only sound
+    when the block's inputs were available. An empty set is vacuously available; it is the malformed
+    shape the gate still refuses. -/
+def justificationsAvailable (w : Window) (js : Finset Nat) : Prop :=
+  ∀ j ∈ js, j = w.anchorBlock ∨ j ∈ w.validated
+
 /-- **The pre-replay gate's rule**: a held replay root **or** an anchored justification set. -/
 def permits_block (w : Window) (pre : Nat) (js : Finset Nat) : Prop :=
   permits_replay_root w pre ∨ permits_justifications w js
@@ -78,7 +95,8 @@ def isCommittedHistory (w : Window) (dag : Dag) (id : Nat) : Prop :=
   IsReplayRefused dag w.anchorBlock id
 
 /-- **The pre-replay gate.** A missing window is a retryable internal fault; committed history is
-    refused; a permitted pre-state or committed justifications replay; anything else is refused as an
+    refused; a permitted pre-state or committed justifications replay; a nonempty justification set
+    with an unavailable input is **deferred**; anything else (the empty shape) is refused as an
     uncertified pre-state. -/
 noncomputable def admission (w : Option Window) (dag : Dag) (id pre : Nat) (js : Finset Nat)
     (heightOf : Nat → Nat) : Verdict :=
@@ -89,10 +107,27 @@ noncomputable def admission (w : Option Window) (dag : Dag) (id pre : Nat) (js :
         Verdict.refusedCommittedHistory
       else if _hperm : permits_block w pre js ∨ justificationsCommitted w js heightOf then
         Verdict.replay
+      else if _hinputs : ¬ justificationsAvailable w js then
+        Verdict.deferredAncestry
       else
         Verdict.refusedUncertifiedPreState
 
-/-- The mutant: a gate that turns an unheld root into a fault. The Rust's retryable fault is
+/-- **The pre-fix gate (item C's mutant): deferral does not exist.** A block that is not admitted and
+    is not committed history is refused as an uncertified pre-state even when its inputs are merely
+    missing — the cascade the drill measured. -/
+noncomputable def admissionRefusingMissing (w : Option Window) (dag : Dag) (id pre : Nat)
+    (js : Finset Nat) (heightOf : Nat → Nat) : Verdict :=
+  match w with
+  | none => Verdict.faultUnknownRoot
+  | some w =>
+      if _hcommitted : isCommittedHistory w dag id then
+        Verdict.refusedCommittedHistory
+      else if _hperm : permits_block w pre js ∨ justificationsCommitted w js heightOf then
+        Verdict.replay
+      else
+        Verdict.refusedUncertifiedPreState
+
+/-- The older mutant: a gate that turns an unheld root into a fault. The Rust's retryable fault is
     reserved for the missing window; an unheld root is a refusal. -/
 noncomputable def admissionFaulting (w : Option Window) (dag : Dag) (id pre : Nat) (js : Finset Nat)
     (heightOf : Nat → Nat) : Verdict :=
@@ -115,7 +150,9 @@ theorem no_admission_path_faults (w : Window) (dag : Dag) (id pre : Nat) (js : F
   · simp [hc]
   · by_cases hp : permits_block w pre js ∨ justificationsCommitted w js heightOf
     · simp [hc, hp]
-    · simp [hc, hp]
+    · by_cases hu : justificationsAvailable w js
+      · simp [hc, hp, hu]
+      · simp [hc, hp, hu]
 
 /-- **A missing window is the retryable fault the Rust raises** (`ValidateError::Internal`). -/
 theorem a_missing_window_is_a_retryable_fault (dag : Dag) (id pre : Nat) (js : Finset Nat)
@@ -134,7 +171,9 @@ theorem admission_replays_iff (w : Window) (dag : Dag) (id pre : Nat) (js : Fins
   · simp [hc]
   · by_cases hp : permits_block w pre js ∨ justificationsCommitted w js heightOf
     · simp [hc, hp]
-    · simp [hc, hp]
+    · by_cases hu : justificationsAvailable w js
+      · simp [hc, hp, hu]
+      · simp [hc, hp, hu]
 
 /-- **Committed history is refused**, whatever the pre-state. -/
 theorem committed_history_is_refused (w : Window) (dag : Dag) (id pre : Nat) (js : Finset Nat)
@@ -166,7 +205,7 @@ theorem a_certified_unheld_root_is_refused_not_faulted (w : Window) (dag : Dag) 
     rcases h with h | h
     · exact hnotroot h
     · exact hnjust h
-  simp [admission, hc, hpb, hcommitted]
+  simp [admission, hc, hpb, hcommitted, justificationsAvailable]
 
 /-- **An uncertified root is refused too.** The refusal does not depend on certification; the
     certified case above is the interesting one because the root is *named* yet still not held. -/
@@ -181,7 +220,7 @@ theorem an_uncertified_root_is_refused (w : Window) (dag : Dag) (id pre : Nat)
     rcases h with h | h
     · exact hnotroot h
     · exact hnjust h
-  simp [admission, hc, hpb, hcommitted]
+  simp [admission, hc, hpb, hcommitted, justificationsAvailable]
 
 /-- **A merged pre-state over validated justifications is replayed.** The pre-state is not a held
     root, but every justification is the anchor or a validated block. -/
@@ -209,31 +248,59 @@ theorem permits_is_the_root_or_certified (w : Window) (pre : Nat) :
     permits w pre ↔ permits_replay_root w pre ∨ pre ∈ w.certified :=
   Iff.rfl
 
-/-- **The mutant proposition**: a windowed gate that faults on an unheld root. -/
+/-- **An unavailable justification defers, not condemns.** With no admitted arm, a justification set
+    containing a block that is neither the anchor nor validated is `deferredAncestry`. -/
+theorem an_unavailable_justification_is_deferred
+    (w : Window) (dag : Dag) (id pre : Nat) (js : Finset Nat) (heightOf : Nat → Nat)
+    (hc : ¬ isCommittedHistory w dag id)
+    (hp : ¬ (permits_block w pre js ∨ justificationsCommitted w js heightOf))
+    (hu : ¬ justificationsAvailable w js) :
+    admission (some w) dag id pre js heightOf = Verdict.deferredAncestry := by
+  unfold admission
+  simp [hc, hp, hu]
+
+/-- **No divergence verdict without available inputs.** The only refusal the gate can produce is the
+    empty-justification shape; when the block names an unavailable input it is deferred instead. -/
+theorem no_divergence_verdict_without_available_inputs
+    (w : Window) (dag : Dag) (id pre : Nat) (js : Finset Nat) (heightOf : Nat → Nat)
+    (h : admission (some w) dag id pre js heightOf = Verdict.refusedUncertifiedPreState) :
+    justificationsAvailable w js := by
+  by_cases hc : isCommittedHistory w dag id
+  · simp [admission, hc] at h
+  · by_cases hp : permits_block w pre js ∨ justificationsCommitted w js heightOf
+    · simp [admission, hc, hp] at h
+    · by_cases hu : justificationsAvailable w js
+      · exact hu
+      · simp [admission, hc, hp, hu] at h
+
+/-- **The mutant proposition**: the pre-fix gate refuses a block whose inputs are merely missing. -/
 def law116_mutant : Prop :=
   ∃ (w : Window) (dag : Dag) (id pre : Nat) (js : Finset Nat) (heightOf : Nat → Nat),
     ¬ isCommittedHistory w dag id ∧
       ¬ permits_block w pre js ∧
       ¬ justificationsCommitted w js heightOf ∧
-      admissionFaulting (some w) dag id pre js heightOf = Verdict.faultUnknownRoot
+      ¬ justificationsAvailable w js ∧
+      admissionRefusingMissing (some w) dag id pre js heightOf =
+        Verdict.refusedUncertifiedPreState
 
 /-- **The falsifier, fired.** A window with no derived roots, a pre-state that is neither the anchor
-    nor derived, and no justifications: the faulting gate returns `faultUnknownRoot`, the real gate
-    `refusedUncertifiedPreState`. -/
+    nor derived, and one justification that is not validated: the pre-fix gate refuses it as a
+    divergence; the real gate defers it. -/
 theorem law116_falsifier : law116_mutant := by
-  refine ⟨⟨0, 0, 0, ∅, {7}, ∅, ∅⟩, (fun _ => none), 6, 7, ∅, (fun _ => 0), ?_, ?_, ?_, ?_⟩
+  refine ⟨⟨0, 0, 0, ∅, {7}, ∅, ∅⟩, (fun _ => none), 6, 7, {3}, (fun _ => 0), ?_, ?_, ?_, ?_, ?_⟩
   · have hseen : Rchain.MergeScope.seenOf (fun _ => none) 0 = (∅ : Finset Nat) := rfl
     simp [isCommittedHistory, IsReplayRefused, replayRefusedHistory, committedHistory, hseen]
   · simp [permits_block, permits_replay_root, permits_justifications]
   · simp [justificationsCommitted]
+  · simp [justificationsAvailable]
   · have hseen : Rchain.MergeScope.seenOf (fun _ => none) 0 = (∅ : Finset Nat) := rfl
-    simp [admissionFaulting, isCommittedHistory, IsReplayRefused, replayRefusedHistory,
+    simp [admissionRefusingMissing, isCommittedHistory, IsReplayRefused, replayRefusedHistory,
       committedHistory, hseen, permits_block, permits_replay_root, permits_justifications,
       justificationsCommitted]
 
 /-- **Law 116's statement.** An installed window never faults; admission is exactly the two
-    permitted arms; committed history is refused; a certified-but-unheld root is refused rather than
-    faulted; and the faulting gate is the mutant. -/
+    permitted arms; committed history is refused; an unavailable input is deferred and never
+    condemned; and the pre-fix gate that refuses it is the mutant. -/
 def law116_statement : Prop :=
   (∀ (w : Window) (dag : Dag) (id pre : Nat) (js : Finset Nat) (heightOf : Nat → Nat),
     admission (some w) dag id pre js heightOf ≠ Verdict.faultUnknownRoot) ∧
@@ -247,10 +314,18 @@ def law116_statement : Prop :=
   (∀ (w : Window) (dag : Dag) (id pre : Nat) (js : Finset Nat) (heightOf : Nat → Nat),
     ¬ isCommittedHistory w dag id → permits_block w pre js ∨ justificationsCommitted w js heightOf →
       admission (some w) dag id pre js heightOf = Verdict.replay) ∧
+  (∀ (w : Window) (dag : Dag) (id pre : Nat) (js : Finset Nat) (heightOf : Nat → Nat),
+    ¬ isCommittedHistory w dag id →
+      ¬ (permits_block w pre js ∨ justificationsCommitted w js heightOf) →
+      ¬ justificationsAvailable w js →
+      admission (some w) dag id pre js heightOf = Verdict.deferredAncestry) ∧
+  (∀ (w : Window) (dag : Dag) (id pre : Nat) (js : Finset Nat) (heightOf : Nat → Nat),
+    admission (some w) dag id pre js heightOf = Verdict.refusedUncertifiedPreState →
+      justificationsAvailable w js) ∧
   law116_mutant
 
 theorem law116 : law116_statement := by
-  refine ⟨?_, ?_, ?_, ?_, law116_falsifier⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, law116_falsifier⟩
   · intro w dag id pre js heightOf
     exact no_admission_path_faults w dag id pre js heightOf
   · intro w dag id pre js heightOf
@@ -260,6 +335,10 @@ theorem law116 : law116_statement := by
   · intro w dag id pre js heightOf hc hp
     unfold admission
     simp [hc, hp]
+  · intro w dag id pre js heightOf hc hp hu
+    exact an_unavailable_justification_is_deferred w dag id pre js heightOf hc hp hu
+  · intro w dag id pre js heightOf h
+    exact no_divergence_verdict_without_available_inputs w dag id pre js heightOf h
 
 end Admission
 end Sync

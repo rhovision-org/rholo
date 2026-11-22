@@ -878,4 +878,60 @@ mod tests {
             other => panic!("expected a refusal, got {other:?}"),
         }
     }
+
+    /// **A catching-up shard does not propose either** (Law 123, RC-4 item A). The continuous
+    /// supervisor re-enters `CatchingUp` when the node's own validated tip leaves the window; the
+    /// proposer asks the same phase question and refuses. The refusal names the phase, and the
+    /// autopropose timer retries once the shard is serving again.
+    #[tokio::test]
+    async fn a_catching_up_cell_does_not_propose() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = mpsc::channel(16);
+        let phase = NodePhaseCell::new();
+        phase.set_phase(NodePhase::CatchingUp {
+            supported: 198,
+            own: 198,
+            peer_tip: 335,
+        });
+        let stream = create_with_retry(
+            rx,
+            tx.clone(),
+            proposer(BlockCreatorResult::NoNewDeploys, calls.clone()),
+            Arc::new(tokio::sync::Mutex::new(ProposerState::default())),
+            healthy(),
+            execution_budget(4_096, 8_192),
+            phase,
+            Arc::new(rchain_shared::log::NopLog),
+            Duration::from_millis(50),
+        );
+        let (otx, orx) = oneshot::channel();
+        tx.send((ProposeSource::Automatic, otx)).await.unwrap();
+        let mut stream = Box::pin(stream);
+        let first = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("the request is answered")
+            .expect("one result");
+        assert!(matches!(
+            first.0.propose_status,
+            ProposeStatus::ResourcePressure(ref state) if state == "not-running"
+        ));
+        assert!(first.1.is_none(), "no block is produced while catching up");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "the proposer must not be called while the shard is behind its peer"
+        );
+        match orx.await.expect("the requester is answered") {
+            ProposerResult::Failure {
+                status, message, ..
+            } => {
+                assert!(matches!(
+                    status,
+                    ProposeStatus::ResourcePressure(ref state) if state == "not-running"
+                ));
+                assert!(message.contains("catching-up"), "{message}");
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
 }

@@ -1179,6 +1179,9 @@ fn wire_block_processing_observed(
         parts.block_disposition.clone(),
         parts.runtime_manager.clone(),
         comm_state.comm_util.clone(),
+        // **A deferred block's ancestry is requested from peers** (Law 116's deferral arm; RC-4
+        // item C). The retriever bounds the fan-out and its retry cadence.
+        Some(comm_state.block_retriever.clone()),
         block_index,
         log,
         health,
@@ -2454,6 +2457,16 @@ async fn setup_shard_runtime(
         }
     };
 
+    // **The claims this node's key has observed on the network** (Law 124; RC-4 item B). One cell,
+    // shared by the engine — which feeds it at signature-verified receipt, before validation — and
+    // the proposer, which refuses to sign or announce through a claim.
+    let received_claims: Option<Arc<rchain_casper::blocks::received_claims::ReceivedClaims>> =
+        parts.validator_identity_opt.as_ref().map(|identity| {
+            Arc::new(rchain_casper::blocks::received_claims::ReceivedClaims::new(
+                rchain_models::validator::Validator::from_slice(identity.public_key.bytes()),
+            ))
+        });
+
     // Node launch mode dispatch (genesis → syncing → running over the peer-message stream).
     let node_launch = node_launch::apply(
         peer_message_rx,
@@ -2479,6 +2492,7 @@ async fn setup_shard_runtime(
             "protocol-server.max-message-consumers must not be negative".to_string()
         })?,
         parts.validator_identity_opt.clone(),
+        received_claims.clone(),
         conf.standalone,
         conf.dev_mode,
         comm_state.transport.clone(),
@@ -2618,6 +2632,7 @@ async fn setup_shard_runtime(
             conf.casper.self_replay_injection,
             shard_health.clone(),
             accepted_window.clone(),
+            received_claims.clone(),
         );
         let proposer_stream = proposer_instance::create(
             proposer_parts.queue_rx,

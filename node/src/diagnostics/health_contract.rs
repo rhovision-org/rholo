@@ -53,6 +53,9 @@ pub const PUBLIC_HEALTH_KEYS: &[&str] = &[
     // null otherwise. A joined node that is behind reads `catching-up` with this coordinate instead
     // of `running`/ready.
     "catchUp",
+    // **Ancestry deferrals** (Law 116's deferral arm, RC-4 item C): blocks held because a
+    // justification is not yet validated. An obligation to fetch, not a fault or a verdict.
+    "deferredBlocks",
     "degraded",
     "diagVersion",
     "finalityStallEpisodes",
@@ -62,6 +65,7 @@ pub const PUBLIC_HEALTH_KEYS: &[&str] = &[
     "finalizedLag",
     "height",
     "lastBlockAgeMs",
+    "lastDeferralReason",
     "lastFinalityAgeMs",
     "lastPeerAgeMs",
     "lastPipelineFault",

@@ -211,6 +211,7 @@ fn independent_recovery_replays_epoch_boundaries_and_refuses_forged_claims() {
                     let creator = BlockCreator {
                         id: identity,
                         shard_id: "/root".to_string(),
+                        received_claims: None,
                     };
                     let mut tip = genesis.block_hash;
                     for height in 1..=12 {

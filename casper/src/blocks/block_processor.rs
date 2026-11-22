@@ -138,6 +138,53 @@ pub fn last_pipeline_fault() -> Option<String> {
     LAST_PIPELINE_FAULT.lock().unpoison().clone()
 }
 
+/// **Blocks this process has deferred for unavailable ancestry** (Law 116's deferral arm; RC-4 item
+/// C). A deferred block is not a verdict: it is an obligation to fetch the missing inputs and offer
+/// the block again. Keyed by hash so a re-deferral counts once; the last reason names the missing
+/// hash an operator can compare with the peer tip.
+static DEFERRED_ANCESTRY: std::sync::OnceLock<Mutex<BTreeSet<BlockHash>>> =
+    std::sync::OnceLock::new();
+static LAST_DEFERRAL_REASON: Mutex<Option<String>> = Mutex::new(None);
+
+fn deferred_ancestry() -> &'static Mutex<BTreeSet<BlockHash>> {
+    DEFERRED_ANCESTRY.get_or_init(|| Mutex::new(BTreeSet::new()))
+}
+
+pub fn deferred_blocks() -> u64 {
+    deferred_ancestry().lock().unpoison().len() as u64
+}
+
+pub fn last_deferral_reason() -> Option<String> {
+    LAST_DEFERRAL_REASON.lock().unpoison().clone()
+}
+
+/// The block's inputs arrived: it is no longer an outstanding deferral.
+pub fn clear_deferral(hash: &BlockHash) {
+    deferred_ancestry().lock().unpoison().remove(hash);
+}
+
+fn note_deferral(block: &BlockMessage, missing: &[BlockHash]) {
+    deferred_ancestry()
+        .lock()
+        .unpoison()
+        .insert(block.block_hash);
+    *LAST_DEFERRAL_REASON.lock().unpoison() = Some(format!(
+        "{} at height {}: {} justification(s) not yet validated (first: {})",
+        block.block_hash.to_hex(),
+        block.block_number,
+        missing.len(),
+        missing
+            .first()
+            .map(|hash| hash.to_hex())
+            .unwrap_or_else(|| "none".to_string())
+    ));
+}
+
+/// **How many missing hashes one deferral asks for.** Justifications are a bounded set, but the
+/// request path is network-facing; eight is the per-block fan-out the retriever's own capacity
+/// bounds are sized for.
+const MAX_ANCESTRY_REQUESTS: usize = 8;
+
 pub(crate) fn note_pipeline_fault(block: &BlockMessage, stage: &str, error: &str) {
     PIPELINE_FAULTS.fetch_add(1, Ordering::Relaxed);
     faulted_blocks().lock().unpoison().insert(block.block_hash);
@@ -209,10 +256,73 @@ async fn validation_within_deadline<T: Send + 'static>(
 /// resolve; that failure is named, so an operator (and the retry sweep) can tell it from a store or
 /// runtime fault. The verdict is unchanged — the block still fails and is still retried.
 fn internal_fault_stage(reason: &str) -> &'static str {
-    if reason.starts_with("missing justification") {
+    // The lookup's own error is wrapped by the summary ("block summary failed: missing
+    // justification <hex>"), so the marker is matched anywhere in the sentence, not at its start.
+    if reason.contains("missing justification") {
         "missing justification"
     } else {
         "validation internal"
+    }
+}
+
+/// **The hash a missing-justification error names.** The error text is the only carrier the replay
+/// path provides; the sentence is fixed ("... missing justification <hex>") and the last hex run is
+/// the block. A parse failure returns `None`, and the caller keeps the fault arm — an unparsable
+/// message must still be visible rather than silently deferred.
+fn missing_justification_hash(reason: &str) -> Option<BlockHash> {
+    let marker = "missing justification ";
+    let start = reason.rfind(marker)? + marker.len();
+    let hex: String = reason[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+    BlockHash::try_from_hex(&hex).ok()
+}
+
+/// **A deferral is an obligation, not a fault** (Law 116's deferral arm; RC-4 item C). The body stays
+/// in the durable ledger as a `Deferred` pending row; the sweep re-offers it on the next tick once
+/// the missing parents validate. The missing hashes are requested from peers (bounded), and the
+/// process gauge names the last deferral for `/health`.
+async fn record_deferral(
+    disposition: &BlockDispositionStore,
+    retriever: Option<&Arc<crate::blocks::block_retriever::BlockRetriever>>,
+    block: &BlockMessage,
+    missing: &[BlockHash],
+    log: &Arc<dyn Log>,
+    source: LogSource,
+) {
+    note_deferral(block, missing);
+    match disposition
+        .mark_pending(
+            block.block_hash,
+            block.block_number,
+            crate::block_disposition::PendingStage::Deferred,
+        )
+        .await
+    {
+        Ok(()) => log.warn(
+            source,
+            &format!(
+                "Block #{} {} deferred: {} justification(s) not yet validated; the ancestry is \
+                 requested and the block will be re-offered (Law 116, RC-4 item C)",
+                block.block_number,
+                block.block_hash.to_hex(),
+                missing.len()
+            ),
+        ),
+        Err(e) => log.error(
+            source,
+            &format!(
+                "Block #{} {} deferred, but the disposition ledger could not record it: {e}",
+                block.block_number,
+                block.block_hash.to_hex()
+            ),
+        ),
+    }
+    if let Some(retriever) = retriever {
+        for hash in missing.iter().take(MAX_ANCESTRY_REQUESTS) {
+            retriever.request_missing_dependency(hash).await;
+        }
     }
 }
 
@@ -385,8 +495,12 @@ async fn settle_block(
     source: LogSource,
 ) {
     match disposition.settle(block.block_hash).await {
-        // The obligation is discharged: the fault no longer blocks readiness.
-        Ok(_) => clear_pipeline_fault(&block.block_hash),
+        // The obligation is discharged: the fault no longer blocks readiness, and a deferral is no
+        // longer outstanding (Law 116's deferral arm; RC-4 item C).
+        Ok(_) => {
+            clear_pipeline_fault(&block.block_hash);
+            clear_deferral(&block.block_hash);
+        }
         Err(e) => log.warn(
             source,
             &format!(
@@ -550,6 +664,9 @@ pub async fn apply<F, Fut>(
     disposition: BlockDispositionStore,
     runtime: Arc<RuntimeManager>,
     comm_util: Arc<CommUtil>,
+    // **How a deferred block's missing ancestry is requested** (Law 116's deferral arm; RC-4 item
+    // C). `None` in a fixture that does not drive the receive path; the node always attaches it.
+    retriever: Option<Arc<crate::blocks::block_retriever::BlockRetriever>>,
     block_index: F,
     log: Arc<dyn Log>,
     health: ShardHealth,
@@ -616,11 +733,13 @@ pub async fn apply<F, Fut>(
                     .await;
             let committed_history =
                 is_committed_history(dag.as_ref(), window.as_ref(), &block).await;
+            let ancestry = classify_ancestry(window.as_ref(), &block);
             let refusal = pre_replay_refusal(
                 window.as_ref(),
                 &block,
                 justifications_committed,
                 committed_history,
+                &ancestry,
             );
             handles.push(tokio::spawn(async move {
                 if let Some(refusal) = refusal {
@@ -709,13 +828,48 @@ pub async fn apply<F, Fut>(
                     .await;
                     continue;
                 }
+                // **Defer, do not condemn** (Law 116's deferral arm; RC-4 item C). A block whose
+                // justifications are not yet available is kept in the durable ledger and its missing
+                // hashes are requested. This path deliberately does not touch `pipeline_faults`:
+                // that latch halts production process-wide, and a transient ancestor gap is not a
+                // fault of this node's pipeline.
+                Err(ValidateError::MissingAncestry { missing }) => {
+                    record_deferral(
+                        &disposition,
+                        retriever.as_ref(),
+                        &block,
+                        &missing,
+                        &log,
+                        source,
+                    )
+                    .await;
+                    continue;
+                }
                 Err(ValidateError::Internal(e)) => {
+                    // **A missing justification is a deferral, not a pipeline fault** (Law 116's
+                    // deferral arm; RC-4 item C). It can arrive here when a parent disappears
+                    // between the receiver's dependency check and the replay (a rewind, or a
+                    // re-offer of a stored body), and the fault latch would halt production
+                    // process-wide for a block whose input is merely late. The error names the hash;
+                    // defer, request it, and let the sweep re-offer.
+                    if internal_fault_stage(&e) == "missing justification" {
+                        if let Some(hash) = missing_justification_hash(&e) {
+                            record_deferral(
+                                &disposition,
+                                retriever.as_ref(),
+                                &block,
+                                &[hash],
+                                &log,
+                                source,
+                            )
+                            .await;
+                            continue;
+                        }
+                    }
                     // An `Internal` failure is retryable by the disposition ledger's schedule, not
-                    // droppable. **A `missing justification` should not arrive here** — the
-                    // receiver releases a block only when every parent is in the DAG — but if one
-                    // does, it is named for what it is rather than folded into "validation
-                    // internal", where it is indistinguishable from a store or runtime fault
-                    // (Law 88d).
+                    // droppable. A `missing justification` that cannot name its hash is kept here
+                    // rather than folded into "validation internal", where it is indistinguishable
+                    // from a store or runtime fault (Law 88d).
                     record_block_fault(
                         &disposition,
                         &block,
@@ -809,9 +963,52 @@ pub async fn apply<F, Fut>(
     announcements.finish().await;
 }
 
+/// **What the pre-replay gate can see of a block's ancestry** (Law 116's deferral arm; RC-4 item C).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Ancestry {
+    /// Every justification is the anchor or a validated block.
+    Ready,
+    /// At least one justification is absent, unvalidated, or present as a failed record.
+    Unavailable(Vec<BlockHash>),
+    /// The block names no justifications at all — the malformed shape the gate still refuses.
+    Empty,
+}
+
+/// **Classify a block's justifications as inputs this node can replay from.**
+///
+/// The predicate is the accepted window's own (`permits_justifications`): a justification is
+/// available when it is the anchor or in `validated` — *blocks this node validated*. Mirroring the
+/// window rather than the DAG's `validation_failed` flags matters: a block validated before a
+/// restart is in the DAG and in the boot-seeded window, and a fetched block justifying it must be
+/// admitted, not condemned. Everything else (absent, unvalidated, failed) is unavailable and the
+/// block is deferred. A missing window is the gate's retryable `Internal` arm, not a classification.
+fn classify_ancestry(
+    window: Option<&crate::engine::anchor::AcceptedWindow>,
+    block: &BlockMessage,
+) -> Ancestry {
+    if block.justifications.is_empty() {
+        return Ancestry::Empty;
+    }
+    let Some(window) = window else {
+        return Ancestry::Ready;
+    };
+    let unavailable: Vec<BlockHash> = block
+        .justifications
+        .iter()
+        .copied()
+        .filter(|justification| !window.permits_justifications(std::slice::from_ref(justification)))
+        .collect();
+    if unavailable.is_empty() {
+        Ancestry::Ready
+    } else {
+        Ancestry::Unavailable(unavailable)
+    }
+}
+
 /// **The pre-replay gate's decision** (review R2). `None` admits the block to replay; `Some` is the
 /// outcome the processor records instead — a retryable internal fault when the boot has not installed
-/// the window, or a `ValidationFailed` with the failed metadata when the pre-state is not admissible.
+/// the window, a `MissingAncestry` deferral when an input is unavailable, or a `ValidationFailed`
+/// with the failed metadata when the pre-state is not admissible.
 /// A multi-parent block's pre-state is a fresh merge, not a parent root; it is admissible when every
 /// justification is the anchor or a block this node validated (C402), or when every justification is
 /// **committed history**: a post-anchor block routinely justifies a same-height sibling and a
@@ -830,6 +1027,8 @@ fn pre_replay_refusal(
     // a latest message the next block's merge must read; refusing it by height alone made every
     // post-anchor block disagree about the pre-state (the 2026-11-17 cold-join run).
     committed_history: bool,
+    // **What this node holds of the block's inputs** (Law 116's deferral arm; RC-4 item C).
+    ancestry: &Ancestry,
 ) -> Option<Result<BlockMetadata, ValidateError>> {
     match window {
         None => Some(Err(ValidateError::Internal(
@@ -846,6 +1045,16 @@ fn pre_replay_refusal(
             if !window.permits_block(block.pre_state_hash, &block.justifications)
                 && !justifications_committed =>
         {
+            // **No divergence verdict without available inputs** (Law 116's deferral arm; RC-4 item
+            // C). If every justification were available, `permits_justifications` would have admitted
+            // the block; reaching here with a nonempty set means at least one input is missing or
+            // failed. That is a gap to fetch, not a disagreement to condemn. The empty shape is the
+            // only refusal left.
+            if let Ancestry::Unavailable(missing) = ancestry {
+                return Some(Err(ValidateError::MissingAncestry {
+                    missing: missing.clone(),
+                }));
+            }
             let status = BlockStatus::UncertifiedPreState;
             Some(Err(ValidateError::ValidationFailed(
                 crate::multi_parent_casper::mark_failed(&BlockMetadata::from_block(block), status),
@@ -1323,7 +1532,7 @@ mod tests {
         child.block_number = BlockHeight::try_from(10).expect("height");
         child.block_hash = BlockHash::new([0xcd; 32]);
         child.pre_state_hash = StateHash::new([9u8; 32]);
-        match pre_replay_refusal(Some(&window), &child, false, false) {
+        match pre_replay_refusal(Some(&window), &child, false, false, &Ancestry::Empty) {
             Some(Err(ValidateError::ValidationFailed(meta, status))) => {
                 assert_eq!(status, BlockStatus::UncertifiedPreState);
                 assert!(
@@ -1341,13 +1550,13 @@ mod tests {
 
         child.pre_state_hash = genesis.post_state_hash;
         assert!(
-            pre_replay_refusal(Some(&window), &child, false, false).is_none(),
+            pre_replay_refusal(Some(&window), &child, false, false, &Ancestry::Empty).is_none(),
             "the anchor root is an admissible pre-state"
         );
 
         assert!(
             matches!(
-                pre_replay_refusal(None, &child, false, false),
+                pre_replay_refusal(None, &child, false, false, &Ancestry::Empty),
                 Some(Err(ValidateError::Internal(_)))
             ),
             "an uninstalled window is a retryable fault, not an acceptance"
@@ -1398,7 +1607,7 @@ mod tests {
             "the fixture must exercise the gap: the merged pre-state is not a recorded root"
         );
         assert!(
-            pre_replay_refusal(Some(&window), &child, false, false).is_none(),
+            pre_replay_refusal(Some(&window), &child, false, false, &Ancestry::Empty).is_none(),
             "a multi-parent block with validated justifications must be admitted to replay"
         );
 
@@ -1406,20 +1615,24 @@ mod tests {
         unknown.justifications = vec![BlockHash::new([0x99; 32])];
         assert!(
             matches!(
-                pre_replay_refusal(Some(&window), &unknown, false, false),
-                Some(Err(ValidateError::ValidationFailed(
-                    _,
-                    BlockStatus::UncertifiedPreState
-                )))
+                pre_replay_refusal(
+                    Some(&window),
+                    &unknown,
+                    false,
+                    false,
+                    &Ancestry::Unavailable(unknown.justifications.clone())
+                ),
+                Some(Err(ValidateError::MissingAncestry { missing }))
+                    if missing == unknown.justifications
             ),
-            "an unknown justification is not an ancestry exemption"
+            "an unknown justification is deferred, not condemned (Law 116, RC-4 item C)"
         );
 
         let mut orphan = child.clone();
         orphan.justifications.clear();
         assert!(
             matches!(
-                pre_replay_refusal(Some(&window), &orphan, false, false),
+                pre_replay_refusal(Some(&window), &orphan, false, false, &Ancestry::Empty),
                 Some(Err(ValidateError::ValidationFailed(
                     _,
                     BlockStatus::UncertifiedPreState
@@ -1455,17 +1668,112 @@ mod tests {
 
         assert!(
             matches!(
-                pre_replay_refusal(Some(&window), &child, false, false),
-                Some(Err(ValidateError::ValidationFailed(
-                    _,
-                    BlockStatus::UncertifiedPreState
-                )))
+                pre_replay_refusal(
+                    Some(&window),
+                    &child,
+                    false,
+                    false,
+                    &Ancestry::Unavailable(child.justifications.clone())
+                ),
+                Some(Err(ValidateError::MissingAncestry { .. }))
             ),
-            "an uncommitted justification set is still refused"
+            "an unavailable justification is deferred until the caller's committed-history rule \
+             admits it"
         );
         assert!(
-            pre_replay_refusal(Some(&window), &child, true, false).is_none(),
-            "the caller's committed-history verdict admits the merged pre-state to replay"
+            pre_replay_refusal(
+                Some(&window),
+                &child,
+                true,
+                false,
+                &Ancestry::Unavailable(vec![BlockHash::new([0x99; 32])])
+            )
+            .is_none(),
+            "the caller's committed-history rule admits the merged pre-state to replay"
         );
+    }
+
+    /// **A missing justification is deferred, not failed** (Law 116's deferral arm; RC-4 item C).
+    /// The pre-replay gate returns the deferral, the durable row is `Deferred`, the process gauge
+    /// names the missing hash — and crucially, no pipeline fault is raised: that latch halts
+    /// production process-wide, and a transient ancestor gap is an obligation to fetch, not a fault.
+    /// **The missing-justification sentence names the hash the deferral must request.** A parse
+    /// failure keeps the fault arm, so this must be exact.
+    #[test]
+    fn a_missing_justification_error_names_its_hash() {
+        let hash = BlockHash::new([0xab; 32]);
+        let text = format!(
+            "block summary failed: missing justification {}",
+            hash.to_hex()
+        );
+        assert_eq!(missing_justification_hash(&text), Some(hash));
+        assert_eq!(
+            missing_justification_hash("validation internal: store"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_justification_is_deferred_not_failed() {
+        use crate::block_disposition::{BlockDisposition, BlockDispositionCodec, PendingStage};
+        use rchain_block_storage::dag::codecs::BlockHashCodec;
+        use rchain_shared::store_manager::{database, InMemoryStoreManager};
+
+        let manager = InMemoryStoreManager::default();
+        let kv = database(
+            &manager,
+            "block-disposition-test-deferred",
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockDispositionCodec),
+        )
+        .await
+        .expect("in-memory ledger");
+        let store = BlockDispositionStore::from_store(Arc::new(kv));
+        let block = sample_block();
+        let missing = vec![BlockHash::new([0x99; 32])];
+        let log: Arc<dyn Log> = Arc::new(rchain_shared::log::NopLog);
+        let before = pipeline_faults_outstanding();
+        record_deferral(
+            &store,
+            None,
+            &block,
+            &missing,
+            &log,
+            LogSource::new("casper.blocks.BlockProcessor"),
+        )
+        .await;
+
+        assert_eq!(
+            pipeline_faults_outstanding(),
+            before,
+            "a deferral must not raise a pipeline fault"
+        );
+        let row = store
+            .get(&block.block_hash)
+            .await
+            .expect("ledger read")
+            .expect("a deferred row");
+        assert!(
+            matches!(
+                row,
+                BlockDisposition::Pending {
+                    stage: PendingStage::Deferred,
+                    ..
+                }
+            ),
+            "a deferral is a pending row, not a verdict"
+        );
+        assert!(
+            crate::block_disposition::eligible_stored_pending(
+                &row,
+                crate::block_disposition::now_unix_millis()
+            ),
+            "the next sweep must re-offer the deferred block"
+        );
+        assert!(deferred_blocks() >= 1);
+        assert!(last_deferral_reason()
+            .expect("a named deferral")
+            .contains(&missing[0].to_hex()));
+        clear_deferral(&block.block_hash);
     }
 }

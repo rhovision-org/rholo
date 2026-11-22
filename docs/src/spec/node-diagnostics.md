@@ -76,12 +76,14 @@ shard's reading must say which.
 | `ok` | readiness | bool | A | P | ≤1 s | equals `ready`; carried for older clients |
 | `ready` | readiness | bool | A | P | ≤1 s | the conjunction of the four gates below; false always names a reason |
 | `readyReasons` | readiness | string[] | A | P | ≤1 s | closed vocabulary; empty iff `ready` |
-| `phase` / `nodePhase` | readiness | string | G | S | ≤1 s | the primary shard's **effective** `NodePhase` label: `blocked` while a durable pipeline fault is outstanding, even if the launch cell says `running`; `catching-up` for a joined node whose fence has not reached the catch-up window (Law 121) |
-| `catchUp` | readiness | object? | G | S | ≤1 s | `{supported}` while the primary shard is `catching-up`: the quorum-supported height the node's own message state can see, the coordinate a reader compares with the peer tip. `null` otherwise; a catching-up shard is never `ready` |
+| `phase` / `nodePhase` | readiness | string | G | S | ≤1 s | the primary shard's **effective** `NodePhase` label: `blocked` while a durable pipeline fault is outstanding, even if the launch cell says `running`; `catching-up` while the node's own validated tip is outside the catch-up window of the peer tip it has observed (Laws 121/123) |
+| `catchUp` | readiness | object? | G | S | ≤1 s | `{supported, own, peerTip}` while the primary shard is `catching-up`: `own` is the highest latest message this node has validated, `peerTip` is the frontier a connected peer reported through a bounded `BlockRange` probe (`-1` until one answers; a joined boot starts catching up before its first probe), and `supported` is the quorum-supported height over the node's own messages (a diagnostic — a healthy leader's quorum height can sit at a laggard's height). `null` otherwise; a catching-up shard is never `ready` |
 | `shardPhases` | readiness | map | G | S | ≤1 s | one entry per member shard, each its effective phase; an absent shard is not claimed running |
 | `pipelineFaults` | ingestion | integer | C | P | at read | monotone since process start; evidence, never a gate |
 | `pipelineFaultsOutstanding` | ingestion | integer | L | P | at read | current obligation; **zero iff no block owes a verdict**; seeded from the durable ledger at boot, unreadable ledger fails closed |
 | `lastPipelineFault` | ingestion | string? | G | P | at read | the last fault's block and stage; null until one fires |
+| `deferredBlocks` | ingestion | integer | L | P | at read | blocks held because a justification is not yet validated — an obligation to fetch the missing ancestry, not a fault or a verdict; the disposition sweep re-offers them and a successful insert clears the entry (Law 116, RC-4 item C). Not a readiness term |
+| `lastDeferralReason` | ingestion | string? | G | P | at read | the last deferred block's hash and height and its first missing justification; null until one is deferred |
 | `orphanBodies` | ingestion | integer | L | P | ≤5 s | confirmed on three consecutive audit samples; zero clears readiness |
 | `orphanDetections` | ingestion | integer | C | P | ≤5 s | monotone; the history beside the current count |
 | `proposalHalted` | consensus | bool | L | S | ≤1 s | set when the proposer is isolated; cleared by restart or operator resume |

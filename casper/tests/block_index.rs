@@ -18,7 +18,16 @@ mod common;
 use common::fringe_state;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use rchain_shared::lock::Unpoison;
+
+/// **The block-index cache is process-global and bounded** (64 entries, `merging.rs`). The tests in
+/// this binary share it, so they run one at a time: a parallel test that indexes more blocks than
+/// the cache holds evicts this test's entry between its two calls and turns a correct cache hit into
+/// a red assertion (CI 2026-11-21, `block_index.rs:422`). Serialising the file's three tests keeps
+/// the identity witness deterministic without weakening it.
+static CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::codecs::{
@@ -166,6 +175,7 @@ fn block_shell() -> BlockMessage {
 /// about.
 #[tokio::test]
 async fn the_block_index_regenerates_a_missing_sidecar_and_indexes_the_block() {
+    let _cache_guard = CACHE_TEST_LOCK.lock().unpoison();
     let rm = common::build_runtime_manager().await;
     let rand = Blake2b512Random::from_init(&[0u8; 32]);
 
@@ -293,6 +303,7 @@ async fn the_block_index_regenerates_a_missing_sidecar_and_indexes_the_block() {
 /// of it, and `MergeScope::merge`'s application of it.
 #[tokio::test]
 async fn a_merge_reproduces_a_branchs_post_state_including_its_native_writes() {
+    let _cache_guard = CACHE_TEST_LOCK.lock().unpoison();
     let rm = common::build_runtime_manager().await;
     let rand = Blake2b512Random::from_init(&[0u8; 32]);
     let (_genesis_pre, genesis_post, _) = rm
@@ -509,6 +520,7 @@ async fn a_merge_reproduces_a_branchs_post_state_including_its_native_writes() {
 /// and something *else* is dropping it".
 #[tokio::test]
 async fn a_slashed_validator_is_absent_from_the_bonds_at_a_merged_root() {
+    let _cache_guard = CACHE_TEST_LOCK.lock().unpoison();
     use rchain_models::block_metadata::SlashSeverity;
     use rchain_rholang::native_state::PosParams;
     use rchain_shared::refined::SeqNum;

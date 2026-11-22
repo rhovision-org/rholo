@@ -7203,15 +7203,17 @@ def lawsC : List Law := [
       is Law 85's." },
 
   { number := 116, layer := "Sync",
-    statement := "**The pre-replay gate admits exactly two arms and never faults with a window \
-      installed.** A block is admitted to replay iff it is not committed history and either its \
-      pre-state is the anchor root or a **derived** root (a root whose state this node holds), or its \
-      justification set is nonempty and every justification is the anchor or a validated block; or \
-      every justification is committed — nonempty, held by the DAG, and at or below the anchor \
-      height. A same-height sibling the anchor has not seen is not committed history; a pre-state \
-      that is certified but not derived is refused as an uncertified pre-state, not faulted. The only \
-      retryable fault is the missing window; an installed window answers replay, \
-      `refusedCommittedHistory` or `refusedUncertifiedPreState`.",
+    statement := "**The pre-replay gate admits exactly two arms, never faults with a window \
+      installed, and never condemns a block whose inputs are unavailable.** A block is admitted to \
+      replay iff it is not committed history and either its pre-state is the anchor root or a \
+      **derived** root (a root whose state this node holds), or its justification set is nonempty and \
+      every justification is the anchor or a validated block; or every justification is committed — \
+      nonempty, held by the DAG, and at or below the anchor height. A same-height sibling the anchor \
+      has not seen is not committed history. When the admitted arms do not apply, a nonempty \
+      justification set containing a block that is neither the anchor nor validated is \
+      **deferred** (`deferredAncestry`), not condemned: a divergence verdict requires the inputs to \
+      be available. The only refusal left is the empty-justification shape. The only retryable fault \
+      is the missing window.",
     status := .provedModel,
     formal := `Rchain.Sync.Admission.law116_statement,
     mutant := `Rchain.Sync.Admission.law116_mutant,
@@ -7221,10 +7223,12 @@ def lawsC : List Law := [
       `Rchain.Sync.Admission.permits_replay_root,
       `Rchain.Sync.Admission.permits,
       `Rchain.Sync.Admission.permits_justifications,
+      `Rchain.Sync.Admission.justificationsAvailable,
       `Rchain.Sync.Admission.permits_block,
       `Rchain.Sync.Admission.justificationsCommitted,
       `Rchain.Sync.Admission.isCommittedHistory,
       `Rchain.Sync.Admission.admission,
+      `Rchain.Sync.Admission.admissionRefusingMissing,
       `Rchain.Sync.Admission.admissionFaulting,
       `Rchain.Sync.Admission.no_admission_path_faults,
       `Rchain.Sync.Admission.a_missing_window_is_a_retryable_fault,
@@ -7236,6 +7240,8 @@ def lawsC : List Law := [
       `Rchain.Sync.Admission.merged_pre_state_over_validated_justifications_is_replayed,
       `Rchain.Sync.Admission.all_justifications_committed_is_replayed,
       `Rchain.Sync.Admission.permits_is_the_root_or_certified,
+      `Rchain.Sync.Admission.an_unavailable_justification_is_deferred,
+      `Rchain.Sync.Admission.no_divergence_verdict_without_available_inputs,
       `Rchain.Sync.Admission.law116_statement,
       `Rchain.Sync.Admission.law116,
       `Rchain.Sync.Admission.law116_mutant,
@@ -7248,7 +7254,8 @@ def lawsC : List Law := [
       "casper/src/engine/anchor.rs:a_checkpoint_anchor_admits_its_committed_fringe_as_justifications",
       "casper/src/blocks/block_processor.rs:the_pre_replay_gate_refuses_an_uncertified_historical_pre_state",
       "casper/src/blocks/block_processor.rs:the_pre_replay_gate_admits_a_merged_pre_state_over_validated_justifications",
-      "casper/src/blocks/block_processor.rs:the_pre_replay_gate_honours_committed_justifications"],
+      "casper/src/blocks/block_processor.rs:the_pre_replay_gate_honours_committed_justifications",
+      "casper/src/blocks/block_processor.rs:a_missing_justification_is_deferred_not_failed"],
     witness := [`Rchain.Sync.Admission.no_admission_path_faults,
       `Rchain.Sync.Admission.admission_replays_iff,
       `Rchain.Sync.Admission.committed_history_is_refused,
@@ -7256,12 +7263,16 @@ def lawsC : List Law := [
       `Rchain.Sync.Admission.a_certified_unheld_root_is_refused_not_faulted,
       `Rchain.Sync.Admission.merged_pre_state_over_validated_justifications_is_replayed,
       `Rchain.Sync.Admission.all_justifications_committed_is_replayed,
+      `Rchain.Sync.Admission.an_unavailable_justification_is_deferred,
+      `Rchain.Sync.Admission.no_divergence_verdict_without_available_inputs,
       `Rchain.MergeScope.a_sibling_is_not_committed_history,
       `Rchain.Sync.Admission.law116_falsifier],
     falsifiable := "Restore the height-keyed pre-replay gate and the sibling is refused as \
       committed history (`a_sibling_is_not_committed_history` is the refutation); return the unheld \
       certified root to the fault branch (`law116_mutant`) and `law116_falsifier` exhibits the \
-      internal `unknown root`; drop the `justificationsCommitted` arm and \
+      internal `unknown root`; use the pre-fix gate for an unavailable justification \
+      (`admissionRefusingMissing`) and `law116_falsifier` exhibits the divergence verdict the real \
+      gate defers; drop the `justificationsCommitted` arm and \
       `all_justifications_committed_is_replayed` fails.",
     note := "**Decision (2026-11-17): the law was too coarse, not the Rust.** The Rust splits the \
       gate into `is_committed_history` (`casper/src/blocks/block_processor.rs:886-906`), which is \
@@ -7269,11 +7280,20 @@ def lawsC : List Law := [
       (`casper/src/engine/anchor.rs:269`), which composes `permits_replay_root` and \
       `permits_justifications`. `pre_replay_refusal` refuses a committed-history block before replay; \
       it admits when `permits_block` is true **or** every justification is committed \
-      (`block_processor.rs:862-880`); otherwise it refuses as `UncertifiedPreState`, not `Internal`. \
-      The law now models the three predicates separately: `derived` is the replay base, `certified` \
-      is named but not held, and the justifications arm is a height rule. The measured failure was \
-      the opposite: a height-keyed gate refused the sibling and the pipeline recorded `unknown \
-      root`. The state roots are the quorum claim Law 85 owns." },
+      (`block_processor.rs:862-880`). The law models the three predicates separately: `derived` is \
+      the replay base, `certified` is named but not held, and the justifications arm is a height \
+      rule. The measured failure was the opposite: a height-keyed gate refused the sibling and the \
+      pipeline recorded `unknown root`. \
+      **The deferral arm (RC-4 item C, 2026-11-21).** The drill measured the other direction: the \
+      bootstrap missed a run of broadcasts (245–260), a later block's justifications were never \
+      validated, and the gate recorded blocks 261–262 as `UncertifiedPreState` divergences; their \
+      descendants inherited the failed parent and were condemned in turn. The fix is not a new \
+      verdict for a real disagreement but the removal of a verdict without inputs: when every \
+      justification is the anchor or validated, `permits_justifications` already replays, so the \
+      refusal only ever described an empty set or an unavailable input. The Rust now defers that \
+      case into the durable ledger and requests the missing ancestry \
+      (`a_missing_justification_is_deferred_not_failed`); the pre-fix gate is `admissionRefusingMissing`. \
+      The state roots are the quorum claim Law 85 owns." },
 
   { number := 117, layer := "Sync",
     statement := "**A signed checkpoint statement is honest about every field the joiner \
@@ -7479,26 +7499,33 @@ def lawsC : List Law := [
       clock, so every node classifies the same way." },
 
   { number := 121, layer := "Sync",
-    statement := "**A joined node is never `running` while it is behind.** The phase that admits \
-      serving carries a proof that the node's quorum-supported height is within the catch-up window \
-      of the highest latest message it holds. A view outside the window is `catchingUp supported`, \
-      which names the coordinate a reader compares with the peer tip; there is no third \
-      constructor, so a running-and-behind state is not writable. The watchdog is the safe \
-      fallback: a catch-up that observes more than `watchdogAfter` attempts without progress \
-      re-enters `syncing` — the node's checkpoint-sync path, which rewinds and adopts a newer \
-      certified anchor — while a running phase is never touched by it. Timing is counted in \
-      observed attempts, not wall clock.",
+    statement := "**A joined node is never `running` while its own validated tip is behind the peer \
+      tip it has observed.** The phase that admits serving carries a proof that `peerTip - own` is \
+      within the catch-up window, where `own` is the highest latest message this node has validated \
+      and `peerTip` is the highest block number it observed from a connected peer. `supported` — the \
+      quorum-supported height over the node's own validated messages — is a diagnostic, not the \
+      test: a healthy leader's quorum height sits at a laggard's height. The pre-fix predicate \
+      (`own - supported`) therefore both admitted the drill's frozen node (own 198, peer tip 335, \
+      supported 198) and froze a healthy leader on a six-height skew (own 207, peer tip 207, \
+      supported 201). A view outside the window is `catchingUp supported own`, naming both \
+      coordinates; there is no third constructor, so running-and-behind is not writable. The \
+      watchdog fails closed to `blocked` after `watchdogAfter` attempts without progress; a running \
+      phase is never touched by it (continuity is Law 123). Timing is counted in observed attempts, \
+      not wall clock.",
     status := .provedModel,
     formal := `Rchain.JoinCatchUp.law121_statement,
     mutant := `Rchain.JoinCatchUp.law121_mutant,
     falsifier := `Rchain.JoinCatchUp.law121_falsifier,
     declarations := [`Rchain.JoinCatchUp.View,
       `Rchain.JoinCatchUp.withinWindow,
+      `Rchain.JoinCatchUp.withinWindowUnchecked,
       `Rchain.JoinCatchUp.Phase,
       `Rchain.JoinCatchUp.Phase.isRunning,
       `Rchain.JoinCatchUp.Phase.blocker,
       `Rchain.JoinCatchUp.afterRestore,
       `Rchain.JoinCatchUp.watchdog,
+      `Rchain.JoinCatchUp.the_pre_fix_predicate_runs_the_frozen_node,
+      `Rchain.JoinCatchUp.the_pre_fix_predicate_freezes_the_healthy_leader,
       `Rchain.JoinCatchUp.law121_statement,
       `Rchain.JoinCatchUp.law121,
       `Rchain.JoinCatchUp.LoosePhase,
@@ -7508,19 +7535,31 @@ def lawsC : List Law := [
     axioms := [],
     rust := ["casper/src/engine/node_phase.rs", "casper/src/engine/node_launch.rs"],
     rustWitness := [
-      "casper/src/engine/catchup.rs:the_catch_up_window_refuses_the_drills_frozen_view"],
-    witness := [`Rchain.JoinCatchUp.law121, `Rchain.JoinCatchUp.law121_falsifier],
+      "casper/src/engine/catchup.rs:the_catch_up_window_refuses_the_drills_frozen_view",
+      "casper/src/engine/catchup.rs:a_leader_with_a_lagging_quorum_is_not_frozen"],
+    witness := [`Rchain.JoinCatchUp.law121, `Rchain.JoinCatchUp.law121_falsifier,
+      `Rchain.JoinCatchUp.the_pre_fix_predicate_runs_the_frozen_node,
+      `Rchain.JoinCatchUp.the_pre_fix_predicate_freezes_the_healthy_leader],
     falsifiable := "The pre-fix launcher — `afterRestoreUnchecked`, the Rust enum without the \
-      running proof — returns `running` for the drill's own view (306 supported at 181); \
-      `law121_mutant` and `law121_falsifier` exhibit it. The typed phase cannot express that value, \
-      which is the closure: the bad state is unwritable, not merely refused.",
+      running proof — returns `running` for the drill's own view; `law121_mutant` and \
+      `law121_falsifier` exhibit it. The pre-fix predicate is wrong in both directions: \
+      `the_pre_fix_predicate_runs_the_frozen_node` (own 198, peer 335, supported 198) and \
+      `the_pre_fix_predicate_freezes_the_healthy_leader` (own 207, peer 207, supported 201). The \
+      typed phase cannot express the first value, which is the closure: the bad state is unwritable, \
+      not merely refused.",
     note := "**The silent freeze this law removes** (RC-4, 2026-11-21): the light-joined victim at \
       `84d43d8fe` restored the certified state, entered `running` at tip 183 while the other \
       validators were at 306, and stayed there for the harness's whole window — pipeline clean, \
-      attestation licensed, nothing named. Both sides of the window come from the message state, \
-      not the DAG's metadata maximum: a metadata tip counts blocks no node has validated and held \
-      every proposer closed in the drill's earlier run. The Rust phase decision and its witness are \
-      the companion commit; the HAZOP is `spec/audit/evidence/rc4-join-catch-up/hazop.md`." },
+      attestation licensed, nothing named. \
+      **The predicate was the defect, and it failed in both directions** (RC-4 item A, #640, \
+      2026-11-21). `own` and `supported` both come from the node's validated message state, so a \
+      node that has validated nothing above 198 reads a zero gap while its peers are at 335. The \
+      same `peerTip - supported` shape used as a *global* proposer gate froze a healthy network on a \
+      six-height skew — the leaders' quorum height sat at the laggards' height (drill run \
+      `565c8dec6`, removed in `5524f2b25`). The corrected view compares the node's own validated tip \
+      with a bounded peer-tip observation (`BlockRange` probe answers), and the Rust witness pins \
+      both directions. The continuous re-entry is Law 123; the HAZOP is \
+      `spec/audit/evidence/rc4-join-catch-up/hazop.md`." },
 
   { number := 122, layer := "Sync",
     statement := "**A validator never re-signs a sequence it has signed.** The proposer derives its \
@@ -7566,6 +7605,110 @@ def lawsC : List Law := [
       remembered it. The record is written before the block leaves `BlockCreator::create`, so a \
       write failure refuses the proposal rather than allowing a signature the node cannot \
       remember; the HAZOP row is J8 in `spec/audit/evidence/rc4-join-catch-up/hazop.md`." },
+
+  { number := 123, layer := "Sync",
+    statement := "**Catch-up is continuous, and only a current view proposes.** A supervisor samples \
+      the Law 121 view on every tick. A `running` phase whose view leaves the window re-enters \
+      `catchingUp` after `enterAfter` consecutive stale observations; the hysteresis is bounded, not \
+      a silence. A `catchingUp` phase whose view returns runs again. A `blocked` phase is terminal. \
+      The proposer asks only whether the shard is `running`, so a proposal always carries a current \
+      view; there is no network-wide window in the decision. The pre-fix one-shot watchdog — run \
+      once at boot and never again — is the mutant.",
+    status := .provedModel,
+    formal := `Rchain.JoinContinuous.law123_statement,
+    mutant := `Rchain.JoinContinuous.law123_mutant,
+    falsifier := `Rchain.JoinContinuous.law123_falsifier,
+    declarations := [`Rchain.JoinContinuous.enterAfter,
+      `Rchain.JoinContinuous.supervise,
+      `Rchain.JoinContinuous.mayPropose,
+      `Rchain.JoinContinuous.a_running_phase_carries_a_current_view,
+      `Rchain.JoinContinuous.a_stale_observation_reenters,
+      `Rchain.JoinContinuous.the_hysteresis_is_bounded,
+      `Rchain.JoinContinuous.a_current_observation_restores,
+      `Rchain.JoinContinuous.a_current_observation_is_served,
+      `Rchain.JoinContinuous.blocked_is_terminal,
+      `Rchain.JoinContinuous.may_propose_is_sound,
+      `Rchain.JoinContinuous.law123_statement,
+      `Rchain.JoinContinuous.law123,
+      `Rchain.JoinContinuous.preFixWatchdog,
+      `Rchain.JoinContinuous.law123_mutant,
+      `Rchain.JoinContinuous.law123_falsifier],
+    axioms := [],
+    rust := ["casper/src/engine/catchup.rs", "casper/src/engine/node_launch.rs",
+      "node/src/instances/proposer_instance.rs"],
+    rustWitness := [
+      "casper/src/engine/catchup.rs:a_running_phase_reenters_catching_up_on_a_stale_observation",
+      "node/src/instances/proposer_instance.rs:a_catching_up_cell_does_not_propose"],
+    witness := [`Rchain.JoinContinuous.law123, `Rchain.JoinContinuous.law123_falsifier,
+      `Rchain.JoinContinuous.a_stale_observation_reenters,
+      `Rchain.JoinContinuous.a_current_observation_restores,
+      `Rchain.JoinContinuous.may_propose_is_sound],
+    falsifiable := "Use the pre-fix watchdog — `preFixWatchdog`, which observes once at boot and \
+      never again — and the drill's frozen view stays `running` (`law123_mutant`, \
+      `law123_falsifier`). Remove the confirmation bound and `the_hysteresis_is_bounded` fails; \
+      return a stale observation to `running` and `a_stale_observation_reenters` fails.",
+    note := "**The disarm this law removes** (RC-4 item A, #640, 2026-11-21). `spawn_catch_up_watchdog` \
+      moved the phase to `Running` once and returned; nothing re-entered `CatchingUp` and nothing \
+      restarted the walk. A joined validator finished its walk at 198 while the network ran to 335 \
+      (`062b4140c`, `87b9aedf2`, `e3f5195c9`). The supervisor is the shard's single observer after \
+      boot: it updates `own` from the validated message state, takes a bounded `BlockRange` probe \
+      answer as the peer tip, and re-enters catch-up on the confirmed stale view. The proposer gate \
+      already lived in `proposer_instance.rs`; this law gives it a phase that can be entered again. \
+      A healthy leader is current even when its quorum-supported height lags (Law 121's second \
+      falsifier), so the observation cannot recreate the removed global gate. The Rust witness is a \
+      pure step test; the drill supplies the timing." },
+
+  { number := 124, layer := "Sync",
+    statement := "**A validator never announces a sequence the network already carries.** Between the \
+      signature (Law 122) and the hash announcement the network's copy of this key's block at the \
+      same sequence can arrive. The broadcast decision reads the observed claims immediately before \
+      the announcement and refuses when a different hash owns that sequence; a same-hash claim does \
+      not block. The claim cell is fed only by blocks that pass the signature check, so a peer \
+      cannot forge an entry. The guarded broadcast therefore always agrees with the claim it \
+      observed; the pre-fix path — the signing-time check only, then an unconditional announcement — \
+      is the mutant.",
+    status := .provedModel,
+    formal := `Rchain.OwnSeqBroadcast.law124_statement,
+    mutant := `Rchain.OwnSeqBroadcast.law124_mutant,
+    falsifier := `Rchain.OwnSeqBroadcast.law124_falsifier,
+    declarations := [`Rchain.OwnSeqBroadcast.Signed,
+      `Rchain.OwnSeqBroadcast.Claims,
+      `Rchain.OwnSeqBroadcast.mayBroadcast,
+      `Rchain.OwnSeqBroadcast.broadcastUnchecked,
+      `Rchain.OwnSeqBroadcast.a_broadcast_matches_its_claim,
+      `Rchain.OwnSeqBroadcast.a_matching_claim_permits_the_broadcast,
+      `Rchain.OwnSeqBroadcast.a_conflicting_claim_refuses_the_broadcast,
+      `Rchain.OwnSeqBroadcast.law124_mutant,
+      `Rchain.OwnSeqBroadcast.law124_falsifier,
+      `Rchain.OwnSeqBroadcast.law124_statement,
+      `Rchain.OwnSeqBroadcast.law124],
+    axioms := [],
+    rust := ["casper/src/blocks/received_claims.rs",
+      "casper/src/blocks/proposer/block_creator.rs",
+      "casper/src/blocks/proposer/proposer.rs"],
+    rustWitness := [
+      "casper/src/blocks/received_claims.rs:a_signature_valid_self_block_records_a_claim",
+      "casper/src/blocks/proposer/proposer.rs:the_broadcast_guard_refuses_a_claim_that_arrived_after_signing"],
+    witness := [`Rchain.OwnSeqBroadcast.law124, `Rchain.OwnSeqBroadcast.law124_falsifier,
+      `Rchain.OwnSeqBroadcast.a_broadcast_matches_its_claim,
+      `Rchain.OwnSeqBroadcast.a_matching_claim_permits_the_broadcast,
+      `Rchain.OwnSeqBroadcast.a_conflicting_claim_refuses_the_broadcast],
+    falsifiable := "Use `broadcastUnchecked` — the pre-fix path, where the signing-time check had \
+      already passed — and the drill's timing announces sequence 196 again after the network's copy \
+      of the pre-crash block arrived (`law124_mutant`, `law124_falsifier`). Read the claims before \
+      signing but not before the announcement and the falsifier is the window; drop the signature \
+      check at receipt and a peer can forge the claim.",
+    note := "**The drill's second slashing** (RC-4 item B, #640, 2026-11-21). With Law 122's \
+      signing-time check in place the victim still signed sequence 196 again: the signing-time check \
+      ran, the network's copy of its own earlier block at that sequence arrived from gossip during \
+      the multi-second replay, and the announcement then made the duplicate network-visible \
+      (`e3f5195c9`, 18:38:10). The local gate was correct; the author should never have announced. \
+      The claims cell is populated at signature-verified receipt — before validation — so the copy \
+      that arrives during replay is visible at the pre-effect check; the block creator also refuses \
+      to sign through a claim, and the proposer's insert path refuses with `SelfEquivocation` rather \
+      than latching an own-key verdict. The residual race — a block still in transport buffering at \
+      the last check — is named in the HAZOP; the H-1 insert gate and the durable own-key verdict \
+      remain the backstop." },
 
 ]
 

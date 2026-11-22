@@ -1,0 +1,235 @@
+{
+  "arm": "local",
+  "claim_id": "RC-4",
+  "claim_title": "Recovery without loss",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-21T22:24:00Z",
+  "harness": {
+    "command": [
+      "/home/patrick/miniforge3/bin/python3",
+      "/home/patrick/RNodeRust/.claude/worktrees/pr-567/tests/consensus-restart-under-load.py",
+      "--validators",
+      "4",
+      "--cycles",
+      "2",
+      "--window",
+      "240",
+      "--load-seconds",
+      "20",
+      "--out",
+      "target/rc4-ec104fb80/restart"
+    ],
+    "exit_code": 0,
+    "name": "consensus-restart-under-load",
+    "out": "target/rc4-ec104fb80/restart"
+  },
+  "locality": "local-devnet",
+  "observations": {
+    "boot_ids": {
+      "after": {
+        "0": "2026-11-21T22:23:28.938563617Z",
+        "1": "2026-11-21T22:21:07.683585525Z",
+        "2": "2026-11-21T22:15:35.9286249Z",
+        "3": "2026-11-21T22:15:37.542910419Z"
+      },
+      "before": {
+        "0": "2026-11-21T22:15:27.624543568Z",
+        "1": "2026-11-21T22:15:34.32095469Z",
+        "2": "2026-11-21T22:15:35.9286249Z",
+        "3": "2026-11-21T22:15:37.542910419Z"
+      }
+    },
+    "boot_traces": [
+      {
+        "accepted": true,
+        "acquisition": "certificate",
+        "dag_len": 886,
+        "file": "boot-1-2.json",
+        "genesis_only": false,
+        "kind": "boot",
+        "outcome": "certified",
+        "refusal_coordinate": null,
+        "served_anchor": "79dba6c36a8bee180f59d55e77a8460bf2918aad649f1d8ed84d67bb1be92b1d",
+        "served_digest": "8c918cfdf21c020281738a588fb695098a3466c3b90b291ca7463df70eb0d824",
+        "served_shard": "/root",
+        "served_supporting_stake": 400,
+        "served_total_stake": 400,
+        "shard_id": "/root",
+        "source_configured": false,
+        "stage": "acquisition",
+        "store_head": "8c918cfdf21c020281738a588fb695098a3466c3b90b291ca7463df70eb0d824",
+        "validator": 0
+      },
+      {
+        "accepted": true,
+        "accepted_fringe": 0,
+        "acquisition": "certificate",
+        "anchor_closure_present": true,
+        "certified_fringe": 4,
+        "dag_len": 886,
+        "file": "boot-1-3.json",
+        "fringe_agreement": "descendant",
+        "fringe_agrees": true,
+        "genesis_only": false,
+        "kind": "boot",
+        "outcome": "certified",
+        "refusal_coordinate": null,
+        "served_anchor": "79dba6c36a8bee180f59d55e77a8460bf2918aad649f1d8ed84d67bb1be92b1d",
+        "served_digest": "8c918cfdf21c020281738a588fb695098a3466c3b90b291ca7463df70eb0d824",
+        "served_shard": "/root",
+        "served_supporting_stake": 400,
+        "served_total_stake": 400,
+        "shard_id": "/root",
+        "source_configured": false,
+        "stage": "decision",
+        "store_head": "8c918cfdf21c020281738a588fb695098a3466c3b90b291ca7463df70eb0d824",
+        "validator": 0
+      },
+      {
+        "accepted": true,
+        "acquisition": "certificate",
+        "dag_len": 731,
+        "file": "boot-1-2.json",
+        "genesis_only": false,
+        "kind": "boot",
+        "outcome": "certified",
+        "refusal_coordinate": null,
+        "served_anchor": "e2b3dd12da40a48c45568b9e9314bbc9c5405734b7601e58485207940cfc6282",
+        "served_digest": "16aa3093bda71192a11f54b923e77bdfcd1f8bd979f7567a898f40382ef49fee",
+        "served_shard": "/root",
+        "served_supporting_stake": 300,
+        "served_total_stake": 400,
+        "shard_id": "/root",
+        "source_configured": true,
+        "stage": "acquisition",
+        "store_head": null,
+        "validator": 1
+      },
+      {
+        "accepted": true,
+        "accepted_fringe": 1,
+        "acquisition": "certificate",
+        "anchor_closure_present": true,
+        "certified_fringe": 4,
+        "dag_len": 731,
+        "file": "boot-1-3.json",
+        "fringe_agreement": "mismatch",
+        "fringe_agrees": false,
+        "genesis_only": false,
+        "kind": "boot",
+        "outcome": "certified",
+        "recovery": "light-join",
+        "refusal_coordinate": null,
+        "served_anchor": "e2b3dd12da40a48c45568b9e9314bbc9c5405734b7601e58485207940cfc6282",
+        "served_digest": "16aa3093bda71192a11f54b923e77bdfcd1f8bd979f7567a898f40382ef49fee",
+        "served_shard": "/root",
+        "served_supporting_stake": 300,
+        "served_total_stake": 400,
+        "shard_id": "/root",
+        "source_configured": true,
+        "stage": "decision",
+        "store_head": null,
+        "validator": 1
+      }
+    ],
+    "certificates_after": {
+      "0": {
+        "anchorHeight": 234,
+        "digest": "c6f78f424831f59c365173728160976e1418fe430685292bf31473c88139cee7",
+        "kind": "checkpoint"
+      },
+      "1": {
+        "anchorHeight": 181,
+        "digest": "16aa3093bda71192a11f54b923e77bdfcd1f8bd979f7567a898f40382ef49fee",
+        "kind": "checkpoint"
+      },
+      "2": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      },
+      "3": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      }
+    },
+    "checkpoint_certificates": {
+      "0": {
+        "anchorHeight": 174,
+        "digest": "b70bc71082bd50aa9a30bc391ded1161f4b1ff50cc7e6b0e268cd04d4837f06f",
+        "kind": "checkpoint"
+      },
+      "1": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      },
+      "2": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      },
+      "3": {
+        "anchorHeight": null,
+        "digest": null,
+        "kind": null
+      }
+    },
+    "deploy_id": "304402204690a5b3ed3c944c50e9b6a7cfe13faa5b1a662a4f8e22a6a3750c3d879aadb10220233de5eba50c9ae1ea92a8b49f4037941490090e36dfffaed666063701b28a53",
+    "harness_result": "PASS",
+    "marker": "release-claim:1795299342423150755",
+    "post_common_head": {
+      "hash": "a4e27c723ad40b7528938a01c3e608b8fe52f54624cb75b0b4e02301341b3c0e",
+      "height": 237,
+      "on_every_validator": true
+    },
+    "post_heads": [
+      {
+        "hash": "a4e27c723ad40b7528938a01c3e608b8fe52f54624cb75b0b4e02301341b3c0e",
+        "height": 237,
+        "inclusion_finalized": true,
+        "marker_present": true,
+        "validator": 0
+      },
+      {
+        "hash": "a4e27c723ad40b7528938a01c3e608b8fe52f54624cb75b0b4e02301341b3c0e",
+        "height": 237,
+        "inclusion_finalized": true,
+        "marker_present": true,
+        "validator": 1
+      },
+      {
+        "hash": "a4e27c723ad40b7528938a01c3e608b8fe52f54624cb75b0b4e02301341b3c0e",
+        "height": 237,
+        "inclusion_finalized": true,
+        "marker_present": true,
+        "validator": 2
+      },
+      {
+        "hash": "a4e27c723ad40b7528938a01c3e608b8fe52f54624cb75b0b4e02301341b3c0e",
+        "height": 237,
+        "inclusion_finalized": true,
+        "marker_present": true,
+        "validator": 3
+      }
+    ],
+    "value": 42,
+    "victim": 0
+  },
+  "preconditions": [],
+  "provenance": {
+    "binary_sha256": "25537e1d30e238becdb86bdc3619d58925f8875d2cec91baabdf5146f735cef1",
+    "devnet_prefix": "restartload",
+    "image_id": "0650e6e5eb3191741846c9439ebb0cae4ed167f5b1c2a6b8298f5c7dfb7b1569",
+    "profile": "local-4",
+    "source_dirty": false,
+    "source_sha": "ec104fb8005406869748566b62fa52d9869fbaa0"
+  },
+  "reasons": [],
+  "schema": 1,
+  "started_at": "2026-11-21T22:15:25Z",
+  "verdict": "pass"
+}

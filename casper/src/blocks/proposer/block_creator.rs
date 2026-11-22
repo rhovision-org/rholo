@@ -1,6 +1,7 @@
 //! Block creation (port of `blocks/proposer/BlockCreator.scala`).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
@@ -18,6 +19,7 @@ use rchain_shared::time::current_millis;
 
 use crate::block_random_seed::BlockRandomSeed;
 use crate::blocks::proposer::proposer::ProposedSlash;
+use crate::blocks::received_claims::ReceivedClaims;
 use crate::interpreter_util::compute_deploys_checkpoint;
 use crate::merging::ParentsMergedState;
 use crate::proto_util::unsigned_block_proto;
@@ -33,6 +35,9 @@ use super::propose_result::BlockCreatorResult;
 pub struct BlockCreator {
     pub id: ValidatorIdentity,
     pub shard_id: String,
+    /// **The sequences this node's key has observed on the network** (Law 124). `None` in a fixture
+    /// that does not drive the gate; the node always attaches it.
+    pub received_claims: Option<Arc<ReceivedClaims>>,
 }
 
 type StateTransitionResult = (
@@ -134,6 +139,22 @@ impl BlockCreator {
         let seq_num = snapshot_seq
             .map(|seq| seq + NonNegI64::one())
             .unwrap_or_else(SeqNum::zero);
+        // **A claimed sequence is never signed** (Law 124; RC-4 item B). The signing-time message
+        // map check below cannot see a copy that arrived after the snapshot was read; the claim
+        // cell can, because it is fed at signature-verified receipt. Checking before the expensive
+        // replay keeps the wait cheap as well as sound.
+        if self
+            .received_claims
+            .as_ref()
+            .and_then(|claims| claims.conflict_any(seq_num))
+            .is_some()
+        {
+            return Ok(BlockCreatorResult::OwnSeqNotReconciled {
+                signed: i64::from(seq_num),
+                signed_height: i64::from(block_num),
+                snapshot: snapshot_seq.map(i64::from),
+            });
+        }
         // Informational block timestamp: the proposer's wall clock, chosen once and used both for
         // the block header and for `rho:block:data` during evaluation, so a contract that reads it
         // sees exactly the value a replayer will (determinism).
@@ -252,6 +273,20 @@ impl BlockCreator {
                         message.sender == creators_validator && message.sender_seq == seq_num
                     });
                 if duplicate {
+                    return Ok(BlockCreatorResult::OwnSeqNotReconciled {
+                        signed: i64::from(seq_num),
+                        signed_height: i64::from(block_num),
+                        snapshot: snapshot_seq.map(i64::from),
+                    });
+                }
+                // **And the last check before the signature** (Law 124): a claim recorded during
+                // the replay is a block the network already has. Never sign through it.
+                if self
+                    .received_claims
+                    .as_ref()
+                    .and_then(|claims| claims.conflict_any(seq_num))
+                    .is_some()
+                {
                     return Ok(BlockCreatorResult::OwnSeqNotReconciled {
                         signed: i64::from(seq_num),
                         signed_height: i64::from(block_num),

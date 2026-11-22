@@ -241,6 +241,7 @@ fn a_wiped_joiner_validates_the_first_post_anchor_block_from_the_certificate_and
                     let creator = BlockCreator {
                         id: identity,
                         shard_id: "/root".to_string(),
+                        received_claims: None,
                     };
                     let mut tip = genesis.block_hash;
                     // The anchor sits beyond `DEPLOY_LIFESPAN` so the wiped-store assertion below

@@ -642,19 +642,9 @@
           "required": true
         },
         "local": {
-          "items": [
-            {
-              "action": "`acquisition_ok`/`verification_ok`/`anchor_ok` false: the boot accepted a state it could not attribute. Fix `boot_outcome` or `acquire_boot_certificate`; the refusal coordinate is in the trace.",
-              "anchor": {
-                "lean": "Rchain.Sync.Anchor.running_is_anchored",
-                "rust": "casper/src/engine/node_launch.rs:rebuild_window_for_boot"
-              },
-              "finding": "boot trace (validator 1, site -): predicate anchor_ok false",
-              "item": "RC-4/local/anchor_ok"
-            }
-          ],
-          "next_pr": "rc-confirm-local",
-          "reading": "unsafe-point",
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
           "required": true
         },
         "multi-host": {
@@ -789,34 +779,18 @@
         },
         "local": {
           "action": {
-            "items": [
-              {
-                "action": "`acquisition_ok`/`verification_ok`/`anchor_ok` false: the boot accepted a state it could not attribute. Fix `boot_outcome` or `acquire_boot_certificate`; the refusal coordinate is in the trace.",
-                "anchor": {
-                  "lean": "Rchain.Sync.Anchor.running_is_anchored",
-                  "rust": "casper/src/engine/node_launch.rs:rebuild_window_for_boot"
-                },
-                "finding": "boot trace (validator 1, site -): predicate anchor_ok false",
-                "item": "RC-4/local/anchor_ok"
-              }
-            ],
-            "next_pr": "rc-confirm-local",
-            "reading": "unsafe-point",
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
             "required": true
           },
-          "binary_sha256": "b6ada1e3278f17d640400a762b42913ab93a65a1208095f0ff7d0ac2f68ac7cf",
-          "finished_at": "2026-11-21T10:47:05Z",
-          "reasons": [
-            "the restart harness did not pass: 'FAIL'",
-            "post-recovery heads were not read on every validator",
-            "victim 1 has no verified checkpoint certificate after restart",
-            "victim 1: the boot decision did not accept (acquisition certificate)",
-            "boot trace (validator 1, site decision): predicate(s) anchor_ok false"
-          ],
-          "record": "spec/audit/evidence/rc4-local-20261121-20501f4/raw/claim.json",
+          "binary_sha256": "25537e1d30e238becdb86bdc3619d58925f8875d2cec91baabdf5146f735cef1",
+          "finished_at": "2026-11-21T22:24:00Z",
+          "reasons": [],
+          "record": "spec/audit/evidence/rc4-local-20261121-ec104fb/raw/claim.json",
           "required": true,
-          "source_sha": "20501f4820df02f8d58d33d6cb9dba19769cae6c",
-          "status": "fail"
+          "source_sha": "ec104fb8005406869748566b62fa52d9869fbaa0",
+          "status": "pass"
         },
         "multi-host": {
           "action": {

@@ -34,13 +34,18 @@ pub enum NodePhase {
     Starting,
     /// The shard is restoring the last finalized state; it serves no chain and proposes nothing.
     Syncing,
-    /// **A joined node whose fence has not caught up** (Law 121, RC-4). The engine runs — it
+    /// **A node whose own validated tip has not caught up** (Law 121, RC-4). The engine runs — it
     /// receives, validates and backfills — but the shard does not serve or propose: its own
-    /// quorum-supported height is outside the catch-up window of the highest latest message it
-    /// holds. `supported` is the coordinate a reader compares with the peer tip; the phase cannot
-    /// be `Running` without the window being satisfied, which is the state the pre-fix launcher
-    /// allowed (a live, silent freeze at tip 183 while peers were at 306).
-    CatchingUp { supported: i64 },
+    /// validated tip (`own`) is outside the catch-up window of the peer tip it has observed
+    /// (`peer_tip`). `supported` is the quorum-supported height over the node's own validated
+    /// messages, kept as a diagnostic coordinate. The phase cannot be `Running` without the window
+    /// being satisfied, which is the state the pre-fix launcher allowed (a live, silent freeze at
+    /// tip 183 while peers were at 306).
+    CatchingUp {
+        supported: i64,
+        own: i64,
+        peer_tip: i64,
+    },
     /// Launch reached the running engine: the DAG is the shard's served chain.
     Running,
     /// Launch refused to serve (a terminal sync failure, or a named launch failure).
@@ -139,6 +144,26 @@ impl NodePhaseCell {
         }
     }
 
+    /// **Wait until the shard is live**: the engine is constructed and is either serving
+    /// (`Running`) or catching up (`CatchingUp`), both of which receive, validate and backfill. The
+    /// disposition loops use this rather than [`Self::wait_until_running`]: a stored body must be
+    /// re-offered while the node is closing its gap, or the gap cannot close (RC-4 item A/C,
+    /// 2026-11-21). Returns `false` when the shard is `Blocked` — the fail-closed phase is terminal,
+    /// and a loop that swept into it would be servicing a chain the node has refused.
+    pub async fn wait_until_live(&self) -> bool {
+        let mut rx = self.tx.subscribe();
+        loop {
+            match &*rx.borrow_and_update() {
+                NodePhase::Running | NodePhase::CatchingUp { .. } => return true,
+                NodePhase::Blocked(_) => return false,
+                NodePhase::Starting | NodePhase::Syncing => {}
+            }
+            if rx.changed().await.is_err() {
+                return false;
+            }
+        }
+    }
+
     /// How long a propose may wait for launch to decide before it is answered "not ready".
     ///
     /// The proposer stream starts **beside** `node_launch`, not after it (`setup_shard_runtime`
@@ -210,7 +235,11 @@ mod tests {
     /// reported `running`/ready at tip 183 against peers at 306.
     #[test]
     fn a_catching_up_shard_names_its_coordinate_and_serves_nothing() {
-        let phase = NodePhase::CatchingUp { supported: 181 };
+        let phase = NodePhase::CatchingUp {
+            supported: 198,
+            own: 198,
+            peer_tip: 335,
+        };
         assert_eq!(phase.label(), "catching-up");
         assert!(!phase.admits_work());
         assert!(!matches!(phase.effective(0), NodePhase::Running));
@@ -226,6 +255,33 @@ mod tests {
         assert_eq!(running.effective(1).label(), "blocked");
         assert_eq!(running.effective(0), NodePhase::Running);
         assert_eq!(NodePhase::Syncing.effective(2).label(), "blocked");
+    }
+
+    /// **A catching-up shard is live for the disposition loops** (RC-4 item A/C). It must receive,
+    /// validate and re-offer stored bodies while it closes the gap; a `Blocked` shard is not live.
+    #[tokio::test]
+    async fn a_catching_up_shard_is_live_and_a_blocked_one_is_not() {
+        let cell = NodePhaseCell::new();
+        let writer = cell.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            writer.set_phase(NodePhase::CatchingUp {
+                supported: 198,
+                own: 198,
+                peer_tip: 335,
+            });
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), cell.wait_until_live())
+                .await
+                .expect("a catching-up cell is live")
+        );
+        let blocked = NodePhaseCell::new();
+        blocked.set_phase(NodePhase::Blocked("terminal".to_string()));
+        assert!(
+            !blocked.wait_until_live().await,
+            "a blocked shard is not live"
+        );
     }
 
     #[tokio::test]
