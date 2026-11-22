@@ -1240,11 +1240,29 @@ pub async fn close_inputs_for_block(
     // leak will fail the caller's post-state comparison loudly if this returns the wrong set — so a
     // missing base is answered with the empty set rather than making the block un-indexable.
     let bonds = match choose_base_claim(claims, None) {
-        Ok(base) => runtime
-            .compute_bonds(&StateHash::from_slice(base.state().as_bytes()))
-            .await
-            .ok(),
-        Err(_) => None,
+        Ok(base) => {
+            match runtime
+                .compute_bonds(&StateHash::from_slice(base.state().as_bytes()))
+                .await
+            {
+                Ok(bonds) => Some(bonds),
+                Err(err) => {
+                    eprintln!(
+                        "[finality] no leak attribution for block {}: the gate's bonds are not \
+                         readable at the previous fringe: {err}",
+                        block.block_hash.to_hex()
+                    );
+                    None
+                }
+            }
+        }
+        Err(refusal) => {
+            eprintln!(
+                "[finality] no leak attribution for block {}: {refusal:?}",
+                block.block_hash.to_hex()
+            );
+            None
+        }
     };
     let reason = match bonds {
         Some(bonds) => {
