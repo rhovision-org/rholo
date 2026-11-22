@@ -72,7 +72,9 @@ G1–G5 criteria are superseded by the release-claim readings: G2/G3 → **RC-1/
 **RC-4/public**, G1 → the public campaign's own prerequisite (the manifest the run records), and G5 →
 the evidence rule. `tools/release-check.py --assert-ready` is the gate; a `not-observed` arm is
 satisfied only by a fresh run on the current candidate, never by a previous build's pins, a previous
-window's samples or an attestation.
+window's samples or an attestation. The campaign that executes the public arms — the manifest
+contract, the fleet driver and the stop/restart it performs — is
+[the public fleet campaign](../node/public-fleet.md).
 
 ## Round two — the witness, control and evidence binding
 

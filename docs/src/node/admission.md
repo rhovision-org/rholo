@@ -173,4 +173,6 @@ finalized head on every validator, the marker retained through later finalized h
 rejoining the same finalized head, no own-key/self-replay halt). `tools/release-check.py` derives the
 reading from the run's own trace and `--assert-ready` is the gate. A previous test's pins, a previous
 window's samples or a reviewer's attestation cannot satisfy a `not-observed` arm; the run must be on
-the current candidate.
+the current candidate. The campaign method — the input-only manifest, the fleet driver and the
+single-validator stop it performs — is
+[the public fleet campaign](public-fleet.md).

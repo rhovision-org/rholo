@@ -48,12 +48,48 @@ class EvidenceLocalityTests(unittest.TestCase):
     def check(self, readme, acceptance="{}"):
         return locality.check(self.record(readme, acceptance))
 
+    @staticmethod
+    def public_result(**overrides):
+        result = {
+            "schema": 1, "campaign": "rc-public-fleet", "locality": "public-live",
+            "transport": "ssh-systemd", "rehearsal": False, "harness_result": "PASS",
+            "preflight": {"checks": {"distinct_host_labels": True,
+                                     "distinct_host_boot_ids": True, "ok": True}},
+            "synthetic_boot_ids": False,
+        }
+        result.update(overrides)
+        return result
+
     def test_a_public_live_record_is_a_declarable_locality(self):
+        directory = self.record(
+            "Public four-validator run on four independent hosts; not an M3 off-host positive.\n"
+            "**Evidence locality.** `public-live` — the public four-validator chain.\n")
+        (directory / "fleet-result.json").write_text(json.dumps(self.public_result()))
+        self.assertEqual(locality.check(directory), [])
+
+    def test_a_public_live_record_needs_the_driver_result(self):
         problems = self.check(
-            "Public four-validator run; not an M3 off-host positive.\n"
-            "**Evidence locality.** `public-live` — the public four-validator chain.\n"
-        )
-        self.assertEqual(problems, [])
+            "Public four-validator run on four independent hosts.\n"
+            "**Evidence locality.** `public-live` — four hosts.\n")
+        self.assertTrue(any("fleet-result.json" in p for p in problems), problems)
+
+    def test_a_rehearsal_cannot_wear_public_live(self):
+        directory = self.record(
+            "Public four-validator run on four independent hosts.\n"
+            "**Evidence locality.** `public-live` — four hosts.\n")
+        (directory / "fleet-result.json").write_text(
+            json.dumps(self.public_result(rehearsal=True)))
+        problems = locality.check(directory)
+        self.assertTrue(any("rehearsal" in p for p in problems), problems)
+
+    def test_synthetic_boot_ids_cannot_wear_public_live(self):
+        directory = self.record(
+            "Public four-validator run on four independent hosts.\n"
+            "**Evidence locality.** `public-live` — four hosts.\n")
+        (directory / "fleet-result.json").write_text(
+            json.dumps(self.public_result(synthetic_boot_ids=True)))
+        problems = locality.check(directory)
+        self.assertTrue(any("synthetic" in p for p in problems), problems)
 
     def test_declared_locality_requires_exactly_one_label(self):
         one = self.record("**Evidence locality.** local-devnet — one host.\n")

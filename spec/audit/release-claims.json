@@ -55,7 +55,7 @@
           "behaviour": "the same settlement and retention reading on the four-host public fleet",
           "next_pr": "rc-public-fleet",
           "close": {
-            "not-observed": "Supply the four-host public manifest and run the settlement/retention reading on testnet-4."
+            "not-observed": "Supply the four-host public manifest and run `tools/release-check.py run --claim RC-1 --env public`; the driver submits the deploy and records retention across two epoch boundaries."
           }
         },
         {
@@ -265,7 +265,7 @@
           "behaviour": "a real host stop on the public fleet",
           "next_pr": "rc-public-fleet",
           "close": {
-            "not-observed": "Run the operator's real host stop on the public fleet."
+            "not-observed": "Run `tools/release-check.py run --claim RC-4 --env public`; the driver performs the single-validator stop and restart and captures the boot ids itself."
           }
         },
         {
@@ -577,7 +577,7 @@
     },
     {
       "id": "rc-public-fleet",
-      "scope": "Supply the four-host public manifest and run the public arms. The availability sweep emits RC-3 and RC-6 availability from the same fleet window.",
+      "scope": "Bring up the four-host public fleet on a coordinated new genesis, perform the deploy and the single-validator restart through tools/fleet-run.py, and run RC-1/public and RC-4/public on the candidate. The source set and the N1/N4/N8 differential are recorded as diagnostics in the same campaign record; the remaining public arms keep this campaign as their next PR.",
       "claims": [
         "RC-1",
         "RC-2",

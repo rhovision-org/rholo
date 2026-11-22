@@ -57,8 +57,8 @@ PRIVATE_V6 = (ipaddress.IPv6Network("fc00::/7"),)
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "spec/audit/evidence"
 
-RUN_ARTEFACTS = ("acceptance.json", "collector.json", "plan.public.json", "report.json",
-                 "run.json", "result.json", "manifest.json")
+RUN_ARTEFACTS = ("acceptance.json", "collector.json", "fleet-result.json", "plan.public.json",
+                 "report.json", "run.json", "result.json", "manifest.json")
 RUN_PREFIXES = ("journal", "observations", "progress-samples", "snapshots")
 LABELS = ("off-host-claim", "multi-host", "loopback-diagnostic", "local-devnet", "single-host",
           "public-live", "live-host", "external", "not-a-run")
@@ -342,6 +342,60 @@ def check(directory: Path) -> list[str]:
                     problems.append(
                         f"{directory.name}: a live-host record carries the mutation "
                         f"{verb!r} in {path.name}")
+    elif label == "public-live":
+        # A public claim is the four-host run itself: the driver's result must say so, and a
+        # rehearsal or a loopback endpoint cannot wear the label.
+        result_path = None
+        for candidate in (directory / "fleet-result.json",
+                          directory / "raw" / "fleet-result.json"):
+            if candidate.is_file():
+                result_path = candidate
+                break
+        if result_path is None:
+            problems.append(
+                f"{directory.name}: a public-live record needs fleet-result.json (the driver's "
+                "own account of the run)")
+        else:
+            try:
+                result = json.loads(result_path.read_text())
+            except ValueError:
+                result = None
+                problems.append(f"{directory.name}: fleet-result.json is not valid JSON")
+            if isinstance(result, dict):
+                if result.get("rehearsal") is True:
+                    problems.append(
+                        f"{directory.name}: a rehearsal record cannot declare public-live")
+                if result.get("locality") != "public-live":
+                    problems.append(
+                        f"{directory.name}: the fleet result locality "
+                        f"{result.get('locality')!r} is not public-live")
+                if result.get("transport") != "ssh-systemd":
+                    problems.append(
+                        f"{directory.name}: a public-live result must name the ssh-systemd "
+                        "transport")
+                checks = ((result.get("preflight") or {}).get("checks") or {})
+                if checks.get("distinct_host_labels") is not True:
+                    problems.append(
+                        f"{directory.name}: the run does not establish four distinct declared hosts")
+                if checks.get("distinct_host_boot_ids") is not True:
+                    problems.append(
+                        f"{directory.name}: the run does not establish four distinct host boot ids")
+                if result.get("synthetic_boot_ids") is not False:
+                    problems.append(
+                        f"{directory.name}: synthetic boot ids mean four hosts were not established")
+        for claim in local:
+            problems.append(
+                f"{directory.name}: a public-live record carries a local {claim}")
+        if not re.search(r"four|independent host", readme, re.I):
+            problems.append(
+                f"{directory.name}: a public-live record must name its four independent hosts")
+        for line in readme.splitlines():
+            low = line.lower()
+            if "rehearsal" in low and not re.search(
+                    r"\b(not|no|never|neither|cannot|zero|absent|pending)\b", low):
+                problems.append(
+                    f"{directory.name}: a public-live record claims a rehearsal")
+                break
     elif label == "external":
         lowered = readme.lower()
         if "independent" not in lowered:
