@@ -275,14 +275,25 @@ class Devnet:
                 f"devnet up failed ({result.returncode}): "
                 f"{(result.stderr or result.stdout)[-1200:]}")
         wait_until(
-            "the devnet answers /api/v1/status on every validator",
-            lambda: all(self._ready(i) for i in range(self.validators)), timeout=240)
+            "the devnet is ready on every validator",
+            lambda: all(self._ready(i) for i in range(self.validators)), timeout=300)
 
     def _ready(self, index: int) -> bool:
+        """HTTP is up **and** the shard is serving.
+
+        A joiner answers `/api/v1/status` while its catch-up gate is still closed: the log says
+        "not served until a peer probe confirms the catch-up window", and `/health` reports
+        `ready=false, readyReasons=['shard_not_running']` for the next probe interval. A drill that
+        starts at HTTP-200 reads that as a precondition failure on a node that was about to serve.
+        Wait for the node's own readiness verdict instead.
+        """
+        base = f"http://127.0.0.1:{self.http_base + index * 1000}"
         try:
-            status, _ = http_json(
-                f"http://127.0.0.1:{self.http_base + index * 1000}/api/v1/status", timeout=3)
-            return status == 200
+            status, _ = http_json(f"{base}/api/v1/status", timeout=3)
+            if status != 200:
+                return False
+            _, health = http_json(f"{base}/health", timeout=3)
+            return isinstance(health, dict) and health.get("ready") is True
         except Exception:
             return False
 
