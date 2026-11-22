@@ -99,7 +99,7 @@ fn gateway_node_runs_two_shards_with_their_own_genesis() {
         let status = poll_json(&client, &format!("{base}/api/status"), "status").await;
         assert_eq!(status["shardId"], "/root");
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
@@ -173,7 +173,7 @@ fn the_operator_status_reports_every_member_shards_health() {
             );
         }
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
@@ -280,7 +280,7 @@ fn gateway_node_coordinates_a_two_shard_transaction() {
         .await;
         assert_eq!(in_flight["inFlight"].as_array().unwrap().len(), 0);
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
@@ -323,7 +323,7 @@ fn gateway_node_refuses_a_non_member_shard() {
             .expect("POST /api/v1/txn");
         assert_eq!(resp.status(), 400);
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }

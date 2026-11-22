@@ -152,8 +152,8 @@ fn a_node_dials_another_node_and_holds_the_object_it_gives_back() {
             "the refusal should come from the transport, not from the policy: {reason}"
         );
 
-        a.shutdown();
-        b.shutdown();
+        a.shutdown().await;
+        b.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir_a);
     let _ = std::fs::remove_dir_all(&dir_b);

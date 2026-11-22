@@ -90,7 +90,7 @@ fn autopropose_grows_the_chain_without_a_deploy() {
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
@@ -160,7 +160,7 @@ fn deploy_is_processed_into_a_block() {
             "expected `\"world\"` at `\"hello\"`, got: {data:?}"
         );
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
@@ -264,7 +264,7 @@ fn a_failed_deploy_reports_its_reason_over_http() {
             "the placeholder is for a record with no message, and this block has one"
         );
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
@@ -431,7 +431,7 @@ fn faucet_delivery_is_successful_finalized_and_idempotent() {
             "retry refusal must come from finalized chain eligibility: {reason}"
         );
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }

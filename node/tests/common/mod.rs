@@ -413,10 +413,31 @@ impl TestNode {
             .expect("read PosParams at the committed state")
     }
 
-    /// Abort the server task outright — the blunt stop, for tests that want the process killed the
-    /// way a `SIGKILL` does.
-    pub fn shutdown(self) {
+    /// Abort the server task outright — the blunt stop, for a test that wants the process killed
+    /// the way a `SIGKILL` does.
+    ///
+    /// Most tests want [`TestNode::shutdown`] instead: this leaves the listeners' detached tasks
+    /// running on the test's runtime, and a caller that removes the data directory immediately
+    /// afterwards can race a writer still holding LMDB.
+    pub fn kill(self) {
         self.handle.abort();
+    }
+
+    /// Stop the node the way an operator's `SIGTERM` does, **waiting for `serve` to return**.
+    ///
+    /// Every listener is told to drain; the handle is awaited so the caller may remove the data
+    /// directory without a detached task touching the store after it is gone. The timeout is a
+    /// tripwire for a listener that never drains, not a performance budget; a stuck node is aborted
+    /// and still awaited so the record is a stop, not a panic.
+    pub async fn shutdown(mut self) {
+        let _ = self.stop.send(true);
+        if tokio::time::timeout(Duration::from_secs(30), &mut self.handle)
+            .await
+            .is_err()
+        {
+            self.handle.abort();
+            let _ = (&mut self.handle).await;
+        }
     }
 
     /// Ask the node to stop the way an operator's `SIGTERM` does: every listener is told, they
@@ -531,9 +552,19 @@ async fn build(
 ) -> TestNode {
     let id = node_environment::create(conf).expect("node environment");
     let log = Arc::new(RecordingLog::default());
-    let program: NodeProgram = setup_node_program(conf, &id, log.clone())
-        .await
-        .expect("setup node program");
+    // **Setup runs on a worker, not the caller's future.** `test_runtime` gives its workers the
+    // node binary's 32 MiB stack because genesis normalization recurses deeply; before this, the
+    // pre-await part of `setup_node_program` executed on the libtest thread (2 MiB) whenever a test
+    // used `test_runtime().block_on(...)`. The node's own runtime contract is the stack the work
+    // runs on, not the stack of whoever happened to start it.
+    let setup_conf = conf.clone();
+    let setup_id = id.clone();
+    let setup_log = log.clone();
+    let program: NodeProgram =
+        tokio::spawn(async move { setup_node_program(&setup_conf, &setup_id, setup_log).await })
+            .await
+            .expect("setup task")
+            .expect("setup node program");
     let runtime = program.primary_runtime.clone();
     let (stop, stop_rx) = tokio::sync::watch::channel(false);
     let handle = tokio::spawn(program.serve(stop_rx));

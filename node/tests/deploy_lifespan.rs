@@ -214,7 +214,7 @@ fn a_fresh_single_validator_chain_produces_on_a_deploy_without_extra_flags() {
              issue #356's title, on one chain"
         );
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
@@ -262,7 +262,7 @@ fn a_lone_validator_with_autopropose_produces_and_finalises() {
             h + 1
         );
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
@@ -348,7 +348,7 @@ fn a_deploy_anchored_behind_the_lifespan_is_refused_by_name() {
             "a refused deploy is not held: {held}"
         );
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
