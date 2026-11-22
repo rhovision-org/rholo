@@ -51,6 +51,7 @@ def finality(**overrides):
         "kind": "finality", "validator": 0,
         "bonded_total": 400, "quorum_total": 400, "supporting": 300,
         "partition": ["aa"], "bonded_senders": ["aa", "bb", "cc", "dd"],
+        "partition_size": 1, "not_full": [], "missing": [],
         "advanced": True, "reason_kind": None,
     }
     row.update(overrides)
@@ -209,6 +210,30 @@ class FinalityTests(unittest.TestCase):
         report, code = evaluate_tool.evaluate(record([row]))
         self.assertEqual(code, 1)
         self.assertIn("partition_ok", report["results"][0]["false"])
+
+    def test_a_support_refusal_that_names_its_senders_is_attributable(self):
+        row = finality(advanced=False, reason_kind="support", supporting=200,
+                       bonded_total=300, quorum_total=300, full_partitions=3, candidates=4,
+                       partition_size=4, not_full=["bb"])
+        report, code = evaluate_tool.evaluate(record([row], verdict="pass"))
+        self.assertEqual(code, 0, report)
+        self.assertNotIn("attributable_ok", report["results"][0]["false"])
+
+    def test_a_reasonless_refusal_is_the_silent_stall(self):
+        row = finality(advanced=False, reason_kind=None, supporting=200,
+                       bonded_total=300, quorum_total=300, full_partitions=3, candidates=4,
+                       partition_size=4, not_full=[])
+        report, code = evaluate_tool.evaluate(record([row], verdict="pass"))
+        self.assertEqual(code, 1)
+        self.assertIn("attributable_ok", report["results"][0]["false"])
+
+    def test_a_support_refusal_must_name_every_not_full_sender(self):
+        row = finality(advanced=False, reason_kind="support", supporting=200,
+                       bonded_total=300, quorum_total=300, full_partitions=3, candidates=4,
+                       partition_size=4, not_full=["bb", "cc"])
+        report, code = evaluate_tool.evaluate(record([row], verdict="pass"))
+        self.assertEqual(code, 1)
+        self.assertIn("attributable_ok", report["results"][0]["false"])
 
 
 class StateTests(unittest.TestCase):

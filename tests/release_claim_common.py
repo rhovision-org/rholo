@@ -632,12 +632,23 @@ def evaluate_merge_trace(trace: dict) -> dict:
 
 
 def evaluate_finality_trace(trace: dict) -> dict:
-    """The finality advance: denominator, partition membership, supermajority support."""
+    """The finality advance: denominator, partition membership, supermajority support, attribution.
+
+    `attributable_ok` is the anti-silence predicate: a refusal that names no reason, or a support
+    refusal without the layer's own counts and the not-full senders, is **not** safe. Before it, a
+    refusal with `reason_kind: null` made `support_ok` true and the trace read `model-incomplete`;
+    the bond-leave stall recorded `full_partitions: 0, candidates: 0` for a 3-of-4 layer.
+    """
     bonded = _integer(trace.get("bonded_total"))
     quorum = _integer(trace.get("quorum_total"))
     supporting = _integer(trace.get("supporting"))
+    full_partitions = _integer(trace.get("full_partitions"))
+    candidates = _integer(trace.get("candidates"))
+    partition_size = _integer(trace.get("partition_size"))
     partition = _string_set(trace.get("partition"))
     bonded_senders = _string_set(trace.get("bonded_senders"))
+    not_full = trace.get("not_full")
+    missing = trace.get("missing")
     advanced = trace.get("advanced") is True
     reason = (trace.get("reason_kind") or "").lower()
     denominator_ok = None if bonded is None or quorum is None else quorum == bonded
@@ -650,11 +661,36 @@ def evaluate_finality_trace(trace: dict) -> dict:
         support_ok = 3 * supporting <= 2 * quorum
     else:
         support_ok = True
-    return _predicate_result({
+    if advanced:
+        attributable_ok = reason == ""
+    elif reason.startswith("support"):
+        attributable_ok = (
+            supporting is not None and quorum is not None
+            and full_partitions is not None and candidates is not None
+            and partition_size is not None
+            and isinstance(not_full, list)
+            and len(not_full) == candidates - full_partitions
+        )
+    elif reason.startswith("coverage"):
+        attributable_ok = isinstance(missing, list) and bool(missing)
+    elif reason.startswith("already-published"):
+        attributable_ok = True
+    else:
+        # A refusal with no reason, or an unknown reason, is exactly the silent stall.
+        attributable_ok = False
+    predicates = {
         "denominator_ok": denominator_ok,
         "support_ok": support_ok,
         "partition_ok": partition_ok,
-    })
+    }
+    # **The attribution predicate applies to traces that carry its schema.** A record emitted before
+    # the gate coordinates existed cannot be judged by them; skipping the key keeps its historical
+    # reading instead of retroactively calling a correctly-recorded run unsafe. Every trace written
+    # by the new node carries `partition_size`, `not_full` and `missing`, so a new refusal is always
+    # judged by this predicate.
+    if "partition_size" in trace or "not_full" in trace or "missing" in trace:
+        predicates["attributable_ok"] = attributable_ok
+    return _predicate_result(predicates)
 
 
 def evaluate_state_trace(trace: dict) -> dict:
@@ -884,8 +920,9 @@ def _safe_finality_trace(validator: int = 0) -> dict:
     return {
         "kind": "finality", "validator": validator,
         "bonded_total": 400, "live_total": 400, "quorum_total": 400,
-        "supporting": 300, "full_partitions": 3, "candidates": 3, "supported_tip": 40,
-        "partition": ["aa", "bb", "cc", "dd"],
+        "supporting": 300, "full_partitions": 3, "candidates": 3, "partition_size": 4,
+        "supported_tip": 40,
+        "partition": ["aa", "bb", "cc", "dd"], "not_full": [], "missing": [],
         "bonded_senders": ["aa", "bb", "cc", "dd"],
         "prev_fringe": [], "new_fringe": ["aa"], "advanced": True, "reason_kind": None,
     }

@@ -493,9 +493,15 @@ pub struct FinalityTrace {
     pub supporting: i128,
     pub full_partitions: usize,
     pub candidates: usize,
+    /// How many senders the live partition held (the refusal's own `partition` count).
+    pub partition_size: usize,
     pub supported_tip: i64,
     pub partition: Vec<String>,
     pub bonded_senders: Vec<String>,
+    /// Support refusal: the senders whose candidates were not seen by the whole partition.
+    pub not_full: Vec<String>,
+    /// Coverage refusal: the partition members with no message in the region.
+    pub missing: Vec<String>,
     pub prev_fringe: Vec<String>,
     pub new_fringe: Vec<String>,
     pub advanced: bool,
@@ -522,25 +528,72 @@ fn finality_trace(
         .map(|stake| i128::from(i64::from(*stake)))
         .sum();
     let advanced = new_fringe.is_some();
-    let (reason_kind, supporting, quorum_total) = match &report.reason {
-        None => (
-            None,
-            report
-                .numbers
-                .as_ref()
-                .map_or(0, |numbers| numbers.supporting),
-            report
-                .numbers
-                .as_ref()
-                .map_or(bonded_total, |numbers| numbers.total),
-        ),
-        Some(NoAdvance::Coverage { .. }) => (Some("coverage".to_string()), 0, bonded_total),
-        Some(NoAdvance::Support {
-            supporting, total, ..
-        }) => (Some("support".to_string()), *supporting, *total),
-        Some(NoAdvance::AlreadyPublished) => {
-            (Some("already-published".to_string()), 0, bonded_total)
+    // **A refusal's own numbers, not the last advance's.** `report.numbers` is `None` whenever the
+    // walk never advanced — which is every stall — so reading `full_partitions`/`candidates` from it
+    // recorded `0 of 0` for a layer the log correctly described as three of four. The refusal
+    // carries the numbers it was made of; the trace reads them there.
+    let (
+        reason_kind,
+        supporting,
+        quorum_total,
+        full_partitions,
+        candidates,
+        partition_size,
+        not_full,
+        missing,
+    ) = match &report.reason {
+        None => {
+            let numbers = report.numbers.as_ref();
+            (
+                None,
+                numbers.map_or(0, |n| n.supporting),
+                numbers.map_or(bonded_total, |n| n.total),
+                numbers.map_or(0, |n| n.full_partitions),
+                numbers.map_or(0, |n| n.candidates),
+                report.live.len(),
+                Vec::new(),
+                Vec::new(),
+            )
         }
+        Some(NoAdvance::Coverage {
+            missing, partition, ..
+        }) => (
+            Some("coverage".to_string()),
+            0,
+            bonded_total,
+            0,
+            0,
+            *partition,
+            Vec::new(),
+            missing.iter().map(sender_hex).collect(),
+        ),
+        Some(NoAdvance::Support {
+            supporting,
+            total,
+            full_partitions,
+            candidates,
+            partition,
+            not_full,
+        }) => (
+            Some("support".to_string()),
+            *supporting,
+            *total,
+            *full_partitions,
+            *candidates,
+            *partition,
+            not_full.iter().map(sender_hex).collect(),
+            Vec::new(),
+        ),
+        Some(NoAdvance::AlreadyPublished) => (
+            Some("already-published".to_string()),
+            0,
+            bonded_total,
+            0,
+            0,
+            report.live.len(),
+            Vec::new(),
+            Vec::new(),
+        ),
     };
     FinalityTrace {
         kind: "finality".to_string(),
@@ -548,11 +601,14 @@ fn finality_trace(
         live_total,
         quorum_total,
         supporting,
-        full_partitions: report.numbers.as_ref().map_or(0, |n| n.full_partitions),
-        candidates: report.numbers.as_ref().map_or(0, |n| n.candidates),
+        full_partitions,
+        candidates,
+        partition_size,
         supported_tip: i64::from(report.supported_tip),
         partition: report.live.keys().map(sender_hex).collect(),
         bonded_senders: report.bonded.keys().map(sender_hex).collect(),
+        not_full,
+        missing,
         prev_fringe: prev_fringe
             .iter()
             .map(|message| message.id.to_hex())
@@ -3459,5 +3515,68 @@ mod base_claim_tests {
     #[test]
     fn no_claim_without_a_certificate_is_an_error() {
         assert_eq!(choose_base_claim(Vec::new(), None), Err(BaseError::NoClaim));
+    }
+}
+
+/// **The stall's attribution.** A support refusal must record the numbers it was made of and the
+/// sender whose candidate was not seen by the whole partition. The bond-leave stall read
+/// `200 of 300 (3 of 4)` and the trace recorded `full_partitions: 0, candidates: 0` because it took
+/// those from the last *advance*; this pins the refusal's own tuple.
+#[cfg(test)]
+mod finality_trace_tests {
+    use super::finality_trace;
+    use rchain_block_storage::dag::finalizer::{Message, NoAdvance};
+    use rchain_block_storage::dag::liveness::FinalityReport;
+    use rchain_models::block_hash::BlockHash;
+    use rchain_models::validator::Validator;
+    use rchain_shared::refined::{BlockHeight, NonNegI64};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn validator(byte: u8) -> Validator {
+        Validator::new([byte; 65])
+    }
+
+    fn bonds() -> BTreeMap<Validator, NonNegI64> {
+        [
+            (validator(0), 100),
+            (validator(1), 100),
+            (validator(2), 50),
+            (validator(3), 50),
+        ]
+        .into_iter()
+        .map(|(v, stake)| (v, NonNegI64::try_from(stake).expect("stake")))
+        .collect()
+    }
+
+    #[test]
+    fn a_finality_trace_names_the_not_full_sender() {
+        let not_full = validator(1);
+        let report = FinalityReport::<Validator> {
+            bonded: bonds(),
+            live: bonds(),
+            supported_tip: BlockHeight::try_from(33).expect("height"),
+            numbers: None,
+            reason: Some(NoAdvance::Support {
+                supporting: 200,
+                total: 300,
+                full_partitions: 3,
+                candidates: 4,
+                partition: 4,
+                not_full: [not_full.clone()].into_iter().collect(),
+            }),
+        };
+        let empty = BTreeSet::<Message<BlockHash, Validator>>::new();
+        let trace = finality_trace(&empty, &None, &report);
+        assert_eq!(trace.reason_kind.as_deref(), Some("support"));
+        assert!(!trace.advanced);
+        assert_eq!(trace.supporting, 200);
+        assert_eq!(trace.quorum_total, 300);
+        assert_eq!(trace.full_partitions, 3);
+        assert_eq!(trace.candidates, 4);
+        assert_eq!(trace.partition_size, 4);
+        assert_eq!(
+            trace.not_full,
+            vec![rchain_shared::base16::encode(not_full.as_bytes())]
+        );
     }
 }
