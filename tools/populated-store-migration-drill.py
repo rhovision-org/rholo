@@ -298,7 +298,8 @@ def run_gate(args) -> int:
     raw.mkdir(parents=True, exist_ok=True)
     if args.source_sha:
         capture(out / "source-sha.txt", args.source_sha.strip() + "\n")
-    image_id = docker(["image", "inspect", "-f", "{{.Id}}", "rnode:local"]).strip()
+    image_id = docker(["image", "inspect", "-f", "{{.Id}}",
+                       os.environ.get("RNODE_IMAGE", "rnode:local")]).strip()
     image_id = image_id.removeprefix("sha256:")
     capture(out / "binary-sha256.txt", image_id + "\n")
     result: dict = {"result": "INCONCLUSIVE", "reasons": [], "arms": {}}
@@ -311,7 +312,15 @@ def run_gate(args) -> int:
         except RuntimeError:
             pass
         devnet("up", "--validators", "1", "--fresh", "--epoch-length", str(EPOCH_LENGTH))
-        pre = wait_finalized_state(HTTP_BASE, TARGET_HEIGHT, "the populated chain")
+        wait_finalized_state(HTTP_BASE, TARGET_HEIGHT, "the populated chain")
+        # **Quiesce before the snapshot.** A producing store keeps advancing while it is stopped
+        # and copied, so the copy resumed at 9 against a snapshot captured at 8 and the acceptance
+        # predicate read a valid byte-copy as a different finalized block. Re-open the same store
+        # with autopropose off and capture the head it persisted. (A single manual proposal does
+        # not finalise a one-validator block: the finalizer needs the next fringe.)
+        devnet("down")
+        devnet("up", "--validators", "1", "--no-autopropose")
+        pre = wait_finalized_state(HTTP_BASE, TARGET_HEIGHT, "the populated store's stable head")
         pre["genesis_hash"] = genesis_hash(HTTP_BASE)
         result["arms"]["populated"] = pre
         capture(raw / "populated.json", json.dumps(pre, indent=2, sort_keys=True) + "\n")
@@ -340,11 +349,10 @@ def run_gate(args) -> int:
 
         devnet("down")
         snapshots = snapshot_all("h0")
-        devnet("up", "--validators", "1", "--data-volume", copy_volume_name,
-               "--no-autopropose")
-        wait_finalized_state(HTTP_BASE, pre.get("height") or TARGET_HEIGHT,
-                             "the advance arm's start")
-        devnet("propose")
+        # Autopropose advances the chain; a single manual proposal does not finalise a
+        # one-validator block (the finalizer needs the next fringe), so the advance arm uses the
+        # producer.
+        devnet("up", "--validators", "1", "--data-volume", copy_volume_name)
         advanced_state = wait_finalized_state(
             HTTP_BASE, (pre.get("height") or 0) + 1,
             "the advance arm's next finalized block")

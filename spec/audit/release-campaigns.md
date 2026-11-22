@@ -40,7 +40,7 @@ cannot yet be made. No status is authored.
 | `RC-6` | `public` | public | public-live | **not-observed** | Supply the operator's completed public join record. | `rc-public-fleet` |
 | `RC-6` | `off-host` | local | off-host-claim | **not-observed** | Run `python3 tools/release-check.py run --claim RC-6 --arm off-host` and commit its record; the arm's harness lands in `rc-offhost`. | `rc-offhost` |
 | `RC-6` | `availability` | public | public-live | **not-observed** | Bootstrap a joiner from a non-producer on the public fleet, restore the served anchor and audit it. | `rc-public-fleet` |
-| `RC-7` | `local` | local | local-devnet | **precondition** | The arm did not produce its observation: the mixed arm needs RNODE_OLD_IMAGE set to a separately built prior image, and the downgrade arm needs a store stamped with format 5. Fix t | `rc-harness-old-image` |
+| `RC-7` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-7` | `public` | public | public-live | **not-observed** | Record the rolling fleet swap's mixed-window block agreement and the post-swap finalised head. | `rc-fleet-upgrade` |
 
 ## Next PRs
@@ -399,10 +399,8 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — mixed N/N+1 binaries agree on a block's state, a populated store migrates, and a newer store is refused
 
-Reading: `precondition` — spec/audit/evidence/rc7-local-20261120-0669419/raw/claim.json
-- `RC-7/local/precondition` — no --old-image/RNODE_OLD_IMAGE: the mixed-version arm needs a separately built prior image. **Next:** The arm did not produce its observation: the mixed arm needs RNODE_OLD_IMAGE set to a separately built prior image, and the downgrade arm needs a store stamped with format 5. Fix that input and re-run.
-- Next PR: `rc-harness-old-image`
-  - observed: no --old-image/RNODE_OLD_IMAGE: the mixed-version arm needs a separately built prior image
+Reading: `safe` — spec/audit/evidence/rc7-local-20261122-8c3fa6d/raw/claim.json
+- No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — a rolling fleet swap keeps one finalised chain through the mixed window and reaches the same head after the swap
 
