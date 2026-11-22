@@ -109,6 +109,7 @@
 
 - [Paper A — The law-first port (draft)](methodology/law-first-port.md)
 - [Paper B — Auditable development by AI agents (draft)](methodology/agentic-assurance.md)
+- [Paper C — Release claims and derived readings (draft)](methodology/release-claims.md)
 
 ---
 

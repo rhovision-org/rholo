@@ -70,6 +70,9 @@ The documentation is served as a book (`mdbook serve docs`). It is organized sof
   experiments.
 - **Part VII — Testnet acceptance** ([`docs/src/spec/`](docs/src/spec/)) — the acceptance
   specification, the bounded adversary, the failure-mode HAZOP, and the resource-safety case.
+- **Part VIII — Methodology (draft papers)** ([`docs/src/methodology/`](docs/src/methodology/)) — the
+  law-first port, auditable development by AI agents, and the release-claim method: claims, readings,
+  and the public record.
 
 The entry point for the book is [`docs/src/introduction.md`](docs/src/introduction.md); the
 goal-indexed map for readers and AI agents is
@@ -205,13 +208,16 @@ PR; September 2026 is kept at §9:
 [`docs/src/node/security-audit.md`](docs/src/node/security-audit.md).**
 
 **How the apparatus was built is written up too, because the method is the part that is unusual here.**
-Two draft papers in the book state it and its own limits:
+Three draft papers in the book state it and its own limits:
 [Paper A — the law-first port](docs/src/methodology/law-first-port.md) argues why the reference
 implementation is not the oracle, and what holds an emitted conformance corpus in place;
 [Paper B — auditable development by AI agents](docs/src/methodology/agentic-assurance.md) asks what
-makes agent-written work checkable *after* the session that wrote it is gone. Both name the same missing
-experiment — attributing each finding to the layer that surfaced it, and its cost — and both say plainly
-that they are drafts. Every claim in either one is checkable against this tree.
+makes agent-written work checkable *after* the session that wrote it is gone;
+[Paper C — release claims](docs/src/methodology/release-claims.md) describes how a release claim is
+closed by a reading derived from a committed record, and why a local record cannot close a public arm.
+Papers A and B name the same missing experiment — attributing each finding to the layer that surfaced
+it, and its cost; Paper C names the reading-history and pass/fail-counterfactual measurement it lacks.
+All three say plainly that they are drafts, and every claim in them is checkable against this tree.
 
 ## Governance
 

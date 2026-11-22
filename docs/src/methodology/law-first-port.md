@@ -144,7 +144,9 @@ and the runs are committed.
 
 Every claimed run has a home under `spec/audit/evidence/` (44 suites). A citation to a `target/`
 directory is unopenable and therefore not evidence. This is the practice that answers the reproduction
-gap that verification-evidence methodology papers most often have to concede.
+gap that verification-evidence methodology papers most often have to concede. How such a record
+becomes a release reading — and which readings may close which environment — is
+[Paper C](release-claims.md).
 
 ## 4. How the method fails
 
@@ -213,6 +215,8 @@ register archaeology away.
 ## References
 
 - `spec/INVENTORY.md`, `spec/TYPE-SYSTEM.md`, `spec/AUDIT.md`, `spec/findings.tsv`, `spec/audit/passes.md`
+- [Paper C — release claims](release-claims.md) — the release-claim method that consumes the committed
+  records above
 - `docs/src/spec/failure-hazop.md`, `docs/src/spec/adversary.md`, `docs/src/spec/testnet-acceptance.md`
 - [`spec/README.md`](../../../spec/README.md) — the specification tree and its gates
 - [Kaizen: Building a Performant Blockchain System Verified for Consensus and Integrity](https://dprg.cs.uiuc.edu/data/files/2019/FMCAD%20Slides.pdf) (FMCAD 2019)

@@ -80,7 +80,8 @@ but no".
 ### 3.4 Evidence is committed, not cited
 
 Every claimed run has a home in the tree (`spec/audit/evidence/<suite>/`). A citation to a build output
-directory is unopenable and therefore not evidence.
+directory is unopenable and therefore not evidence. The release-claim method that consumes these
+records, and refuses to let a local record close a public arm, is [Paper C](release-claims.md).
 
 *Prevents:* a claim that cannot be re-entered by anyone, including the agent in a later session.
 
@@ -198,4 +199,5 @@ failures are the part of the record a reader should actually read.
 - `spec/AUDIT.md`, `spec/findings.tsv` — the findings register and its row schema
 - `spec/audit/evidence/` — committed runs
 - `spec/README.md` — the specification tree and its gates
+- [Paper C — release claims](release-claims.md) — how a committed record becomes a release reading
 - Newcombe et al., *How Amazon Web Services Uses Formal Methods*, CACM 58(4), 2015 — the process-report model
