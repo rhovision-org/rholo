@@ -86,7 +86,7 @@ def verify_isolated_tip_dwell(victim, observations, *, max_extra_samples=30):
     return False
 
 
-def verify_producing_isolation(observations):
+def verify_producing_isolation(victim_before, observations):
     """A producing victim advances its own tip while its finalized fence stays frozen.
 
     This is the producing-split control: with autopropose on, the isolated minority keeps proposing,
@@ -94,14 +94,18 @@ def verify_producing_isolation(observations):
     the finalized fence cannot (no quorum). The tip movement is read over the **whole isolation
     window**, not the last three polls: an autopropose victim can produce a burst and then idle for
     longer than the three-poll dwell, and a last-three check calls that a failure.
+
+    The fence is judged by [`finalized_fence_is_frozen`], not by "one height for the whole window":
+    a finality already in flight at the cut may land on the victim's first post-cut samples. A
+    single height across the window was stricter than the documented drain allowance and failed a
+    run whose tip moved 63→67 while the fence settled at 61 after three samples.
     """
     rows = [row for row in observations if type(row.get("tip")) is int]
-    heights = [row.get("finalized_height") for row in rows]
     if len(rows) < DWELL_MIN_SAMPLES:
         return False
-    return (all(type(value) is int for value in heights)
-            and len({row["tip"] for row in rows}) > 1
-            and len(set(heights)) == 1)
+    if len({row["tip"] for row in rows}) <= 1:
+        return False
+    return finalized_fence_is_frozen(victim_before, observations)
 
 
 def finalized_fence_is_frozen(victim_before, observations):
@@ -117,16 +121,23 @@ def finalized_fence_is_frozen(victim_before, observations):
     pre_cut = victim_before.get("finalized_height")
     if len(heights) < DWELL_MIN_SAMPLES:
         return False
-    for start in range(len(heights) - DWELL_MIN_SAMPLES + 1):
-        window = heights[start:start + DWELL_MIN_SAMPLES]
-        if len(set(window)) == 1:
-            settled = window[0]
-            # A settle below the pre-cut fence is a regression, not a drain. A settle more than one
-            # height above it is more than the one queued pre-cut fringe: the isolation leaked.
-            if type(pre_cut) is int and (settled < pre_cut or settled > pre_cut + 1):
-                return False
-            return all(height == settled for height in heights[start:])
-    return False
+    if not all(type(value) is int for value in heights):
+        return False
+    settled = heights[-1]
+    if len(set(heights[-DWELL_MIN_SAMPLES:])) != 1:
+        return False
+    # A settle below the pre-cut fence is a regression, not a drain. A settle more than one height
+    # above it is more than the one queued pre-cut fringe: the isolation leaked. The drain's timing
+    # is not the criterion — an in-flight certificate can land several polls after the cut — the
+    # *single increment* is.
+    if type(pre_cut) is int:
+        if settled not in (pre_cut, pre_cut + 1):
+            return False
+        if any(height not in (pre_cut, settled) for height in heights):
+            return False
+    # Once settled, the fence must hold for the rest of the window; nothing may settle later.
+    first = heights.index(settled)
+    return all(height == settled for height in heights[first:])
 
 
 def epoch_boundary_crossed(low, high, epoch):
@@ -775,7 +786,7 @@ def main():
                 # state. A no-autopropose victim must show a stable tip; a producing
                 # victim must show the opposite — a moving tip with a frozen fence.
                 if producing:
-                    if not verify_producing_isolation(frozen):
+                    if not verify_producing_isolation(victim_before, frozen):
                         raise AssertionError(
                             "the isolated victim did not keep producing while its finalized "
                             "fence stayed frozen")

@@ -389,11 +389,21 @@ def run_cycle(args, victim, cycle, events):
         if "block receiver state full" in all_logs.stdout + all_logs.stderr:
             raise RuntimeError(f"validator {i} logged a receiver capacity refusal")
 
-    since = docker("logs", "--since", str(restarted_utc), node)
-    if since.returncode:
-        raise RuntimeError(f"cannot inspect post-restart proposal evidence: {since.stderr}")
-    if not controls.proposed_after_restart(since.stdout + since.stderr):
-        raise RuntimeError("the victim did not propose after restart")
+    # **A restarted proposer is licensed before it is due.** The node logs "licensed … paced=true"
+    # and proposes on its next cadence; a single read immediately after the health checks caught the
+    # licensed-but-not-yet-due state (2026-11-22, victim 0: attestation at 13:13:39, certificate
+    # accepted 13:13:45, no proposal in the tail). Wait for the cadence, bounded; the proposal is
+    # still required.
+    proposal_deadline = time.monotonic() + 60
+    while True:
+        since = docker("logs", "--since", str(restarted_utc), node)
+        if since.returncode:
+            raise RuntimeError(f"cannot inspect post-restart proposal evidence: {since.stderr}")
+        if controls.proposed_after_restart(since.stdout + since.stderr):
+            break
+        if time.monotonic() >= proposal_deadline:
+            raise RuntimeError("the victim did not propose after restart")
+        time.sleep(2)
 
     return {
         "cycle": cycle,
