@@ -144,7 +144,7 @@ class ClaimTests(unittest.TestCase):
         out = self.inspect()
         self.assertEqual(out["claims"], 7)
         self.assertEqual(out["arms"], 25)
-        self.assertEqual(out["old"], 12)
+        self.assertEqual(out["old"], 13)
 
     def test_no_claim_authors_a_status_or_a_missing_observation(self):
         for row in self.payload["claims"]:
