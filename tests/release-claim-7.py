@@ -176,8 +176,9 @@ def _provenance() -> dict:
                                            stderr=subprocess.DEVNULL).strip()
         except Exception:
             return None
-    image = run("docker", "inspect", "-f", "{{.Id}}", "rnode:local")
-    binary = run("docker", "run", "--rm", "--entrypoint", "sha256sum", "rnode:local",
+    current = os.environ.get("RNODE_IMAGE", "rnode:local")
+    image = run("docker", "inspect", "-f", "{{.Id}}", current)
+    binary = run("docker", "run", "--rm", "--entrypoint", "sha256sum", current,
                  "/usr/local/bin/rnode")
     return {"source_sha": run("git", "rev-parse", "HEAD"),
             "source_dirty": bool(run("git", "status", "--porcelain")),
@@ -208,7 +209,8 @@ def _downgrade(record: dict, out: Path) -> None:
         # subcommand. Repeating the binary name makes the CLI read it as a subcommand.
         command = ["docker", "run", "--rm", "-v", f"{scratch}:/data",
                    "-e", "RNODE_TRACE_DIR=/data/traces",
-                   "rnode:local", "--profile", "docker", "run", "--data-dir", "/data"]
+                   os.environ.get("RNODE_IMAGE", "rnode:local"),
+                   "--profile", "docker", "run", "--data-dir", "/data"]
         try:
             result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True,
                                     timeout=120)
