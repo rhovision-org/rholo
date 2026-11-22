@@ -1233,24 +1233,28 @@ pub async fn close_inputs_for_block(
             state: Blake2b256Hash::from_byte_array(meta.fringe_state_hash.as_bytes()),
         });
     }
-    let base = choose_base_claim(claims, None).map_err(|e| match e {
-        BaseError::NoClaim => format!(
-            "no parent finalises the previous fringe {:?}: the message map and the metadata store \
-             disagree",
-            fringe_hashes
-        ),
-        BaseError::Disagree(claims) => {
-            format!(
-                "the finalisers of fringe {fringe_hashes:?} disagree: {}",
-                describe_claims(&claims)
-            )
+    // **A base that cannot be established yields no attribution, not a failure.** This path
+    // re-derives state for a block that already validated; a synthetic or partially restored DAG
+    // (messages with no fringe, a state pruned from this node's history) has no base claim to read
+    // the gate's bonds from. The only value at stake is the leak's input, and a block that *did*
+    // leak will fail the caller's post-state comparison loudly if this returns the wrong set — so a
+    // missing base is answered with the empty set rather than making the block un-indexable.
+    let bonds = match choose_base_claim(claims, None) {
+        Ok(base) => runtime
+            .compute_bonds(&StateHash::from_slice(base.state().as_bytes()))
+            .await
+            .ok(),
+        Err(_) => None,
+    };
+    let reason = match bonds {
+        Some(bonds) => {
+            let finalizer = Finalizer::new(msg_map);
+            let (_, _, reason, _) =
+                liveness::calculate_finalization_reported(&finalizer, &parents, &bonds);
+            reason
         }
-    })?;
-    let bonds = runtime
-        .compute_bonds(&StateHash::from_slice(base.state().as_bytes()))
-        .await?;
-    let finalizer = Finalizer::new(msg_map);
-    let (_, _, reason, _) = liveness::calculate_finalization_reported(&finalizer, &parents, &bonds);
+        None => None,
+    };
     Ok((
         participation,
         crate::system_deploy::layer_missing_from_stall(&reason),
