@@ -397,7 +397,7 @@ theorem the_join_layer_names_sender_one :
 theorem the_join_layer_advances_once_all_see :
     calculateFringe suppJoinFull bondsJoin bondsJoin = true := by decide
 
-/-! ### The inactivity leak — Law 129
+/-! ### The inactivity leak — law 89's third instrument
 
 The stall above is the exact-two-thirds boundary: sender 1's bond keeps the denominator at 300
 while the supporting layer reaches 200. The leak retires the silent sender at a boundary, and the
@@ -420,9 +420,9 @@ theorem the_join_layer_advances_after_leak :
 theorem a_speaker_within_the_window_does_not_leak :
     leak bondsJoinActive [] = bondsJoinActive := by decide
 
-/-- **Law 129's proposition**: a leak retires only the named silent senders, never raises the
+/-- **The leak's proposition**: a leak retires only the named silent senders, never raises the
     denominator, and makes the bond-leave layer advance. -/
-def law129_statement : Prop :=
+def law89Leak_statement : Prop :=
   (∀ (active : ActiveBonds) (silent : List Sender),
       (∀ v ∈ silent, v ∉ bondedSenders (bondsOfState (leak active silent))) ∧
       totalStake (bondsOfState (leak active silent))
@@ -431,18 +431,18 @@ def law129_statement : Prop :=
       (bondsOfState (leak bondsJoinActive [1]))
       (bondsOfState (leak bondsJoinActive [1])) = true)
 
-theorem law129_statement_holds : law129_statement := by
+theorem law89Leak_statement_holds : law89Leak_statement := by
   refine ⟨?_, the_join_layer_advances_after_leak⟩
   intro active silent
   exact ⟨fun v hv => the_leaked_sender_is_not_in_the_quorum active silent hv,
     totalStake_leak_le active silent⟩
 
 /-- **The mutant**: a leak that retires every sender empties the quorum. -/
-def law129_mutant : Prop :=
+def law89Leak_mutant : Prop :=
   ∃ (active : ActiveBonds) (silent : List Sender),
     (∀ b ∈ active, b.1.id ∈ silent) ∧ leak active silent = [] ∧ active ≠ []
 
-theorem law129_falsifier : law129_mutant := by
+theorem law89Leak_falsifier : law89Leak_mutant := by
   refine ⟨bondsJoinActive, [0, 1, 2, 3], ?_, ?_, ?_⟩ <;> decide
 
 /-! ### The emitted trace refines the decision -/

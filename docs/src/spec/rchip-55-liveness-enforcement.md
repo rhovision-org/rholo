@@ -51,7 +51,7 @@ latch on history.
   by a height lag; a validator that is merely behind is jailed (step 1) with its bond intact. The
   2026-10-02 decision to refuse a leak (`docs/src/formal/progress.md`) is superseded on 2026-11-22 by
   the bond-leave measurement: the exact-two-thirds layer could not be repaired by any predicate,
-  window or round-clock change, and retirement was chosen and modelled as Law 129.
+  window or round-clock change, and retirement was chosen and modelled as law 89's leak clause.
 - **Not the C111 single-actor eviction.** `untrust` remains admission-only; the leak's input is the
   gate's own derivation and a vote needs >2/3 of the active stake.
 - **Not a proposer-only slash.** Participation is the receiver-derived finalised fringe and
@@ -103,7 +103,8 @@ sidecars agree. This is also hard-fork class: two binaries can reject different 
 Jail never writes the pool; one lapse is not sustained absence; a stalled or off-boundary step changes
 nothing; a vote is admitted only above strict 2/3; a passing vote slashes and ejects; a returning
 validator is released; continued silence renews. A passing vote and a release each close the target's
-window and clear its ballots, and a banished validator cannot rebond. **The leak (Law 129)** retires
+window and clear its ballots, and a banished validator cannot rebond. **The leak (law 89's leak
+clause)** retires
 only the sender the gate named, never raises the denominator, and clears its counter on the first
 boundary whose layer covers the partition; the play/replay seam test pins that the derived refusal
 reaches both paths. The Lean model is `spec/Rchain/Liveness.lean`, the register rows 89 and 129 (with

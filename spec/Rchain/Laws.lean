@@ -5247,9 +5247,18 @@ def lawsC : List Law := [
       900, not 1000); release re-enters it. The jail and expiry paths never write `pool` or \
       `withdrawals`; only the tally and the slash do, and only for a target whose vote passed. The \
       authors-only presence is the mutant (`presentFromSenders`), under which every jail is \
-      permanent.",
+      permanent. **Amended 2026-11-22: the inactivity leak.** A validator that *speaks* but whose \
+      message does not cover the finality partition (`NoAdvance::Support.not_full`) is the one \
+      keeping a layer from filling, and the jail cannot reach it (it is present). After \
+      `liveness-jail-after-boundaries` consecutive boundaries of that silence the boundary \
+      **retires** it: the validator leaves the pool and the active snapshot and its bond is \
+      forfeited to the Coop vault (`SlashSeverity::Malicious` through `slash`). `leak active silent` \
+      retires exactly the named senders, never raises the denominator, and makes the bond-leave \
+      layer advance: 100/100/50/50 with sender 1 not-full refuses at 200 of 300 — exactly two \
+      thirds — and advances at 200 of 200 once sender 1 is leaked. `Coverage.missing` (absence by \
+      height) is deliberately not the trigger; the jail remains its response.",
     status := .provedModel,
-    formal := `Rchain.Liveness.law89_statement,
+    formal := `Rchain.law89_with_leak_statement,
     mutant := `Rchain.Liveness.law89_mutant,
     falsifier := `Rchain.Liveness.law89_falsifier,
     declarations := [`Rchain.Liveness.State,
@@ -5326,11 +5335,19 @@ def lawsC : List Law := [
       `Rchain.Liveness.law89_statement,
       `Rchain.Liveness.law89,
       `Rchain.Liveness.law89_mutant,
-      `Rchain.Liveness.law89_falsifier],
+      `Rchain.Liveness.law89_falsifier,
+      `Rchain.ActiveBonds, `Rchain.bondsOfState, `Rchain.leak,
+      `Rchain.leak_retires_only_the_silent, `Rchain.the_leaked_sender_is_not_in_the_quorum,
+      `Rchain.totalStake_leak_le, `Rchain.bondsJoinActive,
+      `Rchain.the_join_layer_advances_after_leak, `Rchain.a_speaker_within_the_window_does_not_leak,
+      `Rchain.law89Leak_statement, `Rchain.law89Leak_statement_holds, `Rchain.law89Leak_mutant,
+      `Rchain.law89Leak_falsifier, `Rchain.law89_with_leak_statement,
+      `Rchain.law89_with_leak_statement_holds],
     axioms := [],
     rust := ["rholang/src/native_state.rs", "rholang/src/pos_liveness.rs",
       "rholang/src/system_processes.rs", "casper/src/genesis/mod.rs",
-      "block-storage/src/dag/liveness.rs", "casper/src/multi_parent_casper.rs"],
+      "block-storage/src/dag/liveness.rs", "casper/src/multi_parent_casper.rs",
+      "casper/src/system_deploy.rs", "casper/src/blocks/proposer/block_creator.rs"],
     rustWitness := ["rholang/src/native_state.rs:a_sustained_absence_jails_without_touching_the_bond",
       "rholang/src/native_state.rs:one_boundary_omission_does_not_jail",
       "rholang/src/native_state.rs:a_stall_freezes_the_jail_clock",
@@ -5346,7 +5363,11 @@ def lawsC : List Law := [
       "rholang/src/native_state.rs:two_of_three_active_votes_cannot_cross_strict_threshold_via_delegation",
       "casper/src/multi_parent_casper.rs:a_deploy_signer_is_presence_at_the_including_height",
       "casper/src/multi_parent_casper.rs:presence_keeps_the_greatest_height",
-      "rholang/src/system_processes.rs:pos_vote_slash_is_authorised_by_the_deployer_id"],
+      "rholang/src/system_processes.rs:pos_vote_slash_is_authorised_by_the_deployer_id",
+      "rholang/src/native_state.rs:a_validator_that_does_not_cover_the_partition_is_leaked_after_the_window",
+      "rholang/src/native_state.rs:a_boundary_that_covers_the_partition_clears_the_silence_counter",
+      "casper/src/runtime_manager.rs:a_boundarys_layer_missing_reaches_play_and_replay_alike",
+      "casper/src/blocks/proposer/block_creator.rs:the_proposer_attaches_the_list_the_replay_will_read"],
     witness := [`Rchain.Liveness.presence_is_the_max_participation_height,
       `Rchain.Liveness.a_deploy_signer_can_present_a_jailed_validator,
       `Rchain.Liveness.a_jailed_validator_is_never_present,
@@ -5371,7 +5392,11 @@ def lawsC : List Law := [
       `Rchain.Liveness.a_banished_validator_cannot_rebond,
       `Rchain.Liveness.an_unguarded_rebond_reaches_a_banished_validator,
       `Rchain.Liveness.law89,
-      `Rchain.Liveness.law89_falsifier],
+      `Rchain.Liveness.law89_falsifier,
+      `Rchain.leak_retires_only_the_silent, `Rchain.the_leaked_sender_is_not_in_the_quorum,
+      `Rchain.totalStake_leak_le, `Rchain.the_join_layer_advances_after_leak,
+      `Rchain.a_speaker_within_the_window_does_not_leak, `Rchain.law89Leak_statement_holds,
+      `Rchain.law89Leak_falsifier, `Rchain.law89_with_leak_statement_holds],
     falsifiable := "`one_lapse_is_not_sustained` shows one absent boundary does not jail with \
       `jailAfter = 2`; `a_boundary_at_the_threshold_jails` shows the sustained count does. \
       `exactly_two_thirds_does_not_pass` shows 600 of 900 is not a strict supermajority and \
@@ -5381,7 +5406,11 @@ def lawsC : List Law := [
       off-boundary no-ops; `a_passing_vote_slashes_and_ejects` is the bond/eject/clear arm. \
       **The retired authors-only presence** leaves a deploy-presented jail in place \
       (`law89_mutant`/`law89_falsifier`), while `presentFromAuthorsAndDeployers` releases it \
-      (`a_deploy_signer_can_present_a_jailed_validator`).",
+      (`a_deploy_signer_can_present_a_jailed_validator`). **The leak's arms**: \
+      `the_join_layer_advances_after_leak` is the 200/200 advance that the 200/300 refusal could not \
+      reach, `a_speaker_within_the_window_does_not_leak` is the empty silent set, and \
+      `law89Leak_falsifier` constructs the mutant leak that retires every sender and empties the \
+      quorum — a lockstep chain cannot finalise, so the mutant is not a refinement.",
     note := "RCHIP #55. The model derives presence from the participation map: `participationMap` is \
       the maximum height per validator over fringe authors and included deploy signers \
       (`casper/src/multi_parent_casper.rs:770-818`); the boundary's `quorumTip` is the greatest \
@@ -5400,9 +5429,21 @@ def lawsC : List Law := [
       `deploy_signers`), which is the signal a jailed key can still produce: it signs a funded \
       deploy an unjailed proposer includes. `presentFromAuthorsAndDeployers` is that rule; \
       `presentFromSenders` is the retired authors-only model, kept as the mutant. The slash's \
-      distribution to delegators is Law 57's subject. This is **not** an inactivity leak: no \
-      automatic step touches a bond. Default off; a network arms it at genesis. The boundary-skip \
-      hole (no validity rule requires a `CloseBlock` at a boundary) is a separate residual." },
+      distribution to delegators is Law 57's subject. **Amended 2026-11-22 with the priced \
+      inactivity leak**, superseding the 2026-10-02 refusal: the bond-leave measurement showed a \
+      layer at 100/100/50/50 whose 200 of 300 is exactly two thirds, where no predicate, window or \
+      round-clock change advances the chain; retirement of the sender the gate names as not-full is \
+      the escape, and the round-clock alternative was refuted by the N=8 invariants. The trigger is \
+      the gate's own refusal, derived by every node from the block's justification set and never \
+      carried on the wire (`CloseBlock.layer_missing`, `pos:silence`), so a proposer cannot choose \
+      whom to leak; `Coverage.missing` stays the jail's. The leak runs **before** the frozen-tip \
+      guard, because a frozen tip is the condition it exists to break. The bond forfeiture reuses \
+      `slash` (`Malicious` takes the whole tier), so the validator leaves the pool, the active set \
+      and every delegation ledger by the same rule a proven offence uses. Default off; a network \
+      arms it at genesis. What it does **not** claim: that a live quorum produces a full layer in \
+      bounded rounds — that remains Law 58's schedule hypothesis, measured by the campaign. The \
+      boundary-skip hole (no validity rule requires a `CloseBlock` at a boundary) is a separate \
+      residual." },
 
   { number := 90, clause := "a", layer := "Node",
     statement := "**A served hostlist entry is earned.** A peer appears in `GET /api/v1/nodes` only \
@@ -7910,65 +7951,6 @@ def lawsC : List Law := [
       The Rust witnesses are the reset inventory tests: the deploy is returned before its only \
       block is purged, and a disk-backed reset preserves the inventory across a store reopen. The \
       public arm, not this law, measures the live stop and rejoin." },
-  { number := 129, layer := "Casper",
-    statement := "**The inactivity leak: a validator that does not cover the finality partition is \
-      retired from it, and only it.** At an epoch boundary a sender the gate's own refusal names as \
-      not-full (`NoAdvance::Support.not_full`) is retired from the active snapshot after a bounded \
-      window, forfeiting its bond. (`NoAdvance::Coverage.missing` is absence by height, which the \
-      live weight set and the bond-preserving jail already handle; it is deliberately not the leak's \
-      trigger.) `leak active silent` is \
-      the map transition; it removes exactly the named senders, one leaked sender is absent from \
-      `bondedSenders` of the result, and the denominator never rises. The bond-leave fixture — \
-      100/100/50/50 with sender 1's candidate unseen by the partition — refuses at 200 of 300 \
-      (exactly two thirds, Law 52's clause b) and advances at 200 of 200 once sender 1 is leaked: \
-      **retirement, not a weaker predicate, is what lets the survivors finalise.**",
-    status := .provedModel,
-    formal := `Rchain.law129_statement,
-    mutant := `Rchain.law129_mutant,
-    falsifier := `Rchain.law129_falsifier,
-    declarations := [`Rchain.ActiveBonds, `Rchain.bondsOfState, `Rchain.leak,
-      `Rchain.leak_retires_only_the_silent, `Rchain.the_leaked_sender_is_not_in_the_quorum,
-      `Rchain.totalStake_leak_le, `Rchain.bondsJoinActive,
-      `Rchain.the_join_layer_advances_after_leak, `Rchain.a_speaker_within_the_window_does_not_leak,
-      `Rchain.law129_statement, `Rchain.law129_statement_holds, `Rchain.law129_mutant,
-      `Rchain.law129_falsifier],
-    axioms := [],
-    rust := ["rholang/src/native_state.rs", "casper/src/system_deploy.rs",
-      "casper/src/blocks/proposer/block_creator.rs", "casper/src/multi_parent_casper.rs",
-      "block-storage/src/dag/finalizer.rs"],
-    rustWitness := [
-      "rholang/src/native_state.rs:a_validator_that_does_not_cover_the_partition_is_leaked_after_the_window",
-      "rholang/src/native_state.rs:a_boundary_that_covers_the_partition_clears_the_silence_counter",
-      "casper/src/runtime_manager.rs:a_boundarys_layer_missing_reaches_play_and_replay_alike",
-      "casper/src/blocks/proposer/block_creator.rs:the_proposer_attaches_the_list_the_replay_will_read"],
-    witness := [`Rchain.leak_retires_only_the_silent,
-      `Rchain.the_leaked_sender_is_not_in_the_quorum, `Rchain.totalStake_leak_le,
-      `Rchain.the_join_layer_advances_after_leak, `Rchain.a_speaker_within_the_window_does_not_leak,
-      `Rchain.law129_statement_holds, `Rchain.law129_falsifier],
-    falsifiable := "Use a leak that retires every sender (`law129_mutant`): it empties the quorum, \
-      which `law129_falsifier` constructs on the join fixture. Drop the `filter` from `leak` and \
-      `leak_retires_only_the_silent` fails; make the denominator `pool` instead of the filtered \
-      active snapshot and `totalStake_leak_le` fails. The Rust controls are two-sided: the leak fires \
-      only after two consecutive boundaries (one boundary of not-full is a race), and a boundary \
-      without the evidence clears the counter — a latch on history, rather than a statement about \
-      the validator's current condition, is the mutant the second test excludes.",
-    note := "**The instrument the exact-two-thirds decision chose** (2026-11-22, the bond-leave \
-      campaign). Law 52's clause b made the refusal attributable but could not make the chain \
-      advance: 200 of 300 is exactly two thirds and `is_supermajority` refuses it by one stake. The \
-      round-clock correction proposed for it was refuted by the repository's own N=8 invariants \
-      (`a_never_spoken_validator_does_not_rearm_its_grace_every_round`, \
-      `fast_proposer_cannot_retire_an_online_quorum_or_advance_round_alone`), which is why the \
-      liveness escape is priced retirement rather than a wider predicate. The `silent` input is the \
-      gate's own `not_full` — derived by every node from the block's \
-      justification set and **not carried on the wire**, so a proposer cannot choose whom to leak; \
-      the play/replay seam test pins that the derivation reaches both paths. The window is the \
-      existing `liveness_jail_after_boundaries` (sustained absence), and the step runs **before** \
-      the frozen-tip guard, because a frozen tip is the condition the leak exists to break. The \
-      bond forfeiture reuses `slash` (`SlashSeverity::Malicious` takes the whole tier), so the \
-      validator leaves the pool, the active set and every delegation ledger by the same rule a \
-      proven offence uses, and the stake is transferred to the Coop vault. **What it does not \
-      claim**: that a live quorum produces a full layer in bounded rounds — that remains Law 58's \
-      named schedule hypothesis, measured by the campaign, not proved here." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

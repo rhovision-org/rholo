@@ -35,5 +35,5 @@ could not exercise it.
 tests named in the PR (`a_validator_that_does_not_cover_the_partition_is_leaked_after_the_window`,
 `a_boundary_that_covers_the_partition_clears_the_silence_counter`,
 `a_boundarys_layer_missing_reaches_play_and_replay_alike`, `the_leaks_input_is_the_gates_not_full_set`,
-`the_proposer_attaches_the_list_the_replay_will_read`) and by Law 129. The live arm remains owed
+`the_proposer_attaches_the_list_the_replay_will_read`) and by law 89's leak clause. The live arm remains owed
 until the joiner syncs.

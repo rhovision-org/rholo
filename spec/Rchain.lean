@@ -69,6 +69,7 @@ import Rchain.Casper.ReadVersion
 import Rchain.Casper.Record
 import Rchain.Casper.RecordJoin
 import Rchain.Casper.Liveness
+import Rchain.Casper.LivenessLeak
 import Rchain.Casper.Stranding
 import Rchain.Casper.Provenance
 import Rchain.Casper.ReplayEvidence

@@ -293,7 +293,7 @@ def campaign(out: Path, keep: bool) -> dict:
         node_env="RNODE_TRACE_DIR=/var/lib/rnode/traces",
         extra_up=("--no-autopropose", "--propose-on-deploy", "--stakes", "100,100,50",
                   "--epoch-length", str(EPOCH),
-                  # **Arm the inactivity leak** (Law 129). The absence threshold is a height lag, so
+                  # **Arm the inactivity leak** (law 89's leak clause). The absence threshold is a height lag, so
                   # it is set past any plausible block gap on this net: the signal under test is the
                   # gate's coverage refusal (`not_full`/`missing`), not a validator that stopped
                   # publishing. The window is two boundaries — one boundary of not-full is a race.
