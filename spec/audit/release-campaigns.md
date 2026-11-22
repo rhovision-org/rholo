@@ -423,11 +423,12 @@ Reading: `not-observed` — no committed run record
 | `G428-M2` | claim RC-5 | release-claims.json RC-5 |
 | `G428-M3` | claim RC-6 | release-claims.json RC-6 |
 | `G428-M4` | claims RC-2, RC-3, RC-4 | release-claims.json RC-2/RC-3/RC-4 |
-| `G584-G1` | setup precondition | the preflight before every live claim |
-| `G584-G2` | claim RC-1 | release-claims.json RC-1 |
-| `G584-G3` | claim RC-1 | release-claims.json RC-1 |
-| `G584-G4` | claim RC-4 | release-claims.json RC-4 |
-| `G584-G5` | evidence rule | tools/evidence-pack.py and docs/src/spec/gate-measurement.md |
+| `G584-G1` | retired as a closing criterion; a public campaign precondition | release-claims.json RC-1/public and RC-4/public (the manifest each run must record) |
+| `G584-G2` | retired as a closing criterion; claim RC-1/public | release-claims.json RC-1 |
+| `G584-G3` | retired as a closing criterion; claim RC-1/public | release-claims.json RC-1 |
+| `G584-G4` | retired as a closing criterion; claim RC-4/public | release-claims.json RC-4 |
+| `G584-G5` | retired as a closing criterion; the evidence rule | tools/evidence-pack.py and docs/src/spec/gate-measurement.md |
+| `G584-G6` | retired; the claim reading is the verdict, not a named reviewer | tools/release-check.py --assert-ready and release-claims.json RC-1/RC-4 |
 | `TA-C1` | claims RC-1 and RC-2; attestation is an evidence rule | release-claims.json RC-1/RC-2 |
 | `TA-C2` | claims RC-1/RC-2/RC-4 bond-leave arms | release-claims.json RC-1 bond-leave, RC-2 validator-set, RC-4 returner |
 

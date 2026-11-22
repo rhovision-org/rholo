@@ -1,5 +1,14 @@
 # #487 / #584 — pre-registered public four-validator acceptance runbook
 
+> **Historical / superseded (2026-11-22).** This runbook's G6 closing mechanism — a named independent
+> reviewer's verdict against four-host pins and a UTC window — is **retired as a release condition**.
+> The live verdict is now the release-claim reading: **RC-1/public** (truthful settlement) and
+> **RC-4/public** (recovery without loss), derived by `tools/release-check.py` and enforced by
+> `release-check.py --assert-ready`. No prior-test provenance satisfies a `not-observed` arm. The
+> runbook is retained as the historical observation protocol and as diagnostic guidance for the
+> `tools/live-gate.py` sampler; it does not close #584 or authorize a release. See
+> `spec/audit/release-claims.json` and `spec/audit/release-campaigns.md`.
+
 **Status:** DRAFT / NOT EXECUTED. Refreshed 2026-11-18 onto `dev@77953df4f` after the #611 local
 rehearsal: the collector now carries and requires the selected-candidate pins, the deploy
 distribution is a preflight pin, and the sampling cadence is 1 s. The scoring criteria and arms are

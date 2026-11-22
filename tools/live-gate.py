@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""live-gate — sample the #584 live four-validator run and check G1–G5 without deciding.
+"""live-gate — sample a four-validator live run and check G1–G5 without deciding.
 
-The #584 gate closes only when a named independent reviewer records **G6** against **G1–G5**
-(`spec/audit/runbooks/n487-live-postdeployment-20261108.md`). This tool is the instrument between
-the runbook's arms and that review:
+**Diagnostic only (2026-11-22).** The #584 G6 human verdict is retired as a release condition; the
+binding gate is the release-claim reading (`RC-1/public`, `RC-4/public`) derived by
+`tools/release-check.py` and enforced by `release-check.py --assert-ready`. This tool is retained as
+the read-only observation sampler and worksheet for a live run; it does not close a gate and a G6
+record is historical evidence, not a release verdict.
 
 * `sample` polls four validator endpoints **read-only** at a fixed cadence and records every answer,
   including 503s, timeouts and connection errors, as timestamped events with the exact response body
@@ -1276,7 +1278,8 @@ def cmd_check(args) -> int:
         print(f"  G6: {g6['status']} record")
         for reason in g6["reasons"][:4]:
             print(f"      {reason}")
-    print("  NOT ACCEPTANCE: this tool cannot record #584's G6 verdict.")
+    print("  DIAGNOSTIC ONLY: the release gate is tools/release-check.py "
+          "(RC-1/public, RC-4/public); a G6 record is historical evidence, not a verdict.")
     statuses = {
         criterion["status"] for name, criterion in report["criteria"].items()
         if name != "G6" or verdict_path is not None

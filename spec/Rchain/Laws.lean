@@ -7710,6 +7710,178 @@ def lawsC : List Law := [
       the last check — is named in the HAZOP; the H-1 insert gate and the durable own-key verdict \
       remain the backstop." },
 
+  { number := 125, layer := "Casper",
+    statement := "**The finalized read is the certified fringe's seen closure, and it is \
+      node-local.** `is_finalized(h)` is membership in the union of the latest fringe's `seen` sets, \
+      not membership in the fringe's own ids; a block below the tip is finalized because a later \
+      member has seen it. The read is node-local: the finality-observation endpoint reports \
+      `scope: nodeLocal` and `availability: unknown`, and a local read is not a quorum verdict. The \
+      mutant is the read that trusts only the fringe's ids, which drops the seen history.",
+    status := .provedModel,
+    formal := `Rchain.FinalityRead.law125_statement,
+    mutant := `Rchain.FinalityRead.law125_mutant,
+    falsifier := `Rchain.FinalityRead.law125_falsifier,
+    declarations := [`Rchain.FinalityRead.Msg,
+      `Rchain.FinalityRead.fringeSeen,
+      `Rchain.FinalityRead.isFinalized,
+      `Rchain.FinalityRead.isFinalizedUnchecked,
+      `Rchain.FinalityRead.is_finalized_iff_exists_seen,
+      `Rchain.FinalityRead.a_seen_member_is_finalized,
+      `Rchain.FinalityRead.a_fringe_member_is_finalized,
+      `Rchain.FinalityRead.Availability,
+      `Rchain.FinalityRead.Observation,
+      `Rchain.FinalityRead.localObservation,
+      `Rchain.FinalityRead.a_local_observation_does_not_claim_finality,
+      `Rchain.FinalityRead.law125_mutant,
+      `Rchain.FinalityRead.law125_falsifier,
+      `Rchain.FinalityRead.law125_statement,
+      `Rchain.FinalityRead.law125],
+    axioms := [],
+    rust := ["block-storage/src/dag/representation.rs", "node/src/web/http.rs"],
+    rustWitness := [
+      "block-storage/src/dag/representation.rs:the_finalized_read_is_the_seen_closure_not_the_fringe_ids"],
+    witness := [`Rchain.FinalityRead.law125, `Rchain.FinalityRead.law125_falsifier,
+      `Rchain.FinalityRead.a_fringe_member_is_finalized,
+      `Rchain.FinalityRead.a_local_observation_does_not_claim_finality],
+    falsifiable := "Read only the fringe's ids (`isFinalizedUnchecked`) and a block below the tip \
+      that every later member has seen stops being finalized (`law125_mutant`, `law125_falsifier`). \
+      Treat the local read as a quorum verdict and `a_local_observation_does_not_claim_finality` \
+      fails.",
+    note := "**The read every settlement answer derives from** (#487, 2026-10-28). The node's \
+      `finalized_blocks_set` is the seen closure of the latest fringe (`representation.rs:57-83`), \
+      and `is_finalized` is membership in it (`:141-143`). A stale local fringe can lag the network \
+      while the node reports `running`; the endpoint's `nodeLocal`/`unknown` label is the boundary, \
+      not a quorum claim. The Rust test is the representation read: a seen ancestor is finalized, an \
+      unseen block is not, and the last finalized hash is the fringe's highest member. The route \
+      reads the same value; the campaign, not this law, measures whether the local view is current." },
+
+  { number := 126, layer := "Casper",
+    statement := "**Settlement is finalized inclusion, and the deploy lifecycle is total.** \
+      `settlementConfirmed` is true exactly when the deploy's **inclusion block** is finalized and \
+      its execution succeeded (`finalizedSuccess`). `ProcessedWithSuccess` is execution, not \
+      settlement; `includedUnfinalized` and `finalityUnknown` do not confirm; `finalizedError` is a \
+      terminal execution failure, not successful settlement. The stage table is exhaustive and \
+      exclusive. The mutant is the pre-#487 reading that treats any processed deploy as settled.",
+    status := .provedModel,
+    formal := `Rchain.DeploySettlement.law126_statement,
+    mutant := `Rchain.DeploySettlement.law126_mutant,
+    falsifier := `Rchain.DeploySettlement.law126_falsifier,
+    declarations := [`Rchain.DeploySettlement.Exec,
+      `Rchain.DeploySettlement.Stage,
+      `Rchain.DeploySettlement.stage,
+      `Rchain.DeploySettlement.confirmed,
+      `Rchain.DeploySettlement.confirmedUnchecked,
+      `Rchain.DeploySettlement.option_bool_cases,
+      `Rchain.DeploySettlement.confirmed_iff_finalized_success,
+      `Rchain.DeploySettlement.processed_success_without_finality_is_not_settlement,
+      `Rchain.DeploySettlement.a_finalized_error_is_not_settlement,
+      `Rchain.DeploySettlement.the_stage_is_total,
+      `Rchain.DeploySettlement.a_processed_deploy_is_included_before_finality,
+      `Rchain.DeploySettlement.law126_mutant,
+      `Rchain.DeploySettlement.law126_falsifier,
+      `Rchain.DeploySettlement.law126_statement,
+      `Rchain.DeploySettlement.law126],
+    axioms := [],
+    rust := ["node/src/web/http.rs", "casper/src/api/block_api_impl.rs"],
+    rustWitness := [
+      "node/src/web/http.rs:the_settlement_stage_is_total_and_only_finalized_success_confirms"],
+    witness := [`Rchain.DeploySettlement.law126, `Rchain.DeploySettlement.law126_falsifier,
+      `Rchain.DeploySettlement.confirmed_iff_finalized_success,
+      `Rchain.DeploySettlement.processed_success_without_finality_is_not_settlement,
+      `Rchain.DeploySettlement.the_stage_is_total],
+    falsifiable := "Use `confirmedUnchecked` — any processed deploy is settlement — and the \
+      incident's pair (processed success, finality false) confirms (`law126_mutant`, \
+      `law126_falsifier`). Swap the `finalizedError` arm into `finalizedSuccess` and the error test \
+      fails; drop a stage from the table and `the_stage_is_total` fails.",
+    note := "**The #487 contract as a law** (2026-11-22). On block 1781 a native-REV transfer was \
+      `ProcessedWithSuccess` while finality was frozen at 1756; a client reading the execution tag \
+      or the tip balance could treat it as settled. #552 made `settlementConfirmed` depend on the \
+      inclusion block's finality (`http.rs:1556-1659`), and the local campaign at exactly 2/3 live \
+      stake passed. This law states the surface's implication and its total stage table; the Rust \
+      test enumerates every execution/finality pair and asserts confirmation exactly at \
+      `finalizedSuccess`." },
+
+  { number := 127, layer := "Sync",
+    statement := "**A block's declared fringe is a claim; the local read uses the recomputation.** \
+      A validator that ingests a block recomputes the fringe from the justifications and stores that \
+      value in the validated metadata; `is_finalized` reads the validated metadata, not the wire \
+      field. A mismatched declared fringe is therefore not the trusted read. The mutant trusts the \
+      declared field; the falsifier is a declared `[1]` against a computed `[2]`.",
+    status := .provedModel,
+    formal := `Rchain.FringeClaim.law127_statement,
+    mutant := `Rchain.FringeClaim.law127_mutant,
+    falsifier := `Rchain.FringeClaim.law127_falsifier,
+    declarations := [`Rchain.FringeClaim.Block,
+      `Rchain.FringeClaim.readFringe,
+      `Rchain.FringeClaim.trustedRead,
+      `Rchain.FringeClaim.the_trusted_read_is_the_computation,
+      `Rchain.FringeClaim.a_mismatched_claim_is_not_the_trusted_read,
+      `Rchain.FringeClaim.law127_mutant,
+      `Rchain.FringeClaim.law127_falsifier,
+      `Rchain.FringeClaim.law127_statement,
+      `Rchain.FringeClaim.law127],
+    axioms := [],
+    rust := ["casper/src/interpreter_util.rs", "casper/src/engine/recovery.rs",
+      "casper/src/engine/node_launch.rs"],
+    rustWitness := [
+      "casper/tests/fringe_restore.rs:the_two_paths_disagree_about_the_blocks_own_claim"],
+    witness := [`Rchain.FringeClaim.law127, `Rchain.FringeClaim.law127_falsifier,
+      `Rchain.FringeClaim.a_mismatched_claim_is_not_the_trusted_read],
+    falsifiable := "Trust the declared field (`readFringe b false`) and a block whose declared \
+      fringe differs from its computation feeds the wrong set to `is_finalized` (`law127_mutant`, \
+      `law127_falsifier`).",
+    note := "**The ingest trust boundary** (RCA 2026-11-22). The validated metadata's fringe is the \
+      merge's computed pre-state (`interpreter_util.rs:1313,1506`), and the restore/boot paths \
+      compare the restored metadata with the validating one (`recovery.rs:361,403`, \
+      `node_launch.rs:758-791`). The wire field remains a claim: it is content-addressed with the \
+      block, but the local finalized read does not use it. The Rust witness is the fringe-restore \
+      comparison, where the restore path's empty claim and the validating path's real fringe are \
+      kept apart." },
+
+  { number := 128, layer := "Casper",
+    statement := "**Recovery preserves accepted work.** A restart that re-reads the persisted pool \
+      leaves every accepted deploy resolved; a reset to a finalized anchor returns every accepted \
+      deploy above the anchor to the pool (or leaves it finalized below it); a recovery that \
+      empties the pool and the DAG loses it. The invariant is `wellFormed`: an accepted deploy is \
+      already pooled, included or finalized. The mutant is the silent drop.",
+    status := .provedModel,
+    formal := `Rchain.RecoveryPreservation.law128_statement,
+    mutant := `Rchain.RecoveryPreservation.law128_mutant,
+    falsifier := `Rchain.RecoveryPreservation.law128_falsifier,
+    declarations := [`Rchain.RecoveryPreservation.State,
+      `Rchain.RecoveryPreservation.resolved,
+      `Rchain.RecoveryPreservation.wellFormed,
+      `Rchain.RecoveryPreservation.preserves,
+      `Rchain.RecoveryPreservation.replay,
+      `Rchain.RecoveryPreservation.reset,
+      `Rchain.RecoveryPreservation.a_pool_replay_preserves,
+      `Rchain.RecoveryPreservation.a_reset_preserves,
+      `Rchain.RecoveryPreservation.silentDrop,
+      `Rchain.RecoveryPreservation.a_silent_drop_does_not_preserve,
+      `Rchain.RecoveryPreservation.law128_mutant,
+      `Rchain.RecoveryPreservation.law128_falsifier,
+      `Rchain.RecoveryPreservation.law128_statement,
+      `Rchain.RecoveryPreservation.law128],
+    axioms := [],
+    rust := ["casper/src/engine/reset.rs", "casper/src/block_disposition.rs",
+      "casper/tests/reset.rs"],
+    rustWitness := [
+      "casper/tests/reset.rs:a_self_replay_reset_returns_the_deploy_before_purging_its_only_block",
+      "casper/tests/reset.rs:a_disk_backed_reset_preserves_the_inventory_across_store_reopen"],
+    witness := [`Rchain.RecoveryPreservation.law128, `Rchain.RecoveryPreservation.law128_falsifier,
+      `Rchain.RecoveryPreservation.a_pool_replay_preserves,
+      `Rchain.RecoveryPreservation.a_reset_preserves],
+    falsifiable := "Use `silentDrop` — a recovery that empties the pool and the DAG — and the \
+      accepted deploy disappears (`law128_mutant`, `law128_falsifier`). Drop the return arm from \
+      `reset` and `a_reset_preserves` fails.",
+    note := "**The RC-4/public claim in the register** (#564; #641). The 45-hour freeze's recovery \
+      depends on the reset inventory returning unfinalized deploys before the rewind \
+      (`return_unfinalised_deploys`, C366/C359/C365), and RC-4/public's pass condition says every \
+      deploy accepted by a survivor resolves and its effect is at the post-recovery finalized head. \
+      The Rust witnesses are the reset inventory tests: the deploy is returned before its only \
+      block is purged, and a disk-backed reset preserves the inventory across a store reopen. The \
+      public arm, not this law, measures the live stop and rejoin." },
+
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

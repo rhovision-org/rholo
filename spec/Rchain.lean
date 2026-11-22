@@ -112,6 +112,10 @@ import Rchain.Charging
 import Rchain.Cost
 import Rchain.Crypto.Random
 import Rchain.Crypto.Spec
+import Rchain.FinalityRead
+import Rchain.DeploySettlement
+import Rchain.FringeClaim
+import Rchain.RecoveryPreservation
 -- The law register (`Rchain/Laws.lean`) is pure data with no imports: the catalog of every law, and the
 -- rows `Rchain/LawsMain.lean` checks the tree against. (Its own count is `lawCeiling`, checked against
 -- the rows at build time; a number written in a comment here is a number nothing checks.)

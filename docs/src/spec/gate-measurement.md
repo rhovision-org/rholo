@@ -67,6 +67,13 @@ names its blocker. `check-mainnet-gates.py --assert-closeable` exits 3 while any
 different sign-offs. A `related` edge in the register names the shared criterion; it does not
 let one campaign discharge another gate.
 
+**#584's G6 is retired (2026-11-22).** A named reviewer's verdict is not a release condition. The
+G1–G5 criteria are superseded by the release-claim readings: G2/G3 → **RC-1/public**, G4 →
+**RC-4/public**, G1 → the public campaign's own prerequisite (the manifest the run records), and G5 →
+the evidence rule. `tools/release-check.py --assert-ready` is the gate; a `not-observed` arm is
+satisfied only by a fresh run on the current candidate, never by a previous build's pins, a previous
+window's samples or an attestation.
+
 ## Round two — the witness, control and evidence binding
 
 A `met` gate now carries a `witness_binding`: the gate's acceptance hash, a control whose

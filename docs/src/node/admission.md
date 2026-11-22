@@ -163,3 +163,14 @@ validators.
 4. Rollback is removal, not a switch: unset the two HTTP variables, set `RNODE_DEPLOY_RELAY=0`, and
    leave `RNODE_CROSS_DEPLOY_BATCHING` unset. Nothing about genesis, chain state, protocol messages,
    hash validity or fork choice changes.
+
+## The live verdict is a claim reading (2026-11-22)
+
+The #487/#584 live question is no longer a named reviewer's G6 verdict. It is the release-claim
+reading: **RC-1/public** (truthful settlement: `finalizedSuccess` and `settlementConfirmed`, the same
+finalized head on every validator, the marker retained through later finalized heads) and
+**RC-4/public** (recovery without loss: one real host stop, survivors finalizing past it, the victim
+rejoining the same finalized head, no own-key/self-replay halt). `tools/release-check.py` derives the
+reading from the run's own trace and `--assert-ready` is the gate. A previous test's pins, a previous
+window's samples or a reviewer's attestation cannot satisfy a `not-observed` arm; the run must be on
+the current candidate.

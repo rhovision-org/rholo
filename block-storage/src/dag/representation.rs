@@ -335,6 +335,29 @@ mod tests {
         assert!(dag.finalized_blocks_set().is_empty());
     }
 
+    /// **Law 125's Rust witness.** The finalized read is the seen closure of the latest fringe, not
+    /// the fringe's own ids: a block below the tip is finalized because the tip has seen it, while a
+    /// block outside the closure is not. The fixture's tip (height 2) carries `fringe = {hash(2)}`
+    /// and `seen = {hash(0), hash(1), hash(2)}`.
+    #[test]
+    fn the_finalized_read_is_the_seen_closure_not_the_fringe_ids() {
+        let dag = chain_with_a_tip();
+        assert_eq!(dag.last_finalized_block_hash(), Some(hash(2)));
+        assert!(
+            dag.is_finalized(&hash(0)),
+            "hash(0) is below the fringe but the tip has seen it"
+        );
+        assert!(
+            dag.is_finalized(&hash(1)),
+            "hash(1) is in the tip's seen set"
+        );
+        assert!(dag.is_finalized(&hash(2)), "hash(2) is the fringe member");
+        assert!(
+            !dag.is_finalized(&hash(9)),
+            "a block outside the seen closure is not finalized"
+        );
+    }
+
     /// **A rewind plan with no anchor counts everything above genesis, and says there is no anchor.**
     ///
     /// This is the state a node is in before its first finalization: it holds blocks, it has no block

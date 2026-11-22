@@ -3582,6 +3582,53 @@ mod tests {
         assert_eq!(result["settlementConfirmed"], false);
     }
 
+    /// **Law 126's Rust witness.** The settlement stage is total and only `finalizedSuccess`
+    /// confirms: every execution/finality pair lands in one of the six stages, and
+    /// `settlementConfirmed` is true exactly when the stage is `finalizedSuccess`.
+    #[test]
+    fn the_settlement_stage_is_total_and_only_finalized_success_confirms() {
+        let success = DeployExecStatus::ProcessedWithSuccess {
+            deploy_result: Vec::new(),
+            block: issue_487_block(),
+        };
+        let error = DeployExecStatus::ProcessedWithError {
+            deploy_error: "insufficient phlo".to_string(),
+            block: issue_487_block(),
+        };
+        let pooled = DeployExecStatus::NotProcessed {
+            status: rchain_casper::api::block_api::POOLED_DEPLOY_STATUS.to_string(),
+        };
+        let unknown = DeployExecStatus::NotProcessed {
+            status: "Unknown".to_string(),
+        };
+        for execution in [&success, &error, &pooled, &unknown] {
+            for fin in [Some(true), Some(false), None] {
+                let observation = deploy_settlement_observation("sig", execution, fin, 0);
+                let stage = observation["stage"].as_str().expect("stage");
+                let confirmed = observation["settlementConfirmed"]
+                    .as_bool()
+                    .expect("settlementConfirmed");
+                assert!(
+                    matches!(
+                        stage,
+                        "notProcessed"
+                            | "pooled"
+                            | "includedUnfinalized"
+                            | "finalityUnknown"
+                            | "finalizedSuccess"
+                            | "finalizedError"
+                    ),
+                    "unexpected stage {stage}"
+                );
+                assert_eq!(
+                    confirmed,
+                    stage == "finalizedSuccess",
+                    "settlementConfirmed must be true exactly at finalizedSuccess, got {stage}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn issue_487_finality_observation_never_guesses_quorum() {
         let mut status = test_status();
