@@ -1,7 +1,9 @@
 """The preflight refuses a run whose inputs cannot support an explanation.
 
 Every case is a `not run` coordinate: the claim has not been tested, so a claim fail would be a
-false accusation of the code.
+false accusation of the code. The public branch delegates to the fleet manifest contract, so a
+manifest that cannot name four independent hosts, the current candidate and the deploy plan is
+refused before any claim code runs.
 """
 import importlib.util
 import json
@@ -18,6 +20,58 @@ common = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(common)
 
 HEAD = "a" * 40
+DIGEST = "b" * 64
+
+
+def node(index):
+    return {
+        "name": f"validator-{index}",
+        "host": f"8.8.8.{index + 1}",
+        "ssh": f"root@8.8.4.{index + 1}",
+        "unit": f"rnode-{index}",
+        "binary_path": "/usr/local/bin/rnode",
+        "data_dir": f"/var/lib/rnode-{index}",
+        "http": f"https://node{index}.example.org",
+        "grpc_port": 40401,
+    }
+
+
+def public_manifest(**overrides):
+    document = {
+        "schema": 1,
+        "campaign": "rc-public-fleet",
+        "generated_at_utc": "2026-11-22T00:00:00Z",
+        "locality": "public-live",
+        "transport": "ssh-systemd",
+        "provenance": {
+            "source_sha": HEAD,
+            "binary_sha256": DIGEST,
+            "genesis_hash": "c" * 64,
+            "genesis_raw_sha256": "d" * 64,
+            "bonds_sha256": "e" * 64,
+        },
+        "nodes": [node(index) for index in range(4)],
+        "actions": {"epoch_length": 10, "retention_epochs": 2},
+        "deploy": {
+            "from": "validator-0",
+            "marker": "rc-public:20261122",
+            "value": 42,
+            "term_file": "target/term.rho",
+            "term_sha256": "f" * 64,
+            "phlo_limit": 1000000,
+            "phlo_price": 1,
+            "shard_id": "/testnet",
+            "private_key_path": "/etc/rnode/deploy.key",
+            "relay": {
+                "mode": "relay",
+                "aliases": [f"validator-{index}" for index in range(4)],
+                "reachability_checked_utc": "2026-11-22T00:00:00Z",
+                "unreachable_aliases": [],
+            },
+        },
+    }
+    document.update(overrides)
+    return document
 
 
 class Result:
@@ -72,17 +126,65 @@ class PreflightTests(unittest.TestCase):
         self.assertTrue(any("--public-manifest" in p for p in problems))
 
     def test_a_manifest_from_another_revision_is_refused(self):
+        document = public_manifest()
+        document["provenance"]["source_sha"] = "c" * 40
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "manifest.json"
-            path.write_text(json.dumps({"provenance": {"source_sha": "c" * 40}}))
-            problems = common.preflight("public", str(path), runner=runner(), head=HEAD)
+            path.write_text(json.dumps(document))
+            problems = common.preflight("public", str(path), runner=runner(), head=HEAD,
+                                        claim_id="RC-1")
         self.assertTrue(any("source_sha" in p for p in problems))
+
+    def test_four_independent_hosts_are_required(self):
+        document = public_manifest()
+        document["nodes"][2]["host"] = document["nodes"][0]["host"]
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "manifest.json"
+            path.write_text(json.dumps(document))
+            problems = common.preflight("public", str(path), runner=runner(), head=HEAD,
+                                        claim_id="RC-1")
+        self.assertTrue(any("not distinct" in p for p in problems))
+
+    def test_an_operator_supplied_result_is_refused(self):
+        document = public_manifest()
+        document["harness_result"] = "PASS"
+        document["victim"] = "validator-2"
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "manifest.json"
+            path.write_text(json.dumps(document))
+            problems = common.preflight("public", str(path), runner=runner(), head=HEAD,
+                                        claim_id="RC-4")
+        self.assertTrue(any("harness_result" in p for p in problems))
+        self.assertTrue(any("victim" in p for p in problems))
 
     def test_a_matching_manifest_passes(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "manifest.json"
-            path.write_text(json.dumps({"provenance": {"source_sha": HEAD}}))
-            self.assertEqual(common.preflight("public", str(path), runner=runner(), head=HEAD), [])
+            path.write_text(json.dumps(public_manifest()))
+            self.assertEqual(
+                common.preflight("public", str(path), runner=runner(), head=HEAD,
+                                 claim_id="RC-1"), [])
+
+    def test_a_rehearsal_manifest_is_accepted_only_as_a_rehearsal(self):
+        document = public_manifest(
+            transport="docker", locality="local-devnet", rehearsal=True,
+            nodes=[{key: value for key, value in node(index).items()
+                    if key in ("name", "host", "http", "unit", "grpc_port")}
+                   for index in range(4)],
+        )
+        for index, entry in enumerate(document["nodes"]):
+            entry["host"] = f"host-{index}"
+            entry["unit"] = "rcfleet-bootstrap" if index == 0 else f"rcfleet-validator-{index}"
+        document["deploy"].pop("private_key_path")
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "manifest.json"
+            path.write_text(json.dumps(document))
+            self.assertEqual(
+                common.preflight("public", str(path), runner=runner(), head=HEAD,
+                                 claim_id="RC-1", rehearsal=True), [])
+            problems = common.preflight("public", str(path), runner=runner(), head=HEAD,
+                                        claim_id="RC-1")
+        self.assertTrue(any("rehearsal manifest cannot be run" in p for p in problems))
 
 
 if __name__ == "__main__":

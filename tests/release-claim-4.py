@@ -30,7 +30,7 @@ TITLE = "Recovery without loss"
 
 def _fixture_baseline(arm: str = "local") -> dict:
     environment = "public" if arm == "public" else "local"
-    return {
+    record = {
         "schema": 1, "claim_id": CLAIM_ID, "claim_title": TITLE, "arm": arm,
         "environment": environment,
         "locality": "public-live" if environment == "public" else "local-devnet",
@@ -61,6 +61,16 @@ def _fixture_baseline(arm: str = "local") -> dict:
             }],
         },
     }
+    if environment == "public":
+        record["observations"].update({
+            "baseline": {"per_node": [], "common_height": 30, "common_hash": "cd" * 32},
+            "rejoin": {"height": 40, "hash": "cd" * 32, "same_head": True,
+                       "common_height": 40, "heights_above_baseline": 10},
+            "survivor_deploy": {"deploy_id": "ab" * 32, "resolved": True},
+            "own_key_halt": False, "self_replay": False, "regressions": [],
+            "stop": {"exit_code": 0}, "start": {"exit_code": 0},
+        })
+    return record
 
 
 def _check_baseline(record: dict) -> tuple[str, list[str]]:
@@ -108,7 +118,8 @@ def _check_baseline(record: dict) -> tuple[str, list[str]]:
                 f"victim {victim} has no verified checkpoint certificate after restart")
     boot_traces = observations.get("boot_traces")
     victim_traces = ([t for t in boot_traces
-                      if isinstance(t, dict) and str(t.get("validator")) == victim]
+                      if isinstance(t, dict) and common.trace_kind(t) == "boot"
+                      and str(t.get("validator")) == victim]
                      if isinstance(boot_traces, list) else [])
     if victim_traces:
         # **The decision trace, not merely the last filename.** The boot writes an acquisition
@@ -126,8 +137,47 @@ def _check_baseline(record: dict) -> tuple[str, list[str]]:
             problems.append(
                 f"victim {victim}: the boot decision did not accept (acquisition "
                 f"{trace.get('acquisition')})")
+    if record.get("environment") == "public" and record.get("rehearsal") is not True:
+        _public_problems(record, observations, boot, victim, victim_traces, problems)
     problems.extend(common.phase_space_reading(observations, bool(problems)))
     return common.evaluate(record, problems)
+
+
+def _public_problems(record, observations, boot, victim, victim_traces, problems):
+    """The coordinates only the fleet run can supply; a public record must carry them all."""
+    for key in ("baseline", "rejoin", "survivor_deploy"):
+        value = observations.get(key)
+        if not isinstance(value, dict) or not value:
+            problems.append(f"public recovery: {key} is missing")
+    if "own_key_halt" not in observations:
+        problems.append("public recovery: the own-key halt counter was not captured")
+    if "self_replay" not in observations:
+        problems.append("public recovery: the self-replay counter was not captured")
+    if (boot.get("before") or {}).get(victim) is None or \
+            (boot.get("after") or {}).get(victim) is None:
+        problems.append(f"public recovery: victim {victim} has no before/after boot id")
+    baseline = observations.get("baseline") or {}
+    rejoin = observations.get("rejoin") or {}
+    base_height = baseline.get("common_height")
+    rejoin_height = rejoin.get("height")
+    if type(base_height) is not int or type(rejoin_height) is not int:
+        problems.append("public recovery: the baseline or rejoin height is missing")
+    elif rejoin_height < base_height + 3:
+        problems.append(
+            f"the victim rejoined at {rejoin_height}, less than {base_height} + 3")
+    if rejoin.get("same_head") is not True:
+        problems.append("the victim did not rejoin the common finalised head")
+    if (observations.get("survivor_deploy") or {}).get("resolved") is not True:
+        problems.append("the survivor deploy did not resolve")
+    if observations.get("own_key_halt") is not False:
+        problems.append("a validator reports an own-key halt")
+    if observations.get("self_replay") is not False:
+        problems.append("a validator reports a self-replay refusal")
+    if observations.get("regressions"):
+        problems.append(f"finalised heads regressed: {observations['regressions']}")
+    if not victim_traces:
+        problems.append(
+            f"evidence-insufficient: victim {victim} carries no boot trace")
 
 
 FIXTURES = {
@@ -164,11 +214,13 @@ def run(argv: list[str]) -> int:
     parser.add_argument("--public-manifest")
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--cycles", type=int, default=2)
+    parser.add_argument("--rehearse", action="store_true")
     args = parser.parse_args(argv)
     arm = args.arm or args.env or "local"
     meta = common.claim_arm(CLAIM_ID, arm)
     environment = meta["environment"]
-    record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm)
+    record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm,
+                               rehearsal=args.rehearse)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     if arm not in ("local", "public"):
@@ -176,7 +228,8 @@ def run(argv: list[str]) -> int:
             out, record,
             f"the {arm} arm's harness lands in {meta['next_pr']}")[1]
     failure = common.preflight_failure(CLAIM_ID, environment, out, record,
-                                       getattr(args, "public_manifest", None))
+                                       getattr(args, "public_manifest", None),
+                                       rehearsal=args.rehearse)
     if failure is not None:
         return failure
 
@@ -184,18 +237,21 @@ def run(argv: list[str]) -> int:
         manifest = common.load_manifest(args.public_manifest)
         if not manifest:
             return common.not_run(out, record, "no --public-manifest for the public fleet")[1]
-        deploy = manifest.get("deploy") or {}
-        if not deploy.get("deploy_id") or not deploy.get("marker"):
+        target = common.public_target(manifest)
+        fleet_result, code = _recover(args, out / "fleet-recovery")
+        record["provenance"] = manifest.get("provenance") or {}
+        record["harness"] = {"name": "fleet-run recovery", "exit_code": code,
+                             "out": str(out / "fleet-recovery")}
+        _map_recovery(record, fleet_result, target)
+        if code == 3:
             return common.not_run(
                 out, record,
-                "the public run needs the operator's deploy_id and marker in the manifest")[1]
-        target = common.public_target(manifest)
-        record["provenance"] = manifest.get("provenance") or {}
-        record["observations"].update({"marker": deploy["marker"], "value": deploy.get("value", 42),
-                                       "deploy_id": deploy["deploy_id"],
-                                       "harness_result": manifest.get("harness_result"),
-                                       "boot_ids": manifest.get("boot_ids") or {},
-                                       "victim": manifest.get("victim", 3)})
+                "; ".join(fleet_result.get("reasons") or ["the recovery precondition failed"]))[1]
+        if code != 0:
+            common.finish(
+                record, "fail",
+                ["; ".join(fleet_result.get("reasons") or ["the recovery run failed"])])
+            return common.write_record(out, record)[1]
         return _post_reads(target, record, out)
 
     # **The floor scales with the store.** The arm used 4 GiB until 2026-11-21; at 1,139 persisted
@@ -320,6 +376,56 @@ def run(argv: list[str]) -> int:
     finally:
         if not args.keep:
             devnet.down()
+
+
+def _recover(args, out: Path) -> tuple[dict, int]:
+    """Run the driver's recovery; the driver performs the stop and captures the outcome."""
+    out.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, str(ROOT / "tools" / "fleet-run.py"), "recovery",
+               "--manifest", args.public_manifest, "--out", str(out), "--claim", CLAIM_ID]
+    if args.rehearse:
+        command.append("--rehearse")
+    try:
+        done = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=7200)
+    except subprocess.TimeoutExpired as error:
+        return {"reasons": [f"fleet-run recovery timed out: {error}"]}, 3
+    path = out / "fleet-result.json"
+    try:
+        return json.loads(path.read_text()), done.returncode
+    except (OSError, ValueError):
+        return {"reasons": [(done.stdout + done.stderr)[-800:]]}, done.returncode or 3
+
+
+def _map_recovery(record: dict, result: dict, target) -> None:
+    deploy = result.get("deploy") or {}
+    observations = record["observations"]
+    observations.update({
+        "marker": deploy.get("marker"),
+        "value": int(deploy.get("value", common.MARKER_VALUE)),
+        "deploy_id": deploy.get("deploy_id"),
+        "harness_result": result.get("harness_result"),
+        "boot_ids": result.get("boot_ids") or {},
+        "victim": result.get("victim"),
+        "certificates_after": result.get("certificates_after") or {},
+        "baseline": result.get("baseline") or {},
+        "rejoin": result.get("rejoin") or {},
+        "survivor_deploy": result.get("survivor_deploy") or {},
+        "own_key_halt": result.get("own_key_halt"),
+        "self_replay": result.get("self_replay"),
+        "regressions": result.get("regressions") or [],
+        "stop": result.get("stop"),
+        "start": result.get("start"),
+    })
+    traces = []
+    for row in result.get("boot_traces") or []:
+        if common.trace_kind(row) != "boot":
+            continue
+        index = row.get("validator")
+        name = (target.name(index)
+                if isinstance(index, int) and 0 <= index < len(target.nodes) else str(index))
+        traces.append({**row, "validator": name})
+    observations["boot_traces"] = traces
+    observations["fleet_errors"] = result.get("errors") or []
 
 
 def _certificates(target, timeout: float = 300) -> dict:

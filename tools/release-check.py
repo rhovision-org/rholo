@@ -121,6 +121,8 @@ def cmd_run(args) -> int:
         command += ["--old-image", args.old_image]
     if args.keep:
         command.append("--keep")
+    if getattr(args, "rehearse", False):
+        command.append("--rehearse")
     env = dict(os.environ)
     if getattr(args, "allow_dirty", False):
         env["RELEASE_ALLOW_DIRTY"] = "1"
@@ -145,6 +147,11 @@ def cmd_record(args) -> int:
     run_dir = Path(args.record)
     record_path = run_dir / "claim.json" if run_dir.is_dir() else run_dir
     record = json.loads(record_path.read_text())
+    if record.get("rehearsal") is True:
+        print(json.dumps({"result": "REFUSED",
+                          "error": "a rehearsal record is not evidence; run the public arm on "
+                                   "the four-host fleet"}, sort_keys=True))
+        return 2
     verdict, reasons = module_for(row).check(record)
     # A `not run` record is packed as INCONCLUSIVE: the reason it could not run is itself a
     # retained observation, and the tracker must be able to show which precondition blocked it.
@@ -209,6 +216,8 @@ def main(argv: list[str]) -> int:
     run.add_argument("--public-manifest")
     run.add_argument("--old-image")
     run.add_argument("--keep", action="store_true")
+    run.add_argument("--rehearse", action="store_true",
+                     help="exercise the public path on the local fleet; never evidence")
     run.add_argument("--allow-dirty", action="store_true",
                      help="the image is known to contain this working tree")
     run.set_defaults(func=cmd_run)

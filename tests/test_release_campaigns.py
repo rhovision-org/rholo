@@ -294,6 +294,24 @@ class ClaimTests(unittest.TestCase):
         self.assertIn("no partition", action["items"][0]["finding"])
         self.assertTrue(action["items"][0]["action"])
 
+    def test_a_rehearsal_record_cannot_close_a_public_arm(self):
+        row = self.claim("RC-4")
+        module = checker.load_test(row)
+        record = module.fixture("public")
+        record["rehearsal"] = True
+        record["locality"] = "local-devnet"
+        verdict, reasons = module.check(record)
+        self.assertEqual(verdict, "not run")
+        self.assertIn("rehearsal", reasons[0])
+        record["verdict"] = "pass"
+        record["finished_at"] = "2026-11-22T10:00:00Z"
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "rc4" / "claim.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps(record))
+            derived = builder.derive_claim(row, roots=(Path(root),))
+        self.assertNotEqual(derived["public"]["action"]["reading"], "safe")
+
     def test_a_public_not_observed_action_names_the_manifest(self):
         row = self.claim("RC-1")
         with tempfile.TemporaryDirectory() as root:
@@ -468,6 +486,21 @@ class ClaimTests(unittest.TestCase):
         generated = {row["id"] for row in TRACKER["campaigns"]}
         authored = {row["id"] for row in SOURCE["claims"]}
         self.assertEqual(generated, authored)
+
+
+class HarnessSuiteTests(unittest.TestCase):
+    """The fleet harness suites are reached where CI already looks: through this file."""
+
+    def test_the_fleet_harness_suites_pass(self):
+        from io import StringIO
+        for pattern in ("test_fleet_manifest.py", "test_fleet_run.py",
+                        "test_release_preflight.py"):
+            suite = unittest.defaultTestLoader.discover(
+                str(ROOT / "tests"), pattern=pattern, top_level_dir=str(ROOT / "tests"))
+            result = unittest.TextTestRunner(stream=StringIO(), verbosity=0).run(suite)
+            self.assertTrue(result.wasSuccessful(),
+                            (pattern, result.errors, result.failures))
+            self.assertGreater(result.testsRun, 0)
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ cannot yet be made. No status is authored.
 | claim | arm | env | locality | reading | next action | next PR |
 |---|---|---|---|---|---|---|
 | `RC-1` | `local` | local | local-devnet | **safe** | — | — |
-| `RC-1` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest and run the settlement/retention reading on testnet-4. | `rc-public-fleet` |
+| `RC-1` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest and run `tools/release-check.py run --claim RC-1 --env public`; the driver submits the deploy and records retention across two epoch boundaries | `rc-public-fleet` |
 | `RC-1` | `bond-leave` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-1 --arm bond-leave` and commit its record; the arm's harness lands in `rc-bond-leave`. | `rc-bond-leave` |
 | `RC-2` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-2` | `public` | public | public-live | **not-observed** | Run the operator's declared partition window on the public fleet. | `rc-public-fleet` |
@@ -29,7 +29,7 @@ cannot yet be made. No status is authored.
 | `RC-3` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
 | `RC-3` | `availability` | public | public-live | **not-observed** | Run the finalised-block availability sweep on the public fleet: every finalised body and finalised-head state from every validator. | `rc-public-fleet` |
 | `RC-4` | `local` | local | local-devnet | **safe** | — | — |
-| `RC-4` | `public` | public | public-live | **not-observed** | Run the operator's real host stop on the public fleet. | `rc-public-fleet` |
+| `RC-4` | `public` | public | public-live | **not-observed** | Run `tools/release-check.py run --claim RC-4 --env public`; the driver performs the single-validator stop and restart and captures the boot ids itself. | `rc-public-fleet` |
 | `RC-4` | `multi-host` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm multi-host` and commit its record; the arm's harness lands in `rc-multi-host`. | `rc-multi-host` |
 | `RC-4` | `failover` | local | off-host-claim | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm failover` and commit its record; the arm's harness lands in `rc-failover`. | `rc-failover` |
 | `RC-4` | `returner` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm returner` and commit its record; the arm's harness lands in `rc-bond-leave`. | `rc-bond-leave` |
@@ -49,7 +49,7 @@ cannot yet be made. No status is authored.
 |---|---|---|
 | `rc-confirm-local` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6 | Re-run the baseline local arms with the current image and commit the records. Read each failure with tools/trace-evaluate.py: unsafe-point names a predicate and its anchor; model-incomplete names a model gap; evidence-insufficient names the missing trace. Close an arm only when its committed record reads safe. |
 | `rc-harness-old-image` | RC-7 | Build and pin a prior image for the mixed fleet, set RNODE_OLD_IMAGE, and run RC-7's local mixed-store arm. |
-| `rc-public-fleet` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6, RC-7 | Supply the four-host public manifest and run the public arms. The availability sweep emits RC-3 and RC-6 availability from the same fleet window. |
+| `rc-public-fleet` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6, RC-7 | Bring up the four-host public fleet on a coordinated new genesis, perform the deploy and the single-validator restart through tools/fleet-run.py, and run RC-1/public and RC-4/public on the candidate. The source set and the N1/N4/N8 differential are recorded as diagnostics in the same campaign record; the remaining public arms keep this campaign as their next PR. |
 | `rc-bond-leave` | RC-1, RC-2, RC-4 | One bond/leave campaign feeds RC-1 bond-leave, RC-2 validator-set and RC-4 returner. |
 | `rc-offhost` | RC-6 | Run the pre-registered M3 two-host join and record RC-6 off-host, including the loopback negative. |
 | `rc-failover` | RC-4 | Add an ordered seed list to bootstrap resolution and run RC-4 failover with the first seed down. |
@@ -93,7 +93,7 @@ Reading: `safe` — spec/audit/evidence/rc1-local-20261121-e9508f5/raw/claim.jso
 **Arm `public`** (public, `public-live`) — the same settlement and retention reading on the four-host public fleet
 
 Reading: `not-observed` — no committed run record
-- `RC-1/public/observe` — no committed run record. **Next:** Supply the four-host public manifest and run the settlement/retention reading on testnet-4.
+- `RC-1/public/observe` — no committed run record. **Next:** Supply the four-host public manifest and run `tools/release-check.py run --claim RC-1 --env public`; the driver submits the deploy and records retention across two epoch boundaries.
 - Next PR: `rc-public-fleet`
 
 **Arm `bond-leave`** (local, `local-devnet`) — a bond and a withdrawal settle, activate at an epoch boundary, pay after quarantine, and the settlement marker is retained
@@ -246,7 +246,7 @@ Reading: `safe` — spec/audit/evidence/rc4-local-20261121-ec104fb/raw/claim.jso
 **Arm `public`** (public, `public-live`) — a real host stop on the public fleet
 
 Reading: `not-observed` — no committed run record
-- `RC-4/public/observe` — no committed run record. **Next:** Run the operator's real host stop on the public fleet.
+- `RC-4/public/observe` — no committed run record. **Next:** Run `tools/release-check.py run --claim RC-4 --env public`; the driver performs the single-validator stop and restart and captures the boot ids itself.
 - Next PR: `rc-public-fleet`
 
 **Arm `multi-host`** (local, `multi-host`) — host loss, restart/replay and the recovery arm on the M4 topology with no lost accepted deploy
