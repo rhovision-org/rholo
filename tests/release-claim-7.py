@@ -234,7 +234,8 @@ def _downgrade(record: dict, out: Path) -> None:
 
 def _mixed(record: dict, out: Path, old_image: str, keep: bool) -> None:
     devnet = common.Devnet("rc7mix", validators=4, http_base=44403, admin_base=44405,
-                           grpc_base=44402, node_images={3: old_image})
+                           grpc_base=44402, node_images={3: old_image},
+                           extra_up=("--epoch-length", "10"))
     try:
         devnet.up()
         _collect_format_traces(devnet, out / "traces" / "mixed", record)
@@ -275,21 +276,31 @@ def _mixed(record: dict, out: Path, old_image: str, keep: bool) -> None:
             "agreement": agreement, "refusal": refusal,
             "upgrade": {"heads_agree": False, "marker_present": False},
         }
-        # Rolling swap: recreate validator 3 on the current image, keeping its store.
-        subprocess.run(["docker", "rm", "-f", devnet.node(3)], text=True,
-                       capture_output=True, timeout=120)
-        upgraded = common.Devnet("rc7mix", validators=4, http_base=44403, admin_base=44405,
-                                 grpc_base=44402)
-        result = upgraded.shell("up", "--validators", "4", timeout=900)
-        (out / "upgrade.log").write_text(result.stdout + result.stderr)
+        # **A rolling upgrade replaces one validator; the rest keep serving.** Restarting the whole
+        # fleet also restarts the standalone bootstrap, and NodeLaunch refuses a populated DAG it
+        # cannot attribute without a stored checkpoint certificate or a checkpoint source. The
+        # swap therefore recreates only validator 3 on the current image, keeping its store, while
+        # the other three continue.
+        _restart_on_current_image(devnet.node(3))
+        upgraded = devnet
         common.wait_until(
-            "every validator answers after the swap",
-            lambda: all(upgraded._ready(i) for i in range(4)), timeout=360)
+            "validator 3 answers after the swap",
+            lambda: upgraded._ready(3), timeout=360)
         upgraded_target = upgraded.target()
-        common.wait_until(
-            "the upgraded node reaches the same finalised head",
-            lambda: len({upgraded_target.finalized_head(i) for i in range(4)}) == 1,
-            timeout=600)
+        # **A live chain advances between four sequential reads.** Equality of a single snapshot
+        # fails a correct upgrade when one node finalises the next block while the reads are in
+        # flight. The claim is the common finalised head: the lowest head read must be finalised on
+        # every validator.
+        def common_finalized_head():
+            heads = [upgraded_target.finalized_head(i) for i in range(4)]
+            lowest = min(heads, key=lambda pair: pair[0])
+            if all(upgraded_target.is_finalized(i, lowest[1]) for i in range(4)):
+                return {"height": lowest[0], "hash": lowest[1]}
+            return None
+
+        common_head = common.wait_until(
+            "the upgraded node reaches the common finalised head",
+            common_finalized_head, timeout=600)
         _collect_format_traces(upgraded, out / "traces" / "upgraded", record)
         # The upgraded node reaches the head as soon as its store opens; the state read at that
         # head can lag the finality read. Give the marker a bounded window rather than a single
@@ -302,7 +313,9 @@ def _mixed(record: dict, out: Path, old_image: str, keep: bool) -> None:
                 break
             time.sleep(3)
         record["observations"]["mixed"]["upgrade"] = {
-            "heads_agree": len({upgraded_target.finalized_head(i) for i in range(4)}) == 1,
+            "heads_agree": True,
+            "common_height": common_head["height"],
+            "common_hash": common_head["hash"],
             "marker_present": present, "height": head_height, "hash": head_hash}
     finally:
         if not keep:
@@ -323,6 +336,39 @@ def _collect_format_traces(devnet, dest: Path, record: dict) -> None:
                 rows.append({"validator": i, "file": path.name, **json.loads(path.read_text())})
             except ValueError:
                 continue
+
+
+def _restart_on_current_image(name: str) -> None:
+    """Recreate one devnet container from its own inspect, on the selected image.
+
+    A rolling upgrade keeps the volume and the genesis bind mount; only the binary changes. The
+    container is rebuilt from the inspect data rather than from a second `devnet.sh up`, because
+    that would restart the whole fleet (and the bootstrap's populated-DAG gate).
+    """
+    info = json.loads(subprocess.check_output(["docker", "inspect", name], text=True))[0]
+    subprocess.run(["docker", "rm", "-f", name], text=True, capture_output=True, timeout=120)
+    config, host = info["Config"], info["HostConfig"]
+    args = ["docker", "run", "-d", "--name", name,
+            "--network", host.get("NetworkMode") or "bridge"]
+    for container_port, bindings in (host.get("PortBindings") or {}).items():
+        for binding in bindings or []:
+            host_ip = binding.get("HostIp") or "0.0.0.0"
+            args += ["-p", f"{host_ip}:{binding['HostPort']}:{container_port.split('/')[0]}"]
+    for mount in info.get("Mounts") or []:
+        if mount.get("Type") == "volume":
+            args += ["-v", f"{mount['Name']}:{mount['Destination']}"]
+        elif mount.get("Type") == "bind":
+            mode = "" if mount.get("RW") else ":ro"
+            args += ["-v", f"{mount['Source']}:{mount['Destination']}{mode}"]
+    for env in config.get("Env") or []:
+        args += ["-e", env]
+    if config.get("Entrypoint"):
+        args += ["--entrypoint", config["Entrypoint"][0]]
+    args += [os.environ.get("RNODE_IMAGE", "rnode:local")]
+    args += list(config.get("Cmd") or [])
+    result = subprocess.run(args, text=True, capture_output=True, timeout=120)
+    if result.returncode:
+        raise common.ClaimError(f"restarting {name} failed: {result.stderr[-800:]}")
 
 
 def _binary_sha(container: str):
