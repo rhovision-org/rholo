@@ -7,7 +7,7 @@
 mod common;
 use common::fringe_state;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rchain_casper::genesis::contracts::Vault;
 use rchain_casper::interpreter_util::ReplayVerdict;
@@ -819,6 +819,7 @@ async fn a_cost_only_tamper_is_refused_before_the_state_hash_is_compared() {
             BlockData::empty(),
             &fringe_state(1),
             &BTreeMap::new(),
+            &BTreeSet::new(),
             true,
             &PosGenesis::default(),
             &[],
@@ -977,6 +978,7 @@ async fn a_cost_refusal_masks_the_trace_check_and_the_shadow_reports_it() {
             BlockData::empty(),
             &fringe_state(1),
             &BTreeMap::new(),
+            &BTreeSet::new(),
             true,
             &PosGenesis::default(),
             &[],
@@ -1788,6 +1790,7 @@ async fn concurrent_forked_replays_agree_with_serial_replays() {
     // committed pre-state. The shared arguments are bound before the join because the macro's
     // futures borrow them across an await.
     let empty_participation = BTreeMap::new();
+    let empty_layer_missing = BTreeSet::new();
     let pos = PosGenesis::default();
     let fringe_a = fringe_state(1);
     let fringe_b = fringe_state(2);
@@ -1803,6 +1806,7 @@ async fn concurrent_forked_replays_agree_with_serial_replays() {
             block_a,
             &fringe_a,
             &empty_participation,
+            &empty_layer_missing,
             true,
             &pos,
             &[],
@@ -1816,6 +1820,7 @@ async fn concurrent_forked_replays_agree_with_serial_replays() {
             block_b,
             &fringe_b,
             &empty_participation,
+            &empty_layer_missing,
             true,
             &pos,
             &[],

@@ -191,6 +191,7 @@ fn reporting_casper(
     shard_id: &str,
     dag: Arc<dyn BlockDagStorage>,
     block_store: BlockStore,
+    runtime_manager: Arc<RuntimeManager>,
 ) -> Result<impl ReportingCasper, String> {
     let store_manager = store_manager.clone();
     let mergeable_tag_name = SortedProc::new(
@@ -210,15 +211,18 @@ fn reporting_casper(
         move |block: BlockMessage| {
             let dag = dag.clone();
             let block_store = block_store.clone();
+            let runtime_manager = runtime_manager.clone();
             async move {
                 let fringe_state_hash = fringe_state_of(&*dag, &block.block_hash).await?;
-                let participation = rchain_casper::multi_parent_casper::participation_for_block(
-                    &*dag,
-                    &block_store,
-                    &block,
-                )
-                .await?;
-                Ok((fringe_state_hash, participation))
+                let (participation, layer_missing) =
+                    rchain_casper::multi_parent_casper::close_inputs_for_block(
+                        &*dag,
+                        &block_store,
+                        &runtime_manager,
+                        &block,
+                    )
+                    .await?;
+                Ok((fringe_state_hash, participation, layer_missing))
             }
         },
     ))
@@ -3210,6 +3214,7 @@ pub async fn setup_shard(
             &shard_id,
             block_dag_storage.clone(),
             block_store.clone(),
+            runtime_manager.clone(),
         )?),
         report_store,
         validator_opt.clone(),

@@ -15,8 +15,20 @@ sub-quorum outage therefore freezes finality while the absent stake makes the qu
 
 ## 2. The decision
 
-The response has two steps, and they are deliberately different:
+The response has three steps, and they are deliberately different:
 
+0. **Inactivity leak (automatic, priced; added 2026-11-22).** At an epoch boundary, a validator the
+   finality gate names as not covering the whole partition — `NoAdvance::Support.not_full`, the
+   refusal Law 52 makes attributable; `Coverage.missing` is absence by height and stays the jail's
+   business — is counted silent. After
+   `N` consecutive boundaries of that silence (the same window as the jail) it is **retired** from the
+   pool and the active snapshot and its bond is forfeited to the Coop vault. This is the priced
+   response to the *coverage* silence that blocks finality: a layer at 100/100/50/50 whose support is
+   exactly 200 of 300 — two thirds, one stake short of the strict threshold — refuses for ever
+   otherwise, and removing the sender that does not see the partition is what lets the survivors'
+   support become the whole denominator. The input is the gate's own refusal, derived by every node
+   from the block's justification set and not carried on the wire, so a proposer cannot choose whom
+   to leak.
 1. **Jail (automatic, bond-preserving).** After a validator has been absent across `N` consecutive
    **advancing** epoch boundaries, it is removed from the active set for `J` boundaries and paid
    nothing. Its bond and its delegators' principal are untouched. A message releases it when the term
@@ -24,21 +36,27 @@ The response has two steps, and they are deliberately different:
 2. **Vote-gated slash (explicit).** A slash vote opens **automatically** on a jail. Any active
    validator may cast a stake-weighted ballot (`voteSlash`/`unvoteSlash`). At an advancing boundary,
    strictly more than two thirds of the active stake in favour slashes the target at the configured
-   tier and **permanently ejects** (bans) it. No other path reaches the bond through liveness.
+   tier and **permanently ejects** (bans) it.
 
-A stalled chain has no advancing boundary, so neither clock moves. A partition can jail the minority
-on the side that still finalises; the bond is only at risk if that side's supermajority votes for it.
+A stalled chain has no advancing boundary, so the jail and vote clocks do not move. A partition can
+jail the minority on the side that still finalises; the jail's bond is only at risk if that side's
+supermajority votes for it. The leak is the one **automatic** path to a bond, and its trigger is not
+absence but a message that does not cover the partition — a condition the validator's own production
+can end at any boundary, which is what keeps it a statement about the current condition rather than a
+latch on history.
 
 ## 3. What this is not
 
-- **Not an inactivity leak.** No automatic step burns a bond. The 2026-10-02 decision
-  (`docs/src/formal/progress.md`) that a leak is refused is retained for the leak and superseded only
-  for this mechanism.
-- **Not the C111 single-actor eviction.** `untrust` remains admission-only; a vote needs >2/3 of the
-  active stake.
-- **Not a proposer-only slash.** Participation is the receiver-derived finalised fringe, not a
-  proposer-chosen field.
-- **Not slashing a stuck-but-present node.** The trigger is absence from the finalised fringe; #485's
+- **Not a bond burn for absence.** The leak is triggered by the finality gate's coverage refusal, not
+  by a height lag; a validator that is merely behind is jailed (step 1) with its bond intact. The
+  2026-10-02 decision to refuse a leak (`docs/src/formal/progress.md`) is superseded on 2026-11-22 by
+  the bond-leave measurement: the exact-two-thirds layer could not be repaired by any predicate,
+  window or round-clock change, and retirement was chosen and modelled as Law 129.
+- **Not the C111 single-actor eviction.** `untrust` remains admission-only; the leak's input is the
+  gate's own derivation and a vote needs >2/3 of the active stake.
+- **Not a proposer-only slash.** Participation is the receiver-derived finalised fringe and
+  `layer_missing` is derived from the same merge, not a proposer-chosen field.
+- **Not slashing a stuck-but-present node.** The trigger is the partition-coverage refusal; #485's
   present-but-not-finalising defect is separate.
 
 ## 4. Parameters (genesis, default 0 = off)
@@ -56,10 +74,18 @@ window must fit inside the withdrawal quarantine so a bond cannot be paid before
 config encodes the pre-change format-2 `PosParams` record byte-for-byte and writes no new leaves, so
 an old chain replays to the same hashes.
 
+The inactivity leak adds **no parameter**: its window is `liveness-jail-after-boundaries`, and it is
+active exactly when the mechanism is armed. That is deliberate — one bound for "sustained silence",
+applied to whichever kind of silence the validator shows (absence by height → jail; a message that
+does not cover the partition → leak).
+
 ## 5. Consensus surface
 
 New `pos` leaves: `pos:liveness`, `pos:liveness-anchor`, `pos:vote-windows`, `pos:slash-votes`,
-`pos:banished`. New `rho:rchain:pos` methods: `voteSlash`, `unvoteSlash`, `getLiveness`, `getVotes`.
+`pos:banished`, and (from 2026-11-22) `pos:silence` for the leak's counters. New `rho:rchain:pos`
+methods: `voteSlash`, `unvoteSlash`, `getLiveness`, `getVotes`. The leak's `layer_missing` is a
+`CloseBlock` input derived from the gate's refusal on both play and replay — it is not published and
+not carried in the system-deploy data, the same discipline `participation` follows.
 The tally and slash are a **boundary state transition**, not a block-level `Slash` system deploy:
 `validate::slashed_validators` does not list it and `slash_is_unjustified` does not apply; its
 authority is the on-chain tally every node replays. This is hard-fork class (#51 category A).
@@ -77,10 +103,13 @@ sidecars agree. This is also hard-fork class: two binaries can reject different 
 Jail never writes the pool; one lapse is not sustained absence; a stalled or off-boundary step changes
 nothing; a vote is admitted only above strict 2/3; a passing vote slashes and ejects; a returning
 validator is released; continued silence renews. A passing vote and a release each close the target's
-window and clear its ballots, and a banished validator cannot rebond. The Lean model is
-`spec/Rchain/Liveness.lean`, the register row 89 (with row 17e for the merge rule), the HAZOP U21 and
-safety-case B48/B49/H-RS-17. The behaviour-by-behaviour coverage table, including what is not
-covered, is `spec/audit/evidence/c344-law-coverage-20261116.md`.
+window and clear its ballots, and a banished validator cannot rebond. **The leak (Law 129)** retires
+only the sender the gate named, never raises the denominator, and clears its counter on the first
+boundary whose layer covers the partition; the play/replay seam test pins that the derived refusal
+reaches both paths. The Lean model is `spec/Rchain/Liveness.lean`, the register rows 89 and 129 (with
+row 17e for the merge rule), the HAZOP U21 and safety-case B48/B49/H-RS-17. The
+behaviour-by-behaviour coverage table, including what is not covered, is
+`spec/audit/evidence/c344-law-coverage-20261116.md`.
 
 ## 7. Acceptance (met 2026-11-17)
 

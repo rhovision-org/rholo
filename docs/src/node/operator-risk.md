@@ -107,22 +107,26 @@ A low-power host is a **good observer** and a **risky validator**:
 
 ## 7. If the network later prices absence
 
-The current protocol has behavioural slashing only. It has no inactivity leak and no eviction; the
-existing `participation-grace`/`absence-slack` rule scales **income only**, is off by default, and is a
+The current protocol has behavioural slashing plus the opt-in liveness mechanism. The
+`participation-grace`/`absence-slack` rule scales **income only**, is off by default, and is a
 genesis decision for each network. If a network wants to price absence, the staged path is:
 
 | stage | mechanism | bond at risk? | status |
 |---|---|---|---|
-| 0 | current: behavioural slashing; absence paid; no inactivity leak | only invalid/equivocation | shipped |
+| 0 | behavioural slashing; absence paid; no liveness mechanism armed | only invalid/equivocation | shipped |
 | 1 | arm the existing income rule after measuring the participation lag | no | a network/genesis decision; measure first |
-| 2 | an inactivity leak / reward decay (new state) | no | not built; Lean-first and maintainer decision |
-| 3 | liveness slashing — **now the opt-in jail + stake vote** (RCHIP #55, Law 89) | only through a >2/3 active-stake vote | implemented, **default off**; jail first (bond untouched), the vote is the only bond path; the local capstone passes jail, vote/threshold and stall; the restart/release clause is Law 89's state machine and its named witnesses, and the arm's jail half read as expected and its restart/release half needs a new test |
+| 2 | **the inactivity leak** (added 2026-11-22, Law 129) | yes, automatically: after `liveness-jail-after-boundaries` consecutive boundaries in which the validator's message does not cover the finality partition | implemented behind the liveness genesis parameters, **default off**; the trigger is the gate's own coverage refusal, not absence by height |
+| 3 | liveness slashing — **the opt-in jail + stake vote** (RCHIP #55, Law 89) | jail: no; slash: only through a >2/3 active-stake vote | implemented, **default off**; jail first (bond untouched), the vote is the only bond path for absence |
 | 4 | mainnet arming | as above | **not authorised**; waits on the restart evidence and #428 |
 
-**Policy decision.** For the inactivity leak, no automatic step burns a bond. RCHIP #55 adds a *bond-preserving jail* and a *vote-gated slash*; the two
-are not a leak. The recommendation for a default network is still **do not arm**; a network that arms
-accepts that a >2/3 active-stake vote can eject a validator, and that a partitioned minority can be
-jailed on the side that still finalises. Mainnet arming waits on #428.
+**Policy decision (amended 2026-11-22).** The earlier policy — no automatic step burns a bond — is
+superseded for one case: a validator whose own produced message does not cover the whole partition,
+sustained across the window, forfeits its bond and leaves the quorum (Law 129). The reason is
+measured, not theoretical: at 100/100/50/50 the layer is 200 of 300, exactly two thirds, and the
+strict `> 2/3` gate refuses it with no path forward; the leak is what lets the survivors finalise.
+Absence by height still takes the bond-preserving jail, whose bond is reachable only through a
+>2/3 vote. The recommendation for a default network is still **do not arm**; mainnet arming waits on
+#428.
 
 ## 8. Terms and reporting
 

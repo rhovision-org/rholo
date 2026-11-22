@@ -55,6 +55,7 @@ pub async fn replay_block(
     block: &BlockMessage,
     fringe_state_hash: &Blake2b256Hash,
     participation: &BTreeMap<Validator, BlockHeight>,
+    layer_missing: &BTreeSet<Validator>,
     rand: &Blake2b512Random,
 ) -> Result<Blake2b256Hash, ReplayFailure> {
     let start_hash = Blake2b256Hash::from_byte_array(block.pre_state_hash.as_bytes());
@@ -70,6 +71,7 @@ pub async fn replay_block(
             block_data,
             fringe_state_hash,
             participation,
+            layer_missing,
             with_cost_accounting,
             // Genesis PoS descriptors (pool/trusted/params) come from the network's genesis
             // configuration; the trie is authoritative for every non-genesis block, so this value is
@@ -1395,12 +1397,18 @@ where
             };
             return Ok((bmd, Err(status)));
         }
+        // The gate's own refusal for this block's parents, from the merge that produced the
+        // pre-state — the same derivation the proposer ran, so play and replay agree about a
+        // boundary's inactivity leak.
+        let layer_missing =
+            crate::system_deploy::layer_missing_from_stall(&pre_state.finality_stall);
         let mut replay_result = replay_block(
             runtime,
             &forked,
             block,
             &pre_state.fringe_state,
             &pre_state.participation,
+            &layer_missing,
             &rand,
         )
         .await;
@@ -1429,6 +1437,7 @@ where
                     block,
                     &pre_state.fringe_state,
                     &pre_state.participation,
+                    &layer_missing,
                     &rand,
                 )
                 .await;

@@ -7910,7 +7910,65 @@ def lawsC : List Law := [
       The Rust witnesses are the reset inventory tests: the deploy is returned before its only \
       block is purged, and a disk-backed reset preserves the inventory across a store reopen. The \
       public arm, not this law, measures the live stop and rejoin." },
-
+  { number := 129, layer := "Casper",
+    statement := "**The inactivity leak: a validator that does not cover the finality partition is \
+      retired from it, and only it.** At an epoch boundary a sender the gate's own refusal names as \
+      not-full (`NoAdvance::Support.not_full`) is retired from the active snapshot after a bounded \
+      window, forfeiting its bond. (`NoAdvance::Coverage.missing` is absence by height, which the \
+      live weight set and the bond-preserving jail already handle; it is deliberately not the leak's \
+      trigger.) `leak active silent` is \
+      the map transition; it removes exactly the named senders, one leaked sender is absent from \
+      `bondedSenders` of the result, and the denominator never rises. The bond-leave fixture — \
+      100/100/50/50 with sender 1's candidate unseen by the partition — refuses at 200 of 300 \
+      (exactly two thirds, Law 52's clause b) and advances at 200 of 200 once sender 1 is leaked: \
+      **retirement, not a weaker predicate, is what lets the survivors finalise.**",
+    status := .provedModel,
+    formal := `Rchain.law129_statement,
+    mutant := `Rchain.law129_mutant,
+    falsifier := `Rchain.law129_falsifier,
+    declarations := [`Rchain.ActiveBonds, `Rchain.bondsOfState, `Rchain.leak,
+      `Rchain.leak_retires_only_the_silent, `Rchain.the_leaked_sender_is_not_in_the_quorum,
+      `Rchain.totalStake_leak_le, `Rchain.bondsJoinActive,
+      `Rchain.the_join_layer_advances_after_leak, `Rchain.a_speaker_within_the_window_does_not_leak,
+      `Rchain.law129_statement, `Rchain.law129_statement_holds, `Rchain.law129_mutant,
+      `Rchain.law129_falsifier],
+    axioms := [],
+    rust := ["rholang/src/native_state.rs", "casper/src/system_deploy.rs",
+      "casper/src/blocks/proposer/block_creator.rs", "casper/src/multi_parent_casper.rs",
+      "block-storage/src/dag/finalizer.rs"],
+    rustWitness := [
+      "rholang/src/native_state.rs:a_validator_that_does_not_cover_the_partition_is_leaked_after_the_window",
+      "rholang/src/native_state.rs:a_boundary_that_covers_the_partition_clears_the_silence_counter",
+      "casper/src/runtime_manager.rs:a_boundarys_layer_missing_reaches_play_and_replay_alike",
+      "casper/src/blocks/proposer/block_creator.rs:the_proposer_attaches_the_list_the_replay_will_read"],
+    witness := [`Rchain.leak_retires_only_the_silent,
+      `Rchain.the_leaked_sender_is_not_in_the_quorum, `Rchain.totalStake_leak_le,
+      `Rchain.the_join_layer_advances_after_leak, `Rchain.a_speaker_within_the_window_does_not_leak,
+      `Rchain.law129_statement_holds, `Rchain.law129_falsifier],
+    falsifiable := "Use a leak that retires every sender (`law129_mutant`): it empties the quorum, \
+      which `law129_falsifier` constructs on the join fixture. Drop the `filter` from `leak` and \
+      `leak_retires_only_the_silent` fails; make the denominator `pool` instead of the filtered \
+      active snapshot and `totalStake_leak_le` fails. The Rust controls are two-sided: the leak fires \
+      only after two consecutive boundaries (one boundary of not-full is a race), and a boundary \
+      without the evidence clears the counter — a latch on history, rather than a statement about \
+      the validator's current condition, is the mutant the second test excludes.",
+    note := "**The instrument the exact-two-thirds decision chose** (2026-11-22, the bond-leave \
+      campaign). Law 52's clause b made the refusal attributable but could not make the chain \
+      advance: 200 of 300 is exactly two thirds and `is_supermajority` refuses it by one stake. The \
+      round-clock correction proposed for it was refuted by the repository's own N=8 invariants \
+      (`a_never_spoken_validator_does_not_rearm_its_grace_every_round`, \
+      `fast_proposer_cannot_retire_an_online_quorum_or_advance_round_alone`), which is why the \
+      liveness escape is priced retirement rather than a wider predicate. The `silent` input is the \
+      gate's own `not_full` — derived by every node from the block's \
+      justification set and **not carried on the wire**, so a proposer cannot choose whom to leak; \
+      the play/replay seam test pins that the derivation reaches both paths. The window is the \
+      existing `liveness_jail_after_boundaries` (sustained absence), and the step runs **before** \
+      the frozen-tip guard, because a frozen tip is the condition the leak exists to break. The \
+      bond forfeiture reuses `slash` (`SlashSeverity::Malicious` takes the whole tier), so the \
+      validator leaves the pool, the active set and every delegation ledger by the same rule a \
+      proven offence uses, and the stake is transferred to the Coop vault. **What it does not \
+      claim**: that a live quorum produces a full layer in bounded rounds — that remains Law 58's \
+      named schedule hypothesis, measured by the campaign, not proved here." },
 ]
 
 def laws : List Law := lawsA ++ lawsB ++ lawsC

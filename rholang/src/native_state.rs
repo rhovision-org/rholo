@@ -56,9 +56,9 @@ use rchain_rspace::native_store::{
 };
 
 use crate::pos_liveness::{
-    decode_absence, decode_anchor, decode_ballots, decode_validator_set, decode_vote_windows,
-    encode_absence, encode_anchor, encode_ballots, encode_validator_set, encode_vote_windows,
-    AbsenceRecord, Anchor, BallotKey, VoteWindow,
+    decode_absence, decode_anchor, decode_ballots, decode_silence, decode_validator_set,
+    decode_vote_windows, encode_absence, encode_anchor, encode_ballots, encode_silence,
+    encode_validator_set, encode_vote_windows, AbsenceRecord, Anchor, BallotKey, VoteWindow,
 };
 use crate::util::rev_address::RevAddress;
 
@@ -162,6 +162,14 @@ pub fn pos_liveness_key() -> Blake2b256Hash {
 /// Leaf key for the liveness anchor: the last boundary at which finality actually advanced.
 pub fn pos_liveness_anchor_key() -> Blake2b256Hash {
     Blake2b256Hash::create(b"pos:liveness-anchor")
+}
+
+/// Leaf key for the inactivity leak's per-validator counters (`pos:silence`): consecutive
+/// advancing-or-frozen boundaries on which the validator's message did not cover the finality
+/// partition (`layer_missing` from the gate's own refusal). Written only at a boundary and only when
+/// the mechanism is armed, and cleared for a validator the moment it covers the partition again.
+pub fn pos_silence_key() -> Blake2b256Hash {
+    Blake2b256Hash::create(b"pos:silence")
 }
 
 /// Leaf key for open slash-vote windows (`validator → window`).
@@ -963,11 +971,15 @@ pub struct PosGenesis {
 }
 
 /// What a boundary's liveness prelude changed. The `jailed` set is the one the active-set draw
-/// excludes; `slashed` is for the boundary log and for tests. The bond is never in either.
+/// excludes; `slashed` is for the boundary log and for tests. The bond is never in either. `leaked`
+/// is the inactivity leak's own set: validators whose messages did not cover the partition for the
+/// whole window, retired from the quorum and priced (their bond forfeited), so it is the one set here
+/// that *did* reach a bond.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LivenessOutcome {
     pub jailed: BTreeSet<Validator>,
     pub slashed: Vec<Validator>,
+    pub leaked: BTreeSet<Validator>,
     /// **Pool members that have not joined yet.** They are in the bonded pool but not in the active
     /// set and are absent from the quorum-supported tip, so the boundary must not draw them into the
     /// active set: the active set is the finality denominator, and a validator that has never
@@ -1479,6 +1491,20 @@ impl NativeSystemState {
         let value = (!records.is_empty()).then(|| encode_absence(records));
         self.store_optional_pos_leaf(pos_liveness_key(), value)
             .await
+    }
+
+    /// The inactivity leak's counters. Absent reads as empty (no validator has been silent).
+    pub async fn silence(&self) -> Result<BTreeMap<Validator, i64>, String> {
+        match self.store.get(PREFIX_POS, &pos_silence_key()).await? {
+            Some(bytes) => decode_silence(&bytes),
+            None => Ok(BTreeMap::new()),
+        }
+    }
+
+    /// Write the inactivity-leak counters; an empty map clears the leaf.
+    pub async fn set_silence(&self, silence: &BTreeMap<Validator, i64>) -> Result<(), String> {
+        let value = (!silence.is_empty()).then(|| encode_silence(silence));
+        self.store_optional_pos_leaf(pos_silence_key(), value).await
     }
 
     /// The last boundary at which finality advanced, or `None` before the first.
@@ -2026,11 +2052,32 @@ impl NativeSystemState {
     /// It is deliberately neither the deploy's `rand` — a function of the block being proposed, so a
     /// free reroll — nor the block's pre-state, which the proposer influences through its justification
     /// set. See `select_active` for the rule and step 5 for why the fringe is the value that closes it.
+    /// A close whose gate refusal is empty — the historical shape, kept for rigs and reports that do
+    /// not run a finality gate. Consensus paths call [`Self::close_block_attributing`], which states
+    /// the refusal the boundary's inactivity leak reads rather than defaulting it.
     pub async fn close_block(
         &self,
         block_number: i64,
         fringe_state_hash: Blake2b256Hash,
         participation: &BTreeMap<Validator, BlockHeight>,
+    ) -> Result<Result<(), String>, String> {
+        self.close_block_attributing(
+            block_number,
+            fringe_state_hash,
+            participation,
+            &BTreeSet::new(),
+        )
+        .await
+    }
+
+    /// **The epoch transition, with the finality gate's own refusal** — `layer_missing` is the
+    /// senders the gate named as not covering the whole partition, which the inactivity leak prices.
+    pub async fn close_block_attributing(
+        &self,
+        block_number: i64,
+        fringe_state_hash: Blake2b256Hash,
+        participation: &BTreeMap<Validator, BlockHeight>,
+        layer_missing: &BTreeSet<Validator>,
     ) -> Result<Result<(), String>, String> {
         let params = self.params().await?;
         let boundary = is_epoch_boundary(&params, block_number);
@@ -2057,7 +2104,13 @@ impl NativeSystemState {
 
         let active_for_epoch = self.active().await?;
         let liveness = self
-            .apply_liveness_prelude(block_number, fringe_state_hash, participation, &params)
+            .apply_liveness_prelude(
+                block_number,
+                fringe_state_hash,
+                participation,
+                layer_missing,
+                &params,
+            )
             .await?;
         // Read the ledgers **after** the prelude: a passing vote has already run `slash`, and these
         // are the post-slash maps the rest of the boundary must use.
@@ -2525,19 +2578,26 @@ impl NativeSystemState {
         Ok(rewards)
     }
 
-    /// **The liveness prelude**: tally open votes, update absence counters, impose/expire jails and
-    /// open vote windows, at one advancing boundary. It writes only when the mechanism is armed; a
-    /// disabled chain returns without touching a leaf.
+    /// **The liveness prelude**: price sustained silence, tally open votes, update absence counters,
+    /// impose/expire jails and open vote windows, at one epoch boundary. It writes only when the
+    /// mechanism is armed; a disabled chain returns without touching a leaf.
     ///
-    /// It runs **before** the normal boundary steps read the pool and ledgers, because a passing
-    /// vote calls [`Self::slash`] and a later read of stale maps would resurrect the offender.
+    /// It runs **before** the normal boundary steps read the pool and ledgers, because the inactivity
+    /// leak and a passing vote both call [`Self::slash`] and a later read of stale maps would
+    /// resurrect the offender.
+    ///
     /// `participation` is the receiver-derived finalised-fringe map; `fringe_state_hash` is the same
-    /// boundary's finalised fringe. No wall-clock or proposer-chosen input enters the rule.
+    /// boundary's finalised fringe; `layer_missing` is the finality gate's own refusal for this
+    /// block's parents — the senders whose messages did not cover the whole partition
+    /// (`NoAdvance::Support.not_full`; `Coverage.missing` is absence by height and stays the jail's
+    /// business), which every node derives from the same DAG and which is therefore recomputed
+    /// rather than carried on the wire. No wall-clock or proposer-chosen input enters the rule.
     async fn apply_liveness_prelude(
         &self,
         block_number: i64,
         fringe_state_hash: Blake2b256Hash,
         participation: &BTreeMap<Validator, BlockHeight>,
+        layer_missing: &BTreeSet<Validator>,
         params: &PosParams,
     ) -> Result<LivenessOutcome, String> {
         let mut outcome = LivenessOutcome::default();
@@ -2579,6 +2639,67 @@ impl NativeSystemState {
             });
             return Ok(outcome);
         };
+
+        // 0. **The inactivity leak.** A validator whose own message did not cover the whole finality
+        // partition (`layer_missing`) is the one keeping the layer from filling: its stake is inside
+        // the quorum denominator while it does not see the quorum, so a layer can stall at exactly
+        // two thirds — the exact boundary `is_super_majority` refuses. The priced instrument is
+        // retirement: after `liveness_jail_after_boundaries` consecutive boundaries of that silence,
+        // the validator forfeits its bond and leaves the quorum. The window is the existing
+        // sustained-absence bound rather than a second knob — one boundary's lagging block is a race
+        // and clears the counter; a frozen tip repeats the same refusal, which is the evidence.
+        //
+        // It runs **before the frozen-tip guard below**, and that ordering is the point: a frozen tip
+        // is precisely the condition the leak exists to break, so the leak must be able to fire on it.
+        // A jail could not: `select_active_excluding` only helps at a later draw, while the leak
+        // removes the validator from the denominator at this boundary.
+        //
+        // The bond forfeiture goes through `slash` (`SlashSeverity::Malicious` takes the whole tier),
+        // so the validator leaves `pos:bonds`, `pos:active` and every delegation ledger by the same
+        // rule a proven offence uses, and the stake is transferred to the Coop vault rather than
+        // vanishing. Nothing is minted.
+        {
+            let leak_after = params.liveness_jail_after_boundaries;
+            let mut silence = self.silence().await?;
+            let mut to_leak: Vec<Validator> = Vec::new();
+            for validator in active.keys().copied().collect::<Vec<_>>() {
+                if layer_missing.contains(&validator) {
+                    let count = silence.entry(validator).or_insert(0);
+                    *count = count.saturating_add(1);
+                    if *count >= leak_after {
+                        to_leak.push(validator);
+                    }
+                } else {
+                    silence.remove(&validator);
+                }
+            }
+            for validator in to_leak {
+                match self.slash(&validator, SlashSeverity::Malicious).await? {
+                    Ok(()) => {
+                        silence.remove(&validator);
+                        outcome.leaked.insert(validator);
+                        eprintln!(
+                            "[pos] boundary {block_number}: leaked {validator:?} — its message did \
+                             not cover the finality partition for {leak_after} boundaries; bond \
+                             forfeited to the Coop vault"
+                        );
+                    }
+                    Err(e) => eprintln!(
+                        "[pos] boundary {block_number}: the silence of {validator:?} could not be \
+                         priced: {e}"
+                    ),
+                }
+            }
+            if !outcome.leaked.is_empty() {
+                // `slash` rewrote the pool and the active set; the boundary's later steps must read
+                // the post-leak maps, not the ones this prelude opened with.
+                active = self.active().await?;
+            }
+            // A counter only means something for a validator still in the quorum.
+            silence.retain(|validator, _| active.contains_key(validator));
+            self.set_silence(&silence).await?;
+        }
+
         if tip <= anchor.quorum_tip {
             // A changed fringe with an unchanged quorum tip is not progress: the clocks freeze.
             eprintln!(
@@ -6070,6 +6191,157 @@ mod tests {
         assert!(
             unarmed.active().await.unwrap().contains_key(&validator(4)),
             "with the liveness configuration off the draw is the pre-change one"
+        );
+    }
+
+    /// **The inactivity leak: a validator that does not cover the partition forfeits its bond.**
+    ///
+    /// The bond-leave stall was a layer at 100/100/50/50 whose 200 of 300 is *exactly* two thirds —
+    /// one stake short of `is_super_majority` — because one sender's message did not see the whole
+    /// partition (`NoAdvance::Support.not_full`, Law 52's attributable refusal). The priced
+    /// instrument is retirement: after `liveness_jail_after_boundaries` consecutive boundaries of
+    /// that silence the validator leaves the pool and the active set and its bond goes to the Coop
+    /// vault, so the survivors' support becomes the whole denominator.
+    ///
+    /// **The control is the first advancing boundary**: the same evidence once does not leak, which
+    /// is what separates a sustained silence from a one-round race. The reversion arm (below) is the
+    /// other half — a boundary without the evidence clears the counter — so the rule is a window,
+    /// not a latch.
+    #[tokio::test]
+    async fn a_validator_that_does_not_cover_the_partition_is_leaked_after_the_window() {
+        let params = PosParams {
+            minimum_bond: NonNegI64::try_from(1).unwrap(),
+            epoch_length: 1,
+            liveness_absence_threshold: 1,
+            liveness_jail_after_boundaries: 2,
+            liveness_jail_epochs: 2,
+            ..PosParams::default()
+        };
+        let (v1, v2, v3, v4) = (validator(1), validator(2), validator(3), validator(4));
+        let native = native_with(
+            &[v1, v2, v3, v4],
+            params,
+            &[(v1, 100), (v2, 100), (v3, 50), (v4, 50)],
+        )
+        .await;
+        // Everyone speaks at every boundary, so nobody is absent by height — the only silence in
+        // play is the gate's refusal, which is what makes this arm about `layer_missing`.
+        let at = |height: i64| {
+            BTreeMap::from([
+                (v1, BlockHeight::try_from(height).unwrap()),
+                (v2, BlockHeight::try_from(height).unwrap()),
+                (v3, BlockHeight::try_from(height).unwrap()),
+                (v4, BlockHeight::try_from(height).unwrap()),
+            ])
+        };
+        let silent = BTreeSet::from([v1]);
+
+        // The first armed boundary only anchors the comparison point.
+        native
+            .close_block_attributing(10, fringe_state(10), &at(10), &silent)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(native.bonds().await.unwrap().contains_key(&v1));
+        // One advancing boundary of evidence is a race, not sustained silence.
+        native
+            .close_block_attributing(20, fringe_state(20), &at(20), &silent)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(native.silence().await.unwrap().get(&v1), Some(&1));
+        assert!(
+            native.bonds().await.unwrap().contains_key(&v1),
+            "one boundary of not-full is not the window"
+        );
+        // The second consecutive boundary is the window, and the bond is the price.
+        native
+            .close_block_attributing(30, fringe_state(30), &at(30), &silent)
+            .await
+            .unwrap()
+            .unwrap();
+        let bonds = native.bonds().await.unwrap();
+        let active = native.active().await.unwrap();
+        assert!(!bonds.contains_key(&v1), "the leaked bond leaves the pool");
+        assert!(
+            !active.contains_key(&v1),
+            "and the active set is the finality denominator: it leaves that too"
+        );
+        assert_eq!(
+            i64::from(native.coop_balance().await.unwrap()),
+            100,
+            "the bond is forfeited to the Coop vault — a transfer, not a disappearance"
+        );
+        assert_eq!(
+            native.silence().await.unwrap().get(&v1),
+            None,
+            "a retired validator keeps no counter"
+        );
+        assert!(bonds.contains_key(&v2) && active.contains_key(&v2));
+
+        // **The survivors now are the whole denominator.** Their 100+50+50 defeats the same layer
+        // that 200-of-300 could not, which is the property Law 129 states over the map.
+        assert_eq!(
+            active.values().map(|s| i64::from(*s)).sum::<i64>(),
+            200,
+            "the denominator the gate now divides by is the post-leak active stake"
+        );
+    }
+
+    /// **The window is consecutive.** One boundary without the evidence clears the counter, so a
+    /// validator that lags once, catches up, and lags once is never leaked. Without this arm the
+    /// rule would be "ever silent twice", which is a latch on a validator's history rather than a
+    /// statement about its current condition.
+    #[tokio::test]
+    async fn a_boundary_that_covers_the_partition_clears_the_silence_counter() {
+        let params = PosParams {
+            minimum_bond: NonNegI64::try_from(1).unwrap(),
+            epoch_length: 1,
+            liveness_absence_threshold: 1,
+            liveness_jail_after_boundaries: 2,
+            liveness_jail_epochs: 2,
+            ..PosParams::default()
+        };
+        let (v1, v2, v3) = (validator(1), validator(2), validator(3));
+        let native = native_with(&[v1, v2, v3], params, &[(v1, 50), (v2, 50), (v3, 50)]).await;
+        let at = |height: i64| {
+            BTreeMap::from([
+                (v1, BlockHeight::try_from(height).unwrap()),
+                (v2, BlockHeight::try_from(height).unwrap()),
+                (v3, BlockHeight::try_from(height).unwrap()),
+            ])
+        };
+        let silent = BTreeSet::from([v1]);
+        let quiet: BTreeSet<Validator> = BTreeSet::new();
+
+        native
+            .close_block_attributing(10, fringe_state(10), &at(10), &quiet)
+            .await
+            .unwrap()
+            .unwrap();
+        native
+            .close_block_attributing(20, fringe_state(20), &at(20), &silent)
+            .await
+            .unwrap()
+            .unwrap();
+        native
+            .close_block_attributing(30, fringe_state(30), &at(30), &quiet)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            native.silence().await.unwrap().get(&v1),
+            None,
+            "a covering boundary resets the run"
+        );
+        native
+            .close_block_attributing(40, fringe_state(40), &at(40), &silent)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            native.bonds().await.unwrap().contains_key(&v1),
+            "two non-consecutive lapses are not sustained silence"
         );
     }
 

@@ -397,6 +397,54 @@ theorem the_join_layer_names_sender_one :
 theorem the_join_layer_advances_once_all_see :
     calculateFringe suppJoinFull bondsJoin bondsJoin = true := by decide
 
+/-! ### The inactivity leak — Law 129
+
+The stall above is the exact-two-thirds boundary: sender 1's bond keeps the denominator at 300
+while the supporting layer reaches 200. The leak retires the silent sender at a boundary, and the
+survivors' 200 becomes the whole denominator. This is the priced instrument Law 52's clause b names.
+-/
+
+/-- The same bond set as an `ActiveBonds` snapshot (`pos:active`). -/
+def bondsJoinActive : ActiveBonds :=
+  [(⟨0⟩, 100), (⟨1⟩, 100), (⟨2⟩, 50), (⟨3⟩, 50)]
+
+/-- **The leak lets the survivors finalise.** With sender 1 retired, the remaining 200 is the whole
+    denominator, so the 200 supporting it is 200 of 200 — the positive counterpart to
+    `the_join_layer_refuses`. -/
+theorem the_join_layer_advances_after_leak :
+    calculateFringe suppJoinPartial
+      (bondsOfState (leak bondsJoinActive [1]))
+      (bondsOfState (leak bondsJoinActive [1])) = true := by decide
+
+/-- A speaker within the window is not retired: an empty silence set leaks nothing. -/
+theorem a_speaker_within_the_window_does_not_leak :
+    leak bondsJoinActive [] = bondsJoinActive := by decide
+
+/-- **Law 129's proposition**: a leak retires only the named silent senders, never raises the
+    denominator, and makes the bond-leave layer advance. -/
+def law129_statement : Prop :=
+  (∀ (active : ActiveBonds) (silent : List Sender),
+      (∀ v ∈ silent, v ∉ bondedSenders (bondsOfState (leak active silent))) ∧
+      totalStake (bondsOfState (leak active silent))
+        ≤ totalStake (bondsOfState active)) ∧
+  (calculateFringe suppJoinPartial
+      (bondsOfState (leak bondsJoinActive [1]))
+      (bondsOfState (leak bondsJoinActive [1])) = true)
+
+theorem law129_statement_holds : law129_statement := by
+  refine ⟨?_, the_join_layer_advances_after_leak⟩
+  intro active silent
+  exact ⟨fun v hv => the_leaked_sender_is_not_in_the_quorum active silent hv,
+    totalStake_leak_le active silent⟩
+
+/-- **The mutant**: a leak that retires every sender empties the quorum. -/
+def law129_mutant : Prop :=
+  ∃ (active : ActiveBonds) (silent : List Sender),
+    (∀ b ∈ active, b.1.id ∈ silent) ∧ leak active silent = [] ∧ active ≠ []
+
+theorem law129_falsifier : law129_mutant := by
+  refine ⟨bondsJoinActive, [0, 1, 2, 3], ?_, ?_, ?_⟩ <;> decide
+
 /-! ### The emitted trace refines the decision -/
 
 inductive RefusalKind where
