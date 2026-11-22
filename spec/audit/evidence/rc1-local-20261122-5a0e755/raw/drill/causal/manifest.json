@@ -1,0 +1,220 @@
+{
+  "utc": 1795355482.8322625,
+  "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
+  "validators": 4,
+  "nodes": {
+    "0": {
+      "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
+      "container_state": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 3377521,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-11-22T13:50:27.326885865Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-11-22T13:50:42.644206913Z",
+              "End": "2026-11-22T13:50:42.717934155Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"458f775f5e926b0c3e0e7afd43a6cd2f0bece0a7\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":3,\"nodes\":0,\"minPhloPrice\":1,\"latestBlockNumber\":1,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":{\"kind\":\"genesis\",\"digest\":null,\"anchor\":\"f9aac21483cb6235268a602bd2921bff0564a249b8d2189bd1a7aa4e8599e939\",\"anchorHeight\":0,\"ageBlocks\":null,\"validationWindowHeights\":14,\"validationWindowCommitted\":false,\"metadataCommitted\":false},\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:50:52.71919022Z",
+              "End": "2026-11-22T13:50:52.789153589Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"458f775f5e926b0c3e0e7afd43a6cd2f0bece0a7\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":3,\"nodes\":0,\"minPhloPrice\":1,\"latestBlockNumber\":13,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":8,\"syncPhase\":\"running\",\"checkpoint\":{\"kind\":\"checkpoint\",\"digest\":\"b9060a5ae9f97a3dc70c8646da3330ad016ba2769d3f9fb7665a1694aa151995\",\"anchor\":\"edeaf6e40ae84dc3640006482c5851343cf9055b8e581adc73e6913077ce7baa\",\"anchorHeight\":4,\"ageBlocks\":8,\"validationWindowHeights\":14,\"validationWindowCommitted\":true,\"metadataCommitted\":true},\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:51:02.790760775Z",
+              "End": "2026-11-22T13:51:02.857502595Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"458f775f5e926b0c3e0e7afd43a6cd2f0bece0a7\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":3,\"nodes\":0,\"minPhloPrice\":1,\"latestBlockNumber\":20,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":4,\"syncPhase\":\"running\",\"checkpoint\":{\"kind\":\"checkpoint\",\"digest\":\"76e3895220980c9797369dfabb048c6ecb2541689ccdf3b27930f61ccc3fe9c9\",\"anchor\":\"b69e200cdbb3ea1d23bc6e40de4fff58864abfff5b5ba35249b094737fa3fe92\",\"anchorHeight\":15,\"ageBlocks\":4,\"validationWindowHeights\":14,\"validationWindowCommitted\":true,\"metadataCommitted\":true},\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:51:12.858361829Z",
+              "End": "2026-11-22T13:51:12.926434695Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"458f775f5e926b0c3e0e7afd43a6cd2f0bece0a7\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":3,\"nodes\":0,\"minPhloPrice\":1,\"latestBlockNumber\":24,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":1,\"bytes\":3,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":4,\"syncPhase\":\"running\",\"checkpoint\":{\"kind\":\"checkpoint\",\"digest\":\"a61a81371df707fc160436c598ddbda2b7534575ab8619c30f9e633e44baeb7a\",\"anchor\":\"a7d73bc96463fb4c27f6b48a21606d2ee39bad2f09345848cc81aa0a7ff86a55\",\"anchorHeight\":19,\"ageBlocks\":4,\"validationWindowHeights\":14,\"validationWindowCommitted\":true,\"metadataCommitted\":true},\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:51:22.928222964Z",
+              "End": "2026-11-22T13:51:22.985739943Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"458f775f5e926b0c3e0e7afd43a6cd2f0bece0a7\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":3,\"nodes\":0,\"minPhloPrice\":1,\"latestBlockNumber\":28,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":3,\"syncPhase\":\"running\",\"checkpoint\":{\"kind\":\"checkpoint\",\"digest\":\"df3993d7d20f3a6bd04793756b468667a347e4680ce8ad35217da2f27d5dd4eb\",\"anchor\":\"8ba045a0bb579e2ab42fe97305a31c53a94e85052a350671ec007a680144067e\",\"anchorHeight\":24,\"ageBlocks\":3,\"validationWindowHeights\":14,\"validationWindowCommitted\":true,\"metadataCommitted\":true},\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            }
+          ]
+        }
+      }
+    },
+    "1": {
+      "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
+      "container_state": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 3378308,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-11-22T13:50:33.680950583Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-11-22T13:50:38.931758777Z",
+              "End": "2026-11-22T13:50:39.005111906Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"1d989003484e3e4ece8e93d7608f7042e7d14e4b\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":1,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"catching-up\",\"checkpoint\":{\"kind\":\"genesis\",\"digest\":null,\"anchor\":\"f9aac21483cb6235268a602bd2921bff0564a249b8d2189bd1a7aa4e8599e939\",\"anchorHeight\":0,\"ageBlocks\":null,\"validationWindowHeights\":14,\"validationWindowCommitted\":false,\"metadataCommitted\":false},\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:50:49.006632628Z",
+              "End": "2026-11-22T13:50:49.069393431Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"1d989003484e3e4ece8e93d7608f7042e7d14e4b\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":8,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":null,\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:50:59.070356953Z",
+              "End": "2026-11-22T13:50:59.131094961Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"1d989003484e3e4ece8e93d7608f7042e7d14e4b\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":18,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":null,\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:51:09.132167034Z",
+              "End": "2026-11-22T13:51:09.200147644Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"1d989003484e3e4ece8e93d7608f7042e7d14e4b\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":22,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":null,\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:51:19.201810135Z",
+              "End": "2026-11-22T13:51:19.270604777Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"1d989003484e3e4ece8e93d7608f7042e7d14e4b\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":26,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":null,\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            }
+          ]
+        }
+      }
+    },
+    "2": {
+      "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
+      "container_state": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 3378639,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-11-22T13:50:34.841838062Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-11-22T13:50:40.07404631Z",
+              "End": "2026-11-22T13:50:40.175940619Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"e6418d85d2eca817bca7a7de7c7686b3986312a0\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":1,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"catching-up\",\"checkpoint\":{\"kind\":\"genesis\",\"digest\":null,\"anchor\":\"f9aac21483cb6235268a602bd2921bff0564a249b8d2189bd1a7aa4e8599e939\",\"anchorHeight\":0,\"ageBlocks\":null,\"validationWindowHeights\":14,\"validationWindowCommitted\":false,\"metadataCommitted\":false},\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:50:50.177407097Z",
+              "End": "2026-11-22T13:50:50.249417346Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"e6418d85d2eca817bca7a7de7c7686b3986312a0\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":10,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":null,\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:51:00.250596409Z",
+              "End": "2026-11-22T13:51:00.332789344Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"e6418d85d2eca817bca7a7de7c7686b3986312a0\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":18,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":null,\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:51:10.334043222Z",
+              "End": "2026-11-22T13:51:10.396626667Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"e6418d85d2eca817bca7a7de7c7686b3986312a0\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":22,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":null,\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:51:20.398152446Z",
+              "End": "2026-11-22T13:51:20.469647905Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"e6418d85d2eca817bca7a7de7c7686b3986312a0\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":27,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":null,\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            }
+          ]
+        }
+      }
+    },
+    "3": {
+      "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
+      "container_state": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 3378950,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-11-22T13:50:35.919010265Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-11-22T13:50:41.125018012Z",
+              "End": "2026-11-22T13:50:41.197087334Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"cee01ada3bc361db30f09b6d71e3ad97426dad4f\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":1,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"catching-up\",\"checkpoint\":{\"kind\":\"genesis\",\"digest\":null,\"anchor\":\"f9aac21483cb6235268a602bd2921bff0564a249b8d2189bd1a7aa4e8599e939\",\"anchorHeight\":0,\"ageBlocks\":null,\"validationWindowHeights\":14,\"validationWindowCommitted\":false,\"metadataCommitted\":false},\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:50:51.197754488Z",
+              "End": "2026-11-22T13:50:51.260413657Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"cee01ada3bc361db30f09b6d71e3ad97426dad4f\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":11,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":null,\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:51:01.261487388Z",
+              "End": "2026-11-22T13:51:01.322728094Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"cee01ada3bc361db30f09b6d71e3ad97426dad4f\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":19,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":null,\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:51:11.323905807Z",
+              "End": "2026-11-22T13:51:11.386701877Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"cee01ada3bc361db30f09b6d71e3ad97426dad4f\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":23,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":null,\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            },
+            {
+              "Start": "2026-11-22T13:51:21.387666927Z",
+              "End": "2026-11-22T13:51:21.459590201Z",
+              "ExitCode": 0,
+              "Output": "{\"version\":{\"api\":\"1\",\"node\":\"rholo node 0.1.0 (5a0e755be3d92ddf3843aa5fde493a622f58ca7c)\"},\"address\":\"cee01ada3bc361db30f09b6d71e3ad97426dad4f\",\"networkId\":\"testnet\",\"shardId\":\"/root\",\"peers\":1,\"nodes\":1,\"minPhloPrice\":1,\"latestBlockNumber\":27,\"autopropose\":false,\"proposeOnDeploy\":true,\"manualPropose\":false,\"devMode\":true,\"proposer\":true,\"degraded\":\"normal\",\"acceptsDeploys\":true,\"pool\":{\"deploys\":0,\"bytes\":0,\"maxDeploys\":10000,\"maxBytes\":67108864},\"historyAvailability\":\"available\",\"checkpointAge\":null,\"syncPhase\":\"running\",\"checkpoint\":null,\"audit\":{\"available\":false,\"running\":false,\"lastVerdict\":null,\"lastCheckpoint\":null,\"lastRunAtUnixMs\":null}}"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "unavailable": [
+    "internal round ID",
+    "signature verification of captured raw bytes",
+    "candidate fringe internals; use gate verdict in operator status"
+  ]
+}

@@ -503,6 +503,26 @@ class HealingWindowTests(unittest.TestCase):
         self.assertFalse(m.finalized_fence_is_frozen(before, moving_tip[:2]))
         self.assertFalse(m.finalized_fence_is_frozen(
             before, [{"latest": 34, "finalized_height": 24}] * 3))
+        # The drain is judged by the single increment, not by when it lands: a certificate already
+        # in flight can land several polls after the cut (observed 2026-11-22 at sample 7).
+        late_drain = ([{"latest": 34, "finalized_height": 25}] * 3
+                      + [{"latest": 35, "finalized_height": 26}] * 4)
+        self.assertTrue(m.finalized_fence_is_frozen(before, late_drain))
+        # A second increment is a leak, however early the first one landed.
+        two_drains = ([{"latest": 34, "finalized_height": 25}] * 2
+                      + [{"latest": 35, "finalized_height": 26}] * 2
+                      + [{"latest": 36, "finalized_height": 27}] * 3)
+        self.assertFalse(m.finalized_fence_is_frozen(before, two_drains))
+
+    def test_production_is_measured_against_the_install_tip(self):
+        """A block proposed between the cut and the first sample is production."""
+        after = {"tip": 67, "finalized_height": 59}
+        samples = [{"tip": 68, "finalized_height": 60},
+                   {"tip": 68, "finalized_height": 60},
+                   {"tip": 68, "finalized_height": 60}]
+        self.assertTrue(m.verify_producing_isolation(after, samples))
+        flat = [{"tip": 67, "finalized_height": 59}] * 3
+        self.assertFalse(m.verify_producing_isolation(after, flat))
 
     def test_queued_pre_cut_blocks_must_finish_before_stable_dwell(self):
         from unittest.mock import patch

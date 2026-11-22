@@ -1,0 +1,20 @@
+{
+  "kind": "finality",
+  "bonded_total": 100,
+  "live_total": 100,
+  "quorum_total": 100,
+  "supporting": 0,
+  "full_partitions": 0,
+  "candidates": 0,
+  "supported_tip": 0,
+  "partition": [
+    "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+  ],
+  "bonded_senders": [
+    "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
+  ],
+  "prev_fringe": [],
+  "new_fringe": [],
+  "advanced": false,
+  "reason_kind": "support"
+}

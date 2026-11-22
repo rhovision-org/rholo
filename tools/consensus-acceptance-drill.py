@@ -178,6 +178,27 @@ class Drill:
             "cgroup_oom_kills": (operator.get("resources") or {}).get("cgroupOomKills"),
         }
 
+    def wait_for_ready(self, phase="workload-start", timeout=180):
+        """Wait for the node's own readiness verdict before treating it as a drill subject.
+
+        A joiner answers `/api/v1/status` while its catch-up gate is still closed; `/health`
+        reports `ready=false, readyReasons=['shard_not_running']` until the peer probe confirms the
+        window. Starting the workload at HTTP-200 made an N=8 acceptance run fail on a node that
+        was about to serve (run 45021169384, node 4), while the partition campaign on the same
+        fleet passed. The wait is bounded; if readiness never comes, `health_precondition` names
+        the refusal.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                rows = [self.status_row(i) for i in range(self.args.validators)]
+                if all(row.get("ready") is True for row in rows):
+                    return
+            except Exception:  # noqa: BLE001 - an unready read is retried, not judged
+                pass
+            time.sleep(2)
+        return
+
     def health_precondition(self, phase="drill"):
         """A node that is not a clean subject is a named precondition, not a timeout.
 
@@ -389,6 +410,7 @@ class Drill:
         # A node that is not a clean subject is a named precondition, not a later
         # timeout: a latched pipeline fault or a non-durable divergence zero must
         # not be read as evidence.
+        self.wait_for_ready("workload-start")
         self.health_precondition("workload-start")
         for i in range(self.args.validators):
             inspect = subprocess.check_output(["docker", "inspect", node_name(i)], text=True)

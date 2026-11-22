@@ -1,0 +1,7 @@
+{"kind": "held", "status": null, "retry_after": null, "body": "", "t_ms": 0}
+{"kind": "held", "status": null, "retry_after": null, "body": "", "t_ms": 0}
+{"kind": "probe", "status": 429, "retry_after": 1, "body": "HTTP in-flight capacity exhausted", "t_ms": 309}
+{"kind": "probe", "status": 429, "retry_after": 1, "body": "HTTP in-flight capacity exhausted", "t_ms": 461}
+{"kind": "probe", "status": 429, "retry_after": 1, "body": "HTTP in-flight capacity exhausted", "t_ms": 613}
+{"kind": "probe", "status": 429, "retry_after": 1, "body": "HTTP in-flight capacity exhausted", "t_ms": 767}
+{"kind": "after", "status": 400, "retry_after": null, "body": "Failed to parse the request body as JSON: expected value at line 1 column 1", "t_ms": 1221}
