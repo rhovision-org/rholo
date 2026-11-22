@@ -103,7 +103,16 @@ def verify_producing_isolation(victim_before, observations):
     rows = [row for row in observations if type(row.get("tip")) is int]
     if len(rows) < DWELL_MIN_SAMPLES:
         return False
-    if len({row["tip"] for row in rows}) <= 1:
+    tips = [row["tip"] for row in rows]
+    install_tip = victim_before.get("tip")
+    if type(install_tip) is int:
+        # Production is measured against the install view, not movement inside the sample list: a
+        # block proposed between the cut and the first sample is still production (2026-11-22,
+        # install 67, block #68 proposed at 13:41:12, every sample read 68).
+        produced = max(tips) > install_tip
+    else:
+        produced = len(set(tips)) > 1
+    if not produced:
         return False
     return finalized_fence_is_frozen(victim_before, observations)
 

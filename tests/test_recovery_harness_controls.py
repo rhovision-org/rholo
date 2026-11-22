@@ -514,6 +514,16 @@ class HealingWindowTests(unittest.TestCase):
                       + [{"latest": 36, "finalized_height": 27}] * 3)
         self.assertFalse(m.finalized_fence_is_frozen(before, two_drains))
 
+    def test_production_is_measured_against_the_install_tip(self):
+        """A block proposed between the cut and the first sample is production."""
+        after = {"tip": 67, "finalized_height": 59}
+        samples = [{"tip": 68, "finalized_height": 60},
+                   {"tip": 68, "finalized_height": 60},
+                   {"tip": 68, "finalized_height": 60}]
+        self.assertTrue(m.verify_producing_isolation(after, samples))
+        flat = [{"tip": 67, "finalized_height": 59}] * 3
+        self.assertFalse(m.verify_producing_isolation(after, flat))
+
     def test_queued_pre_cut_blocks_must_finish_before_stable_dwell(self):
         from unittest.mock import patch
         observations=[{"tip": 32}, {"tip": 33}, {"tip": 34}]
