@@ -1,0 +1,174 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/rhovision-org/rholo/spec/audit/runbooks/rc-public-fleet.manifest.schema.json",
+  "title": "rc-public-fleet manifest",
+  "description": "The input contract for tools/fleet-run.py and the RC-1/RC-4 public paths. It names four nodes, the candidate pins, the one deploy plan and the action policy. It carries inputs only: harness results, the victim, boot ids, post heads, certificates and a pre-made deploy id are produced by the driver or read by the claim, and a manifest containing them is refused. The committed record carries a redacted copy; a redacted manifest is evidence, not an input.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "campaign", "generated_at_utc", "locality", "transport", "provenance", "nodes"
+  ],
+  "properties": {
+    "schema": { "const": 1 },
+    "campaign": { "const": "rc-public-fleet" },
+    "generated_at_utc": { "type": "string" },
+    "locality": { "enum": ["public-live", "local-devnet", "single-host"] },
+    "transport": { "enum": ["ssh-systemd", "docker"] },
+    "rehearsal": {
+      "type": "boolean",
+      "description": "True only for the local dress rehearsal. A public-live run must not set it, and a rehearsal record never reads safe."
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["source_sha", "binary_sha256"],
+      "properties": {
+        "source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "binary_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "genesis_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "genesis_raw_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bonds_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "network_id": { "type": "string" },
+        "shard_id": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["name", "host", "http"],
+        "properties": {
+          "name": { "type": "string" },
+          "host": {
+            "type": "string",
+            "description": "Stable declared host label. A public run needs four distinct, non-loopback, non-private labels; the label is never resolved."
+          },
+          "ssh": { "type": "string", "description": "user@host for the ssh-systemd transport" },
+          "unit": { "type": "string", "description": "systemd unit, or docker container name" },
+          "binary_path": { "type": "string" },
+          "data_dir": { "type": "string" },
+          "http": { "type": "string" },
+          "admin": { "type": "string" },
+          "grpc_host": { "type": "string", "default": "127.0.0.1" },
+          "grpc_port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "deploy": {
+      "type": "object",
+      "required": ["from", "marker", "value", "phlo_limit", "phlo_price", "shard_id", "relay"],
+      "properties": {
+        "from": { "type": "string", "description": "Node name whose host runs the deploy CLI" },
+        "marker": { "type": "string" },
+        "value": { "type": "integer" },
+        "term": { "type": "string" },
+        "term_file": { "type": "string" },
+        "term_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "phlo_limit": { "type": "integer", "minimum": 1 },
+        "phlo_price": { "type": "integer", "minimum": 0 },
+        "shard_id": { "type": "string" },
+        "private_key_path": {
+          "type": "string",
+          "description": "Remote path to a 0600 deployer key. Never key material, never an argv value."
+        },
+        "relay": {
+          "type": "object",
+          "required": ["mode", "aliases", "reachability_checked_utc", "unreachable_aliases"],
+          "properties": {
+            "mode": { "enum": ["relay", "four-ingress"] },
+            "aliases": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "uniqueItems": true,
+              "items": { "type": "string" }
+            },
+            "destination_port": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
+            "reachability_checked_utc": { "type": "string" },
+            "unreachable_aliases": { "type": "array", "maxItems": 0 },
+            "signed_payload_file": {
+              "type": "string",
+              "description": "Required for four-ingress: one pre-signed DeployRequest, offered to all four ingresses. No Python signer is invented."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "actions": {
+      "type": "object",
+      "properties": {
+        "survivor_advance_blocks": { "type": "integer", "minimum": 1, "default": 3 },
+        "rejoin_margin_blocks": { "type": "integer", "minimum": 1, "default": 3 },
+        "epoch_length": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The genesis epoch length. Required by RC-1: retention is sampled across two further epoch boundaries."
+        },
+        "retention_epochs": { "type": "integer", "minimum": 1, "default": 2 },
+        "timeouts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "preflight_s": { "type": "integer", "minimum": 1 },
+            "deploy_s": { "type": "integer", "minimum": 1 },
+            "settle_s": { "type": "integer", "minimum": 1 },
+            "stop_s": { "type": "integer", "minimum": 1 },
+            "advance_s": { "type": "integer", "minimum": 1 },
+            "start_s": { "type": "integer", "minimum": 1 },
+            "rejoin_s": { "type": "integer", "minimum": 1 },
+            "trace_s": { "type": "integer", "minimum": 1 }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "redaction": {
+      "type": "object",
+      "properties": {
+        "fields": { "type": "array", "items": { "type": "string" } },
+        "host_pseudonyms": { "type": "boolean", "default": true }
+      },
+      "additionalProperties": false
+    },
+    "operator_fields": { "type": "object" },
+    "fault": { "type": "object" },
+    "cycles": { "type": "array" },
+    "pressure_record": { "type": "string" },
+    "join_result": { "type": "string" },
+    "audit_bootstrap": { "type": "string" },
+    "upgrade_record": { "type": "string" },
+    "redactions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Present only on a redacted evidence copy, never on a runnable input."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "transport": { "const": "ssh-systemd" } } },
+      "then": {
+        "properties": {
+          "locality": { "const": "public-live" },
+          "nodes": {
+            "items": {
+              "required": ["ssh", "unit", "binary_path", "data_dir"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "transport": { "const": "docker" } } },
+      "then": {
+        "properties": {
+          "locality": { "enum": ["local-devnet", "single-host"] }
+        }
+      }
+    }
+  ]
+}

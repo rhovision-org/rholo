@@ -14,6 +14,7 @@ always re-runs `check`.
 from __future__ import annotations
 
 import datetime
+import importlib.util
 import json
 import os
 import re
@@ -24,6 +25,10 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+_FLEET_SPEC = importlib.util.spec_from_file_location(
+    "fleet_manifest", ROOT / "tools" / "fleet_manifest.py")
+fleet_manifest = importlib.util.module_from_spec(_FLEET_SPEC)
+_FLEET_SPEC.loader.exec_module(fleet_manifest)
 VERDICTS = ("pass", "fail", "not run")
 DEPLOYER_PRIV = "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76"
 MARKER_VALUE = 42
@@ -369,6 +374,8 @@ def arm_of(record: dict) -> str:
 
 def dispatch_arm(arms: dict, record: dict) -> tuple[str, list[str]]:
     """Run the arm's own check. An unknown arm is a fail, never a guessed baseline."""
+    if record.get("rehearsal") is True:
+        return "not run", ["a rehearsal record is not evidence; run the arm on the fleet"]
     arm = arm_of(record)
     handler = arms.get(arm)
     if handler is None:
@@ -390,14 +397,14 @@ def claim_arm(claim_id: str, arm: str) -> dict:
 
 
 def new_record(claim_id: str, title: str, environment: str, locality: str,
-               arm: str | None = None) -> dict:
-    return {
+               arm: str | None = None, rehearsal: bool = False) -> dict:
+    record = {
         "schema": 1,
         "claim_id": claim_id,
         "claim_title": title,
         "arm": arm or environment,
         "environment": environment,
-        "locality": locality,
+        "locality": "local-devnet" if rehearsal else locality,
         "started_at": utc_now(),
         "finished_at": None,
         "provenance": {},
@@ -409,6 +416,11 @@ def new_record(claim_id: str, title: str, environment: str, locality: str,
         "errors": [],
         "files": {},
     }
+    if rehearsal:
+        # A rehearsal exercises the public code path on a local fleet. It is never evidence and
+        # must not be packable as a public record.
+        record["rehearsal"] = True
+    return record
 
 
 def finish(record: dict, verdict: str, reasons=None, errors=None) -> dict:
@@ -468,7 +480,8 @@ class _Result:
 
 
 def preflight(environment: str, public_manifest: str | None = None, *,
-              runner=None, head: str | None = None) -> list[str]:
+              runner=None, head: str | None = None, claim_id: str | None = None,
+              rehearsal: bool = False) -> list[str]:
     """Check the run's inputs before a container starts.
 
     A failure here is a `not run` with the missing coordinate, not a claim fail: the claim has not
@@ -525,18 +538,17 @@ def preflight(environment: str, public_manifest: str | None = None, *,
                 except ValueError as error:
                     problems.append(f"preflight: manifest {public_manifest} is not JSON: {error}")
                 else:
-                    sha = (manifest.get("provenance") or {}).get("source_sha")
-                    if sha and head and sha != head:
-                        problems.append(
-                            f"preflight: the manifest's provenance source_sha {sha[:12]} is not "
-                            f"HEAD {head[:12]}")
+                    problems.extend(fleet_manifest.validate(
+                        manifest, claim_id=claim_id, environment="public",
+                        head=head, rehearsal=rehearsal))
     return problems
 
 
 def preflight_failure(claim_id: str, environment: str, out, record: dict,
-                      public_manifest: str | None = None) -> int | None:
+                      public_manifest: str | None = None,
+                      rehearsal: bool = False) -> int | None:
     """Write a `not run` record when the preflight refuses; `None` means proceed."""
-    problems = preflight(environment, public_manifest)
+    problems = preflight(environment, public_manifest, claim_id=claim_id, rehearsal=rehearsal)
     if not problems:
         return None
     record["claim_id"] = claim_id
