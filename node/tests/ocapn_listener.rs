@@ -167,7 +167,7 @@ fn a_peer_dials_the_node_and_fetches_a_fixture() {
         );
 
         drop(client);
-        node.shutdown();
+        node.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -234,7 +234,7 @@ fn a_live_session_ends_when_the_node_is_asked_to_stop() {
             "the peer sees the connection closed, not another message: {ended:?}"
         );
 
-        node.shutdown();
+        node.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -312,7 +312,7 @@ fn a_peer_dials_the_node_over_unix_and_reaches_its_ertp_capability() {
         );
 
         drop(client);
-        node.shutdown();
+        node.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -403,7 +403,7 @@ fn a_peer_dials_the_node_over_noise_and_reaches_its_ertp_capability() {
         );
 
         drop(client);
-        node.shutdown();
+        node.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -495,7 +495,7 @@ fn a_peer_dials_the_node_over_websocket_and_reaches_its_ertp_capability() {
         );
 
         drop(client);
-        node.shutdown();
+        node.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -634,7 +634,7 @@ fn two_sessions_contend_for_one_capabilitys_share_and_one_gets_nothing() {
 
         drop(first);
         drop(second);
-        node.shutdown();
+        node.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -815,7 +815,7 @@ fn a_relay_between_the_node_and_a_peer_reads_the_captp_records_in_the_clear() {
         );
 
         drop(client);
-        node.shutdown();
+        node.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -931,7 +931,7 @@ fn a_captp_delivery_to_a_chain_backed_capability_resolves_from_a_block() {
         );
 
         drop(client);
-        node.shutdown();
+        node.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1035,7 +1035,7 @@ fn a_captp_peer_holds_an_ertp_issuer_and_calls_it() {
         );
 
         drop(client);
-        node.shutdown();
+        node.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1104,7 +1104,7 @@ fn a_captp_peer_passes_a_capability_back_as_an_argument() {
         );
 
         drop(client);
-        node.shutdown();
+        node.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1175,7 +1175,7 @@ fn a_captp_peer_sends_an_amount_and_the_contract_reads_it() {
         );
 
         drop(client);
-        node.shutdown();
+        node.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1371,7 +1371,7 @@ fn the_admin_route_makes_the_node_dial_a_peer_and_refuses_a_link_local_target() 
             "the refusal names why: {reason}"
         );
 
-        node.shutdown();
+        node.shutdown().await;
     });
     let _ = std::fs::remove_dir_all(&dir);
 }

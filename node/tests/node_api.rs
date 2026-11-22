@@ -64,7 +64,7 @@ async fn http_surface_without_genesis() {
         .unwrap();
     assert!(status.get("networkId").is_some(), "api/status = {status}");
 
-    node.shutdown();
+    node.shutdown().await;
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -206,7 +206,7 @@ fn genesis_boot_exposes_block_over_http() {
         assert_eq!(bonds.len(), 1);
         assert_eq!(bonds[0]["stake"], 100);
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }

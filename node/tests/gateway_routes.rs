@@ -14,6 +14,23 @@ use common::{
     free_ports, gateway_conf_with_txn_api, standalone_conf, start, temp_dir, VALIDATOR_PRIV_HEX,
 };
 
+/// Poll until the listener accepts a request. The admin listener is a second binding and can come up
+/// after the public one; a test that reads it must wait for it rather than panic on a refused
+/// connection.
+async fn wait_for_listener(client: &reqwest::Client, base: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        if client.get(base.to_string()).send().await.is_ok() {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the listener {base} never accepted a request"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 /// Poll until the node's HTTP surface answers.
 async fn wait_for_http(client: &reqwest::Client, base: &str) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
@@ -45,6 +62,7 @@ fn the_txn_routes_404_when_the_api_is_disabled() {
         let admin_base = format!("http://127.0.0.1:{}", node.admin_port);
         let client = reqwest::Client::new();
         wait_for_http(&client, &base).await;
+        wait_for_listener(&client, &admin_base).await;
 
         // Still a gateway: the membership is reported.
         let shards: Value = client
@@ -96,7 +114,7 @@ fn the_txn_routes_404_when_the_api_is_disabled() {
             );
         }
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
@@ -120,6 +138,7 @@ fn an_enabled_gateway_serves_the_txn_routes_only_on_the_admin_listener() {
         let admin_base = format!("http://127.0.0.1:{}", node.admin_port);
         let client = reqwest::Client::new();
         wait_for_http(&client, &base).await;
+        wait_for_listener(&client, &admin_base).await;
 
         // Public: 404, and this node's transaction API is on — the 404 is the route's absence, not a
         // feature flag, which is exactly what the fix changed.
@@ -160,7 +179,7 @@ fn an_enabled_gateway_serves_the_txn_routes_only_on_the_admin_listener() {
         let value: Value = list.json().await.expect("json");
         assert!(value["inFlight"].is_array(), "in-flight list: {value}");
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
@@ -181,6 +200,7 @@ fn a_single_shard_node_serves_no_txn_routes() {
         let admin_base = format!("http://127.0.0.1:{}", node.admin_port);
         let client = reqwest::Client::new();
         wait_for_http(&client, &base).await;
+        wait_for_listener(&client, &admin_base).await;
 
         let shards: Value = client
             .get(format!("{base}/api/v1/shards"))
@@ -208,7 +228,7 @@ fn a_single_shard_node_serves_no_txn_routes() {
             );
         }
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
@@ -243,7 +263,7 @@ fn the_shard_list_reports_each_chain_height() {
                                     "every member reports its own id: {shard}"
                                 );
                             }
-                            node.shutdown();
+                            node.shutdown().await;
                             let _ = std::fs::remove_dir_all(&dir);
                             return;
                         }

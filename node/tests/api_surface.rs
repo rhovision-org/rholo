@@ -471,7 +471,7 @@ fn the_read_routes_answer_and_their_refusals_are_defined() {
             "`Origin: null` is not the admin host's authority"
         );
 
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }

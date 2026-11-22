@@ -107,7 +107,7 @@ fn a_configured_validator_public_key_the_private_key_does_not_derive_does_not_re
         // The reading, asserted rather than narrated: the node is up. Everything below it signs with
         // the private key's identity, and the configured public key is inert — reading it anywhere in
         // the runtime is what would make this test unnecessary.
-        node.shutdown();
+        node.shutdown().await;
         let _ = std::fs::remove_dir_all(&dir);
     });
 }
@@ -165,7 +165,7 @@ fn a_second_boot_with_a_changed_key_file_is_neither_refused_nor_recorded() {
         conf.casper.validator_private_key_path = Some(first_key.clone());
         let node = common::start(&conf, ports[2], ports[0]).await;
         wait_for_genesis(&format!("http://127.0.0.1:{}", ports[0])).await;
-        node.shutdown();
+        node.shutdown().await;
         // **Two seconds, because the next boot opens the same data directory.** LMDB takes an
         // exclusive lock on it, so a second boot that arrives before the first has closed does not
         // merely race — it fails to open the store, and this arm would then be measuring shutdown
@@ -191,7 +191,7 @@ fn a_second_boot_with_a_changed_key_file_is_neither_refused_nor_recorded() {
         //     would have to show: the node is read-only until genesis is announced, so an answering
         //     `/api/blocks` is the node fully started.
         wait_for_genesis(&format!("http://127.0.0.1:{}", ports[0])).await;
-        node.shutdown();
+        node.shutdown().await;
         // **Two seconds, because the next boot opens the same data directory.** LMDB takes an
         // exclusive lock on it, so a second boot that arrives before the first has closed does not
         // merely race — it fails to open the store, and this arm would then be measuring shutdown
