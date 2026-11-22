@@ -214,12 +214,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "88a4c7614df98dd3fb6fc0a8039897032f33dd89266321ae21c40bd5eccd61c0",
-          "finished_at": "2026-11-21T09:53:18Z",
+          "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
+          "finished_at": "2026-11-22T13:51:35Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc1-local-20261121-e9508f5/raw/claim.json",
+          "record": "spec/audit/evidence/rc1-local-20261122-5a0e755/raw/claim.json",
           "required": true,
-          "source_sha": "e9508f58c613e87e839de831f08c30cfe3685c59",
+          "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
           "status": "pass"
         },
         "public": {
@@ -407,12 +407,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "88a4c7614df98dd3fb6fc0a8039897032f33dd89266321ae21c40bd5eccd61c0",
-          "finished_at": "2026-11-21T09:57:45Z",
+          "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
+          "finished_at": "2026-11-22T13:56:15Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc2-local-20261121-e9508f5/raw/claim.json",
+          "record": "spec/audit/evidence/rc2-local-20261122-5a0e755/raw/claim.json",
           "required": true,
-          "source_sha": "e9508f58c613e87e839de831f08c30cfe3685c59",
+          "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
           "status": "pass"
         },
         "multi-host": {
@@ -593,12 +593,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "88a4c7614df98dd3fb6fc0a8039897032f33dd89266321ae21c40bd5eccd61c0",
-          "finished_at": "2026-11-21T09:58:32Z",
+          "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
+          "finished_at": "2026-11-22T13:56:48Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc3-local-20261121-e9508f5/raw/claim.json",
+          "record": "spec/audit/evidence/rc3-local-20261122-5a0e755/raw/claim.json",
           "required": true,
-          "source_sha": "e9508f58c613e87e839de831f08c30cfe3685c59",
+          "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
           "status": "pass"
         },
         "public": {
@@ -784,12 +784,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "25537e1d30e238becdb86bdc3619d58925f8875d2cec91baabdf5146f735cef1",
-          "finished_at": "2026-11-21T22:24:00Z",
+          "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
+          "finished_at": "2026-11-22T14:05:01Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc4-local-20261121-ec104fb/raw/claim.json",
+          "record": "spec/audit/evidence/rc4-local-20261122-5a0e755/raw/claim.json",
           "required": true,
-          "source_sha": "ec104fb8005406869748566b62fa52d9869fbaa0",
+          "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
           "status": "pass"
         },
         "multi-host": {
@@ -953,12 +953,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "88a4c7614df98dd3fb6fc0a8039897032f33dd89266321ae21c40bd5eccd61c0",
-          "finished_at": "2026-11-21T10:01:00Z",
+          "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
+          "finished_at": "2026-11-22T14:05:44Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc5-local-20261121-e9508f5/raw/claim.json",
+          "record": "spec/audit/evidence/rc5-local-20261122-5a0e755/raw/claim.json",
           "required": true,
-          "source_sha": "e9508f58c613e87e839de831f08c30cfe3685c59",
+          "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
           "status": "pass"
         },
         "public": {
@@ -1144,12 +1144,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "88a4c7614df98dd3fb6fc0a8039897032f33dd89266321ae21c40bd5eccd61c0",
-          "finished_at": "2026-11-21T10:03:25Z",
+          "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
+          "finished_at": "2026-11-22T14:07:44Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc6-local-20261121-e9508f5/raw/claim.json",
+          "record": "spec/audit/evidence/rc6-local-20261122-5a0e755/raw/claim.json",
           "required": true,
-          "source_sha": "e9508f58c613e87e839de831f08c30cfe3685c59",
+          "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
           "status": "pass"
         },
         "off-host": {

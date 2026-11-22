@@ -1,0 +1,54 @@
+{
+  "result": "pass",
+  "validators": 4,
+  "locality": "local-devnet",
+  "initial_finalized": [
+    {
+      "node": 0,
+      "height": 10,
+      "hash": "672f865af48fe7f92750249bc6fc0f071545c12720f57d7f5e49a9fa8d389e61"
+    },
+    {
+      "node": 1,
+      "height": 10,
+      "hash": "672f865af48fe7f92750249bc6fc0f071545c12720f57d7f5e49a9fa8d389e61"
+    },
+    {
+      "node": 2,
+      "height": 10,
+      "hash": "672f865af48fe7f92750249bc6fc0f071545c12720f57d7f5e49a9fa8d389e61"
+    },
+    {
+      "node": 3,
+      "height": 10,
+      "hash": "672f865af48fe7f92750249bc6fc0f071545c12720f57d7f5e49a9fa8d389e61"
+    }
+  ],
+  "final_finalized": [
+    {
+      "node": 0,
+      "height": 35,
+      "hash": "ccc18bff47aeb8943b0b78e21baa3f239a7fe3b3df8d811414561f40b0ebf508"
+    },
+    {
+      "node": 1,
+      "height": 35,
+      "hash": "ccc18bff47aeb8943b0b78e21baa3f239a7fe3b3df8d811414561f40b0ebf508"
+    },
+    {
+      "node": 2,
+      "height": 35,
+      "hash": "ccc18bff47aeb8943b0b78e21baa3f239a7fe3b3df8d811414561f40b0ebf508"
+    },
+    {
+      "node": 3,
+      "height": 35,
+      "hash": "ccc18bff47aeb8943b0b78e21baa3f239a7fe3b3df8d811414561f40b0ebf508"
+    }
+  ],
+  "target_height": 34,
+  "deploy_id": "3045022100c55708ddbd3edc03aaeaf9e0173e1ef80674194ed310c831807c1715162aa38f02201f54fc2d9bbac6274c0d5e618d3c497423470daedea08f002f1c416cceb6e548",
+  "marker": "acceptance:72b96f79e1624372a9b51e77fc53f5af",
+  "value": 42,
+  "boundary": "finite devnet witness; no universal safety theorem"
+}

@@ -1,0 +1,25 @@
+{
+ "admitted": 0,
+ "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
+ "cap": 2,
+ "direct": {
+  "after_status_line": "HTTP/1.1 400",
+  "retry_after": 1,
+  "status_line": "HTTP/1.1 429",
+  "transcript": "direct-capped.txt"
+ },
+ "endpoint": "http://127.0.0.1:56403",
+ "handler_reached_after_release": true,
+ "held": 2,
+ "mode": "capped",
+ "probe": 4,
+ "refusal": {
+  "class": "429",
+  "message": "HTTP in-flight capacity exhausted"
+ },
+ "refused": 4,
+ "requests_per_second": 6.55,
+ "retry_after": 4,
+ "server_errors": 0,
+ "transcript": "http-capped.jsonl"
+}

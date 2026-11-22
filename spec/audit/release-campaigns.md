@@ -87,7 +87,7 @@ cannot yet be made. No status is authored.
 
 **Arm `local`** (local, `local-devnet`) — the acceptance drill retains a confirmed marker through two further epoch boundaries
 
-Reading: `safe` — spec/audit/evidence/rc1-local-20261121-e9508f5/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc1-local-20261122-5a0e755/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — the same settlement and retention reading on the four-host public fleet
@@ -134,7 +134,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — partition/rejoin with a producing victim; containment and no regression
 
-Reading: `safe` — spec/audit/evidence/rc2-local-20261121-e9508f5/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc2-local-20261122-5a0e755/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — the operator's partition window on the public fleet
@@ -193,7 +193,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — state agreement across a merge on the local four-validator devnet
 
-Reading: `safe` — spec/audit/evidence/rc3-local-20261121-e9508f5/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc3-local-20261122-5a0e755/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — state agreement on the public fleet
@@ -240,7 +240,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — restart under load: accepted work survives and the victim rejoins
 
-Reading: `safe` — spec/audit/evidence/rc4-local-20261121-ec104fb/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc4-local-20261122-5a0e755/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — a real host stop on the public fleet
@@ -299,7 +299,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — capped and unset pressure on the local node
 
-Reading: `safe` — spec/audit/evidence/rc5-local-20261121-e9508f5/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc5-local-20261122-5a0e755/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — pressure on the public endpoint and proxy
@@ -346,7 +346,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — genesis join and audit on the local devnet
 
-Reading: `safe` — spec/audit/evidence/rc6-local-20261121-e9508f5/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc6-local-20261122-5a0e755/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — a public join and audit

@@ -1,0 +1,101 @@
+{
+  "complete": true,
+  "containers": {
+    "joiner": "n457join-validator-3",
+    "responder": "n457join-bootstrap"
+  },
+  "correlation": {
+    "advertised_peer": "rnode://a04b00e08cee303cc66b07ccea64bdcbfe969ddf@n457join-validator-3?protocol=40400&discovery=40404",
+    "anchor": "6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0",
+    "joiner_key": "a04b00e08cee303cc66b07ccea64bdcbfe969ddf",
+    "responder_key": "b273648b7c9c708e3a5aaec382b6315b57ea002f",
+    "state_hash": "86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5"
+  },
+  "gate_id": "G428-M3",
+  "generated_utc": "2026-11-22T14:07:35Z",
+  "incomplete_reasons": [],
+  "locality": "local-devnet",
+  "logs": {
+    "joiner": "passive.log",
+    "responder": "responder.log"
+  },
+  "non_claims": [
+    "a log correlation is not a cryptographic delivery receipt",
+    "stage 4 is the joiner's gRPC receiver acknowledgement, not handler completion",
+    "a local-devnet chain is not an off-host positive"
+  ],
+  "schema": 1,
+  "sources": {
+    "joiner_log": "raw/passive.log",
+    "responder_log": "raw/responder.log"
+  },
+  "stages": {
+    "1_request": {
+      "anchor": "6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0",
+      "attempt": "1/10",
+      "event": "request_sent",
+      "log_line": "2026-11-22T14:07:13.189Z INFO  [casper.protocol.CommUtil] LFS fringe request 1/10 sent to peer b273648b7c9c708e3a5aaec382b6315b57ea002f (anchor 6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0); awaiting admitted reply",
+      "peer": "b273648b7c9c708e3a5aaec382b6315b57ea002f",
+      "source": "casper/src/protocol/comm_util.rs::request_initial_fringe_with_policy"
+    },
+    "2_receipt": {
+      "anchor": "6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0",
+      "event": "request_received",
+      "log_line": "2026-11-22T14:07:13.189Z INFO  [casper.engine.NodeRunning] Received FinalizedFringeRequest from rnode://a04b00e08cee303cc66b07ccea64bdcbfe969ddf@n457join-validator-3?protocol=40400&discovery=40404 (requested anchor 6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0)",
+      "peer": "rnode://a04b00e08cee303cc66b07ccea64bdcbfe969ddf@n457join-validator-3?protocol=40400&discovery=40404",
+      "peer_key": "a04b00e08cee303cc66b07ccea64bdcbfe969ddf",
+      "source": "casper/src/engine/node_running.rs::NodeRunning::handle"
+    },
+    "3_construction": {
+      "anchor": "6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0",
+      "block_count": 1,
+      "event": "response_constructed",
+      "first_block": "6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0",
+      "last_block": "6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0",
+      "log_line": "2026-11-22T14:07:13.194Z INFO  [casper.engine.NodeRunning] Fringe response prepared for rnode://a04b00e08cee303cc66b07ccea64bdcbfe969ddf@n457join-validator-3?protocol=40400&discovery=40404: state 86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5, requested anchor 6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0, 1 block(s) [6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0 .. 6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0]",
+      "peer": "rnode://a04b00e08cee303cc66b07ccea64bdcbfe969ddf@n457join-validator-3?protocol=40400&discovery=40404",
+      "peer_key": "a04b00e08cee303cc66b07ccea64bdcbfe969ddf",
+      "source": "casper/src/engine/node_running.rs::NodeRunning::handle",
+      "state_hash": "86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5"
+    },
+    "4_transport": {
+      "anchor": "6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0",
+      "event": "transport_outcome",
+      "log_line": "2026-11-22T14:07:13.239Z INFO  [casper.engine.NodeRunning] FinalizedFringe sent to rnode://a04b00e08cee303cc66b07ccea64bdcbfe969ddf@n457join-validator-3?protocol=40400&discovery=40404: transport outcome delivered (state 86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5)",
+      "outcome": "delivered",
+      "peer": "rnode://a04b00e08cee303cc66b07ccea64bdcbfe969ddf@n457join-validator-3?protocol=40400&discovery=40404",
+      "peer_key": "a04b00e08cee303cc66b07ccea64bdcbfe969ddf",
+      "source": "casper/src/engine/node_running.rs::handle_finalized_fringe_request",
+      "state_hash": "86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5"
+    },
+    "5_receive": {
+      "anchor": "6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0",
+      "blocks": [
+        "6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0"
+      ],
+      "event": "response_received",
+      "log_line": "2026-11-22T14:07:13.199Z INFO  [casper.engine.NodeSyncing] Received finalized fringe from bootstrap node (86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5) 6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0 from peer b273648b7c9c708e3a5aaec382b6315b57ea002f.",
+      "peer": "b273648b7c9c708e3a5aaec382b6315b57ea002f",
+      "source": "casper/src/engine/node_syncing.rs::NodeSyncing::handle",
+      "state_hash": "86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5"
+    },
+    "6_apply": {
+      "accepted_root": "939a4699f21fd7c1e284b4cda13ebf915b13915259aba760de62248e44143e78",
+      "accepted_root_kind": "checkpoint",
+      "anchor": "6ed35fde2e1d60f1bc98e3e945fc8dae28fc8b2365ceb9fe6d9fe9b516ceeae0",
+      "checkpoint_readback": true,
+      "event": "state_restored",
+      "log_line": "2026-11-22T14:07:26.527Z INFO  [casper.engine.NodeSyncing] LFS state is successfully restored. Served state 86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5, accepted run root 939a4699f21fd7c1e284b4cda13ebf915b13915259aba760de62248e44143e78 (checkpoint), approved checkpoint read back.",
+      "pages_finished": 2,
+      "pages_total": 2,
+      "peer": "b273648b7c9c708e3a5aaec382b6315b57ea002f",
+      "restored_state_hash": "86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5",
+      "served_state_hash": "86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5",
+      "source": "casper/src/engine/node_syncing.rs::report_restored_checkpoint",
+      "walk_completed": true,
+      "walk_log_line": "2026-11-22T14:07:13.776Z INFO  [casper.engine.NodeSyncing] LFS tuple-space walk finished for served state 86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5: 2 of 2 page key(s) done.",
+      "walk_state_hash": "86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5"
+    }
+  },
+  "tool": "tools/m3-join-chain.py"
+}
