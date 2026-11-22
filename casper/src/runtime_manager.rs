@@ -1489,9 +1489,15 @@ impl RuntimeManager {
                 block_number,
                 fringe_state_hash,
                 participation,
+                layer_missing,
             } => {
                 native
-                    .close_block(*block_number, *fringe_state_hash, participation)
+                    .close_block_attributing(
+                        *block_number,
+                        *fringe_state_hash,
+                        participation,
+                        layer_missing,
+                    )
                     .await?
             }
             NativeSystemDeployOp::Slash {
@@ -1646,6 +1652,18 @@ impl RuntimeManager {
                 _ => None,
             })
             .unwrap_or_default();
+        // The leak's input travels the same way, for the same reason: the play op carries the gate's
+        // refusal this node derived, and the backstop must replay with *that* set or the two sides of
+        // the comparison would disagree about a boundary's membership.
+        let layer_missing: BTreeSet<Validator> = system_deploys
+            .iter()
+            .find_map(|sd| match &sd.op {
+                Some(NativeSystemDeployOp::CloseBlock { layer_missing, .. }) => {
+                    Some(layer_missing.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
         // Laws 23–25: the speculative run, with the whole-set safety net. A certificate
         // invalidation escaping the per-deploy fallback (a block-level system deploy's
         // speculative commit) re-runs the whole deploy set sequentially on a forked runtime
@@ -1705,6 +1723,7 @@ impl RuntimeManager {
                     &block_data,
                     fringe_state_hash,
                     &participation,
+                    &layer_missing,
                     &processed_deploys,
                     &processed_system_deploys,
                     state_hash,
@@ -2016,6 +2035,7 @@ impl RuntimeManager {
         block_data: &BlockData,
         fringe_state_hash: &Blake2b256Hash,
         participation: &BTreeMap<Validator, BlockHeight>,
+        layer_missing: &BTreeSet<Validator>,
         relaxed_user: &[UserDeployRuntimeResult],
         relaxed_sys: &[SystemDeployRuntimeResult],
         relaxed_hash: Blake2b256Hash,
@@ -2082,6 +2102,7 @@ impl RuntimeManager {
                         block_data.clone(),
                         fringe_state_hash,
                         participation,
+                        layer_missing,
                         true,
                         // No PoS override on the backstop replay; the manager's genesis
                         // descriptors stand in for the (HEAD-era) empty bonds map.
@@ -2143,6 +2164,7 @@ impl RuntimeManager {
             block_data,
             fringe_state_hash,
             participation,
+            &BTreeSet::new(),
             with_cost_accounting,
             pos_genesis,
             vaults,
@@ -2163,6 +2185,7 @@ impl RuntimeManager {
         block_data: BlockData,
         fringe_state_hash: &Blake2b256Hash,
         participation: &BTreeMap<Validator, BlockHeight>,
+        layer_missing: &BTreeSet<Validator>,
         with_cost_accounting: bool,
         pos_genesis: &PosGenesis,
         vaults: &[Vault],
@@ -2178,6 +2201,7 @@ impl RuntimeManager {
                 block_data,
                 fringe_state_hash,
                 participation,
+                layer_missing,
                 with_cost_accounting,
                 pos_genesis,
                 vaults,
@@ -2557,6 +2581,7 @@ mod tests {
                 BlockData::empty(),
                 &Blake2b256Hash::from_bytes([0u8; 32]),
                 &BTreeMap::new(),
+                &BTreeSet::new(),
                 false,
                 &PosGenesis::default(),
                 &[],
@@ -2659,6 +2684,177 @@ mod tests {
             native.bonds().await.expect("read the pool").get(&bonded),
             Some(&NonNegI64::try_from(1_000).expect("a stake")),
             "and the payment does not come out of anyone's bond"
+        );
+    }
+
+    /// **A boundary's `layer_missing` reaches the inactivity leak, and play and replay agree about
+    /// it** — the leak's seam, mirroring the participation one below.
+    ///
+    /// The gate's refusal is the second `close_block` input that is **not** carried on the wire: the
+    /// proposer puts it inside the close op, the replayer derives it from the same justification set
+    /// and hands it to the same arithmetic. What this test pins is that the value is *used*: a
+    /// replay with the set the block was played with reaches the block's post-state, and a replay
+    /// with an empty set reaches a different one. The silence counter is itself a boundary write, so
+    /// the difference is visible on the very first advancing boundary — before any bond moves.
+    #[tokio::test]
+    async fn a_boundarys_layer_missing_reaches_play_and_replay_alike() {
+        use rchain_rholang::native_state::PosParams;
+        use rchain_rholang::util::rev_address::RevAddress;
+        use rchain_shared::refined::{BlockHeight, SeqNum};
+
+        let rm = manager().await;
+        let rand = Blake2b512Random::from_init(&[0u8; 32]);
+        let deployer = PublicKey::new(vec![7u8; 65]);
+        let (v1, v2) = (
+            Validator::from_slice(&[1u8; 65]),
+            Validator::from_slice(&[2u8; 65]),
+        );
+        // Liveness armed, every block a boundary, a window of two: block 10 anchors, block 11 is the
+        // first judging boundary and records the counter without leaking anybody.
+        let pos = PosGenesis {
+            bonds: BTreeMap::from([
+                (v1, NonNegI64::try_from(100).unwrap()),
+                (v2, NonNegI64::try_from(100).unwrap()),
+            ]),
+            trusted: BTreeSet::new(),
+            params: PosParams {
+                epoch_length: 1,
+                minimum_bond: NonNegI64::try_from(1).unwrap(),
+                liveness_absence_threshold: 1,
+                liveness_jail_after_boundaries: 2,
+                liveness_jail_epochs: 2,
+                ..PosParams::default()
+            },
+            dev_vesting: None,
+        };
+        let vaults = [Vault {
+            rev_address: RevAddress::from_public_key(&deployer).expect("deployer address"),
+            initial_balance: NonNegI64::try_from(1_000_000_000).expect("a funded deployer"),
+        }];
+        let (_pre, genesis_post, _) = rm
+            .compute_genesis(&[], &rand, BlockData::empty(), &pos, &vaults)
+            .await
+            .expect("compute_genesis");
+
+        let block = |number: i64| BlockData {
+            block_number: BlockHeight::try_from(number).expect("a height"),
+            sender: deployer.clone(),
+            seq_num: SeqNum::zero(),
+            timestamp: 0,
+        };
+        let both_at = |height: i64| {
+            BTreeMap::from([
+                (v1, BlockHeight::try_from(height).expect("a height")),
+                (v2, BlockHeight::try_from(height).expect("a height")),
+            ])
+        };
+        let silent = BTreeSet::from([v1]);
+        let quiet: BTreeSet<Validator> = BTreeSet::new();
+
+        // Block 10: no evidence, and it only sets the anchor.
+        let anchor_close = [SystemDeploy::close_block(
+            10,
+            Blake2b256Hash::from_bytes([10u8; 32]),
+            both_at(10),
+            rand.split_byte(0),
+        )];
+        let (post10, _, _) = rm
+            .compute_state(
+                &genesis_post,
+                &[],
+                &anchor_close,
+                &rand,
+                block(10),
+                &Blake2b256Hash::from_bytes([10u8; 32]),
+            )
+            .await
+            .expect("the anchoring boundary plays");
+
+        // Block 11: the gate names v1, and the counter is a boundary write.
+        let fringe11 = Blake2b256Hash::from_bytes([11u8; 32]);
+        let silent_close = [SystemDeploy::close_block_attributing(
+            11,
+            fringe11,
+            both_at(11),
+            silent.clone(),
+            rand.split_byte(0),
+        )];
+        let (post11, _, sys11) = rm
+            .compute_state(&post10, &[], &silent_close, &rand, block(11), &fringe11)
+            .await
+            .expect("the judging boundary plays");
+        let processed_sys: Vec<ProcessedSystemDeploy> =
+            sys11.into_iter().map(|r| r.deploy).collect();
+
+        // The control: an empty set really does move the post-state, so the replay arm below is
+        // testing the value and not a no-op.
+        let quiet_close = [SystemDeploy::close_block_attributing(
+            11,
+            fringe11,
+            both_at(11),
+            quiet.clone(),
+            rand.split_byte(0),
+        )];
+        let (other_post, _, _) = rm
+            .compute_state(&post10, &[], &quiet_close, &rand, block(11), &fringe11)
+            .await
+            .expect("the control boundary plays");
+        assert_ne!(
+            post11, other_post,
+            "the gate's refusal changes what the boundary writes, or the replay arm proves nothing"
+        );
+
+        let fork = rm
+            .fork_replay_runtime(post10)
+            .await
+            .expect("fork the replay");
+        let (agreed, _) = rm
+            .replay_compute_state_with(
+                &fork,
+                &post10,
+                &[],
+                &processed_sys,
+                &rand,
+                block(11),
+                &fringe11,
+                &both_at(11),
+                &silent,
+                true,
+                &pos,
+                &vaults,
+            )
+            .await
+            .expect("replay with the set the block was played with");
+        assert_eq!(
+            post11, agreed,
+            "the refusal is consensus data: both paths must reach the same post-state"
+        );
+
+        let fork = rm
+            .fork_replay_runtime(post10)
+            .await
+            .expect("fork the replay");
+        let (mismatched, _) = rm
+            .replay_compute_state_with(
+                &fork,
+                &post10,
+                &[],
+                &processed_sys,
+                &rand,
+                block(11),
+                &fringe11,
+                &both_at(11),
+                &quiet,
+                true,
+                &pos,
+                &vaults,
+            )
+            .await
+            .expect("replay with a set the block was not played with");
+        assert_ne!(
+            post11, mismatched,
+            "a replay that ignores the refusal it was handed reaches the wrong state, which is what \
+             this arm exists to catch"
         );
     }
 

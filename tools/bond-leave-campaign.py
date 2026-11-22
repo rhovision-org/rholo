@@ -74,9 +74,20 @@ def wait_ready(index: int, timeout: float = 300) -> None:
 
 
 def wait_synced(index: int, timeout: float = 420) -> None:
-    """An unbonded newcomer is not `ready` until it is activated, but it does sync and answer."""
-    common.wait_until(f"validator {index} answers and has synced",
-                      lambda: latest_height(HTTP[index]) > 0,
+    """An unbonded newcomer is not `ready` until it is activated, but it does sync and answer.
+
+    **It must be at the bootstrap's height, not merely above zero.** A joining validator restores
+    the bootstrap's checkpoint and then fetches every block after the anchor from the peer's
+    validation window. Bonding before that catch-up completes changes the bonded pool, and the
+    checkpoint collector then refuses every new certificate (`BondSetDrifted`) — so the joiner's own
+    anchor goes stale and it can never fetch what it needs. The chain is not being driven here (the
+    devnet is `--no-autopropose`), so both heights converge on their own; requiring equality is the
+    precondition the join ladder assumes.
+    """
+    # A round is the unit `latestBlockNumber` counts, so the joiner can read one or two behind the
+    # bootstrap while both are static; the precondition is that it has the chain, not the last block.
+    common.wait_until(f"validator {index} has caught up with the bootstrap",
+                      lambda: latest_height(HTTP[index]) >= latest_height(HTTP[0]) - 2,
                       timeout=timeout, interval=2.0)
 
 
@@ -162,10 +173,10 @@ def drive_term() -> str:
     return (ROOT / "examples" / "hello.rho").read_text()
 
 
-def drive(count: int = 1, pause: float = 0.0) -> list[str]:
+def drive(count: int = 1, pause: float = 0.0, key: str = GENESIS_PRIV) -> list[str]:
     ids = []
     for index in range(count):
-        ids.append(deploy(CONTAINERS[index % 3], GENESIS_PRIV, drive_term()))
+        ids.append(deploy(CONTAINERS[index % 3], key, drive_term()))
         if pause:
             time.sleep(pause)
     return ids
@@ -281,7 +292,14 @@ def campaign(out: Path, keep: bool) -> dict:
         PREFIX, validators=3, memory="8g",
         node_env="RNODE_TRACE_DIR=/var/lib/rnode/traces",
         extra_up=("--no-autopropose", "--propose-on-deploy", "--stakes", "100,100,50",
-                  "--epoch-length", str(EPOCH)))
+                  "--epoch-length", str(EPOCH),
+                  # **Arm the inactivity leak** (law 89's leak clause). The absence threshold is a height lag, so
+                  # it is set past any plausible block gap on this net: the signal under test is the
+                  # gate's coverage refusal (`not_full`/`missing`), not a validator that stopped
+                  # publishing. The window is two boundaries — one boundary of not-full is a race.
+                  "--liveness-absence-threshold", str(EPOCH),
+                  "--liveness-jail-after-boundaries", "2",
+                  "--liveness-jail-epochs", "2"))
     try:
         devnet.down()
         devnet.up()
@@ -317,7 +335,7 @@ def campaign(out: Path, keep: bool) -> dict:
 
         activation = None
         newcomer_produced = None
-        deadline = time.monotonic() + 420
+        deadline = time.monotonic() + 600
         while time.monotonic() < deadline:
             rows = blocks(HTTP[0], 50)
             bonded = [row.get("blockNumber") for row in rows if isinstance(row, dict)
@@ -333,7 +351,13 @@ def campaign(out: Path, keep: bool) -> dict:
                                      else min(newcomer_produced, min(produced)))
             if activation is not None and newcomer_produced is not None:
                 break
-            drive(1)
+            # **Drive with the newcomer's own key while it waits to be drawn.** The armed join
+            # ladder admits a pooled validator only after it appears in the finalised fringe's
+            # participation, and participation is the current layer's authors *and deploy signers*
+            # (C344). A validator that is not active cannot author, so signing a deploy is the
+            # ladder's own path to being noticed; the genesis deployer's key would leave it absent
+            # and the draw would hold it out for ever.
+            drive(1, key=K3_PRIV)
             time.sleep(8)
         if activation is None:
             raise common.ClaimError("the newcomer's bond never appeared in a block's bonds")
@@ -360,6 +384,10 @@ def campaign(out: Path, keep: bool) -> dict:
         fund = deploy(CONTAINERS[0], GENESIS_PRIV,
                       (ROOT / "examples" / "leave-fund.rho").read_text())
         deploy_status(fund)
+        # **The set before the leave, not the number three.** The armed join ladder can hold a
+        # newcomer out for a boundary and the leak can retire a validator, so the active count is
+        # not a constant; the withdrawal's own effect is that the set *shrinks*.
+        active_before = active_count()
         withdraw = deploy(CONTAINERS[0], K2_PRIV,
                           (ROOT / "examples" / "pos-withdraw.rho").read_text())
         # **Poll for the staging at once.** The pending entry lives only to the next epoch
@@ -378,7 +406,7 @@ def campaign(out: Path, keep: bool) -> dict:
         deadline = time.monotonic() + 600
         paid = False
         while time.monotonic() < deadline:
-            if active_count() == 2 and latest_height() > quarantine:
+            if active_count() < active_before and latest_height() > quarantine:
                 wait_finalized(quarantine + 1, timeout=300)
                 post_balance, post_block = balance(
                     CONTAINERS[0], "leave-balance-after", "leave-balance-after.rho")
@@ -387,7 +415,9 @@ def campaign(out: Path, keep: bool) -> dict:
                 result["bond_leave"].update({
                     "quarantine_height": quarantine,
                     "paid_height": finalized()[0] or latest_height(),
-                    "active_at_boundary": active_count() == 2,
+                    "active_at_boundary": active_count() < active_before,
+                    "active_before": active_before,
+                    "active_after": active_count(),
                     "paid_after_quarantine": paid,
                     "balance_before": pre_balance, "balance_after": post_balance,
                     "balance_blocks": [pre_block, post_block],

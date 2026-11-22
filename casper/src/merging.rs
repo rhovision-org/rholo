@@ -1625,8 +1625,9 @@ async fn regenerate_sidecars(
     // only a fallback replay consumes. It is the *same* derivation the merge that validated this block
     // performed (`participation_for_block`), and it has to be: the post-state comparison below refuses
     // a replay that computes anything else.
-    let participation =
-        crate::multi_parent_casper::participation_for_block(dag, block_store, block).await?;
+    let (participation, layer_missing) =
+        crate::multi_parent_casper::close_inputs_for_block(dag, block_store, runtime, block)
+            .await?;
     let forked = runtime.fork_replay_runtime(pre_state_hash).await?;
     let rand = BlockRandomSeed::random_generator_from_block(block).map_err(|e| e.to_string())?;
     let with_cost_accounting = !block.justifications.is_empty();
@@ -1640,6 +1641,7 @@ async fn regenerate_sidecars(
             BlockData::from_block(block),
             &fringe_state_hash,
             &participation,
+            &layer_missing,
             with_cost_accounting,
             // Genesis PoS descriptors; consumed only on the genesis replay path
             // (`is_genesis_pre_state`). See `interpreter_util.rs`.

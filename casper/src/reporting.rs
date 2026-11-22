@@ -1,6 +1,6 @@
 //! Block replay reporting (port of `casper/reporting/ReportingCasper.scala`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -162,14 +162,19 @@ impl
 /// `ReportingCasper.rhoReporter`). The space factory is async because building a `ReplayRSpace`
 /// requires store access; `mergeable_tag_name` is the shard's non-negative mergeable tag.
 ///
-/// **The two inputs a `CloseBlock` system deploy needs that a reporter cannot derive for itself**: the
-/// state hash of the last finalised fringe, and the participation its epoch's absence rule reads.
-pub type CloseInputs = (Blake2b256Hash, BTreeMap<Validator, BlockHeight>);
+/// **The inputs a `CloseBlock` system deploy needs that a reporter cannot derive for itself**: the
+/// state hash of the last finalised fringe, the participation its epoch's absence rule reads, and the
+/// finality gate's refusal for the block's parents, which the boundary's inactivity leak reads.
+pub type CloseInputs = (
+    Blake2b256Hash,
+    BTreeMap<Validator, BlockHeight>,
+    BTreeSet<Validator>,
+);
 
-/// `close_inputs_of` supplies those two for a block. They are parameters rather than something derived
+/// `close_inputs_of` supplies those for a block. They are parameters rather than something derived
 /// here because deriving them means the merge (`get_pre_state_for_parents`), which needs a DAG, and a
 /// reporter replays from a block message alone. For the same reason they are *asked for* rather than
-/// carried on the block: nothing about either is published, so there is nothing a proposer could
+/// carried on the block: nothing about any of them is published, so there is nothing a proposer could
 /// choose and nothing a validator would have to verify.
 pub fn rho_reporter<F, Fut, G, Gut>(
     create_space: F,
@@ -221,7 +226,8 @@ impl ReportingCasper for RhoReporter {
         let rand = BlockRandomSeed::from_block(&block)
             .random_generator()
             .map_err(|e| e.to_string())?;
-        let (fringe_state_hash, participation) = (self.close_inputs_of)(block.clone()).await?;
+        let (fringe_state_hash, participation, layer_missing) =
+            (self.close_inputs_of)(block.clone()).await?;
         replay_deploys(
             &runtime,
             &block,
@@ -229,6 +235,7 @@ impl ReportingCasper for RhoReporter {
             with_cost_accounting,
             &fringe_state_hash,
             &participation,
+            &layer_missing,
         )
         .await
     }
@@ -243,6 +250,7 @@ async fn replay_deploys(
     with_cost_accounting: bool,
     fringe_state_hash: &Blake2b256Hash,
     participation: &BTreeMap<Validator, BlockHeight>,
+    layer_missing: &BTreeSet<Validator>,
 ) -> Result<ReplayResult, String> {
     let ops = RuntimeReplayOps::new(runtime);
 
@@ -276,6 +284,7 @@ async fn replay_deploys(
                 i64::from(block.block_number),
                 fringe_state_hash,
                 participation,
+                layer_missing,
                 rand.split_byte(
                     u8::try_from(terms_len + i)
                         .map_err(|_| "deploy count exceeds 255".to_string())?,

@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use rchain_block_storage::dag::finalizer::NoAdvance;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_crypto::public_key::PublicKey;
@@ -120,6 +121,17 @@ pub enum NativeSystemDeployOp {
         /// a pre-state is a function of the justification set, and nothing requires a block to justify
         /// everything it has seen. That is exactly the hole `close_block` step 5 documents for the seed.
         participation: BTreeMap<Validator, BlockHeight>,
+        /// **The finality gate's own refusal for this block's parents** — the senders whose messages
+        /// did not cover the whole partition (`NoAdvance::Support.not_full`; the coverage arm is
+        /// absence by height and stays the jail's business). The boundary's inactivity leak reads it;
+        /// a validator named here on `liveness_jail_after_boundaries` consecutive boundaries forfeits
+        /// its bond and leaves the quorum, which is what lets the survivors finalise past an
+        /// exact-two-thirds layer.
+        ///
+        /// Derived from the same merge the pre-state came from and, like `participation`, **not
+        /// published**: a proposer-chosen set would let a block author retire a rival at a boundary,
+        /// so every node recomputes it from its own DAG and the two paths agree by construction.
+        layer_missing: BTreeSet<Validator>,
     },
     Slash {
         validator: Validator,
@@ -145,6 +157,26 @@ pub enum NativeSystemDeployOp {
         executor: PublicKey,
         burned: NonNegI64,
     },
+}
+
+/// **The senders a finality refusal names as not covering the whole partition** — the input the
+/// boundary's inactivity leak reads. `Support.not_full` names the justification senders whose
+/// candidates the partition did not all see: validators that *spoke* but whose message does not
+/// justify everything the partition holds, which is the one silence nothing else prices.
+///
+/// **`Coverage.missing` is deliberately not included.** It names partition members with *no*
+/// message in the region — absence by height — and that condition is already handled by the live
+/// weight set (a silent validator drops out of the partition within `LIVENESS_WINDOW` heights) and by
+/// the bond-preserving jail. Folding it in would make the leak an automatic bond burn for absence,
+/// which is the policy this instrument does not adopt.
+///
+/// One function for play and replay, so the two cannot disagree about which refusal is meant: the
+/// caller passes the `NoAdvance` its own merge derived.
+pub fn layer_missing_from_stall(stall: &Option<NoAdvance<Validator>>) -> BTreeSet<Validator> {
+    match stall {
+        Some(NoAdvance::Support { not_full, .. }) => not_full.clone(),
+        _ => BTreeSet::new(),
+    }
 }
 
 impl SystemDeploy {
@@ -194,10 +226,32 @@ impl SystemDeploy {
         }
     }
 
+    /// A close whose gate refusal is empty — the historical shape, kept for callers that do not run a
+    /// finality gate of their own (unit rigs and reports). Consensus paths use
+    /// [`Self::close_block_attributing`], which states the refusal rather than defaulting it.
     pub fn close_block(
         block_number: i64,
         fringe_state_hash: Blake2b256Hash,
         participation: BTreeMap<Validator, BlockHeight>,
+        rand: Blake2b512Random,
+    ) -> SystemDeploy {
+        Self::close_block_attributing(
+            block_number,
+            fringe_state_hash,
+            participation,
+            BTreeSet::new(),
+            rand,
+        )
+    }
+
+    /// **A close carrying the finality gate's own refusal** — the input the boundary's inactivity
+    /// leak reads. Both consensus paths build the close with this: the proposer from its pre-state's
+    /// `finality_stall`, the replayer from the same refusal its own merge derived.
+    pub fn close_block_attributing(
+        block_number: i64,
+        fringe_state_hash: Blake2b256Hash,
+        participation: BTreeMap<Validator, BlockHeight>,
+        layer_missing: BTreeSet<Validator>,
         rand: Blake2b512Random,
     ) -> SystemDeploy {
         SystemDeploy {
@@ -209,6 +263,7 @@ impl SystemDeploy {
                 block_number,
                 fringe_state_hash,
                 participation,
+                layer_missing,
             }),
         }
     }
@@ -278,6 +333,36 @@ mod tests {
                 amount: nn(100)
             })
         );
+    }
+
+    /// **The leak's input is the not-full set, and only that.** A support refusal names the senders
+    /// whose messages did not cover the partition; a coverage refusal names absent senders, and
+    /// folding those in would make the leak an automatic bond burn for absence — the jail's job, and
+    /// the shape the policy explicitly did not adopt. An advance names nobody.
+    #[test]
+    fn the_leaks_input_is_the_gates_not_full_set() {
+        let v1 = Validator::new([1u8; 65]);
+        let v2 = Validator::new([2u8; 65]);
+        let support = Some(NoAdvance::Support {
+            supporting: 200,
+            total: 300,
+            full_partitions: 3,
+            candidates: 4,
+            partition: 4,
+            not_full: BTreeSet::from([v1]),
+        });
+        assert_eq!(layer_missing_from_stall(&support), BTreeSet::from([v1]));
+        let coverage = Some(NoAdvance::Coverage {
+            missing: BTreeSet::from([v2]),
+            senders: BTreeSet::from([v1]),
+            partition: 2,
+        });
+        assert!(
+            layer_missing_from_stall(&coverage).is_empty(),
+            "absence by height is the live weight set's and the jail's, not the leak's"
+        );
+        assert!(layer_missing_from_stall(&Some(NoAdvance::AlreadyPublished)).is_empty());
+        assert!(layer_missing_from_stall(&None).is_empty());
     }
 
     /// The refund carries its payer. The Scala contract reads the deployer back out of the

@@ -65,6 +65,7 @@ pub struct BallotKey {
 const ABSENCE_ENTRY_LEN: usize = VALIDATOR_LEN + 2 * I64_LEN;
 const VOTE_WINDOW_ENTRY_LEN: usize = VALIDATOR_LEN + 2 * I64_LEN;
 const BALLOT_ENTRY_LEN: usize = 2 * VALIDATOR_LEN + 1;
+const SILENCE_ENTRY_LEN: usize = VALIDATOR_LEN + I64_LEN;
 
 fn validator_at(bytes: &[u8], at: usize) -> Validator {
     Validator::from_slice(&bytes[at..at + VALIDATOR_LEN])
@@ -103,6 +104,35 @@ pub fn decode_absence(bytes: &[u8]) -> Result<BTreeMap<Validator, AbsenceRecord>
                 jail_remaining: read_i64(chunk, VALIDATOR_LEN + I64_LEN),
             },
         );
+    }
+    Ok(out)
+}
+
+/// **The inactivity-leak counters**: consecutive boundaries on which a validator's own message did
+/// not cover the whole finality partition (`layer_missing`), by validator.
+///
+/// A separate record from [`AbsenceRecord`], because the two measure different silences. Absence is
+/// *height*: the validator has not spoken. Not-full is *coverage*: the validator spoke, but its
+/// message does not justify everything the partition holds, which is what keeps a layer from filling
+/// it. A validator can be present by height and still be the one blocking finality; conflating the
+/// counters would reset the leak on a boundary where the validator happened to publish a lagging
+/// message.
+pub fn encode_silence(silence: &BTreeMap<Validator, i64>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(silence.len() * SILENCE_ENTRY_LEN);
+    for (validator, count) in silence {
+        out.extend_from_slice(validator.as_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+    }
+    out
+}
+
+pub fn decode_silence(bytes: &[u8]) -> Result<BTreeMap<Validator, i64>, String> {
+    if bytes.len() % SILENCE_ENTRY_LEN != 0 {
+        return Err(stride_error("silence", bytes.len(), SILENCE_ENTRY_LEN));
+    }
+    let mut out = BTreeMap::new();
+    for chunk in bytes.chunks_exact(SILENCE_ENTRY_LEN) {
+        out.insert(validator_at(chunk, 0), read_i64(chunk, VALIDATOR_LEN));
     }
     Ok(out)
 }

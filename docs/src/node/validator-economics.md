@@ -428,8 +428,8 @@ decisions were reached is in [Incident history](incident-history.md).
   page is what it *earns*.
 - [Running a public testnet of your own](validator-observer-setup.md) — the slash rule and the
   offline-is-free asymmetry stated for an operator.
-- [Progress: the shapes of non-progress](../formal/progress.md) — the `Participation` hypothesis, and why
-  an inactivity leak is out of scope.
+- [Progress: the shapes of non-progress](../formal/progress.md) — the `Participation` hypothesis and the
+  inactivity leak's 2026-11-22 model (law 89's leak clause), which supersedes the earlier "out of scope" decision.
 - [Blockchain multi-stakeholder governance](../qucalc/multi-stakeholder-governance.md) — the governance
   framing around validator-only decision-making.
 

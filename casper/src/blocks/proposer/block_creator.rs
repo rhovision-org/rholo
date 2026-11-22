@@ -196,6 +196,9 @@ impl BlockCreator {
                 i64::from(block_num),
                 pre_state.fringe_state,
                 pre_state.participation.clone(),
+                // The gate's own refusal for the parents this block extends — the same value a
+                // replayer derives from the same justification set, so play and replay agree.
+                crate::system_deploy::layer_missing_from_stall(&pre_state.finality_stall),
                 &rand,
             )?;
 
@@ -339,6 +342,7 @@ fn block_system_deploys(
     block_number: i64,
     fringe_state: Blake2b256Hash,
     participation: BTreeMap<Validator, BlockHeight>,
+    layer_missing: BTreeSet<Validator>,
     rand: &Blake2b512Random,
 ) -> Result<Vec<SystemDeploy>, String> {
     let mut system_deploys: Vec<SystemDeploy> = Vec::new();
@@ -350,10 +354,11 @@ fn block_system_deploys(
             seed_at(rand, deploy_count + i)?,
         ));
     }
-    system_deploys.push(SystemDeploy::close_block(
+    system_deploys.push(SystemDeploy::close_block_attributing(
         block_number,
         fringe_state,
         participation,
+        layer_missing,
         seed_at(rand, deploy_count + to_slash.len())?,
     ));
     Ok(system_deploys)
@@ -375,7 +380,7 @@ mod block_system_deploy_tests {
     use rchain_models::block_metadata::SlashSeverity;
     use rchain_models::validator::Validator;
     use rchain_shared::refined::{BlockHeight, SeqNum};
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn offender(
         byte: u8,
@@ -407,9 +412,19 @@ mod block_system_deploy_tests {
             offender(1, SlashSeverity::HonestMistake, None),
         ]);
         let deploy_count = 4usize;
-        let deploys =
-            block_system_deploys(&to_slash, deploy_count, 12, fringe, BTreeMap::new(), &rand)
-                .expect("a list of system deploys");
+        // The gate's refusal names sender 1 as not covering the partition; the close must carry it,
+        // because the boundary's inactivity leak reads exactly this set.
+        let layer_missing = BTreeSet::from([Validator::new([1u8; 65])]);
+        let deploys = block_system_deploys(
+            &to_slash,
+            deploy_count,
+            12,
+            fringe,
+            BTreeMap::new(),
+            layer_missing.clone(),
+            &rand,
+        )
+        .expect("a list of system deploys");
 
         // Three entries: two slashes and the close, in that order. It was four until `RecordSpoke` was
         // retired, and the shift is the point of the seed arm below rather than a detail of this one.
@@ -444,8 +459,10 @@ mod block_system_deploy_tests {
                 block_number: 12,
                 fringe_state_hash: fringe,
                 participation: BTreeMap::new(),
+                layer_missing,
             }),
-            "and the close carries the fringe's own state hash, which is not the proposer's to choose"
+            "and the close carries the fringe's own state hash and the gate's own refusal, neither of \
+             which is the proposer's to choose"
         );
 
         // **The positional seeds.** This is `replay_deploys`'s derivation, spelled the same way — and
@@ -474,6 +491,7 @@ mod block_system_deploy_tests {
             1,
             Blake2b256Hash::from_bytes([0u8; 32]),
             BTreeMap::new(),
+            BTreeSet::new(),
             &rand,
         )
         .expect("a list of system deploys");

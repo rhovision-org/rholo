@@ -1,0 +1,23 @@
+{
+  "bond_leave": {},
+  "boot_traces": [],
+  "errors": [
+    "ClaimError: validator 3 has caught up with the bootstrap did not hold within 420s (ConnectionResetError: [Errno 104] Connection reset by peer)"
+  ],
+  "finality_gate": {},
+  "finality_gate_after_leave": {},
+  "finality_traces": [],
+  "ok": false,
+  "provenance": {
+    "binary_sha256": "6afbc570e6db29189bc58a223b938c65830b886c00ccd89e56cc06337b8089ac",
+    "devnet_prefix": "bondleave",
+    "image_id": "986c6b942a04cfa1ae465c0388413112314dd71f17e2ec2753b4ef186d955900",
+    "profile": "local-3",
+    "source_dirty": false,
+    "source_sha": "09083b3a9544ab09d54996a3847f9ca01b99694e"
+  },
+  "returner": {},
+  "schema": 1,
+  "traces": [],
+  "validator_set": {}
+}

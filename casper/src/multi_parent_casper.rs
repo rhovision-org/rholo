@@ -1165,20 +1165,29 @@ where
     })
 }
 
-/// **The participation an epoch boundary's absence rule reads** (B4, #150), derived from the DAG for a
-/// block whose merged pre-state is not in hand.
+/// **The two close inputs an epoch boundary's rule reads** — the participation the absence rule
+/// consumes (B4, #150) and the finality gate's refusal, which the inactivity leak reads — derived from
+/// the DAG for a block whose merged pre-state is not in hand.
 ///
 /// It exists for the index-regeneration replay, which carries a `fringe_state_hash` but no
-/// `ParentsMergedState` — and it is deliberately the *same* derivation `get_pre_state_for_parents`
-/// performs, down to the `validation_failed` filter `validate_block_checkpoint` applies before it asks
-/// for a pre-state. It has to be: `regenerate_sidecars` compares the post-state hash it replays against
-/// the block's own, so a map derived any other way is a different post-state and the block becomes
-/// un-indexable.
-pub async fn participation_for_block(
+/// `ParentsMergedState` — and both values are deliberately the *same* derivation
+/// `get_pre_state_for_parents` performs, down to the `validation_failed` filter
+/// `validate_block_checkpoint` applies before it asks for a pre-state and the base-claim selection
+/// the gate's bonds come from. It has to be: `regenerate_sidecars` compares the post-state hash it
+/// replays against the block's own, so an input derived any other way is a different post-state and
+/// the block becomes un-indexable.
+///
+/// The bonds are read at the **pre-merge base state** (`choose_base_claim` over the parents that
+/// finalise the previous fringe), not at `block.pre_state_hash`: the gate ran before the new fringe
+/// was merged, so its denominator is the active map at the previous fringe. Reading the block's own
+/// pre-state instead would be one merge late, and would disagree exactly when a boundary in the
+/// fringe moved the active set.
+pub async fn close_inputs_for_block(
     dag: &dyn BlockDagStorage,
     block_store: &BlockStore,
+    runtime: &RuntimeManager,
     block: &BlockMessage,
-) -> Result<BTreeMap<Validator, BlockHeight>, String> {
+) -> Result<(BTreeMap<Validator, BlockHeight>, BTreeSet<Validator>), String> {
     let dag_repr = dag.get_representation().await;
     let msg_map = &dag_repr.dag_message_state.msg_map;
     let mut parents: BTreeSet<Message<BlockHash, Validator>> = BTreeSet::new();
@@ -1196,7 +1205,78 @@ pub async fn participation_for_block(
     // An empty parent set has no fringe, and no participation: the genesis shape, and the arm
     // `validate_block_checkpoint` handles separately.
     let fringe = message_map::latest_fringe(msg_map, &parents);
-    participation_from_fringe(block_store, fringe.iter()).await
+    let participation = participation_from_fringe(block_store, fringe.iter()).await?;
+    let fringe_hashes: BTreeSet<BlockHash> = fringe.iter().map(|m| m.id).collect();
+
+    // **The base claim, exactly as the merge selects it**: the parents whose own `fringe` is this
+    // set, and the greatest `(height, id)` among their claimed states. Disagreement is refused rather
+    // than tie-broken — `get_pre_state_for_parents` makes the same call, and a silent choice here is
+    // how two nodes would derive different gate bonds.
+    let mut claims = Vec::new();
+    for m in parents.iter().filter(|m| m.fringe == fringe_hashes) {
+        let meta = dag.lookup(&m.id).await?.ok_or_else(|| {
+            format!(
+                "missing fringe block {} in the metadata store",
+                m.id.to_hex()
+            )
+        })?;
+        let parent_block = block_store
+            .get(&[m.id])
+            .await?
+            .into_iter()
+            .next()
+            .flatten()
+            .ok_or_else(|| format!("missing fringe block {} in the block store", m.id.to_hex()))?;
+        claims.push(Claim {
+            height: i64::from(parent_block.block_number),
+            id: m.id,
+            state: Blake2b256Hash::from_byte_array(meta.fringe_state_hash.as_bytes()),
+        });
+    }
+    // **A base that cannot be established yields no attribution, not a failure.** This path
+    // re-derives state for a block that already validated; a synthetic or partially restored DAG
+    // (messages with no fringe, a state pruned from this node's history) has no base claim to read
+    // the gate's bonds from. The only value at stake is the leak's input, and a block that *did*
+    // leak will fail the caller's post-state comparison loudly if this returns the wrong set — so a
+    // missing base is answered with the empty set rather than making the block un-indexable.
+    let bonds = match choose_base_claim(claims, None) {
+        Ok(base) => {
+            match runtime
+                .compute_bonds(&StateHash::from_slice(base.state().as_bytes()))
+                .await
+            {
+                Ok(bonds) => Some(bonds),
+                Err(err) => {
+                    eprintln!(
+                        "[finality] no leak attribution for block {}: the gate's bonds are not \
+                         readable at the previous fringe: {err}",
+                        block.block_hash.to_hex()
+                    );
+                    None
+                }
+            }
+        }
+        Err(refusal) => {
+            eprintln!(
+                "[finality] no leak attribution for block {}: {refusal:?}",
+                block.block_hash.to_hex()
+            );
+            None
+        }
+    };
+    let reason = match bonds {
+        Some(bonds) => {
+            let finalizer = Finalizer::new(msg_map);
+            let (_, _, reason, _) =
+                liveness::calculate_finalization_reported(&finalizer, &parents, &bonds);
+            reason
+        }
+        None => None,
+    };
+    Ok((
+        participation,
+        crate::system_deploy::layer_missing_from_stall(&reason),
+    ))
 }
 
 /// A deploy's signer, when it is a validator key: the `deployer` field is a 65-byte public key, and

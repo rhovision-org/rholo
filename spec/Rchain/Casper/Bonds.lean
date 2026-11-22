@@ -53,6 +53,42 @@ abbrev ActiveBonds := List (Validator × Nat)
     from `pos:active` and as `Bonds` (the gates' type) spells it. -/
 def bondsOfState (active : ActiveBonds) : Bonds := active.map (fun b => (b.1.id, b.2))
 
+/-- **The inactivity leak** — retire the silent validators from the active snapshot at a boundary.
+    This is the map transition the boundary applies before the finality gate is asked again; it is
+    the priced instrument Law 52's clause b names for a bond that keeps a quorum unreachable. -/
+def leak (active : ActiveBonds) (silent : List Sender) : ActiveBonds :=
+  active.filter (fun b => decide (b.1.id ∉ silent))
+
+/-- The leak retires only validators it was told are silent. -/
+theorem leak_retires_only_the_silent (active : ActiveBonds) (silent : List Sender) :
+    ∀ b ∈ leak active silent, b.1.id ∉ silent := by
+  intro b hb
+  exact of_decide_eq_true (List.mem_filter.mp hb).2
+
+/-- A leaked sender is no longer in the bonds map the gates read. -/
+theorem the_leaked_sender_is_not_in_the_quorum (active : ActiveBonds) (silent : List Sender)
+    {v : Sender} (hv : v ∈ silent) :
+    v ∉ bondedSenders (bondsOfState (leak active silent)) := by
+  intro h
+  have hleak : v ∈ (leak active silent).map (fun b => b.1.id) := by
+    simpa [bondedSenders, bondsOfState] using h
+  simp only [List.mem_map] at hleak
+  obtain ⟨b, hb, hbid⟩ := hleak
+  exact leak_retires_only_the_silent active silent b hb (by simpa [hbid] using hv)
+
+/-- **The leak never raises the quorum denominator.** -/
+theorem totalStake_leak_le (active : ActiveBonds) (silent : List Sender) :
+    totalStake (bondsOfState (leak active silent))
+      ≤ totalStake (bondsOfState active) := by
+  induction active with
+  | nil => simp [leak, bondsOfState, totalStake]
+  | cons b bs ih =>
+    by_cases h : b.1.id ∈ silent
+    · simp [leak, h, bondsOfState, totalStake] at ih ⊢
+      omega
+    · simp [leak, h, bondsOfState, totalStake] at ih ⊢
+      omega
+
 /-- A justification, reduced to the two things the bonds sync reads about it: the active map of the
     state at its block's post-state, and the bonds map its block **carried** (the port's
     `Justification.bonds_map`, `casper_message.rs`). `seqNum` is what `newest_justification` orders by

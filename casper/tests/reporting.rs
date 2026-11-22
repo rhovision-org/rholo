@@ -250,7 +250,7 @@ async fn the_reporter_replays_a_block_and_collects_its_events() {
         // A reporter has no DAG, so the close deploy's two derived inputs are supplied to it — here the
         // same values the play above handed to `close_block`, which is what a node gets from the DAG
         // for that block.
-        |_block| async move { Ok((fringe_state(1), BTreeMap::new())) },
+        |_block| async move { Ok((fringe_state(1), BTreeMap::new(), BTreeSet::new())) },
     );
 
     let result = reporter

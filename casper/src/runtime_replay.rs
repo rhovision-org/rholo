@@ -147,6 +147,7 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         block_data: BlockData,
         fringe_state_hash: &Blake2b256Hash,
         participation: &BTreeMap<Validator, BlockHeight>,
+        layer_missing: &BTreeSet<Validator>,
         with_cost_accounting: bool,
         pos_genesis: &PosGenesis,
         vaults: &[Vault],
@@ -161,6 +162,7 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
             block_number,
             fringe_state_hash,
             participation,
+            layer_missing,
             with_cost_accounting,
             pos_genesis,
             vaults,
@@ -179,6 +181,7 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         block_number: i64,
         fringe_state_hash: &Blake2b256Hash,
         participation: &BTreeMap<Validator, BlockHeight>,
+        layer_missing: &BTreeSet<Validator>,
         with_cost_accounting: bool,
         pos_genesis: &PosGenesis,
         vaults: &[Vault],
@@ -299,6 +302,7 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
                     block_number,
                     fringe_state_hash,
                     participation,
+                    layer_missing,
                     rand.split_byte(u8::try_from(terms.len() + i).map_err(|_| {
                         ReplayFailure::internal_error("deploy count exceeds 255".to_string())
                     })?),
@@ -540,6 +544,7 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         block_number: i64,
         fringe_state_hash: &Blake2b256Hash,
         participation: &BTreeMap<Validator, BlockHeight>,
+        layer_missing: &BTreeSet<Validator>,
         rand: Blake2b512Random,
     ) -> Result<NumberChannelsDiff, ReplayFailure> {
         let system_deploy_data = match processed {
@@ -554,10 +559,11 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
                 severity,
                 evidence,
             } => SystemDeploy::slash(validator, *severity, evidence.clone(), rand),
-            SystemDeployData::CloseBlock => SystemDeploy::close_block(
+            SystemDeployData::CloseBlock => SystemDeploy::close_block_attributing(
                 block_number,
                 *fringe_state_hash,
                 participation.clone(),
+                layer_missing.clone(),
                 rand,
             ),
             SystemDeployData::Empty => {
@@ -671,9 +677,15 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
                 block_number,
                 fringe_state_hash,
                 participation,
+                layer_missing,
             } => {
                 native
-                    .close_block(*block_number, *fringe_state_hash, participation)
+                    .close_block_attributing(
+                        *block_number,
+                        *fringe_state_hash,
+                        participation,
+                        layer_missing,
+                    )
                     .await?
             }
             NativeSystemDeployOp::Slash {
