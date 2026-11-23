@@ -1,0 +1,35 @@
+{
+  "arms": [],
+  "binary_sha256": "acba71d7d6ce6251b84d149ce4f567befa49dca98f0238e5217eec78f6e0db0f",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 5040710,
+      "kind": "json",
+      "path": "raw/campaign/result.json",
+      "sha256": "551e79f7195a11c9385e2a547eed699aaf8118379cc037de441a412546bb3ca5"
+    },
+    {
+      "bytes": 1701700,
+      "kind": "json",
+      "path": "raw/claim.json",
+      "sha256": "96a03946974ea52f135151458876dce6cc037f71c42ff21d8e3e8733c8c4a300"
+    }
+  ],
+  "gate_id": "RC-2",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-23T21:34:39+00:00",
+    "tool": "evidence-pack",
+    "version": 2
+  },
+  "redactions": [],
+  "reference": null,
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "71c80b17db488feb1b36769a04812cc4bacfdf71",
+  "verdict": "PASS"
+}

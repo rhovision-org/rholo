@@ -98,7 +98,7 @@ Merged campaigns, retained for the stall-coverage cross-reference; they are not 
 
 **Arm `local`** (local, `local-devnet`) — the acceptance drill retains a confirmed marker through two further epoch boundaries
 
-Reading: `safe` — spec/audit/evidence/rc1-local-20261123-2d0edab/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc1-local-20261123-2315ef3/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — the same settlement and retention reading on the four-host public fleet
@@ -109,7 +109,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `bond-leave`** (local, `local-devnet`) — a bond and a withdrawal settle, activate at an epoch boundary, pay after quarantine, and the settlement marker is retained
 
-Reading: `safe` — spec/audit/evidence/rc1-bond-leave-20261123-38cd50e/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc1-bond-leave-20261123-71c80b1/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Supersedes.** G584-G2, G584-G3, TA-C1
@@ -144,7 +144,7 @@ Reading: `safe` — spec/audit/evidence/rc1-bond-leave-20261123-38cd50e/raw/clai
 
 **Arm `local`** (local, `local-devnet`) — partition/rejoin with a producing victim; containment and no regression
 
-Reading: `safe` — spec/audit/evidence/rc2-local-20261123-2d0edab/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc2-local-20261123-2315ef3/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — the operator's partition window on the public fleet
@@ -167,12 +167,12 @@ Reading: `not-observed` — no committed run record
 
 **Arm `validator-set`** (local, `local-devnet`) — every validator agrees on the bond set at each epoch boundary and the finality denominator is that set
 
-Reading: `safe` — spec/audit/evidence/rc2-validator-set-20261123-38cd50e/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc2-validator-set-20261123-71c80b1/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `stall-denominator`** (local, `local-devnet`) — with exactly 200 of 300 bonded stake live, height advances while finality freezes and no settlement claims success; restarting the two stopped validators finalises the same deploy with no resubmission
 
-Reading: `safe` — spec/audit/evidence/rc2-stall-denominator-20261123-5b9685e/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc2-stall-denominator-20261123-2315ef3/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Supersedes.** G428-M4, TA-C1
@@ -207,7 +207,7 @@ Reading: `safe` — spec/audit/evidence/rc2-stall-denominator-20261123-5b9685e/r
 
 **Arm `local`** (local, `local-devnet`) — state agreement across a merge on the local four-validator devnet
 
-Reading: `safe` — spec/audit/evidence/rc3-local-20261123-2d0edab/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc3-local-20261123-2315ef3/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — state agreement on the public fleet
@@ -224,7 +224,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `stall-episode`** (local, `local-devnet`) — a finality stall is visible while it stands and the persisted episode count survives the restore, so a stall that ended is not reported as none
 
-Reading: `safe` — spec/audit/evidence/rc3-stall-episode-20261123-5b9685e/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc3-stall-episode-20261123-2315ef3/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Supersedes.** G428-M4
@@ -259,7 +259,7 @@ Reading: `safe` — spec/audit/evidence/rc3-stall-episode-20261123-5b9685e/raw/c
 
 **Arm `local`** (local, `local-devnet`) — restart under load: accepted work survives and the victim rejoins
 
-Reading: `safe` — spec/audit/evidence/rc4-local-20261123-2d0edab/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc4-local-20261123-2315ef3/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — a real host stop on the public fleet
@@ -282,7 +282,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `returner`** (local, `local-devnet`) — a validator down across a bond-change boundary rejoins the same finalised head without manual surgery
 
-Reading: `safe` — spec/audit/evidence/rc4-returner-20261123-38cd50e/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc4-returner-20261123-71c80b1/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Supersedes.** G584-G4, TA-C2, G428-M4
@@ -317,7 +317,7 @@ Reading: `safe` — spec/audit/evidence/rc4-returner-20261123-38cd50e/raw/claim.
 
 **Arm `local`** (local, `local-devnet`) — capped and unset pressure on the local node
 
-Reading: `safe` — spec/audit/evidence/rc5-local-20261123-2d0edab/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc5-local-20261123-2315ef3/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — pressure on the public endpoint and proxy
@@ -328,7 +328,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `transport`** (local, `local-devnet`) — one deploy id through HTTP, direct HTTP, gRPC and a proxy returns the same id, status, settlement stage and error class
 
-Reading: `safe` — spec/audit/evidence/rc5-transport-20261123-361680e/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc5-transport-20261123-2315ef3/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Supersedes.** G428-M2
@@ -363,7 +363,7 @@ Reading: `safe` — spec/audit/evidence/rc5-transport-20261123-361680e/raw/claim
 
 **Arm `local`** (local, `local-devnet`) — genesis join and audit on the local devnet
 
-Reading: `safe` — spec/audit/evidence/rc6-local-20261123-2d0edab/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc6-local-20261123-2315ef3/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — a public join and audit
@@ -416,7 +416,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — mixed N/N+1 binaries agree on a block's state, a populated store migrates, and a newer store is refused
 
-Reading: `safe` — spec/audit/evidence/rc7-local-20261123-2d0edab/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc7-local-20261123-2315ef3/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — a rolling fleet swap keeps one finalised chain through the mixed window and reaches the same head after the swap

@@ -1,0 +1,119 @@
+{
+  "arm": "transport",
+  "claim_id": "RC-5",
+  "claim_title": "Overload refusal",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-23T21:12:46Z",
+  "harness": {
+    "name": "rc5-transport",
+    "out": "target/release-claims/campaign-20261123b/rc5-transport"
+  },
+  "locality": "local-devnet",
+  "observations": {
+    "admission_traces": [],
+    "transport": {
+      "deploy_id": "3044022075d97dda12b2eb9468fb57b12d0eec227923c4bf66326e73ec76af9a478a619f0220483da8561d0f4c7348c62c40cd50fcb5be767cb4a17c4f0d1c471af09cb8773b",
+      "deploy_request": {
+        "data": {
+          "phloLimit": 1000000,
+          "phloPrice": 1,
+          "shardId": "/root",
+          "term": "@\"release-claim-transport:1795468275125599119\"!(42)",
+          "timestamp": 1795468282637,
+          "validAfterBlockNumber": 8
+        },
+        "deployer": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4",
+        "sigAlgorithm": "secp256k1",
+        "signature": "3044022075d97dda12b2eb9468fb57b12d0eec227923c4bf66326e73ec76af9a478a619f0220483da8561d0f4c7348c62c40cd50fcb5be767cb4a17c4f0d1c471af09cb8773b"
+      },
+      "environment_checks": {
+        "future_at_start": true,
+        "latest_block_number": 3,
+        "shard_id": "/root",
+        "valid_after_block_number": 8
+      },
+      "negative_control": {
+        "body": "\"Invalid signature.\"",
+        "status": 400,
+        "surface": "http"
+      },
+      "note": "four fresh single-node devnets; the invariant is the deploy id and the node's status/stage, not block equality across chains",
+      "proxy_transcript": {
+        "request_sha256": "6ed301860ac91926024dfc1ec799aa2625a811a583694f4e6289b356edad6b0c",
+        "response_sha256": "8342073bba8271910b87729b20f4b930df8f45d041a70092e6e420da476a9b33"
+      },
+      "request_body_sha256": "b65fe0a4a397002b727c0fbb6f5bc4032b7ca30595490c2acdeebcd449c233d6",
+      "surfaces": [
+        {
+          "block": {
+            "blockHash": "058059cd8c2ef5755b85f406b44a932885b1dda52541ad7310b407925a34c9e6",
+            "blockNumber": 8
+          },
+          "deploy_id": "3044022075d97dda12b2eb9468fb57b12d0eec227923c4bf66326e73ec76af9a478a619f0220483da8561d0f4c7348c62c40cd50fcb5be767cb4a17c4f0d1c471af09cb8773b",
+          "error_class": null,
+          "settlement_confirmed": true,
+          "settlement_stage": "finalizedSuccess",
+          "status": "ProcessedWithSuccess",
+          "status_source": "grpc",
+          "surface": "grpc"
+        },
+        {
+          "block": {
+            "blockHash": "01a690b2e3c15e12375895291930909f11e5afe5c1a0f280ac27a9eb8e40400b",
+            "blockNumber": 8
+          },
+          "deploy_id": "3044022075d97dda12b2eb9468fb57b12d0eec227923c4bf66326e73ec76af9a478a619f0220483da8561d0f4c7348c62c40cd50fcb5be767cb4a17c4f0d1c471af09cb8773b",
+          "error_class": null,
+          "settlement_confirmed": true,
+          "settlement_stage": "finalizedSuccess",
+          "status": "ProcessedWithSuccess",
+          "status_source": "http",
+          "surface": "http"
+        },
+        {
+          "block": {
+            "blockHash": "3ae98f1ce8f1b90861dfc507debb3d20c110140d3e459c28078185ba2f836a70",
+            "blockNumber": 8
+          },
+          "deploy_id": "3044022075d97dda12b2eb9468fb57b12d0eec227923c4bf66326e73ec76af9a478a619f0220483da8561d0f4c7348c62c40cd50fcb5be767cb4a17c4f0d1c471af09cb8773b",
+          "error_class": null,
+          "settlement_confirmed": true,
+          "settlement_stage": "finalizedSuccess",
+          "status": "ProcessedWithSuccess",
+          "status_source": "http",
+          "surface": "direct-http"
+        },
+        {
+          "block": {
+            "blockHash": "cd23b3d1201da166a79c0507c47758f4db447a46ba67d8dbc50c32eb366570f4",
+            "blockNumber": 8
+          },
+          "deploy_id": "3044022075d97dda12b2eb9468fb57b12d0eec227923c4bf66326e73ec76af9a478a619f0220483da8561d0f4c7348c62c40cd50fcb5be767cb4a17c4f0d1c471af09cb8773b",
+          "error_class": null,
+          "settlement_confirmed": true,
+          "settlement_stage": "finalizedSuccess",
+          "status": "ProcessedWithSuccess",
+          "status_source": "http",
+          "surface": "proxy"
+        }
+      ]
+    }
+  },
+  "preconditions": [],
+  "provenance": {
+    "binary_sha256": "d15055c580782dd0dc259c19700c7295dd850d1a0b0577123c918155a9df55cf",
+    "binary_source_sha": "2315ef37ec82624983894a6fe620fe07b0c678ed",
+    "binary_version": "rnode 0.1.0 (2315ef37ec82624983894a6fe620fe07b0c678ed)",
+    "devnet_prefix": "rc5t-grpc",
+    "image_id": "726c1c95d22f05a91eda9a48b935491236e66caf9fd46487d5e1f7001dcbbda7",
+    "profile": "local-1",
+    "source_dirty": false,
+    "source_sha": "2315ef37ec82624983894a6fe620fe07b0c678ed"
+  },
+  "reasons": [],
+  "schema": 1,
+  "started_at": "2026-11-23T21:11:14Z",
+  "verdict": "pass"
+}

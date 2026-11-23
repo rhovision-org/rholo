@@ -1,0 +1,12 @@
+{
+  "raw/audit.json": "8151cd26db369bfc5eb6054e83f96c445809e38d9826cb8c54b94a93cf14f3c0",
+  "raw/audit.log": "f0ac6e17f442d4e51851ea3d8e5fd6e28e9c4e8c932f3bffa5d19527f6aa8ac8",
+  "raw/chain.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "raw/claim.json": "f01be80261f9c687095fd7ed93368ecaa78e0f7acdf7514eeb53cfa97815092c",
+  "raw/join.log": "f251f1da4153c6e41222b1ef85cc1bc901bb141765a565f33a26bf69eda3d165",
+  "raw/join/activated.log": "fa1108920c4bc2a3272be58cb1f1916fecd7fdb242220ef3cd71c2b878f7e214",
+  "raw/join/chain.json": "08005867de01b84964747c48a54f2ce25b1b4b582fcdc766f618f4bc4a9b89b7",
+  "raw/join/mature-join.json": "29e977d58a89ddb489332f9c8a41356704e6392d1b3e7b0ceb2a7b07e5a12e0c",
+  "raw/join/passive.log": "ce715fcba4276e3d98f18c2a08fab37ed4cbce2be2ff734de1750f200a8eed7c",
+  "raw/join/responder.log": "67a0f565299daf4cd4d390fe18a7d8245d0d847b1c66efde450e50092a8e59cf"
+}
