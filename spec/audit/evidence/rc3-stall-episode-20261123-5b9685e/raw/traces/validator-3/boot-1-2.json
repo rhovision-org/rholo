@@ -1,0 +1,18 @@
+{
+  "kind": "boot",
+  "stage": "acquisition",
+  "dag_len": 73,
+  "genesis_only": false,
+  "store_head": null,
+  "source_configured": true,
+  "acquisition": "certificate",
+  "served_digest": "9618dcf4a63a4407f67c4c99e7da87e3afc1fa5e773cbcccaa46013f7ece9c98",
+  "served_anchor": "db5b3773c84b6da1c343e269e259b26da4fad98852d905d2572d60ec65a8b441",
+  "served_shard": "/root",
+  "shard_id": "/root",
+  "served_supporting_stake": 300,
+  "served_total_stake": 300,
+  "outcome": "certified",
+  "refusal_coordinate": null,
+  "accepted": true
+}
