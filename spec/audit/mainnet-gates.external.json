@@ -366,6 +366,38 @@
         }
       ],
       "does_not_claim": "The prose correction is not an independent safety attestation."
+    },
+    {
+      "id": "G655-FORKLESS-DEVREWARDS",
+      "gate": false,
+      "family": "G655",
+      "title": "Fee-funded developer usage rewards can be activated after genesis without a hard fork",
+      "source_label": "#655",
+      "source_url": "https://github.com/rhovision-org/rholo/issues/655",
+      "source_retrieved": "2026-11-23",
+      "source_sha256": null,
+      "pass_condition": "On a multi-validator network built with the candidate genesis rules and developer rewards inactive, the same binaries and genesis later activate a fee-funded developer reserve, settle one threshold-authorized payout (including one to a deployer-named beneficiary) built from finalized history by an external observer, converge to exactly-once balances after injected service crashes, and keep one protocol version and one finalized state on every node, with every reward action an ordinary valid deploy (#655 section 7).",
+      "fail_condition": "Activation needs any of: a genesis intervention, a change to fee-allocation rules, block validity, finality or REV transfer rules, a new mandatory block or deploy type, a new node binary, or a rewrite of finalized balances outside ordinary deploys; or a crash drill duplicates, loses or misdirects a payment.",
+      "observable": "Genesis hash, protocol version and binary digests before and after activation; the treasury, beneficiary and settlement balances; the manifest hash recomputed by independent observers; each node's finalized state; the reward-service crash-drill outcomes.",
+      "witness_kind": null,
+      "witness_ref": null,
+      "negative_control": "A build whose genesis commits no developer share must fail the activation arm; a settlement replayed for an accepted epoch must be refused; a beneficiary change not authorized by the deployer's own deployerId must be refused.",
+      "docker_free": true,
+      "sole_evidence": "none",
+      "locality": "local-devnet",
+      "witness_scope": "integration",
+      "owner": "Jim / release coordination",
+      "status": "owes",
+      "status_reason": "No witness exists. The capability audit (spec/audit/forkless-developer-rewards-20261123.md) finds one fork-required-if-deferred gap: PosParams is genesis-only, so a developer share of the burn must be committed at genesis (PR-B on #655) or later rewards need a hard fork. The release may instead record a dated owner disposition withdrawing the requirement.",
+      "evidence": {
+        "url": null,
+        "digest": null,
+        "source_sha": null,
+        "binary_sha256": null
+      },
+      "depends_on": [],
+      "related": [],
+      "does_not_claim": "The capability audit classifies source; it does not show activation, treasury security, unambiguous attribution or consensus isolation. A demonstrated activation does not show any reward algorithm is economically sound or collusion-resistant."
     }
   ]
 }
