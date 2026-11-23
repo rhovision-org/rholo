@@ -25,11 +25,11 @@ cannot yet be made. No status is authored.
 | `RC-2` | `multi-host` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm multi-host` and commit its record; the arm's harness lands in `rc-multi-host`. | `rc-multi-host` |
 | `RC-2` | `equivocation` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm equivocation` and commit its record; the arm's harness lands in `rc-equivocation`. | `rc-equivocation` |
 | `RC-2` | `validator-set` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm validator-set` and commit its record; the arm's harness lands in `rc-bond-leave`. | `rc-bond-leave` |
-| `RC-2` | `stall-denominator` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm stall-denominator` and commit its record; the arm's harness lands in `rc-stall-arms`. | `rc-stall-arms` |
+| `RC-2` | `stall-denominator` | local | local-devnet | **safe** | — | — |
 | `RC-3` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-3` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
 | `RC-3` | `availability` | public | public-live | **not-observed** | Run the finalised-block availability sweep on the public fleet: every finalised body and finalised-head state from every validator. | `rc-public-fleet` |
-| `RC-3` | `stall-episode` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-3 --arm stall-episode` and commit its record; the arm's harness lands in `rc-stall-arms`. | `rc-stall-arms` |
+| `RC-3` | `stall-episode` | local | local-devnet | **safe** | — | — |
 | `RC-4` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-4` | `public` | public | public-live | **not-observed** | Run `tools/release-check.py run --claim RC-4 --env public`; the driver performs the single-validator stop and restart and captures the boot ids itself. | `rc-public-fleet` |
 | `RC-4` | `multi-host` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm multi-host` and commit its record; the arm's harness lands in `rc-multi-host`. | `rc-multi-host` |
@@ -166,9 +166,8 @@ Reading: `not-observed` — no committed run record
 
 **Arm `stall-denominator`** (local, `local-devnet`) — with exactly 200 of 300 bonded stake live, height advances while finality freezes and no settlement claims success; restarting the two stopped validators finalises the same deploy with no resubmission
 
-Reading: `not-observed` — no committed run record
-- `RC-2/stall-denominator/observe` — no committed run record. **Next:** Run `python3 tools/release-check.py run --claim RC-2 --arm stall-denominator` and commit its record; the arm's harness lands in `rc-stall-arms`.
-- Next PR: `rc-stall-arms`
+Reading: `safe` — spec/audit/evidence/rc2-stall-denominator-20261123-5b9685e/raw/claim.json
+- No action: the reading is safe; carry the record forward.
 
 **Supersedes.** G428-M4, TA-C1
 
@@ -219,9 +218,8 @@ Reading: `not-observed` — no committed run record
 
 **Arm `stall-episode`** (local, `local-devnet`) — a finality stall is visible while it stands and the persisted episode count survives the restore, so a stall that ended is not reported as none
 
-Reading: `not-observed` — no committed run record
-- `RC-3/stall-episode/observe` — no committed run record. **Next:** Run `python3 tools/release-check.py run --claim RC-3 --arm stall-episode` and commit its record; the arm's harness lands in `rc-stall-arms`.
-- Next PR: `rc-stall-arms`
+Reading: `safe` — spec/audit/evidence/rc3-stall-episode-20261123-5b9685e/raw/claim.json
+- No action: the reading is safe; carry the record forward.
 
 **Supersedes.** G428-M4
 

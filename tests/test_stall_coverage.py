@@ -87,12 +87,40 @@ class StallCoverageGate(unittest.TestCase):
         mutated = self.source.replace("| owed | - |", "| live | - |", 1)
         self.assert_refused(mutated, "live without a spec/audit/evidence path")
 
+    def test_a_live_row_whose_record_is_another_arm_is_refused(self) -> None:
+        line = next(l for l in self.source.splitlines()
+                    if l.startswith("| DE-04 | RC-2 | stall-denominator |"))
+        mutated = self.source.replace(
+            line,
+            "| DE-04 | RC-2 | stall-denominator | rc-stall-arms | live | "
+            "spec/audit/evidence/rc3-stall-episode-20261123-5b9685e/raw/claim.json |", 1)
+        self.assert_refused(mutated, "not RC-2/stall-denominator")
+
+    def test_a_live_row_whose_record_is_not_packed_is_refused(self) -> None:
+        line = next(l for l in self.source.splitlines()
+                    if l.startswith("| DE-04 | RC-2 | stall-denominator |"))
+        mutated = self.source.replace(
+            line,
+            "| DE-04 | RC-2 | stall-denominator | rc-stall-arms | live | "
+            "spec/audit/evidence/c405-merge-unfunded-chain-20261123.md |", 1)
+        self.assert_refused(mutated, "evidence record has no manifest.json")
+
+    def test_a_duplicate_placement_triple_is_refused(self) -> None:
+        line = next(l for l in self.source.splitlines()
+                    if l.startswith("| DE-04 | RC-2 | stall-denominator |"))
+        mutated = self.source.replace(line, line + "\n" + line, 1)
+        self.assert_refused(mutated, "duplicate row for DE-04/RC-2/stall-denominator")
+
     def test_a_claim_reading_on_the_hazop_surface_is_refused(self) -> None:
         mutated = self.source.replace("| owed | - |", "| safe | - |", 1)
         self.assert_refused(mutated, "RC reading 'safe'")
 
     def test_a_debt_line_that_disagrees_is_refused(self) -> None:
-        mutated = self.source.replace("placement rows owed: 29", "placement rows owed: 28", 1)
+        mutated = self.source.replace("placement rows owed: 25", "placement rows owed: 24", 1)
+        self.assert_refused(mutated, "debt line says")
+
+    def test_a_falsifier_debt_line_that_disagrees_is_refused(self) -> None:
+        mutated = self.source.replace("falsifiers owed: 3", "falsifiers owed: 2", 1)
         self.assert_refused(mutated, "debt line says")
 
     def test_a_guide_word_with_no_disposition_is_refused(self) -> None:

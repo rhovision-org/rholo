@@ -303,15 +303,9 @@
           "required": true
         },
         "stall-denominator": {
-          "items": [
-            {
-              "action": "Run `python3 tools/release-check.py run --claim RC-2 --arm stall-denominator` and commit its record; the arm's harness lands in `rc-stall-arms`.",
-              "finding": "no committed run record",
-              "item": "RC-2/stall-denominator/observe"
-            }
-          ],
-          "next_pr": "rc-stall-arms",
-          "reading": "not-observed",
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
           "required": true
         },
         "validator-set": {
@@ -482,21 +476,18 @@
         },
         "stall-denominator": {
           "action": {
-            "items": [
-              {
-                "action": "Run `python3 tools/release-check.py run --claim RC-2 --arm stall-denominator` and commit its record; the arm's harness lands in `rc-stall-arms`.",
-                "finding": "no committed run record",
-                "item": "RC-2/stall-denominator/observe"
-              }
-            ],
-            "next_pr": "rc-stall-arms",
-            "reading": "not-observed",
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
             "required": true
           },
+          "binary_sha256": "a402763636d5c8229f024e70cb574cd6a70b4fadfb36b1cfa3121c3c0854d822",
+          "finished_at": "2026-11-23T14:35:18Z",
           "reasons": [],
-          "record": null,
+          "record": "spec/audit/evidence/rc2-stall-denominator-20261123-5b9685e/raw/claim.json",
           "required": true,
-          "status": "not run"
+          "source_sha": "5b9685eca38250a9f0d81fb3da2f410328721aec",
+          "status": "pass"
         },
         "validator-set": {
           "action": {
@@ -558,15 +549,9 @@
           "required": true
         },
         "stall-episode": {
-          "items": [
-            {
-              "action": "Run `python3 tools/release-check.py run --claim RC-3 --arm stall-episode` and commit its record; the arm's harness lands in `rc-stall-arms`.",
-              "finding": "no committed run record",
-              "item": "RC-3/stall-episode/observe"
-            }
-          ],
-          "next_pr": "rc-stall-arms",
-          "reading": "not-observed",
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
           "required": true
         }
       },
@@ -689,21 +674,18 @@
         },
         "stall-episode": {
           "action": {
-            "items": [
-              {
-                "action": "Run `python3 tools/release-check.py run --claim RC-3 --arm stall-episode` and commit its record; the arm's harness lands in `rc-stall-arms`.",
-                "finding": "no committed run record",
-                "item": "RC-3/stall-episode/observe"
-              }
-            ],
-            "next_pr": "rc-stall-arms",
-            "reading": "not-observed",
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
             "required": true
           },
+          "binary_sha256": "a402763636d5c8229f024e70cb574cd6a70b4fadfb36b1cfa3121c3c0854d822",
+          "finished_at": "2026-11-23T14:38:56Z",
           "reasons": [],
-          "record": null,
+          "record": "spec/audit/evidence/rc3-stall-episode-20261123-5b9685e/raw/claim.json",
           "required": true,
-          "status": "not run"
+          "source_sha": "5b9685eca38250a9f0d81fb3da2f410328721aec",
+          "status": "pass"
         }
       },
       "supersedes": [

@@ -384,8 +384,8 @@ def parse_guide_words(lines: list[str], violations: Violations) -> set[str]:
 
 def parse_table_a(lines: list[str], laws: set[str], lean: set[str],
                   crosswalk: dict[tuple[str, str], tuple[str, str, str]],
-                  violations: Violations) -> tuple[dict[str, str], set[str]]:
-    """Return DE id → its root cause, and the set of guide words carried."""
+                  violations: Violations) -> tuple[dict[str, tuple[str, str, str]], set[str], int]:
+    """Return DE id → (cause, shape, representation), the guide words, and owed falsifiers."""
     for line in lines:
         if not is_table_row(line):
             continue
@@ -395,8 +395,9 @@ def parse_table_a(lines: list[str], laws: set[str], lean: set[str],
             violations.add(
                 "Table A carries an RC column; the HAZOP surface has no Claim, Claim arm or Stall "
                 "arm column — placement belongs in Table E")
-    seen: dict[str, str] = {}
+    seen: dict[str, tuple[str, str, str]] = {}
     words: set[str] = set()
+    owed_falsifiers = 0
     for row in table_rows(lines, TABLE_A_HEADER, "Table A", violations):
         if len(row) != 11:
             violations.add(f"Table A row has {len(row)} cells, want 11: {' | '.join(row)[:90]!r}")
@@ -408,7 +409,7 @@ def parse_table_a(lines: list[str], laws: set[str], lean: set[str],
             continue
         if row_id in seen:
             violations.add(f"duplicate id {row_id}")
-        seen[row_id] = cause
+        seen[row_id] = (cause, shape, representation)
         if word not in GUIDE_WORDS:
             violations.add(f"{row_id}: guide word {word!r} is not canonical")
         words.add(word)
@@ -434,9 +435,11 @@ def parse_table_a(lines: list[str], laws: set[str], lean: set[str],
                         f"{row_id}: law {law}'s crosswalk shape is {cross_rep}/{cross_shape}, not "
                         f"the row's {representation}/{shape}")
         falsifier_exists(falsifier, violations, row_id)
+        if strip_code(falsifier).startswith("owed:"):
+            owed_falsifiers += 1
     if not seen:
         violations.add("Table A has no rows")
-    return seen, words
+    return seen, words, owed_falsifiers
 
 
 def parse_table_b(lines: list[str], laws: set[str], lean: set[str],
@@ -521,8 +524,43 @@ def tracked(relative: str) -> bool:
     return result.returncode == 0
 
 
+def live_record_problem(evidence: str, de: str, claim_id: str, arm_id: str,
+                        classification: tuple[str, str, str] | None) -> str | None:
+    """A live placement must cite a packed record whose episode is this deviation."""
+    path = ROOT / evidence
+    if not path.is_file():
+        return f"evidence is not a file: {evidence}"
+    for name in ("manifest.json", "SHA256SUMS.json"):
+        if not (path.parent.parent / name).is_file():
+            return f"evidence record has no {name}"
+    try:
+        record = json.loads(path.read_text())
+    except ValueError as error:
+        return f"evidence is not JSON: {error}"
+    if not isinstance(record, dict):
+        return "evidence is not a record object"
+    if record.get("claim_id") != claim_id or record.get("arm") != arm_id:
+        return (f"evidence is {record.get('claim_id')!r}/{record.get('arm')!r}, "
+                f"not {claim_id}/{arm_id}")
+    if record.get("verdict") != "pass":
+        return f"evidence verdict is {record.get('verdict')!r}, not pass"
+    observations = record.get("observations")
+    episode = observations.get("stall_episode") if isinstance(observations, dict) else None
+    if not isinstance(episode, dict):
+        return "evidence carries no stall_episode"
+    deviations = episode.get("deviations")
+    if not isinstance(deviations, list) or de not in deviations:
+        return f"the episode names {deviations!r}, not {de}"
+    if classification is not None:
+        observed = (episode.get("cause"), episode.get("shape"), episode.get("representation"))
+        if observed != classification:
+            return f"the episode reads {observed!r}, but the DE row reads {classification!r}"
+    return None
+
+
 def parse_table_e(lines: list[str], required: dict[tuple[str, str], str],
                   campaigns: set[str], de_ids: set[str],
+                  de_classes: dict[str, tuple[str, str, str]],
                   violations: Violations) -> tuple[int, int]:
     """A placement is a (DE, claim, arm) triple: an arm may measure more than one deviation."""
     seen: set[tuple[str, str, str]] = set()
@@ -558,6 +596,12 @@ def parse_table_e(lines: list[str], required: dict[tuple[str, str], str],
                     f"Table E: {claim_id}/{arm_id} is live without a spec/audit/evidence path")
             elif not (ROOT / evidence).exists() or not tracked(evidence):
                 violations.add(f"Table E: {claim_id}/{arm_id} evidence is not a tracked file: {evidence}")
+            else:
+                problem = live_record_problem(evidence, de, claim_id, arm_id,
+                                              de_classes.get(de))
+                if problem:
+                    violations.add(
+                        f"Table E: {claim_id}/{arm_id} live evidence: {problem}")
         elif status in READINGS:
             violations.add(
                 f"Table E: {claim_id}/{arm_id} uses the RC reading {status!r}; the HAZOP surface "
@@ -593,19 +637,19 @@ def parse_residue(lines: list[str], lean: set[str], violations: Violations) -> i
 
 
 def debt_line(lines: list[str], deviations: int, owed: int, placed: int, required: int,
-              violations: Violations) -> None:
+              falsifiers: int, violations: Violations) -> None:
     line = next((l for l in lines if l.strip().startswith("**Debt.**")), None)
     if line is None:
         violations.add("no `**Debt.**` line")
         return
     match = re.search(
         r"deviations: ([0-9]+) · placement rows owed: ([0-9]+) · required arms placed: "
-        r"([0-9]+)/([0-9]+)", line)
+        r"([0-9]+)/([0-9]+) · falsifiers owed: ([0-9]+)", line)
     if not match:
         violations.add(f"debt line is not in the gated form: {line.strip()!r}")
         return
     declared = tuple(int(value) for value in match.groups())
-    actual = (deviations, owed, placed, required)
+    actual = (deviations, owed, placed, required, falsifiers)
     if declared != actual:
         violations.add(f"debt line says {declared}; the tables say {actual}")
 
@@ -637,7 +681,8 @@ def main(argv: list[str]) -> int:
             violations.add(f"the HAZOP surface must not carry the RC field {word!r}")
 
     row_words = parse_guide_words(lines, violations)
-    de_causes, table_words = parse_table_a(lines, laws, lean, crosswalk, violations)
+    de_classes, table_words, falsifiers_owed = parse_table_a(
+        lines, laws, lean, crosswalk, violations)
     for word in row_words:
         if word not in table_words:
             violations.add(f"guide word {word} is declared `row` but no Table A row carries it")
@@ -647,7 +692,7 @@ def main(argv: list[str]) -> int:
     if "TE-7" not in text:
         violations.add("the page never names TE-7")
 
-    de_ids = set(de_causes)
+    de_ids = set(de_classes)
     parse_table_b(lines, laws, lean, violations)
     parse_table_c(lines, de_ids, laws, violations)
     parse_table_d(lines, de_ids, laws, lean, violations)
@@ -657,7 +702,7 @@ def main(argv: list[str]) -> int:
             for cell in row:
                 for law in LAW_REF.findall(cell):
                     check_law_explicit(law, crosswalk, violations, label)
-    owed, placed = parse_table_e(lines, required, campaigns, de_ids, violations)
+    owed, placed = parse_table_e(lines, required, campaigns, de_ids, de_classes, violations)
     parse_residue(lines, lean, violations)
 
     for row in table_rows(lines, TABLE_A_HEADER, "Table A", Violations()):
@@ -665,7 +710,7 @@ def main(argv: list[str]) -> int:
             if strip_code(cell) in READINGS:
                 violations.add(f"Table A carries the RC reading {strip_code(cell)!r}")
 
-    debt_line(lines, len(de_ids), owed, placed, len(required), violations)
+    debt_line(lines, len(de_ids), owed, placed, len(required), falsifiers_owed, violations)
 
     if not violations.ok():
         return violations.report("stall-coverage.md")
