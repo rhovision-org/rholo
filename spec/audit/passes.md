@@ -14322,3 +14322,32 @@ recipe, not a durable store invented in a new module. No live arm was run.
 **State.** C406 done; the census PR adds the U26 rows, the two tools, the evidence record and the §5
 surface debt. The four examples in #658 are Stages 2–4: F-U4-01's retry contract test, F-U7-01 and
 F-U3-01's register-only closures, and the `unrestorableRecords` acting rule.
+
+## 191. A refused merge is retried, not dropped — 2026-11-23
+
+**Subject.** F-U4-01 recorded that a search-budget refusal, a native-relation refusal and a
+number-channel overflow all became one `ValidateError::Internal` and were dropped with no re-queue.
+At `f9e509038` the drop arm is gone: `block_processor::apply` records the fault through
+`record_block_fault`, and the durable disposition ledger retries it. The missing half was proof.
+
+**Change.**
+
+- `casper/src/blocks/block_processor.rs` gains
+  `the_three_merge_refusals_are_recorded_for_retry`: it drives the three exact reason classes and
+  asserts a durable `Faulted` row at `validation internal`, the outstanding pipeline obligation, the
+  retry due set, the attempt budget and the quarantine, with a settled row as the negative control.
+- The pipeline-fault set is process-global, so the tests that read or write it now take a dedicated
+  lock. The recorder test exposed a race with the deferral test's unchanged-count assertion; the
+  module passes twice at default parallelism.
+- F-U4-01 becomes Drift (R2 + R3) with the new test as its falsifier; the falsifiers-owed debt falls
+  from 30 to 29.
+
+**Why believed.** The test passes; the mutation control replaces the recorder's ledger write with a
+constant and the test fails on the missing fault row. The evidence names both runs and the mutation in
+`spec/audit/evidence/c407-merge-retry-20261123.md`.
+
+**What it does not claim.** The producer path is read, not run: the three causes are expensive to
+construct inside the processor, so this pins the recording/retry contract for the exact reason
+classes rather than an end-to-end merge. No release claim, no public arm, no consensus-rule change.
+
+**State.** C407 done; F-U4-01 Drift; the branch is stacked on the census PR #662.
