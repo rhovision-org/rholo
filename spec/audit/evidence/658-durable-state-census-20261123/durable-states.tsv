@@ -1,0 +1,47 @@
+BLOCKS_DB	key	blocks	block-storage/src/block_store.rs	BLOCKS_DB	45
+BLOCK_DISPOSITION_DB	db	block-disposition	casper/src/storage.rs	BLOCK_DISPOSITION_DB	303
+CHECKPOINT_HEAD_KEY	key	44	block-storage/src/checkpoint_store.rs	CHECKPOINT_HEAD_KEY	36
+CURRENT_ROOT	key	current-root	rspace/src/history/roots_store.rs	CURRENT_ROOT	8
+DEPLOYER_INDEXED_FROM_KEY	key	indexed-from	casper/src/dag.rs	DEPLOYER_INDEXED_FROM_KEY	252
+DEPLOYER_INDEX_COUNT_KEY	key	indexed-count	casper/src/dag.rs	DEPLOYER_INDEX_COUNT_KEY	264
+EQUIVOCATION_EVIDENCE_DB	db	equivocation-evidence	casper/src/storage.rs	EQUIVOCATION_EVIDENCE_DB	295
+FINALIZED_FRINGE_KEY	key	42	block-storage/src/approved_store.rs	FINALIZED_FRINGE_KEY	18
+GATEWAY_TXN_DB	db	gateway-txn	casper/src/storage.rs	GATEWAY_TXN_DB	369
+HALT_RECORD_KEY	key	autopropose-halt	block-storage/src/dag/dag_storage.rs	HALT_RECORD_KEY	156
+HEALTH_COUNTERS_KEY	key	shard-health-counters	block-storage/src/dag/dag_storage.rs	HEALTH_COUNTERS_KEY	184
+HISTORY_FROM_KEY	key	45	block-storage/src/checkpoint_store.rs	HISTORY_FROM_KEY	41
+LEGACY_BLOCK_DISPOSITION_DB	db	legacy-block-disposition-v3	casper/src/storage.rs	LEGACY_BLOCK_DISPOSITION_DB	308
+LEGACY_BODY_SCAN_KEY	key	legacy-body-scan	block-storage/src/dag/dag_storage.rs	LEGACY_BODY_SCAN_KEY	190
+OWN_LATEST_KEY	key	own-latest	block-storage/src/dag/dag_storage.rs	OWN_LATEST_KEY	71
+RECOVERY_PENDING_KEY	key	43	block-storage/src/approved_store.rs	RECOVERY_PENDING_KEY	22
+RESET_MARKER_DB	db	reset-marker	casper/src/storage.rs	RESET_MARKER_DB	289
+RESET_MARKER_KEY	key	last-reset	block-storage/src/dag/dag_storage.rs	RESET_MARKER_KEY	61
+SELF_REPLAY_RECORD_KEY	key	self-replay-record	block-storage/src/dag/dag_storage.rs	SELF_REPLAY_RECORD_KEY	333
+SHARD_ID_MARKER	marker	shard-id	casper/src/storage.rs	SHARD_ID_MARKER	13
+STORE_FORMAT_MARKER	marker	store-format	casper/src/storage.rs	STORE_FORMAT_MARKER	29
+V3_MIGRATION_COMPLETE	key	complete-v1	casper/src/block_disposition.rs	V3_MIGRATION_COMPLETE	357
+V3_MIGRATION_KEY	key	v3-ledger-copy	casper/src/block_disposition.rs	V3_MIGRATION_KEY	356
+audit-claims	db	audit-claims	casper/src/storage.rs		270
+audit-conflicts	db	audit-conflicts	casper/src/storage.rs		274
+block-metadata	db	block-metadata	casper/src/storage.rs		223
+blocks	db	blocks	casper/src/storage.rs		218
+checkpoint-anchors	db	checkpoint-anchors	casper/src/storage.rs		249
+checkpoint-certificates	db	checkpoint-certificates	casper/src/storage.rs		237
+checkpoint-head	db	checkpoint-head	casper/src/storage.rs		241
+checkpoint-history	db	checkpoint-history	casper/src/storage.rs		245
+deploy-index	db	deploy-index	casper/src/storage.rs		279
+deploy-pool	db	deploy-pool	casper/src/storage.rs		326
+deployer-index	db	deployer-index	casper/src/storage.rs		284
+eval-cold	db	eval-cold	casper/src/storage.rs		362
+eval-history	db	eval-history	casper/src/storage.rs		354
+eval-roots	db	eval-roots	casper/src/storage.rs		358
+finalized-store	db	finalized-store	casper/src/storage.rs		230
+history-meter	db	history-meter	casper/src/storage.rs		262
+mergeable-channel-cache	db	mergeable-channel-cache	casper/src/storage.rs		315
+native-changes-cache	db	native-changes-cache	casper/src/storage.rs		321
+reporting-cache	db	reporting-cache	casper/src/storage.rs		331
+rspace-cold	db	rspace-cold	casper/src/storage.rs		344
+rspace-history	db	rspace-history	casper/src/storage.rs		336
+rspace-roots	db	rspace-roots	casper/src/storage.rs		340
+transaction	db	transaction	casper/src/storage.rs		349
+work-seen-store	db	work-seen-store	casper/src/storage.rs		256
