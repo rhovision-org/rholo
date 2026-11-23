@@ -30,6 +30,7 @@ fixtures = importlib.util.module_from_spec(FIXTURE_SPEC)
 FIXTURE_SPEC.loader.exec_module(fixtures)
 REGISTER = json.loads((ROOT / "spec/audit/mainnet-gates.json").read_text())
 MATRIX = json.loads((ROOT / "spec/audit/final-gap-matrix.json").read_text())
+EXTERNAL_PATH = ROOT / "spec/audit/mainnet-gates.external.json"
 
 # **Synthetic rows for the binding tests.** The two ids below are deleted campaign
 # rows; their criterion entries remain in `gate-criteria.json`, so the binding tests
@@ -732,6 +733,82 @@ class RegisterTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 1)
         self.assertIn("STALE", result.stdout)
+
+
+class ExternalRegisterTests(unittest.TestCase):
+    """The hand-authored external register carries the register's own vocabulary.
+
+    A ``gate: false`` row is filtered out of ``build()`` and therefore out of every
+    check ``check-mainnet-gates.py --check`` performs. That left the authored rows
+    unguarded — a malformed status, locality or required string would pass every
+    citation in the PR that added it (found reviewing #656, whose row is the first
+    ``gate: false`` row with status ``owes``). These assertions apply the same
+    constants to the external rows directly.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.document = json.loads(EXTERNAL_PATH.read_text())
+
+    def rows(self):
+        return self.document["gates"]
+
+    def test_the_document_has_the_register_shape(self):
+        self.assertEqual(self.document.get("schema"), 1)
+        self.assertIsInstance(self.document.get("sources"), dict)
+        self.assertTrue(self.rows())
+
+    def test_ids_are_unique_and_namespaced_by_family(self):
+        identifiers = [row.get("id") for row in self.rows()]
+        self.assertEqual(len(identifiers), len(set(identifiers)))
+        for row in self.rows():
+            with self.subTest(gate=row.get("id")):
+                family = row.get("family")
+                self.assertIsInstance(family, str)
+                self.assertTrue(
+                    row["id"].startswith(family + "-") or row["id"] == family,
+                    f"{row['id']} is not namespaced by its family {family}")
+
+    def test_every_row_carries_the_required_terms(self):
+        for row in self.rows():
+            with self.subTest(gate=row.get("id")):
+                for field in ("title", "pass_condition", "fail_condition", "observable",
+                              "negative_control", "owner", "source_label", "source_url",
+                              "does_not_claim"):
+                    self.assertIsInstance(row.get(field), str, field)
+                    self.assertTrue(row[field].strip(), field)
+                self.assertIn(row.get("status"), gate.STATUSES)
+                self.assertIn(row.get("locality"), gate.LOCALITIES)
+                self.assertIn(row.get("sole_evidence"), gate.SOLE_EVIDENCE)
+                self.assertIs(type(row.get("docker_free")), bool)
+                self.assertIs(type(row.get("gate", True)), bool)
+                self.assertRegex(row["source_url"], r"^https://")
+                self.assertIsNotNone(gate.DATE.fullmatch(str(row.get("source_retrieved"))),
+                                     "source_retrieved must be YYYY-MM-DD")
+                kind = row.get("witness_kind")
+                if kind is not None:
+                    self.assertIn(kind, gate.WITNESS_KINDS)
+                evidence = row.get("evidence")
+                self.assertIsInstance(evidence, dict)
+                for key in ("url", "digest", "source_sha", "binary_sha256"):
+                    self.assertIn(key, evidence)
+
+    def test_a_non_met_row_carries_its_status_reason(self):
+        for row in self.rows():
+            with self.subTest(gate=row.get("id")):
+                if row["status"] == "met":
+                    continue
+                self.assertIsInstance(row.get("status_reason"), str)
+                self.assertTrue(row["status_reason"].strip())
+
+    def test_a_non_gate_row_is_not_a_met_gate(self):
+        for row in self.rows():
+            with self.subTest(gate=row.get("id")):
+                if row.get("gate", True):
+                    continue
+                self.assertNotEqual(
+                    row["status"], "met",
+                    "a row excluded from the generated register cannot be a met gate")
 
 
 if __name__ == "__main__":

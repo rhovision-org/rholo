@@ -1,0 +1,13 @@
+2026-11-23T17:51:08.249147150Z 2026-11-23T17:51:08.248Z INFO  [coop.rchain.node.runtime.NodeRuntime] trying to open ports using UPnP....
+2026-11-23T17:51:08.249206343Z 2026-11-23T17:51:08.249Z INFO  [coop.rchain.node.runtime.NodeRuntime] INFO - No gateway devices found
+2026-11-23T17:51:08.249210441Z 2026-11-23T17:51:08.249Z INFO  [coop.rchain.node.runtime.NodeRuntime] No need to open any port
+2026-11-23T17:51:08.254689894Z 2026-11-23T17:51:08.254Z INFO  [operator-risk] validator operator risk notice: an invalid block or proven equivocation can cost a stated share of your bond; an absent validator is not currently slashed but forfeits income and can stall finality, and enough silence stops the >2/3 quorum. Read TERMS.md.
+2026-11-23T17:51:08.254707948Z 2026-11-23T17:51:08.254Z INFO  [resource-preflight] host resources: 21847 MiB available, cgroup v2, data dir 44183 MiB free, 1 rnode process(es), 24 CPU(s), 13 persisted block(s)
+2026-11-23T17:51:08.254711705Z 2026-11-23T17:51:08.254Z WARN  [resource-preflight] no CPU quota is set for the node's cgroup; a busy host can starve it
+2026-11-23T17:51:08.260393624Z replay complete — starting listeners; the API answers once they are up
+2026-11-23T17:51:08.260971875Z 2026-11-23T17:51:08.260Z INFO  [casper.engine.NodeLaunch] Reconnecting to existing network...
+2026-11-23T17:51:08.261814058Z 2026-11-23T17:51:08.261Z WARN  [casper.engine.NodeLaunch] boot: the accepted fringe (0 block(s)) is a validated descendant of the certificate's fringe (1 block(s)); adopting the certificate as the base and re-deriving the window
+2026-11-23T17:51:08.275615526Z 2026-11-23T17:51:08.275Z INFO  [casper.engine.NodeLaunch] published CURRENT_ROOT from the accepted anchor
+2026-11-23T17:51:08.277053184Z 2026-11-23T17:51:08.276Z INFO  [casper.blocks.BlockDisposition] start-up disposition audit: 0 unsettled block(s) re-offered, 0 skipped for missing parents, 0 already inserted, 0 quarantined, 0 unreadable
+2026-11-23T17:51:08.277074614Z 2026-11-23T17:51:08.276Z INFO  [casper.engine.NodeLaunch] start-up disposition audit: 0 pre-ledger body/bodies adopted, 0 re-offered, 0 skipped for missing parents, 0 still pending when the drain closed
+2026-11-23T17:51:08.277156200Z 2026-11-23T17:51:08.277Z INFO  [casper.engine.NodeLaunch] Making a transition to Running state.
