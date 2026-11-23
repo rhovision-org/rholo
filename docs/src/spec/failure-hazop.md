@@ -57,6 +57,15 @@ exit** — no transition that changes the input, produces an attestation, resets
 or halts every trigger loudly. U23 is the recovery state machine and its safety case, and it cites
 (F-U5-01/F-U5-02, U11–U16, F-U17-07/10/11, F-U18-11, U20) rather than duplicating the reset lifecycle.
 
+**Extended 2026-11-23 — the durable-state census U26.** U1–U25 study the node's **functions**; U26
+studies its **durable states** — every record, marker, ledger and quarantine that outlives the
+process — and asks, for each, what writes it, what clears it, and what a stuck node does next. The
+node may be left in one of these states indefinitely without any function node naming the exit, so
+the census's completeness is itself machine-checked: `tools/emit-durable-states.sh` derives the set
+from the tree, and `tools/check-durable-state-census.py` refuses any identifier that Table D does
+not classify or Table F does not exclude with a reason. The review revision is `dev` at
+`f9e509038`; every citation below was re-derived against it.
+
 **Companion, not a replacement.** The hazards and their root-cause analysis live in
 `testnet-acceptance.md` §1 as rows `H-U*-*`; this page does not restate them. What it adds is the
 **disposition** — which rung of the ladder below the deviation lands on, what the node does today, and
@@ -891,6 +900,105 @@ LESS is vacuous: the loss classification is a set difference; there is no quanti
 | U25-12 | Law 113 and C344 | a finalised close chain is consensus-mandated; the user/system split and the existing C344 tests are the guard. |
 | U25-06, U25-07, U25-08, U25-09 | not a law — **R4 / R2** | the deviations are in the harness, claim scope and evidence capture; the falsifiers are the rig assertion, the trace-derived verdict, and the scoped scan. |
 
+### U26 — Durable state and its inverse (2026-11-23)
+
+**Design intent.** Every durable state the node writes has a named writer, a named clearer or a named
+reason it is never cleared, a resolution class, a test, and a surface; no state is left with neither
+an inverse nor a report.
+
+**Why this node exists.** The function nodes say what the node does; none says what it is left
+*holding* when it stops. A record written before a destructive act, a ledger row whose verdict never
+arrives, or a counter that only grows can persist for ever while every function node reads "handled".
+The census makes that set explicit, classes each state by how it is allowed to end, and links each to
+the function row that already dispositions its hazard. It adds no release claim and changes no
+consensus rule.
+
+**Guide words.** row: NO, AFTER · folded: MORE → NO, LESS → NO, PART OF → NO, AS WELL AS → NO, OTHER THAN → NO, REVERSE → NO · vacuous: EARLY (state, not timing), LATE (state, not timing), BEFORE (state, not timing)
+
+**Table A — deviations**
+
+| ID | Guide word | Deviation | RCA → causal chain | Current behaviour | Class | Disposition | Falsifier |
+|---|---|---|---|---|---|---|---|
+| **F-U26-01** | NO | **A durable state can exist with no named clearer and no report**, and nothing refused the omission | the store list, the literal keys and their maintenance paths were prose only; `tools/check-hazop-worksheet.sh` reads Table A and cannot see a record that has no row | fixed by the census: every DB, key and marker emitted by `tools/emit-durable-states.sh` is a D26 row or an X26 exclusion, and the checker refuses an unclassified identifier | Drift | R2 | tools/check-durable-state-census.py::the_census_is_total |
+| **F-U26-02** | NO | **`unrestorableRecords` is published but no trigger stops a divergent view**: with `casper.self-reset` off and no safe anchor the reset request is consumed and the proposer keeps proposing | `note_unrestorable_if_exhausted` raises a `ResetRequest` only when the rewind names an anchor and height (`casper/src/multi_parent_casper.rs`); `act_on_reset_request` consumes it when the switch is off (`casper/src/engine/reset.rs`); `Proposer::do_propose` reads the self-replay latch, not the counter | Stage 4 of #658: a durable divergence halt stops every proposal trigger, keeps serving, and exits only by an operator acknowledgement | Terminal | R2 + R3 | owed: the divergence-halt total-trigger test (Stage 4) |
+| **F-U26-03** | AFTER | **A halt recorded after the latch is observed leaves a crash window** in which a restart silently resumes production | the latch must be store-first: a process that crashes between the in-memory flag and the durable record is not halted on the next boot | Stage 4 of #658: the record is written before the latch is set, and the surface reports `durable: false` when the write did not land | Drift | R2 | owed: the halt-record durability-order test (Stage 4) |
+
+**Table D — durable-state census**
+
+| ID | Durable state (key/DB) | Writer → clearer (path::symbol) | Resolution class | Test | Surface | HAZOP/law link |
+|---|---|---|---|---|---|---|
+| **D26-01** | `RESET_MARKER_DB` + `RESET_MARKER_KEY` | `casper/src/dag.rs::write_reset_marker` → `casper/src/engine/catchup.rs::run_catchup` | auto-recover | `casper/tests/reset.rs::a_crash_after_the_rewind_is_repaired_at_boot_by_the_marker` | `field:resetMarker` | F-U12-01 · Law 72/72b |
+| **D26-02** | `OWN_LATEST_KEY` | `casper/src/dag.rs::write_own_latest` → `casper/src/dag.rs::clear_own_latest` | auto-recover | `casper/src/dag.rs::the_own_sequence_record_round_trips_and_clears` | `owed:ownSequenceRecord` | candidate:own-sequence-record · Law 122 |
+| **D26-03** | `HALT_RECORD_KEY` | `casper/src/dag.rs::write_halt_record` → `casper/src/api/block_api_impl.rs::clear_autopropose_halt` | operator-action | `casper/tests/reset.rs::a_halt_written_before_the_restart_is_read_at_the_next_boot` | `field:proposalHalted` | F-U10-02 · vacuous: operator policy |
+| **D26-04** | `HEALTH_COUNTERS_KEY` | `casper/src/dag.rs::write_health_counters` → none: three monotone counters; clearing one would falsify the shard's own history | operator-action | `casper/tests/reset.rs::the_shard_health_counters_survive_a_restart` | `field:finalityStallEpisodes` | F-U10-01 · vacuous: monotone history |
+| **D26-05** | `LEGACY_BODY_SCAN_KEY` | `casper/src/dag.rs::write_legacy_body_scan_marker` → none: a one-time completion record; a crash before the write rescans on the next boot | auto-recover | `casper/src/block_disposition.rs::the_legacy_scan_adopts_every_unaccounted_body_and_writes_its_marker` | `field:orphanBodies` | F-U19-07 · Law 88a |
+| **D26-06** | `SELF_REPLAY_RECORD_KEY` | `casper/src/dag.rs::write_self_replay_record` → `casper/src/dag.rs::clear_self_replay_record` | auto-recover | `casper/tests/reset.rs::a_self_replay_reset_record_latches_the_next_boot` | `field:selfValidationRefusal` | F-U23-09 · Law 94 |
+| **D26-07** | `BLOCK_DISPOSITION_DB` + `LEGACY_BLOCK_DISPOSITION_DB` + `V3_MIGRATION_KEY` + `V3_MIGRATION_COMPLETE` | `casper/src/block_disposition.rs::BlockDispositionStore::mark_pending` → `casper/src/block_disposition.rs::BlockDispositionStore::settle` | auto-recover | `casper/src/block_disposition.rs::a_stored_body_without_a_dag_entry_is_reoffered` | `field:pipelineFaultsOutstanding` | F-U19-01 · Law 88a |
+| **D26-08** | `block-metadata` | `casper/src/multi_parent_casper.rs::mark_failed` → `casper/src/multi_parent_casper.rs::restore_divergent_justifications` | operator-action | `casper/src/multi_parent_casper.rs::the_attempt_cap_is_reached_not_exceeded` | `owed:unrestorableRecords` | F-U5-02 · Law 53c |
+| **D26-09** | `finalized-store` + `FINALIZED_FRINGE_KEY` + `RECOVERY_PENDING_KEY` | `casper/src/engine/node_syncing.rs::mark_recovery_pending` → `casper/src/engine/node_syncing.rs::report_restored_checkpoint` | auto-recover | `casper/src/engine/node_syncing.rs::checkpoint_readback_and_pending_marker_removal_are_required` | `field:finalizedHeight` | F-U3-01 · Law 108 |
+| **D26-10** | `checkpoint-certificates` + `checkpoint-anchors` + `checkpoint-head` + `checkpoint-history` + `CHECKPOINT_HEAD_KEY` + `HISTORY_FROM_KEY` | `block-storage/src/checkpoint_store.rs::record` → none: the served head is monotone and certificates are retained evidence | operator-action | `block-storage/src/checkpoint_store.rs::a_record_is_found_by_its_digest_anchor_and_as_the_head_after_a_reopen` | `field:checkpoint` | F-U24-01 · Law 105 |
+| **D26-11** | `audit-claims` + `audit-conflicts` | `block-storage/src/audit_store.rs::accept` → none: accepted claims and refused conflicts are retained evidence | operator-action | `block-storage/src/audit_store.rs::a_failed_batch_writes_none_of_the_claim` | `field:audit` | F-U24-14 · Law 112 |
+| **D26-12** | `blocks` + `BLOCKS_DB` | `casper/src/block_disposition.rs::BodyDispositionWriter::store_body_and_mark_pending` → `casper/src/block_disposition.rs::BlockDispositionStore::settle` | auto-recover | `casper/src/block_disposition.rs::a_stored_body_without_a_dag_entry_is_reoffered` | `field:orphanBodies` | F-U19-05 · Law 88a |
+| **D26-13** | `EQUIVOCATION_EVIDENCE_DB` | `casper/src/dag.rs::record_equivocation` → none: durable offence evidence; deleting it would destroy the only copy of the offence | operator-action | `casper/src/dag.rs::the_equivocation_evidence_survives_a_restart` | `owed:equivocationEvidence` | candidate:equivocation-evidence · Law 52 |
+| **D26-14** | `GATEWAY_TXN_DB` | `casper/src/gateway/ledger.rs::TxnLedger::put` → none: coordinator records reach a terminal state and are never deleted | operator-action | `casper/src/gateway/ledger.rs::record_vote_overwrites_a_repeated_shard_vote` | `owed:gatewayTxn` | vacuous: node-local records, not consensus state |
+| **D26-15** | `rspace-history` + `rspace-roots` + `rspace-cold` + `CURRENT_ROOT` | `rspace/src/history/roots_store.rs::record_root` → none: the root is a single pointer, rewritten by a reset and never deleted | auto-recover | `casper/tests/current_root_publication.rs::a_failed_insert_leaves_the_current_root_where_it_was` | `owed:rspaceRoot` | F-U15-03 · Law 80 |
+| **D26-16** | `SHARD_ID_MARKER` | `node/src/runtime/node_runtime.rs::write_marker_durably` → `node/src/runtime/node_runtime.rs::check_shard_data_dir` | safe-halt | `node/src/runtime/node_runtime.rs::setup_refuses_a_directory_owned_by_another_shard` | `log:node/src/runtime/node_runtime.rs::check_shard_data_dir` | vacuous: boot refusal is the guard |
+| **D26-17** | `STORE_FORMAT_MARKER` | `node/src/runtime/node_runtime.rs::check_store_format` → none: a newer-format marker refuses to open; only an operator upgrade or downgrade changes it | safe-halt | `node/src/runtime/node_runtime.rs::a_store_from_a_newer_build_is_refused_and_this_build_stamps_what_it_opens` | `log:node/src/runtime/node_runtime.rs::check_store_format` | W-N11-03 · vacuous: boot refusal is the guard |
+
+**Table E — resolution classes**
+
+| class | what it means | required mechanism | required proof | ladder |
+|---|---|---|---|---|
+| **auto-recover** | the node clears or repairs the state on boot or on the next advance, with no operator | a named detector, a named clearer, and a restart/crash test | the test names both the write and the clear | R1 (designed out) or R3 (detected reset + catch-up) |
+| **operator-action** | the state is correct to persist until an authenticated operator acts; this includes append-only evidence and monotone counters, which the node must not clear | the route or command, the authority check, and a store-first clear | a route/command test, or a counted `owed:` | R2 (loud) + R4 (runbook) |
+| **safe-halt** | the node must stay halted — or refuse to open — to protect consensus | the invariant or law, a surface, and the documented exit (itself an operator-action) | the law and a refusal test | R2, with the halt as the safeguard |
+
+A state that is never cleared by design (a monotone counter, an append-only evidence store) is
+classed **operator-action**: the node must not clear it, and only an operator may archive or remove
+it. The class is about who is allowed to end the state, not whether an end is desirable.
+
+**Table F — excluded look-alikes**
+
+| ID | Literal / path | Why it is not a recovery state |
+|---|---|---|
+| **X26-01** | `deploy-index` | an index derived from `blocks` and block metadata; `casper/src/dag.rs::repair_derived_index_rows` re-derives stale rows, so a wrong entry is repaired, not exited (F-U17-11) |
+| **X26-02** | `deployer-index` + `DEPLOYER_INDEXED_FROM_KEY` + `DEPLOYER_INDEX_COUNT_KEY` | a resumable backfill cursor and count over the surviving block set; a restart resumes or re-derives it, and it is not read to decide what the node does |
+| **X26-03** | `work-seen-store` | a proposer work-licence cache pruned below finality; a stale row delays a proposal, it does not strand the node |
+| **X26-04** | `history-meter` | archive accounting per paying peer; a lost or stale meter costs service revenue, not node recovery |
+| **X26-05** | `deploy-pool` | deploy work, self-clearing on inclusion or expiry; the expiry boundary is F-U7-01's |
+| **X26-06** | `eval-history` + `eval-roots` + `eval-cold` | the evaluator's scratch RSpace, rebuilt from the committed roots and never read as consensus |
+| **X26-07** | `mergeable-channel-cache` | a merge-time cache rebuilt from the blocks it is asked about |
+| **X26-08** | `native-changes-cache` | a merge-time cache rebuilt from replayed blocks (issue #74) |
+| **X26-09** | `reporting-cache` | trace/reporting output; losing it costs observability, not recovery |
+| **X26-10** | `transaction` | mapped in `rnode_db_mapping()` but never opened anywhere in this tree; a dead mapping, recorded so a later pass does not count it as coverage |
+
+**The grep recipe.** The census's completeness is re-derived by
+`tools/emit-durable-states.sh`, which runs exactly these scans and stops at the first `#[cfg(test)]`
+in each file:
+
+```
+git grep -n 'Db::new(' -- casper/src/storage.rs
+git grep -n 'Db {' -- casper/src/storage.rs
+git grep -nE 'pub const [A-Z0-9_]*_DB: &str' -- casper/src/storage.rs block-storage/src/block_store.rs
+git grep -nE '(pub )?const [A-Z0-9_]*(_KEY|_MARKER|_COMPLETE|CURRENT_ROOT):' -- \
+  block-storage/src/dag/dag_storage.rs casper/src/dag.rs casper/src/block_disposition.rs \
+  block-storage/src/approved_store.rs block-storage/src/audit_store.rs \
+  block-storage/src/checkpoint_store.rs rspace/src/history/roots_store.rs rspace/src/state/instances.rs
+```
+
+The scan's limit is stated rather than implied: it is the set of store files named here, so a new
+store module is added to the recipe deliberately. A durable identifier added to one of these files
+fails `tools/check-durable-state-census.py` until it has a Table D row or a Table F exclusion.
+
+**Provenance.** read: the files and symbols named in Tables D and F, the diagnostics standard
+(`docs/src/spec/node-diagnostics.md` §3–§5), and the existing U11–U25 rows linked above. ran:
+`tools/emit-durable-states.sh`, `tools/check-durable-state-census.py`, and
+`tools/check-hazop-worksheet.sh` against `dev` at `f9e509038`. not read: the whole of
+`casper/src/dag.rs`, `casper/src/multi_parent_casper.rs` and `casper/src/block_disposition.rs` — the
+named functions only; the LMDB environment internals; and the evidence runs behind the linked
+`F-U*` rows. The derivation record is
+`spec/audit/evidence/658-durable-state-census-20261123/`.
+
 ## 4. The fault tree
 
 ```
@@ -1070,7 +1178,7 @@ not read: the whole of `casper/src/merging.rs` (3,800+ lines), `casper/src/dag.r
 `spec/findings.tsv`'s C248 row in the register's emitted form; the remaining `spec/audit/evidence/`
 runs; and the `rspace` history and store internals beyond the named cache and lock sites.
 
-**Debt.** falsifiers owed: 28 · node-words owed: 44
+**Debt.** falsifiers owed: 30 · node-words owed: 44 · census tests owed: 0 · census surfaces owed: 5
 
 *(A `F-` row with an `owed` falsifier is a deviation this pass **dispositioned** but did not **prove**;
 the number above is checked against the page by `tools/check-hazop-worksheet.sh`, so it cannot rot.

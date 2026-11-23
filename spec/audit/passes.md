@@ -14280,3 +14280,45 @@ that cannot compose still fails the merge — and it is not a liveness theorem.
 **State.** 47 registered gates, all met, 0 unresolved; seven release claims with measured statuses
 (two pass, two fail, three not run locally); `check-mainnet-gates.py --assert-closeable` exits 0;
 `check-release-campaigns.py --assert-ready` exits 3; the #51 closeout still opens.
+
+## 190. The durable-state census — 2026-11-23
+
+**Subject.** The failure HAZOP is organised by function (U1–U25). Nothing enumerated the **durable**
+states a stopped node is left holding, so a record, marker, ledger or quarantine could persist for
+ever with every function node reading "handled". The census is the missing inverse: for each durable
+state, who writes it, who clears it (or why none may), what class of resolution it has, what test
+proves it, and what surface diagnoses it.
+
+**Change.**
+
+- `docs/src/spec/failure-hazop.md` gains **U26 — durable state and its inverse**: Table A (three
+  deviations: an unclassified state, the `unrestorableRecords` acting gap, and the store-before-latch
+  ordering), Table D (17 rows, one per durable state), Table E (the three resolution classes and the
+  R1–R4 mapping), Table F (10 explicit exclusions with reasons), the grep recipe, and the provenance.
+- `tools/emit-durable-states.sh` is the recipe made executable: it emits 47 identifiers from
+  `rnode_db_mapping()`, the `*_KEY`/`*_DB`/`*_MARKER`/`CURRENT_ROOT`/`*_COMPLETE` constants in the
+  declared store files, stopping at `#[cfg(test)]`. `--check` refuses a stale evidence copy.
+- `tools/check-durable-state-census.py` reads Table D against the tree: it refuses an emitted
+  identifier with no Table D row or Table F exclusion, a Table D/F identifier that is not emitted, an
+  unknown class, a fabricated `path::symbol`, an uncounted `owed:` test, an `owed:` surface with no
+  `node-diagnostics.md` §5 row, and a §5 row the census does not cite (the declared non-durable gaps
+  excepted). It is called from the already-invoked `check-hazop-worksheet.sh --gate`, so CI needs no
+  workflow change, and from `make check-register`.
+- `docs/src/spec/node-diagnostics.md` §5 gains four owed surfaces (`ownSequenceRecord`,
+  `equivocationEvidence`, `gatewayTxn`, `rspaceRoot`) and names #658 on the `unrestorableRecords` row.
+
+**Why believed.** At `f9e509038` the emitter derives 47 identifiers and all are classified; the
+checker reports 17 rows (8 auto-recover, 7 operator-action, 2 safe-halt), 0 tests owed and 5
+surfaces owed. The negative controls are recorded in the evidence: a removed row, a bad class, a
+fabricated symbol, an uncounted owed test and an absent §5 surface are each refused, while a
+`#[cfg(test)]` key stays excluded. The HAZOP's own checker still passes: 26 nodes, 152 Table A rows,
+30 falsifiers owed, 44 node-words owed.
+
+**What it does not claim.** No release claim and no consensus-rule change. The census changes no Rust;
+F-U26-02/F-U26-03 are `owed:` until Stage 4 of #658 (the divergence halt), and F-U3-01's live-testnet
+drill remains a release-campaign item. The scan's limit is named: it covers the store files in the
+recipe, not a durable store invented in a new module. No live arm was run.
+
+**State.** C406 done; the census PR adds the U26 rows, the two tools, the evidence record and the §5
+surface debt. The four examples in #658 are Stages 2–4: F-U4-01's retry contract test, F-U7-01 and
+F-U3-01's register-only closures, and the `unrestorableRecords` acting rule.
