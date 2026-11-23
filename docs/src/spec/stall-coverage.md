@@ -156,7 +156,8 @@ classification module makes it a constructor, so the gate can refuse a cause the
 This table says where each deviation can be measured. It changes **no claim, no arm and no reading**.
 The `Claim` and `Claim arm` cells must name a required arm already in
 [`spec/audit/release-claims.json`](../../../spec/audit/release-claims.json); `Campaign` is that arm's
-`next_pr`; `Measurement status` is `owed` (no stall run in that environment yet) or `live` (a committed
+`next_pr` while the arm is open, or the completed PR its `closed_by` names once it is safe;
+`Measurement status` is `owed` (no stall run in that environment yet) or `live` (a committed
 evidence record exists). A change to the RC surface is a separate campaign PR. The denominator
 record is read the same way: it contains the warm-up steps finality took on the silent validators'
 last messages before the support gate refused, so the measured freeze is the refused-support

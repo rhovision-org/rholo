@@ -757,6 +757,7 @@ def campaigns(roots=(EVIDENCE,)) -> dict:
         "rule": document.get("rule"),
         "campaigns": rendered,
         "action_prs": document.get("action_prs") or [],
+        "completed_prs": document.get("completed_prs") or [],
         "superseded": superseded,
         "excluded_behaviours": document.get("excluded_behaviours") or [],
     }
@@ -781,8 +782,9 @@ def render_campaigns_md(document: dict) -> str:
         "Emitted from `spec/audit/release-claims.json` by `tools/build-mainnet-gates.py`.",
         "",
         "Each claim is a gate with one executable test over a decision trace, exercised by named",
-        "**arms**. An arm has its own environment, evidence locality and next PR; its state is a",
-        "measured **reading** of the newest committed record. `safe` is the only reading that",
+        "**arms**. An arm has its own environment, evidence locality, and — while open — a next PR;",
+        "a closed arm names the PR that closed it. Its state is a measured **reading** of the",
+        "newest committed record. `safe` is the only reading that",
         "closes an arm. `unsafe-point` names a false predicate and its Rust and Lean anchors;",
         "`model-incomplete` names the trace that is the model gap; `evidence-insufficient` names",
         "the missing trace or coordinate; `precondition` and `not-observed` name the run that",
@@ -796,11 +798,20 @@ def render_campaigns_md(document: dict) -> str:
         "| claim | arm | env | locality | reading | next action | next PR |",
         "|---|---|---|---|---|---|---|",
     ]
+    completed = {entry.get("id"): entry for entry in document.get("completed_prs") or []}
     for row in document["campaigns"]:
         for arm in row.get("arms") or []:
             action = action_for(row, arm)
             pr = action.get("next_pr")
-            pr_cell = f"`{cell(pr)}`" if pr else "—"
+            closed_by = arm.get("closed_by")
+            if pr:
+                pr_cell = f"`{cell(pr)}`"
+            elif closed_by:
+                entry = completed.get(closed_by) or {}
+                pr_cell = (f"closed by #{entry['pr']}" if entry.get("pr")
+                           else f"`{cell(closed_by)}`")
+            else:
+                pr_cell = "—"
             lines.append(
                 f"| `{cell(row['id'])}` | `{cell(arm['id'])}` | {cell(arm['environment'])} | "
                 f"{cell(arm.get('locality'))} | **{cell(action.get('reading') or 'not-observed')}** | "
@@ -811,6 +822,17 @@ def render_campaigns_md(document: dict) -> str:
         for entry in document["action_prs"]:
             lines.append(
                 f"| `{cell(entry.get('id'))}` | {', '.join(entry.get('claims') or [])} | "
+                f"{cell(entry.get('scope'))} |")
+    if document.get("completed_prs"):
+        lines.extend(["", "## Completed PRs", "",
+                      "Merged campaigns, retained for the stall-coverage cross-reference; "
+                      "they are not next work.",
+                      "",
+                      "| PR | merged | closes | scope |", "|---|---|---|---|"])
+        for entry in document["completed_prs"]:
+            lines.append(
+                f"| `{cell(entry.get('id'))}` | #{cell(entry.get('pr'))} | "
+                f"{', '.join(entry.get('arms') or entry.get('claims') or [])} | "
                 f"{cell(entry.get('scope'))} |")
     lines.extend(["", "---", ""])
     for row in document["campaigns"]:

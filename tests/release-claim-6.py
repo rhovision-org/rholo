@@ -120,6 +120,8 @@ def run(argv: list[str]) -> int:
     parser.add_argument("--arm")
     parser.add_argument("--out", required=True)
     parser.add_argument("--public-manifest")
+    parser.add_argument("--campaign-result")
+    parser.add_argument("--head", help="the source SHA the operator run pins")
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--min-height", type=int, default=28)
     args = parser.parse_args(argv)
@@ -129,6 +131,11 @@ def run(argv: list[str]) -> int:
     record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    if arm == "off-host":
+        if not args.campaign_result:
+            return common.not_run(
+                out, record, "the off-host arm needs --campaign-result <M3 run dir>")[1]
+        return common.run_offhost_arm(out, record, args.campaign_result, head=args.head)
     if arm not in ("local", "public"):
         return common.not_run(
             out, record,

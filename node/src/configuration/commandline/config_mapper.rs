@@ -56,9 +56,16 @@ fn opt_duration(e: &mut Entries, key: &str, v: Option<Duration>) {
     }
 }
 
-fn opt_peer_node(e: &mut Entries, key: &str, v: &Option<PeerNode>) {
-    if let Some(v) = v {
-        e.push((key.to_string(), Hocon::String(v.to_address())));
+/// **One seed stays a string, several become an ordered array.** The single-seed form is what
+/// every existing config file carries; keeping it a string makes the merge byte-identical.
+fn opt_peer_nodes(e: &mut Entries, key: &str, v: &[PeerNode]) {
+    match v {
+        [] => {}
+        [one] => e.push((key.to_string(), Hocon::String(one.to_address()))),
+        many => e.push((
+            key.to_string(),
+            Hocon::Array(many.iter().map(|p| Hocon::String(p.to_address())).collect()),
+        )),
     }
 }
 
@@ -154,7 +161,7 @@ pub fn from_options(options: &Options) -> Hocon {
             run.discovery_init_wait_loop_interval,
         );
 
-        opt_peer_node(&mut e, "protocol-client.bootstrap", &run.bootstrap);
+        opt_peer_nodes(&mut e, "protocol-client.bootstrap", &run.bootstrap);
         opt_duration(
             &mut e,
             "protocol-client.network-timeout",
@@ -626,6 +633,49 @@ mod tests {
         let mut argv = vec!["rnode"];
         argv.extend_from_slice(args);
         Options::try_parse_from(argv).expect("the CLI options parse")
+    }
+
+    fn seed(host: &str) -> String {
+        format!(
+            "rnode://de6eed5d00cf080fc587eeb412cb31a75fd10358@{host}\
+             ?protocol=40400&discovery=40404"
+        )
+    }
+
+    fn mapped_seed(address: &str) -> Hocon {
+        Hocon::String(
+            PeerNode::from_address(address)
+                .expect("seed parses")
+                .to_address(),
+        )
+    }
+
+    /// **Repeated `-b` flags keep the operator's order.** The order is the failover policy: the
+    /// first live seed is the join witness.
+    #[test]
+    fn repeated_bootstrap_flags_preserve_the_authored_order() {
+        let first = seed("52.119.8.9");
+        let second = seed("52.119.8.10");
+        let mapped = from_options(&options(&["run", "-b", &first, "-b", &second]));
+        let client = field(&mapped, "protocol-client").expect("protocol-client block");
+        assert_eq!(
+            field(client, "bootstrap"),
+            Some(&Hocon::Array(vec![
+                mapped_seed(&first),
+                mapped_seed(&second)
+            ])),
+            "the authored order is the fallback order: {mapped:?}"
+        );
+    }
+
+    /// **One seed stays a string**, so the merged configuration is byte-compatible with every
+    /// existing file and the pre-failover tests keep their shape.
+    #[test]
+    fn one_bootstrap_flag_stays_a_string() {
+        let only = seed("52.119.8.9");
+        let mapped = from_options(&options(&["run", "-b", &only]));
+        let client = field(&mapped, "protocol-client").expect("protocol-client block");
+        assert_eq!(field(client, "bootstrap"), Some(&mapped_seed(&only)));
     }
 
     /// Only options that were **explicitly supplied** are written. This is what makes the layered

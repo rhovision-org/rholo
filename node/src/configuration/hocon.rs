@@ -170,6 +170,24 @@ fn to_peer_node(h: &Hocon) -> Result<PeerNode, String> {
     PeerNode::from_address(&s).map_err(|e| format!("invalid peer node address `{s}`: {e:?}"))
 }
 
+/// **An ordered seed list, with the single-seed form preserved.** The defaults file carries one
+/// `rnode://` string; an operator who wants failover writes an array. An empty array is refused
+/// because a list with no seed is not a different configuration, it is an unjoinable one.
+fn to_peer_nodes(h: &Hocon) -> Result<Vec<PeerNode>, String> {
+    match h {
+        Hocon::String(_) => Ok(vec![to_peer_node(h)?]),
+        Hocon::Array(items) => {
+            if items.is_empty() {
+                return Err(
+                    "invalid peer node list `[]`: at least one seed is required".to_string()
+                );
+            }
+            items.iter().map(to_peer_node).collect()
+        }
+        _ => err("peer node address or array of addresses", h),
+    }
+}
+
 fn to_string_list(h: &Hocon) -> Result<Vec<String>, String> {
     match h {
         Hocon::Array(items) => items.iter().map(to_string).collect(),
@@ -206,7 +224,7 @@ fn protocol_server_from_hocon(h: &Hocon) -> Result<ProtocolServer, String> {
 fn protocol_client_from_hocon(h: &Hocon) -> Result<ProtocolClient, String> {
     Ok(ProtocolClient {
         network_id: to_string(get(h, "network-id")?)?,
-        bootstrap: to_peer_node(get(h, "bootstrap")?)?,
+        bootstrap: to_peer_nodes(get(h, "bootstrap")?)?,
         disable_lfs: to_bool(get(h, "disable-lfs")?)?,
         batch_max_connections: to_i32(get(h, "batch-max-connections")?)?,
         network_timeout: to_duration(get(h, "network-timeout")?)?,
@@ -772,6 +790,36 @@ mod tests {
 
     fn i(v: i64) -> Hocon {
         Hocon::Integer(v)
+    }
+
+    // --- bootstrap seeds -----------------------------------------------------
+
+    fn seed(port: u16) -> String {
+        format!(
+            "rnode://de6eed5d00cf080fc587eeb412cb31a75fd10358@52.119.8.{port}\
+             ?protocol=40400&discovery=40404"
+        )
+    }
+
+    /// **The single-seed form is preserved.** Every existing config file carries one address; the
+    /// ordered form is an array, and both parse to the same first seed.
+    #[test]
+    fn a_bootstrap_may_be_one_address_or_an_ordered_list() {
+        let one = to_peer_nodes(&s(&seed(9))).expect("one address");
+        assert_eq!(one.len(), 1);
+        let many =
+            to_peer_nodes(&Hocon::Array(vec![s(&seed(9)), s(&seed(10))])).expect("an ordered list");
+        assert_eq!(many.len(), 2);
+        assert_eq!(many[0].to_address(), one[0].to_address());
+        assert_ne!(many[0].to_address(), many[1].to_address());
+    }
+
+    /// An empty list is not a configuration choice; it is a node with nobody to join.
+    #[test]
+    fn an_empty_or_non_string_bootstrap_list_is_refused() {
+        assert!(to_peer_nodes(&Hocon::Array(vec![])).is_err());
+        assert!(to_peer_nodes(&Hocon::Boolean(true)).is_err());
+        assert!(to_peer_nodes(&Hocon::Array(vec![i(1)])).is_err());
     }
 
     // --- parse_size ----------------------------------------------------------

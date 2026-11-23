@@ -1,0 +1,144 @@
+{
+  "arm": "returner",
+  "claim_id": "RC-4",
+  "claim_title": "Recovery without loss",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-23T21:32:22Z",
+  "harness": {
+    "command": [
+      "/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/bond-leave-campaign.py",
+      "--out",
+      "target/release-claims/campaign-20261123b/bond-leave-71c"
+    ],
+    "exit_code": 0,
+    "name": "bond-leave-campaign",
+    "out": "target/release-claims/campaign-20261123b/bond-leave-71c"
+  },
+  "locality": "local-devnet",
+  "observations": {
+    "boot_traces": [
+      {
+        "accepted": true,
+        "acquisition": "certificate",
+        "dag_len": 266,
+        "file": "boot-1-2.json",
+        "genesis_only": false,
+        "kind": "boot",
+        "outcome": "certified",
+        "refusal_coordinate": null,
+        "served_anchor": "4307bf5f67b3890b4431916bcb7f99bf7fa528ab3ed2dada9a4b53e70d358785",
+        "served_digest": "7f403f62fb5e571cbc9a853fbcda7843f37feb8449d50a4a27ef591193a1fa41",
+        "served_shard": "/root",
+        "served_supporting_stake": 250,
+        "served_total_stake": 250,
+        "shard_id": "/root",
+        "source_configured": true,
+        "stage": "acquisition",
+        "store_head": "7f403f62fb5e571cbc9a853fbcda7843f37feb8449d50a4a27ef591193a1fa41",
+        "validator": 3
+      },
+      {
+        "accepted": true,
+        "accepted_fringe": 1,
+        "acquisition": "certificate",
+        "anchor_closure_present": true,
+        "certified_fringe": 3,
+        "dag_len": 266,
+        "file": "boot-1-3.json",
+        "fringe_agreement": "descendant",
+        "fringe_agrees": true,
+        "genesis_only": false,
+        "kind": "boot",
+        "outcome": "certified",
+        "refusal_coordinate": null,
+        "served_anchor": "4307bf5f67b3890b4431916bcb7f99bf7fa528ab3ed2dada9a4b53e70d358785",
+        "served_digest": "7f403f62fb5e571cbc9a853fbcda7843f37feb8449d50a4a27ef591193a1fa41",
+        "served_shard": "/root",
+        "served_supporting_stake": 250,
+        "served_total_stake": 250,
+        "shard_id": "/root",
+        "source_configured": true,
+        "stage": "decision",
+        "store_head": "7f403f62fb5e571cbc9a853fbcda7843f37feb8449d50a4a27ef591193a1fa41",
+        "validator": 3
+      }
+    ],
+    "returner": {
+      "down_at_finalized": "205a976ef1c93aac53b13adecb9df0c123e22fa3e1a98f2b83f270166d082ed7",
+      "down_at_height": 78,
+      "downtime_s": 31.3,
+      "finalised": [
+        {
+          "hash": "1afc6fa284d3eb0509c23b940778c041a2c14e5d2eaad4f0bd9c39f75383154a",
+          "height": 79,
+          "is_finalized": true,
+          "validator": 0
+        },
+        {
+          "hash": "1afc6fa284d3eb0509c23b940778c041a2c14e5d2eaad4f0bd9c39f75383154a",
+          "height": 79,
+          "is_finalized": true,
+          "validator": 1
+        },
+        {
+          "hash": "1afc6fa284d3eb0509c23b940778c041a2c14e5d2eaad4f0bd9c39f75383154a",
+          "height": 79,
+          "is_finalized": true,
+          "validator": 2
+        },
+        {
+          "hash": "1afc6fa284d3eb0509c23b940778c041a2c14e5d2eaad4f0bd9c39f75383154a",
+          "height": 79,
+          "is_finalized": true,
+          "validator": 3
+        }
+      ],
+      "gate_refusal": null,
+      "heads_agree": true,
+      "manual_surgery": false,
+      "new_boot_id": true,
+      "rejoin_height": 79,
+      "restart_at_height": 83,
+      "victim": 3
+    },
+    "stall_episode": {
+      "cause": "loss-blind-refusal",
+      "deviations": [
+        "DE-11"
+      ],
+      "exercise": {
+        "deviation_observed": false,
+        "down_at_finalized": "205a976ef1c93aac53b13adecb9df0c123e22fa3e1a98f2b83f270166d082ed7",
+        "down_at_height": 78,
+        "downtime_s": 31.3,
+        "gate_refusal": null,
+        "manual_surgery": false,
+        "new_boot_id": true,
+        "rejoin_height": 79,
+        "restart_at_height": 83,
+        "safeguard_observed": true,
+        "trigger": "validator 3 stopped after the payout and restarted without manual surgery",
+        "trigger_exercised": true
+      },
+      "law": "Rchain.System.Stuck",
+      "representation": "protocol-stall",
+      "rung": "R2",
+      "shape": "stuck"
+    }
+  },
+  "preconditions": [],
+  "provenance": {
+    "binary_sha256": "acba71d7d6ce6251b84d149ce4f567befa49dca98f0238e5217eec78f6e0db0f",
+    "devnet_prefix": "bondleave",
+    "image_id": "1956d901fb2f56db2fd43144afcb1842dbaf9ed179ed3e63e8b3a3fc4fda8396",
+    "profile": "local-3",
+    "source_dirty": false,
+    "source_sha": "71c80b17db488feb1b36769a04812cc4bacfdf71"
+  },
+  "reasons": [],
+  "schema": 1,
+  "started_at": "2026-11-23T21:32:21Z",
+  "verdict": "pass"
+}

@@ -1,0 +1,11 @@
+{
+  "verdict": "PASS",
+  "validators": 4,
+  "stakes": [
+    100,
+    100,
+    50,
+    50
+  ],
+  "live_at_stall": "200/300"
+}

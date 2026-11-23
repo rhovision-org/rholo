@@ -33,7 +33,8 @@ is a measured `/api/is-finalized/<hash>` answer; the record's non-claims say so.
 - **A single-runner CI record labelled multi-host.** The existing harness is guarded to a
   disposable GitHub-hosted runner and one Docker network; a multi-host topology is required.
 - **Lost accepted work, a spurious self-replay, or an own-key halt** on a healthy key.
-- **M3-11 failover bundled into this window.** It is a separate runtime change.
+- **A failover window bundled into this campaign.** The ordered seed list exists, but failover is
+  its own two-host window and its own arm.
 - **Any gate promotion is out of scope.** None is expected from this run.
 
 ## 3. Preflight pins (fill before starting; a missing pin is NO-GO)
@@ -103,6 +104,46 @@ arms. If the candidate is on a public chain, the authorization is recorded here 
    python3 tools/evidence-pack.py verify --record <record> --require-pins
    ```
 
+## 4b. Release-claim record (RC-2 and RC-4 multi-host)
+
+The release-claim arms read the one `observations.json` from `collect`. The claim's distinct-host
+rule is **stricter than the M4 gate's minimum**: N=8 needs **eight distinct hosts**
+(`hosts >= max(sizes)` and `hosts >= validators`), and the host list is derived from where the
+capacity record places each validator, not from `campaign.hosts`. A campaign that declares eight
+hosts but places two validators on each of four fails the arm.
+
+```sh
+python3 tests/release-claim-2.py --arm multi-host \
+  --campaign-result <run>/observations.json --head <40hex> --out <record>/rc2
+python3 tests/release-claim-4.py --arm multi-host \
+  --campaign-result <run>/observations.json --head <40hex> --out <record>/rc4
+```
+
+A missing coordinate (either workload, one shared root, a lost host, a typed cycle) is `not run`;
+a false observation (lost accepted work, an own-key halt, a self-replay, an anchor reported
+retained and false) is `fail`. `collect` refuses structural negatives before writing, so a failing
+campaign produces no artifact and the arms read `not run` with the producer's reason; the
+artifact's negative paths are exercised by the offline runner tests, not by a doctored producer.
+
+## 4c. Equivocation arm (RC-2)
+
+The runtime injection is `--equivocation-injection` on one validator; the others are observers.
+Capture the two twin hashes at one height, a non-injector refusal in `detection.json`
+(`{"refusals": [...]}`), and the slashing policy (`{"slashing_enabled": false}`). Then:
+
+```sh
+python3 tools/m4-campaign.py observe-equivocation \
+  --injector <id> --height <n> --block <twin-a> --block <twin-b> \
+  --validator <id>=<url> --validator <id>=<url> \
+  --validator <id>=<url> --validator <id>=<url> \
+  --detection detection.json --policy policy.json --out equivocation.json
+python3 tests/release-claim-2.py --arm equivocation \
+  --campaign-result equivocation.json --head <40hex> --out <record>/equivocation
+```
+
+The observer **records** a validator that finalised both twins; it does not refuse the unsafe
+observation. A missing policy, detection record or the fourth validator is `not run`.
+
 ## 5. Negative controls (each captured in a labelled record)
 
 - **A single declared host.** `collect` refuses a capacity host outside `campaign.hosts`; the
@@ -116,10 +157,9 @@ arms. If the candidate is on a public chain, the authorization is recorded here 
 
 ## 6. What this window does not establish
 
-- **The multi-host driver is still a separate code slice.** The existing
-  `tests/consensus-partition-rejoin.py` is guarded to one disposable GitHub-hosted runner; the
-  criterion, collator and this runbook make a submitted multi-host campaign judgeable, but the
-  operator must supply the multi-host topology and its driver.
+- **The multi-host topology is still an operator input.** The release-arm runners and the
+  collator now exist, but `tests/consensus-partition-rejoin.py` is guarded to one disposable
+  GitHub-hosted runner; the operator must supply the eight independent hosts and the workloads.
 - Host independence and the host stop are operator facts; distinct host ids are a declaration.
 - `execution_proven` is false; the digests prove the bytes, not the run.
 - The approved root is a finalized block hash; a state-root definition is a follow-up.

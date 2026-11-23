@@ -1,0 +1,144 @@
+{
+  "gate_id": "n4-restart-under-load",
+  "provenance": {
+    "source_sha": "2315ef37ec82624983894a6fe620fe07b0c678ed",
+    "binary_sha256": "d15055c580782dd0dc259c19700c7295dd850d1a0b0577123c918155a9df55cf",
+    "container_image": "5a30022c6e5b82683b1ce004cad75e84184b624bc7c0b9afebae4cfc4dc25495",
+    "genesis_hash": "eed474322f9f008dc95259b8da9297b3914f693320ba365c578248d6a56a83cd",
+    "validators": 4,
+    "window": 240,
+    "load_seconds": 20,
+    "prefix": "restartload",
+    "network": "restartloadnet"
+  },
+  "cycles": [
+    {
+      "cycle": 0,
+      "result": "PASS",
+      "victim": 1,
+      "base_height": 218,
+      "final": [
+        [
+          237,
+          "72f59756f11454d132ee3c20ca7152f98abf0c8ee8bb52cca234fb7f8e456ecb"
+        ],
+        [
+          237,
+          "72f59756f11454d132ee3c20ca7152f98abf0c8ee8bb52cca234fb7f8e456ecb"
+        ],
+        [
+          237,
+          "72f59756f11454d132ee3c20ca7152f98abf0c8ee8bb52cca234fb7f8e456ecb"
+        ],
+        [
+          237,
+          "72f59756f11454d132ee3c20ca7152f98abf0c8ee8bb52cca234fb7f8e456ecb"
+        ]
+      ],
+      "boot_ids": [
+        "1-1795466722032",
+        "1-1795467039469"
+      ],
+      "stream_counts": {
+        "0": 50,
+        "1": 50,
+        "2": 50,
+        "3": 50
+      },
+      "block_pipeline": {
+        "0": {
+          "capacity": 1024,
+          "incomingQueue": 0,
+          "pending": 1,
+          "sampledPeak": 3,
+          "validatedQueue": 0
+        },
+        "1": {
+          "capacity": 1024,
+          "incomingQueue": 0,
+          "pending": 1,
+          "sampledPeak": 25,
+          "validatedQueue": 0
+        },
+        "2": {
+          "capacity": 1024,
+          "incomingQueue": 0,
+          "pending": 0,
+          "sampledPeak": 1,
+          "validatedQueue": 0
+        },
+        "3": {
+          "capacity": 1024,
+          "incomingQueue": 0,
+          "pending": 0,
+          "sampledPeak": 1,
+          "validatedQueue": 0
+        }
+      }
+    },
+    {
+      "cycle": 1,
+      "result": "PASS",
+      "victim": 0,
+      "base_height": 239,
+      "final": [
+        [
+          242,
+          "2437669f2c6f26527e91c02584524627cbcc6ef8d1a17c44050ba112e3bfcc1e"
+        ],
+        [
+          242,
+          "2437669f2c6f26527e91c02584524627cbcc6ef8d1a17c44050ba112e3bfcc1e"
+        ],
+        [
+          242,
+          "2437669f2c6f26527e91c02584524627cbcc6ef8d1a17c44050ba112e3bfcc1e"
+        ],
+        [
+          242,
+          "2437669f2c6f26527e91c02584524627cbcc6ef8d1a17c44050ba112e3bfcc1e"
+        ]
+      ],
+      "boot_ids": [
+        "1-1795466722028",
+        "1-1795467146299"
+      ],
+      "stream_counts": {
+        "0": 50,
+        "1": 50,
+        "2": 50,
+        "3": 50
+      },
+      "block_pipeline": {
+        "0": {
+          "capacity": 1024,
+          "incomingQueue": 0,
+          "pending": 0,
+          "sampledPeak": 0,
+          "validatedQueue": 0
+        },
+        "1": {
+          "capacity": 1024,
+          "incomingQueue": 0,
+          "pending": 0,
+          "sampledPeak": 25,
+          "validatedQueue": 0
+        },
+        "2": {
+          "capacity": 1024,
+          "incomingQueue": 0,
+          "pending": 0,
+          "sampledPeak": 1,
+          "validatedQueue": 0
+        },
+        "3": {
+          "capacity": 1024,
+          "incomingQueue": 0,
+          "pending": 0,
+          "sampledPeak": 1,
+          "validatedQueue": 0
+        }
+      }
+    }
+  ]
+}

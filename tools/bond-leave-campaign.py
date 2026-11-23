@@ -43,8 +43,14 @@ common = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(common)
 
 PREFIX = "bondleave"
-HTTP = [40403, 41403, 42403, 43403]
-ADMIN = [40405, 41405, 42405, 43405]
+# **The bases are overridable** so the campaign can run beside another local devnet. The defaults
+# are the historical 404xx range; the three arms pass the same `--campaign-result`, so the ports
+# are a property of this run, not of the reading.
+HTTP_BASE = int(os.environ.get("BOND_LEAVE_HTTP_BASE", "40403"))
+ADMIN_BASE = int(os.environ.get("BOND_LEAVE_ADMIN_BASE", "40405"))
+GRPC_BASE = int(os.environ.get("BOND_LEAVE_GRPC_BASE", "40402"))
+HTTP = [HTTP_BASE + index * 1000 for index in range(4)]
+ADMIN = [ADMIN_BASE + index * 1000 for index in range(4)]
 CONTAINERS = [f"{PREFIX}-bootstrap", f"{PREFIX}-validator-1", f"{PREFIX}-validator-2",
               f"{PREFIX}-validator-3"]
 GENESIS_PRIV = "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76"
@@ -528,6 +534,7 @@ def campaign(out: Path, keep: bool) -> dict:
     os.environ.update(env)
     devnet = common.Devnet(
         PREFIX, validators=3, memory="8g",
+        http_base=HTTP_BASE, admin_base=ADMIN_BASE, grpc_base=GRPC_BASE,
         node_env="RNODE_TRACE_DIR=/var/lib/rnode/traces",
         extra_up=("--no-autopropose", "--propose-on-deploy", "--stakes", "100,100,50",
                   "--epoch-length", str(EPOCH),

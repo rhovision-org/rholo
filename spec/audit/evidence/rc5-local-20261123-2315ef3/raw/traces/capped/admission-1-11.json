@@ -1,0 +1,17 @@
+{
+  "kind": "admission",
+  "site": "http-inflight",
+  "surface": "http",
+  "refused": true,
+  "class": "inflight",
+  "status": 429,
+  "grpc_code": null,
+  "retry_after": 1,
+  "inflight": 2,
+  "inflight_limit": 2,
+  "pool_count": null,
+  "pool_limit": null,
+  "pool_bytes": null,
+  "byte_limit": null,
+  "deployer_held": null
+}

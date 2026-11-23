@@ -1,0 +1,42 @@
+{
+  "copy": {
+    "digest": "55973f3df5edb9a32c86868669d67eea7bd59d6cd382b007f911fa47fb54b001",
+    "files": 14,
+    "lines": [
+      "./blockstorage/data.mdb 159744 09d1ea5d8b4af070866cb18de906c4412f9c1da9dc8179be206fe674094f320f",
+      "./dagstorage/data.mdb 110592 2b85d45a66eff1486c324e38f89427e06337ad21ad3a08f3ae576cc45ad205a3",
+      "./deploypoolstorage/data.mdb 45056 09d0fb542cd05ded24652922e7f685ceaeadb15a85d68292415fbcdccf88567f",
+      "./eval/cold/data.mdb 12288 1255255aeae8f923f29f27111804abaf58fdb90c2382ddec1a2bc63df0002cb4",
+      "./eval/history/data.mdb 32768 6b304b633ff556e4487103d101c4998a526bd0edb0026295e65c0b7e9bc8ac4b",
+      "./faucet-ledger.json 24 2781ed7cd26740a06e0c59ff8949e9f8455a269d011b31e44fe03265ce046dcd",
+      "./node.certificate.pem 550 b3344ff68fc3a2d544c59b3d1e2ba3335184cdfb4fb9049415a9ff4171662644",
+      "./node.key.pem 241 1ed14d6faed4048352c953ce85f87de9eb0c07344e9bbf6643f9d4ce52ea8ec9",
+      "./reporting/data.mdb 12288 087915a56bb8878ca5ef63c133c52e970b55ec865894e6b8f41cc9899ea5daca",
+      "./rspace/cold/data.mdb 368640 7713927896171f1aa61cb6c801fe8e3493356bd7e61552bf577aeb73045845ca",
+      "./rspace/history/data.mdb 102400 f36756e69c6d4a17ba62d1f6de960032189df99753daea81ba8c5a86fe5d315f",
+      "./shard-id 5 94a6b447580330f9f2b609422537b04239ff3a39df9137e32efd559f1a2935cb",
+      "./store-format 1 4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+      "./validator.hex 65 45abb0c15e01422af6ba06632d37793cd21b7ad44cd1db9b1670101da9707c20"
+    ]
+  },
+  "source": {
+    "digest": "55973f3df5edb9a32c86868669d67eea7bd59d6cd382b007f911fa47fb54b001",
+    "files": 14,
+    "lines": [
+      "./blockstorage/data.mdb 159744 09d1ea5d8b4af070866cb18de906c4412f9c1da9dc8179be206fe674094f320f",
+      "./dagstorage/data.mdb 110592 2b85d45a66eff1486c324e38f89427e06337ad21ad3a08f3ae576cc45ad205a3",
+      "./deploypoolstorage/data.mdb 45056 09d0fb542cd05ded24652922e7f685ceaeadb15a85d68292415fbcdccf88567f",
+      "./eval/cold/data.mdb 12288 1255255aeae8f923f29f27111804abaf58fdb90c2382ddec1a2bc63df0002cb4",
+      "./eval/history/data.mdb 32768 6b304b633ff556e4487103d101c4998a526bd0edb0026295e65c0b7e9bc8ac4b",
+      "./faucet-ledger.json 24 2781ed7cd26740a06e0c59ff8949e9f8455a269d011b31e44fe03265ce046dcd",
+      "./node.certificate.pem 550 b3344ff68fc3a2d544c59b3d1e2ba3335184cdfb4fb9049415a9ff4171662644",
+      "./node.key.pem 241 1ed14d6faed4048352c953ce85f87de9eb0c07344e9bbf6643f9d4ce52ea8ec9",
+      "./reporting/data.mdb 12288 087915a56bb8878ca5ef63c133c52e970b55ec865894e6b8f41cc9899ea5daca",
+      "./rspace/cold/data.mdb 368640 7713927896171f1aa61cb6c801fe8e3493356bd7e61552bf577aeb73045845ca",
+      "./rspace/history/data.mdb 102400 f36756e69c6d4a17ba62d1f6de960032189df99753daea81ba8c5a86fe5d315f",
+      "./shard-id 5 94a6b447580330f9f2b609422537b04239ff3a39df9137e32efd559f1a2935cb",
+      "./store-format 1 4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+      "./validator.hex 65 45abb0c15e01422af6ba06632d37793cd21b7ad44cd1db9b1670101da9707c20"
+    ]
+  }
+}
