@@ -18,14 +18,14 @@
         "RC-6"
       ],
       "id": "rc-offhost",
-      "scope": "Run the pre-registered M3 two-host join and record RC-6 off-host, including the loopback negative."
+      "scope": "Run the pre-registered two-host join and record RC-6 off-host, including the loopback negative control. The runner is `tests/release-claim-6.py --arm off-host`; its `--campaign-result` is the run directory with `chain.json` (from `m3-join-chain.py build`), `declaration.json`, `negative/loopback.json` and the retained logs."
     },
     {
       "claims": [
         "RC-4"
       ],
       "id": "rc-failover",
-      "scope": "Add an ordered seed list to bootstrap resolution and run RC-4 failover with the first seed down."
+      "scope": "The ordered seed list is implemented. Run the two-host window with the first seed down (non-loopback seeds), capture `joiner.log`, and record RC-4 failover with `tests/release-claim-4.py --arm failover --campaign-result <run dir>`."
     },
     {
       "claims": [
@@ -33,14 +33,14 @@
         "RC-4"
       ],
       "id": "rc-multi-host",
-      "scope": "Add the multi-host driver the M4 runbook owes, run N=4 and N=8 on declared hosts, and record RC-2/RC-4 multi-host from the one campaign."
+      "scope": "Run the M4 campaign on eight distinct declared hosts (the claim's own rule: N=8 needs eight hosts, not the M4 gate's minimum of two) and record RC-2 and RC-4 multi-host from the one `observations.json` with `tests/release-claim-2.py --arm multi-host --campaign-result <file>`."
     },
     {
       "claims": [
         "RC-2"
       ],
       "id": "rc-equivocation",
-      "scope": "Inject an equivocation under a validator key on the M4 topology, add the finality coordinate, and record RC-2 equivocation."
+      "scope": "Inject an equivocation under a validator key on the M4 topology, capture the twin hashes, a non-injector detection record and the slashing policy, run `tools/m4-campaign.py observe-equivocation`, and record RC-2 equivocation from its output."
     },
     {
       "claims": [

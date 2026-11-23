@@ -51,10 +51,10 @@ cannot yet be made. No status is authored.
 | PR | closes | scope |
 |---|---|---|
 | `rc-public-fleet` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6, RC-7 | Bring up the four-host public fleet on a coordinated new genesis, perform the deploy and the single-validator restart through tools/fleet-run.py, and run RC-1/public and RC-4/public on the candidate. The source set and the N1/N4/N8 differential are recorded as diagnostics in the same campaign record; the remaining public arms keep this campaign as their next PR. |
-| `rc-offhost` | RC-6 | Run the pre-registered M3 two-host join and record RC-6 off-host, including the loopback negative. |
-| `rc-failover` | RC-4 | Add an ordered seed list to bootstrap resolution and run RC-4 failover with the first seed down. |
-| `rc-multi-host` | RC-2, RC-4 | Add the multi-host driver the M4 runbook owes, run N=4 and N=8 on declared hosts, and record RC-2/RC-4 multi-host from the one campaign. |
-| `rc-equivocation` | RC-2 | Inject an equivocation under a validator key on the M4 topology, add the finality coordinate, and record RC-2 equivocation. |
+| `rc-offhost` | RC-6 | Run the pre-registered two-host join and record RC-6 off-host, including the loopback negative control. The runner is `tests/release-claim-6.py --arm off-host`; its `--campaign-result` is the run directory with `chain.json` (from `m3-join-chain.py build`), `declaration.json`, `negative/loopback.json` and the retained logs. |
+| `rc-failover` | RC-4 | The ordered seed list is implemented. Run the two-host window with the first seed down (non-loopback seeds), capture `joiner.log`, and record RC-4 failover with `tests/release-claim-4.py --arm failover --campaign-result <run dir>`. |
+| `rc-multi-host` | RC-2, RC-4 | Run the M4 campaign on eight distinct declared hosts (the claim's own rule: N=8 needs eight hosts, not the M4 gate's minimum of two) and record RC-2 and RC-4 multi-host from the one `observations.json` with `tests/release-claim-2.py --arm multi-host --campaign-result <file>`. |
+| `rc-equivocation` | RC-2 | Inject an equivocation under a validator key on the M4 topology, capture the twin hashes, a non-injector detection record and the slashing policy, run `tools/m4-campaign.py observe-equivocation`, and record RC-2 equivocation from its output. |
 | `rc-fleet-upgrade` | RC-7 | Roll the public fleet through the mixed window to the new image and record RC-7 public. |
 | `launch-gate` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6, RC-7 | Aggregate the required arms and the external obligations into the launch gate; refuse ready while any external item is open without a dated disposition. |
 

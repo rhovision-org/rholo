@@ -82,7 +82,10 @@ pub struct ProtocolServer {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProtocolClient {
     pub network_id: String,
-    pub bootstrap: PeerNode,
+    /// **Ordered bootstrap seeds.** The first live seed is the one the node joins through; the
+    /// rest are fallbacks. A single configured seed is still the ordinary case and behaves exactly
+    /// as before (see `RPConf::bootstrap`, which remains the first entry).
+    pub bootstrap: Vec<PeerNode>,
     pub disable_lfs: bool,
     pub batch_max_connections: i32,
     pub network_timeout: Duration,

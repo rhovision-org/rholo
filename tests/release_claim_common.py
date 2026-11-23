@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import datetime
 import importlib.util
+import ipaddress
 import json
+import shutil
 import os
 import re
 import subprocess
@@ -1533,9 +1535,54 @@ def offhost_fixture(claim_id: str, title: str) -> dict:
     return record
 
 
+def _address_host(address: str) -> str:
+    """The host of an `rnode://key@host?params` address, a `host:port`, or a bare literal."""
+    text = address.strip()
+    if text.startswith("rnode://") and "@" in text:
+        text = text.split("@", 1)[1]
+    text = text.split("?", 1)[0]
+    if text.startswith("[") and "]" in text:
+        return text[1:text.index("]")]
+    if text.count(":") == 1:
+        return text.rsplit(":", 1)[0]
+    return text
+
+
+def _ip_address(host: str):
+    try:
+        return ipaddress.ip_address(host.strip().strip("[]"))
+    except ValueError:
+        return None
+
+
 def _is_loopback(host: str) -> bool:
-    name = host.rsplit(":", 1)[0] if ":" in host else host
-    return name in ("127.0.0.1", "localhost", "::1", "0.0.0.0")
+    """Loopback under either address family.
+
+    The old reader stripped one trailing `:port`, which is wrong for `[::1]:40403` (it kept the
+    brackets) and for a bare `::1` (it split inside the literal), so an IPv6-loopback
+    advertisement passed the off-host predicate. Parse the literal instead.
+    """
+    name = _address_host(host)
+    address = _ip_address(name)
+    if address is not None:
+        return address.is_loopback
+    return name.lower() == "localhost"
+
+
+def _is_local_address(host: str) -> bool:
+    """Loopback, private, link-local, reserved or unspecified: not an off-host observer."""
+    name = _address_host(host)
+    address = _ip_address(name)
+    if address is None:
+        return name.lower() == "localhost"
+    return (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_unspecified
+        or address.is_multicast
+    )
 
 
 def check_offhost(record: dict) -> tuple[str, list[str]]:
@@ -1606,8 +1653,476 @@ def check_failover(record: dict) -> tuple[str, list[str]]:
         problems.append("failover: the joiner did not use the second seed")
     if body.get("finalised_head_agrees") is not True:
         problems.append("failover: the joiner's finalised head does not agree")
+    for seed in seeds:
+        if _is_local_address(str(seed)):
+            problems.append(f"failover: seed {seed!r} is a local address; an off-host claim "
+                            "needs routable hosts")
     problems.extend(phase_space_reading(record.get("observations") or {}, bool(problems)))
     return evaluate(record, problems)
+
+
+FAILOVER_FIELDS = ("seeds", "seed_status", "joined", "joined_via", "finalised_head_agrees")
+
+
+def _artifact_json(path: Path) -> dict:
+    if not path.is_file():
+        raise ClaimError(f"the run artifact {path} is missing")
+    try:
+        document = json.loads(path.read_text())
+    except ValueError as error:
+        raise ClaimError(f"the run artifact {path} is not JSON: {error}") from error
+    if not isinstance(document, dict):
+        raise ClaimError(f"the run artifact {path} is not an object")
+    return document
+
+
+def failover_body(run_dir: Path) -> dict:
+    """Map a two-host failover run directory to the predicate's observation.
+
+    The directory carries `failover.json` (the five coordinates) and retains `joiner.log`. A
+    missing coordinate or a local seed is a precondition (`not run`), because the arm's locality
+    is `off-host-claim`; a present negative value reaches `check_failover` as a failure.
+    """
+    document = _artifact_json(Path(run_dir) / "failover.json")
+    missing = [field for field in FAILOVER_FIELDS if field not in document]
+    if missing:
+        raise ClaimError("the failover run is missing " + ", ".join(missing))
+    seeds = document["seeds"]
+    if not isinstance(seeds, list) or len(seeds) < 2:
+        raise ClaimError("the failover run needs an ordered list of at least two seeds")
+    local = [seed for seed in seeds if _is_local_address(str(seed))]
+    if local:
+        raise ClaimError("the failover run names a local seed; off-host-claim needs routable "
+                         "hosts: " + ", ".join(str(seed) for seed in local))
+    if not (Path(run_dir) / "joiner.log").is_file():
+        raise ClaimError("the failover run retains no joiner.log")
+    return {field: document[field] for field in FAILOVER_FIELDS}
+
+
+def run_failover_arm(out, record: dict, run_dir, head: str | None = None) -> int:
+    """Fill RC-4/failover from an operator run; the predicate remains the only judge."""
+    try:
+        body = failover_body(Path(run_dir))
+    except ClaimError as error:
+        return not_run(out, record, str(error))[1]
+    document = _artifact_json(Path(run_dir) / "failover.json")
+    record["provenance"] = document.get("provenance") or {}
+    if head:
+        record["provenance"]["source_sha"] = head
+    record["harness"] = {
+        "name": "failover-diagnostic",
+        "exit_code": 0,
+        "out": str(run_dir),
+        "command": ["failover-diagnostic", str(run_dir)],
+    }
+    record["observations"]["failover"] = body
+    verdict, reasons = check_failover(record)
+    finish(record, verdict, reasons)
+    return write_record(out, record)[1]
+
+
+MULTI_HOST_SIZES = (("n4", 4), ("n8", 8))
+
+
+def _required_integer(value, where: str) -> int:
+    if type(value) is not int:
+        raise ClaimError(f"{where} is missing or not an integer")
+    return value
+
+
+def _multi_host_arm(workload: dict, key: str, where: str) -> dict:
+    arms = workload.get("arms") if isinstance(workload, dict) else None
+    entry = arms.get(key) if isinstance(arms, dict) else None
+    if not isinstance(entry, dict):
+        raise ClaimError(f"{where}: the campaign carries no {key} arm")
+    return entry
+
+
+def multi_host_data(path) -> dict:
+    document = _artifact_json(Path(path))
+    data = document.get("record_data")
+    if not isinstance(data, dict):
+        raise ClaimError("the multi-host artifact has no record_data object")
+    return data
+
+
+def multi_host_preflight(record: dict, data: dict, head: str | None = None) -> None:
+    """Pin the campaign's selected candidate; a wrong or missing pin is a precondition."""
+    campaign = data.get("campaign") or {}
+    selected = campaign.get("selected") or {}
+    source = selected.get("source_sha")
+    binary = selected.get("binary_sha256")
+    if not (isinstance(source, str) and re.fullmatch(r"[0-9a-f]{40}", source)):
+        raise ClaimError("the campaign names no 40-hex source_sha")
+    if not (isinstance(binary, str) and re.fullmatch(r"[0-9a-f]{64}", binary)):
+        raise ClaimError("the campaign names no 64-hex binary_sha256")
+    if head and not (source == head or source.startswith(head) or head.startswith(source)):
+        raise ClaimError(f"the campaign measured {source}, not the requested {head}")
+    record["provenance"] = {"source_sha": source, "binary_sha256": binary}
+
+
+def multi_host_body(data: dict) -> dict:
+    """Map `m4-campaign.py collect`'s record_data to the multi-host predicate's observation.
+
+    Every coordinate the predicate reads is required; a missing one is a precondition refusal. A
+    readable negative value (a false retention, a lost deploy, an own-key halt) is mapped so the
+    predicate can fail. The producer refuses structural negatives before writing the artifact, so
+    such a value reaches this mapper only from a mutated artifact — which is exactly what the
+    offline test exercises.
+    """
+    campaign = data.get("campaign") or {}
+    hosts = campaign.get("hosts")
+    if not isinstance(hosts, list) or not hosts or not all(
+            isinstance(host, str) and host for host in hosts):
+        raise ClaimError("the campaign declares no host list")
+    workloads = data.get("workloads") or {}
+    if not {key for key, _ in MULTI_HOST_SIZES} <= set(workloads):
+        raise ClaimError("the campaign did not run N=4 and N=8")
+    bodies = [(key, size, workloads[key]) for key, size in MULTI_HOST_SIZES]
+
+    # **Placement, not declaration.** A campaign can declare eight hosts and put two validators
+    # on each of four; the claim's distinct-host rule must read where the validators actually ran.
+    placed: set[str] = set()
+    for key, size, workload in bodies:
+        capacity = workload.get("capacity")
+        row = capacity.get("validators") if isinstance(capacity, dict) else None
+        if not isinstance(row, list) or not row:
+            raise ClaimError(f"N={size}: the capacity record names no validators")
+        for entry in row:
+            host = entry.get("host") if isinstance(entry, dict) else None
+            if not isinstance(host, str) or not host:
+                raise ClaimError(f"N={size}: a capacity validator has no host")
+            placed.add(host)
+    declared_hosts = sorted(placed)
+    if not set(declared_hosts) <= set(hosts):
+        raise ClaimError("a validator was placed on a host the campaign did not declare")
+
+    validators = max(_required_integer(workload.get("validators"), f"N={size}.validators")
+                     for _, size, workload in bodies)
+    roots = {workload.get("approved_root") for _, _, workload in bodies}
+    if len(roots) != 1 or not isinstance(next(iter(roots)), str):
+        raise ClaimError("the workloads do not share one approved root")
+    approved = roots.pop()
+
+    retained = True
+    tolerances: list[int] = []
+    lost_counts: list[int] = []
+    accepted_lost = 0
+    own_halt = False
+    self_replay = False
+    restarted = True
+    replayed = True
+    post_heads = True
+    containment: list[dict] = []
+
+    for key, size, workload in bodies:
+        where = f"N={size}"
+        partition = _multi_host_arm(workload, "partition_rejoin", where)
+        host_loss = _multi_host_arm(workload, "host_loss", where)
+        recovery = _multi_host_arm(workload, "safe_recovery", where)
+        restart = _multi_host_arm(workload, "restart_replay", where)
+        deploy = _multi_host_arm(workload, "deploy_finalization", where)
+
+        capacity = workload.get("capacity")
+        if not isinstance(capacity, dict):
+            raise ClaimError(f"{where}: no capacity record")
+        declared = capacity.get("declared") if isinstance(capacity.get("declared"), dict) else {}
+        tolerances.append(_required_integer(declared.get("host_failure_tolerance"),
+                                            f"{where}.capacity.host_failure_tolerance"))
+
+        lost = host_loss.get("lost_hosts")
+        survivors = host_loss.get("survivors")
+        if not isinstance(lost, list) or not lost:
+            raise ClaimError(f"{where}: the host-loss observation names no lost host")
+        if not isinstance(survivors, list) or not survivors:
+            raise ClaimError(f"{where}: the host-loss observation names no survivor")
+        lost_counts.append(len(lost))
+        if host_loss.get("retained") is not True:
+            retained = False
+        if host_loss.get("root_before") != approved or host_loss.get("root_after") != approved:
+            retained = False
+
+        cycles = partition.get("cycles")
+        if not isinstance(cycles, list) or not cycles:
+            raise ClaimError(f"{where}: the partition arm records no typed cycle")
+        for cycle in cycles:
+            if not isinstance(cycle, dict):
+                raise ClaimError(f"{where}: a partition cycle is not an object")
+            anchor = cycle.get("anchor") if isinstance(cycle.get("anchor"), dict) else {}
+            answers = cycle.get("validators")
+            if not isinstance(answers, list) or not answers:
+                raise ClaimError(f"{where}: a partition cycle carries no retention answers")
+            if not isinstance(anchor.get("hash"), str) or len(anchor["hash"]) != 64:
+                raise ClaimError(f"{where}: a partition cycle has no 64-hex anchor")
+            containment.append({
+                "validator": cycle.get("victim"),
+                "height": _required_integer(anchor.get("height"), f"{where}.anchor.height"),
+                "hash": anchor["hash"],
+                "answers": [
+                    {"validator": row.get("id"),
+                     "finalized": row.get("finalized_anchor") is True}
+                    for row in answers if isinstance(row, dict)
+                ],
+            })
+
+        if "accepted_work_lost" not in recovery:
+            raise ClaimError(f"{where}: safe_recovery.accepted_work_lost is missing")
+        accepted_lost += _required_integer(recovery["accepted_work_lost"],
+                                           f"{where}.safe_recovery.accepted_work_lost")
+        for key in ("own_key_halt", "self_replay"):
+            if type(recovery.get(key)) is not bool:
+                raise ClaimError(f"{where}: safe_recovery.{key} is missing")
+        own_halt = own_halt or recovery["own_key_halt"] is True
+        self_replay = self_replay or recovery["self_replay"] is True
+
+        if restart.get("manual_restart") is not True:
+            restarted = False
+        recovered = _required_integer(restart.get("recovered_height"),
+                                      f"{where}.restart_replay.recovered_height")
+        replay_height = _required_integer(restart.get("replay_height"),
+                                          f"{where}.restart_replay.replay_height")
+        replayed = replayed and recovered >= replay_height
+
+        if deploy.get("finalized_on_all") is not True \
+                or deploy.get("approved_root_finalized_on_all") is not True:
+            post_heads = False
+
+    conflicts = [
+        row for row in containment
+        if any(answer.get("finalized") is not True for answer in row["answers"])
+    ]
+    tolerance_ok = all(tolerance >= lost for tolerance, lost in zip(tolerances, lost_counts))
+    safe_halt = (tolerance_ok and retained and accepted_lost == 0
+                 and not own_halt and not self_replay)
+
+    return {
+        "declared_hosts": declared_hosts,
+        "validators": validators,
+        "sizes": [size for _, size in MULTI_HOST_SIZES],
+        "capacity_tier": "M1",
+        "capacity_basis": "both workloads carry supported-tier capacity records",
+        "approved_root": approved,
+        "root_retained": retained,
+        "partition_observed": True,
+        "host_loss_observed": True,
+        "conflicting_finality": conflicts,
+        "safe_halt": safe_halt,
+        "containment": containment,
+        "regression": [],
+        "finality_basis": "one stable anchor per typed cycle with the approved root retained",
+        "recovery": {
+            "restarted": restarted,
+            "replayed": replayed,
+            "lost_deploys": ([f"{accepted_lost} accepted deploy(s) lost"]
+                             if accepted_lost else []),
+            "own_key_halt": own_halt,
+            "self_replay": self_replay,
+            "post_heads_agree": post_heads,
+        },
+    }
+
+
+def run_multi_host_arm(out, record: dict, campaign_result, head: str | None = None) -> int:
+    """Fill a multi-host arm from one M4 campaign; the arm's own predicate is the judge."""
+    try:
+        data = multi_host_data(campaign_result)
+        multi_host_preflight(record, data, head=head)
+        body = multi_host_body(data)
+    except ClaimError as error:
+        return not_run(out, record, str(error))[1]
+    artifact = Path(out) / "campaign"
+    artifact.mkdir(parents=True, exist_ok=True)
+    (artifact / "observations.json").write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    record["harness"] = {
+        "name": "m4-campaign collect",
+        "exit_code": 0,
+        "out": str(campaign_result),
+        "command": ["m4-campaign.py", "collect", str(campaign_result)],
+    }
+    record["observations"]["multi_host"] = body
+    checker = (check_multi_host_recovery if record.get("claim_id") == "RC-4"
+               else check_multi_host_finality)
+    verdict, reasons = checker(record)
+    finish(record, verdict, reasons)
+    return write_record(out, record)[1]
+
+
+OFFHOST_STAGES = {
+    "1_request": "request",
+    "2_receipt": "receipt",
+    "3_construction": "construction",
+    "4_transport": "transport_delivered",
+    "5_receive": "receive",
+    "6_apply": "apply",
+}
+
+
+def offhost_body(run_dir: Path) -> dict:
+    """Map the M3 two-host run to the off-host predicate's observation.
+
+    The run dir carries `chain.json` (from `m3-join-chain.py build`), `declaration.json` (the two
+    distinct hosts), `negative/loopback.json` (a loopback advertisement that was refused), and
+    optionally `audit.json` plus raw logs. A local host, a missing stage or a missing hash is a
+    precondition; a hash disagreement or a failed stage reaches the predicate as a failure.
+    """
+    run_dir = Path(run_dir)
+    chain = _artifact_json(run_dir / "chain.json")
+    if chain.get("complete") is not True:
+        reasons = chain.get("incomplete_reasons") or ["the chain is not complete"]
+        raise ClaimError("the M3 chain is incomplete: " + "; ".join(str(r) for r in reasons))
+    stages = chain.get("stages") or {}
+    missing = [key for key in OFFHOST_STAGES if not isinstance(stages.get(key), dict)]
+    if missing:
+        raise ClaimError("the M3 chain is missing stage(s): " + ", ".join(missing))
+    correlation = chain.get("correlation") or {}
+    advertised = correlation.get("advertised_peer")
+    if not isinstance(advertised, str) or not advertised:
+        raise ClaimError("the chain carries no advertised peer")
+    if _is_local_address(advertised):
+        raise ClaimError("the advertised peer is local; off-host-claim needs a routable host")
+
+    declaration = _artifact_json(run_dir / "declaration.json")
+    host_a, host_b = declaration.get("host_a"), declaration.get("host_b")
+    if not (isinstance(host_a, str) and host_a and isinstance(host_b, str) and host_b):
+        raise ClaimError("the declaration names no host_a/host_b")
+    if host_a == host_b:
+        raise ClaimError("the declaration names the same host twice")
+    for host in (host_a, host_b):
+        if _is_local_address(host):
+            raise ClaimError(f"host {host!r} is local; off-host-claim needs routable hosts")
+
+    negative = _artifact_json(run_dir / "negative" / "loopback.json")
+    if negative.get("refused") is not True:
+        raise ClaimError("the loopback negative control did not refuse")
+    if not _is_loopback(str(negative.get("advertised") or "")):
+        raise ClaimError("the loopback negative control advertised no loopback address")
+
+    apply = stages["6_apply"]
+    receive = stages["5_receive"]
+    hashes = {
+        "served": apply.get("served_state_hash"),
+        "received": receive.get("state_hash"),
+        "restored": apply.get("restored_state_hash"),
+        "walked": apply.get("walk_state_hash"),
+    }
+    if any(not value for value in hashes.values()):
+        absent = [name for name, value in hashes.items() if not value]
+        raise ClaimError("the chain lacks join hash(es): " + ", ".join(absent))
+
+    body = {
+        "host_a": host_a,
+        "host_b": host_b,
+        "advertised": advertised,
+        "dial_back": True,
+        "chain": {name: True for name in OFFHOST_STAGES.values()},
+        "hashes": hashes,
+        "loopback_advertisement_refused": True,
+    }
+    audit = run_dir / "audit.json"
+    if audit.is_file():
+        trace = _artifact_json(audit)
+        # Only a trace in the typed shape is evidence; an operator's raw audit report is retained
+        # in `raw/` but is not fed to the phase-space reader.
+        if trace.get("kind") == "audit":
+            body["_audit"] = trace
+    return body
+
+
+def run_offhost_arm(out, record: dict, run_dir, head: str | None = None) -> int:
+    """Fill RC-6/off-host from the two-host run; the predicate remains the only judge."""
+    try:
+        body = offhost_body(Path(run_dir))
+    except ClaimError as error:
+        return not_run(out, record, str(error))[1]
+    audit = body.pop("_audit", None)
+    record["observations"]["off_host"] = body
+    if audit is not None:
+        record["observations"]["audit_traces"] = [audit]
+    record["provenance"] = {"source_sha": head} if head else {}
+    record["harness"] = {
+        "name": "m3-join-chain",
+        "exit_code": 0,
+        "out": str(run_dir),
+        "command": ["m3-join-chain.py", "build", str(run_dir)],
+    }
+    raw = Path(out) / "raw"
+    raw.mkdir(parents=True, exist_ok=True)
+    for name in ("chain.json", "declaration.json", "audit.json", "joiner.log", "responder.log"):
+        source = Path(run_dir) / name
+        if source.is_file():
+            shutil.copy2(source, raw / name)
+    negative = Path(run_dir) / "negative" / "loopback.json"
+    if negative.is_file():
+        (raw / "negative").mkdir(exist_ok=True)
+        shutil.copy2(negative, raw / "negative" / "loopback.json")
+    verdict, reasons = check_offhost(record)
+    finish(record, verdict, reasons)
+    return write_record(out, record)[1]
+
+
+EQUIVOCATION_FIELDS = ("injector", "height", "blocks", "validators", "finalised_by",
+                       "detected", "slashing_enabled")
+
+
+def equivocation_body(path) -> dict:
+    """Map an `observe-equivocation` artifact to the RC-2 predicate's observation.
+
+    A missing input (the policy, the detection record, a validator list of four) is a
+    precondition. A readable negative — a validator that finalised both twins, a fault nobody
+    detected, slashing still on — reaches the predicate as a failure.
+    """
+    path = Path(path)
+    if path.is_dir():
+        path = path / "equivocation.json"
+    document = _artifact_json(path)
+    missing = [field for field in EQUIVOCATION_FIELDS if field not in document]
+    if missing:
+        raise ClaimError("the equivocation observation is missing " + ", ".join(missing))
+    validators = document["validators"]
+    if not isinstance(validators, list) or len(validators) < 4:
+        raise ClaimError("the equivocation observation needs at least four validators")
+    if document["injector"] not in validators:
+        raise ClaimError("the injector is not one of the observed validators")
+    blocks = document["blocks"]
+    if (not isinstance(blocks, list) or len(blocks) != 2
+            or not all(isinstance(block, str) and len(block) == 64 for block in blocks)
+            or len(set(blocks)) != 2):
+        raise ClaimError("the observation does not carry two distinct 64-hex twin hashes")
+    if type(document["height"]) is not int:
+        raise ClaimError("the equivocation height is missing")
+    if not isinstance(document["finalised_by"], dict):
+        raise ClaimError("the per-validator finalised histories are missing")
+    for key in ("detected", "slashing_enabled"):
+        if type(document[key]) is not bool:
+            raise ClaimError(f"{key} is missing or not a boolean")
+    return {
+        "equivocator": document["injector"],
+        "height": document["height"],
+        "blocks": blocks,
+        "finalised_by": document["finalised_by"],
+        "conflicts": [],
+        "detected": document["detected"],
+        "slashing_enabled": document["slashing_enabled"],
+    }
+
+
+def run_equivocation_arm(out, record: dict, campaign_result, head: str | None = None) -> int:
+    """Fill RC-2/equivocation from the M4 observer; the predicate remains the only judge."""
+    try:
+        body = equivocation_body(campaign_result)
+    except ClaimError as error:
+        return not_run(out, record, str(error))[1]
+    record["provenance"] = {"source_sha": head} if head else {}
+    record["harness"] = {
+        "name": "m4-campaign observe-equivocation",
+        "exit_code": 0,
+        "out": str(campaign_result),
+        "command": ["m4-campaign.py", "observe-equivocation", str(campaign_result)],
+    }
+    record["observations"]["equivocation"] = body
+    verdict, reasons = check_equivocation(record)
+    finish(record, verdict, reasons)
+    return write_record(out, record)[1]
 
 
 def _multi_host_fixture(claim_id: str, title: str, arm: str) -> dict:

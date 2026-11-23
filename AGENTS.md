@@ -165,10 +165,10 @@ authority is [`spec/audit/release-campaigns.md`](spec/audit/release-campaigns.md
 | PR | Claims | Scope |
 |---|---|---|
 | `rc-public-fleet` | RC-1 … RC-7 | bring up the four independent hosts on a coordinated genesis; submit the deploy and perform the single-validator restart through `tools/fleet-run.py`; record the public arms |
-| `rc-offhost` | RC-6 | the pre-registered two-host join, including the loopback negative control |
-| `rc-failover` | RC-4 | ordered seed list; run with the first seed down |
-| `rc-multi-host` | RC-2, RC-4 | the multi-host driver; N=4 and N=8 on declared hosts |
-| `rc-equivocation` | RC-2 | inject an equivocation under a validator key; add the finality coordinate |
+| `rc-offhost` | RC-6 | run the pre-registered two-host join and record it; the runner and the loopback negative are in place |
+| `rc-failover` | RC-4 | the ordered seed list is in place; run the two-host window with the first seed down and record it |
+| `rc-multi-host` | RC-2, RC-4 | run the M4 campaign on **eight distinct** declared hosts and record both arms from one observations file |
+| `rc-equivocation` | RC-2 | inject an equivocation on the M4 topology; run the observer and record the twin hashes, the detection and the policy |
 | `rc-fleet-upgrade` | RC-7 | roll the public fleet through the mixed window to the new image |
 | `launch-gate` | all | aggregate the required arms and external obligations; refuse ready while an external item is open without a dated disposition |
 

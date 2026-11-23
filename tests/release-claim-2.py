@@ -292,6 +292,7 @@ def run(argv: list[str]) -> int:
     parser.add_argument("--out", required=True)
     parser.add_argument("--public-manifest")
     parser.add_argument("--campaign-result")
+    parser.add_argument("--head", help="the source SHA the operator run pins")
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--rehearse", action="store_true")
     args = parser.parse_args(argv)
@@ -306,6 +307,17 @@ def run(argv: list[str]) -> int:
         return _run_stall(args, out, record)
     if arm == "validator-set":
         return _run_validator_set(args, out, record)
+    if arm == "multi-host":
+        if not args.campaign_result:
+            return common.not_run(
+                out, record, "the multi-host arm needs --campaign-result <M4 observations>")[1]
+        return common.run_multi_host_arm(out, record, args.campaign_result, head=args.head)
+    if arm == "equivocation":
+        if not args.campaign_result:
+            return common.not_run(
+                out, record,
+                "the equivocation arm needs --campaign-result <observation>")[1]
+        return common.run_equivocation_arm(out, record, args.campaign_result, head=args.head)
     if arm not in ("local", "public"):
         return common.not_run(
             out, record,

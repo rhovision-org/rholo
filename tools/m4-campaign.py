@@ -613,6 +613,61 @@ def observe_host_loss(args: argparse.Namespace) -> int:
     return 0
 
 
+def observe_equivocation(args: argparse.Namespace) -> int:
+    """Read both twin hashes on every validator and **record** what each finalised.
+
+    This observer never refuses a validator that finalised both blocks: that is the unsafe
+    observation the RC-2 predicate exists to read. Only a missing input is refused.
+    """
+    validators = pairs(args.validator, "--validator")
+    if len(validators) < 4:
+        refuse("--validator needs at least four validators for the <=1/3 bound")
+    if args.injector not in {ident for ident, _ in validators}:
+        refuse(f"the injector {args.injector!r} is not one of the declared validators")
+    blocks = list(args.block or [])
+    if len(blocks) != 2 or len(set(blocks)) != 2:
+        refuse("--block must name two distinct twin hashes")
+    for block in blocks:
+        if not isinstance(block, str) or not HEX64.fullmatch(block):
+            refuse(f"block {block!r} is not 64-hex")
+    detection = load(Path(args.detection), "the detection file")
+    refusals = detection.get("refusals") if isinstance(detection, dict) else None
+    if not isinstance(refusals, list):
+        refuse("the detection file has no refusals list")
+    detected = any(
+        isinstance(row, dict) and string(row.get("validator"))
+        and row.get("validator") != args.injector
+        for row in refusals)
+    policy = load(Path(args.policy), "the policy file")
+    if not isinstance(policy, dict) or type(policy.get("slashing_enabled")) is not bool:
+        refuse("the policy file has no boolean slashing_enabled")
+    finalised_by = {}
+    for ident, endpoint in validators:
+        finalised = []
+        for block in blocks:
+            url = endpoint.rstrip("/") + "/api/is-finalized/" + block
+            if http_bool(url):
+                finalised.append(block)
+        finalised_by[ident] = finalised
+    document = {
+        "schema": SCHEMA,
+        "gate_id": GATE,
+        "kind": "equivocation",
+        "injector": args.injector,
+        "height": args.height,
+        "blocks": blocks,
+        "validators": [ident for ident, _ in validators],
+        "finalised_by": finalised_by,
+        "detected": detected,
+        "slashing_enabled": policy["slashing_enabled"],
+        "refusals": refusals[:64],
+    }
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(document, indent=1) + "\n")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -630,6 +685,15 @@ def main() -> int:
     loss_cmd.add_argument("--lost", action="append", default=[], metavar="HOST=URL")
     loss_cmd.add_argument("--survivor", action="append", default=[], metavar="ID=URL")
     loss_cmd.add_argument("--out", required=True)
+    equiv_cmd = sub.add_parser("observe-equivocation",
+                               help="read both twin hashes on every validator")
+    equiv_cmd.add_argument("--injector", required=True)
+    equiv_cmd.add_argument("--validator", action="append", default=[], metavar="ID=URL")
+    equiv_cmd.add_argument("--block", action="append", default=[], metavar="HEX64")
+    equiv_cmd.add_argument("--height", type=int, required=True)
+    equiv_cmd.add_argument("--detection", required=True)
+    equiv_cmd.add_argument("--policy", required=True)
+    equiv_cmd.add_argument("--out", required=True)
     args = parser.parse_args()
     if args.command == "collect":
         declaration = Path(args.declaration)
@@ -640,6 +704,8 @@ def main() -> int:
         return 0
     if args.command == "observe-root":
         return observe_root(args)
+    if args.command == "observe-equivocation":
+        return observe_equivocation(args)
     return observe_host_loss(args)
 
 

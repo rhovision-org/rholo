@@ -117,9 +117,10 @@ def cmd_run(args) -> int:
                "--arm", arm_id, "--out", str(out)]
     if args.public_manifest:
         command += ["--public-manifest", args.public_manifest]
-    if getattr(args, "campaign_result", None) and arm_id in (
-            "bond-leave", "validator-set", "returner"):
+    if getattr(args, "campaign_result", None):
         command += ["--campaign-result", args.campaign_result]
+    if getattr(args, "head", None):
+        command += ["--head", args.head]
     if args.old_image:
         command += ["--old-image", args.old_image]
     if args.keep:
@@ -218,7 +219,10 @@ def main(argv: list[str]) -> int:
     run.add_argument("--out")
     run.add_argument("--public-manifest")
     run.add_argument("--campaign-result",
-                     help="a bond-leave campaign result.json shared by its three arms")
+                     help="the operator artifact an arm consumes: the shared bond-leave result, "
+                          "the M4 observations, the M3 run dir, the failover run dir, or the "
+                          "equivocation observation")
+    run.add_argument("--head", help="the source SHA an operator run pins")
     run.add_argument("--old-image")
     run.add_argument("--keep", action="store_true")
     run.add_argument("--rehearse", action="store_true",

@@ -95,6 +95,39 @@ pub async fn connect<T: TransportLayer + ?Sized>(
     transport.send(peer, ph).await
 }
 
+/// **Whether the authored seed list has fallback to try.** A single seed is the ordinary
+/// configuration; the ordered dialler runs only for a list of two or more, so the single-seed path
+/// is the pre-failover node's path, call for call.
+pub fn should_dial_seeds(seeds: &[PeerNode]) -> bool {
+    seeds.len() > 1
+}
+
+/// Dial the authored bootstrap seeds **in order** and return the first that answers.
+///
+/// The order is the operator's: a down first seed falls through to the second. A seed already in
+/// the connection table is skipped (it is already serving the node), and the dial stops at the
+/// first success so a live seed is never masked by a later one. The returned peer is the join
+/// witness the failover record names as `joined_via`.
+pub async fn connect_seeds<T: TransportLayer + ?Sized>(
+    transport: &T,
+    conf: &RPConf,
+    seeds: &[PeerNode],
+    connections: &[PeerNode],
+) -> Vec<PeerNode> {
+    let connected: HashSet<Vec<u8>> = connections.iter().map(|p| p.key().to_vec()).collect();
+    for seed in seeds {
+        if connected.contains(seed.key()) {
+            continue;
+        }
+        crate::diagnostics::stats().note_dial_attempt();
+        match connect(transport, conf, seed).await {
+            Ok(()) => return vec![seed.clone()],
+            Err(_) => crate::diagnostics::stats().note_dial_failure(),
+        }
+    }
+    Vec::new()
+}
+
 /// Ping the first `num_of_connections_pinged` peers (over the read-only snapshot), returning
 /// `(to_ping, successful, failed)`. The caller applies `removeConn(toPing).addConn(successful)` to
 /// the *current* connections under a brief write lock, so the outbound sends never hold the
@@ -336,5 +369,147 @@ mod tests {
             after.iter().any(|p| p.key() == newcomer.key()),
             "the newcomer is admitted, or nothing was evicted and the bound is not doing anything"
         );
+    }
+
+    /// A transport that answers per peer key, and records the dial order.
+    struct SeedTransport {
+        outcomes: Vec<(Vec<u8>, bool)>,
+        attempts: std::sync::Mutex<Vec<Vec<u8>>>,
+    }
+
+    impl SeedTransport {
+        fn new(outcomes: Vec<(Vec<u8>, bool)>) -> Self {
+            SeedTransport {
+                outcomes,
+                attempts: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn attempts(&self) -> Vec<Vec<u8>> {
+            self.attempts.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TransportLayer for SeedTransport {
+        async fn send(
+            &self,
+            peer: &PeerNode,
+            _msg: rchain_models::comm::protocol::Protocol,
+        ) -> CommErr<()> {
+            self.attempts.lock().unwrap().push(peer.key().to_vec());
+            let answers = self
+                .outcomes
+                .iter()
+                .find(|(key, _)| key == &peer.key().to_vec())
+                .map(|(_, answers)| *answers)
+                .unwrap_or(false);
+            if answers {
+                Ok(())
+            } else {
+                Err(crate::errors::CommError::PeerUnavailable(
+                    peer.clone(),
+                    "down".into(),
+                ))
+            }
+        }
+
+        async fn broadcast(
+            &self,
+            _peers: &[PeerNode],
+            _msg: rchain_models::comm::protocol::Protocol,
+        ) -> Vec<CommErr<()>> {
+            unreachable!("seed dialling is one peer at a time")
+        }
+
+        async fn stream(
+            &self,
+            _peers: &[PeerNode],
+            _blob: crate::transport::chunker::Blob,
+        ) -> Vec<CommErr<()>> {
+            unreachable!("seed dialling is one peer at a time")
+        }
+    }
+
+    fn conf(local: &PeerNode) -> RPConf {
+        RPConf {
+            local: local.clone(),
+            network_id: "test".to_string(),
+            bootstrap: None,
+            default_timeout: std::time::Duration::from_secs(1),
+            max_num_of_connections: 10,
+            clear_connections: crate::rp::rp_conf::ClearConnectionsConf {
+                num_of_connections_pinged: 0,
+            },
+        }
+    }
+
+    /// **The failover shape: a down first seed must not stop the join.** The second seed answers,
+    /// the result is the second seed, and the dials happened in the authored order.
+    #[tokio::test]
+    async fn a_down_first_seed_falls_through_to_the_second() {
+        let a = peer(1, "a");
+        let b = peer(2, "b");
+        let local = peer(9, "local");
+        let transport =
+            SeedTransport::new(vec![(a.key().to_vec(), false), (b.key().to_vec(), true)]);
+        let connected = connect_seeds(&transport, &conf(&local), &[a, b.clone()], &[]).await;
+        assert_eq!(connected, vec![b.clone()]);
+        assert_eq!(
+            transport.attempts(),
+            vec![vec![1u8], vec![2u8]],
+            "the authored order is the dial order; the live second seed is the witness"
+        );
+    }
+
+    /// **The first live seed wins and the rest are not dialled.** Trying a later seed after a
+    /// success would make `joined_via` depend on which answer arrived first, not on the order.
+    #[tokio::test]
+    async fn the_first_live_seed_wins_and_the_rest_are_not_dialled() {
+        let a = peer(1, "a");
+        let b = peer(2, "b");
+        let local = peer(9, "local");
+        let transport =
+            SeedTransport::new(vec![(a.key().to_vec(), true), (b.key().to_vec(), true)]);
+        let connected = connect_seeds(&transport, &conf(&local), &[a.clone(), b], &[]).await;
+        assert_eq!(connected, vec![a]);
+        assert_eq!(transport.attempts(), vec![vec![1u8]]);
+    }
+
+    /// A seed already in the connection table is serving the node; dialling it again would count a
+    /// success that is not a join.
+    #[tokio::test]
+    async fn an_already_connected_seed_is_skipped() {
+        let a = peer(1, "a");
+        let b = peer(2, "b");
+        let local = peer(9, "local");
+        let transport =
+            SeedTransport::new(vec![(a.key().to_vec(), true), (b.key().to_vec(), true)]);
+        let connected =
+            connect_seeds(&transport, &conf(&local), &[a.clone(), b.clone()], &[a]).await;
+        assert_eq!(connected, vec![b]);
+        assert_eq!(transport.attempts(), vec![vec![2u8]]);
+    }
+
+    /// All seeds down is an empty result, not an error: the discovery loop retries next round.
+    #[tokio::test]
+    async fn no_live_seed_returns_empty() {
+        let a = peer(1, "a");
+        let b = peer(2, "b");
+        let local = peer(9, "local");
+        let transport =
+            SeedTransport::new(vec![(a.key().to_vec(), false), (b.key().to_vec(), false)]);
+        let connected = connect_seeds(&transport, &conf(&local), &[a, b], &[]).await;
+        assert!(connected.is_empty());
+        assert_eq!(transport.attempts(), vec![vec![1u8], vec![2u8]]);
+    }
+
+    /// **One seed takes the pre-failover path.** The ordered dialler is not called at all, so the
+    /// ordinary configuration cannot be changed by this feature.
+    #[test]
+    fn a_single_seed_does_not_enter_the_ordered_dialler() {
+        assert!(!should_dial_seeds(&[peer(1, "a")]));
+        assert!(!should_dial_seeds(&[]));
+        assert!(should_dial_seeds(&[peer(1, "a"), peer(2, "b")]));
     }
 }
