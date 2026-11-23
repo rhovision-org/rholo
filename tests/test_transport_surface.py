@@ -67,6 +67,10 @@ class DeployRequest(unittest.TestCase):
         self.assertEqual(claim5._response_id(body), "abcdef")
         self.assertEqual(claim5._response_id(body.encode()), "abcdef")
 
+    def test_the_captured_body_is_the_request_body(self) -> None:
+        raw = b'POST /api/v1/deploy HTTP/1.1\r\nContent-Length: 5\r\n\r\n{"a"}'
+        self.assertEqual(claim5._captured_body(raw), b'{"a"}')
+
 
 def _fixture() -> dict:
     return claim5.fixture("transport")

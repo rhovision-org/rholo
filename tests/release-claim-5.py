@@ -278,6 +278,15 @@ def _tampered(request: dict) -> dict:
     return bad
 
 
+def _captured_body(raw: bytes) -> bytes:
+    """The body of a captured HTTP/1.1 request or response, by its Content-Length."""
+    header, _, rest = raw.partition(b"\r\n\r\n")
+    match = re.search(rb"(?i)content-length: *(\d+)", header)
+    if match:
+        return rest[:int(match.group(1))]
+    return rest
+
+
 def _settle(devnet: common.Devnet, deploy_id: str) -> dict:
     """Wait for autopropose to include the future deploy and its attestation to finalise it.
 
@@ -425,10 +434,11 @@ def _run_transport(record: dict, out: Path, keep: bool) -> int:
         common.wait_until("the proxy transcript is captured",
                           lambda: proxy.captured is not None, timeout=15)
         transcript = proxy.captured or {"request": b"", "response": b""}
-        if transcript["request"] != body:
+        forwarded = _captured_body(transcript["request"])
+        if forwarded != body:
             raise common.ClaimError(
-                "the proxy changed the request bytes: "
-                f"{hashlib.sha256(transcript['request']).hexdigest()[:16]} != "
+                "the proxy changed the request body: "
+                f"{hashlib.sha256(forwarded).hexdigest()[:16]} != "
                 f"{hashlib.sha256(body).hexdigest()[:16]}")
         rows.append(_transport_row("proxy", proxied, got))
 
