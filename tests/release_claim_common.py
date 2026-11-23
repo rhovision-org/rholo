@@ -1492,8 +1492,11 @@ def check_transport(record: dict) -> tuple[str, list[str]]:
         problems.append("transport: the deploy id is missing")
     triples = {(row.get("status"), row.get("settlement_stage"), row.get("error_class"))
                for row in surfaces if isinstance(row, dict)}
-    if len(triples) > 1:
-        problems.append(f"transport: the surfaces disagree on status/stage/error: {triples}")
+    successful = ("ProcessedWithSuccess", "finalizedSuccess", None)
+    if triples != {successful}:
+        problems.append(
+            f"transport: the surfaces read {sorted(triples)!r}, not the successful triple "
+            f"{successful!r}; a uniform refusal is not a transport pass")
     for row in surfaces:
         if not isinstance(row, dict):
             problems.append("transport: a surface row is not an object")
