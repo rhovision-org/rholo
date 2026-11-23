@@ -343,7 +343,7 @@ def _grpc_status(devnet: common.Devnet, deploy_id: str) -> tuple[str, str]:
     """The gRPC `deployStatus` read through the CLI. A rendering failure falls back to HTTP."""
     result = subprocess.run(
         ["docker", "exec", devnet.node(0), "rnode", "--grpc-host", "localhost",
-         "deploy-status", deploy_id],
+         "deploy-status", "--deploy-signature", deploy_id],
         text=True, capture_output=True, timeout=60)
     text = result.stdout + result.stderr
     match = re.search(r"\b(ProcessedWithSuccess|ProcessedWithError|NotProcessed)\b", text)
