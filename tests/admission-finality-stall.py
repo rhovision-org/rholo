@@ -135,6 +135,26 @@ def observed_height(i: int) -> int | None:
     return None if value is None else int(value)
 
 
+def operator_status(i: int) -> dict:
+    """The operator half: whether the persisted stall counters are the shard's history."""
+    try:
+        _, body = http_json(f"http://127.0.0.1:{port(i, admin=True)}/api/v1/status/operator")
+    except Exception:  # noqa: BLE001 - a stopped node has no reading; the caller records it
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def stall_surface(i: int) -> dict:
+    """The episode surface: stalled now, the persisted count, and whether it is the shard's."""
+    body = health(i)
+    operator = operator_status(i)
+    return {
+        "stalled": body.get("finalityStalled"),
+        "episodes": body.get("finalityStallEpisodes"),
+        "durable": operator.get("finalityCountersDurable"),
+    }
+
+
 def settlement(deploy_id: str, node: int = 0) -> dict:
     return get(node, f"/api/v1/deploy-settlement/{deploy_id}")
 
@@ -346,6 +366,7 @@ def main() -> int:
         # A finalizing baseline: the campaign is meaningless on a chain that never finalized.
         drive_proposals(range(args.validators))
         wait_finalized(range(args.validators), 3, deadline, events)
+        baseline_counters = {i: stall_surface(i) for i in range(args.validators)}
 
         # Arm 1: accepted, and never advertised as settled before its inclusion block finalizes. On
         # an autopropose chain the deploy can already be included when the first sample is read, so
@@ -373,6 +394,9 @@ def main() -> int:
         drive_proposals(range(args.validators))
         wait_finalized(range(args.validators), included, deadline, events)
         lag_samples.append(wait_settlement(lag_id, deadline, events))
+        # **The never-stalled control.** The ordinary lag is not a sustained stall, so the
+        # persisted episode count must not have moved before the trigger.
+        pre_trigger_counters = {i: stall_surface(i) for i in range(args.validators)}
         error = controls.ordinary_lag_verdict(lag_samples)
         arms.append({"arm": "ordinary-lag", "deploy": lag_id, "result": "PASS" if error is None else "FAIL",
                      "error": error})
@@ -415,6 +439,7 @@ def main() -> int:
                 break
             time.sleep(2)
         frozen = {i: finalized_height(i) for i in live_nodes}
+        stall_counters = {i: stall_surface(i) for i in live_nodes}
         samples = sample_settlement(stall_id, out, "stall", seconds=6)
         for sample in samples:
             error = controls.settlement_verdict(
@@ -453,6 +478,9 @@ def main() -> int:
             "finalized_before": before,
             "finalized_frozen": frozen,
             "settlement": samples,
+            "counters": {"baseline": baseline_counters,
+                         "pre_trigger": pre_trigger_counters,
+                         "stall": stall_counters},
             "result": "PASS",
         })
 
@@ -492,6 +520,7 @@ def main() -> int:
         drive_proposals(recovery_nodes, rounds=8)
         wait_finalized(recovery_nodes, max(inclusion, 1), recovery_deadline, events)
         recovered = wait_settlement(stall_id, recovery_deadline, events)
+        restore_counters = {i: stall_surface(i) for i in recovery_nodes}
         error = controls.recovery_verdict(
             recovered, inclusion, finalized_height(recovery_nodes[0])
         )
@@ -506,6 +535,7 @@ def main() -> int:
             "recovery_nodes": recovery_nodes,
             "not_ready": not_ready,
             "settlement": recovered,
+            "counters": restore_counters,
             "accepted": accepted,
             "final_stages": final_stages,
             "result": "PASS" if error is None else "FAIL",

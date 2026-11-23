@@ -34,6 +34,37 @@ def strict_supermajority(live: int, total: int) -> bool:
     return 3 * live > 2 * total
 
 
+def fixture(deploy_id: str, *, episode: dict, expected: dict, control: dict,
+            rule: str = "R2", mechanism: str = "stop-validators",
+            live_stake: int = 200, bonded_total: int = 300,
+            status: str = "finalizedSuccess", surfaces: dict | None = None) -> dict:
+    """The observations half of a complete passing stall record.
+
+    The live harness fills the same shape from its measured coordinates; the claim tests use this
+    for the offline fixture and one decisive mutation.
+    """
+    return {
+        "stall_series": [
+            {"kind": "stall", "phase": "baseline", "height": 40, "finalized": 38},
+            {"kind": "stall", "phase": "trigger", "mechanism": mechanism, "exercised": True,
+             "live_stake": live_stake, "bonded_total": bonded_total},
+            {"kind": "stall", "phase": "stall", "height": 44, "finalized": 38, "window_s": 60,
+             "progress_advanced": expected["progress"],
+             "finality_advanced": expected["finality"],
+             "progress_expected": expected["progress"],
+             "finality_expected": expected["finality"],
+             "settlement_claimed": False},
+            {"kind": "stall", "phase": "restore", "action": "restore", "rule": rule,
+             "height": 46, "finalized": 44, "progress_resumed": True,
+             "finality_resumed": True},
+            {"kind": "stall", "phase": "settle", "deploy_status": {deploy_id: status},
+             "rejected_deploys": [], "surfaces": surfaces or {}},
+        ],
+        "stall_episode": episode,
+        "stall_control": control,
+    }
+
+
 def _reasons_for(row: dict) -> list[str]:
     evaluation = common.evaluate_stall_trace(row)
     reasons = [f"{name} is false at phase {row.get('phase')!r}"

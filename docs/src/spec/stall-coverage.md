@@ -186,8 +186,12 @@ evidence record exists). A change to the RC surface is a separate campaign PR.
 | DE-09 | RC-6 | availability | rc-public-fleet | owed | - |
 | DE-18 | RC-7 | local | rc-harness-old-image | owed | - |
 | DE-19 | RC-7 | public | rc-fleet-upgrade | owed | - |
+| DE-04 | RC-2 | stall-denominator | rc-stall-arms | owed | - |
+| DE-05 | RC-2 | stall-denominator | rc-stall-arms | owed | - |
+| DE-06 | RC-2 | stall-denominator | rc-stall-arms | owed | - |
+| DE-09 | RC-3 | stall-episode | rc-stall-arms | owed | - |
 
-**Debt.** deviations: 19 · placement rows owed: 25 · required arms placed: 25/25.
+**Debt.** deviations: 19 · placement rows owed: 29 · required arms placed: 27/27.
 
 ## Outside the diagram
 

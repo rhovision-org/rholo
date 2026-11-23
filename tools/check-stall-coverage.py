@@ -524,8 +524,10 @@ def tracked(relative: str) -> bool:
 def parse_table_e(lines: list[str], required: dict[tuple[str, str], str],
                   campaigns: set[str], de_ids: set[str],
                   violations: Violations) -> tuple[int, int]:
-    seen: set[tuple[str, str]] = set()
+    """A placement is a (DE, claim, arm) triple: an arm may measure more than one deviation."""
+    seen: set[tuple[str, str, str]] = set()
     covered: set[str] = set()
+    covered_arms: set[tuple[str, str]] = set()
     owed = 0
     for row in table_rows(lines, TABLE_E_HEADER, "Table E", violations):
         if len(row) != 6:
@@ -534,14 +536,16 @@ def parse_table_e(lines: list[str], required: dict[tuple[str, str], str],
         de, claim_id, arm_id, campaign, status, evidence = row
         if de not in de_ids:
             violations.add(f"Table E: unknown DE row {de!r}")
-        covered.add(de)
-        key = (claim_id, arm_id)
-        if key not in required:
+        arm = (claim_id, arm_id)
+        if arm not in required:
             violations.add(f"Table E: {claim_id}/{arm_id} is not a required arm")
             continue
+        key = (de, claim_id, arm_id)
         if key in seen:
-            violations.add(f"Table E: duplicate row for {claim_id}/{arm_id}")
+            violations.add(f"Table E: duplicate row for {de}/{claim_id}/{arm_id}")
         seen.add(key)
+        covered.add(de)
+        covered_arms.add(arm)
         if campaign not in campaigns:
             violations.add(f"Table E: {claim_id}/{arm_id} campaign {campaign!r} is not a next_pr")
         if status == "owed":
@@ -561,12 +565,12 @@ def parse_table_e(lines: list[str], required: dict[tuple[str, str], str],
         else:
             violations.add(f"Table E: {claim_id}/{arm_id} status {status!r} is neither owed nor live")
     for key in required:
-        if key not in seen:
+        if key not in covered_arms:
             violations.add(f"Table E: required arm {key[0]}/{key[1]} has no placement row")
     missing = de_ids - covered
     if missing:
         violations.add(f"Table E places no measurement for deviation(s): {', '.join(sorted(missing))}")
-    return owed, len(seen)
+    return owed, len(covered_arms)
 
 
 def parse_residue(lines: list[str], lean: set[str], violations: Violations) -> int:

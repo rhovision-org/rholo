@@ -64,6 +64,10 @@ ARM_MUTATIONS = {
         loopback_advertisement_refused=False),
     ("RC-6", "availability"): lambda record: record["observations"]["availability"]["blocks"][0][
         "validators"][0].update(state_served=False),
+    ("RC-2", "stall-denominator"): lambda record: record["observations"]["stall_series"][2].update(
+        finality_advanced=True),
+    ("RC-3", "stall-episode"): lambda record: record["observations"]["stall_counters"][
+        "restore"]["0"].update(stalled=True),
 }
 
 
@@ -111,6 +115,10 @@ ARM_TRACE_MUTATIONS = {
                            "target_shape_ok"),
     ("RC-6", "availability"): ("state_traces",
                                lambda row: row.update(computed_pre="ff" * 32), "pre_ok"),
+    ("RC-2", "stall-denominator"): ("stall_series",
+                                    lambda row: row.update(height=0), "baseline_ok"),
+    ("RC-3", "stall-episode"): ("stall_series",
+                                lambda row: row.update(height=0), "baseline_ok"),
 }
 
 
@@ -143,7 +151,7 @@ class ClaimTests(unittest.TestCase):
     def test_the_tracker_validates(self):
         out = self.inspect()
         self.assertEqual(out["claims"], 7)
-        self.assertEqual(out["arms"], 25)
+        self.assertEqual(out["arms"], 27)
         self.assertEqual(out["old"], 13)
 
     def test_no_claim_authors_a_status_or_a_missing_observation(self):

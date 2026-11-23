@@ -22,6 +22,10 @@ _spec = importlib.util.spec_from_file_location(
     "release_claim_common", ROOT / "tests" / "release_claim_common.py")
 common = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(common)
+_stall_spec = importlib.util.spec_from_file_location(
+    "stall_series", ROOT / "tests" / "stall_series.py")
+stall = importlib.util.module_from_spec(_stall_spec)
+_stall_spec.loader.exec_module(stall)
 
 CLAIM_ID = "RC-3"
 TITLE = "State agreement across a merge"
@@ -95,15 +99,98 @@ def _check_baseline(record: dict) -> tuple[str, list[str]]:
     return common.evaluate(record, problems)
 
 
+STALL_DEPLOY = "cd" * 32
+STALL_EXPECT = {
+    "deviations": {"DE-09"},
+    "representation": "protocol-wait",
+    "shape": "historic",
+    "cause": "historic-predicate",
+    "rung": "R2",
+    "control": "never-stalled",
+    "deploys": [STALL_DEPLOY],
+}
+
+
+def _fixture_stall_episode() -> dict:
+    observations = stall.fixture(
+        STALL_DEPLOY,
+        episode={"deviations": ["DE-09"], "representation": "protocol-wait",
+                 "shape": "historic", "cause": "historic-predicate", "rung": "R2",
+                 "law": "Rchain.traceRefines"},
+        expected={"progress": True, "finality": False},
+        control={"kind": "never-stalled", "stall_absent": True,
+                 "episode_count_equal": True})
+    observations["stall_counters"] = {
+        "baseline": {str(i): {"stalled": False, "episodes": 0, "durable": True}
+                     for i in range(4)},
+        "pre_trigger": {str(i): {"stalled": False, "episodes": 0, "durable": True}
+                        for i in range(4)},
+        "stall": {"0": {"stalled": True, "episodes": 1, "durable": True},
+                  "1": {"stalled": True, "episodes": 1, "durable": True}},
+        "restore": {str(i): {"stalled": False, "episodes": 1, "durable": True}
+                    for i in range(4)},
+    }
+    return {
+        "schema": 1, "claim_id": CLAIM_ID, "claim_title": TITLE,
+        "arm": "stall-episode", "environment": "local", "locality": "local-devnet",
+        "provenance": {"source_sha": "0" * 40, "binary_sha256": "1" * 64},
+        "preconditions": [], "verdict": "pass", "reasons": [], "errors": [],
+        "harness": {"name": "admission-finality-stall", "exit_code": 0},
+        "observations": observations,
+    }
+
+
+def _check_stall_episode(record: dict) -> tuple[str, list[str]]:
+    verdict, reasons = stall.verdict(record, STALL_EXPECT)
+    if verdict != "pass":
+        return verdict, reasons
+    observations = record.get("observations") or {}
+    counters = observations.get("stall_counters")
+    counters = counters if isinstance(counters, dict) else {}
+    problems: list[str] = []
+    stall_rows = counters.get("stall")
+    stall_rows = stall_rows if isinstance(stall_rows, dict) else {}
+    restore = counters.get("restore")
+    restore = restore if isinstance(restore, dict) else {}
+    baseline = counters.get("baseline")
+    baseline = baseline if isinstance(baseline, dict) else {}
+    pre = counters.get("pre_trigger")
+    pre = pre if isinstance(pre, dict) else {}
+    stalled = [ident for ident, row in stall_rows.items()
+               if isinstance(row, dict) and row.get("stalled") is True]
+    if not stalled:
+        problems.append("no live validator reported finalityStalled during the stall")
+    for ident, row in restore.items():
+        if not isinstance(row, dict):
+            problems.append(f"validator {ident}: restore counter row is not an object")
+            continue
+        if row.get("stalled") is True:
+            problems.append(f"validator {ident}: finalityStalled persists after the restore")
+        if row.get("durable") is not True:
+            problems.append(f"validator {ident}: finalityCountersDurable is not true")
+        if type(row.get("episodes")) is not int or row["episodes"] <= 0:
+            problems.append(f"validator {ident}: no stall episode was retained")
+    for ident in baseline:
+        before = (baseline.get(ident) or {}).get("episodes")
+        after = (pre.get(ident) or {}).get("episodes")
+        if type(before) is int and type(after) is int and after != before:
+            problems.append(
+                f"validator {ident}: the stall counter advanced on a live chain "
+                f"({before} -> {after})")
+    return common.evaluate(record, problems)
+
+
 FIXTURES = {
     "local": lambda: _fixture_baseline("local"),
     "public": lambda: _fixture_baseline("public"),
     "availability": lambda: common.availability_fixture(CLAIM_ID, TITLE),
+    "stall-episode": _fixture_stall_episode,
 }
 ARMS = {
     "local": _check_baseline,
     "public": _check_baseline,
     "availability": common.check_availability,
+    "stall-episode": _check_stall_episode,
 }
 
 
@@ -115,6 +202,29 @@ def check(record: dict) -> tuple[str, list[str]]:
     if record.get("verdict") == "not run":
         return "not run", list(record.get("preconditions") or record.get("reasons") or [])
     return common.dispatch_arm(ARMS, record)
+
+
+def _load_campaign():
+    path = ROOT / "tools" / "stall-campaign.py"
+    spec = importlib.util.spec_from_file_location("stall_campaign", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _run_stall(args, out: Path, record: dict) -> int:
+    try:
+        campaign = _load_campaign()
+        campaign.run_denominator(record, out, episode="rc3", keep=args.keep)
+    except common.ClaimError as error:
+        common.finish(record, "not run", [str(error)])
+        return common.write_record(out, record)[1]
+    except Exception as error:  # noqa: BLE001 - a failed harness is a measured failure
+        common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
+        return common.write_record(out, record)[1]
+    verdict, reasons = check(record)
+    common.finish(record, verdict, reasons)
+    return common.write_record(out, record)[1]
 
 
 def run(argv: list[str]) -> int:
@@ -131,6 +241,8 @@ def run(argv: list[str]) -> int:
     record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    if arm == "stall-episode":
+        return _run_stall(args, out, record)
     if arm not in ("local", "public"):
         return common.not_run(
             out, record,

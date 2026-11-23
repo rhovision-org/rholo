@@ -14,6 +14,14 @@
     },
     {
       "claims": [
+        "RC-2",
+        "RC-3"
+      ],
+      "id": "rc-stall-arms",
+      "scope": "Run the local stall arms (RC-2 stall-denominator, RC-3 stall-episode), read each failure with tools/trace-evaluate.py, pack and commit the records, and place the measured deviations on the HAZOP surface. An unexercised trigger is `not run`, never `safe`."
+    },
+    {
+      "claims": [
         "RC-7"
       ],
       "id": "rc-harness-old-image",
@@ -294,6 +302,18 @@
           "reading": "not-observed",
           "required": true
         },
+        "stall-denominator": {
+          "items": [
+            {
+              "action": "Run `python3 tools/release-check.py run --claim RC-2 --arm stall-denominator` and commit its record; the arm's harness lands in `rc-stall-arms`.",
+              "finding": "no committed run record",
+              "item": "RC-2/stall-denominator/observe"
+            }
+          ],
+          "next_pr": "rc-stall-arms",
+          "reading": "not-observed",
+          "required": true
+        },
         "validator-set": {
           "items": [
             {
@@ -355,6 +375,15 @@
           "next_pr": "rc-bond-leave",
           "required": true,
           "test_mode": "bond-leave"
+        },
+        {
+          "behaviour": "with exactly 200 of 300 bonded stake live, height advances while finality freezes and no settlement claims success; restarting the two stopped validators finalises the same deploy with no resubmission",
+          "environment": "local",
+          "id": "stall-denominator",
+          "locality": "local-devnet",
+          "next_pr": "rc-stall-arms",
+          "required": true,
+          "test_mode": "stall-denominator"
         }
       ],
       "claim": "No two conflicting finalised histories: every finalised block held by one validator is finalised by every validator at or above its height, and no finalised (height, hash) regresses across restart, replay or partition.",
@@ -451,6 +480,24 @@
           "required": true,
           "status": "not run"
         },
+        "stall-denominator": {
+          "action": {
+            "items": [
+              {
+                "action": "Run `python3 tools/release-check.py run --claim RC-2 --arm stall-denominator` and commit its record; the arm's harness lands in `rc-stall-arms`.",
+                "finding": "no committed run record",
+                "item": "RC-2/stall-denominator/observe"
+              }
+            ],
+            "next_pr": "rc-stall-arms",
+            "reading": "not-observed",
+            "required": true
+          },
+          "reasons": [],
+          "record": null,
+          "required": true,
+          "status": "not run"
+        },
         "validator-set": {
           "action": {
             "items": [
@@ -509,6 +556,18 @@
           "next_pr": "rc-public-fleet",
           "reading": "not-observed",
           "required": true
+        },
+        "stall-episode": {
+          "items": [
+            {
+              "action": "Run `python3 tools/release-check.py run --claim RC-3 --arm stall-episode` and commit its record; the arm's harness lands in `rc-stall-arms`.",
+              "finding": "no committed run record",
+              "item": "RC-3/stall-episode/observe"
+            }
+          ],
+          "next_pr": "rc-stall-arms",
+          "reading": "not-observed",
+          "required": true
         }
       },
       "arms": [
@@ -541,6 +600,15 @@
           "next_pr": "rc-public-fleet",
           "required": true,
           "test_mode": "availability"
+        },
+        {
+          "behaviour": "a finality stall is visible while it stands and the persisted episode count survives the restore, so a stall that ended is not reported as none",
+          "environment": "local",
+          "id": "stall-episode",
+          "locality": "local-devnet",
+          "next_pr": "rc-stall-arms",
+          "required": true,
+          "test_mode": "stall-episode"
         }
       ],
       "claim": "For the same accepted block on the same binary, every validator derives the same preStateHash and postStateHash and the same kept/rejected ledger; kept tuple-space effects are present and rejected effects absent.",
@@ -611,6 +679,24 @@
               }
             ],
             "next_pr": "rc-public-fleet",
+            "reading": "not-observed",
+            "required": true
+          },
+          "reasons": [],
+          "record": null,
+          "required": true,
+          "status": "not run"
+        },
+        "stall-episode": {
+          "action": {
+            "items": [
+              {
+                "action": "Run `python3 tools/release-check.py run --claim RC-3 --arm stall-episode` and commit its record; the arm's harness lands in `rc-stall-arms`.",
+                "finding": "no committed run record",
+                "item": "RC-3/stall-episode/observe"
+              }
+            ],
+            "next_pr": "rc-stall-arms",
             "reading": "not-observed",
             "required": true
           },

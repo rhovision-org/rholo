@@ -92,7 +92,7 @@ class StallCoverageGate(unittest.TestCase):
         self.assert_refused(mutated, "RC reading 'safe'")
 
     def test_a_debt_line_that_disagrees_is_refused(self) -> None:
-        mutated = self.source.replace("placement rows owed: 25", "placement rows owed: 24", 1)
+        mutated = self.source.replace("placement rows owed: 29", "placement rows owed: 28", 1)
         self.assert_refused(mutated, "debt line says")
 
     def test_a_guide_word_with_no_disposition_is_refused(self) -> None:
