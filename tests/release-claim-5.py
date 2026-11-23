@@ -83,9 +83,13 @@ TRANSPORT_SURFACES = ("grpc", "http", "direct-http", "proxy")
 
 
 def _transport_devnet(prefix: str, http: int, admin: int, grpc: int) -> common.Devnet:
+    # A lone validator's first block carries the deploy but no attestation; autopropose's tap is the
+    # carrier that closes the round (`node/tests/deploy_lifespan.rs`, the one-flag control). The
+    # deploy is signed with a future `validAfter`, so autopropose cannot consume it before the pool
+    # read; propose-on-deploy stays off so it is not included at admission either.
     return common.Devnet(
         prefix, validators=1, http_base=http, admin_base=admin, grpc_base=grpc,
-        memory="2g", extra_up=("--no-autopropose", "--no-propose-on-deploy"))
+        memory="2g", extra_up=("--autopropose", "--no-propose-on-deploy"))
 
 
 def _pooled_deploy(devnet: common.Devnet, deploy_id: str) -> dict:
@@ -274,22 +278,13 @@ def _tampered(request: dict) -> dict:
     return bad
 
 
-def _propose(devnet: common.Devnet) -> None:
-    result = None
-    for args in (("propose",), ("propose", "--admin")):
-        result = devnet.shell(*args, timeout=180)
-        if result.returncode == 0:
-            return
-    raise common.ClaimError(
-        f"the node did not propose: {(result.stderr or result.stdout)[-800:] if result else ''}")
-
-
 def _settle(devnet: common.Devnet, deploy_id: str) -> dict:
-    """Propose twice: a lone validator's first block includes the deploy but carries no attestation.
+    """Wait for autopropose to include the future deploy and its attestation to finalise it.
 
-    `node/tests/deploy_lifespan.rs` proves the deploy stays `includedUnfinalized` after one proposal
-    and finalises when a second (attestation) block follows. The second call is the carrier
-    autopropose would supply; a third is allowed before the run names a precondition.
+    The deploy is signed with a future `validAfter`, so it is pooled and unincludable until the
+    chain reaches that height; autopropose then includes it and the next tick carries the
+    attestation. `node/tests/deploy_lifespan.rs` is the one-flag control: a lone validator without
+    autopropose never finalises.
     """
     url = devnet.nodes()[0]["http"] + f"/api/v1/deploy-settlement/{deploy_id}"
 
@@ -301,17 +296,7 @@ def _settle(devnet: common.Devnet, deploy_id: str) -> dict:
             return body
         return None
 
-    _propose(devnet)
-    try:
-        time.sleep(2)
-        _propose(devnet)
-    except common.ClaimError:
-        pass
-    try:
-        return common.wait_until("the deploy settles", ready, timeout=60)
-    except common.ClaimError:
-        _propose(devnet)
-        return common.wait_until("the deploy settles after another proposal", ready, timeout=60)
+    return common.wait_until("the deploy settles", ready, timeout=180)
 
 
 def _environment(devnet: common.Devnet, valid_after: int) -> dict:
@@ -322,15 +307,15 @@ def _environment(devnet: common.Devnet, valid_after: int) -> dict:
     if shard != "/root":
         raise common.ClaimError(
             f"precondition: the node's shard is {shard!r}, not '/root'")
-    if not isinstance(latest, int) or latest < valid_after:
-        raise common.ClaimError(
-            f"precondition: latest block {latest!r} precedes validAfter {valid_after}")
-    if latest + 1 - valid_after >= 50:
+    if not isinstance(latest, int):
+        raise common.ClaimError(f"precondition: the node reports no block height")
+    if latest >= valid_after + 50:
         raise common.ClaimError(
             f"precondition: the deploy's validity window has expired "
             f"(latest {latest}, validAfter {valid_after})")
     return {"shard_id": shard, "latest_block_number": latest,
-            "valid_after_block_number": valid_after}
+            "valid_after_block_number": valid_after,
+            "future_at_start": latest < valid_after}
 
 
 def _status_variant(devnet: common.Devnet, deploy_id: str) -> str:
@@ -399,7 +384,9 @@ def _run_transport(record: dict, out: Path, keep: bool) -> int:
         match = re.search(r"\(([0-9a-f]{40})\)", version)
         record["provenance"]["binary_source_sha"] = match.group(1) if match else None
         record["provenance"]["binary_version"] = version
-        deploy_id = grpc.deploy(term)
+        latest = int(grpc.target().status(0)["latestBlockNumber"])
+        valid_after = latest + 5
+        deploy_id = grpc.deploy(term, valid_after=valid_after)
         pooled = _pooled_deploy(grpc, deploy_id)
         request = _deploy_request(pooled)
         body = json.dumps(request, separators=(",", ":")).encode()
