@@ -247,21 +247,24 @@ def drive_proposals(indices, rounds: int = 3) -> None:
         time.sleep(1)
 
 
-def advance_with_deploy(indices, rounds: int = 1) -> None:
+def advance_with_deploy(indices, rounds: int = 1) -> list[str]:
     """A quiet chain's autopropose has no new state transition; a fresh deploy supplies one.
 
     `POST /api/v1/propose` with no new deploy answers `NoNewDeploys`, so the stall arm advances the
     height by submitting and proposing, not by waiting on the timer. Each live validator gets its own
-    deploy because a pool is node-local.
+    deploy because a pool is node-local. The ids are returned so the caller can hold every accepted
+    deploy to the no-silent-loss rule.
     """
+    ids: list[str] = []
     for _ in range(rounds):
         for i in indices:
             try:
-                deploy_on(i, "Nil")
+                ids.append(deploy_on(i, "Nil"))
                 propose(i)
             except (OSError, RuntimeError, urllib.error.URLError):
                 pass
         time.sleep(1)
+    return ids
 
 
 def wait_deploy_processed(deploy_id: str, deadline: float, events: Path, node: int = 0) -> dict:
@@ -364,7 +367,23 @@ def main() -> int:
         for i in range(args.validators):
             wait_ready(i, deadline, events)
         # A finalizing baseline: the campaign is meaningless on a chain that never finalized.
-        drive_proposals(range(args.validators))
+        # With `--no-autopropose` a bare propose answers NoNewDeploys, so production needs a fresh
+        # deploy per round; every baseline deploy is recorded, because accepted work that is lost
+        # later must be caught by the same no-silent-loss rule as the measured arms.
+        baseline_ids: list[str] = []
+        while time.monotonic() < deadline:
+            for i in range(args.validators):
+                baseline_ids.append(deploy_on(i, "Nil"))
+            drive_proposals(range(args.validators), rounds=1)
+            time.sleep(2)
+            try:
+                if min(finalized_height(i) for i in range(args.validators)) >= 3:
+                    break
+            except (OSError, ValueError, KeyError, urllib.error.URLError):
+                # No finalised block yet: `/api/last-finalized-block` answers 400 on an empty DAG.
+                pass
+        accepted.extend(baseline_ids)
+        deadline = time.monotonic() + args.window
         wait_finalized(range(args.validators), 3, deadline, events)
         baseline_counters = {i: stall_surface(i) for i in range(args.validators)}
 
@@ -388,6 +407,7 @@ def main() -> int:
         # Arm 2: ordinary lag on >2/3. The deploy must settle.
         lag_id = deploy_on(0, "Nil")
         accepted.append(lag_id)
+        drive_proposals(range(args.validators), rounds=1)
         processed = wait_deploy_processed(lag_id, deadline, events)
         included = processed_block_number(processed)
         lag_samples = sample_settlement(lag_id, out, "ordinary-lag", seconds=3)
@@ -413,32 +433,54 @@ def main() -> int:
             record(events, stop=i, node=node_name(i))
             docker("stop", node_name(i))
         live_nodes = [i for i in range(args.validators) if i not in stopped]
-        # Let the finality already in flight from the stopped validators settle before the baseline.
-        # A step that completes from messages sent before the stop is not production at <= 2/3; a
-        # step after this window is.
-        time.sleep(5)
-        before = {i: finalized_height(i) for i in live_nodes}
         stall_id = deploy_on(live_nodes[0], "Nil")
         accepted.append(stall_id)
+        # With `--no-propose-on-deploy` a submitted deploy waits for an explicit proposal; the
+        # stall arm is measuring production at <=2/3, so propose on the live side before waiting.
+        drive_proposals(live_nodes, rounds=1)
         stall_processed = wait_deploy_processed(stall_id, time.monotonic() + args.window, events)
         stall_inclusion = processed_block_number(stall_processed)
+        # **The silent validators' last messages still support a step or two.** Finality lags, then
+        # freezes when the gate refuses for support. The freeze is the baseline; the warm-up steps
+        # before it are recorded, not hidden.
+        before = None
+        warmup = None
+        gate_deadline = time.monotonic() + 120
+        while time.monotonic() < gate_deadline:
+            accepted.extend(advance_with_deploy(live_nodes))
+            gates = {i: (health(i).get("finalityGate") or {}) for i in live_nodes}
+            warmup = {i: finalized_height(i) for i in live_nodes}
+            frozen_by_support = all(
+                gate.get("reason") == "support"
+                and 3 * int(gate.get("supporting") or 0) <= 2 * int(gate.get("total") or 0)
+                for gate in gates.values())
+            if frozen_by_support:
+                before = warmup
+                break
+            time.sleep(2)
+        if before is None:
+            raise RuntimeError("the finality gate did not refuse for support within the warm-up")
+        record(events, warmup=warmup,
+               warmup_gate={str(i): (health(i).get("finalityGate") or {}) for i in live_nodes},
+               before=before)
         height_before = {i: observed_height(i) for i in live_nodes}
         # The round gate can hold a proposer for its 15 s escape; give the live side a window rather
         # than one attempt. Production continuing is the claim, not production at a fixed cadence.
         advance_deadline = time.monotonic() + 45
         height_after = dict(height_before)
+        # Run the whole window. The episode surface (`finalityStalled`, `finalityStallEpisodes`)
+        # counts a *run* of refused derivations — twice the partition, in consecutive blocks — so an
+        # episode that ends after one block is not the state DE-09 is about.
         while time.monotonic() < advance_deadline:
-            advance_with_deploy(live_nodes)
+            accepted.extend(advance_with_deploy(live_nodes))
             height_after = {i: observed_height(i) for i in live_nodes}
-            if any(
-                height_after[i] is not None
-                and height_before[i] is not None
-                and height_after[i] > height_before[i]
-                for i in live_nodes
-            ):
-                break
             time.sleep(2)
         frozen = {i: finalized_height(i) for i in live_nodes}
+        # The gate's own numbers: a finality step here is not a verdict, but the supporting/total
+        # and missing set say whether it counted the silent validators' stale latest messages.
+        record(events, stall_gate={str(i): health(i).get("finalityGate") for i in live_nodes},
+               frozen=frozen, before=before, height_before=height_before,
+               height_after=height_after)
         stall_counters = {i: stall_surface(i) for i in live_nodes}
         samples = sample_settlement(stall_id, out, "stall", seconds=6)
         for sample in samples:
@@ -548,6 +590,7 @@ def main() -> int:
         victim = args.validators - 1
         victim_id = deploy_on(0, "Nil")
         accepted.append(victim_id)
+        drive_proposals(range(args.validators), rounds=1)
         wait_deploy_processed(victim_id, time.monotonic() + args.window, events)
         # The victim must hold the inclusion block before it is cut off; otherwise its settlement
         # says notProcessed for a reason that has nothing to do with finality.

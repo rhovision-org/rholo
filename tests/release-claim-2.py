@@ -167,10 +167,12 @@ def _fixture_stall_denominator() -> dict:
 
 
 def _check_stall_denominator(record: dict) -> tuple[str, list[str]]:
-    verdict, reasons = stall.verdict(record, STALL_EXPECT)
+    observations = record.get("observations") or {}
+    expect = dict(STALL_EXPECT)
+    expect["deploys"] = [observations.get("stall_deploy") or STALL_DEPLOY]
+    verdict, reasons = stall.verdict(record, expect)
     if verdict != "pass":
         return verdict, reasons
-    observations = record.get("observations") or {}
     problems: list[str] = []
     trigger = next((row for row in observations.get("stall_series") or []
                     if isinstance(row, dict) and row.get("phase") == "trigger"), {})

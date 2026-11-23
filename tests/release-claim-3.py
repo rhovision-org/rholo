@@ -141,10 +141,12 @@ def _fixture_stall_episode() -> dict:
 
 
 def _check_stall_episode(record: dict) -> tuple[str, list[str]]:
-    verdict, reasons = stall.verdict(record, STALL_EXPECT)
+    observations = record.get("observations") or {}
+    expect = dict(STALL_EXPECT)
+    expect["deploys"] = [observations.get("stall_deploy") or STALL_DEPLOY]
+    verdict, reasons = stall.verdict(record, expect)
     if verdict != "pass":
         return verdict, reasons
-    observations = record.get("observations") or {}
     counters = observations.get("stall_counters")
     counters = counters if isinstance(counters, dict) else {}
     problems: list[str] = []
@@ -156,10 +158,21 @@ def _check_stall_episode(record: dict) -> tuple[str, list[str]]:
     baseline = baseline if isinstance(baseline, dict) else {}
     pre = counters.get("pre_trigger")
     pre = pre if isinstance(pre, dict) else {}
-    stalled = [ident for ident, row in stall_rows.items()
-               if isinstance(row, dict) and row.get("stalled") is True]
-    if not stalled:
-        problems.append("no live validator reported finalityStalled during the stall")
+    # The episode is visible either as the live boolean or as a persisted count that moved. DE-09
+    # is exactly the case where the boolean has cleared by the time the operator reads; the count
+    # is the surface that must survive that.
+    entered = []
+    for ident, row in stall_rows.items():
+        if not isinstance(row, dict):
+            continue
+        before = (baseline.get(ident) or {}).get("episodes")
+        during = row.get("episodes")
+        if row.get("stalled") is True or (
+                type(before) is int and type(during) is int and during > before):
+            entered.append(ident)
+    if not entered:
+        problems.append("no live validator entered a stall episode during the episode window "
+                        "(neither finalityStalled nor finalityStallEpisodes moved)")
     for ident, row in restore.items():
         if not isinstance(row, dict):
             problems.append(f"validator {ident}: restore counter row is not an object")
@@ -170,6 +183,11 @@ def _check_stall_episode(record: dict) -> tuple[str, list[str]]:
             problems.append(f"validator {ident}: finalityCountersDurable is not true")
         if type(row.get("episodes")) is not int or row["episodes"] <= 0:
             problems.append(f"validator {ident}: no stall episode was retained")
+        during = (stall_rows.get(ident) or {}).get("episodes")
+        if type(during) is int and type(row.get("episodes")) is int \
+                and row["episodes"] < during:
+            problems.append(
+                f"validator {ident}: the retained count fell ({during} -> {row['episodes']})")
     for ident in baseline:
         before = (baseline.get(ident) or {}).get("episodes")
         after = (pre.get(ident) or {}).get("episodes")

@@ -33,6 +33,10 @@ EPISODES = {
             "cause": "historic-predicate", "rung": "R2", "law": "Rchain.traceRefines"},
 }
 STAKES = "100,100,50,50"
+# Away from the bond-leave rig's 40402/40403/40405: a campaign may run beside a kept devnet.
+HTTP_BASE = 44403
+ADMIN_BASE = 44405
+GRPC_BASE = 44402
 
 
 def _read(path: Path) -> dict:
@@ -75,7 +79,8 @@ def run_denominator(record: dict, out: Path, *, episode: str, keep: bool = False
         raise ValueError(f"unknown episode {episode!r}; expected one of {sorted(EPISODES)}")
     out.mkdir(parents=True, exist_ok=True)
     devnet = common.Devnet(
-        "stall", validators=4, network="stall",
+        "stall", validators=4, network="stall", http_base=HTTP_BASE,
+        admin_base=ADMIN_BASE, grpc_base=GRPC_BASE,
         extra_up=("--stakes", STAKES, "--no-autopropose", "--no-propose-on-deploy",
                   "--epoch-length", "10"))
     try:
@@ -99,6 +104,11 @@ def run_denominator(record: dict, out: Path, *, episode: str, keep: bool = False
         _fill(record, payload, episode)
     finally:
         if not keep:
+            for index in range(devnet.validators):
+                try:
+                    devnet.copy_traces(index, out / "traces" / f"validator-{index}")
+                except Exception:  # noqa: BLE001 - a missing trace is evidence, not a crash
+                    pass
             devnet.down()
 
 
