@@ -49,6 +49,32 @@ read as "the gate never fires". Law 52b is the other half: with the whole bonded
 validator that produces no message makes the filter *empty* rather than slow, and that emptiness is
 derived from the predicate (`fullPartitionStake_eq_zero_of_a_silent_bonded`) rather than observed.
 
+## The third axis: representation, and the crosswalk
+
+Shape and cause say *why* an obligation cannot be met and *where* the fix goes. The third axis says
+whether the failure is even the node's: **representation**.
+
+| representation | what is stuck | is it a stall? |
+|---|---|---|
+| `closedSilence` | a closed ρ term whose receive has no matching send | no — the calculus; nothing outside the term can add a send |
+| `protocolWait` | a protocol state whose next step is a delivery, round or peer message | not yet — a wait becomes a stall only when a rule consumes the event |
+| `protocolStall` | a protocol state no rule restores inside the observation window | yes — this is TE-7 |
+
+The three axes are constructors in `spec/Rchain/Progress/Classification.lean`, not prose: `Shape`,
+`RootCause`, `Representation`, `Cell`, `Attribution`. The register's crosswalk
+([`spec/PROGRESS-CROSSWALK.md`](../../../spec/PROGRESS-CROSSWALK.md)) assigns every law a role —
+`ontology`, `instance`, `guard`, `witness`, or `independent` — with 25 explicit entries today and every
+other row visibly defaulted to `independent`. Check 11 refuses a Progress-layer law or a law in the
+declared progress families left at that default, so a new law cannot quietly escape the classification.
+
+That crosswalk is a lens, not a theorem, and the difference is deliberate. It shows that the progress
+laws share one vocabulary and one repair discipline; it does not claim the register is one theorem, and
+most laws are not about stalls at all. The classification's own propositions are Law 51's
+(`Rchain.Progress.Classification.law51_statement` and its falsifier) and, at the merge boundary, Law
+53b's (`Rchain.MergeRepair.law53b_statement`). What the transition relation cannot state is listed as a
+residue rather than hidden: starvation, physical partition, I/O, wall-clock windows, operator action and
+fleet version skew.
+
 ## The hypotheses, and what each one is worth
 
 Every liveness statement in this layer carries a hypothesis, because a liveness claim without one is the
@@ -146,5 +172,6 @@ stall must not share a name.
 
 **What this page does not claim.** That the classification is complete (starvation is named and *not*
 modelled, and the shape is registered `open`); that the protocol's rules are modelled in full (the
-inactivity leak is not); or that a `System` is the only way to state these properties — it is the way this
+inactivity leak is not); that the crosswalk turns the <!-- counts:laws -->128 laws<!-- counts:end --> into one theorem (it is a
+lens, and most laws are `independent`); or that a `System` is the only way to state these properties — it is the way this
 tree states them, with a decidable predicate so the conformance corpus can reach the verdicts.

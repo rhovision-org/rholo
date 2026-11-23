@@ -2934,17 +2934,29 @@ def lawsB : List Law := [
       bound the rate). The vocabulary is parameterised over a transition system, so one set of \
       definitions serves the reducer and the protocol built on it, and each shape is separated from the \
       others by one question: `Void` from `Terminal` is whether the goal was ever satisfiable, \
-      `Terminal` from `Drift` is whether anything moved at all",
+      `Terminal` from `Drift` is whether anything moved at all. The three axes are machine-checked in \
+      `Rchain.Progress.Classification`: **representation** (closed silence, protocol wait, protocol \
+      stall), **shape**, and **root cause**, with `Paced` and the two polarities stated as theorems",
     status := .provedModel,
     declarations := [`Rchain.System.Reach, `Rchain.System.Enabled, `Rchain.System.Stuck,
       `Rchain.System.Silent, `Rchain.System.Void, `Rchain.System.Terminal, `Rchain.System.Unrestorable,
       `Rchain.System.Persistent,
-      `Rchain.System.Run, `Rchain.System.Drift, `Rchain.System.Paced],
+      `Rchain.System.Run, `Rchain.System.Drift, `Rchain.System.Paced,
+      `Rchain.Progress.Classification.Representation, `Rchain.Progress.Classification.Shape,
+      `Rchain.Progress.Classification.RootCause, `Rchain.Progress.Classification.Cell,
+      `Rchain.Progress.Classification.Attribution, `Rchain.Progress.Classification.attributions,
+      `Rchain.waitSystem, `Rchain.waitGoal,
+      `Rchain.System.persistent_iff_unrestorable_complement],
     axioms := [],
+    formal := some `Rchain.Progress.Classification.law51_statement,
+    mutant := some `Rchain.Progress.Classification.law51_mutant,
+    falsifier := some `Rchain.Progress.Classification.law51_falsifier,
     rust := ["casper/src/validate.rs", "block-storage/src/dag/liveness.rs",
       "casper/src/blocks/proposer/proposer.rs", "casper/src/engine/lfs_block_requester.rs"],
     witness := [`Rchain.System.void_goal_is_never_waiting,
-      `Rchain.System.unrestorable_lost_is_never_regained, `Rchain.the_two_cycle_drifts],
+      `Rchain.System.unrestorable_lost_is_never_regained, `Rchain.the_two_cycle_drifts,
+      `Rchain.a_wait_is_one_step_from_the_goal, `Rchain.a_wait_is_not_terminal,
+      `Rchain.System.persistent_iff_unrestorable_complement],
     falsifiable := some "each shape is inhabited, which is what stops the vocabulary being a list of \
       empty names: `Rchain.the_two_cycle_drifts` exhibits a `Drift` on the smallest system that has one \
       (a 2-cycle with a constant measure, so no `Paced` bound holds), and the `Void` and `Terminal` \
@@ -2954,7 +2966,8 @@ def lawsB : List Law := [
       hypothesis**: an `Unrestorable` property that a step restores makes \
       `Rchain.System.unrestorable_lost_is_never_regained` false by construction, and a system whose steps \
       all advance the measure makes `Rchain.the_two_cycle_drifts` unprovable — which is exactly the \
-      obligation C171's fix is owed (`Paced`)",
+      obligation C171's fix is owed (`Paced`). The classification's own mutation is \
+      `Rchain.Progress.Classification.law51_falsifier`: a system whose two polarities disagree",
     note := "**What this row is about, and why it is a law rather than a module.** Four findings of \
       2026-09-28/29 were the same property failing and were argued and fixed as one-offs: C174 (a \
       fringe partition no state could satisfy), C173 (a refusal no rule clears), C171 (steps forever, \
@@ -2977,7 +2990,11 @@ def lawsB : List Law := [
       the state already kept — `LfsState::finished`, monotone because `done` only adds and `add` \
       refuses a key that is there — and this row's two `rustWitness` entries falsify it in both \
       directions: deleting the give-up leaves the walk drifting, and deleting the reset abandons a \
-      slow walk that is still completing blocks" },
+      slow walk that is still completing blocks. **The classification is a lens over the register, not \
+      a new law number**: `Rchain.Progress.Classification.attributions` assigns the progress-family \
+      rows a role and a cell, `spec/progress-crosswalk.tsv` emits every entry (defaulting the rest to \
+      `independent`), and check 11 refuses a progress law left at that default. The crosswalk does not \
+      claim the register is one theorem; most laws are not about stalls at all" },
   { number := 51, clause := "b", layer := "Progress",
     rustWitness := ["casper/src/blocks/proposer/proposer.rs:a_silent_validators_stale_message_does_not_carry_the_quorum"],
     statement := "The two **causes** of a non-progress shape, on the predicate side: a liveness \
@@ -2986,9 +3003,13 @@ def lawsB : List Law := [
       — C172's index and store answered different questions about the same block). The causes produce \
       the shapes: the historic predicate is what let the guard's suppression never fire (C171's \
       `Drift`), and the split is what turned an unresolvable justification into a dropped block with \
-      nothing to re-queue it (a `Terminal` stall)",
+      nothing to re-queue it (a `Terminal` stall). **Two causes of the cause are named as \
+      constructors** in `Rchain.Progress.Classification.RootCause`: `selfReferentialGating` — the \
+      guard's predicate is a function of the surface it freezes — and `lossBlindRefusal` — a unit \
+      leaves the working set with no re-queue, reset or terminal surface",
     status := .provedModel,
-    declarations := [`Rchain.Historic, `Rchain.ReadsTheView, `Rchain.System.Split],
+    declarations := [`Rchain.Historic, `Rchain.ReadsTheView, `Rchain.System.Split,
+      `Rchain.Progress.Classification.RootCause, `Rchain.Progress.Classification.Attribution],
     axioms := [],
     rust := ["casper/src/blocks/proposer/proposer.rs", "casper/src/block_metadata_store.rs"],
     witness := [`Rchain.historic_refutes_reading_the_view,
@@ -3005,7 +3026,10 @@ def lawsB : List Law := [
       *what* is stuck, the cause says *where the fix goes* — a `Drift` whose cause is `Historic` is \
       fixed in the predicate, not with a rate limiter, and C171 is exactly that case. \
       `docs/src/formal/progress.md` carries the triage table keyed on both columns, and is the page an \
-      agent reads before proposing a fix" },
+      agent reads before proposing a fix. This clause now also names the **causes of the cause**: a \
+      guard that reads the view it freezes is `selfReferentialGating`, and a refusal that drops the \
+      unit is `lossBlindRefusal`; the crosswalk's `guard` rows are the laws whose proof reddens when a \
+      fix removes one" },
   { number := 51, clause := "c", layer := "Progress",
     rustWitness := [],
     statement := "The vocabulary is **shared with the ρ-calculus rather than parallel to it**: a \
@@ -3233,7 +3257,9 @@ def lawsB : List Law := [
       "casper/src/multi_parent_casper.rs:only_a_divergence_is_restorable",
       "casper/tests/restoring_rule.rs:only_a_divergence_is_revalidated",
       "casper/tests/restoring_rule.rs:one_block_budget_bounds_the_revalidations",
-      "casper/tests/restoring_rule.rs:a_record_at_the_attempt_limit_is_not_revalidated_again"],
+      "casper/tests/restoring_rule.rs:a_record_at_the_attempt_limit_is_not_revalidated_again",
+      "casper/src/merging.rs:a_spend_whose_funding_chain_lost_is_rejected_rather_than_halting_the_merge",
+      "casper/src/merging.rs:a_system_deploy_in_the_dependent_closure_is_not_dropped"],
     statement := "**A refusal has an inverse, and the inverse is bounded.** Clause a's `Terminal` is \
       repaired by a rule that *unmarks*: a node re-validates a failed record against its current view, \
       and a record that now passes is cleared — so the block above it is admitted rather than refused. \
@@ -3245,13 +3271,27 @@ def lawsB : List Law := [
       record by a count that is *persisted*, so a restart does not refresh the budget; and it is \
       budgeted per incoming block, so the work one block can provoke is a constant times the cost the \
       protocol already pays to validate it. Clearing a record keeps `slashable` exactly as it was — the \
-      refusal has an inverse, attribution does not",
+      refusal has an inverse, attribution does not. **The same shape holds at the merge boundary**: a \
+      cost composition that goes negative used to fail the merge as a whole, so every proposal on that \
+      view failed and a restart did not clear it. The inverse names the offending chain and its \
+      dependent closure, drops them, and recomposes; when nothing is removable the merge still fails, \
+      which is the honest `Terminal` rather than a silent success",
     status := .provedModel,
-    declarations := [`Rchain.Strand, `Rchain.restoreStep, `Rchain.strandSystemRestoring],
+    declarations := [`Rchain.Strand, `Rchain.restoreStep, `Rchain.strandSystemRestoring,
+      `Rchain.MergeRepair.Spend, `Rchain.MergeRepair.repairStep, `Rchain.MergeRepair.removable,
+      `Rchain.MergeRepair.dropHosts, `Rchain.MergeRepair.funded, `Rchain.MergeRepair.withSystem,
+      `Rchain.MergeRepair.systemOnly, `Rchain.MergeRepair.law53b_statement],
     axioms := [],
-    rust := ["casper/src/multi_parent_casper.rs", "casper/tests/restoring_rule.rs"],
+    formal := some `Rchain.MergeRepair.law53b_statement,
+    mutant := some `Rchain.MergeRepair.law53b_mutant,
+    falsifier := some `Rchain.MergeRepair.law53b_falsifier,
+    rust := ["casper/src/multi_parent_casper.rs", "casper/tests/restoring_rule.rs",
+      "casper/src/merging.rs"],
     witness := [`Rchain.the_refusal_is_not_persistent_once_a_rule_restores,
-      `Rchain.a_restoring_step_removes_a_refusal],
+      `Rchain.a_restoring_step_removes_a_refusal, `Rchain.MergeRepair.law53b,
+      `Rchain.MergeRepair.a_repair_reports_every_drop,
+      `Rchain.MergeRepair.a_system_spend_survives,
+      `Rchain.MergeRepair.a_repair_never_silently_succeeds],
     falsifiable := some "**the falsifier is the absence of the step**: delete `restoreStep` from \
       `strandSystemRestoring`'s relation and the reachable set is clause a's again, so \
       `the_refusal_is_not_persistent_once_a_rule_restores` cannot be proved — persistence returns. On \
@@ -3263,14 +3303,20 @@ def lawsB : List Law := [
       promise the inverse always fires — a node whose own view is still divergent re-validates to the \
       same refusal, and is right to keep refusing a block it cannot verify. The rule gives the refused \
       state an inverse, which is what `Terminal` demands; the refutation theorem is a statement about \
-      the relation, not a liveness promise about any particular run",
+      the relation, not a liveness promise about any particular run. At the merge boundary the mutant \
+      is `Rchain.MergeRepair.law53b_falsifier`: the old whole-merge failure on the measured instance, \
+      refuted by the repair that names and drops the unfundable chain",
     note := "C173's fix, #125, landed 2026-10-01. The name is deliberately a *clause* rather than a \
       new number: it is not a new shape but the other half of clause a's — `Persistent` and its dual \
       (`Rchain.System.Unrestorable`) are what Law 51's vocabulary exists to tell apart, and a \
       refusal that its own fault cannot clear is exactly the case where the two must be stated \
       together. The three Rust bounds are the ones the register's C180 class asks for, because a \
       restoring rule that re-validated on every child would be an unbounded re-fetch triggered by an \
-      input nothing bounds" },
+      input nothing bounds. **The merge-boundary half is a second instance, not a new law number**: \
+      `Rchain.MergeRepair` proves that a repair reports every drop, that a system deploy is not \
+      removable, and that a merge with nothing removable fails rather than succeeding with a silent \
+      loss; the conditional success is deliberate, because a surviving set that cannot compose must \
+      fail" },
   { number := 53, clause := "c", layer := "Casper",
     rustWitness := [
       "casper/src/multi_parent_casper.rs:a_spent_budget_rewinds_only_where_a_height_can_be_named",

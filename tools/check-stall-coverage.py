@@ -35,6 +35,8 @@ PAGE = ROOT / "docs" / "src" / "spec" / "stall-coverage.md"
 CLAIMS = ROOT / "spec" / "audit" / "release-claims.json"
 LAWS = ROOT / "spec" / "laws.tsv"
 LEAN = ROOT / "spec" / "Rchain"
+VOCABULARY = ROOT / "spec" / "progress-vocabulary.tsv"
+CROSSWALK = ROOT / "spec" / "progress-crosswalk.tsv"
 
 GUIDE_WORDS = [
     "NO", "MORE", "LESS", "AS WELL AS", "PART OF", "OTHER THAN", "REVERSE", "EARLY", "LATE",
@@ -147,6 +149,74 @@ def load_claims() -> tuple[dict[str, dict], dict[tuple[str, str], str], set[str]
     }
     campaigns = {pr["id"] for pr in data.get("action_prs", [])}
     return claims, required, campaigns
+
+
+def load_vocabulary(violations: Violations) -> dict[str, set[str]]:
+    """Read the emitted vocabulary; the page's closed axes are the Lean module's, not a copy."""
+    if not VOCABULARY.exists():
+        violations.add(
+            "no spec/progress-vocabulary.tsv — run tools/emit-lean-laws.sh; the classification is "
+            "emitted from Lean")
+        return {}
+    vocabulary: dict[str, set[str]] = {}
+    for line in VOCABULARY.read_text().splitlines():
+        if not line or line.startswith("axis\t"):
+            continue
+        parts = line.split("\t")
+        if len(parts) != 2:
+            violations.add(f"vocabulary row is not `axis<TAB>wire`: {line!r}")
+            continue
+        vocabulary.setdefault(parts[0], set()).add(parts[1])
+    expected = {
+        "representation": set(REPRESENTATIONS),
+        "shape": set(SHAPES),
+        "root-cause": set(ROOT_CAUSES),
+    }
+    for axis, wires in expected.items():
+        if vocabulary.get(axis, set()) != wires:
+            violations.add(
+                f"vocabulary drift: {axis} is {sorted(vocabulary.get(axis, set()))}, "
+                f"want {sorted(wires)}")
+    return vocabulary
+
+
+def load_crosswalk(violations: Violations) -> dict[tuple[str, str], tuple[str, str, str]]:
+    """The explicitly attributed register entries: `(number, clause) -> (rep, shape, cause)`."""
+    if not CROSSWALK.exists():
+        violations.add(
+            "no spec/progress-crosswalk.tsv — run tools/emit-lean-laws.sh; the classification is "
+            "emitted from Lean")
+        return {}
+    crosswalk: dict[tuple[str, str], tuple[str, str, str]] = {}
+    for line in CROSSWALK.read_text().splitlines():
+        if not line or line.startswith("number\t"):
+            continue
+        parts = line.split("\t")
+        if len(parts) < 8:
+            violations.add(f"crosswalk row has {len(parts)} cells, want at least 8: {line!r}")
+            continue
+        number, clause, _role, rep, shape, cause, _rung, explicit = parts[:8]
+        if explicit == "true":
+            crosswalk[(number, clause)] = (rep, shape, cause)
+    return crosswalk
+
+
+def crosswalk_keys(law: str, crosswalk: dict[tuple[str, str], tuple[str, str, str]]
+                   ) -> list[tuple[str, str]]:
+    match = re.fullmatch(r"([0-9]+)([a-z]?)", law)
+    if not match:
+        return []
+    number, clause = match.groups()
+    if clause:
+        key = (number, clause)
+        return [key] if key in crosswalk else []
+    return [key for key in crosswalk if key[0] == number]
+
+
+def check_law_explicit(law: str, crosswalk: dict[tuple[str, str], tuple[str, str, str]],
+                       violations: Violations, label: str) -> None:
+    if not crosswalk_keys(law, crosswalk):
+        violations.add(f"{label}: law {law} has no explicit attribution in progress-crosswalk.tsv")
 
 
 def load_law_keys() -> set[str]:
@@ -313,6 +383,7 @@ def parse_guide_words(lines: list[str], violations: Violations) -> set[str]:
 
 
 def parse_table_a(lines: list[str], laws: set[str], lean: set[str],
+                  crosswalk: dict[tuple[str, str], tuple[str, str, str]],
                   violations: Violations) -> tuple[dict[str, str], set[str]]:
     """Return DE id → its root cause, and the set of guide words carried."""
     for line in lines:
@@ -352,6 +423,16 @@ def parse_table_a(lines: list[str], laws: set[str], lean: set[str],
         if not deviation or not consequence or not anchor:
             violations.add(f"{row_id}: empty deviation, RCA anchor or consequence")
         lean_cell_ok(lean_cell, laws, lean, violations, row_id)
+        for law in LAW_REF.findall(lean_cell):
+            keys = crosswalk_keys(law, crosswalk)
+            if not keys:
+                violations.add(f"{row_id}: law {law} has no explicit crosswalk attribution")
+            for key in keys:
+                cross_rep, cross_shape, _cross_cause = crosswalk[key]
+                if cross_rep != "-" and (cross_rep != representation or cross_shape != shape):
+                    violations.add(
+                        f"{row_id}: law {law}'s crosswalk shape is {cross_rep}/{cross_shape}, not "
+                        f"the row's {representation}/{shape}")
         falsifier_exists(falsifier, violations, row_id)
     if not seen:
         violations.add("Table A has no rows")
@@ -542,6 +623,8 @@ def main(argv: list[str]) -> int:
     laws = load_law_keys()
     lean = load_lean_names()
     violations = Violations()
+    load_vocabulary(violations)
+    crosswalk = load_crosswalk(violations)
 
     for law in sorted(set(WITHDRAWN_LAW.findall(text))):
         violations.add(f"the page cites withdrawn Law {law}; the consolidation folds it into 51/53")
@@ -550,7 +633,7 @@ def main(argv: list[str]) -> int:
             violations.add(f"the HAZOP surface must not carry the RC field {word!r}")
 
     row_words = parse_guide_words(lines, violations)
-    de_causes, table_words = parse_table_a(lines, laws, lean, violations)
+    de_causes, table_words = parse_table_a(lines, laws, lean, crosswalk, violations)
     for word in row_words:
         if word not in table_words:
             violations.add(f"guide word {word} is declared `row` but no Table A row carries it")
@@ -564,6 +647,12 @@ def main(argv: list[str]) -> int:
     parse_table_b(lines, laws, lean, violations)
     parse_table_c(lines, de_ids, laws, violations)
     parse_table_d(lines, de_ids, laws, lean, violations)
+    for header, label in ((TABLE_B_HEADER, "Table B"), (TABLE_C_HEADER, "Table C"),
+                          (TABLE_D_HEADER, "Table D")):
+        for row in table_rows(lines, header, label, Violations()):
+            for cell in row:
+                for law in LAW_REF.findall(cell):
+                    check_law_explicit(law, crosswalk, violations, label)
     owed, placed = parse_table_e(lines, required, campaigns, de_ids, violations)
     parse_residue(lines, lean, violations)
 

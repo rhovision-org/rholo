@@ -14244,6 +14244,39 @@ workflow edit. The seven `out_of_scope` behaviours (off-host transport, failover
 bond/leave, transport correctness, finalised-body availability, equivocation) remain outside these
 claims.
 
+## 189. The merge repair: an unfunded chain is rejected, not a merge failure — 2026-11-23
+
+**Subject.** A bond-leave devnet run halted with `cost accounting would take a vault to -1902` on every
+proposal at height 41, and the halt survived a restart. The spender's funding chain (`4f933ca8…`,
+height 39) was an ancestor but had lost conflict resolution; the descendant stayed in `to_merge`, so its
+burn composed onto a vault the base never funded. The refusal was deterministic and named one number, so
+an operator could not see which chain was unfundable.
+
+**Change.**
+
+- `compose_cost_accounting` records the negative, non-system hosts per slot and returns them in
+  `refused_hosts` on a negative composition. The error message names slot, key, address, current,
+  delta and base state; the diagnostic maps built on every merge are not kept.
+- `MergeScope::merge` drops the offending chain and its `with_dependencies` closure, adds the closure
+  to `rejected`, and recomposes. If no drop is possible, the original error is returned.
+- `refusal_closure` checks the whole dependent closure for a system deploy before dropping any of it,
+  because `with_dependencies` returns dependents (C344). A system chain is never dropped.
+- The regression test `a_spend_whose_funding_chain_lost_is_rejected_rather_than_halting_the_merge`
+  pins the measured shape; `a_system_deploy_in_the_dependent_closure_is_not_dropped` pins the C344
+  guard, with the same graph minus the system chain as its positive control.
+- Law 53b is amended in place with the merge-boundary inverse (`Rchain.MergeRepair`), so the law
+  precedes the Rust change. No new law number: the register is at the 16 GB runner ceiling.
+
+**Why believed.** With the repair disabled, the regression test fails with the old cost-accounting
+error (`-500` on the fixture, the live instance's `-1902`); with it enabled, the spender is in
+`rejected`, the innocent chain's leaf is in the merged state, and the unfunded vault leaf is absent.
+`cargo test -p rchain-casper --lib merging::` passes 68 tests; the C405 row and its evidence record
+name the law, the fix and the controls.
+
+**What it does not claim.** No public-fleet run and no RC change: the release-claim surface is
+untouched, and a stall arm is a separate campaign change. The repair is conditional — a surviving set
+that cannot compose still fails the merge — and it is not a liveness theorem.
+
 **State.** 47 registered gates, all met, 0 unresolved; seven release claims with measured statuses
 (two pass, two fail, three not run locally); `check-mainnet-gates.py --assert-closeable` exits 0;
 `check-release-campaigns.py --assert-ready` exits 3; the #51 closeout still opens.

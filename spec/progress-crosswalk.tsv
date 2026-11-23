@@ -1,0 +1,188 @@
+number	clause	role	representation	shape	cause	rung	explicit	note
+1	a	independent	-	-	-	-	false	
+1	b	independent	-	-	-	-	false	
+2		independent	-	-	-	-	false	
+3		independent	-	-	-	-	false	
+4	a	independent	-	-	-	-	false	
+4	b	independent	-	-	-	-	false	
+5		independent	-	-	-	-	false	
+6		independent	-	-	-	-	false	
+7		independent	-	-	-	-	false	
+8		independent	-	-	-	-	false	
+9		independent	-	-	-	-	false	
+10		independent	-	-	-	-	false	
+11		independent	-	-	-	-	false	
+12		independent	-	-	-	-	false	
+13		independent	-	-	-	-	false	
+14	a	independent	-	-	-	-	false	
+14	b	independent	-	-	-	-	false	
+15		independent	-	-	-	-	false	
+16	a	independent	-	-	-	-	false	
+16	b	independent	-	-	-	-	false	
+16	c	independent	-	-	-	-	false	
+16	d	independent	-	-	-	-	false	
+17	a	independent	-	-	-	-	false	
+17	b	independent	-	-	-	-	false	
+17	c	independent	-	-	-	-	false	
+17	d	independent	-	-	-	-	false	
+17	e	independent	-	-	-	-	false	
+18		independent	-	-	-	-	false	
+19		independent	-	-	-	-	false	
+20		independent	-	-	-	-	true	scheduler linearization; starvation is a residue, not a shape
+21		independent	-	-	-	-	false	
+22		independent	-	-	-	-	false	
+23		independent	-	-	-	-	false	
+24		independent	-	-	-	-	false	
+25		independent	-	-	-	-	false	
+26	a	independent	-	-	-	-	false	
+26	b	independent	-	-	-	-	false	
+26	c	independent	-	-	-	-	false	
+27		independent	-	-	-	-	false	
+28		independent	-	-	-	-	false	
+29		independent	-	-	-	-	false	
+30		independent	-	-	-	-	false	
+31		independent	-	-	-	-	false	
+32		independent	-	-	-	-	false	
+33		independent	-	-	-	-	false	
+34		independent	-	-	-	-	false	
+35		independent	-	-	-	-	false	
+36		independent	-	-	-	-	false	
+37		independent	-	-	-	-	false	
+38		ontology	-	-	-	-	true	the closed-calculus silence: no step and no error
+39		independent	-	-	-	-	false	
+40		independent	-	-	-	-	false	
+41		independent	-	-	-	-	false	
+42		independent	-	-	-	-	false	
+43		independent	-	-	-	-	false	
+44		independent	-	-	-	-	false	
+45		independent	-	-	-	-	false	
+46		independent	-	-	-	-	false	
+47		independent	-	-	-	-	false	
+48		independent	-	-	-	-	false	
+49		independent	-	-	-	-	false	
+50	a	independent	-	-	-	-	false	
+50	b	independent	-	-	-	-	false	
+51	a	ontology	-	-	-	-	true	the shape vocabulary; the classification module is its machine form
+51	b	ontology	-	-	-	-	true	the cause vocabulary; selfReferentialGating and lossBlindRefusal are its causes of the cause
+51	c	ontology	-	-	-	-	true	the closed-calculus representation; silence is stuckness by the enabled tie
+51	d	instance	protocol-wait	paced	self-referential-gating	R2	true	the pacing escape: a banked permit is the self-referential gate's smallest instance
+52	a	guard	protocol-stall	void	unsatisfiable-requirement	R1	true	the counterexample that reddens a denominator-shrinking fix
+52	b	instance	protocol-stall	void	unsatisfiable-requirement	R1	true	
+53	a	guard	protocol-stall	terminal	loss-blind-refusal	R3	true	the refusal that stays persistent until a restoring rule exists
+53	b	instance	protocol-stall	terminal	loss-blind-refusal	R3	true	
+53	c	instance	protocol-stall	terminal	recovery-before-anchor	R3	true	
+54	a	instance	protocol-wait	historic	historic-predicate	R2	true	
+54	b	instance	protocol-stall	split	divergent-readers	R1	true	
+55	a	independent	-	-	-	-	false	
+55	b	independent	-	-	-	-	false	
+56	a	independent	-	-	-	-	false	
+57		independent	-	-	-	-	false	
+58		instance	protocol-wait	silent	unsatisfiable-requirement	R2	true	
+59	a	independent	-	-	-	-	false	
+59	b	independent	-	-	-	-	false	
+59	c	independent	-	-	-	-	false	
+60	a	independent	-	-	-	-	false	
+60	b	independent	-	-	-	-	false	
+61	a	instance	protocol-wait	stuck	loss-blind-refusal	R2	true	
+61	b	guard	protocol-stall	terminal	loss-blind-refusal	R2	true	a deferred answer is written, so the fix cannot become a silent drop
+62		independent	-	-	-	-	false	
+63	a	independent	-	-	-	-	false	
+63	b	independent	-	-	-	-	false	
+64	a	independent	-	-	-	-	false	
+64	b	independent	-	-	-	-	false	
+65		independent	-	-	-	-	false	
+66		independent	-	-	-	-	false	
+67		independent	-	-	-	-	false	
+68		independent	-	-	-	-	false	
+69		instance	protocol-stall	drift	self-referential-gating	R3	true	
+70		independent	-	-	-	-	false	
+71		guard	protocol-wait	stuck	self-referential-gating	R2	true	the catch-up window bounds what a joiner may wait on
+72		independent	-	-	-	-	false	
+72	b	independent	-	-	-	-	false	
+73		independent	-	-	-	-	false	
+74		independent	-	-	-	-	false	
+74	b	independent	-	-	-	-	false	
+75		independent	-	-	-	-	false	
+76		instance	protocol-stall	terminal	loss-blind-refusal	R3	true	
+77		independent	-	-	-	-	false	
+78		independent	-	-	-	-	false	
+79		independent	-	-	-	-	false	
+80		independent	-	-	-	-	false	
+81		independent	-	-	-	-	false	
+82		independent	-	-	-	-	false	
+83		guard	protocol-stall	split	unverified-trust	R1	true	derivable fringe is refused, so the trust boundary cannot be widened by a fix
+84		independent	-	-	-	-	false	
+85		independent	-	-	-	-	false	
+86	a	independent	-	-	-	-	false	
+86	b	independent	-	-	-	-	false	
+86	c	independent	-	-	-	-	false	
+86	d	independent	-	-	-	-	false	
+86	e	independent	-	-	-	-	false	
+87	a	independent	-	-	-	-	false	
+87	b	independent	-	-	-	-	false	
+87	c	independent	-	-	-	-	false	
+87	d	independent	-	-	-	-	false	
+87	e	independent	-	-	-	-	false	
+88	a	independent	-	-	-	-	false	
+88	b	independent	-	-	-	-	false	
+88	c	independent	-	-	-	-	false	
+88	d	independent	-	-	-	-	false	
+89		instance	protocol-stall	void	unsatisfiable-requirement	R3	true	
+90	a	independent	-	-	-	-	false	
+90	b	independent	-	-	-	-	false	
+90	c	independent	-	-	-	-	false	
+91	a	independent	-	-	-	-	false	
+91	b	independent	-	-	-	-	false	
+91	c	independent	-	-	-	-	false	
+92		independent	-	-	-	-	false	
+93		independent	-	-	-	-	false	
+94		instance	protocol-stall	terminal	recovery-before-anchor	R3	true	
+95	a	independent	-	-	-	-	false	
+95	b	independent	-	-	-	-	false	
+96	a	independent	-	-	-	-	false	
+96	b	independent	-	-	-	-	false	
+96	c	independent	-	-	-	-	false	
+96	d	independent	-	-	-	-	false	
+97	a	independent	-	-	-	-	false	
+97	b	independent	-	-	-	-	false	
+97	c	independent	-	-	-	-	false	
+97	d	independent	-	-	-	-	false	
+98	a	independent	-	-	-	-	false	
+98	b	independent	-	-	-	-	false	
+98	c	independent	-	-	-	-	false	
+99	a	independent	-	-	-	-	false	
+99	b	independent	-	-	-	-	false	
+99	c	independent	-	-	-	-	false	
+99	d	independent	-	-	-	-	false	
+100	a	independent	-	-	-	-	false	
+100	b	independent	-	-	-	-	false	
+100	c	independent	-	-	-	-	false	
+100	d	independent	-	-	-	-	false	
+101		independent	-	-	-	-	false	
+102		independent	-	-	-	-	false	
+103		independent	-	-	-	-	false	
+104		guard	protocol-stall	terminal	recovery-before-anchor	R3	true	a boot verifies the certificate before it adopts it
+105		independent	-	-	-	-	false	
+106		independent	-	-	-	-	false	
+107		independent	-	-	-	-	false	
+108		independent	-	-	-	-	false	
+109		independent	-	-	-	-	false	
+110		independent	-	-	-	-	false	
+111		independent	-	-	-	-	false	
+112		independent	-	-	-	-	false	
+113		independent	-	-	-	-	false	
+114		independent	-	-	-	-	false	
+115		independent	-	-	-	-	false	
+116		independent	-	-	-	-	false	
+117		independent	-	-	-	-	false	
+118		independent	-	-	-	-	false	
+119		independent	-	-	-	-	false	
+120		independent	-	-	-	-	false	
+121		instance	protocol-wait	historic	historic-predicate	R2	true	
+122		independent	-	-	-	-	false	
+123		instance	protocol-wait	historic	historic-predicate	R2	true	
+124		independent	-	-	-	-	false	
+125		independent	-	-	-	-	false	
+126		independent	-	-	-	-	false	
+127		independent	-	-	-	-	false	
+128		independent	-	-	-	-	false	

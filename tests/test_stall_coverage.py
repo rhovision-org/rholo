@@ -72,6 +72,14 @@ class StallCoverageGate(unittest.TestCase):
             "Rchain.MergeScope.scope_is_a_function_of_the_dag", "Rchain.not_a_declaration", 1)
         self.assert_refused(mutated, "Rchain.not_a_declaration")
 
+    def test_a_law_outside_the_crosswalk_is_refused(self) -> None:
+        mutated = self.source.replace("| Law 53b |", "| Law 1 |", 1)
+        self.assert_refused(mutated, "law 1 has no explicit crosswalk attribution")
+
+    def test_a_law_whose_crosswalk_shape_disagrees_is_refused(self) -> None:
+        mutated = self.source.replace("| Law 53b |", "| Law 51d |", 1)
+        self.assert_refused(mutated, "crosswalk shape")
+
     def test_a_withdrawn_law_is_refused(self) -> None:
         self.assert_refused(self.source + "\nLaw 129 is owed.\n", "withdrawn Law 129")
 

@@ -11,10 +11,11 @@ There are three surfaces, and this page is only the middle one:
   placement table at the end is a cross-reference to existing arms, nothing more.
 - **The HAZOP surface.** This page: guide words, deviations, safeguards and falsifiers. It classifies a
   stall; it does not measure one.
-- **The Lean surface.** The vocabulary in [`spec/Rchain/Progress.lean`](../../../spec/Rchain/Progress.lean)
-  and, in the consolidation, `Rchain.Progress.Classification`. The classification is the machine form
-  of this page's axes; the crosswalk that assigns every law a role is emitted from Lean, not restated
-  here.
+- **The Lean surface.** The vocabulary in [`spec/Rchain/Progress.lean`](../../../spec/Rchain/Progress.lean),
+  the classification in `Rchain.Progress.Classification`, and the crosswalk emitted to
+  [`spec/PROGRESS-CROSSWALK.md`](../../../spec/PROGRESS-CROSSWALK.md). The classification is the machine
+  form of this page's axes; the crosswalk assigns every law a role and defaults the rest to
+  `independent`, and the register's check 11 refuses a progress-family law left at that default.
 
 The method is the one in [failure-mode HAZOP and disposition](failure-hazop.md): the eleven IEC guide
 words, the R1–R4 disposition ladder, and the **Lean4-first rule** — a deviation no existing law already

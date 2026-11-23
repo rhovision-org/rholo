@@ -26,6 +26,7 @@ import Rchain.Envelope
 import Rchain.Lex
 import Rchain.Concurrent
 import Rchain.Progress
+import Rchain.Progress.Classification
 import Rchain.Tree
 import Rchain.FreeVars
 import Rchain.Depth
@@ -71,6 +72,7 @@ import Rchain.Casper.RecordJoin
 import Rchain.Casper.Liveness
 import Rchain.Casper.LivenessLeak
 import Rchain.Casper.Stranding
+import Rchain.Casper.MergeRepair
 import Rchain.Casper.Provenance
 import Rchain.Casper.ReplayEvidence
 import Rchain.Casper.Recovery

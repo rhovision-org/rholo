@@ -385,11 +385,12 @@ if [[ -x "$ROOT/tools/emit-lean-laws.sh" ]]; then
   else
     fail "law register emission failed — see /tmp/lean-laws.log"
   fi
-  dirty="$(cd "$ROOT" && git status --porcelain -- spec/laws.tsv spec/LAWS.md)"
+  dirty="$(cd "$ROOT" && git status --porcelain -- spec/laws.tsv spec/LAWS.md \
+    spec/progress-vocabulary.tsv spec/progress-crosswalk.tsv spec/PROGRESS-CROSSWALK.md)"
   if [[ -z "$dirty" ]]; then
     ok "committed law register matches the Lean"
   else
-    fail "spec/laws.tsv / spec/LAWS.md are not what the Lean defines — re-emit and commit:"
+    fail "a law-register artefact is not what the Lean defines — re-emit and commit:"
     printf '%s\n' "$dirty" | sed 's/^/      /'
   fi
 

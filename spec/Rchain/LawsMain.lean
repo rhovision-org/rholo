@@ -94,7 +94,7 @@ new (2026-11-16), so the register is retrofitted as rows are revisited rather th
 ceiling may only fall; a new or materially edited law must set `formal` and `falsifier`, and check 10
 requires both to resolve. Publishing the number keeps the remaining work visible instead of letting a
 ratchet at an unstated baseline look finished. -/
-def formalMissingCeiling : Nat := 141
+def formalMissingCeiling : Nat := 139
 
 /-- **The declarations the register names whose proofs rest on the *compiler* — empty as of 2026-09-25,
 and checked in both directions by check 6b.**
@@ -385,6 +385,44 @@ def markdown : String :=
       ++ String.intercalate "\n" (rows.map one)
   String.intercalate "\n\n" (layers.map fun layer => s!"### {layer}\n\n{table layer}")
 
+/-- One line of `spec/progress-crosswalk.tsv`. Every register entry appears, so a law left out of the
+classification is visible as `explicit = false` with role `independent` rather than silently absent —
+and the build's check 11 refuses a progress-family law left at that default. -/
+def crosswalkRow (l : Law) : String :=
+  let flat (s : String) : String := (s.replace "\t" " ").replace "\n" " "
+  let attribution := Rchain.Progress.Classification.attributionFor l.number l.clause
+  let cell := attribution.bind (fun a => a.cell)
+  let role := (attribution.map (fun a => a.role.wire)).getD "independent"
+  let rep := (cell.map (fun c => c.representation.wire)).getD "-"
+  let shape := (cell.map (fun c => c.shape.wire)).getD "-"
+  let cause := (cell.map (fun c => c.cause.wire)).getD "-"
+  let rung := ((attribution.bind (fun a => a.rung)).map (fun r => r.wire)).getD "-"
+  let explicit := if attribution.isSome then "true" else "false"
+  let note := flat ((attribution.map (fun a => a.note)).getD "")
+  String.intercalate "\t" [toString l.number, l.clause, role, rep, shape, cause, rung, explicit, note]
+
+def crosswalkTsv : String :=
+  String.intercalate "\n" <|
+    ("number\tclause\trole\trepresentation\tshape\tcause\trung\texplicit\tnote"
+      :: ordered.map crosswalkRow)
+
+/-- The crosswalk as a Markdown table, for `spec/PROGRESS-CROSSWALK.md`. -/
+def crosswalkMarkdown : String :=
+  let one (l : Law) : String :=
+    let attribution := Rchain.Progress.Classification.attributionFor l.number l.clause
+    let cell := attribution.bind (fun a => a.cell)
+    let role := (attribution.map (fun a => a.role.wire)).getD "independent"
+    let rep := (cell.map (fun c => c.representation.wire)).getD "-"
+    let shape := (cell.map (fun c => c.shape.wire)).getD "-"
+    let cause := (cell.map (fun c => c.cause.wire)).getD "-"
+    let rung := ((attribution.bind (fun a => a.rung)).map (fun r => r.wire)).getD "-"
+    let explicit := if attribution.isSome then "yes" else "no"
+    let note := (attribution.map (fun a => a.note)).getD ""
+    "| " ++ String.intercalate " | " [s!"{l.number}{l.clause}", role, rep, shape, cause, rung,
+      explicit, mdCell note] ++ " |"
+  "| Law | Role | Representation | Shape | Cause | Rung | Explicit | Note |\n\
+   |---|---|---|---|---|---|---|---|\n" ++ String.intercalate "\n" (ordered.map one)
+
 end Laws
 end Rchain
 
@@ -411,11 +449,17 @@ def main (args : List String) : IO UInt32 := do
     match args.findIdx? (fun a => a == "--format") with
     | some i => args[i + 1]?.getD "tsv"
     | none => "tsv"
-  if format != "tsv" && format != "md" then
-    IO.eprintln s!"rchain-laws: unknown --format {format} (expected tsv or md)"
+  let formats := ["tsv", "md", "crosswalk", "vocabulary", "crosswalk-md"]
+  if !formats.contains format then
+    IO.eprintln s!"rchain-laws: unknown --format {format} (expected one of {formats})"
     return 1
   let body :=
-    if format == "md" then s!"{Rchain.Laws.summary}\n\n{Rchain.Laws.markdown}" else Rchain.Laws.tsv
+    match format with
+    | "md" => s!"{Rchain.Laws.summary}\n\n{Rchain.Laws.markdown}"
+    | "crosswalk" => Rchain.Laws.crosswalkTsv
+    | "vocabulary" => Rchain.Progress.Classification.vocabularyTsv
+    | "crosswalk-md" => Rchain.Laws.crosswalkMarkdown
+    | _ => Rchain.Laws.tsv
   match args.findIdx? (fun a => a == "--out") with
   | some i =>
       match args[i + 1]? with
@@ -776,6 +820,48 @@ run_cmd do
     failures := failures.push s!"formal: {formalMissing} proved rows have no `formal` proposition, \
       above the ceiling {formalMissingCeiling} — a new or materially edited law must name its \
       proposition and its falsifier; raise the ceiling only with the work that reduces it"
+
+  -- 11. **The deadly-embrace crosswalk.** The classification is a lens over the register, not a new
+  -- law number: it assigns each entry a role and, for an instance or guard, a cell in
+  -- representation × shape × root cause. The check keeps the crosswalk honest in both directions — an
+  -- attributed key must exist, and a progress-family law may not be left at the `independent` default.
+  -- The explicit rows are few by design; every other entry is emitted as `independent`, visibly.
+  let crosswalk := Rchain.Progress.Classification.attributions
+  let keyOf (a : Rchain.Progress.Classification.Attribution) : Nat × String := (a.number, a.clause)
+  let keys := crosswalk.map keyOf
+  if keys.eraseDups.length != keys.length then
+    failures := failures.push s!"crosswalk: {keys.length - keys.eraseDups.length} duplicate \
+      attribution key(s)"
+  let registerKeys := register.map fun l => (l.number, l.clause)
+  for a in crosswalk do
+    if !registerKeys.contains (a.number, a.clause) then
+      failures := failures.push s!"crosswalk: law {a.number}{a.clause} is attributed but is not in \
+        the register"
+    if a.role == .instanceRole || a.role == .guard then
+      if a.cell.isNone then
+        failures := failures.push s!"crosswalk: law {a.number}{a.clause} is `{a.role.wire}` with no \
+          representability × shape × cause cell"
+    if a.role == .guard && a.note.isEmpty then
+      failures := failures.push s!"crosswalk: guard law {a.number}{a.clause} has no note naming the \
+        fix it reddens"
+    if a.role == .independent && (a.cell.isSome || a.rung.isSome) then
+      failures := failures.push s!"crosswalk: law {a.number}{a.clause} is `independent` but carries \
+        a cell or a rung"
+  let requiredLaws := (Rchain.Progress.Classification.coreProgress ++
+    Rchain.Progress.Classification.stallRelevant ++
+    Rchain.Progress.Classification.contextRelevant).eraseDups
+  for n in requiredLaws do
+    let rows := register.filter (·.number == n)
+    if rows.isEmpty then
+      failures := failures.push s!"crosswalk: required law {n} is not in the register"
+    for l in rows do
+      if !keys.contains (l.number, l.clause) then
+        failures := failures.push s!"crosswalk: law {l.number}{l.clause} is in a required family but \
+          has no explicit attribution"
+  for l in register do
+    if l.layer == "Progress" && !keys.contains (l.number, l.clause) then
+      failures := failures.push s!"crosswalk: Progress-law {l.number}{l.clause} has no explicit \
+        attribution"
 
   if failures.isEmpty then
     logInfo m!"rchain-laws: the register is consistent — {lawCount} laws, {entryCount} entries, \

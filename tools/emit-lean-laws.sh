@@ -28,15 +28,28 @@ printf 'emitted  %s (%s rows, plus a header)\n' "$SPEC/laws.tsv" "$(($(wc -l < "
 ( cd "$SPEC" && lake exe rchain-laws --format md --out "$SPEC/LAWS.md" )
 printf 'emitted  %s (%s lines)\n' "$SPEC/LAWS.md" "$(wc -l < "$SPEC/LAWS.md")"
 
+( cd "$SPEC" && lake exe rchain-laws --format vocabulary --out "$SPEC/progress-vocabulary.tsv" )
+printf 'emitted  %s (%s rows, plus a header)\n' "$SPEC/progress-vocabulary.tsv" \
+  "$(($(wc -l < "$SPEC/progress-vocabulary.tsv") - 1))"
+
+( cd "$SPEC" && lake exe rchain-laws --format crosswalk --out "$SPEC/progress-crosswalk.tsv" )
+printf 'emitted  %s (%s rows, plus a header)\n' "$SPEC/progress-crosswalk.tsv" \
+  "$(($(wc -l < "$SPEC/progress-crosswalk.tsv") - 1))"
+
+( cd "$SPEC" && lake exe rchain-laws --format crosswalk-md --out "$SPEC/PROGRESS-CROSSWALK.md" )
+printf 'emitted  %s (%s lines)\n' "$SPEC/PROGRESS-CROSSWALK.md" \
+  "$(wc -l < "$SPEC/PROGRESS-CROSSWALK.md")"
+
 if [[ "${1:-}" == "--check" ]]; then
   # `git status --porcelain` rather than `git diff`, for the reason the corpus check gives: an untracked
   # file has no diff to show, and a check that passes on an uncommitted artefact is the same check that
   # would pass on a stale one.
-  dirty="$(cd "$ROOT" && git status --porcelain -- spec/laws.tsv spec/LAWS.md)"
+  dirty="$(cd "$ROOT" && git status --porcelain -- spec/laws.tsv spec/LAWS.md \
+    spec/progress-vocabulary.tsv spec/progress-crosswalk.tsv spec/PROGRESS-CROSSWALK.md)"
   if [[ -z "$dirty" ]]; then
     echo "ok    the committed law register matches the Lean"
   else
-    echo "FAIL  spec/laws.tsv or spec/LAWS.md is not what the Lean says — re-emit and commit:" >&2
+    echo "FAIL  a committed register artefact is not what the Lean says — re-emit and commit:" >&2
     printf '%s\n' "$dirty" | sed 's/^/      /' >&2
     exit 1
   fi
