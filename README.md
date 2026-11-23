@@ -17,11 +17,11 @@ memory-safety bugs are unwritable rather than mitigated. The October 2026 advers
 Solana (Agave), Sui and Bitcoin SV at pinned revisions: no chain split, no fund loss, no remote code
 execution here.
 
-**A small artifact, deliberately**: recounted <!-- recount:date -->2026-11-01<!-- recount:end -->,
-<!-- recount:rs-lines -->232,773<!-- recount:end --> lines of Rust across
-<!-- recount:rs-files -->515<!-- recount:end --> files compile to a single
-**<!-- recount:binary-mib -->47.0<!-- recount:end --> MiB** native binary
-(<!-- recount:binary-bytes -->49,317,360<!-- recount:end --> bytes) — nothing to boot but the process,
+**A small artifact, deliberately**: recounted <!-- recount:date -->2026-11-22<!-- recount:end -->,
+<!-- recount:rs-lines -->275,478<!-- recount:end --> lines of Rust across
+<!-- recount:rs-files -->561<!-- recount:end --> files compile to a single
+**<!-- recount:binary-mib -->54.8<!-- recount:end --> MiB** native binary
+(<!-- recount:binary-bytes -->57,428,080<!-- recount:end --> bytes) — nothing to boot but the process,
 and no collector inside it to pause — so the node runs on a commodity laptop with an NVMe. A
 **validator** still needs the per-validator hardware floor; a laptop is a good observer, not
 automatically a good validator.
@@ -91,10 +91,10 @@ code, and a stop-the-world collector is safe Rust — we simply do not ship one.
 engineering concern either way, and this node measures its own (see
 [hardware requirements](docs/src/node/validator-requirements.md)).
 
-**Decentralization.** Recounted <!-- recount:date -->2026-11-01<!-- recount:end -->,
-<!-- recount:rs-lines -->232,773<!-- recount:end --> lines of Rust compile to a single
-<!-- recount:binary-mib -->47.0<!-- recount:end --> MiB native binary
-(<!-- recount:binary-bytes -->49,317,360<!-- recount:end --> bytes) — no JVM and no collector in the
+**Decentralization.** Recounted <!-- recount:date -->2026-11-22<!-- recount:end -->,
+<!-- recount:rs-lines -->275,478<!-- recount:end --> lines of Rust compile to a single
+<!-- recount:binary-mib -->54.8<!-- recount:end --> MiB native binary
+(<!-- recount:binary-bytes -->57,428,080<!-- recount:end --> bytes) — no JVM and no collector in the
 process — so the node runs on any modern desktop or laptop with an
 NVMe SSD. A **validator** still needs the per-validator floor; a laptop is a good observer, not
 automatically a good validator (see [hardware requirements](docs/src/node/validator-requirements.md)
@@ -338,8 +338,8 @@ see because it walks only the Rust lockfile.
 | Restore it locally | `git checkout 1b7583649 -- legacy` |
 
 That is the point of recording the revision rather than just deleting the tree: this repository cites
-the Scala by <!-- recount:legacy-citation-paths -->162<!-- recount:end --> distinct `legacy/...` paths
-(<!-- recount:legacy-citation-refs -->249<!-- recount:end --> references), as the port's reference
+the Scala by <!-- recount:legacy-citation-paths -->165<!-- recount:end --> distinct `legacy/...` paths
+(<!-- recount:legacy-citation-refs -->257<!-- recount:end --> references), as the port's reference
 implementation, and a citation that cannot be followed is not a citation. Every `legacy/...` path in a code comment, in `spec/`, or in the book
 resolves at `1b7583649` — including the ones written after the archive, which is why the revision is
 here and not just in the commit that removed it.

@@ -41,11 +41,11 @@ rate (see [Running a validator: hardware requirements](../node/validator-require
 
 ### The practical upshot — a validator on modest hardware
 
-The payoff is operational, not just theoretical. Counted <!-- recount:date -->2026-11-01<!-- recount:end -->,
-<!-- recount:rs-lines -->232,773<!-- recount:end --> lines of Rust across
-<!-- recount:rs-files -->515<!-- recount:end --> source files compile to a single
-**<!-- recount:binary-mib -->47.0<!-- recount:end --> MiB native binary**
-(<!-- recount:binary-bytes -->49,317,360<!-- recount:end --> bytes) — no JVM to boot, no collector in
+The payoff is operational, not just theoretical. Counted <!-- recount:date -->2026-11-22<!-- recount:end -->,
+<!-- recount:rs-lines -->275,478<!-- recount:end --> lines of Rust across
+<!-- recount:rs-files -->561<!-- recount:end --> source files compile to a single
+**<!-- recount:binary-mib -->54.8<!-- recount:end --> MiB native binary**
+(<!-- recount:binary-bytes -->57,428,080<!-- recount:end --> bytes) — no JVM to boot, no collector in
 the process, no `-Xmx4g -Xss2m` to size. The collector-induced pauses and the heap sizing that made the
 JVM node's runtime heavy and its latency unpredictable are gone, so a validator runs comfortably on any
 reasonably modern desktop PC or high-performance laptop with an NVMe SSD. See
@@ -53,12 +53,12 @@ reasonably modern desktop PC or high-performance laptop with an NVMe SSD. See
 
 *(Both figures are held in `tools/artifact-counts.json` and emitted by `tools/recount-artifact.sh`:
 the line and file totals are `git ls-files '*.rs' | xargs wc -l` over the workspace —
-<!-- recount:rs-lines -->232,773<!-- recount:end --> lines over
-<!-- recount:rs-files -->515<!-- recount:end --> files — and the binary is the default release build
+<!-- recount:rs-lines -->275,478<!-- recount:end --> lines over
+<!-- recount:rs-files -->561<!-- recount:end --> files — and the binary is the default release build
 (unstripped, with no `[profile.release]` tuning),
-<!-- recount:binary-bytes -->49,317,360<!-- recount:end --> bytes,
-<!-- recount:binary-mib -->47.0<!-- recount:end --> MiB, sha256
-`<!-- recount:binary-sha256 -->446dbaf13e24930fe4067ec97390959e328c62dc7a6e0e631dc83de846ad34bf<!-- recount:end -->`. `--check` refuses a page that disagrees with the
+<!-- recount:binary-bytes -->57,428,080<!-- recount:end --> bytes,
+<!-- recount:binary-mib -->54.8<!-- recount:end --> MiB, sha256
+`<!-- recount:binary-sha256 -->935dd03e3facc851cbe9fe9691278d116afac4fd1201d5729d5b5768049d15bf<!-- recount:end -->`. `--check` refuses a page that disagrees with the
 record, and the nightly `--verify-live` re-measures the tree. The record is refreshed when the
 documentation changes, not on every code commit, which is why these figures are not in the law-count
 gate.)*
