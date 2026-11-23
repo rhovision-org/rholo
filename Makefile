@@ -65,6 +65,7 @@ check-register:
 	tools/check-workflow-pins.sh
 	tools/check-review-ledger.sh --gate
 	tools/check-hazop-worksheet.sh --gate
+	tools/check-stall-coverage.py --gate
 	tools/check-spawn-observability.sh --gate
 
 # The book's own gates, plus the artifact record and the law-count spans. `mdbook build` is here so a

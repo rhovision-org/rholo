@@ -100,6 +100,7 @@
 - [Gate measurement](spec/gate-measurement.md)
 - [The bounded adversary](spec/adversary.md)
 - [Failure-mode HAZOP and disposition](spec/failure-hazop.md)
+- [Deadly embrace and catastrophic stall across the release campaigns](spec/stall-coverage.md)
 - [Node diagnostics](spec/node-diagnostics.md)
 - [Resource safety case](spec/resource-safety-case.md)
 - [RCHIP #55 — liveness enforcement](spec/rchip-55-liveness-enforcement.md)
