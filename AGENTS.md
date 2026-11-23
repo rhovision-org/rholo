@@ -13,7 +13,7 @@ statements as binding constraints, not suggestions.
   cross-implementation relay this tree cannot observe). Per-row status is the register's and is not
   restated here.
 - **What passes today.** The current-build mainnet gate register reads **47 of 47 met**; the external
-  register carries eight rows (one `blocked`, two `external`, three `reviewable`, one `owes`, one
+  register carries nine rows (one `blocked`, two `external`, three `reviewable`, two `owes`, one
   `superseded`). The release-claim register has seven claims and 25 arms: the seven local-devnet arms
   read `safe`, the other eighteen read `not-observed`.
 - **What remains is the release campaign**, not defects on the local path: the public four-host fleet,
@@ -151,6 +151,7 @@ carries the obligations a build cannot discharge:
 | `S6-PR600-CHECKPOINT-V3` | `reviewable` | the checkpoint-v3 sync-protocol rule (Law 117) |
 | `S6-PR600-MERGE-FORK` | `reviewable` | the merge fork rule (Law 115) |
 | `G520-MIGRATION` | `owes` | populated-store migration and replay qualification |
+| `G655-FORKLESS-DEVREWARDS` | `owes` | fee-funded developer usage rewards can be activated after genesis without a hard fork ([audit](spec/audit/forkless-developer-rewards-20261123.md)) |
 | `G584-G6` | `superseded` | retired; superseded by the release-claim reading |
 
 **What remains is the release campaign.** Release truth is not authored. Each claim has named arms; an

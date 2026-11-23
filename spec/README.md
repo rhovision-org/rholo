@@ -123,3 +123,4 @@ The laws are validated against — not replacing — the Scala tests that alread
 
 - [Hard-fork tracker closeout](audit/hardfork-51-closeout.md): executable accountability and closure refusal.
 - [Current release gap matrix](audit/final-gap-matrix.md): exact tracker obligations and the pinned section-six reverse inventory; independent acceptance and sign-off remain separate.
+- [Forkless developer usage rewards — capability audit](audit/forkless-developer-rewards-20261123.md): what exists, what is missing and what becomes a hard fork if deferred, for #655; one row (the reserved fee share) must land before genesis.
