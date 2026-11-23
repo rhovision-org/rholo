@@ -39,7 +39,10 @@ pub const STORE_FORMAT_MARKER: &str = "store-format";
 // unowned — the same orphan one directory over — so downgrade must refuse.
 // C355 copies the v3 ledger, including fault history, before the body re-scan.
 // The re-scan then adopts only bodies that still have no disposition.
-pub const STORE_FORMAT_VERSION: u32 = 4;
+// Version 5 adds the divergence halt (F-U26-02, #658). A v4 binary would ignore the record and
+// could resume proposing on a divergent view, which is the state the halt exists to prevent — so
+// downgrade must refuse.
+pub const STORE_FORMAT_VERSION: u32 = 5;
 
 /// **The store-format decision, typed.** The marker on disk and this build's version determine one
 /// of five outcomes. `RefuseNewer` and `RefuseUnreadable` are the only refusals; `Stamp`, `Accept`
@@ -125,7 +128,7 @@ mod store_format_tests {
     #[test]
     fn an_absent_marker_is_a_stamp() {
         assert_eq!(
-            decide_store_format(None, 4),
+            decide_store_format(None, 5),
             StoreFormatDecision::Stamp { from: None }
         );
     }
@@ -133,7 +136,7 @@ mod store_format_tests {
     #[test]
     fn the_builds_own_format_is_accepted() {
         assert_eq!(
-            decide_store_format(Some("4"), 4),
+            decide_store_format(Some("5"), 5),
             StoreFormatDecision::Accept
         );
     }
@@ -141,24 +144,24 @@ mod store_format_tests {
     #[test]
     fn an_older_format_is_an_advance() {
         assert_eq!(
-            decide_store_format(Some("3\n"), 4),
-            StoreFormatDecision::Advance { from: 3 }
+            decide_store_format(Some("4\n"), 5),
+            StoreFormatDecision::Advance { from: 4 }
         );
     }
 
     #[test]
     fn a_newer_format_is_refused() {
         assert_eq!(
-            decide_store_format(Some("5"), 4),
-            StoreFormatDecision::RefuseNewer { on_disk: 5 }
+            decide_store_format(Some("6"), 5),
+            StoreFormatDecision::RefuseNewer { on_disk: 6 }
         );
-        assert!(decide_store_format(Some("5"), 4).refused());
+        assert!(decide_store_format(Some("6"), 5).refused());
     }
 
     #[test]
     fn an_unreadable_marker_is_refused() {
         assert_eq!(
-            decide_store_format(Some("four"), 4),
+            decide_store_format(Some("four"), 5),
             StoreFormatDecision::RefuseUnreadable {
                 marker: "four".to_string()
             }

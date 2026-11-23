@@ -7,9 +7,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use rchain_block_storage::dag::dag_storage::{
-    BlockDagStorage, DeployId, DeployIdPermit, DeployPermit, DeployerLookup, HaltRecord,
-    HealthCounters, ResetMarker, SelfReplayRecord, HALT_RECORD_KEY, HEALTH_COUNTERS_KEY,
-    LEGACY_BODY_SCAN_KEY, OWN_LATEST_KEY, RESET_MARKER_KEY, SELF_REPLAY_RECORD_KEY,
+    BlockDagStorage, DeployId, DeployIdPermit, DeployPermit, DeployerLookup, DivergenceHalt,
+    HaltRecord, HealthCounters, ResetMarker, SelfReplayRecord, DIVERGENCE_HALT_KEY,
+    HALT_RECORD_KEY, HEALTH_COUNTERS_KEY, LEGACY_BODY_SCAN_KEY, OWN_LATEST_KEY, RESET_MARKER_KEY,
+    SELF_REPLAY_RECORD_KEY,
 };
 
 use rchain_block_storage::dag::finalizer::Message;
@@ -1649,6 +1650,50 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
             return Ok(());
         };
         store.delete(&[HALT_RECORD_KEY.to_vec()]).await.map(|_| ())
+    }
+
+    /// **The divergence halt, under its own reserved key** (F-U26-02, #658). The same store and the
+    /// same refusing-default rule as the autopropose halt: a backend with nowhere to keep the record
+    /// must not look like one that recorded it. The caller has already decided to stop, so its
+    /// refusal becomes `durable: false` on the record the in-process latch holds.
+    async fn write_divergence_halt(&self, record: DivergenceHalt) -> Result<(), String> {
+        let Some(store) = &self.reset_marker else {
+            return Err(
+                "this DAG storage has no durable-records store attached, so this shard's divergence \
+                 halt would be honoured by this process and forgotten by the next"
+                    .to_string(),
+            );
+        };
+        store
+            .put(&[(DIVERGENCE_HALT_KEY.to_vec(), record.encode())])
+            .await
+    }
+
+    async fn read_divergence_halt(&self) -> Result<Option<DivergenceHalt>, String> {
+        let Some(store) = &self.reset_marker else {
+            return Err(
+                "this DAG storage has no durable-records store attached, so this shard's divergence \
+                 halt cannot be read — unknown, not empty"
+                    .to_string(),
+            );
+        };
+        let raw = store
+            .get(&[DIVERGENCE_HALT_KEY.to_vec()])
+            .await?
+            .into_iter()
+            .next()
+            .flatten();
+        raw.map(|bytes| DivergenceHalt::decode(&bytes)).transpose()
+    }
+
+    async fn clear_divergence_halt(&self) -> Result<(), String> {
+        let Some(store) = &self.reset_marker else {
+            return Ok(());
+        };
+        store
+            .delete(&[DIVERGENCE_HALT_KEY.to_vec()])
+            .await
+            .map(|_| ())
     }
 
     /// **The self-replay fault, under its own reserved key** (#564). The same store and the same

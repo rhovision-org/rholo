@@ -89,4 +89,60 @@ theorem a_note_without_a_stop_leaves_the_node_serving :
     ∃ σ, Relation.ReflTransGen noteOnlyStep serveFresh σ ∧ σ.fatal = true ∧ σ.serving = true :=
   ⟨⟨true, true⟩, Relation.ReflTransGen.single ⟨rfl, rfl⟩, rfl, rfl⟩
 
+/-!
+## The safe halt — stopping production, not service
+
+A spent restore budget is a divergence the node cannot repair without naming an anchor the network
+has not agreed. The node must stop **producing**, but it is still a truthful read-only server of the
+chain it holds. That is a third state beside the fatal stop above: `proposing` goes false, `serving`
+stays true, and the only way back is an operator's act.
+
+The model is the smallest machine with that content. The theorem that matters is the *absence* of an
+automatic exit: no safe-halt step sets `proposing` back to true, so a halt a crash left on disk is
+still a halt at the next boot.
+-/
+
+/-- A node that may still serve and may or may not propose. `fatal` is the law-76 stop above; a
+    safe halt leaves it false. -/
+structure HaltState where
+  fatal : Bool
+  serving : Bool
+  proposing : Bool
+deriving DecidableEq, Repr
+
+/-- A healthy node: nothing fatal, serving, proposing. -/
+def haltFresh : HaltState := ⟨false, true, true⟩
+
+/-- **The safe halt**: production stops, service does not. -/
+def safeHaltStep (s s' : HaltState) : Prop :=
+  s.fatal = false ∧ s.proposing = true ∧ s.serving = true ∧ s' = { s with proposing := false }
+
+/-- **The operator's resume**: the only step that turns production back on. -/
+def operatorResumeStep (s s' : HaltState) : Prop :=
+  s.fatal = false ∧ s.proposing = false ∧ s.serving = true ∧ s' = { s with proposing := true }
+
+/-- The halt machine's step relation: either a safe halt or the operator's resume. -/
+def haltStep (s s' : HaltState) : Prop := safeHaltStep s s' ∨ operatorResumeStep s s'
+
+/-- **The safe halt stops production and keeps the node serving.** -/
+theorem a_safe_halt_stops_production_not_serving {s s' : HaltState}
+    (h : safeHaltStep s s') : s'.proposing = false ∧ s'.serving = true := by
+  rcases h with ⟨_, _, hserv, rfl⟩
+  exact ⟨rfl, hserv⟩
+
+/-- **A safe halt has no automatic exit.** From the halted state, no safe-halt step is enabled; only
+    the operator's resume can leave it. -/
+theorem a_safe_halt_has_no_automatic_exit :
+    ¬ ∃ s', safeHaltStep ({ haltFresh with proposing := false }) s' := by
+  rintro ⟨s', h⟩
+  have hp : ({ haltFresh with proposing := false } : HaltState).proposing = true := h.2.1
+  simp [haltFresh] at hp
+
+/-- **Non-vacuity: an operator can resume a safe halt.** -/
+theorem a_safe_halt_can_be_resumed_by_an_operator :
+    ∃ s s', safeHaltStep haltFresh s ∧ operatorResumeStep s s' ∧ s'.proposing = true := by
+  refine ⟨{ haltFresh with proposing := false }, { haltFresh with proposing := true }, ?_, ?_, rfl⟩
+  · exact ⟨rfl, rfl, rfl, rfl⟩
+  · exact ⟨rfl, rfl, rfl, rfl⟩
+
 end Rchain

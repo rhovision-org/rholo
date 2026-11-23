@@ -155,6 +155,84 @@ pub struct HaltRecord {
 /// [`RESET_MARKER_KEY`] in the store they share.
 pub const HALT_RECORD_KEY: &[u8] = b"autopropose-halt";
 
+/// **A divergence the node cannot repair without an anchor the network has not agreed** (F-U26-02,
+/// issue #658).
+///
+/// A spent restore budget is the state this record exists for: the node has given up on a block and
+/// its descendants, and the only automatic exit would be a rewind to an anchor that no peer has
+/// proved. The node therefore stops **producing** and keeps **serving** the chain it holds; the
+/// record is what makes that stop outlive the process, and what names the block the operator must
+/// acknowledge to resume.
+///
+/// **Store-first.** The record is written before the in-process latch is set, so a crash between the
+/// two leaves a halt the next boot reads rather than a halt that existed only in a dead process.
+/// [`DivergenceHalt::durable`] says whether that write reached the store; `false` is "this process is
+/// honouring a halt the next one will not know about", said rather than implied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DivergenceHalt {
+    /// When the halt was taken, in milliseconds since the unix epoch.
+    pub at_ms: i64,
+    /// The refused block the operator must acknowledge.
+    pub block_hash: [u8; 32],
+    /// Its sequence number, so the surface can name the fork.
+    pub seq_num: i64,
+    /// **Monotone**: how many records this shard has given up on. The count is the history; the
+    /// flag is the state.
+    pub episodes: u64,
+    /// Whether the write that produced this record reached the store. Not encoded: a record read
+    /// back is durable by construction.
+    pub durable: bool,
+}
+
+/// The divergence halt's one key, a literal in the same durable-records store as the reset/halt keys.
+pub const DIVERGENCE_HALT_KEY: &[u8] = b"divergence-halt";
+
+impl DivergenceHalt {
+    /// `at_ms` (8) ++ block hash (32) ++ `seq_num` (8) ++ `episodes` (8). Fixed width, so a decode
+    /// cannot be ambiguous and a truncated or trailing value is refused rather than guessed at.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(56);
+        out.extend_from_slice(&self.at_ms.to_be_bytes());
+        out.extend_from_slice(&self.block_hash);
+        out.extend_from_slice(&self.seq_num.to_be_bytes());
+        out.extend_from_slice(&self.episodes.to_be_bytes());
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 56 {
+            return Err(format!(
+                "divergence halt: expected 56 bytes, got {}",
+                bytes.len()
+            ));
+        }
+        let at_ms = i64::from_be_bytes(
+            bytes[0..8]
+                .try_into()
+                .map_err(|_| "divergence halt: at_ms is not 8 bytes".to_string())?,
+        );
+        let mut block_hash = [0u8; 32];
+        block_hash.copy_from_slice(&bytes[8..40]);
+        let seq_num = i64::from_be_bytes(
+            bytes[40..48]
+                .try_into()
+                .map_err(|_| "divergence halt: seq_num is not 8 bytes".to_string())?,
+        );
+        let episodes = u64::from_be_bytes(
+            bytes[48..56]
+                .try_into()
+                .map_err(|_| "divergence halt: episodes is not 8 bytes".to_string())?,
+        );
+        Ok(Self {
+            at_ms,
+            block_hash,
+            seq_num,
+            episodes,
+            durable: true,
+        })
+    }
+}
+
 /// **The per-shard health counters that must survive a restart** (W-N10-02).
 ///
 /// **Why these three and not the rest.** The health surface carries counters of two lifetimes, and the
@@ -753,6 +831,29 @@ pub trait BlockDagStorage: Send + Sync {
     /// **Forget the halt** — the one way out, reached by `POST /api/v1/autopropose/resume` on the admin
     /// listener. The default does nothing, for the same reason the read answers `None`.
     async fn clear_halt_record(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// **Record a divergence halt** (F-U26-02, #658). The default refuses, like the halt's write: a
+    /// backend with nowhere to keep the record must not look like one that recorded it. The caller has
+    /// already decided to stop, so a refusal becomes `durable: false` on the record it latches rather
+    /// than an aborted halt.
+    async fn write_divergence_halt(&self, _record: DivergenceHalt) -> Result<(), String> {
+        Err(
+            "this DAG storage cannot record a divergence halt (no `write_divergence_halt` impl)"
+                .to_string(),
+        )
+    }
+
+    /// The divergence halt this shard took, if it took one. The default answers *no*, which is honest
+    /// for a backend that records nothing.
+    async fn read_divergence_halt(&self) -> Result<Option<DivergenceHalt>, String> {
+        Ok(None)
+    }
+
+    /// **Forget the divergence halt** — only the operator's acknowledgement of the named block clears
+    /// it. The default does nothing, for the same reason the read answers `None`.
+    async fn clear_divergence_halt(&self) -> Result<(), String> {
         Ok(())
     }
 

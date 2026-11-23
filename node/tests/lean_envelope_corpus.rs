@@ -318,6 +318,7 @@ fn dto_by_name(name: &str) -> Value {
             admin_http: false,
             consecutive_self_validation_failures: 0,
             self_validation_refusal: None,
+            divergence_halt: None,
             pool_quarantined: 0,
             autopropose_timer_halted: false,
             autopropose_timer_halt_episodes: 0,

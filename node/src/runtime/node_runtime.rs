@@ -2145,7 +2145,7 @@ async fn setup_shard_runtime(
     // #157: created **here**, before `setup_shard`, because that call builds the `BlockApiImpl` that
     // reports it and the autopropose loop below is what writes it. One cell per shard, shared by
     // `Clone`.
-    let propose_health = ProposeHealth::new();
+    let propose_health = ProposeHealth::new().with_shard_id(spec.shard_id.clone());
     // **This shard's finality-and-merge cells** (W-N10-02, W-N10-03) — created beside the proposer's,
     // for the same reason: the validation path writes them and the `BlockApiImpl` this shard builds
     // reports them, so the cell exists before either. `Clone` shares the cells rather than copying
@@ -2208,6 +2208,24 @@ async fn setup_shard_runtime(
     // **The self-replay fault latch, seeded from its own record** (#564): a previous process that
     // reached the reset/halt rung must not be retried by this one. The read is after the store exists
     // and before the timer spawn, the same placement the halt seed uses.
+    // **The divergence halt, seeded from its own record** (F-U26-02, #658): a block the previous
+    // process could not restore and could not rewind past is still a block this one cannot. A read
+    // that fails is logged and leaves the registry unfilled — "unknown", not "never halted" — the
+    // same policy the autopropose halt's seed keeps.
+    if let Err(e) = propose_health
+        .seed_divergence_halt_from_store(parts.dag.as_ref())
+        .await
+    {
+        log.warn(
+            LogSource::new("coop.rchain.node.runtime.Setup"),
+            &format!(
+                "could not read the divergence halt record for shard {}: {e} — this shard's halt \
+                 history is unknown, not empty",
+                spec.shard_id
+            ),
+        );
+    }
+
     if let Err(e) = propose_health
         .seed_self_replay_from_store(parts.dag.as_ref())
         .await

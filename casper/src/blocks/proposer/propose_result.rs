@@ -33,6 +33,13 @@ pub enum ProposeStatus {
     /// transient fault, and `POST /api/v1/autopropose/resume` does not clear it. The reason names
     /// the refused block.
     KeyEquivocationHalted(String),
+    /// **A spent restore budget halted production on this shard** (F-U26-02, #658): the node gave up
+    /// on a block it could not restore and has no anchor the network has agreed. The node keeps
+    /// serving the chain it holds; the only resume is the operator's acknowledgement of this block.
+    DivergenceHalted {
+        block: String,
+        seq: i64,
+    },
     /// **The durable record of this validator's own signatures is ahead of the round snapshot**
     /// (Law 122). A rewind or a light join dropped the block that carried a later sequence, so the
     /// snapshot's next number would duplicate one the network already has — an equivocation the
@@ -75,6 +82,13 @@ impl fmt::Display for ProposeStatus {
                 write!(
                     f,
                     "Proposal halted: this validator's key equivocated ({reason})"
+                )
+            }
+            ProposeStatus::DivergenceHalted { block, seq } => {
+                write!(
+                    f,
+                    "Proposal halted: the restore budget was spent on block {block} (seq {seq}); \
+                     serving continues, and the operator's acknowledgement is the only resume"
                 )
             }
             ProposeStatus::OwnSeqNotReconciled {

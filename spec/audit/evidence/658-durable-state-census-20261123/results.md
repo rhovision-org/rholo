@@ -63,3 +63,11 @@ row first. The final controls above are the ones recorded.
   Stage 4; F-U3-01's live-testnet drill remains a release-campaign item.
 - No live devnet or testnet arm was run for this pass. The census is a document-and-tree claim, and
   its two checkers are the evidence.
+
+## Later change — the divergence-halt key (C408, #658)
+
+Stage 4 added `DIVERGENCE_HALT_KEY` to the control-record store. `tools/emit-durable-states.sh` now
+derives **48** identifiers and Table D has **18** rows (8 auto-recover, 8 operator-action, 2
+safe-halt); the census surfaces owed fall 5 → 4 because D26-08 now names the `divergenceHalt` field.
+The Stage 1 run recorded above remains the `f9e509038` baseline; `durable-states.tsv` in this
+directory is the current set, which is what `--check` compares.
