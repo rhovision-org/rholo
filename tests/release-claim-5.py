@@ -339,16 +339,29 @@ def _status_variant(devnet: common.Devnet, deploy_id: str) -> str:
     return str(body)
 
 
+def _status_from_text(text: str) -> str | None:
+    """The exec-status variant in the CLI's JSON, normalised to the HTTP spelling."""
+    match = re.search(
+        r'"(processedWithSuccess|processedWithError|notProcessed|'
+        r'ProcessedWithSuccess|ProcessedWithError|NotProcessed)"', text)
+    if not match:
+        return None
+    return {
+        "processedwithsuccess": "ProcessedWithSuccess",
+        "processedwitherror": "ProcessedWithError",
+        "notprocessed": "NotProcessed",
+    }[match.group(1).lower()]
+
+
 def _grpc_status(devnet: common.Devnet, deploy_id: str) -> tuple[str, str]:
     """The gRPC `deployStatus` read through the CLI. A rendering failure falls back to HTTP."""
     result = subprocess.run(
         ["docker", "exec", devnet.node(0), "rnode", "--grpc-host", "localhost",
          "deploy-status", "--deploy-signature", deploy_id],
         text=True, capture_output=True, timeout=60)
-    text = result.stdout + result.stderr
-    match = re.search(r"\b(ProcessedWithSuccess|ProcessedWithError|NotProcessed)\b", text)
-    if result.returncode == 0 and match:
-        return match.group(1), "grpc"
+    status = _status_from_text(result.stdout + result.stderr)
+    if result.returncode == 0 and status is not None:
+        return status, "grpc"
     return _status_variant(devnet, deploy_id), "http-fallback"
 
 

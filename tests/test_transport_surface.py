@@ -71,6 +71,13 @@ class DeployRequest(unittest.TestCase):
         raw = b'POST /api/v1/deploy HTTP/1.1\r\nContent-Length: 5\r\n\r\n{"a"}'
         self.assertEqual(claim5._captured_body(raw), b'{"a"}')
 
+    def test_the_cli_status_variant_is_normalised(self) -> None:
+        self.assertEqual(
+            claim5._status_from_text('Deploy status: {"processedWithSuccess": {}}'),
+            "ProcessedWithSuccess")
+        self.assertEqual(claim5._status_from_text('{"NotProcessed": {}}'), "NotProcessed")
+        self.assertIsNone(claim5._status_from_text("no status here"))
+
 
 def _fixture() -> dict:
     return claim5.fixture("transport")
