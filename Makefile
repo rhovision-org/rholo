@@ -65,6 +65,7 @@ check-register:
 	tools/check-workflow-pins.sh
 	tools/check-review-ledger.sh --gate
 	tools/check-hazop-worksheet.sh --gate
+	python3 tools/check-durable-state-census.py --gate
 	tools/check-stall-coverage.py --gate
 	tools/check-spawn-observability.sh --gate
 
