@@ -409,7 +409,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — mixed N/N+1 binaries agree on a block's state, a populated store migrates, and a newer store is refused
 
-Reading: `safe` — spec/audit/evidence/rc7-local-20261122-8c3fa6d/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc7-local-20261123-e90cb02/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — a rolling fleet swap keeps one finalised chain through the mixed window and reaches the same head after the swap

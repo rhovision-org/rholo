@@ -1313,12 +1313,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "c971797ad5dd4dba89cf25e3c83c95ff5d5467911bf538ae3d5435f6b255bed7",
-          "finished_at": "2026-11-22T16:06:07Z",
+          "binary_sha256": "5c6946014a9869bc749d9ab436a8491319691c6effc33a21ba91db71430a44fd",
+          "finished_at": "2026-11-23T16:46:13Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc7-local-20261122-8c3fa6d/raw/claim.json",
+          "record": "spec/audit/evidence/rc7-local-20261123-e90cb02/raw/claim.json",
           "required": true,
-          "source_sha": "8c3fa6d747ffe9bbfa28a21763015adbe7e3b882",
+          "source_sha": "e90cb0211c36d1f37c0a5ce575079b04b4a870fe",
           "status": "pass"
         },
         "public": {

@@ -102,7 +102,7 @@ where a deviation is measured belongs in the placement table, at the end.
 | DE-15 | NO | The sync requester is consumed by the first attempt, and a failed sync sits in NodeSyncing with a serving API and no error | `C181`, `C337`; Law 81 | loss-blind-refusal | stuck | protocol-stall | The joiner never enters Running | R2: retry loop with a terminal signal | `Rchain.Sync.Join` | `casper/src/engine/node_syncing.rs::a_failed_sync_does_not_signal_the_node_out_of_syncing` |
 | DE-16 | OTHER THAN | A join completes by trusting fringe metadata the joiner cannot check | `C338`, Law 83 | unverified-trust | split | protocol-stall | State at the anchor is not the state that was signed | R1: derivable fringe is refused | `Rchain.Sync.Trust` | `casper/src/engine/node_syncing.rs::an_ancestry_fringe_that_is_not_the_derived_fringe_is_refused` |
 | DE-17 | BEFORE | A populated DAG with no stored certificate refuses to boot before it asks for the adopted one | `C403`, `C404`; Law 108 | recovery-before-anchor | terminal | protocol-stall | A restarted validator cannot start during its jail | R3: re-verify or fetch the adopted certificate | `Rchain.Sync.Checkpoint.law104` | `casper/src/engine/node_launch.rs::a_fetched_certificate_is_recorded_and_adopted` |
-| DE-18 | AS WELL AS | A mixed-store upgrade runs the new node while a prior-format contract path stalls | C402 residue; RC-7 local | mixed-version | terminal | protocol-stall | The upgrade reports success while the old path is dead | R3: refuse the mixed mode or migrate it | Law 53b | owed: the mixed-store fixture |
+| DE-18 | AS WELL AS | A mixed-store upgrade runs the new node while a prior-format contract path stalls | C402 residue; RC-7 local | mixed-version | terminal | protocol-stall | The upgrade reports success while the old path is dead | R3: refuse the mixed mode or migrate it | Law 53b | `casper/src/block_disposition.rs::v3_to_v4_preserves_fault_history_instead_of_adopting_it_as_pending` |
 | DE-19 | AFTER | A fleet upgrade leaves one validator on the old image after the window | RC-7 public; no run | mixed-version | split | protocol-stall | The fleet forks by version and finality stalls | R4: the fleet inventory is checked after the window | Law 51a | owed: the fleet-upgrade arm |
 
 ## Table B — representability matrix
@@ -187,7 +187,7 @@ height, not the height at the stop.
 | DE-17 | RC-6 | public | rc-public-fleet | owed | - |
 | DE-16 | RC-6 | off-host | rc-offhost | owed | - |
 | DE-09 | RC-6 | availability | rc-public-fleet | owed | - |
-| DE-18 | RC-7 | local | rc-harness-old-image | owed | - |
+| DE-18 | RC-7 | local | rc-harness-old-image | live | spec/audit/evidence/rc7-local-20261123-e90cb02/raw/claim.json |
 | DE-19 | RC-7 | public | rc-fleet-upgrade | owed | - |
 | DE-04 | RC-2 | stall-denominator | rc-stall-arms | live | spec/audit/evidence/rc2-stall-denominator-20261123-5b9685e/raw/claim.json |
 | DE-05 | RC-2 | stall-denominator | rc-stall-arms | live | spec/audit/evidence/rc2-stall-denominator-20261123-5b9685e/raw/claim.json |
@@ -201,7 +201,19 @@ refusal while the survivors held 200 of 200. The DE-06 `validator-set` row stays
 support refusals all report `supporting: 0`, so the exact two-thirds exposure was not exercised; the
 live DE-06 row on `stall-denominator` is the one that measured it.
 
-**Debt.** deviations: 19 · placement rows owed: 23 · required arms placed: 27/27 · falsifiers owed: 2.
+The DE-18 row is also a safeguard measurement, and its record says so. Validator 3 on the prior
+image finalised the first epoch boundary and installed a persistent contract; its store was kept,
+and the current binary re-opened it, re-read the pre-swap block's state triple and marker, executed
+the contract, and reached the common finalised head. The prior path was alive, so
+`deviation_observed` is false. The run does **not** cross a store-format boundary — both images
+write format 4 — so the migration half is pinned by
+`casper/src/block_disposition.rs::v3_to_v4_preserves_fault_history_instead_of_adopting_it_as_pending`,
+the contract-state wire half by `rholang/src/native_state.rs::params_wire_slots_are_append_only`,
+and the C402-shaped replay consequence by
+`casper/tests/determinism.rs::play_and_replay_agree_for_a_block_with_a_close_block_deploy`. DE-19
+stays `owed`: it needs the public fleet after the upgrade window.
+
+**Debt.** deviations: 19 · placement rows owed: 22 · required arms placed: 27/27 · falsifiers owed: 1.
 
 ## Outside the diagram
 
