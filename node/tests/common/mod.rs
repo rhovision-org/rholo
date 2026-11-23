@@ -176,7 +176,7 @@ pub fn joiner_conf(dir: &Path, ports: &[u16], bootstrap: &PeerNode) -> NodeConf 
     conf.standalone = false;
     // A joiner does not create a genesis, so the production-genesis gate is never reached.
     conf.dev_mode = false;
-    conf.protocol_client.bootstrap = bootstrap.clone();
+    conf.protocol_client.bootstrap = vec![bootstrap.clone()];
     conf.peers_discovery.port = ports[4] as i32;
     if ports.len() >= 6 {
         conf.api_server.port_grpc_external = ports[5] as i32;
