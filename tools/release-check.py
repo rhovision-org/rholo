@@ -117,6 +117,9 @@ def cmd_run(args) -> int:
                "--arm", arm_id, "--out", str(out)]
     if args.public_manifest:
         command += ["--public-manifest", args.public_manifest]
+    if getattr(args, "campaign_result", None) and arm_id in (
+            "bond-leave", "validator-set", "returner"):
+        command += ["--campaign-result", args.campaign_result]
     if args.old_image:
         command += ["--old-image", args.old_image]
     if args.keep:
@@ -214,6 +217,8 @@ def main(argv: list[str]) -> int:
     run.add_argument("--env", choices=ENVIRONMENTS)
     run.add_argument("--out")
     run.add_argument("--public-manifest")
+    run.add_argument("--campaign-result",
+                     help="a bond-leave campaign result.json shared by its three arms")
     run.add_argument("--old-image")
     run.add_argument("--keep", action="store_true")
     run.add_argument("--rehearse", action="store_true",

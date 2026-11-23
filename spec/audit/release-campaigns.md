@@ -19,12 +19,12 @@ cannot yet be made. No status is authored.
 |---|---|---|---|---|---|---|
 | `RC-1` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-1` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest and run `tools/release-check.py run --claim RC-1 --env public`; the driver submits the deploy and records retention across two epoch boundaries | `rc-public-fleet` |
-| `RC-1` | `bond-leave` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-1 --arm bond-leave` and commit its record; the arm's harness lands in `rc-bond-leave`. | `rc-bond-leave` |
+| `RC-1` | `bond-leave` | local | local-devnet | **safe** | — | — |
 | `RC-2` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-2` | `public` | public | public-live | **not-observed** | Run the operator's declared partition window on the public fleet. | `rc-public-fleet` |
 | `RC-2` | `multi-host` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm multi-host` and commit its record; the arm's harness lands in `rc-multi-host`. | `rc-multi-host` |
 | `RC-2` | `equivocation` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm equivocation` and commit its record; the arm's harness lands in `rc-equivocation`. | `rc-equivocation` |
-| `RC-2` | `validator-set` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm validator-set` and commit its record; the arm's harness lands in `rc-bond-leave`. | `rc-bond-leave` |
+| `RC-2` | `validator-set` | local | local-devnet | **safe** | — | — |
 | `RC-2` | `stall-denominator` | local | local-devnet | **safe** | — | — |
 | `RC-3` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-3` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
@@ -34,7 +34,7 @@ cannot yet be made. No status is authored.
 | `RC-4` | `public` | public | public-live | **not-observed** | Run `tools/release-check.py run --claim RC-4 --env public`; the driver performs the single-validator stop and restart and captures the boot ids itself. | `rc-public-fleet` |
 | `RC-4` | `multi-host` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm multi-host` and commit its record; the arm's harness lands in `rc-multi-host`. | `rc-multi-host` |
 | `RC-4` | `failover` | local | off-host-claim | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm failover` and commit its record; the arm's harness lands in `rc-failover`. | `rc-failover` |
-| `RC-4` | `returner` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm returner` and commit its record; the arm's harness lands in `rc-bond-leave`. | `rc-bond-leave` |
+| `RC-4` | `returner` | local | local-devnet | **safe** | — | — |
 | `RC-5` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-5` | `public` | public | public-live | **not-observed** | Supply the capped/unset pressure record from the public endpoint and proxy. | `rc-public-fleet` |
 | `RC-5` | `transport` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-5 --arm transport` and commit its record; the arm's harness lands in `rc-transport`. | `rc-transport` |
@@ -101,9 +101,8 @@ Reading: `not-observed` — no committed run record
 
 **Arm `bond-leave`** (local, `local-devnet`) — a bond and a withdrawal settle, activate at an epoch boundary, pay after quarantine, and the settlement marker is retained
 
-Reading: `not-observed` — no committed run record
-- `RC-1/bond-leave/observe` — no committed run record. **Next:** Run `python3 tools/release-check.py run --claim RC-1 --arm bond-leave` and commit its record; the arm's harness lands in `rc-bond-leave`.
-- Next PR: `rc-bond-leave`
+Reading: `safe` — spec/audit/evidence/rc1-bond-leave-20261123-38cd50e/raw/claim.json
+- No action: the reading is safe; carry the record forward.
 
 **Supersedes.** G584-G2, G584-G3, TA-C1
 
@@ -160,9 +159,8 @@ Reading: `not-observed` — no committed run record
 
 **Arm `validator-set`** (local, `local-devnet`) — every validator agrees on the bond set at each epoch boundary and the finality denominator is that set
 
-Reading: `not-observed` — no committed run record
-- `RC-2/validator-set/observe` — no committed run record. **Next:** Run `python3 tools/release-check.py run --claim RC-2 --arm validator-set` and commit its record; the arm's harness lands in `rc-bond-leave`.
-- Next PR: `rc-bond-leave`
+Reading: `safe` — spec/audit/evidence/rc2-validator-set-20261123-38cd50e/raw/claim.json
+- No action: the reading is safe; carry the record forward.
 
 **Arm `stall-denominator`** (local, `local-devnet`) — with exactly 200 of 300 bonded stake live, height advances while finality freezes and no settlement claims success; restarting the two stopped validators finalises the same deploy with no resubmission
 
@@ -276,9 +274,8 @@ Reading: `not-observed` — no committed run record
 
 **Arm `returner`** (local, `local-devnet`) — a validator down across a bond-change boundary rejoins the same finalised head without manual surgery
 
-Reading: `not-observed` — no committed run record
-- `RC-4/returner/observe` — no committed run record. **Next:** Run `python3 tools/release-check.py run --claim RC-4 --arm returner` and commit its record; the arm's harness lands in `rc-bond-leave`.
-- Next PR: `rc-bond-leave`
+Reading: `safe` — spec/audit/evidence/rc4-returner-20261123-38cd50e/raw/claim.json
+- No action: the reading is safe; carry the record forward.
 
 **Supersedes.** G584-G4, TA-C2, G428-M4
 

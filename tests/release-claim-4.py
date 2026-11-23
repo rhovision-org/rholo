@@ -206,12 +206,36 @@ def check(record: dict) -> tuple[str, list[str]]:
     return common.dispatch_arm(ARMS, record)
 
 
+def _run_returner(args, out: Path, record: dict) -> int:
+    """The RC-4 half of one bond-leave campaign."""
+    if getattr(args, "rehearse", False):
+        return common.not_run(out, record,
+                              "a rehearsal is not evidence for the returner arm")[1]
+    failure = common.preflight_failure(CLAIM_ID, "local", out, record)
+    if failure is not None:
+        return failure
+    try:
+        common.bond_leave_arm_run(out, record, "returner",
+                                  getattr(args, "campaign_result", None),
+                                  keep=getattr(args, "keep", False))
+    except common.ClaimError as error:
+        common.finish(record, "not run", [str(error)])
+        return common.write_record(out, record)[1]
+    except Exception as error:  # noqa: BLE001 - a failed harness is a measured failure
+        common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
+        return common.write_record(out, record)[1]
+    verdict, reasons = check(record)
+    common.finish(record, verdict, reasons)
+    return common.write_record(out, record)[1]
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", choices=("local", "public"))
     parser.add_argument("--arm")
     parser.add_argument("--out", required=True)
     parser.add_argument("--public-manifest")
+    parser.add_argument("--campaign-result")
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--cycles", type=int, default=2)
     parser.add_argument("--rehearse", action="store_true")
@@ -223,6 +247,8 @@ def run(argv: list[str]) -> int:
                                rehearsal=args.rehearse)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    if arm == "returner":
+        return _run_returner(args, out, record)
     if arm not in ("local", "public"):
         return common.not_run(
             out, record,

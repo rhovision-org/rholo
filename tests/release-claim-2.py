@@ -193,6 +193,24 @@ def _check_stall_denominator(record: dict) -> tuple[str, list[str]]:
     return common.evaluate(record, problems)
 
 
+def _check_validator_set(record: dict) -> tuple[str, list[str]]:
+    """The boundary set, plus the DE-06 series when the campaign could derive one."""
+    verdict, reasons = common.check_validator_set(record)
+    if verdict != "pass":
+        return verdict, reasons
+    observations = record.get("observations") or {}
+    series = observations.get("stall_series")
+    if not isinstance(series, list) or not series:
+        return verdict, reasons
+    return stall.verdict(record, {
+        "deviations": ["DE-06"],
+        "representation": "protocol-stall",
+        "shape": "void",
+        "cause": "unsatisfiable-requirement",
+        "rung": "R2",
+    })
+
+
 FIXTURES = {
     "local": lambda: _fixture_baseline("local"),
     "public": lambda: _fixture_baseline("public"),
@@ -206,7 +224,7 @@ ARMS = {
     "public": _check_baseline,
     "multi-host": common.check_multi_host_finality,
     "equivocation": common.check_equivocation,
-    "validator-set": common.check_validator_set,
+    "validator-set": _check_validator_set,
     "stall-denominator": _check_stall_denominator,
 }
 
@@ -244,22 +262,50 @@ def _run_stall(args, out: Path, record: dict) -> int:
     return common.write_record(out, record)[1]
 
 
+def _run_validator_set(args, out: Path, record: dict) -> int:
+    """The RC-2 half of one bond-leave campaign."""
+    if getattr(args, "rehearse", False):
+        return common.not_run(out, record,
+                              "a rehearsal is not evidence for the validator-set arm")[1]
+    failure = common.preflight_failure(CLAIM_ID, "local", out, record)
+    if failure is not None:
+        return failure
+    try:
+        common.bond_leave_arm_run(out, record, "validator-set",
+                                  getattr(args, "campaign_result", None),
+                                  keep=getattr(args, "keep", False))
+    except common.ClaimError as error:
+        common.finish(record, "not run", [str(error)])
+        return common.write_record(out, record)[1]
+    except Exception as error:  # noqa: BLE001 - a failed harness is a measured failure
+        common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
+        return common.write_record(out, record)[1]
+    verdict, reasons = check(record)
+    common.finish(record, verdict, reasons)
+    return common.write_record(out, record)[1]
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", choices=("local", "public"))
     parser.add_argument("--arm")
     parser.add_argument("--out", required=True)
     parser.add_argument("--public-manifest")
+    parser.add_argument("--campaign-result")
     parser.add_argument("--keep", action="store_true")
+    parser.add_argument("--rehearse", action="store_true")
     args = parser.parse_args(argv)
     arm = args.arm or args.env or "local"
     meta = common.claim_arm(CLAIM_ID, arm)
     environment = meta["environment"]
-    record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm)
+    record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm,
+                               rehearsal=getattr(args, "rehearse", False))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     if arm == "stall-denominator":
         return _run_stall(args, out, record)
+    if arm == "validator-set":
+        return _run_validator_set(args, out, record)
     if arm not in ("local", "public"):
         return common.not_run(
             out, record,
