@@ -314,8 +314,14 @@ class Devnet:
             text=True, capture_output=True)
         return result.returncode
 
-    def deploy(self, term: str, index: int = 0, timeout: float = 60) -> str:
-        """Submit one signed deploy through node `index`; return its id."""
+    def deploy(self, term: str, index: int = 0, timeout: float = 60,
+               valid_after: int | None = None) -> str:
+        """Submit one signed deploy through node `index`; return its id.
+
+        `valid_after` pins the signed `validAfterBlockNumber` instead of the node's current height.
+        A future value keeps the deploy pooled and unincludable until the chain catches up, which is
+        how the transport arm reads the signed bytes back before autopropose consumes them.
+        """
         container = self.node(index)
         status = self.target().status(index)
         write = subprocess.run(
@@ -323,11 +329,12 @@ class Devnet:
             input=term, text=True, capture_output=True, timeout=30)
         if write.returncode:
             raise ClaimError(f"deploy file write failed: {write.stderr[-800:]}")
+        after = status["latestBlockNumber"] if valid_after is None else valid_after
         result = subprocess.run(
             ["docker", "exec", container, "rnode", "--grpc-host", "localhost", "deploy",
              "--phlo-limit", "1000000", "--phlo-price", "1",
              "--private-key", DEPLOYER_PRIV, "--shard-id", status["shardId"],
-             "--valid-after-block-number", str(status["latestBlockNumber"]),
+             "--valid-after-block-number", str(after),
              "/tmp/release-claim.rho"],
             text=True, capture_output=True, timeout=timeout)
         match = re.search(r"DeployId is: ([0-9a-fA-F]+)", result.stdout + result.stderr)
@@ -1492,8 +1499,11 @@ def check_transport(record: dict) -> tuple[str, list[str]]:
         problems.append("transport: the deploy id is missing")
     triples = {(row.get("status"), row.get("settlement_stage"), row.get("error_class"))
                for row in surfaces if isinstance(row, dict)}
-    if len(triples) > 1:
-        problems.append(f"transport: the surfaces disagree on status/stage/error: {triples}")
+    successful = ("ProcessedWithSuccess", "finalizedSuccess", None)
+    if triples != {successful}:
+        problems.append(
+            f"transport: the surfaces read {sorted(triples)!r}, not the successful triple "
+            f"{successful!r}; a uniform refusal is not a transport pass")
     for row in surfaces:
         if not isinstance(row, dict):
             problems.append("transport: a surface row is not an object")

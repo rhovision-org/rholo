@@ -1,0 +1,1 @@
+{"ingress_rate":{"admitted":1,"code":8,"refused":1,"retry_after":null},"permissive":{"admitted":2,"refused":0},"pool_full":{"admitted":0,"code":8,"refused":1,"retry_after":1}}

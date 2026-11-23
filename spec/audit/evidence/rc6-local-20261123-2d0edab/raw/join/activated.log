@@ -1,0 +1,46 @@
+2026-11-23T17:49:59.256Z INFO  [coop.rchain.node.runtime.NodeRuntime] trying to open ports using UPnP....
+2026-11-23T17:49:59.257Z INFO  [coop.rchain.node.runtime.NodeRuntime] INFO - No gateway devices found
+2026-11-23T17:49:59.257Z INFO  [coop.rchain.node.runtime.NodeRuntime] No need to open any port
+2026-11-23T17:49:59.263Z INFO  [operator-risk] validator operator risk notice: an invalid block or proven equivocation can cost a stated share of your bond; an absent validator is not currently slashed but forfeits income and can stall finality, and enough silence stops the >2/3 quorum. Read TERMS.md.
+2026-11-23T17:49:59.263Z INFO  [resource-preflight] host resources: 21802 MiB available, cgroup v2, data dir 44200 MiB free, 1 rnode process(es), 24 CPU(s), 115 persisted block(s)
+2026-11-23T17:49:59.263Z WARN  [resource-preflight] no CPU quota is set for the node's cgroup; a busy host can starve it
+replay complete — starting listeners; the API answers once they are up
+2026-11-23T17:49:59.276Z INFO  [casper.engine.NodeLaunch] Reconnecting to existing network...
+2026-11-23T17:49:59.278Z WARN  [casper.engine.NodeLaunch] boot: the accepted fringe (1 block(s)) is a validated descendant of the certificate's fringe (4 block(s)); adopting the certificate as the base and re-deriving the window
+2026-11-23T17:49:59.289Z WARN  [coop.rchain.node.runtime.CheckpointCollector] /root: no checkpoint certificate this tick: the certificate is not quorate: 100 of 400 bonded stake signed (strictly more than two thirds is required)
+2026-11-23T17:49:59.291Z INFO  [casper.engine.NodeLaunch] published CURRENT_ROOT from the accepted anchor
+2026-11-23T17:49:59.292Z INFO  [casper.blocks.BlockDisposition] start-up disposition audit: 0 unsettled block(s) re-offered, 0 skipped for missing parents, 0 already inserted, 0 quarantined, 0 unreadable
+2026-11-23T17:49:59.292Z INFO  [casper.engine.NodeLaunch] start-up disposition audit: 0 pre-ledger body/bodies adopted, 0 re-offered, 0 skipped for missing parents, 0 still pending when the drain closed
+2026-11-23T17:49:59.292Z INFO  [casper.engine.NodeLaunch] Making a transition to Running state.
+2026-11-23T17:49:59.293Z INFO  [coop.rchain.node.runtime.DeployerIndex] /root: deployer index backfilled from 115 stored blocks
+2026-11-23T17:49:59.339Z INFO  [casper.blocks.Proposer] attestation at tip 30: licensed — nothing_to_finalize=false new_state_transition=true quorum_reachable=true cadence_due=false paced=true round=[04d8b6c3 04dbe32c 04ea3ce0 04f700a4] blocked_attempts=0 escape=false
+No pooled deploys; injecting dummy deploy for block #28
+[deploy] deployer=04f700a417754b77 ok cost=3 
+[pos] close_block 28 boundary=false epoch_length=10 max_active=100 bond=[1, 9223372036854775807]
+2026-11-23T17:49:59.446Z WARN  [casper.interpreter.validate] merge: 26 chains in scope (24 kept, 2 rejected; 1 rejected a cost-accounted chain); 2 chain(s) rejected as forks: their block did not see the whole final fringe (`Rchain.MergeScope.KeptRule`)
+[pos] close_block 28 boundary=false epoch_length=10 max_active=100 bond=[1, 9223372036854775807]
+2026-11-23T17:49:59.539Z INFO  [casper.protocol.CommUtil] Block hash e381092dd7f43d30873d33581bd399a7c2aff755b6114560fa06fa0b1075e6e5: transport accepted 1 initial, 0 retry; 0 failed of 1 peers (transport acceptance is not remote DAG admission)
+2026-11-23T17:49:59.539Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #28 (seq 27)
+2026-11-23T17:49:59.584Z INFO  [casper.protocol.CommUtil] Requested fork tip from peers
+2026-11-23T17:49:59.627Z INFO  [casper.engine.NodeRunning] Received request for block e381092dd7f43d30873d33581bd399a7c2aff755b6114560fa06fa0b1075e6e5 from rnode://e2358ac57f5f03251a68127367467be5f0cd6940@n457join-bootstrap?protocol=40400&discovery=40404. Response sent.
+2026-11-23T17:49:59.994Z INFO  [casper.blocks.BlockRetriever] Adding f2e4bde5410b7baeb46947073aef51441e1f7315a5642a5a7239607f0da3989e hash to RequestedBlocks because of HashBroadcastRecieved.
+2026-11-23T17:50:00.082Z INFO  [casper.blocks.BlockRetriever] Block f2e4bde5410b7baeb46947073aef51441e1f7315a5642a5a7239607f0da3989e marked as received.
+2026-11-23T17:50:00.152Z WARN  [casper.interpreter.validate] finality did not advance at tip 30: a layer exists but its supporting stake is not a supermajority — 0 of 400 (0 full partition(s) among 4 candidate(s) of a 4-sender partition); not full: 04d8b6c3, 04dbe32c, 04ea3ce0, 04f700a4
+2026-11-23T17:50:00.155Z WARN  [casper.interpreter.validate] merge: 24 chains in scope (22 kept, 2 rejected; 1 rejected a cost-accounted chain); 2 chain(s) rejected as forks: their block did not see the whole final fringe (`Rchain.MergeScope.KeptRule`)
+[pos] close_block 31 boundary=false epoch_length=10 max_active=100 bond=[1, 9223372036854775807]
+No pooled deploys; injecting dummy deploy for block #31
+[deploy] deployer=04f700a417754b77 ok cost=3 
+[pos] close_block 31 boundary=false epoch_length=10 max_active=100 bond=[1, 9223372036854775807]
+2026-11-23T17:50:00.236Z INFO  [casper.protocol.CommUtil] Block hash f2e4bde5410b7baeb46947073aef51441e1f7315a5642a5a7239607f0da3989e: transport accepted 1 initial, 0 retry; 0 failed of 1 peers (transport acceptance is not remote DAG admission)
+2026-11-23T17:50:00.282Z WARN  [casper.interpreter.validate] merge: 24 chains in scope (22 kept, 2 rejected; 1 rejected a cost-accounted chain); 2 chain(s) rejected as forks: their block did not see the whole final fringe (`Rchain.MergeScope.KeptRule`)
+[pos] close_block 31 boundary=false epoch_length=10 max_active=100 bond=[1, 9223372036854775807]
+2026-11-23T17:50:00.354Z INFO  [casper.protocol.CommUtil] Block hash 6c777d7fa8ea4b9416fc956328379edca20f4171627223aaae4f34ba9ce91b87: transport accepted 1 initial, 0 retry; 0 failed of 1 peers (transport acceptance is not remote DAG admission)
+2026-11-23T17:50:00.354Z INFO  [coop.rchain.node.instances.ProposerInstance] proposed and added block #31 (seq 28)
+2026-11-23T17:50:00.396Z INFO  [casper.blocks.BlockRetriever] Adding 406142103bf4e2240a36ff270fd5ea70e9a1e48659f468ef74aec08632009a16 hash to RequestedBlocks because of HashBroadcastRecieved.
+2026-11-23T17:50:00.475Z INFO  [casper.blocks.BlockRetriever] Adding 445693ff178cdce8136e4b22ab697e08538c42e8a0dde442d18b9d4f66794517 hash to RequestedBlocks because of HashBroadcastRecieved.
+2026-11-23T17:50:00.484Z INFO  [casper.blocks.BlockRetriever] Block 406142103bf4e2240a36ff270fd5ea70e9a1e48659f468ef74aec08632009a16 marked as received.
+2026-11-23T17:50:00.520Z INFO  [casper.engine.NodeRunning] Received request for block 6c777d7fa8ea4b9416fc956328379edca20f4171627223aaae4f34ba9ce91b87 from rnode://e2358ac57f5f03251a68127367467be5f0cd6940@n457join-bootstrap?protocol=40400&discovery=40404. Response sent.
+2026-11-23T17:50:00.524Z WARN  [casper.interpreter.validate] merge: 24 chains in scope (22 kept, 2 rejected; 1 rejected a cost-accounted chain); 2 chain(s) rejected as forks: their block did not see the whole final fringe (`Rchain.MergeScope.KeptRule`)
+2026-11-23T17:50:00.527Z INFO  [casper.blocks.BlockRetriever] Block 445693ff178cdce8136e4b22ab697e08538c42e8a0dde442d18b9d4f66794517 marked as received.
+[pos] close_block 31 boundary=false epoch_length=10 max_active=100 bond=[1, 9223372036854775807]
+2026-11-23T17:50:00.600Z INFO  [casper.protocol.CommUtil] Block hash 406142103bf4e2240a36ff270fd5ea70e9a1e48659f468ef74aec08632009a16: transport accepted 1 initial, 0 retry; 0 failed of 1 peers (transport acceptance is not remote DAG admission)
