@@ -87,11 +87,20 @@ pub fn build_pos_genesis(
         liveness_vote_window: proof_of_stake.liveness_vote_window,
         liveness_slash_severity: proof_of_stake.liveness_slash_severity,
     };
+    // **The developer fee reserve** (#655): a non-zero share is the reserve; a zero share is none, so
+    // a network that does not reserve installs exactly the genesis it installed before the field.
+    let developer_reserve = (proof_of_stake.developer_share != NonNegI64::zero()).then(|| {
+        rchain_rholang::native_state::DeveloperReserve {
+            share: proof_of_stake.developer_share,
+            address: proof_of_stake.developer_reserve_address.clone(),
+        }
+    });
     PosGenesis {
         bonds,
         trusted,
         params,
         dev_vesting,
+        developer_reserve,
     }
 }
 
@@ -187,6 +196,25 @@ pub fn genesis_descriptors_from_config(
     }))
 }
 
+/// **The configured developer fee reserve share** (#655), refused rather than clamped like the
+/// producer's share: a negative share is not a rule, and a share over the whole would pay more than a
+/// deploy burned. The joint bound with `executor-share`, and the need for an address, are checked by
+/// [`rchain_rholang::native_state::check_developer_reserve`] when the genesis is installed.
+pub fn developer_share_from_config(
+    gbd: &crate::conf::GenesisBlockData,
+) -> Result<NonNegI64, String> {
+    let share = NonNegI64::try_from(i64::from(gbd.developer_share))
+        .map_err(|e| format!("casper.genesis.developer-share must not be negative: {e}"))?;
+    if i64::from(share) > 10_000 {
+        return Err(format!(
+            "casper.genesis.developer-share is {} basis points, above the whole of what a deploy \
+             burns",
+            i64::from(share)
+        ));
+    }
+    Ok(share)
+}
+
 /// The configured PoS parameters with an already-parsed validator set.
 fn proof_of_stake_from_config(
     gbd: &crate::conf::GenesisBlockData,
@@ -240,6 +268,8 @@ fn proof_of_stake_from_config(
         pos_multi_sig_public_keys: gbd.pos_multi_sig_public_keys.clone(),
         pos_multi_sig_quorum: gbd.pos_multi_sig_quorum,
         pos_vault_pub_key: gbd.pos_vault_pub_key.clone(),
+        developer_share: developer_share_from_config(gbd)?,
+        developer_reserve_address: gbd.developer_reserve_address.clone(),
 
         liveness_absence_threshold: gbd.liveness_absence_threshold,
         liveness_jail_after_boundaries: i64::from(gbd.liveness_jail_after_boundaries),
@@ -692,6 +722,8 @@ mod tests {
             pos_multi_sig_public_keys: vec![],
             pos_multi_sig_quorum: 0,
             pos_vault_pub_key: String::new(),
+            developer_share: NonNegI64::zero(),
+            developer_reserve_address: String::new(),
             dev_tax_vesting_blocks: NonNegI64::zero(),
 
             liveness_absence_threshold: 0,
@@ -848,6 +880,8 @@ mod tests {
                 pos_multi_sig_public_keys: Vec::new(),
                 pos_multi_sig_quorum: 0,
                 pos_vault_pub_key: String::new(),
+                developer_share: 0,
+                developer_reserve_address: String::new(),
                 system_contract_pub_key: String::new(),
                 dev_tax_address: String::new(),
                 dev_tax_vesting_blocks: 0,

@@ -2623,6 +2623,7 @@ mod tests {
                 ..PosParams::default()
             },
             dev_vesting: None,
+            developer_reserve: None,
         };
         let vaults = [Vault {
             rev_address: RevAddress::from_public_key(&deployer).expect("deployer address"),
@@ -2726,6 +2727,7 @@ mod tests {
                 ..PosParams::default()
             },
             dev_vesting: None,
+            developer_reserve: None,
         };
         let vaults = [Vault {
             rev_address: RevAddress::from_public_key(&deployer).expect("deployer address"),
@@ -2899,6 +2901,7 @@ mod tests {
                 ..PosParams::default()
             },
             dev_vesting: None,
+            developer_reserve: None,
         };
         let vaults = [Vault {
             rev_address: RevAddress::from_public_key(&deployer).expect("deployer address"),
@@ -3057,6 +3060,7 @@ mod tests {
             trusted: BTreeSet::new(),
             params: PosParams::default(),
             dev_vesting: None,
+            developer_reserve: None,
         };
         let (_pre, genesis_post, _) = rm
             .compute_genesis(&[], &rand, BlockData::empty(), &pos, &[])
@@ -3173,6 +3177,7 @@ mod tests {
                 ..PosParams::default()
             },
             dev_vesting: None,
+            developer_reserve: None,
         };
         let (_pre, genesis_post, _) = rm
             .compute_genesis(&[], &rand, BlockData::empty(), &pos, &[])
@@ -3243,6 +3248,7 @@ mod tests {
             trusted: BTreeSet::new(),
             params: PosParams::default(),
             dev_vesting: None,
+            developer_reserve: None,
         };
         let vaults = [
             Vault {
@@ -3338,6 +3344,7 @@ mod tests {
             trusted: BTreeSet::new(),
             params: PosParams::default(),
             dev_vesting: None,
+            developer_reserve: None,
         };
         let vaults = [
             Vault {

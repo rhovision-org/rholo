@@ -61,6 +61,12 @@ pub struct ProofOfStake {
     /// straight into `PosParams`. `0` is no schedule at all, which is the rule for a chain with no
     /// allocation — see [`rchain_rholang::native_state::PosParams::dev_tax_vesting_blocks`].
     pub dev_tax_vesting_blocks: NonNegI64,
+    /// **The developer fee reserve's share** of each deploy's burn, in basis points (#655). `0` is no
+    /// reserve, which is what every genesis before the field installed.
+    pub developer_share: NonNegI64,
+    /// **Where the developer fee reserve is paid**, as a base58 REV address (#655). Required when
+    /// `developer_share` is non-zero; ignored when it is zero.
+    pub developer_reserve_address: String,
     /// Liveness enforcement's five parameters (RCHIP #55, Law 89), carried straight into
     /// [`rchain_rholang::native_state::PosParams`]. All zero is the pre-change rule (off).
     pub liveness_absence_threshold: i64,

@@ -732,6 +732,16 @@ pub struct Run {
     #[arg(long = "executor-share")]
     pub executor_share: Option<i32>,
 
+    /// **The developer fee reserve's share of a deploy's burned phlo, in basis points** (#655), paid to
+    /// `--developer-reserve-address`. A *genesis* parameter; `0` (the default) is no reserve.
+    #[arg(long = "developer-share")]
+    pub developer_share: Option<i32>,
+
+    /// **The REV address the developer fee reserve is paid to** (#655). Required with a non-zero
+    /// `--developer-share`; a *genesis* parameter.
+    #[arg(long = "developer-reserve-address")]
+    pub developer_reserve_address: Option<String>,
+
     /// **How long a validator may go without signing a block before an epoch stops paying it** (B4,
     /// #150), in heights; `0` is the contract's behaviour and the shipped default. It is the *knee* of
     /// the participation weight: the lag at which the weight reaches zero.

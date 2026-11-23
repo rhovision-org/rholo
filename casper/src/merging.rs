@@ -27,7 +27,7 @@ use rchain_models::validator::Validator;
 use rchain_rholang::merging::SidecarRecord;
 use rchain_rholang::merging::{calculate_number_channel_merge, read_mergeable_values};
 use rchain_rholang::native_state::{
-    pos_vault_key, pos_vault_put_action, vault_key, vault_put_action, NativeSystemState,
+    fee_split, pos_vault_key, pos_vault_put_action, vault_key, vault_put_action, NativeSystemState,
 };
 use rchain_rholang::storage::RhoHistoryRepository;
 use rchain_rholang::system_processes::BlockData;
@@ -1749,12 +1749,15 @@ async fn compose_cost_accounting(
     let store: Arc<InMemNativeStore> = Arc::new(InMemNativeStore::new(reader));
     // The producer's share travels in consensus state (`PosParams`), so the merge reads it where
     // `pay_executor` reads it rather than carrying a copy on the chain.
-    let share = i64::from(
-        NativeSystemState::new(Arc::clone(&store))
-            .params()
-            .await?
-            .executor_share,
-    );
+    let native = NativeSystemState::new(Arc::clone(&store));
+    let share = native.params().await?.executor_share;
+    // **And the developer fee reserve (#655)**, read from the same base state for the same reason. A
+    // chain whose genesis committed none has no leaf, and its composition is exactly what it was.
+    let reserve = native.developer_reserve().await?;
+    let developer_share = reserve
+        .as_ref()
+        .map(|r| r.share)
+        .unwrap_or(NonNegI64::zero());
 
     // The moves are accumulated per slot first, because the *skip* decision is per (chain, slot):
     // two chains can contribute to one slot with only one of them seen by the fold's winner.
@@ -1764,14 +1767,14 @@ async fn compose_cost_accounting(
     for chain in accepted {
         let host = chain.host_block;
         for moves in chain.cost_moves.values() {
-            // `pay_executor`'s own arithmetic, kept identical to it: the product of two `i64`s does
-            // not fit an `i64`, and a wrapped product would pay a different amount than the share
-            // names, silently, on a consensus path.
-            let payment = i128::from(moves.burned) * i128::from(share) / 10000;
-            let Some(payment) = i64::try_from(payment).ok() else {
-                return Err(format!("executor payment {} overflows i64", moves.burned));
-            };
-            let entries = [
+            // `pay_executor`'s own arithmetic — the same function, so the two cannot compute different
+            // amounts for one deploy (`fee_split` takes the products in `i128`).
+            let burned = NonNegI64::try_from(moves.burned)
+                .map_err(|e| format!("a deploy's burn is not an amount: {e}"))?;
+            let (payment, reserved) = fee_split(burned, share, developer_share)?;
+            let payment = i64::from(payment);
+            let reserved = i64::from(reserved);
+            let mut entries = vec![
                 // The deployer pays the charge and is refunded what it did not burn.
                 (
                     (
@@ -1781,11 +1784,12 @@ async fn compose_cost_accounting(
                     Some(moves.deployer.clone()),
                     -moves.charge + moves.refund,
                 ),
-                // The staking vault keeps what was burned, minus the producer's share of it.
+                // The staking vault keeps what was burned, minus the producer's share of it and the
+                // developer reserve's.
                 (
                     (rchain_rspace::native_store::PREFIX_POS, pos_vault_key()),
                     None,
-                    moves.charge - moves.refund - payment,
+                    moves.charge - moves.refund - payment - reserved,
                 ),
                 // The block's own signed sender is paid for producing it.
                 (
@@ -1797,6 +1801,18 @@ async fn compose_cost_accounting(
                     payment,
                 ),
             ];
+            // The developer fee reserve's address is credited its share (#655). Like the producer's
+            // vault it is an additive slot, so concurrent blocks compose on it rather than conflict.
+            if let Some(reserve) = &reserve {
+                entries.push((
+                    (
+                        rchain_rspace::native_store::PREFIX_VAULT,
+                        vault_key(&reserve.address),
+                    ),
+                    Some(reserve.address.clone()),
+                    reserved,
+                ));
+            }
             for (slot, address, delta) in entries {
                 if delta == 0 {
                     continue;
@@ -4360,6 +4376,14 @@ mod boundary_merge_tests {
 
     /// The issue's genesis - bonds 100/100/50, `--epoch-length 10` - with two funded deployers.
     async fn genesis() -> (RhoHistoryRepository, Blake2b256Hash) {
+        genesis_with_fees(0, None).await
+    }
+
+    /// [`genesis`], with a producer share and a developer fee reserve (#655).
+    async fn genesis_with_fees(
+        executor_share: i64,
+        developer_reserve: Option<rchain_rholang::native_state::DeveloperReserve>,
+    ) -> (RhoHistoryRepository, Blake2b256Hash) {
         let manager = InMemoryStoreManager::default();
         let repo = create_history_repository::<
             SortedProc,
@@ -4387,7 +4411,7 @@ mod boundary_merge_tests {
                     minimum_bond: nn(1),
                     maximum_bond: nn(100),
                     number_of_active_validators: 10,
-                    executor_share: nn(0),
+                    executor_share: nn(executor_share),
                     absence_slack: nn(0),
                     participation_grace: nn(0),
                     min_phlo_price: NonNegI64::zero(),
@@ -4400,6 +4424,7 @@ mod boundary_merge_tests {
                     liveness_slash_severity: 0,
                 },
                 dev_vesting: None,
+                developer_reserve,
             })
             .unwrap();
         for byte in [8, 9] {
@@ -4621,6 +4646,7 @@ mod boundary_merge_tests {
                     liveness_slash_severity: 2,
                 },
                 dev_vesting: None,
+                developer_reserve: None,
             })
             .unwrap();
         let repo = repo
@@ -5334,6 +5360,89 @@ mod boundary_merge_tests {
                  answerable for"
             );
         }
+    }
+
+    /// **The developer fee reserve composes through the merge** (#655). Two concurrent blocks each
+    /// carry a deploy that burned 1 000 on a genesis with the shipped producer share and a
+    /// 500-basis-point reserve. Cost accounting is composed at merge time, so the merged state must
+    /// pay the reserve **both** deploys' shares, from the same `fee_split` `pay_executor` uses, and the
+    /// staking vault must keep exactly the rest: the reserve's address is an additive slot, so the two
+    /// blocks compose on it rather than conflict.
+    #[tokio::test]
+    async fn the_developer_reserve_composes_across_concurrent_blocks() {
+        let reserve_addr = payer(7).1;
+        let (repo, base) = genesis_with_fees(
+            2500,
+            Some(rchain_rholang::native_state::DeveloperReserve {
+                share: nn(500),
+                address: reserve_addr.clone(),
+            }),
+        )
+        .await;
+        let read = |state: Blake2b256Hash| {
+            let repo = &repo;
+            async move {
+                NativeSystemState::new(Arc::new(InMemNativeStore::new(
+                    repo.get_native_reader(state).await,
+                )))
+            }
+        };
+        let base_vault = i64::from(read(base).await.pos_vault_balance().await.unwrap());
+        let chain = |n: u8, payer_byte: u8| {
+            Arc::new(DeployChainIndex {
+                first_deploy_ordinal: 0,
+                native_effects: Vec::new(),
+                host_block: Blake2b256Hash::from_bytes([n; 32]),
+                deploys_with_cost: BTreeSet::from([DeployIdWithCost {
+                    id: vec![n],
+                    cost: 1000,
+                }]),
+                pre_state_hash: base,
+                post_state_hash: base,
+                event_log_index: EventLogIndex::empty(),
+                state_changes: StateChange::empty(),
+                cost_moves: BTreeMap::from([(
+                    vec![n],
+                    CostMoves {
+                        deployer: payer(payer_byte).1,
+                        charge: 1000,
+                        refund: 0,
+                        burned: 1000,
+                    },
+                )]),
+                executor: payer(1).1,
+            })
+        };
+        let blocks = vec![
+            BlockIndex {
+                block_hash: block_hash(0xa0),
+                deploy_chains: vec![chain(0xa0, 8)],
+            },
+            BlockIndex {
+                block_hash: block_hash(0xb0),
+                deploy_chains: vec![chain(0xb0, 9)],
+            },
+        ];
+        let (merged, rejected) = merge(&repo, base, blocks, BTreeMap::new())
+            .await
+            .expect("two funded deploys merge");
+        assert!(rejected.is_empty(), "nothing conflicts: {rejected:?}");
+        let native = read(merged).await;
+        assert_eq!(
+            i64::from(native.vault_balance(&reserve_addr).await.unwrap().unwrap()),
+            100,
+            "five percent of each burn, from both blocks"
+        );
+        assert_eq!(
+            i64::from(native.vault_balance(&payer(1).1).await.unwrap().unwrap()),
+            500,
+            "a quarter of each burn to the producer"
+        );
+        assert_eq!(
+            i64::from(native.pos_vault_balance().await.unwrap()),
+            base_vault + 1400,
+            "and the staking vault keeps the 700 of each burn that neither share took"
+        );
     }
 
     /// **The 2026-11-23 halt (C405), at the merge boundary.** A spender's funding chain lost conflict

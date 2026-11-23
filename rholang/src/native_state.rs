@@ -279,6 +279,152 @@ impl DevVesting {
     }
 }
 
+/// Leaf key for the **developer fee reserve** (#655): the share of each deploy's burned phlo that is
+/// set aside for developer usage rewards, and the address it is paid to.
+///
+/// **Written once, at genesis, and only when the share is non-zero.** No native method writes it after
+/// that, for the reason [`PosParams`] is immutable: the share decides amounts, and amounts are consensus
+/// state. A genesis with no reserve leaves no leaf at all, so a chain that predates this key, or a network
+/// that does not reserve, has exactly the post-state it had before the key existed.
+///
+/// **Why a share fixed at genesis and not a setting.** A share that a genesis does not commit can never be
+/// enabled without a hard fork, because no deploy can write consensus parameters. So genesis commits a
+/// *ceiling*; how much of the reserve is actually paid to developers, and when, is the policy of whoever
+/// controls the recipient address, carried out with ordinary deploys (and `fundPot` returns any part a
+/// policy does not spend to the validator pot). See `spec/audit/forkless-developer-rewards-20261123.md`.
+pub fn pos_developer_reserve_key() -> Blake2b256Hash {
+    Blake2b256Hash::create(b"pos:developer-reserve")
+}
+
+/// The developer fee reserve, as stored under [`pos_developer_reserve_key`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeveloperReserve {
+    /// Basis points of a deploy's burned phlo paid to [`Self::address`], on the `executor_share`
+    /// convention. Never zero in a stored record (a zero share is no leaf), and never more than
+    /// `10000 - executor_share` (refused at genesis, so the two shares together never exceed the burn).
+    pub share: NonNegI64,
+    /// The recipient, as its base58 REV address — the spelling `vault_key` uses.
+    pub address: String,
+}
+
+impl DeveloperReserve {
+    /// Encode as `<share i64><u32 little-endian address length><address bytes>`.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(8 + 4 + self.address.len());
+        out.extend_from_slice(&i64::from(self.share).to_le_bytes());
+        out.extend_from_slice(&(self.address.len() as u32).to_le_bytes());
+        out.extend_from_slice(self.address.as_bytes());
+        out
+    }
+
+    /// Decode [`DeveloperReserve`]. Refuses a malformed record, a negative or zero share and a share
+    /// above the whole burn, for the reason [`decode_params`] refuses its fields rather than clamping
+    /// them: a corrupted leaf must not become a permissive reading of the same bytes.
+    pub fn decode(bytes: &[u8]) -> Result<DeveloperReserve, String> {
+        if bytes.len() < 12 {
+            return Err(format!(
+                "developer reserve record is {} bytes, too short",
+                bytes.len()
+            ));
+        }
+        let mut share = [0u8; 8];
+        share.copy_from_slice(&bytes[..8]);
+        let share = i64::from_le_bytes(share);
+        let len = u32::from_le_bytes(
+            bytes[8..12]
+                .try_into()
+                .map_err(|_| "developer reserve address length is malformed".to_string())?,
+        ) as usize;
+        if bytes.len() != 12 + len {
+            return Err(format!(
+                "developer reserve record is {} bytes, expected {}",
+                bytes.len(),
+                12 + len
+            ));
+        }
+        if share <= 0 || share > 10_000 {
+            return Err(format!(
+                "developer reserve share is {share} basis points; a stored reserve is between 1 and 10000"
+            ));
+        }
+        let address = String::from_utf8(bytes[12..].to_vec())
+            .map_err(|e| format!("the developer reserve address is not UTF-8: {e}"))?;
+        Ok(DeveloperReserve {
+            share: NonNegI64::try_from(share)
+                .map_err(|e| format!("developer reserve share: {e}"))?,
+            address,
+        })
+    }
+}
+
+/// **How one deploy's burn is split** (B2 #150, #655): `(producer, reserve)`, each
+/// `burned * share / 10000` in exact integer arithmetic, and what is left stays in the staking vault for
+/// the epoch pot. Shared by [`NativeSystemState::pay_executor`] and the merge's cost-accounting
+/// composition, so the two cannot compute different amounts for the same deploy.
+///
+/// The products are taken in `i128`: an `i64` amount times an `i64` share does not fit an `i64`, and a
+/// wrapped product would pay a different amount than the share names, silently, on a consensus path.
+/// A pair of shares above the whole burn is refused rather than paid: the genesis rule
+/// ([`check_developer_reserve`]) keeps it from being installed, and this is the second wall.
+pub fn fee_split(
+    burned: NonNegI64,
+    executor_share: NonNegI64,
+    developer_share: NonNegI64,
+) -> Result<(NonNegI64, NonNegI64), String> {
+    let burned = i128::from(i64::from(burned));
+    let executor = i128::from(i64::from(executor_share));
+    let developer = i128::from(i64::from(developer_share));
+    if executor + developer > 10_000 {
+        return Err(format!(
+            "executor share {executor} and developer share {developer} exceed the 10000 basis points \
+             a deploy burns"
+        ));
+    }
+    let payment = checked_i64(burned * executor / 10000, "executor payment")?;
+    let reserved = checked_i64(burned * developer / 10000, "developer reserve payment")?;
+    Ok((
+        NonNegI64::try_from(payment).map_err(|e| format!("payExecutor: {e}"))?,
+        NonNegI64::try_from(reserved).map_err(|e| format!("developer reserve: {e}"))?,
+    ))
+}
+
+/// **The genesis rule for a developer fee reserve** (#655): `None` and a zero share are both "no
+/// reserve"; a non-zero share needs a REV address, and the producer's share and the reserve together may
+/// not exceed the whole of what a deploy burns. Applied by [`NativeSystemState::install_genesis`], which
+/// both the ceremony and a replaying node call, so the two cannot disagree about which genesis is valid.
+pub fn check_developer_reserve(
+    params: &PosParams,
+    reserve: Option<&DeveloperReserve>,
+) -> Result<(), String> {
+    let Some(reserve) = reserve else {
+        return Ok(());
+    };
+    let share = i64::from(reserve.share);
+    if share == 0 {
+        return Ok(());
+    }
+    if share > 10_000 {
+        return Err(format!(
+            "developer-share is {share} basis points, above the whole of what a deploy burns"
+        ));
+    }
+    let executor = i64::from(params.executor_share);
+    if executor + share > 10_000 {
+        return Err(format!(
+            "executor-share {executor} and developer-share {share} together exceed the 10000 basis \
+             points a deploy burns"
+        ));
+    }
+    if RevAddress::parse(&reserve.address).is_err() {
+        return Err(format!(
+            "developer-reserve-address {:?} is not a REV address, and a non-zero developer-share \
+             needs one",
+            reserve.address
+        ));
+    }
+    Ok(())
+}
+
 /// How much of `allocation` has vested at `height`, over a schedule of `duration` blocks from genesis
 /// (**Law 79**).
 ///
@@ -968,6 +1114,10 @@ pub struct PosGenesis {
     /// path and not the other. The amount lands in the **vesting** account, not in a vault — it is not
     /// spendable until it vests.
     pub dev_vesting: Option<(String, NonNegI64)>,
+    /// **The developer fee reserve** (#655), or `None` for a genesis that reserves nothing. Carried here
+    /// for the reason `dev_vesting` is: it is native genesis state, written by
+    /// [`NativeSystemState::install_genesis`] on both the ceremony's path and a replaying node's.
+    pub developer_reserve: Option<DeveloperReserve>,
 }
 
 /// What a boundary's liveness prelude changed. The `jailed` set is the one the active-set draw
@@ -1703,6 +1853,18 @@ impl NativeSystemState {
         }
     }
 
+    /// Read the developer fee reserve (#655), if this chain's genesis committed one.
+    pub async fn developer_reserve(&self) -> Result<Option<DeveloperReserve>, String> {
+        match self
+            .store
+            .get(PREFIX_POS, &pos_developer_reserve_key())
+            .await?
+        {
+            None => Ok(None),
+            Some(bytes) => DeveloperReserve::decode(&bytes).map(Some),
+        }
+    }
+
     /// **The total REV this node's state holds, over every address it can see** (AUDIT C109).
     ///
     /// This is the invariant whose absence let the negative-`phlo_limit` mint live: the existing
@@ -1847,6 +2009,8 @@ impl NativeSystemState {
         // Computed before anything is written, so a genesis whose bond sum does not fit an `i64`
         // leaves the store untouched rather than half-installed.
         let bond_sum = genesis.bond_sum()?;
+        // Checked before anything is written, for the same reason as the bond sum.
+        check_developer_reserve(&genesis.params, genesis.developer_reserve.as_ref())?;
         let trusted: BTreeSet<Validator> = if genesis.trusted.is_empty() {
             genesis.bonds.keys().copied().collect()
         } else {
@@ -1880,6 +2044,15 @@ impl NativeSystemState {
                 unreleased: *amount,
             })),
             None => self.set_dev_vesting(None),
+        }
+        // **The developer fee reserve** (#655). Written only when the share is non-zero, and not
+        // deleted otherwise: a genesis that reserves nothing must produce exactly the post-state it
+        // produced before the key existed, so it touches nothing.
+        if let Some(reserve) = &genesis.developer_reserve {
+            if reserve.share != NonNegI64::zero() {
+                self.store
+                    .put(PREFIX_POS, pos_developer_reserve_key(), reserve.encode());
+            }
         }
         Ok(())
     }
@@ -3614,27 +3787,42 @@ impl NativeSystemState {
         burned: NonNegI64,
     ) -> Result<Result<(), String>, String> {
         let share = i64::from(self.params().await?.executor_share);
-        // `i128`, because the product of an `i64`-bounded amount and a `i64`-bounded share is not an
-        // `i64` — and a wrapped product here would pay the producer a *different* amount than the one
-        // the share names, silently, on a consensus path.
-        let payment = i128::from(i64::from(burned)) * i128::from(share) / 10000;
-        let payment = checked_i64(payment, "executor payment")?;
-        let payment = NonNegI64::try_from(payment).map_err(|e| format!("payExecutor: {e}"))?;
-        if payment == NonNegI64::zero() {
-            return Ok(Ok(()));
-        }
-        let address = RevAddress::from_public_key(executor)
-            .ok_or_else(|| "payExecutor: invalid executor public key".to_string())?
-            .to_base58();
-        self.debit_pos_vault(payment).await?;
-        let balance = self
-            .vault_balance(&address)
-            .await?
+        let share = NonNegI64::try_from(share)
+            .map_err(|e| format!("payExecutor: executor_share is not a share: {e}"))?;
+        let reserve = self.developer_reserve().await?;
+        let developer_share = reserve
+            .as_ref()
+            .map(|r| r.share)
             .unwrap_or(NonNegI64::zero());
-        self.set_vault_balance(
-            &address,
-            balance_plus(balance, i64::from(payment), "payExecutor")?,
-        );
+        let (payment, reserved) = fee_split(burned, share, developer_share)?;
+        if payment != NonNegI64::zero() {
+            let address = RevAddress::from_public_key(executor)
+                .ok_or_else(|| "payExecutor: invalid executor public key".to_string())?
+                .to_base58();
+            self.debit_pos_vault(payment).await?;
+            let balance = self
+                .vault_balance(&address)
+                .await?
+                .unwrap_or(NonNegI64::zero());
+            self.set_vault_balance(
+                &address,
+                balance_plus(balance, i64::from(payment), "payExecutor")?,
+            );
+        }
+        // **The developer fee reserve** (#655): the same move, to the address the genesis committed.
+        // It is paid here, in the same native step as the producer's share, so it needs no system
+        // deploy of its own and play and replay compute it from the same two inputs.
+        if let (Some(reserve), true) = (reserve, reserved != NonNegI64::zero()) {
+            self.debit_pos_vault(reserved).await?;
+            let balance = self
+                .vault_balance(&reserve.address)
+                .await?
+                .unwrap_or(NonNegI64::zero());
+            self.set_vault_balance(
+                &reserve.address,
+                balance_plus(balance, i64::from(reserved), "developer reserve")?,
+            );
+        }
         Ok(Ok(()))
     }
 
@@ -3693,6 +3881,7 @@ mod tests {
                 trusted: trusted.iter().copied().collect(),
                 params,
                 dev_vesting: None,
+                developer_reserve: None,
             })
             .unwrap();
         for (v, _) in pool {
@@ -4759,6 +4948,7 @@ mod tests {
                     recipient.to_string(),
                     NonNegI64::try_from(allocation).unwrap(),
                 )),
+                developer_reserve: None,
             })
             .unwrap();
 
@@ -5893,6 +6083,7 @@ mod tests {
                     ..PosParams::default()
                 },
                 dev_vesting: None,
+                developer_reserve: None,
             })
             .unwrap();
         let staking_before = i64::from(native.pos_vault_balance().await.unwrap());
@@ -5941,6 +6132,7 @@ mod tests {
                 trusted: BTreeSet::from([validator]),
                 params: PosParams::default(),
                 dev_vesting: None,
+                developer_reserve: None,
             })
             .unwrap();
         let before = i64::from(no_share.pos_vault_balance().await.unwrap());
@@ -5958,6 +6150,172 @@ mod tests {
             None,
             "a share of zero does not even create the producer's vault"
         );
+    }
+
+    /// A genesis with a developer fee reserve (#655) of `share` basis points next to the shipped
+    /// producer share, paying `reserve_addr`.
+    fn reserve_genesis(validator: Validator, share: i64, reserve_addr: &str) -> PosGenesis {
+        PosGenesis {
+            bonds: BTreeMap::from([(validator, nn(100))]),
+            trusted: BTreeSet::from([validator]),
+            params: PosParams {
+                executor_share: nn(2500),
+                ..PosParams::default()
+            },
+            dev_vesting: None,
+            developer_reserve: Some(DeveloperReserve {
+                share: nn(share),
+                address: reserve_addr.to_string(),
+            }),
+        }
+    }
+
+    /// **The developer fee reserve is paid with the producer's share, out of the same burn** (#655),
+    /// and it is a transfer: the staking vault loses exactly what the producer and the reserve gain.
+    /// This is the Rust side of `payFees_conserves` (`spec/Rchain/Pos.lean`).
+    #[tokio::test]
+    async fn the_developer_reserve_is_paid_a_share_of_what_the_deploy_burned() {
+        let native = NativeSystemState::new(Arc::new(InMemNativeStore::empty()));
+        let producer = PublicKey::new(vec![9u8; 65]);
+        let producer_addr = RevAddress::from_public_key(&producer).unwrap().to_base58();
+        let reserve_addr = RevAddress::from_public_key(&PublicKey::new(vec![7u8; 65]))
+            .unwrap()
+            .to_base58();
+        let validator = validator(1);
+        native
+            .install_genesis(&reserve_genesis(validator, 500, &reserve_addr))
+            .unwrap();
+        assert_eq!(
+            native.developer_reserve().await.unwrap(),
+            Some(DeveloperReserve {
+                share: nn(500),
+                address: reserve_addr.clone()
+            }),
+            "the genesis committed the reserve"
+        );
+        // The burned 1 000 is in the vault, as `pre_charge`/`refund` leave it.
+        native.credit_pos_vault(nn(1000)).await.unwrap();
+        let staking_before = i64::from(native.pos_vault_balance().await.unwrap());
+        native
+            .pay_executor(&producer, nn(1000))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            i64::from(native.vault_balance(&producer_addr).await.unwrap().unwrap()),
+            250,
+            "a quarter to the producer"
+        );
+        assert_eq!(
+            i64::from(native.vault_balance(&reserve_addr).await.unwrap().unwrap()),
+            50,
+            "five percent to the reserve"
+        );
+        assert_eq!(
+            i64::from(native.pos_vault_balance().await.unwrap()),
+            staking_before - 300,
+            "and exactly those 300 left the staking vault; the 700 stays for the epoch pot"
+        );
+        assert_eq!(
+            native.bonds().await.unwrap().get(&validator),
+            Some(&nn(100)),
+            "the bond is not a payment source"
+        );
+    }
+
+    /// **A zero share is no reserve, and leaves no trace** (#655): no leaf is written, so a genesis
+    /// that reserves nothing produces exactly the native state it produced before the key existed,
+    /// and `pay_executor` pays the producer alone.
+    #[tokio::test]
+    async fn a_zero_developer_share_writes_no_leaf_and_pays_nothing() {
+        let native = NativeSystemState::new(Arc::new(InMemNativeStore::empty()));
+        let reserve_addr = RevAddress::from_public_key(&PublicKey::new(vec![7u8; 65]))
+            .unwrap()
+            .to_base58();
+        native
+            .install_genesis(&reserve_genesis(validator(1), 0, &reserve_addr))
+            .unwrap();
+        assert_eq!(native.developer_reserve().await.unwrap(), None);
+        native.credit_pos_vault(nn(1000)).await.unwrap();
+        native
+            .pay_executor(&PublicKey::new(vec![9u8; 65]), nn(1000))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(native.vault_balance(&reserve_addr).await.unwrap(), None);
+    }
+
+    /// **The genesis refuses a reserve it could not honour** (#655): shares that together exceed the
+    /// whole burn (the bound `fee_split_le_burned` needs, and `shares_above_the_whole_overpay` shows
+    /// is load-bearing), and a non-zero share with no REV address to pay. Refused before anything is
+    /// written, so a refused genesis leaves the store untouched.
+    #[tokio::test]
+    async fn a_developer_reserve_the_genesis_cannot_honour_is_refused() {
+        let reserve_addr = RevAddress::from_public_key(&PublicKey::new(vec![7u8; 65]))
+            .unwrap()
+            .to_base58();
+        let over = NativeSystemState::new(Arc::new(InMemNativeStore::empty()));
+        let err = over
+            .install_genesis(&reserve_genesis(validator(1), 7501, &reserve_addr))
+            .expect_err("2500 + 7501 is more than a deploy burns");
+        assert!(err.contains("exceed"), "{err}");
+        assert_eq!(over.params().await.unwrap(), PosParams::default());
+        assert_eq!(over.developer_reserve().await.unwrap(), None);
+
+        let no_address = NativeSystemState::new(Arc::new(InMemNativeStore::empty()));
+        let err = no_address
+            .install_genesis(&reserve_genesis(validator(1), 500, ""))
+            .expect_err("a reserve needs somewhere to go");
+        assert!(err.contains("not a REV address"), "{err}");
+
+        // The boundary itself is accepted: the two shares may take the whole burn.
+        NativeSystemState::new(Arc::new(InMemNativeStore::empty()))
+            .install_genesis(&reserve_genesis(validator(1), 7500, &reserve_addr))
+            .expect("2500 + 7500 is exactly the whole");
+    }
+
+    /// **The split is one function**, shared by `pay_executor` and the merge's composition: exact
+    /// integers, each share floored, and a pair of shares above the whole refused.
+    #[test]
+    fn the_fee_split_floors_each_share_and_refuses_more_than_the_whole() {
+        assert_eq!(
+            fee_split(nn(999), nn(2500), nn(500)).unwrap(),
+            (nn(249), nn(49))
+        );
+        assert_eq!(
+            fee_split(nn(1000), nn(2500), nn(0)).unwrap(),
+            (nn(250), nn(0))
+        );
+        assert!(fee_split(nn(1000), nn(9000), nn(2000)).is_err());
+        // `i64::MAX` burned at the whole share does not wrap.
+        let max = NonNegI64::try_from(i64::MAX).unwrap();
+        assert_eq!(fee_split(max, nn(0), nn(10_000)).unwrap().1, max);
+    }
+
+    /// **A stored reserve decodes to what was encoded, and a corrupted one is refused** rather than
+    /// read permissively.
+    #[test]
+    fn a_developer_reserve_record_round_trips_and_refuses_corruption() {
+        let reserve = DeveloperReserve {
+            share: nn(500),
+            address: "1111abc".to_string(),
+        };
+        assert_eq!(
+            DeveloperReserve::decode(&reserve.encode()).unwrap(),
+            reserve
+        );
+        let mut zero = reserve.encode();
+        zero[..8].copy_from_slice(&0i64.to_le_bytes());
+        assert!(
+            DeveloperReserve::decode(&zero).is_err(),
+            "a stored zero is not a reserve"
+        );
+        let mut over = reserve.encode();
+        over[..8].copy_from_slice(&10_001i64.to_le_bytes());
+        assert!(DeveloperReserve::decode(&over).is_err());
+        let mut short = reserve.encode();
+        short.pop();
+        assert!(DeveloperReserve::decode(&short).is_err());
     }
 
     #[tokio::test]
@@ -7192,6 +7550,7 @@ mod epoch_seed_writer_tests {
                     ..PosParams::default()
                 },
                 dev_vesting: None,
+                developer_reserve: None,
             })
             .unwrap();
         native
@@ -8096,6 +8455,7 @@ mod delegation_tests {
                     ..PosParams::default()
                 },
                 dev_vesting: None,
+                developer_reserve: None,
             })
             .unwrap();
         native
@@ -9547,6 +9907,7 @@ mod liveness_tests {
                 trusted: (1..=4).map(validator).collect(),
                 params,
                 dev_vesting: None,
+                developer_reserve: None,
             })
             .unwrap();
         native

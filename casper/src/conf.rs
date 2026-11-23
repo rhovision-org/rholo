@@ -374,6 +374,14 @@ pub struct GenesisBlockData {
     /// A config written before this key resolves to `0` — no schedule — which is the rule for a chain
     /// with no allocation, and the only rule a chain that predates the field could have run.
     pub dev_tax_vesting_blocks: i64,
+    /// **The developer fee reserve's share of each deploy's burn**, in basis points (#655). `0` is no
+    /// reserve. A genesis parameter for the reason `executor_share` is, and for a stronger one: a share
+    /// a genesis does not commit can never be enabled without a hard fork, because no deploy can write
+    /// consensus parameters. `executor_share + developer_share` may not exceed `10000`.
+    pub developer_share: i32,
+    /// **The REV address the developer fee reserve is paid to** (#655). Required when
+    /// `developer_share` is non-zero; ignored when it is zero.
+    pub developer_reserve_address: String,
     /// Liveness enforcement's five parameters (RCHIP #55, Law 89). All zero is the shipped
     /// pre-change rule; a network arms the mechanism at genesis.
     pub liveness_absence_threshold: i64,
@@ -409,6 +417,8 @@ mod tests {
             system_contract_pub_key: String::new(),
             dev_tax_address: String::new(),
             dev_tax_vesting_blocks: 0,
+            developer_share: 0,
+            developer_reserve_address: String::new(),
 
             liveness_absence_threshold: 0,
             liveness_jail_after_boundaries: 0,

@@ -439,6 +439,16 @@ fn genesis_block_data_from_hocon(h: &Hocon) -> Result<GenesisBlockData, String> 
             Some(v) => to_i64(v)?,
             None => 0,
         },
+        // The developer fee reserve (#655): optional, and its absence is the rule a config written before
+        // the keys could describe — no reserve.
+        developer_share: match get_opt(h, "developer-share") {
+            Some(v) => to_i32(v)?,
+            None => 0,
+        },
+        developer_reserve_address: match get_opt(h, "developer-reserve-address") {
+            Some(v) => to_string(v)?,
+            None => String::new(),
+        },
 
         // Liveness enforcement (RCHIP #55, Law 89): optional and off by default. A config written
         // before these keys resolves to the shipped rule — no jail, no vote.
@@ -540,6 +550,12 @@ fn genesis_block_data_over(
     }
     if let Some(v) = get_opt(h, "dev-tax-vesting-blocks") {
         out.dev_tax_vesting_blocks = to_i64(v)?;
+    }
+    if let Some(v) = get_opt(h, "developer-share") {
+        out.developer_share = to_i32(v)?;
+    }
+    if let Some(v) = get_opt(h, "developer-reserve-address") {
+        out.developer_reserve_address = to_string(v)?;
     }
     if let Some(v) = get_opt(h, "liveness-absence-threshold") {
         out.liveness_absence_threshold = to_i64(v)?;
@@ -958,6 +974,8 @@ mod tests {
             system_contract_pub_key: "system".to_string(),
             dev_tax_address: String::new(),
             dev_tax_vesting_blocks: 0,
+            developer_share: 0,
+            developer_reserve_address: String::new(),
 
             liveness_absence_threshold: 0,
             liveness_jail_after_boundaries: 0,

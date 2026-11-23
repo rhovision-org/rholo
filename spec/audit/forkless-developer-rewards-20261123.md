@@ -58,6 +58,11 @@ evidence for it, not its witness, and it does not move the row.
    two installs of identical source by different deploys log distinct consume hashes, and that an
    invocation's COMM resolves to exactly one installing deploy.
 
+**Status of row 4 after PR-B.** The developer fee reserve (`developer-share`,
+`developer-reserve-address`, the `pos:developer-reserve` leaf, and the split in `pay_executor` and the
+merge composition) supplies the mechanism. A genesis with a zero share still has no reserve, so the
+row is closed for a given network only if its genesis commits a non-zero share.
+
 ## Non-claims
 
 This record does not show that any reward can be activated, that the treasury is secure, that
