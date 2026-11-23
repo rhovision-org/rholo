@@ -23,6 +23,10 @@ _spec = importlib.util.spec_from_file_location(
     "release_claim_common", ROOT / "tests" / "release_claim_common.py")
 common = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(common)
+_stall_spec = importlib.util.spec_from_file_location(
+    "stall_series", ROOT / "tests" / "stall_series.py")
+stall = importlib.util.module_from_spec(_stall_spec)
+_stall_spec.loader.exec_module(stall)
 
 CLAIM_ID = "RC-2"
 TITLE = "Safety"
@@ -130,12 +134,72 @@ def _check_baseline(record: dict) -> tuple[str, list[str]]:
     return common.evaluate(record, problems)
 
 
+STALL_DEPLOY = "ab" * 32
+STALL_EXPECT = {
+    "deviations": {"DE-04", "DE-05", "DE-06"},
+    "representation": "protocol-stall",
+    "shape": "void",
+    "cause": "unsatisfiable-requirement",
+    "rung": "R2",
+    "control": "no-trigger",
+    "deploys": [STALL_DEPLOY],
+}
+
+
+def _fixture_stall_denominator() -> dict:
+    observations = stall.fixture(
+        STALL_DEPLOY,
+        episode={"deviations": ["DE-04", "DE-05", "DE-06"],
+                 "representation": "protocol-stall", "shape": "void",
+                 "cause": "unsatisfiable-requirement", "rung": "R2", "law": "Law 52b"},
+        expected={"progress": True, "finality": False},
+        control={"kind": "no-trigger", "stall_absent": True})
+    observations["stall_deploy"] = STALL_DEPLOY
+    observations["stall_settlements"] = []
+    return {
+        "schema": 1, "claim_id": CLAIM_ID, "claim_title": TITLE,
+        "arm": "stall-denominator", "environment": "local", "locality": "local-devnet",
+        "provenance": {"source_sha": "0" * 40, "binary_sha256": "1" * 64},
+        "preconditions": [], "verdict": "pass", "reasons": [], "errors": [],
+        "harness": {"name": "admission-finality-stall", "exit_code": 0},
+        "observations": observations,
+    }
+
+
+def _check_stall_denominator(record: dict) -> tuple[str, list[str]]:
+    observations = record.get("observations") or {}
+    expect = dict(STALL_EXPECT)
+    expect["deploys"] = [observations.get("stall_deploy") or STALL_DEPLOY]
+    verdict, reasons = stall.verdict(record, expect)
+    if verdict != "pass":
+        return verdict, reasons
+    problems: list[str] = []
+    trigger = next((row for row in observations.get("stall_series") or []
+                    if isinstance(row, dict) and row.get("phase") == "trigger"), {})
+    live, total = trigger.get("live_stake"), trigger.get("bonded_total")
+    if not (type(live) is int and type(total) is int) or stall.strict_supermajority(live, total):
+        problems.append(
+            f"the trigger left live stake {live}/{total}; the arm is not the exact-2/3 case")
+    for row in observations.get("stall_settlements") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("stage") == "finalizedSuccess" or row.get("settlementConfirmed") is True:
+            problems.append("a settlement claimed success while finality was frozen")
+    settle = next((row for row in observations.get("stall_series") or []
+                   if isinstance(row, dict) and row.get("phase") == "settle"), {})
+    status = (settle.get("deploy_status") or {}).get(observations.get("stall_deploy"))
+    if status != "finalizedSuccess":
+        problems.append(f"the stalled deploy settled as {status!r}, not finalizedSuccess")
+    return common.evaluate(record, problems)
+
+
 FIXTURES = {
     "local": lambda: _fixture_baseline("local"),
     "public": lambda: _fixture_baseline("public"),
     "multi-host": lambda: common.multi_host_finality_fixture(CLAIM_ID, TITLE),
     "equivocation": lambda: common.equivocation_fixture(CLAIM_ID, TITLE),
     "validator-set": lambda: common.validator_set_fixture(CLAIM_ID, TITLE),
+    "stall-denominator": _fixture_stall_denominator,
 }
 ARMS = {
     "local": _check_baseline,
@@ -143,6 +207,7 @@ ARMS = {
     "multi-host": common.check_multi_host_finality,
     "equivocation": common.check_equivocation,
     "validator-set": common.check_validator_set,
+    "stall-denominator": _check_stall_denominator,
 }
 
 
@@ -154,6 +219,29 @@ def check(record: dict) -> tuple[str, list[str]]:
     if record.get("verdict") == "not run":
         return "not run", list(record.get("preconditions") or record.get("reasons") or [])
     return common.dispatch_arm(ARMS, record)
+
+
+def _load_campaign():
+    path = ROOT / "tools" / "stall-campaign.py"
+    spec = importlib.util.spec_from_file_location("stall_campaign", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _run_stall(args, out: Path, record: dict) -> int:
+    try:
+        campaign = _load_campaign()
+        campaign.run_denominator(record, out, episode="rc2", keep=args.keep)
+    except common.ClaimError as error:
+        common.finish(record, "not run", [str(error)])
+        return common.write_record(out, record)[1]
+    except Exception as error:  # noqa: BLE001 - a failed harness is a measured failure
+        common.finish(record, "fail", [f"{type(error).__name__}: {error}"])
+        return common.write_record(out, record)[1]
+    verdict, reasons = check(record)
+    common.finish(record, verdict, reasons)
+    return common.write_record(out, record)[1]
 
 
 def run(argv: list[str]) -> int:
@@ -170,6 +258,8 @@ def run(argv: list[str]) -> int:
     record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    if arm == "stall-denominator":
+        return _run_stall(args, out, record)
     if arm not in ("local", "public"):
         return common.not_run(
             out, record,

@@ -129,6 +129,38 @@ ANCHORS = {
         "rust": "node/src/runtime/node_runtime.rs:write_marker_durably",
         "lean": "Rchain.Casper.StoreFormat.storeSafe",
     },
+    ("stall", "baseline_ok"): {
+        "rust": "node/src/web/http.rs:api_health",
+        "lean": "Rchain.Progress.Classification.law51_statement",
+    },
+    ("stall", "trigger_ok"): {
+        "rust": "block-storage/src/dag/liveness.rs:live_weight_set",
+        "lean": "Rchain.finality_safe_partition",
+    },
+    ("stall", "stall_ok"): {
+        "rust": "block-storage/src/dag/liveness.rs:calculate_finalization_reported",
+        "lean": "Rchain.finalitySafe",
+    },
+    ("stall", "restore_ok"): {
+        "rust": "block-storage/src/dag/finalizer.rs:next_fringe_reported",
+        "lean": "Rchain.the_refusal_is_not_persistent_once_a_rule_restores",
+    },
+    ("stall", "settle_ok"): {
+        "rust": "node/src/web/http.rs:deploy_settlement_observation",
+        "lean": "Rchain.FinalizedMerge.a_finalised_deploy_is_not_in_the_ledger",
+    },
+    ("stall", "no_silent_drop_ok"): {
+        "rust": "casper/src/merging.rs:refusal_closure",
+        "lean": "Rchain.MergeRepair.law53b_statement",
+    },
+    ("stall", "episode_ok"): {
+        "rust": "node/src/web/http.rs:api_health",
+        "lean": "Rchain.Progress.Classification.attributionFor",
+    },
+    ("stall", "phase_ok"): {
+        "rust": "node/src/web/http.rs:api_health",
+        "lean": "Rchain.Progress.Classification.law51_statement",
+    },
 }
 
 COORDINATE_KEYS = (
@@ -142,6 +174,12 @@ COORDINATE_KEYS = (
     "anchor", "target_hashes", "target_state", "anchor_post_state",
     "verdict", "derived_root", "claimed_root",
     "on_disk", "build", "decision", "stamped", "durable",
+    "phase", "exercised", "mechanism", "live_stake", "progress_advanced",
+    "finality_advanced", "progress_expected", "finality_expected",
+    "settlement_claimed", "progress_resumed", "finality_resumed", "intrinsic",
+    "operator", "deploy_status", "rejected_deploys", "surfaces", "deviations",
+    "representation", "shape", "cause", "rung", "law", "window_s", "height",
+    "finalized",
 )
 
 

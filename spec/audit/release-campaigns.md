@@ -12,7 +12,7 @@ cannot yet be made. No status is authored.
 
 - generated: 2026-11-20
 - claims: 7
-- arms: 25
+- arms: 27
 - review: `spec/audit/release-campaign-red-team-20261119.md`
 
 | claim | arm | env | locality | reading | next action | next PR |
@@ -25,9 +25,11 @@ cannot yet be made. No status is authored.
 | `RC-2` | `multi-host` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm multi-host` and commit its record; the arm's harness lands in `rc-multi-host`. | `rc-multi-host` |
 | `RC-2` | `equivocation` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm equivocation` and commit its record; the arm's harness lands in `rc-equivocation`. | `rc-equivocation` |
 | `RC-2` | `validator-set` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm validator-set` and commit its record; the arm's harness lands in `rc-bond-leave`. | `rc-bond-leave` |
+| `RC-2` | `stall-denominator` | local | local-devnet | **safe** | — | — |
 | `RC-3` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-3` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
 | `RC-3` | `availability` | public | public-live | **not-observed** | Run the finalised-block availability sweep on the public fleet: every finalised body and finalised-head state from every validator. | `rc-public-fleet` |
+| `RC-3` | `stall-episode` | local | local-devnet | **safe** | — | — |
 | `RC-4` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-4` | `public` | public | public-live | **not-observed** | Run `tools/release-check.py run --claim RC-4 --env public`; the driver performs the single-validator stop and restart and captures the boot ids itself. | `rc-public-fleet` |
 | `RC-4` | `multi-host` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm multi-host` and commit its record; the arm's harness lands in `rc-multi-host`. | `rc-multi-host` |
@@ -48,6 +50,7 @@ cannot yet be made. No status is authored.
 | PR | closes | scope |
 |---|---|---|
 | `rc-confirm-local` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6 | Re-run the baseline local arms with the current image and commit the records. Read each failure with tools/trace-evaluate.py: unsafe-point names a predicate and its anchor; model-incomplete names a model gap; evidence-insufficient names the missing trace. Close an arm only when its committed record reads safe. |
+| `rc-stall-arms` | RC-2, RC-3 | Run the local stall arms (RC-2 stall-denominator, RC-3 stall-episode), read each failure with tools/trace-evaluate.py, pack and commit the records, and place the measured deviations on the HAZOP surface. An unexercised trigger is `not run`, never `safe`. |
 | `rc-harness-old-image` | RC-7 | Build and pin a prior image for the mixed fleet, set RNODE_OLD_IMAGE, and run RC-7's local mixed-store arm. |
 | `rc-public-fleet` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6, RC-7 | Bring up the four-host public fleet on a coordinated new genesis, perform the deploy and the single-validator restart through tools/fleet-run.py, and run RC-1/public and RC-4/public on the candidate. The source set and the N1/N4/N8 differential are recorded as diagnostics in the same campaign record; the remaining public arms keep this campaign as their next PR. |
 | `rc-bond-leave` | RC-1, RC-2, RC-4 | One bond/leave campaign feeds RC-1 bond-leave, RC-2 validator-set and RC-4 returner. |
@@ -161,6 +164,11 @@ Reading: `not-observed` — no committed run record
 - `RC-2/validator-set/observe` — no committed run record. **Next:** Run `python3 tools/release-check.py run --claim RC-2 --arm validator-set` and commit its record; the arm's harness lands in `rc-bond-leave`.
 - Next PR: `rc-bond-leave`
 
+**Arm `stall-denominator`** (local, `local-devnet`) — with exactly 200 of 300 bonded stake live, height advances while finality freezes and no settlement claims success; restarting the two stopped validators finalises the same deploy with no resubmission
+
+Reading: `safe` — spec/audit/evidence/rc2-stall-denominator-20261123-5b9685e/raw/claim.json
+- No action: the reading is safe; carry the record forward.
+
 **Supersedes.** G428-M4, TA-C1
 
 **Does not claim.** The claim assumes the <=1/3 Byzantine/equivocation bound; without it an equivocator can back two quorums. The multi-host arm covers N=4 and N=8 on declared hosts, not an arbitrary topology.
@@ -207,6 +215,11 @@ Reading: `not-observed` — no committed run record
 Reading: `not-observed` — no committed run record
 - `RC-3/availability/observe` — no committed run record. **Next:** Run the finalised-block availability sweep on the public fleet: every finalised body and finalised-head state from every validator.
 - Next PR: `rc-public-fleet`
+
+**Arm `stall-episode`** (local, `local-devnet`) — a finality stall is visible while it stands and the persisted episode count survives the restore, so a stall that ended is not reported as none
+
+Reading: `safe` — spec/audit/evidence/rc3-stall-episode-20261123-5b9685e/raw/claim.json
+- No action: the reading is safe; carry the record forward.
 
 **Supersedes.** G428-M4
 

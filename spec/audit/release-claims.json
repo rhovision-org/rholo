@@ -148,6 +148,15 @@
           "test_mode": "bond-leave",
           "behaviour": "every validator agrees on the bond set at each epoch boundary and the finality denominator is that set",
           "next_pr": "rc-bond-leave"
+        },
+        {
+          "id": "stall-denominator",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "stall-denominator",
+          "behaviour": "with exactly 200 of 300 bonded stake live, height advances while finality freezes and no settlement claims success; restarting the two stopped validators finalises the same deploy with no resubmission",
+          "next_pr": "rc-stall-arms"
         }
       ]
     },
@@ -211,6 +220,15 @@
           "close": {
             "not-observed": "Run the finalised-block availability sweep on the public fleet: every finalised body and finalised-head state from every validator."
           }
+        },
+        {
+          "id": "stall-episode",
+          "environment": "local",
+          "locality": "local-devnet",
+          "required": true,
+          "test_mode": "stall-episode",
+          "behaviour": "a finality stall is visible while it stands and the persisted episode count survives the restore, so a stall that ended is not reported as none",
+          "next_pr": "rc-stall-arms"
         }
       ]
     },
@@ -566,6 +584,14 @@
         "RC-4",
         "RC-5",
         "RC-6"
+      ]
+    },
+    {
+      "id": "rc-stall-arms",
+      "scope": "Run the local stall arms (RC-2 stall-denominator, RC-3 stall-episode), read each failure with tools/trace-evaluate.py, pack and commit the records, and place the measured deviations on the HAZOP surface. An unexercised trigger is `not run`, never `safe`.",
+      "claims": [
+        "RC-2",
+        "RC-3"
       ]
     },
     {

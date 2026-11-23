@@ -14,6 +14,14 @@
     },
     {
       "claims": [
+        "RC-2",
+        "RC-3"
+      ],
+      "id": "rc-stall-arms",
+      "scope": "Run the local stall arms (RC-2 stall-denominator, RC-3 stall-episode), read each failure with tools/trace-evaluate.py, pack and commit the records, and place the measured deviations on the HAZOP surface. An unexercised trigger is `not run`, never `safe`."
+    },
+    {
+      "claims": [
         "RC-7"
       ],
       "id": "rc-harness-old-image",
@@ -294,6 +302,12 @@
           "reading": "not-observed",
           "required": true
         },
+        "stall-denominator": {
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
+          "required": true
+        },
         "validator-set": {
           "items": [
             {
@@ -355,6 +369,15 @@
           "next_pr": "rc-bond-leave",
           "required": true,
           "test_mode": "bond-leave"
+        },
+        {
+          "behaviour": "with exactly 200 of 300 bonded stake live, height advances while finality freezes and no settlement claims success; restarting the two stopped validators finalises the same deploy with no resubmission",
+          "environment": "local",
+          "id": "stall-denominator",
+          "locality": "local-devnet",
+          "next_pr": "rc-stall-arms",
+          "required": true,
+          "test_mode": "stall-denominator"
         }
       ],
       "claim": "No two conflicting finalised histories: every finalised block held by one validator is finalised by every validator at or above its height, and no finalised (height, hash) regresses across restart, replay or partition.",
@@ -451,6 +474,21 @@
           "required": true,
           "status": "not run"
         },
+        "stall-denominator": {
+          "action": {
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
+            "required": true
+          },
+          "binary_sha256": "a402763636d5c8229f024e70cb574cd6a70b4fadfb36b1cfa3121c3c0854d822",
+          "finished_at": "2026-11-23T14:35:18Z",
+          "reasons": [],
+          "record": "spec/audit/evidence/rc2-stall-denominator-20261123-5b9685e/raw/claim.json",
+          "required": true,
+          "source_sha": "5b9685eca38250a9f0d81fb3da2f410328721aec",
+          "status": "pass"
+        },
         "validator-set": {
           "action": {
             "items": [
@@ -509,6 +547,12 @@
           "next_pr": "rc-public-fleet",
           "reading": "not-observed",
           "required": true
+        },
+        "stall-episode": {
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
+          "required": true
         }
       },
       "arms": [
@@ -541,6 +585,15 @@
           "next_pr": "rc-public-fleet",
           "required": true,
           "test_mode": "availability"
+        },
+        {
+          "behaviour": "a finality stall is visible while it stands and the persisted episode count survives the restore, so a stall that ended is not reported as none",
+          "environment": "local",
+          "id": "stall-episode",
+          "locality": "local-devnet",
+          "next_pr": "rc-stall-arms",
+          "required": true,
+          "test_mode": "stall-episode"
         }
       ],
       "claim": "For the same accepted block on the same binary, every validator derives the same preStateHash and postStateHash and the same kept/rejected ledger; kept tuple-space effects are present and rejected effects absent.",
@@ -618,6 +671,21 @@
           "record": null,
           "required": true,
           "status": "not run"
+        },
+        "stall-episode": {
+          "action": {
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
+            "required": true
+          },
+          "binary_sha256": "a402763636d5c8229f024e70cb574cd6a70b4fadfb36b1cfa3121c3c0854d822",
+          "finished_at": "2026-11-23T14:38:56Z",
+          "reasons": [],
+          "record": "spec/audit/evidence/rc3-stall-episode-20261123-5b9685e/raw/claim.json",
+          "required": true,
+          "source_sha": "5b9685eca38250a9f0d81fb3da2f410328721aec",
+          "status": "pass"
         }
       },
       "supersedes": [

@@ -1,0 +1,17 @@
+{
+  "kind": "state",
+  "origin": "peer",
+  "block": "5a2058f9e1f6f704e1164bd40d58861e9ace5a5eaba7b57dd1b3575594e53f04",
+  "height": 1,
+  "sender": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4",
+  "parents": [
+    "677d0d754c4d7c29a1181614a2b7f356e966b99ebdbca39b340f1f9655183bda"
+  ],
+  "claimed_pre": "647eb66f521f8ab1105c5922b27239618e066d2ad1a8567a99f5c4dc3256df22",
+  "computed_pre": "647eb66f521f8ab1105c5922b27239618e066d2ad1a8567a99f5c4dc3256df22",
+  "claimed_post": "cb979ef0ae751ad227a74be9ea6c59aab8160cd6e0dd728995a2c82b06b74885",
+  "replayed_post": "cb979ef0ae751ad227a74be9ea6c59aab8160cd6e0dd728995a2c82b06b74885",
+  "claimed_rejected": [],
+  "computed_rejected": [],
+  "verdict": "matched"
+}
