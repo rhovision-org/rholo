@@ -8,8 +8,11 @@ The campaign, in order, on a three-validator net with stakes 100,100,50, epoch 1
 2. a marker is written and read at every validator's finalised head;
 3. validator 2 (the 50-stake one) withdraws, the boundary activates the leave, and the vault is
    credited after quarantine (RC-1 bond-leave; the boundary bond sets are RC-2 validator-set);
-4. validator 3 is stopped before the leave boundary and restarted after the payout, without manual
-   surgery, and rejoins the common finalised head (RC-4 returner).
+4. validator 3 is stopped **after** the payout, while the surviving set is a strict supermajority,
+   and restarted without manual surgery; it rejoins the common finalised head (RC-4 returner). The
+   stop is deliberately after the boundary: stopping it before the leave adds the 200/300 finality
+   freeze to the returner arm, which would measure the denominator (RC-2's subject) instead of the
+   rejoin (RC-4's).
 
 The mechanics are the committed n220/n223 rigs' (`spec/audit/evidence/n220-join-run.sh`,
 `n220-leave-run.sh`, `n223-rejoin-run.sh`), driven from the HTTP API so every observation is a
@@ -21,6 +24,7 @@ Exit: 0 the campaign completed (observations may still fail their predicates); 2
 from __future__ import annotations
 
 import argparse
+import copy
 import importlib.util
 import json
 import os
@@ -118,6 +122,71 @@ def wait_finalized(height: int, timeout: float = 300, port: int = HTTP[0]) -> tu
     return common.wait_until(f"finalised height {height}", probe, timeout=timeout, interval=2.0)
 
 
+def is_finalized(port: int, block_hash: str) -> bool:
+    try:
+        return common.get_json(
+            f"http://127.0.0.1:{port}/api/is-finalized/{block_hash}") is True
+    except common.ClaimError:
+        return False
+
+
+def wait_finalized_hash(block_hash: str, timeout: float = 300) -> None:
+    """Wait until every running validator calls the block finalised.
+
+    A height is not enough: another block at the same height on a fork is also a finalised height.
+    The bond-leave funding deploy is finalised this way before the withdrawal is signed, so the
+    withdrawal's precharge cannot read a state that lacks the funding transfer.
+    """
+    common.wait_until(
+        f"block {block_hash[:12]} is finalised on every validator",
+        lambda: all(is_finalized(HTTP[index], block_hash) for index in range(4)),
+        timeout=timeout, interval=2.0)
+
+
+def health_sample(index: int = 0) -> dict:
+    """One attributable sample: the gate, the stalled flag and the two heights."""
+    sample: dict = {"validator": index, "height": None, "finalised": None,
+                    "finalityStalled": None, "finalityStallEpisodes": None,
+                    "finalityGate": None}
+    try:
+        sample["height"] = latest_height(HTTP[index])
+    except Exception:  # noqa: BLE001 - a stopped node is a null sample, not a crash
+        pass
+    try:
+        sample["finalised"] = finalized(HTTP[index])[0]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        _, health = common.http_json(f"http://127.0.0.1:{HTTP[index]}/health", timeout=3)
+        if isinstance(health, dict):
+            sample["finalityStalled"] = health.get("finalityStalled")
+            sample["finalityStallEpisodes"] = health.get("finalityStallEpisodes")
+            sample["finalityGate"] = health.get("finalityGate")
+    except Exception:  # noqa: BLE001
+        pass
+    return sample
+
+
+def support_refusal(sample: dict) -> bool:
+    """The exact-2/3 exposure: a support refusal at a denominator the layer cannot reach."""
+    gate = sample.get("finalityGate")
+    if not isinstance(gate, dict):
+        return False
+    supporting, total = gate.get("supporting"), gate.get("total")
+    reason = str(gate.get("reason") or "").lower()
+    return (reason.startswith("support") and type(supporting) is int
+            and type(total) is int and total > 0
+            and 3 * supporting <= 2 * total)
+
+
+def gate_total(samples: dict | None) -> int | None:
+    """The denominator every validator's gate reports, when they agree."""
+    if not isinstance(samples, dict):
+        return None
+    totals = {row.get("total") for row in samples.values() if isinstance(row, dict)}
+    return totals.pop() if len(totals) == 1 else None
+
+
 def deploy(container: str, key: str, term: str, timeout: float = 90) -> str:
     path = f"/tmp/bond-campaign-{uuid.uuid4().hex}.rho"
     write = subprocess.run(["docker", "exec", "-i", container, "sh", "-c",
@@ -196,6 +265,34 @@ def block_at(height: int, port: int = HTTP[0]) -> dict | None:
     return None
 
 
+def boundary_sets(block_hash: str) -> list[dict] | None:
+    """The bond map at one block, read on all four validators; None while any is behind."""
+    rows = []
+    for index in range(4):
+        try:
+            body = common.get_json(f"http://127.0.0.1:{HTTP[index]}/api/block/{block_hash}")
+        except common.ClaimError:
+            return None
+        info = body.get("blockInfo") if isinstance(body, dict) else None
+        if not isinstance(info, dict):
+            return None
+        rows.append({"validator": index, "bonds": bond_map(info)})
+    return rows
+
+
+def boundary_row(height: int, block_hash: str, gate: dict | None) -> dict:
+    sets = common.wait_until(
+        f"boundary {height} is readable on every validator",
+        lambda: boundary_sets(block_hash), timeout=300, interval=2.0)
+    totals = [sum(v for v in row["bonds"].values() if type(v) is int) for row in sets]
+    return {
+        "height": height,
+        "sets": sets,
+        "finality_denominator": totals[0] if len(set(totals)) == 1 else None,
+        "gate_total": gate_total(gate),
+    }
+
+
 def bond_map(block: dict) -> dict:
     bonds = {}
     for row in block.get("bonds") or []:
@@ -244,12 +341,16 @@ def pending_deadline(timeout: float = 60) -> int | None:
 def balance(container: str, channel: str, contract: str) -> tuple[int | None, int | None]:
     deploy_id = deploy(container, GENESIS_PRIV, (ROOT / "examples" / contract).read_text())
     deploy_status(deploy_id)
-    result = subprocess.run(
-        ["docker", "exec", container, "rnode", "--grpc-host", "localhost",
-         "listen-data-at-name", "-t", "pub", "-c", f'"{channel}"'],
-        text=True, capture_output=True, timeout=90)
+    # **`listen-data-at-name` streams.** It does not exit after the first datum, so the probe is
+    # bounded by `timeout`: the data already printed is the answer and exit 124 is expected.
+    try:
+        result = subprocess.run(
+            ["timeout", "20", "docker", "exec", container, "rnode", "--grpc-host", "localhost",
+             "listen-data-at-name", "-t", "pub", "-c", f'"{channel}"'],
+            text=True, capture_output=True, timeout=40)
+    except subprocess.TimeoutExpired:
+        return (None, None)
     text = result.stdout + result.stderr
-    import re
     values = re.findall(r"GInt\(([0-9]+)\)", text)
     heights = re.findall(r"block_number: ([0-9]+)", text)
     return (int(values[-1]) if values else None,
@@ -280,10 +381,147 @@ def copy_traces(out: Path, prefixes: tuple[str, ...]) -> dict[str, list[dict]]:
     return rows
 
 
+def series_from(samples: list[dict], refusal: dict | None,
+                settle: tuple[str, str | None] | None) -> list[dict]:
+    """The DE-06 series, only when the samples carry every phase.
+
+    A refusal is not a series: the phase rows need a progress step with finality held, a later
+    finalised advance, and a settled deploy. When any of those is absent the function returns
+    `[]`, and the record's `exercise` still says whether the two-thirds refusal was seen.
+    """
+    rows = [sample for sample in samples
+            if isinstance(sample, dict) and type(sample.get("height")) is int
+            and type(sample.get("finalised")) is int]
+    if not rows or not isinstance(refusal, dict):
+        return []
+    index = next((i for i, sample in enumerate(rows)
+                  if sample is refusal
+                  or (sample.get("height") == refusal.get("height")
+                      and sample.get("finalised") == refusal.get("finalised"))), None)
+    if index is None or index == 0:
+        return []
+    before = rows[index - 1]
+    after = rows[index]
+    if not (after["height"] > before["height"]
+            and after["finalised"] == before["finalised"]):
+        return []
+    resumed = next((sample for sample in rows[index + 1:]
+                    if sample["finalised"] > after["finalised"]), None)
+    if resumed is None:
+        return []
+    gate = refusal.get("finalityGate") or {}
+    supporting, total = gate.get("supporting"), gate.get("total")
+    if type(supporting) is not int or type(total) is not int or total <= 0:
+        return []
+    if not (3 * supporting <= 2 * total):
+        return []
+    statuses = {}
+    if settle and isinstance(settle[0], str) and isinstance(settle[1], str):
+        statuses = {settle[0]: settle[1]}
+    if not statuses:
+        return []
+    return [
+        {"phase": "baseline", "height": before["height"], "finalized": before["finalised"]},
+        {"phase": "trigger", "mechanism": "bond-leave-boundary", "exercised": True,
+         "live_stake": supporting, "bonded_total": total},
+        {"phase": "stall", "progress_advanced": True, "finality_advanced": False,
+         "progress_expected": True, "finality_expected": False,
+         "settlement_claimed": False},
+        {"phase": "restore", "progress_resumed": True, "finality_resumed": True, "rule": "R2"},
+        {"phase": "settle", "deploy_status": statuses, "rejected_deploys": [],
+         "surfaces": {}},
+    ]
+
+
+def _settlements_confirmed(result: dict) -> int:
+    rows = (result.get("bond_leave") or {}).get("settlements") or []
+    return sum(1 for row in rows if isinstance(row, dict)
+               and row.get("stage") == "finalizedSuccess"
+               and row.get("settlementConfirmed") is True)
+
+
+def _floor_rejections(result: dict) -> int:
+    """Merge traces that named a rejected host: the finalised-floor exposure, where it occurred."""
+    count = 0
+    for row in result.get("traces") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("rejected_hosts") or row.get("rejected_user_hosts"):
+            count += 1
+    return count
+
+
+def episodes(result: dict) -> dict:
+    """The three HAZOP episodes, each with the measurement that exercised it.
+
+    The classification is the Table A wire, never invented; `exercise` is the measured half. A
+    `deviation_observed: false` means the safeguard held in this run — it does not claim the
+    deviation is impossible (the README states the non-claim).
+    """
+    bond = result.get("bond_leave") or {}
+    validator = result.get("validator_set") or {}
+    returner = result.get("returner") or {}
+    refusal = result.get("first_support_refusal")
+    retained = bond.get("marker_retained") or []
+    confirmed = _settlements_confirmed(result)
+    paid = bond.get("paid_after_quarantine") is True
+    boundaries = [
+        {"height": row.get("height"), "total": row.get("finality_denominator"),
+         "gate_total": row.get("gate_total")}
+        for row in validator.get("boundaries") or [] if isinstance(row, dict)]
+    episodes = copy.deepcopy(common.BOND_LEAVE_EPISODES)
+    episodes["bond-leave"]["exercise"] = {
+        "path": "bond, withdraw, leave and payout on one devnet",
+        "activation_height": bond.get("activation_height"),
+        "withdraw_request_height": bond.get("withdraw_request_height"),
+        "quarantine_height": bond.get("quarantine_height"),
+        "paid_height": bond.get("paid_height"),
+        "paid_after_quarantine": paid,
+        "active_at_boundary": bond.get("active_at_boundary"),
+        "marker_retained_all": bool(retained) and all(retained),
+        "settlements_confirmed": confirmed,
+        "floor_rejections_observed": _floor_rejections(result),
+        "deviation_observed": not paid or confirmed < 4,
+        "safeguard_observed": paid and confirmed >= 4 and bool(retained) and all(retained),
+    }
+    episodes["validator-set"]["exercise"] = {
+        "boundaries": boundaries,
+        "finality_denominators": validator.get("finality_denominators"),
+        "gate_samples_count": len(result.get("finality_gate_series") or []),
+        "first_support_refusal": refusal,
+        "two_thirds_support_refusal_observed": bool(refusal and support_refusal(refusal)),
+        "deviation_observed": validator.get("denominators_match") is not True
+        or validator.get("active_set_agrees") is not True,
+        "safeguard_observed": validator.get("denominators_match") is True
+        and validator.get("active_set_agrees") is True,
+    }
+    episodes["returner"]["exercise"] = {
+        "trigger": "validator 3 stopped after the payout and restarted without manual surgery",
+        "trigger_exercised": type(returner.get("down_at_height")) is int
+        and type(returner.get("restart_at_height")) is int,
+        "down_at_height": returner.get("down_at_height"),
+        "down_at_finalized": returner.get("down_at_finalized"),
+        "downtime_s": returner.get("downtime_s"),
+        "gate_refusal": returner.get("gate_refusal"),
+        "restart_at_height": returner.get("restart_at_height"),
+        "rejoin_height": returner.get("rejoin_height"),
+        "new_boot_id": returner.get("new_boot_id"),
+        "manual_surgery": returner.get("manual_surgery"),
+        "deviation_observed": returner.get("heads_agree") is not True
+        or returner.get("new_boot_id") is not True,
+        "safeguard_observed": returner.get("heads_agree") is True
+        and returner.get("new_boot_id") is True
+        and returner.get("manual_surgery") is False,
+    }
+    return episodes
+
+
 def campaign(out: Path, keep: bool) -> dict:
     result: dict = {"schema": 1, "ok": False, "errors": [],
                     "bond_leave": {}, "validator_set": {}, "returner": {},
                     "finality_gate": {}, "finality_gate_after_leave": {},
+                    "finality_gate_series": [], "first_support_refusal": None,
+                    "stall_series": [], "episodes": {},
                     "traces": [], "finality_traces": [], "boot_traces": []}
     env = dict(os.environ)
     env["DEVNET_EXTRA_FLAGS"] = "--quarantine-length 20"
@@ -364,26 +602,53 @@ def campaign(out: Path, keep: bool) -> dict:
         result["bond_leave"]["activation_height"] = activation
         result["bond_leave"]["newcomer_produced_height"] = newcomer_produced
 
-        # The bond set at the activation boundary, read on every validator.
+        # The bond set at the activation boundary, read on every validator. The gate is sampled
+        # before the read so the denominator it publishes belongs to the boundary being measured.
+        result["finality_gate"] = gate_samples()
         boundary_block = block_at(activation)
         if boundary_block is None:
             raise common.ClaimError("the activation block is not readable by height")
-        sets = [{"validator": i, "bonds": bond_map(
-            common.get_json(f"http://127.0.0.1:{HTTP[i]}/api/block/"
-                            f"{boundary_block['blockHash']}").get("blockInfo") or {})}
-            for i in range(4)]
-        result["validator_set"]["boundaries"] = [{"height": activation, "sets": sets}]
-        result["finality_gate"] = gate_samples()
+        result["validator_set"]["boundaries"] = [
+            boundary_row(activation, boundary_block["blockHash"], result["finality_gate"])]
+        activation_sample = health_sample(0)
+        result["finality_gate_series"].append(activation_sample)
+        if result["first_support_refusal"] is None and support_refusal(activation_sample):
+            result["first_support_refusal"] = activation_sample
 
         # --- the marker ----------------------------------------------------------------
         marker_id = deploy(CONTAINERS[0], GENESIS_PRIV, f'@{json.dumps(MARKER)}!({MARKER_VALUE})')
         marker_block = deploy_status(marker_id)
-        wait_finalized(int(marker_block.get("blockNumber") or 0))
+        if marker_block.get("blockHash"):
+            wait_finalized_hash(marker_block["blockHash"])
+        else:
+            wait_finalized(int(marker_block.get("blockNumber") or 0))
 
         # --- the leave -----------------------------------------------------------------
         fund = deploy(CONTAINERS[0], GENESIS_PRIV,
                       (ROOT / "examples" / "leave-fund.rho").read_text())
-        deploy_status(fund)
+        fund_block = deploy_status(fund)
+        fund_height = int(fund_block.get("blockNumber") or 0)
+        fund_hash = fund_block.get("blockHash")
+        if fund_hash:
+            # **Finalised, not merely processed.** deploy-status can report success on a validator
+            # whose block is not in the bootstrap's finalised prefix; submitting the withdrawal
+            # there precharges against a state without the transfer and fails 0 < 1000000.
+            wait_finalized_hash(fund_hash)
+        result["bond_leave"].update({"fund_deploy": fund, "fund_height": fund_height,
+                                     "fund_hash": fund_hash})
+        # A named precondition beats the downstream precharge: if the vault is still empty, say so.
+        # The read is best-effort — its own probe is a deploy and must not become a second way for
+        # the campaign to fail when the funding block is already finalised.
+        try:
+            pre_withdraw_balance, _ = balance(
+                CONTAINERS[0], "leave-balance", "leave-balance.rho")
+        except Exception:  # noqa: BLE001 - a failed probe is a null, not a failed campaign
+            pre_withdraw_balance = None
+        result["bond_leave"]["balance_before_withdraw"] = pre_withdraw_balance
+        if type(pre_withdraw_balance) is int and pre_withdraw_balance < 1_000_000:
+            raise common.ClaimError(
+                f"validator 2's vault holds {pre_withdraw_balance}, below the deploy precharge; "
+                "the funding transfer did not land")
         # **The set before the leave, not the number three.** The armed join ladder can hold a
         # newcomer out for a boundary and the leak can retire a validator, so the active count is
         # not a constant; the withdrawal's own effect is that the set *shrinks*.
@@ -406,6 +671,12 @@ def campaign(out: Path, keep: bool) -> dict:
         deadline = time.monotonic() + 600
         paid = False
         while time.monotonic() < deadline:
+            # The boundary exposure is read at the gate, not inferred from the stop or the leaver's
+            # height: a support refusal carries the layer's own supporting/total numbers.
+            sample = health_sample(0)
+            result["finality_gate_series"].append(sample)
+            if result["first_support_refusal"] is None and support_refusal(sample):
+                result["first_support_refusal"] = sample
             if active_count() < active_before and latest_height() > quarantine:
                 wait_finalized(quarantine + 1, timeout=300)
                 post_balance, post_block = balance(
@@ -430,20 +701,20 @@ def campaign(out: Path, keep: bool) -> dict:
 
         # The bond set after the leave, at the common finalised head.
         head_height, head_hash = wait_finalized(max(quarantine + 1, latest_height() - 1))
-        final_block = common.get_json(f"http://127.0.0.1:{HTTP[0]}/api/block/{head_hash}")
-        info = final_block.get("blockInfo") or {}
-        sets = [{"validator": i, "bonds": bond_map(
-            common.get_json(f"http://127.0.0.1:{HTTP[i]}/api/block/{head_hash}").get("blockInfo")
-            or {})} for i in range(4)]
-        result["validator_set"]["boundaries"].append({"height": head_height, "sets": sets})
-        totals = [sum(v for v in row["bonds"].values() if type(v) is int)
-                  for row in sets]
-        result["validator_set"].update({
-            "denominators_match": len(set(totals)) == 1,
-            "active_set_agrees": all(row["bonds"] == sets[0]["bonds"] for row in sets),
-            "finality_denominator": totals[0] if totals else 0,
-        })
         result["finality_gate_after_leave"] = gate_samples()
+        result["validator_set"]["boundaries"].append(
+            boundary_row(head_height, head_hash, result["finality_gate_after_leave"]))
+        result["finality_gate_series"].append(health_sample(0))
+        boundaries = result["validator_set"]["boundaries"]
+        totals = [boundary.get("finality_denominator") for boundary in boundaries]
+        result["validator_set"].update({
+            "finality_denominators": totals,
+            "denominators_match": all(total is not None for total in totals),
+            "active_set_agrees": all(
+                all(row["bonds"] == boundary["sets"][0]["bonds"]
+                    for row in boundary["sets"])
+                for boundary in boundaries),
+        })
 
         # --- marker retention and settlements after the payout -------------------------
         retained = []
@@ -460,24 +731,39 @@ def campaign(out: Path, keep: bool) -> dict:
                                 "settlementConfirmed": row.get("settlementConfirmed")})
         result["bond_leave"].update({"marker_retained": retained, "settlements": settlements})
         result["bond_leave"]["bond_deploy_status"] = (bond_block or {}).get("blockHash")
+        settled = next((row.get("stage") for row in settlements
+                        if isinstance(row, dict) and row.get("validator") == 0), None)
+        result["stall_series"] = series_from(
+            result["finality_gate_series"], result["first_support_refusal"],
+            (withdraw, settled))
 
         # --- the returner --------------------------------------------------------------
         # **Stop after the leave, not during the join.** With the newcomer (50) down before the
         # leave, the survivors hold 250 of 300 — but the finality layer counted only 200 of 300,
         # exactly two thirds and therefore not a strict supermajority. Once the 50-stake leaver is
-        # out, the surviving set is 200 of 200 and the returner's absence is tolerable.
+        # out, the surviving set is 200 of 200 and the returner's absence is tolerable. The stop is
+        # therefore isolated to the rejoin: the boundary arithmetic is RC-2's subject, not RC-4's.
         before_boot = common.get_json(f"http://127.0.0.1:{HTTP[3]}/health").get("bootId")
-        down_at, _ = finalized(HTTP[3])
+        down_at, down_finalized = finalized(HTTP[3])
         if down_at is None:
-            down_at, _ = finalized(HTTP[0])
+            down_at, down_finalized = finalized(HTTP[0])
+        stopped = time.monotonic()
         devnet.shell("stop", "3", timeout=120)
         result["returner"].update({"victim": 3, "down_at_height": down_at,
+                                   "down_at_finalized": down_finalized,
                                    "manual_surgery": False})
+        down_gate = None
         for _ in range(4):
             drive(1)
+            sample = health_sample(0)
+            result["finality_gate_series"].append(sample)
+            if down_gate is None and support_refusal(sample):
+                down_gate = sample
             time.sleep(6)
         devnet.shell("start", "3", timeout=120)
         wait_ready(3, timeout=420)
+        restart_at_height = latest_height(HTTP[3])
+        downtime = round(time.monotonic() - stopped, 1)
         tip_at_return = latest_height()
         common.wait_until(
             "the returner reaches the survivors' tip",
@@ -487,25 +773,43 @@ def campaign(out: Path, keep: bool) -> dict:
             "the common finalised head is finalised on every validator",
             lambda: _common_head(), timeout=420, interval=3.0)
         rows = []
+        answers = []
         for index in range(4):
-            common.get_json(f"http://127.0.0.1:{HTTP[index]}/api/is-finalized/"
-                            f"{common_head['hash']}")
+            try:
+                answer = common.get_json(
+                    f"http://127.0.0.1:{HTTP[index]}/api/is-finalized/{common_head['hash']}")
+            except common.ClaimError:
+                answer = False
+            answers.append(answer is True)
             rows.append({"validator": index, "height": common_head["height"],
-                         "hash": common_head["hash"]})
+                         "hash": common_head["hash"], "is_finalized": answer is True})
+        result["finality_gate_series"].append(health_sample(0))
         result["returner"].update({
             "new_boot_id": bool(before_boot and after_boot and before_boot != after_boot),
-            "heads_agree": True, "finalised": rows,
+            "heads_agree": all(answers), "finalised": rows,
             "rejoin_height": common_head["height"],
+            "restart_at_height": restart_at_height,
+            "downtime_s": downtime,
+            "gate_refusal": down_gate,
         })
 
         traces = copy_traces(out, ("merge", "finality", "boot"))
         result["traces"] = traces["merge"]
         result["finality_traces"] = traces["finality"]
         result["boot_traces"] = traces["boot"]
+        result["episodes"] = episodes(result)
         result["provenance"] = devnet.provenance()
         result["ok"] = True
     except Exception as error:  # noqa: BLE001 - the partial result is the report
         result["errors"].append(f"{type(error).__name__}: {error}")
+        # A red run still carries the decision traces; the diagnosis is in them.
+        try:
+            traces = copy_traces(out, ("merge", "finality", "boot"))
+            result["traces"] = traces["merge"]
+            result["finality_traces"] = traces["finality"]
+            result["boot_traces"] = traces["boot"]
+        except Exception:  # noqa: BLE001
+            pass
         try:
             result["provenance"] = devnet.provenance()
         except Exception:  # noqa: BLE001

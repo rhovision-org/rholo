@@ -19,6 +19,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -1086,6 +1087,151 @@ def _arm_body(record: dict, key: str):
     return body, []
 
 
+# The three arms one bond-leave campaign feeds. The body key is the observation surface the arm's
+# check reads; the trace key is the decision list that carries its phase-space reading.
+BOND_LEAVE_ARMS = {
+    "bond-leave": ("bond_leave", "traces"),
+    "validator-set": ("validator_set", "finality_traces"),
+    "returner": ("returner", "boot_traces"),
+}
+
+# The HAZOP classification each arm measures, exactly as Table A carries it. The campaign attaches
+# these to its result; a claim record copies its own arm's block, so `check-stall-coverage.py` can
+# compare the record's episode with the deviation row.
+BOND_LEAVE_EPISODES = {
+    "bond-leave": {
+        "deviations": ["DE-02"],
+        "representation": "protocol-stall",
+        "shape": "terminal",
+        "cause": "loss-blind-refusal",
+        "rung": "R3",
+        "law": "Rchain.FinalizedMerge.a_finalised_deploy_is_not_in_the_ledger",
+    },
+    "validator-set": {
+        "deviations": ["DE-06"],
+        "representation": "protocol-stall",
+        "shape": "void",
+        "cause": "unsatisfiable-requirement",
+        "rung": "R2",
+        "law": "Law 52b",
+    },
+    "returner": {
+        "deviations": ["DE-11"],
+        "representation": "protocol-stall",
+        "shape": "stuck",
+        "cause": "loss-blind-refusal",
+        "rung": "R2",
+        "law": "Rchain.System.Stuck",
+    },
+}
+
+BOND_LEAVE_CAMPAIGN = ROOT / "tools" / "bond-leave-campaign.py"
+
+
+def _campaign_result_path(campaign_result=None) -> Path:
+    value = campaign_result or os.environ.get("BOND_LEAVE_CAMPAIGN_OUT") \
+        or (ROOT / "target" / "bond-leave-campaign" / "current")
+    path = Path(value)
+    return path / "result.json" if path.is_dir() else path
+
+
+def bond_leave_campaign_result(out, campaign_result=None, *, keep: bool = False,
+                               timeout: float = 7200) -> tuple[dict, Path]:
+    """One campaign result, shared by the three arms.
+
+    A result is reused only when it completed, was recorded on a clean tree, and was recorded from
+    this HEAD: a bond-leave record that cites an older commit is stale evidence, not a measurement.
+    When no result exists the campaign is run once; that is the only place a devnet starts.
+    """
+    path = _campaign_result_path(campaign_result)
+    if not path.is_file():
+        destination = path.parent
+        destination.mkdir(parents=True, exist_ok=True)
+        command = [sys.executable, str(BOND_LEAVE_CAMPAIGN), "--out", str(destination)]
+        if keep:
+            command.append("--keep")
+        result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True,
+                                timeout=timeout)
+        log = Path(out) / "campaign.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text((result.stdout or "") + (result.stderr or ""))
+        if not path.is_file():
+            raise ClaimError(
+                f"the bond-leave campaign produced no result (exit {result.returncode}): "
+                f"{(result.stderr or result.stdout)[-1200:]}")
+    try:
+        payload = json.loads(path.read_text())
+    except ValueError as error:
+        raise ClaimError(f"the campaign result is not JSON: {error}") from error
+    if not isinstance(payload, dict):
+        raise ClaimError("the campaign result is not an object")
+    provenance = payload.get("provenance") or {}
+    head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                          text=True, capture_output=True).stdout.strip()
+    if provenance.get("source_dirty") is not False:
+        raise ClaimError("the campaign result was recorded on a dirty tree; re-run from a clean "
+                         "commit")
+    if head and provenance.get("source_sha") != head:
+        raise ClaimError(
+            f"the campaign result is from {provenance.get('source_sha')}, not HEAD {head}; "
+            "re-run the campaign from this commit")
+    return payload, path
+
+
+def bond_leave_observations(payload: dict, arm: str) -> dict:
+    """The arm's half of the campaign, in the shape its check reads.
+
+    The returner's boot traces are scoped to validator 3: that is the arm's subject, and another
+    validator's boot is a control, not a witness. A missing body or an empty trace list is a
+    precondition, not a pass.
+    """
+    if arm not in BOND_LEAVE_ARMS:
+        raise ClaimError(f"unknown bond-leave arm {arm!r}")
+    body_key, trace_key = BOND_LEAVE_ARMS[arm]
+    body = payload.get(body_key)
+    traces = payload.get(trace_key)
+    if not isinstance(body, dict) or not body:
+        raise ClaimError(f"the campaign recorded no {body_key} for {arm}")
+    if not isinstance(traces, list) or not traces:
+        raise ClaimError(f"the campaign recorded no {trace_key} for {arm}")
+    if arm == "returner":
+        victim = [row for row in traces if isinstance(row, dict) and row.get("validator") == 3]
+        if not victim:
+            raise ClaimError("the campaign recorded no validator 3 boot trace")
+        traces = victim
+    observations = {body_key: body, trace_key: traces}
+    episode = (payload.get("episodes") or {}).get(arm)
+    if isinstance(episode, dict):
+        observations["stall_episode"] = episode
+    if arm == "validator-set":
+        series = payload.get("stall_series")
+        if isinstance(series, list) and series:
+            observations["stall_series"] = series
+    return observations
+
+
+def bond_leave_arm_run(out, record: dict, arm: str, campaign_result=None, *,
+                       keep: bool = False) -> Path:
+    """Fill a claim record from the shared campaign result and copy the result into the run."""
+    payload, path = bond_leave_campaign_result(out, campaign_result, keep=keep)
+    if payload.get("ok") is not True:
+        reasons = payload.get("errors") or ["the campaign did not set ok"]
+        raise ClaimError("the bond-leave campaign did not complete: " + "; ".join(reasons))
+    record["provenance"] = payload.get("provenance") or {}
+    record["harness"] = {
+        "name": "bond-leave-campaign",
+        "exit_code": 0,
+        "out": str(path.parent),
+        "command": [str(BOND_LEAVE_CAMPAIGN), "--out", str(path.parent)],
+    }
+    record["observations"] = bond_leave_observations(payload, arm)
+    campaign_dir = Path(out) / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    (campaign_dir / "result.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    return path
+
+
 def bond_leave_fixture(claim_id: str, title: str) -> dict:
     record = _arm_record(claim_id, title, "bond-leave", "local", "local-devnet")
     record["observations"] = {
@@ -1151,12 +1297,14 @@ def validator_set_fixture(claim_id: str, title: str) -> dict:
         "validator_set": {
             "boundaries": [
                 {"height": 10, "sets": [{"validator": i, "bonds": dict(bonds)}
-                                       for i in range(4)]},
+                                       for i in range(4)],
+                 "finality_denominator": 400, "gate_total": 400},
                 {"height": 20, "sets": [{"validator": i, "bonds": dict(bonds)}
-                                       for i in range(4)]},
+                                       for i in range(4)],
+                 "finality_denominator": 400, "gate_total": 400},
             ],
+            "finality_denominators": [400, 400],
             "denominators_match": True, "active_set_agrees": True,
-            "finality_denominator": 400,
         },
         "finality_traces": [_safe_finality_trace()],
     }
@@ -1177,24 +1325,42 @@ def check_validator_set(record: dict) -> tuple[str, list[str]]:
     if not isinstance(boundaries, list) or not boundaries:
         problems.append("validator_set: no epoch boundary was observed")
         boundaries = []
+    totals: list[int | None] = []
     for boundary in boundaries:
         if not isinstance(boundary, dict):
             problems.append("validator_set: a boundary row is not an object")
+            totals.append(None)
             continue
         sets = boundary.get("sets")
         if not isinstance(sets, list) or len(sets) < 4:
             problems.append(f"validator_set: boundary {boundary.get('height')} was not read "
                             "on every validator")
+            totals.append(None)
             continue
         values = [row.get("bonds") for row in sets if isinstance(row, dict)]
         if len(values) < 4 or any(value != values[0] for value in values):
             problems.append(f"validator_set: boundary {boundary.get('height')} has different "
                             "bond sets across validators")
-        if values and isinstance(values[0], dict):
-            total = sum(value for value in values[0].values() if type(value) is int)
-            if body.get("finality_denominator") != total:
-                problems.append("validator_set: the finality denominator is not the boundary "
-                                "bond total")
+        if not values or not isinstance(values[0], dict):
+            totals.append(None)
+            continue
+        # **The denominator is per boundary.** The activation set (300) and the post-leave set
+        # (250) are different totals; one scalar cannot describe both, and a boundary whose
+        # denominator is another boundary's total is exactly the drift this arm measures.
+        total = sum(value for value in values[0].values() if type(value) is int)
+        totals.append(total)
+        declared = boundary.get("finality_denominator")
+        if declared is not None and declared != total:
+            problems.append(f"validator_set: boundary {boundary.get('height')} declares "
+                            f"denominator {declared}, not its bond total {total}")
+        gate_total = boundary.get("gate_total")
+        if type(gate_total) is int and gate_total != total:
+            problems.append(f"validator_set: boundary {boundary.get('height')} gate reads "
+                            f"{gate_total}, not the bond total {total}")
+    declared_totals = body.get("finality_denominators")
+    if declared_totals is not None and declared_totals != totals:
+        problems.append("validator_set: finality_denominators is not the per-boundary bond "
+                        f"totals {totals}")
     problems.extend(phase_space_reading(record.get("observations") or {}, bool(problems)))
     return evaluate(record, problems)
 
