@@ -110,15 +110,9 @@
     {
       "action": {
         "bond-leave": {
-          "items": [
-            {
-              "action": "Run `python3 tools/release-check.py run --claim RC-1 --arm bond-leave` and commit its record; the arm's harness lands in `rc-bond-leave`.",
-              "finding": "no committed run record",
-              "item": "RC-1/bond-leave/observe"
-            }
-          ],
-          "next_pr": "rc-bond-leave",
-          "reading": "not-observed",
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
           "required": true
         },
         "local": {
@@ -199,21 +193,18 @@
       "status": {
         "bond-leave": {
           "action": {
-            "items": [
-              {
-                "action": "Run `python3 tools/release-check.py run --claim RC-1 --arm bond-leave` and commit its record; the arm's harness lands in `rc-bond-leave`.",
-                "finding": "no committed run record",
-                "item": "RC-1/bond-leave/observe"
-              }
-            ],
-            "next_pr": "rc-bond-leave",
-            "reading": "not-observed",
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
             "required": true
           },
+          "binary_sha256": "41ccf63ca66b5575c4b93731f11482e03e9478e2c406e2c32491a7528e901d94",
+          "finished_at": "2026-11-23T15:57:33Z",
           "reasons": [],
-          "record": null,
+          "record": "spec/audit/evidence/rc1-bond-leave-20261123-38cd50e/raw/claim.json",
           "required": true,
-          "status": "not run"
+          "source_sha": "38cd50ecf1d6ab64863eb1a318e781b062ffdc7e",
+          "status": "pass"
         },
         "local": {
           "action": {
@@ -309,15 +300,9 @@
           "required": true
         },
         "validator-set": {
-          "items": [
-            {
-              "action": "Run `python3 tools/release-check.py run --claim RC-2 --arm validator-set` and commit its record; the arm's harness lands in `rc-bond-leave`.",
-              "finding": "no committed run record",
-              "item": "RC-2/validator-set/observe"
-            }
-          ],
-          "next_pr": "rc-bond-leave",
-          "reading": "not-observed",
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
           "required": true
         }
       },
@@ -491,21 +476,18 @@
         },
         "validator-set": {
           "action": {
-            "items": [
-              {
-                "action": "Run `python3 tools/release-check.py run --claim RC-2 --arm validator-set` and commit its record; the arm's harness lands in `rc-bond-leave`.",
-                "finding": "no committed run record",
-                "item": "RC-2/validator-set/observe"
-              }
-            ],
-            "next_pr": "rc-bond-leave",
-            "reading": "not-observed",
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
             "required": true
           },
+          "binary_sha256": "41ccf63ca66b5575c4b93731f11482e03e9478e2c406e2c32491a7528e901d94",
+          "finished_at": "2026-11-23T15:57:37Z",
           "reasons": [],
-          "record": null,
+          "record": "spec/audit/evidence/rc2-validator-set-20261123-38cd50e/raw/claim.json",
           "required": true,
-          "status": "not run"
+          "source_sha": "38cd50ecf1d6ab64863eb1a318e781b062ffdc7e",
+          "status": "pass"
         }
       },
       "supersedes": [
@@ -740,15 +722,9 @@
           "required": true
         },
         "returner": {
-          "items": [
-            {
-              "action": "Run `python3 tools/release-check.py run --claim RC-4 --arm returner` and commit its record; the arm's harness lands in `rc-bond-leave`.",
-              "finding": "no committed run record",
-              "item": "RC-4/returner/observe"
-            }
-          ],
-          "next_pr": "rc-bond-leave",
-          "reading": "not-observed",
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
           "required": true
         }
       },
@@ -898,21 +874,18 @@
         },
         "returner": {
           "action": {
-            "items": [
-              {
-                "action": "Run `python3 tools/release-check.py run --claim RC-4 --arm returner` and commit its record; the arm's harness lands in `rc-bond-leave`.",
-                "finding": "no committed run record",
-                "item": "RC-4/returner/observe"
-              }
-            ],
-            "next_pr": "rc-bond-leave",
-            "reading": "not-observed",
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
             "required": true
           },
+          "binary_sha256": "41ccf63ca66b5575c4b93731f11482e03e9478e2c406e2c32491a7528e901d94",
+          "finished_at": "2026-11-23T15:57:40Z",
           "reasons": [],
-          "record": null,
+          "record": "spec/audit/evidence/rc4-returner-20261123-38cd50e/raw/claim.json",
           "required": true,
-          "status": "not run"
+          "source_sha": "38cd50ecf1d6ab64863eb1a318e781b062ffdc7e",
+          "status": "pass"
         }
       },
       "supersedes": [

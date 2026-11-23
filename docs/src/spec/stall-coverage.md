@@ -95,7 +95,7 @@ where a deviation is measured belongs in the placement table, at the end.
 | DE-08 | OTHER THAN | Two nodes merge the same justifications to different pre-states, and the recovery route rewrites the committed claim | `C215`; Law 17a | divergent-readers | split | protocol-stall | A node cannot reproduce its own history | R1: one key for ordering, equality and hashing | `Rchain.MergeScope.scope_is_a_function_of_the_dag` | `casper/tests/merge_determinism.rs::an_arrival_order_moves_the_round_snapshot_and_not_the_scope_a_block_derives` |
 | DE-09 | AFTER | Availability is read after the observation window, so a stall that ended is reported as none | F-U24 availability; `C340` | historic-predicate | historic | protocol-wait | The stall is invisible to the operator | R2: the status carries the stall episode | `Rchain.traceRefines` | `tests/test_stall_series.py::test_an_episode_survives_its_restore` |
 | DE-10 | LATE | A deterministic self-replay refusal is retried as divergence for hours instead of taking its safe exit | `C357`, `C361`; Laws 92–95 | loss-blind-refusal | drift | protocol-stall | The validator never broadcasts; finality caps | R3: one rebuild, one reset per anchor | `Rchain.System.Persistent`, `Rchain.System.Terminal` | `casper/tests/reset.rs::a_self_replay_reset_returns_the_deploy_before_purging_its_only_block` |
-| DE-11 | NO | A rejoining validator never retries a missing justification and stays behind | `C211` | loss-blind-refusal | stuck | protocol-stall | The returner never rejoins; the survivors run on | R2: the dependency set is every parent not yet held | `Rchain.System.Stuck` | owed: the returner arm |
+| DE-11 | NO | A rejoining validator never retries a missing justification and stays behind | `C211` | loss-blind-refusal | stuck | protocol-stall | The returner never rejoins; the survivors run on | R2: the dependency set is every parent not yet held | `Rchain.System.Stuck` | `casper/src/blocks/block_receiver.rs::a_block_waits_for_every_parent_not_yet_validated` |
 | DE-12 | BEFORE | Recovery runs before the anchor it recovers to is valid | `C259`, `C274`; Law 53c | recovery-before-anchor | terminal | protocol-stall | The node rewinds into a state it cannot extend | R3: refuse until the anchor is verified | `Rchain.the_refusal_is_persistent` | `casper/src/engine/recovery.rs::an_anchored_target_is_the_only_accepted_shape` |
 | DE-13 | AS WELL AS | The block receiver is full, the block is dropped, and the chain progresses without it | `C340`; F-U8-02 | loss-blind-refusal | terminal | protocol-stall | A permanent drop with no re-queue and no counter | R2: re-offer, and the bound is visible | Law 53b | `casper/src/engine/node_running.rs::a_full_ingress_queue_re_requests_the_block` |
 | DE-14 | MORE | An attestation storm outruns production, and the guard that would pace it is short-circuited | `C170`, `C171`; H-U2-01 | self-referential-gating | drift | protocol-stall | Production outruns finality and the queue | R2: the cadence guard reads its own witness | `Rchain.Pacing.take` | `casper/src/blocks/proposer/proposer.rs::the_cadence_is_read_from_our_own_latest_message` |
@@ -166,7 +166,7 @@ height, not the height at the stop.
 |---|---|---|---|---|---|
 | DE-01 | RC-1 | local | rc-confirm-local | owed | - |
 | DE-01 | RC-1 | public | rc-public-fleet | owed | - |
-| DE-02 | RC-1 | bond-leave | rc-bond-leave | owed | - |
+| DE-02 | RC-1 | bond-leave | rc-bond-leave | live | spec/audit/evidence/rc1-bond-leave-20261123-38cd50e/raw/claim.json |
 | DE-03 | RC-2 | local | rc-confirm-local | owed | - |
 | DE-04 | RC-2 | public | rc-public-fleet | owed | - |
 | DE-05 | RC-2 | multi-host | rc-multi-host | owed | - |
@@ -179,7 +179,7 @@ height, not the height at the stop.
 | DE-10 | RC-4 | public | rc-public-fleet | owed | - |
 | DE-05 | RC-4 | multi-host | rc-multi-host | owed | - |
 | DE-12 | RC-4 | failover | rc-failover | owed | - |
-| DE-11 | RC-4 | returner | rc-bond-leave | owed | - |
+| DE-11 | RC-4 | returner | rc-bond-leave | live | spec/audit/evidence/rc4-returner-20261123-38cd50e/raw/claim.json |
 | DE-13 | RC-5 | local | rc-confirm-local | owed | - |
 | DE-14 | RC-5 | public | rc-public-fleet | owed | - |
 | DE-14 | RC-5 | transport | rc-transport | owed | - |
@@ -194,7 +194,14 @@ height, not the height at the stop.
 | DE-06 | RC-2 | stall-denominator | rc-stall-arms | live | spec/audit/evidence/rc2-stall-denominator-20261123-5b9685e/raw/claim.json |
 | DE-09 | RC-3 | stall-episode | rc-stall-arms | live | spec/audit/evidence/rc3-stall-episode-20261123-5b9685e/raw/claim.json |
 
-**Debt.** deviations: 19 · placement rows owed: 25 · required arms placed: 27/27 · falsifiers owed: 3.
+The two bond-leave live rows are safeguard measurements, and their records say so. DE-02 carries 256
+finalised-floor rejections and every deploy settled — the no-inverse condition was not observed.
+DE-11 carries a 30.2 s stop, a new boot and a rejoin at the common finalised head, with no support
+refusal while the survivors held 200 of 200. The DE-06 `validator-set` row stays `owed`: its 27
+support refusals all report `supporting: 0`, so the exact two-thirds exposure was not exercised; the
+live DE-06 row on `stall-denominator` is the one that measured it.
+
+**Debt.** deviations: 19 · placement rows owed: 23 · required arms placed: 27/27 · falsifiers owed: 2.
 
 ## Outside the diagram
 
