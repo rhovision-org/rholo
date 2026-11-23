@@ -173,7 +173,7 @@ CH-U3-03, which this pass does not reopen). The folds are its folds.
 
 | ID | Guide word | Deviation | RCA → causal chain | Current behaviour | Class | Disposition | Falsifier |
 |---|---|---|---|---|---|---|---|
-| **F-U3-01** | NO | **While finality is stalled there is no fringe to sync from**, so the *only* path that restores a node is closed for exactly as long as the chain is broken — a restoring or joining node answers `"Finalized fringe is not available."` | the restore/sync path reads the **finalised** fringe → finality frozen at 101 means no new fringe is minted (`spec/audit/evidence/te-1-2026-10-09-four-divergent-heads.md`, "The dependency this exposes") → the node's recovery and the chain's recovery are the same dependency, so a stalled chain cannot be repaired by restarting nodes into it | loud, and already stated in the specification (`testnet-acceptance.md`:1147, "Recovery from the divergent finality itself: none") | Terminal | R3 — **the tool is delivered** (#287 closed) | owed: the **live-testnet drill**, which is the venue #287 recorded as owed and blocked — this box holds no root key, and the live build predates the routes the meet needs |
+| **F-U3-01** | NO | **While finality is stalled there is no fringe to sync from**, so the *only* path that restores a node is closed for exactly as long as the chain is broken — a restoring or joining node answers `"Finalized fringe is not available."` | the restore/sync path reads the **finalised** fringe → finality frozen at 101 means no new fringe is minted (`spec/audit/evidence/te-1-2026-10-09-four-divergent-heads.md`, "The dependency this exposes") → the node's recovery and the chain's recovery are the same dependency, so a stalled chain cannot be repaired by restarting nodes into it | **the operator route is delivered and tested**: with finality frozen no peer has a fringe, so automatic recovery would have to name an anchor the network has not agreed — the consensus-safety line. `restore_chain_state_from_master` restores from an operator-named anchor; the drill wiped and re-anchored validator 1 while the net stayed frozen | Terminal | R3 — **the tool is delivered** (#287 closed); automatic recovery is deliberately not offered | tools/reconcile-network.sh::restore_chain_state_from_master, tests/reconcile-regression.py::run_restore, spec/audit/evidence/n-anchor-drill/frozen-finality-recovery.txt — the live-testnet drill remains a release-campaign item |
 
 ### U4 — Merge & DAG search
 
@@ -273,7 +273,7 @@ dedups on).
 
 | ID | Guide word | Deviation | RCA → causal chain | Current behaviour | Class | Disposition | Falsifier |
 |---|---|---|---|---|---|---|---|
-| **F-U7-01** | LATE | **A deploy expiring at the boundary can make the proposer reject its own block and stall permanently** (#284, found by the #144 campaign's void arm) | the frozen campaign at `74cda38f1` processed 95–99 of 200 deploys and exposed a deploy-expiry boundary wedge; the proposer's own self-validation then refuses the block it just built, which is the shape the 2026-10-08 witness records as `the block's rejected-deploy set does not match its parent` | loud (the self-validation failure is logged) and **sticky** — the stall persists | Terminal | R2 + R3 | owed: #284's reproduction (the campaign arm that exposed it is preserved as VOID) |
+| **F-U7-01** | LATE | **A deploy expiring at the boundary can make the proposer reject its own block and stall permanently** (#284, found by the #144 campaign's void arm) | the frozen campaign at `74cda38f1` processed 95–99 of 200 deploys and exposed a deploy-expiry boundary wedge; the proposer's own self-validation then refuses the block it just built, which is the shape the 2026-10-08 witness records as `the block's rejected-deploy set does not match its parent` | **closed by #284 / PR #285** (`bbb63ccad`): `casper/src/validate.rs::deploy_expired_at_block` is the single boundary predicate, used by both selection and validation; the tests pin both sides of the boundary | Historic | R2 | casper/src/blocks/proposer/proposer.rs::expiry_boundary_selection_and_validation_advance_together, casper/src/validate.rs::deploy_expiration_boundary_is_inclusive |
 
 **A hypothesis, stated as one.** #284's mechanism and the `#106` self-validation failure in the
 2026-10-08 witness share a shape — a block whose rejected-deploy set disagrees with its parent — and #280
@@ -1178,7 +1178,7 @@ not read: the whole of `casper/src/merging.rs` (3,800+ lines), `casper/src/dag.r
 `spec/findings.tsv`'s C248 row in the register's emitted form; the remaining `spec/audit/evidence/`
 runs; and the `rspace` history and store internals beyond the named cache and lock sites.
 
-**Debt.** falsifiers owed: 29 · node-words owed: 44 · census tests owed: 0 · census surfaces owed: 5
+**Debt.** falsifiers owed: 27 · node-words owed: 44 · census tests owed: 0 · census surfaces owed: 5
 
 *(A `F-` row with an `owed` falsifier is a deviation this pass **dispositioned** but did not **prove**;
 the number above is checked against the page by `tools/check-hazop-worksheet.sh`, so it cannot rot.
