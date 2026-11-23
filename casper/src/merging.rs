@@ -1307,6 +1307,29 @@ pub fn is_system_deploy_id(id: &[u8]) -> bool {
     id.len() == 33 && matches!(id[32], 1..=3)
 }
 
+/// The closure a cost-accounting refusal would drop, or `None` when it contains a system deploy.
+///
+/// `with_dependencies` returns the **dependents** of the offending chains, not just the hosts, so
+/// testing the hosts alone would drop a consensus-mandated close chain that happens to descend from
+/// the unfundable one (C344). The decision is separated from the merge loop so it can be tested with
+/// a synthetic dependency graph.
+fn refusal_closure(
+    offending: &BTreeSet<Arc<DeployChainIndex>>,
+    dependency_map: &BTreeMap<Arc<DeployChainIndex>, BTreeSet<Arc<DeployChainIndex>>>,
+) -> Option<BTreeSet<Arc<DeployChainIndex>>> {
+    let forced = rchain_sdk::dag::merging::with_dependencies(offending, dependency_map);
+    if forced.iter().any(|chain| {
+        chain
+            .deploys_with_cost
+            .iter()
+            .any(|d| is_system_deploy_id(&d.id))
+    }) {
+        None
+    } else {
+        Some(forced)
+    }
+}
+
 /// The in-memory block-index cache (port of `BlockIndex.cache`).
 ///
 /// Entries are `Arc`-shared rather than owned. A `BlockIndex` holds a `Vec<DeployChainIndex>` and each
@@ -1717,6 +1740,10 @@ async fn compose_cost_accounting(
     seen: impl Fn(&Blake2b256Hash, &Blake2b256Hash) -> bool,
     winners: &BTreeMap<(u8, Blake2b256Hash), Blake2b256Hash>,
     changes: &mut BTreeMap<(u8, Blake2b256Hash), NativeStoreAction>,
+    // **The chains whose spend the base cannot fund** (the 2026-11-23 halt). A refusal that names
+    // them lets the merge reject those chains, the way it rejects any chain that cannot execute in
+    // this view, instead of failing the whole merge and stopping the proposer.
+    refused_hosts: &mut Vec<Blake2b256Hash>,
 ) -> Result<(), String> {
     let reader = history_repository.get_native_reader(base_state).await;
     let store: Arc<InMemNativeStore> = Arc::new(InMemNativeStore::new(reader));
@@ -1732,6 +1759,8 @@ async fn compose_cost_accounting(
     // The moves are accumulated per slot first, because the *skip* decision is per (chain, slot):
     // two chains can contribute to one slot with only one of them seen by the fold's winner.
     let mut deltas: BTreeMap<(u8, Blake2b256Hash), (Option<String>, i64)> = BTreeMap::new();
+    // **Which chains spent, per slot**, so a refusal can name the ones the base cannot fund.
+    let mut negative_hosts: BTreeMap<(u8, Blake2b256Hash), Vec<Blake2b256Hash>> = BTreeMap::new();
     for chain in accepted {
         let host = chain.host_block;
         for moves in chain.cost_moves.values() {
@@ -1777,6 +1806,12 @@ async fn compose_cost_accounting(
                         continue;
                     }
                 }
+                if delta < 0 {
+                    let spenders = negative_hosts.entry(slot).or_default();
+                    if !spenders.contains(&host) {
+                        spenders.push(host);
+                    }
+                }
                 let entry = deltas.entry(slot).or_insert_with(|| (address, 0));
                 entry.1 = entry
                     .1
@@ -1819,9 +1854,15 @@ async fn compose_cost_accounting(
             .checked_add(delta)
             .ok_or_else(|| format!("cost-accounting composition overflow on {slot:?}"))?;
         if composed < 0 {
+            *refused_hosts = negative_hosts.get(&slot).cloned().unwrap_or_default();
             return Err(format!(
                 "cost accounting would take a vault to {composed}: the accepted deploys spend more \
-                 than the merged state holds, and no sequential execution reaches this"
+                 than the merged state holds, and no sequential execution reaches this \
+                 [slot prefix {} key {} address {:?} current {current} delta {delta} base_state {}]",
+                slot.0,
+                slot.1.to_hex(),
+                address,
+                base_state.to_hex(),
             ));
         }
         let value = NonNegI64::try_from(composed)
@@ -2423,28 +2464,77 @@ impl MergeScope {
         // accepted host in hash order: that restored liveness but decided a disagreement by hash, and
         // two concurrent blocks' absolute values are two transitions, so keeping either discards the
         // other's.
-        let folded = native.fold(&to_merge)?;
-        let winners: BTreeMap<(u8, Blake2b256Hash), Blake2b256Hash> = folded
-            .iter()
-            .map(|(slot, (host, _))| (*slot, *host))
-            .collect();
-        let mut native_changes: BTreeMap<(u8, Blake2b256Hash), NativeStoreAction> = folded
-            .into_values()
-            .map(|(_, action)| (action.slot(), action))
-            .collect();
-        // **And cost accounting, which no longer travels in a block's sidecar.** Applied per
-        // accepted chain rather than per block, which is the granularity the tuple space already
-        // merges its effects at — and the reason a user deploy's own native writes no longer die
-        // with a whole-block rejection (AUDIT C207).
-        compose_cost_accounting(
-            history_repository,
-            base_state,
-            &to_merge,
-            |a, b| native.sees(a, b),
-            &winners,
-            &mut native_changes,
-        )
-        .await?;
+        // **A chain whose spend this merge cannot fund is rejected, not a merge failure** (the
+        // 2026-11-23 halt). Cost accounting composes each accepted deploy's moves onto the merge's
+        // base. When the chain that *funded* the payer lost conflict resolution — a sibling boundary
+        // block rejected whole, with the spender a descendant of it — the spender's burned phlo
+        // composes onto a vault that never received the funding. Refusing the whole merge made every
+        // proposal fail on that view and stopped the chain: the spender's block is not executable
+        // here, which is exactly what the merge's rejection ledger is for. Reject that chain (and
+        // its dependents) and recompose; a system-deploy chain is never dropped (C344).
+        let native_changes: BTreeMap<(u8, Blake2b256Hash), NativeStoreAction>;
+        let mut winners: BTreeMap<(u8, Blake2b256Hash), Blake2b256Hash>;
+        loop {
+            let folded = native.fold(&to_merge)?;
+            winners = folded
+                .iter()
+                .map(|(slot, (host, _))| (*slot, *host))
+                .collect();
+            let mut changes: BTreeMap<(u8, Blake2b256Hash), NativeStoreAction> = folded
+                .into_values()
+                .map(|(_, action)| (action.slot(), action))
+                .collect();
+            // **And cost accounting, which no longer travels in a block's sidecar.** Applied per
+            // accepted chain rather than per block, which is the granularity the tuple space already
+            // merges its effects at — and the reason a user deploy's own native writes no longer die
+            // with a whole-block rejection (AUDIT C207).
+            let mut refused_hosts: Vec<Blake2b256Hash> = Vec::new();
+            match compose_cost_accounting(
+                history_repository,
+                base_state,
+                &to_merge,
+                |a, b| native.sees(a, b),
+                &winners,
+                &mut changes,
+                &mut refused_hosts,
+            )
+            .await
+            {
+                Ok(()) => {
+                    native_changes = changes;
+                    break;
+                }
+                Err(message) => {
+                    let mut dropped = false;
+                    for host in refused_hosts {
+                        let offending: BTreeSet<Arc<DeployChainIndex>> = to_merge
+                            .iter()
+                            .filter(|chain| chain.host_block == host)
+                            .cloned()
+                            .collect();
+                        if offending.is_empty() {
+                            continue;
+                        }
+                        // A system deploy is consensus-mandated: never refuse it — including when it
+                        // is a *dependent* of the offending chain, because `with_dependencies`
+                        // returns the closure, not just the host (C344).
+                        let Some(forced) = refusal_closure(&offending, &dependency_map) else {
+                            continue;
+                        };
+                        let remaining: BTreeSet<Arc<DeployChainIndex>> =
+                            to_merge.difference(&forced).cloned().collect();
+                        if remaining.len() < to_merge.len() {
+                            to_merge = remaining;
+                            rejected = rejected.union(&forced).cloned().collect();
+                            dropped = true;
+                        }
+                    }
+                    if !dropped {
+                        return Err(message);
+                    }
+                }
+            }
+        }
         let native_changes: Vec<NativeStoreAction> = native_changes.into_values().collect();
 
         let mut coverage = KeptEffectCoverage::default();
@@ -5244,6 +5334,163 @@ mod boundary_merge_tests {
                  answerable for"
             );
         }
+    }
+
+    /// **The 2026-11-23 halt (C405), at the merge boundary.** A spender's funding chain lost conflict
+    /// resolution (a sibling block rejected whole), and the spender — a descendant of it — stayed in
+    /// the accepted set. Cost accounting then composed its burned phlo onto a vault the base never
+    /// funded. The old behaviour refused the whole merge, so every proposal on that view failed and
+    /// the chain stopped (`cost accounting would take a vault to -1902`). This arm pins the fix: the
+    /// unfundable chain is **rejected**, the merge succeeds, and the innocent chain survives.
+    #[tokio::test]
+    async fn a_spend_whose_funding_chain_lost_is_rejected_rather_than_halting_the_merge() {
+        let (repo, base) = genesis().await;
+        // `payer(10)` was never funded at genesis: the base holds nothing for it.
+        let spender = Arc::new(DeployChainIndex {
+            first_deploy_ordinal: 0,
+            // An effect of its own, so its rejection is a loss the ledger names rather than an
+            // effect-free dummy.
+            native_effects: vec![NativeStoreAction::Put {
+                prefix: PREFIX_POS,
+                key: Blake2b256Hash::from_bytes([12; 32]),
+                value: vec![1],
+            }],
+            host_block: Blake2b256Hash::from_bytes([0xa0; 32]),
+            deploys_with_cost: BTreeSet::from([DeployIdWithCost {
+                id: vec![0xa0],
+                cost: 500,
+            }]),
+            pre_state_hash: base,
+            post_state_hash: base,
+            event_log_index: EventLogIndex::empty(),
+            state_changes: StateChange::empty(),
+            cost_moves: BTreeMap::from([(
+                vec![0xa0],
+                CostMoves {
+                    deployer: payer(10).1,
+                    charge: 500,
+                    refund: 0,
+                    burned: 500,
+                },
+            )]),
+            executor: payer(1).1,
+        });
+        let unique = Blake2b256Hash::from_bytes([11; 32]);
+        let innocent = Arc::new(DeployChainIndex {
+            first_deploy_ordinal: 0,
+            native_effects: vec![NativeStoreAction::Put {
+                prefix: PREFIX_POS,
+                key: unique,
+                value: vec![5],
+            }],
+            host_block: Blake2b256Hash::from_bytes([0xb0; 32]),
+            deploys_with_cost: BTreeSet::from([DeployIdWithCost {
+                id: vec![0xb0],
+                cost: 0,
+            }]),
+            pre_state_hash: base,
+            post_state_hash: base,
+            event_log_index: EventLogIndex::empty(),
+            state_changes: StateChange::empty(),
+            cost_moves: BTreeMap::new(),
+            executor: payer(1).1,
+        });
+        let blocks = vec![
+            BlockIndex {
+                block_hash: block_hash(0xa0),
+                deploy_chains: vec![spender],
+            },
+            BlockIndex {
+                block_hash: block_hash(0xb0),
+                deploy_chains: vec![innocent],
+            },
+        ];
+
+        let (merged, rejected) = merge(&repo, base, blocks, BTreeMap::new())
+            .await
+            .expect("the merge must reject the unfundable chain, not fail closed");
+
+        assert!(
+            rejected.contains(&vec![0xa0]),
+            "the chain whose burn the base cannot fund is the rejected deploy, not a merge error: \
+             {rejected:?}"
+        );
+        assert!(
+            !rejected.contains(&vec![0xb0]),
+            "the innocent chain is untouched"
+        );
+        let reader = repo.get_native_reader(merged).await;
+        assert_eq!(
+            reader
+                .get_native(PREFIX_POS, unique)
+                .await
+                .expect("a readable native leaf"),
+            Some(vec![5]),
+            "the rest of the merge still applies"
+        );
+        assert_eq!(
+            reader
+                .get_native(
+                    rchain_rspace::native_store::PREFIX_VAULT,
+                    vault_key(&payer(10).1),
+                )
+                .await
+                .expect("a readable vault leaf"),
+            None,
+            "and the rejected chain's charge was not invented against an empty vault"
+        );
+    }
+
+    fn chain_for_refusal(host: u8, id: Vec<u8>, base: Blake2b256Hash) -> Arc<DeployChainIndex> {
+        Arc::new(DeployChainIndex {
+            first_deploy_ordinal: 0,
+            native_effects: Vec::new(),
+            host_block: Blake2b256Hash::from_bytes([host; 32]),
+            deploys_with_cost: BTreeSet::from([DeployIdWithCost { id, cost: 0 }]),
+            pre_state_hash: base,
+            post_state_hash: base,
+            event_log_index: EventLogIndex::empty(),
+            state_changes: StateChange::empty(),
+            cost_moves: BTreeMap::new(),
+            executor: payer(1).1,
+        })
+    }
+
+    /// **A system deploy in the dependent closure is not dropped.** The repair's closure is the
+    /// offending chain *plus its dependents*; checking only the host would drop a close chain that
+    /// descends from the unfundable one (C344). The positive control is the same graph without the
+    /// system deploy, where the closure is removable and no user chain is lost.
+    #[test]
+    fn a_system_deploy_in_the_dependent_closure_is_not_dropped() {
+        let base = Blake2b256Hash::from_bytes([0u8; 32]);
+        let spender = chain_for_refusal(0xa0, vec![0xa0; 32], base);
+        let dependent = chain_for_refusal(0xb0, vec![0xb0; 32], base);
+        let mut system_id = vec![0xc0u8; 33];
+        system_id[32] = 2; // CloseBlock
+        let system = chain_for_refusal(0xc0, system_id, base);
+
+        let mut dependency_map: BTreeMap<Arc<DeployChainIndex>, BTreeSet<Arc<DeployChainIndex>>> =
+            BTreeMap::new();
+        dependency_map.insert(
+            Arc::clone(&spender),
+            BTreeSet::from([Arc::clone(&dependent), Arc::clone(&system)]),
+        );
+        let offending = BTreeSet::from([Arc::clone(&spender)]);
+        assert!(
+            refusal_closure(&offending, &dependency_map).is_none(),
+            "a closure containing a system deploy must not be droppable"
+        );
+
+        let mut user_only = dependency_map.clone();
+        user_only.insert(
+            Arc::clone(&spender),
+            BTreeSet::from([Arc::clone(&dependent)]),
+        );
+        let closure =
+            refusal_closure(&offending, &user_only).expect("a closure of user chains is removable");
+        assert!(closure.contains(&spender));
+        assert!(closure.contains(&dependent));
+        assert!(!closure.contains(&system));
     }
 
     /// The state the C344 merge fixtures fork from: v4 jailed at boundary 30 with a vote window

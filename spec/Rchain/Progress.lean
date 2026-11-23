@@ -229,6 +229,20 @@ theorem persistent_blocks_the_goal {S : System} {want goal : S.State → Prop}
   rintro ⟨σ', hr, hg⟩
   exact hgoal σ' (S.persistent_of_reaches hpers hσ σ' hr) hg
 
+/-- **The two polarities are exact complements.** `Persistent want` ("once true, always true") and
+    `Unrestorable (¬want)` ("once lost, never regained") are the same statement read from the two ends
+    of a step. This is what lets the classification say *refusal* and *loss* without treating them as
+    two mechanisms: a `Persistent` refusal that forbids the goal is a `Terminal` stall (the law above),
+    and the same fact stated from the goal's side is that the goal is `Unrestorable`. -/
+theorem persistent_iff_unrestorable_complement {S : System} {want : S.State → Prop} :
+    S.Persistent want ↔ S.Unrestorable (fun σ => ¬ want σ) := by
+  constructor
+  · intro h σ σ' hstep hnot hw'
+    exact hnot (fun hw => hw' (h σ σ' hstep hw))
+  · intro h σ σ' hstep hw
+    by_contra hw'
+    exact h σ σ' hstep (fun hnot => hnot hw) hw'
+
 /-- **The `Void` shape, as an implication from the predicate** — nothing satisfies the goal's requirement,
     so nothing satisfies the goal, so nothing is ever `Waiting` on it. What makes this a statement about
     a protocol is *proving* the requirement empty of its rules, which is the instance's obligation
@@ -293,6 +307,35 @@ theorem a_silent_term_is_stuck (p : Par) (h : takesStep p = false) : silenceSyst
   have ht : takesStep p = true := (takesStep_iff_reduces p).mpr ⟨q, hq⟩
   rw [ht] at h
   exact Bool.noConfusion h
+
+/-- **The smallest protocol wait**: one step from `false` to the goal `true`, and no step out of `true`.
+    It is the layer distinction in its smallest form — a state with a step available is *waiting*, and
+    that is not a stall. The larger point is negative: this model does not say the step is ever taken,
+    because a transition relation fixes no schedule (`Fair` is named and unmodelled). -/
+def waitSystem : System where
+  State := Bool
+  Step := fun a b => a = false ∧ b = true
+  enabled := fun a => !a
+  enabled_iff := by
+    intro σ
+    cases σ
+    · exact ⟨fun _ => ⟨true, rfl, rfl⟩, fun _ => rfl⟩
+    · exact ⟨fun h => Bool.noConfusion h, fun h => by rcases h with ⟨_, h1, _⟩; cases h1⟩
+
+/-- The wait's goal: the one state one step away. -/
+def waitGoal : Bool → Prop := fun b => b = true
+
+/-- **A wait is one step from the goal**, and the step is available now. -/
+theorem a_wait_is_one_step_from_the_goal : waitSystem.Reach false true :=
+  Relation.ReflTransGen.single ⟨rfl, rfl⟩
+
+/-- **A wait is not a `Terminal`**: a state exists whose continuation satisfies the goal. This is the
+    boundary the classification must keep sharp — `Terminal` requires that the satisfying state was
+    *left* and no continuation restores it, and a wait has not left it. -/
+theorem a_wait_is_not_terminal : ¬ waitSystem.Terminal waitGoal false := by
+  rintro ⟨σ, σ', _, hgoal, hstep, _⟩
+  have hσ : σ = true := hgoal
+  exact Bool.noConfusion (hσ.symm.trans hstep.1)
 
 /-- The 2-cycle: two states, each stepping only to the other — the smallest system with a `Drift`. -/
 def twoCycle : System where
