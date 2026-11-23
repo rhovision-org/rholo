@@ -213,12 +213,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
-          "finished_at": "2026-11-22T13:51:35Z",
+          "binary_sha256": "fa4f3d8e4332532fe029f377ad8ce93a07bfc0ae4b7b3b2c5f4689017405e7ba",
+          "finished_at": "2026-11-23T17:35:31Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc1-local-20261122-5a0e755/raw/claim.json",
+          "record": "spec/audit/evidence/rc1-local-20261123-2d0edab/raw/claim.json",
           "required": true,
-          "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
+          "source_sha": "2d0edabc792b839ac42cc03d3a6e47c2a90473e6",
           "status": "pass"
         },
         "public": {
@@ -415,12 +415,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
-          "finished_at": "2026-11-22T13:56:15Z",
+          "binary_sha256": "fa4f3d8e4332532fe029f377ad8ce93a07bfc0ae4b7b3b2c5f4689017405e7ba",
+          "finished_at": "2026-11-23T17:39:21Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc2-local-20261122-5a0e755/raw/claim.json",
+          "record": "spec/audit/evidence/rc2-local-20261123-2d0edab/raw/claim.json",
           "required": true,
-          "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
+          "source_sha": "2d0edabc792b839ac42cc03d3a6e47c2a90473e6",
           "status": "pass"
         },
         "multi-host": {
@@ -628,12 +628,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
-          "finished_at": "2026-11-22T13:56:48Z",
+          "binary_sha256": "fa4f3d8e4332532fe029f377ad8ce93a07bfc0ae4b7b3b2c5f4689017405e7ba",
+          "finished_at": "2026-11-23T17:39:56Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc3-local-20261122-5a0e755/raw/claim.json",
+          "record": "spec/audit/evidence/rc3-local-20261123-2d0edab/raw/claim.json",
           "required": true,
-          "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
+          "source_sha": "2d0edabc792b839ac42cc03d3a6e47c2a90473e6",
           "status": "pass"
         },
         "public": {
@@ -828,12 +828,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
-          "finished_at": "2026-11-22T14:05:01Z",
+          "binary_sha256": "fa4f3d8e4332532fe029f377ad8ce93a07bfc0ae4b7b3b2c5f4689017405e7ba",
+          "finished_at": "2026-11-23T17:48:11Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc4-local-20261122-5a0e755/raw/claim.json",
+          "record": "spec/audit/evidence/rc4-local-20261123-2d0edab/raw/claim.json",
           "required": true,
-          "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
+          "source_sha": "2d0edabc792b839ac42cc03d3a6e47c2a90473e6",
           "status": "pass"
         },
         "multi-host": {
@@ -918,15 +918,9 @@
           "required": true
         },
         "transport": {
-          "items": [
-            {
-              "action": "Run `python3 tools/release-check.py run --claim RC-5 --arm transport` and commit its record; the arm's harness lands in `rc-transport`.",
-              "finding": "no committed run record",
-              "item": "RC-5/transport/observe"
-            }
-          ],
-          "next_pr": "rc-transport",
-          "reading": "not-observed",
+          "items": [],
+          "next_pr": null,
+          "reading": "safe",
           "required": true
         }
       },
@@ -994,12 +988,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
-          "finished_at": "2026-11-22T14:05:44Z",
+          "binary_sha256": "fa4f3d8e4332532fe029f377ad8ce93a07bfc0ae4b7b3b2c5f4689017405e7ba",
+          "finished_at": "2026-11-23T17:48:50Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc5-local-20261122-5a0e755/raw/claim.json",
+          "record": "spec/audit/evidence/rc5-local-20261123-2d0edab/raw/claim.json",
           "required": true,
-          "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
+          "source_sha": "2d0edabc792b839ac42cc03d3a6e47c2a90473e6",
           "status": "pass"
         },
         "public": {
@@ -1022,21 +1016,18 @@
         },
         "transport": {
           "action": {
-            "items": [
-              {
-                "action": "Run `python3 tools/release-check.py run --claim RC-5 --arm transport` and commit its record; the arm's harness lands in `rc-transport`.",
-                "finding": "no committed run record",
-                "item": "RC-5/transport/observe"
-              }
-            ],
-            "next_pr": "rc-transport",
-            "reading": "not-observed",
+            "items": [],
+            "next_pr": null,
+            "reading": "safe",
             "required": true
           },
+          "binary_sha256": "3fec983c06866a15636636b035368c20479dabd20fb2db50c2ca9ab07d2eeeb3",
+          "finished_at": "2026-11-23T18:21:32Z",
           "reasons": [],
-          "record": null,
+          "record": "spec/audit/evidence/rc5-transport-20261123-361680e/raw/claim.json",
           "required": true,
-          "status": "not run"
+          "source_sha": "361680eec25ab2fb16d790a1c4ef33b3ee1e3ecb",
+          "status": "pass"
         }
       },
       "supersedes": [
@@ -1185,12 +1176,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "e5ae3e023d7e604175b723eba68a9cf035b898efb46fb169b66f8f5e33fe60ca",
-          "finished_at": "2026-11-22T14:07:44Z",
+          "binary_sha256": "fa4f3d8e4332532fe029f377ad8ce93a07bfc0ae4b7b3b2c5f4689017405e7ba",
+          "finished_at": "2026-11-23T17:50:08Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc6-local-20261122-5a0e755/raw/claim.json",
+          "record": "spec/audit/evidence/rc6-local-20261123-2d0edab/raw/claim.json",
           "required": true,
-          "source_sha": "5a0e755be3d92ddf3843aa5fde493a622f58ca7c",
+          "source_sha": "2d0edabc792b839ac42cc03d3a6e47c2a90473e6",
           "status": "pass"
         },
         "off-host": {
@@ -1313,12 +1304,12 @@
             "reading": "safe",
             "required": true
           },
-          "binary_sha256": "c971797ad5dd4dba89cf25e3c83c95ff5d5467911bf538ae3d5435f6b255bed7",
-          "finished_at": "2026-11-22T16:06:07Z",
+          "binary_sha256": "fa4f3d8e4332532fe029f377ad8ce93a07bfc0ae4b7b3b2c5f4689017405e7ba",
+          "finished_at": "2026-11-23T17:54:09Z",
           "reasons": [],
-          "record": "spec/audit/evidence/rc7-local-20261122-8c3fa6d/raw/claim.json",
+          "record": "spec/audit/evidence/rc7-local-20261123-2d0edab/raw/claim.json",
           "required": true,
-          "source_sha": "8c3fa6d747ffe9bbfa28a21763015adbe7e3b882",
+          "source_sha": "2d0edabc792b839ac42cc03d3a6e47c2a90473e6",
           "status": "pass"
         },
         "public": {

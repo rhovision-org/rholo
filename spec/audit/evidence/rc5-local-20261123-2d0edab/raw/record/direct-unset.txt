@@ -1,0 +1,17 @@
+HTTP/1.1 400 Bad Request
+content-type: text/plain; charset=utf-8
+access-control-expose-headers: *
+access-control-allow-origin: *
+content-length: 75
+date: Mon, 23 Nov 2026 17:48:38 GMT
+
+Failed to parse the request body as JSON: expected value at line 1 column 1
+-- release --
+HTTP/1.1 400 Bad Request
+content-type: text/plain; charset=utf-8
+access-control-expose-headers: *
+access-control-allow-origin: *
+content-length: 75
+date: Mon, 23 Nov 2026 17:48:39 GMT
+
+Failed to parse the request body as JSON: expected value at line 1 column 1

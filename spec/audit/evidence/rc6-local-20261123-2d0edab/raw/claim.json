@@ -1,0 +1,62 @@
+{
+  "arm": "local",
+  "claim_id": "RC-6",
+  "claim_title": "Join and audit",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-23T17:50:08Z",
+  "harness": {
+    "command": [
+      "/home/patrick/miniforge3/bin/python3",
+      "/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/n457-mature-join-arm.py",
+      "--supported-recovery",
+      "--min-height",
+      "28",
+      "--timeout",
+      "900",
+      "--out",
+      "target/release-claims/campaign-20261123/RC-6/join"
+    ],
+    "exit_code": 0,
+    "name": "n457-mature-join-arm",
+    "out": "target/release-claims/campaign-20261123/RC-6/join"
+  },
+  "locality": "local-devnet",
+  "observations": {
+    "audit": {
+      "blocks": 101,
+      "checkpointDigest": "ed4c9415ca9445842ebc85df2f7c5fc5c62b28311732d3413a7f774653f52e82",
+      "claimedRoot": "86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5",
+      "derivedRoot": "86701b6029bb8a74f3017869b0f753f58cd80b6b72fd400b8e5946e387ae9ab5",
+      "error": null,
+      "exit": 0,
+      "reason": null,
+      "verdict": "AGREE"
+    },
+    "audit_traces": [],
+    "chain_problems": [],
+    "derived_root_matches": true,
+    "digest_matches": true,
+    "join_result": "pass",
+    "joiner_checkpoint": {
+      "anchor": "d09a55767be921a6db9e1df53fa8d014ab3dfcdee2e5be0e6f00842d6ccbaab2",
+      "anchorHeight": 25,
+      "digest": "ed4c9415ca9445842ebc85df2f7c5fc5c62b28311732d3413a7f774653f52e82",
+      "kind": "checkpoint"
+    }
+  },
+  "preconditions": [],
+  "provenance": {
+    "binary_sha256": "fa4f3d8e4332532fe029f377ad8ce93a07bfc0ae4b7b3b2c5f4689017405e7ba",
+    "devnet_prefix": "n457join",
+    "image_id": "2d3991976a49a65466d1ddfeb39ac5e2167b6c3a7f867d9a9b9f8376a0880b37",
+    "profile": "local-4",
+    "source_dirty": false,
+    "source_sha": "2d0edabc792b839ac42cc03d3a6e47c2a90473e6"
+  },
+  "reasons": [],
+  "schema": 1,
+  "started_at": "2026-11-23T17:48:55Z",
+  "verdict": "pass"
+}

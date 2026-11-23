@@ -37,7 +37,7 @@ cannot yet be made. No status is authored.
 | `RC-4` | `returner` | local | local-devnet | **safe** | — | — |
 | `RC-5` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-5` | `public` | public | public-live | **not-observed** | Supply the capped/unset pressure record from the public endpoint and proxy. | `rc-public-fleet` |
-| `RC-5` | `transport` | local | local-devnet | **not-observed** | Run `python3 tools/release-check.py run --claim RC-5 --arm transport` and commit its record; the arm's harness lands in `rc-transport`. | `rc-transport` |
+| `RC-5` | `transport` | local | local-devnet | **safe** | — | — |
 | `RC-6` | `local` | local | local-devnet | **safe** | — | — |
 | `RC-6` | `public` | public | public-live | **not-observed** | Supply the operator's completed public join record. | `rc-public-fleet` |
 | `RC-6` | `off-host` | local | off-host-claim | **not-observed** | Run `python3 tools/release-check.py run --claim RC-6 --arm off-host` and commit its record; the arm's harness lands in `rc-offhost`. | `rc-offhost` |
@@ -90,7 +90,7 @@ cannot yet be made. No status is authored.
 
 **Arm `local`** (local, `local-devnet`) — the acceptance drill retains a confirmed marker through two further epoch boundaries
 
-Reading: `safe` — spec/audit/evidence/rc1-local-20261122-5a0e755/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc1-local-20261123-2d0edab/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — the same settlement and retention reading on the four-host public fleet
@@ -136,7 +136,7 @@ Reading: `safe` — spec/audit/evidence/rc1-bond-leave-20261123-38cd50e/raw/clai
 
 **Arm `local`** (local, `local-devnet`) — partition/rejoin with a producing victim; containment and no regression
 
-Reading: `safe` — spec/audit/evidence/rc2-local-20261122-5a0e755/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc2-local-20261123-2d0edab/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — the operator's partition window on the public fleet
@@ -199,7 +199,7 @@ Reading: `safe` — spec/audit/evidence/rc2-stall-denominator-20261123-5b9685e/r
 
 **Arm `local`** (local, `local-devnet`) — state agreement across a merge on the local four-validator devnet
 
-Reading: `safe` — spec/audit/evidence/rc3-local-20261122-5a0e755/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc3-local-20261123-2d0edab/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — state agreement on the public fleet
@@ -251,7 +251,7 @@ Reading: `safe` — spec/audit/evidence/rc3-stall-episode-20261123-5b9685e/raw/c
 
 **Arm `local`** (local, `local-devnet`) — restart under load: accepted work survives and the victim rejoins
 
-Reading: `safe` — spec/audit/evidence/rc4-local-20261122-5a0e755/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc4-local-20261123-2d0edab/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — a real host stop on the public fleet
@@ -309,7 +309,7 @@ Reading: `safe` — spec/audit/evidence/rc4-returner-20261123-38cd50e/raw/claim.
 
 **Arm `local`** (local, `local-devnet`) — capped and unset pressure on the local node
 
-Reading: `safe` — spec/audit/evidence/rc5-local-20261122-5a0e755/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc5-local-20261123-2d0edab/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — pressure on the public endpoint and proxy
@@ -320,9 +320,8 @@ Reading: `not-observed` — no committed run record
 
 **Arm `transport`** (local, `local-devnet`) — one deploy id through HTTP, direct HTTP, gRPC and a proxy returns the same id, status, settlement stage and error class
 
-Reading: `not-observed` — no committed run record
-- `RC-5/transport/observe` — no committed run record. **Next:** Run `python3 tools/release-check.py run --claim RC-5 --arm transport` and commit its record; the arm's harness lands in `rc-transport`.
-- Next PR: `rc-transport`
+Reading: `safe` — spec/audit/evidence/rc5-transport-20261123-361680e/raw/claim.json
+- No action: the reading is safe; carry the record forward.
 
 **Supersedes.** G428-M2
 
@@ -356,7 +355,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — genesis join and audit on the local devnet
 
-Reading: `safe` — spec/audit/evidence/rc6-local-20261122-5a0e755/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc6-local-20261123-2d0edab/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — a public join and audit
@@ -409,7 +408,7 @@ Reading: `not-observed` — no committed run record
 
 **Arm `local`** (local, `local-devnet`) — mixed N/N+1 binaries agree on a block's state, a populated store migrates, and a newer store is refused
 
-Reading: `safe` — spec/audit/evidence/rc7-local-20261122-8c3fa6d/raw/claim.json
+Reading: `safe` — spec/audit/evidence/rc7-local-20261123-2d0edab/raw/claim.json
 - No action: the reading is safe; carry the record forward.
 
 **Arm `public`** (public, `public-live`) — a rolling fleet swap keeps one finalised chain through the mixed window and reaches the same head after the swap

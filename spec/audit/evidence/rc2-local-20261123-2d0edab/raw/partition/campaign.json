@@ -1,0 +1,23 @@
+{
+  "gate_id": "n8-partition-rejoin",
+  "gate_version": 2,
+  "source_sha": "2d0edabc792b839ac42cc03d3a6e47c2a90473e6",
+  "binary_sha256": "fa4f3d8e4332532fe029f377ad8ce93a07bfc0ae4b7b3b2c5f4689017405e7ba",
+  "run_id": null,
+  "run_attempt": null,
+  "locality": "local-devnet",
+  "validators": 4,
+  "aggregate": "PASS_BOUNDED_WORKLOAD_PARTITION_REJOIN",
+  "cycles": [
+    {
+      "cycle": 1,
+      "result": "PASS",
+      "failure_class": null
+    },
+    {
+      "cycle": 2,
+      "result": "PASS",
+      "failure_class": null
+    }
+  ]
+}

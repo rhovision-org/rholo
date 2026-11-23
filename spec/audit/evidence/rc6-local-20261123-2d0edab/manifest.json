@@ -1,0 +1,83 @@
+{
+  "arms": [],
+  "binary_sha256": "fa4f3d8e4332532fe029f377ad8ce93a07bfc0ae4b7b3b2c5f4689017405e7ba",
+  "execution_proven": false,
+  "files": [
+    {
+      "bytes": 754,
+      "kind": "json",
+      "path": "raw/audit.json",
+      "sha256": "cf5f747bf8946d7cafe0c2545c892502cf82aaf1bbfeec55f729f1214069f8ea"
+    },
+    {
+      "bytes": 532568,
+      "kind": "log",
+      "path": "raw/audit.log",
+      "sha256": "77634b628cf770de2be073f6575aae534f3ec66e658f4bd4bc8f9edb3e051ed8"
+    },
+    {
+      "bytes": 0,
+      "kind": "log",
+      "path": "raw/chain.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 1949,
+      "kind": "json",
+      "path": "raw/claim.json",
+      "sha256": "9541240e2cc470746b1d0941148743582520844ca5769291192f106d7702493d"
+    },
+    {
+      "bytes": 7503,
+      "kind": "log",
+      "path": "raw/join/activated.log",
+      "sha256": "7a05db3cbcbb6c6bcae53dfe3c5989a22dfafe2dd061792106dac21542b81bf4"
+    },
+    {
+      "bytes": 6614,
+      "kind": "json",
+      "path": "raw/join/chain.json",
+      "sha256": "56c75bba349e0afa90593c34ce5907d89f5432507c1d033d6cd69d26ce10116e"
+    },
+    {
+      "bytes": 1798,
+      "kind": "json",
+      "path": "raw/join/mature-join.json",
+      "sha256": "be9140e6e18b7a6400fde756f1f000120cc199971d8b435777f356c442d94161"
+    },
+    {
+      "bytes": 74884,
+      "kind": "log",
+      "path": "raw/join/passive.log",
+      "sha256": "0fc70d207a50d5747c3569cba85392367deab3729f7e3f2bbfe2641cefcfad3a"
+    },
+    {
+      "bytes": 80052,
+      "kind": "log",
+      "path": "raw/join/responder.log",
+      "sha256": "1fa74a392a7bd9f581a87de8bf16ceeb6d1157d1e7b3b5753e2939b7f6547d4b"
+    },
+    {
+      "bytes": 545,
+      "kind": "log",
+      "path": "raw/join.log",
+      "sha256": "60394aa902e73b123de135c0bd2ba8578559420a59a14a029900dc0fc0279e85"
+    }
+  ],
+  "gate_id": "RC-6",
+  "locality": "local-devnet",
+  "packer": {
+    "packaged_at": "2026-11-23T18:21:58+00:00",
+    "tool": "evidence-pack",
+    "version": 2
+  },
+  "redactions": [],
+  "reference": null,
+  "run": {
+    "attempt": null,
+    "url": null
+  },
+  "schema": 1,
+  "source_sha": "2d0edabc792b839ac42cc03d3a6e47c2a90473e6",
+  "verdict": "PASS"
+}
