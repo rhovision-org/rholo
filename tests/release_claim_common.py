@@ -571,7 +571,7 @@ def preflight_failure(claim_id: str, environment: str, out, record: dict,
 # node's own `predicates`/`bounded`/`accepted` labels are never trusted.
 # --------------------------------------------------------------------------------------
 
-TRACE_KINDS = ("merge", "finality", "state", "boot", "admission", "audit", "format")
+TRACE_KINDS = ("merge", "finality", "state", "boot", "admission", "audit", "format", "stall")
 
 BOUNDED_ADMISSION_CLASSES = {"full", "byte-full", "deployer-share", "rate-limited", "inflight"}
 
@@ -805,6 +805,111 @@ def evaluate_audit_trace(trace: dict) -> dict:
     })
 
 
+STALL_SETTLE_STATUSES = {"finalizedSuccess", "finalizedError", "requeued", "terminal",
+                         "rejected"}
+VOCABULARY = ROOT / "spec" / "progress-vocabulary.tsv"
+
+
+def progress_vocabulary() -> dict[str, set[str]]:
+    """The emitted canonical wires. A missing or malformed file is a refusal, never empty."""
+    axes = {"representation": set(), "shape": set(), "root-cause": set(), "rung": set()}
+    if not VOCABULARY.is_file():
+        raise ValueError(f"the progress vocabulary is missing: {VOCABULARY}")
+    lines = VOCABULARY.read_text().splitlines()
+    if not lines or lines[0].split("\t") != ["axis", "wire"]:
+        raise ValueError("the progress vocabulary header is not axis<TAB>wire")
+    for number, line in enumerate(lines[1:], 2):
+        parts = line.split("\t")
+        if len(parts) != 2 or not parts[1]:
+            raise ValueError(f"vocabulary line {number} is not axis<TAB>wire: {line!r}")
+        if parts[0] in axes:
+            axes[parts[0]].add(parts[1])
+    for axis, wires in axes.items():
+        if not wires:
+            raise ValueError(f"the vocabulary has no {axis} wires")
+    return axes
+
+
+def evaluate_stall_trace(trace: dict) -> dict:
+    """One phase of a stall series: the coordinates decide, not the harness's labels."""
+    phase = trace.get("phase")
+    if phase == "baseline":
+        height = _integer(trace.get("height"))
+        finalized = _integer(trace.get("finalized"))
+        baseline_ok = (height is not None and finalized is not None
+                       and height > 0 and 0 <= finalized <= height)
+        return _predicate_result({"baseline_ok": baseline_ok})
+    if phase == "trigger":
+        mechanism = trace.get("mechanism")
+        exercised = trace.get("exercised") is True
+        live = _integer(trace.get("live_stake"))
+        total = _integer(trace.get("bonded_total"))
+        stake_ok = True
+        if live is not None or total is not None:
+            stake_ok = live is not None and total is not None and 0 < live <= total
+        trigger_ok = (exercised and isinstance(mechanism, str) and bool(mechanism.strip())
+                      and stake_ok)
+        return _predicate_result({"trigger_ok": trigger_ok})
+    if phase == "stall":
+        progress = trace.get("progress_advanced")
+        finality = trace.get("finality_advanced")
+        decided = ((progress is True or progress is False)
+                   and (finality is True or finality is False))
+        expected_progress = trace.get("progress_expected")
+        expected_finality = trace.get("finality_expected")
+        matches = decided
+        if expected_progress is not None:
+            matches = matches and progress is expected_progress
+        if expected_finality is not None:
+            matches = matches and finality is expected_finality
+        # A finality stall holds finality, and never claims a settlement while it is held.
+        stall_ok = matches and finality is False and trace.get("settlement_claimed") is not True
+        return _predicate_result({"stall_ok": stall_ok})
+    if phase == "restore":
+        resumed = (trace.get("progress_resumed") is True
+                   or trace.get("finality_resumed") is True)
+        rule = trace.get("rule")
+        operator = trace.get("operator") is True
+        intrinsic = trace.get("intrinsic") is True
+        restore_ok = resumed and (rule in ("R2", "R3", "R4") or operator or intrinsic)
+        return _predicate_result({"restore_ok": restore_ok})
+    if phase == "settle":
+        statuses = trace.get("deploy_status")
+        statuses = statuses if isinstance(statuses, dict) else {}
+        rejected = _string_set(trace.get("rejected_deploys"))
+        surfaces = trace.get("surfaces")
+        surfaces = surfaces if isinstance(surfaces, dict) else {}
+        known = bool(statuses) and all(
+            isinstance(status, str) and status in STALL_SETTLE_STATUSES
+            for status in statuses.values())
+        nonfinal = {ident for ident, status in statuses.items()
+                    if status in ("rejected", "terminal")}
+        surfaced = all(isinstance(surfaces.get(ident), str) and surfaces[ident].strip()
+                       for ident in nonfinal)
+        no_silent_drop_ok = surfaced and rejected <= set(statuses)
+        return _predicate_result({
+            "settle_ok": known,
+            "no_silent_drop_ok": no_silent_drop_ok,
+        })
+    if phase == "episode":
+        try:
+            vocabulary = progress_vocabulary()
+        except ValueError as error:
+            return {"predicates": {}, "missing": [], "false": ["episode_ok"],
+                    "error": str(error)}
+        deviations = [item for item in (trace.get("deviations") or [])
+                      if isinstance(item, str) and item.startswith("DE-")]
+        episode_ok = (
+            trace.get("representation") in vocabulary["representation"]
+            and trace.get("shape") in vocabulary["shape"]
+            and trace.get("cause") in vocabulary["root-cause"]
+            and trace.get("rung") in vocabulary["rung"]
+            and bool(deviations)
+            and isinstance(trace.get("law"), str) and bool(trace["law"].strip()))
+        return _predicate_result({"episode_ok": episode_ok})
+    return _predicate_result({"phase_ok": False})
+
+
 def evaluate_format_trace(trace: dict) -> dict:
     """The store-format gate: the decision is the arithmetic one, and a stamp is durable."""
     present = _integer(trace.get("on_disk"))
@@ -841,6 +946,7 @@ EVALUATORS = {
     "admission": evaluate_admission_trace,
     "audit": evaluate_audit_trace,
     "format": evaluate_format_trace,
+    "stall": evaluate_stall_trace,
 }
 
 
@@ -861,10 +967,15 @@ def traces_from(record: dict) -> list[dict]:
         observations = {}
     rows: list[dict] = []
     for key in ("traces", "boot_traces", "finality_traces", "state_traces",
-                "admission_traces", "audit_traces", "format_traces"):
+                "admission_traces", "audit_traces", "format_traces", "stall_series"):
         value = observations.get(key)
         if isinstance(value, list):
             rows.extend(row for row in value if isinstance(row, dict))
+    # The episode is one object, not a phase row; expose it as a trace so a false wire is
+    # attributable like any other coordinate.
+    episode = observations.get("stall_episode")
+    if isinstance(episode, dict):
+        rows.append({**episode, "kind": "stall", "phase": "episode"})
     if not rows:
         value = record.get("traces")
         if isinstance(value, list):
