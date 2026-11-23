@@ -153,6 +153,7 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(out["claims"], 7)
         self.assertEqual(out["arms"], 27)
         self.assertEqual(out["old"], 13)
+        self.assertEqual(out["completed"], 5)
 
     def test_no_claim_authors_a_status_or_a_missing_observation(self):
         for row in self.payload["claims"]:
@@ -235,8 +236,9 @@ class ClaimTests(unittest.TestCase):
         verdict, reasons = module.check(record)
         self.assertEqual(verdict, "pass", reasons)
 
-    def test_every_claim_names_its_trace_close_actions_and_next_pr(self):
+    def test_every_claim_names_its_trace_close_actions_and_pr(self):
         pr_ids = {entry["id"] for entry in self.payload["action_prs"]}
+        completed_ids = {entry["id"] for entry in self.payload["completed_prs"]}
         for row in self.payload["claims"]:
             with self.subTest(claim=row["id"]):
                 self.assertIn(row.get("trace"), checker.TRACE_KINDS)
@@ -244,11 +246,56 @@ class ClaimTests(unittest.TestCase):
                     self.assertTrue((row.get("close") or {}).get(key), (row["id"], key))
                 environments = set()
                 for arm in row["arms"]:
-                    self.assertIn(arm.get("next_pr"), pr_ids, (row["id"], arm["id"]))
+                    live, closed = arm.get("next_pr"), arm.get("closed_by")
+                    self.assertNotEqual(live is None, closed is None, (row["id"], arm["id"]))
+                    if live is not None:
+                        self.assertIn(live, pr_ids, (row["id"], arm["id"]))
+                    else:
+                        self.assertIn(closed, completed_ids, (row["id"], arm["id"]))
                     self.assertIn(arm.get("locality"), checker.LOCALITIES)
                     if arm.get("required"):
                         environments.add(arm["environment"])
                 self.assertEqual(environments, {"local", "public"}, row["id"])
+
+    def test_live_and_completed_actions_are_disjoint_and_both_referenced(self):
+        live = {entry["id"]: entry for entry in self.payload["action_prs"]}
+        completed = {entry["id"]: entry for entry in self.payload["completed_prs"]}
+        self.assertFalse(set(live) & set(completed))
+        referenced = {arm["next_pr"] for row in self.payload["claims"] for arm in row["arms"]
+                      if arm.get("next_pr")}
+        closed = {arm["closed_by"] for row in self.payload["claims"] for arm in row["arms"]
+                  if arm.get("closed_by")}
+        for ident, entry in live.items():
+            if entry.get("programme"):
+                continue
+            self.assertIn(ident, referenced, ident)
+        for ident in completed:
+            self.assertIn(ident, closed, ident)
+        self.assertTrue(live["launch-gate"].get("programme"))
+
+    def test_the_anti_rot_rule_refuses_an_action_that_closes_nothing(self):
+        payload = copy.deepcopy(SOURCE)
+        payload["action_prs"].append(
+            {"id": "rc-invented", "scope": "nothing", "claims": ["RC-1"]})
+        with self.assertRaises(checker.ClaimError):
+            checker.validate(payload, FakeBuilder(payload["claims"]))
+
+    def test_a_completed_pr_may_not_be_a_live_next_pr(self):
+        payload = copy.deepcopy(SOURCE)
+        row = next(row for row in payload["claims"] if row["id"] == "RC-1")
+        arm = next(arm for arm in row["arms"] if arm["id"] == "public")
+        arm["next_pr"] = "rc-transport"
+        with self.assertRaises(checker.ClaimError):
+            checker.validate(payload, FakeBuilder(payload["claims"]))
+
+    def test_a_safe_arm_must_name_the_pr_that_closed_it(self):
+        payload = copy.deepcopy(SOURCE)
+        row = next(row for row in payload["claims"] if row["id"] == "RC-1")
+        arm = next(arm for arm in row["arms"] if arm["id"] == "local")
+        arm.pop("closed_by")
+        arm["next_pr"] = "rc-public-fleet"
+        with self.assertRaises(checker.ClaimError):
+            checker.validate(payload, builder)
 
     def test_a_false_predicate_action_names_the_predicate_and_anchors(self):
         row = self.claim("RC-1")

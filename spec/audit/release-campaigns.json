@@ -7,47 +7,11 @@
         "RC-3",
         "RC-4",
         "RC-5",
-        "RC-6"
-      ],
-      "id": "rc-confirm-local",
-      "scope": "Re-run the baseline local arms with the current image and commit the records. Read each failure with tools/trace-evaluate.py: unsafe-point names a predicate and its anchor; model-incomplete names a model gap; evidence-insufficient names the missing trace. Close an arm only when its committed record reads safe."
-    },
-    {
-      "claims": [
-        "RC-2",
-        "RC-3"
-      ],
-      "id": "rc-stall-arms",
-      "scope": "Run the local stall arms (RC-2 stall-denominator, RC-3 stall-episode), read each failure with tools/trace-evaluate.py, pack and commit the records, and place the measured deviations on the HAZOP surface. An unexercised trigger is `not run`, never `safe`."
-    },
-    {
-      "claims": [
-        "RC-7"
-      ],
-      "id": "rc-harness-old-image",
-      "scope": "Build and pin a prior image for the mixed fleet, set RNODE_OLD_IMAGE, and run RC-7's local mixed-store arm."
-    },
-    {
-      "claims": [
-        "RC-1",
-        "RC-2",
-        "RC-3",
-        "RC-4",
-        "RC-5",
         "RC-6",
         "RC-7"
       ],
       "id": "rc-public-fleet",
       "scope": "Bring up the four-host public fleet on a coordinated new genesis, perform the deploy and the single-validator restart through tools/fleet-run.py, and run RC-1/public and RC-4/public on the candidate. The source set and the N1/N4/N8 differential are recorded as diagnostics in the same campaign record; the remaining public arms keep this campaign as their next PR."
-    },
-    {
-      "claims": [
-        "RC-1",
-        "RC-2",
-        "RC-4"
-      ],
-      "id": "rc-bond-leave",
-      "scope": "One bond/leave campaign feeds RC-1 bond-leave, RC-2 validator-set and RC-4 returner."
     },
     {
       "claims": [
@@ -80,13 +44,6 @@
     },
     {
       "claims": [
-        "RC-5"
-      ],
-      "id": "rc-transport",
-      "scope": "Drive one deploy id through HTTP, direct HTTP, gRPC and a proxy and record RC-5 transport."
-    },
-    {
-      "claims": [
         "RC-7"
       ],
       "id": "rc-fleet-upgrade",
@@ -103,6 +60,7 @@
         "RC-7"
       ],
       "id": "launch-gate",
+      "programme": true,
       "scope": "Aggregate the required arms and the external obligations into the launch gate; refuse ready while any external item is open without a dated disposition."
     }
   ],
@@ -137,10 +95,10 @@
       "arms": [
         {
           "behaviour": "the acceptance drill retains a confirmed marker through two further epoch boundaries",
+          "closed_by": "rc-confirm-local",
           "environment": "local",
           "id": "local",
           "locality": "local-devnet",
-          "next_pr": "rc-confirm-local",
           "required": true,
           "test_mode": "default"
         },
@@ -158,10 +116,10 @@
         },
         {
           "behaviour": "a bond and a withdrawal settle, activate at an epoch boundary, pay after quarantine, and the settlement marker is retained",
+          "closed_by": "rc-bond-leave",
           "environment": "local",
           "id": "bond-leave",
           "locality": "local-devnet",
-          "next_pr": "rc-bond-leave",
           "required": true,
           "test_mode": "bond-leave"
         }
@@ -309,10 +267,10 @@
       "arms": [
         {
           "behaviour": "partition/rejoin with a producing victim; containment and no regression",
+          "closed_by": "rc-confirm-local",
           "environment": "local",
           "id": "local",
           "locality": "local-devnet",
-          "next_pr": "rc-confirm-local",
           "required": true,
           "test_mode": "default"
         },
@@ -348,19 +306,19 @@
         },
         {
           "behaviour": "every validator agrees on the bond set at each epoch boundary and the finality denominator is that set",
+          "closed_by": "rc-bond-leave",
           "environment": "local",
           "id": "validator-set",
           "locality": "local-devnet",
-          "next_pr": "rc-bond-leave",
           "required": true,
           "test_mode": "bond-leave"
         },
         {
           "behaviour": "with exactly 200 of 300 bonded stake live, height advances while finality freezes and no settlement claims success; restarting the two stopped validators finalises the same deploy with no resubmission",
+          "closed_by": "rc-stall-arms",
           "environment": "local",
           "id": "stall-denominator",
           "locality": "local-devnet",
-          "next_pr": "rc-stall-arms",
           "required": true,
           "test_mode": "stall-denominator"
         }
@@ -540,10 +498,10 @@
       "arms": [
         {
           "behaviour": "state agreement across a merge on the local four-validator devnet",
+          "closed_by": "rc-confirm-local",
           "environment": "local",
           "id": "local",
           "locality": "local-devnet",
-          "next_pr": "rc-confirm-local",
           "required": true,
           "test_mode": "default"
         },
@@ -570,10 +528,10 @@
         },
         {
           "behaviour": "a finality stall is visible while it stands and the persisted episode count survives the restore, so a stall that ended is not reported as none",
+          "closed_by": "rc-stall-arms",
           "environment": "local",
           "id": "stall-episode",
           "locality": "local-devnet",
-          "next_pr": "rc-stall-arms",
           "required": true,
           "test_mode": "stall-episode"
         }
@@ -731,10 +689,10 @@
       "arms": [
         {
           "behaviour": "restart under load: accepted work survives and the victim rejoins",
+          "closed_by": "rc-confirm-local",
           "environment": "local",
           "id": "local",
           "locality": "local-devnet",
-          "next_pr": "rc-confirm-local",
           "required": true,
           "test_mode": "default"
         },
@@ -770,10 +728,10 @@
         },
         {
           "behaviour": "a validator down across a bond-change boundary rejoins the same finalised head without manual surgery",
+          "closed_by": "rc-bond-leave",
           "environment": "local",
           "id": "returner",
           "locality": "local-devnet",
-          "next_pr": "rc-bond-leave",
           "required": true,
           "test_mode": "bond-leave"
         }
@@ -927,10 +885,10 @@
       "arms": [
         {
           "behaviour": "capped and unset pressure on the local node",
+          "closed_by": "rc-confirm-local",
           "environment": "local",
           "id": "local",
           "locality": "local-devnet",
-          "next_pr": "rc-confirm-local",
           "required": true,
           "test_mode": "default"
         },
@@ -948,10 +906,10 @@
         },
         {
           "behaviour": "one deploy id through HTTP, direct HTTP, gRPC and a proxy returns the same id, status, settlement stage and error class",
+          "closed_by": "rc-transport",
           "environment": "local",
           "id": "transport",
           "locality": "local-devnet",
-          "next_pr": "rc-transport",
           "required": true,
           "test_mode": "transport"
         }
@@ -1085,10 +1043,10 @@
       "arms": [
         {
           "behaviour": "genesis join and audit on the local devnet",
+          "closed_by": "rc-confirm-local",
           "environment": "local",
           "id": "local",
           "locality": "local-devnet",
-          "next_pr": "rc-confirm-local",
           "required": true,
           "test_mode": "default"
         },
@@ -1252,10 +1210,10 @@
       "arms": [
         {
           "behaviour": "mixed N/N+1 binaries agree on a block's state, a populated store migrates, and a newer store is refused",
+          "closed_by": "rc-harness-old-image",
           "environment": "local",
           "id": "local",
           "locality": "local-devnet",
-          "next_pr": "rc-harness-old-image",
           "required": true,
           "test_mode": "mixed-store"
         },
@@ -1337,6 +1295,79 @@
       "trace": "format"
     }
   ],
+  "completed_prs": [
+    {
+      "arms": [
+        "RC-1/local",
+        "RC-2/local",
+        "RC-3/local",
+        "RC-4/local",
+        "RC-5/local",
+        "RC-6/local"
+      ],
+      "claims": [
+        "RC-1",
+        "RC-2",
+        "RC-3",
+        "RC-4",
+        "RC-5",
+        "RC-6"
+      ],
+      "id": "rc-confirm-local",
+      "pr": 645,
+      "scope": "Re-run the baseline local arms with the current image and commit the records. Read each failure with tools/trace-evaluate.py: unsafe-point names a predicate and its anchor; model-incomplete names a model gap; evidence-insufficient names the missing trace. Close an arm only when its committed record reads safe."
+    },
+    {
+      "arms": [
+        "RC-2/stall-denominator",
+        "RC-3/stall-episode"
+      ],
+      "claims": [
+        "RC-2",
+        "RC-3"
+      ],
+      "id": "rc-stall-arms",
+      "pr": 652,
+      "scope": "Run the local stall arms (RC-2 stall-denominator, RC-3 stall-episode), read each failure with tools/trace-evaluate.py, pack and commit the records, and place the measured deviations on the HAZOP surface. An unexercised trigger is `not run`, never `safe`."
+    },
+    {
+      "arms": [
+        "RC-7/local"
+      ],
+      "claims": [
+        "RC-7"
+      ],
+      "id": "rc-harness-old-image",
+      "pr": 646,
+      "scope": "Build and pin a prior image for the mixed fleet, set RNODE_OLD_IMAGE, and run RC-7's local mixed-store arm."
+    },
+    {
+      "arms": [
+        "RC-1/bond-leave",
+        "RC-2/validator-set",
+        "RC-4/returner"
+      ],
+      "claims": [
+        "RC-1",
+        "RC-2",
+        "RC-4"
+      ],
+      "id": "rc-bond-leave",
+      "pr": 653,
+      "scope": "One bond/leave campaign feeds RC-1 bond-leave, RC-2 validator-set and RC-4 returner."
+    },
+    {
+      "arms": [
+        "RC-5/transport"
+      ],
+      "claims": [
+        "RC-5"
+      ],
+      "id": "rc-transport",
+      "pr": 657,
+      "scope": "Drive one deploy id through HTTP, direct HTTP, gRPC and a proxy and record RC-5 transport."
+    }
+  ],
   "excluded_behaviours": [
     {
       "arms": [
@@ -1394,7 +1425,7 @@
   ],
   "generated": "2026-11-20",
   "review": "spec/audit/release-campaign-red-team-20261119.md",
-  "rule": "Each claim names exactly one executable test under tests/ and one or more arms. An arm is a named behaviour with its own environment, evidence locality, test mode and next PR. The tracker stores no status and no missing observation: an arm's status is derived from its newest committed run record by re-running the test's pure check(record), dispatched on the record's arm. A claim whose test does not exist, does not import, or does not define run/check/fixture/CLAIM_ID is refused.",
+  "rule": "Each claim names exactly one executable test under tests/ and one or more arms. An arm is a named behaviour with its own environment, evidence locality and test mode: while its reading is not safe it names a live next PR in action_prs, and once it reads safe it names the merged campaign in completed_prs via closed_by. The tracker stores no status and no missing observation: an arm's status is derived from its newest committed run record by re-running the test's pure check(record), dispatched on the record's arm. A claim whose test does not exist, does not import, or does not define run/check/fixture/CLAIM_ID is refused.",
   "schema": 3,
   "source": "spec/audit/release-claims.json",
   "superseded": [

@@ -130,7 +130,35 @@ def validate(source: dict, builder) -> dict:
         require(ident and entry.get("scope") and entry.get("claims"),
                 "every action PR needs an id, a scope and the claims it closes")
         require(ident not in pr_ids, f"action PR {ident!r} appears twice")
+        require("programme" not in entry or isinstance(entry["programme"], bool),
+                f"action PR {ident!r}: programme must be a boolean")
         pr_ids.add(ident)
+
+    # **A merged campaign leaves the next-action table.** Keeping it there made five completed
+    # campaigns read as next work in the generated tracker. The completed list stays resolvable
+    # because the stall-coverage table uses those ids as HAZOP campaign tokens for rows that are
+    # legitimately still owed.
+    completed_prs = source.get("completed_prs")
+    require(isinstance(completed_prs, list) and completed_prs,
+            "completed_prs must map the merged campaigns")
+    completed_ids = set()
+    completed_arms = {}
+    for entry in completed_prs:
+        ident = entry.get("id")
+        require(ident and isinstance(entry.get("pr"), int)
+                and entry.get("scope") and entry.get("claims")
+                and isinstance(entry.get("arms"), list) and entry["arms"],
+                "every completed PR needs an id, a PR number, a scope, claims and arms")
+        require(ident not in completed_ids, f"completed PR {ident!r} appears twice")
+        require(ident not in pr_ids,
+                f"{ident!r} is both a live action and a completed PR")
+        completed_ids.add(ident)
+        for reference in entry["arms"]:
+            require(reference not in completed_arms,
+                    f"arm {reference!r} is closed by two completed PRs")
+            completed_arms[reference] = ident
+    fresh = builder.campaigns()
+    derived = {row["id"]: row.get("action") or {} for row in fresh["campaigns"]}
     for row in claims:
         ident = row.get("id")
         for field in REQUIRED:
@@ -181,8 +209,26 @@ def validate(source: dict, builder) -> dict:
             require(isinstance(arm.get("behaviour"), str) and arm["behaviour"].strip()
                     and isinstance(arm.get("test_mode"), str) and arm["test_mode"].strip(),
                     f"{ident}/{arm_id}: behaviour and test_mode are required")
-            require(arm.get("next_pr") in pr_ids,
-                    f"{ident}/{arm_id}: next_pr must name an action PR")
+            next_pr = arm.get("next_pr")
+            closed_by = arm.get("closed_by")
+            require((next_pr is None) != (closed_by is None),
+                    f"{ident}/{arm_id}: name exactly one of next_pr / closed_by")
+            if next_pr is not None:
+                require(next_pr in pr_ids,
+                        f"{ident}/{arm_id}: next_pr must name a live action PR")
+            else:
+                require(closed_by in completed_ids,
+                        f"{ident}/{arm_id}: closed_by must name a completed PR")
+                require(completed_arms.get(f"{ident}/{arm_id}") == closed_by,
+                        f"{ident}/{arm_id}: closed_by disagrees with the completed PR's arms")
+            # The schema-only unit-test builder carries no derived actions; when it does, the
+            # authored open/closed field must agree with the measured reading.
+            action = (derived.get(ident) or {}).get(arm_id)
+            if action is not None:
+                reading = action.get("reading") or "not-observed"
+                require((reading == "safe") == (closed_by is not None),
+                        f"{ident}/{arm_id}: reading {reading!r} does not match "
+                        f"{'closed_by' if closed_by is not None else 'next_pr'}")
             for key in (arm.get("close") or {}):
                 require(key in CLOSE_KEYS,
                         f"{ident}/{arm_id}: close key {key!r} is not a reading")
@@ -218,7 +264,22 @@ def validate(source: dict, builder) -> dict:
                     f"excluded behaviour {entry['id']!r} is covered by a non-required arm "
                     f"{reference!r}")
 
-    fresh = builder.campaigns()
+    # **The anti-rot rule.** An action that closes no arm is either finished (move it to
+    # completed_prs) or invented; a completed entry that closes no arm is a dangling history.
+    # `programme: true` marks an aggregate action (launch-gate) that no single arm names.
+    referenced = {arm["next_pr"] for row in claims for arm in row["arms"]
+                  if arm.get("next_pr") is not None}
+    closed = {arm["closed_by"] for row in claims for arm in row["arms"]
+              if arm.get("closed_by") is not None}
+    for entry in action_prs:
+        if entry.get("programme"):
+            continue
+        require(entry["id"] in referenced,
+                f"action PR {entry['id']!r} closes no arm; retire it to completed_prs")
+    for ident in completed_ids:
+        require(ident in closed,
+                f"completed PR {ident!r} closes no arm")
+
     require([row["id"] for row in fresh["campaigns"]] == ids,
             "the generated tracker does not carry the authored claims")
     return {
@@ -227,6 +288,7 @@ def validate(source: dict, builder) -> dict:
         "actions": {row["id"]: row.get("action") or {} for row in fresh["campaigns"]},
         "statuses": {row["id"]: row.get("status") or {} for row in fresh["campaigns"]},
         "old": len(old),
+        "completed": len(completed_ids),
     }
 
 
@@ -276,6 +338,7 @@ def main() -> int:
         "claims": result["claims"],
         "arms": result["arms"],
         "superseded": result["old"],
+        "completed": result["completed"],
         "readings": {ident: {arm: (entry.get("reading") or "not-observed")
                              for arm, entry in actions.items()}
                      for ident, actions in result["actions"].items()},
@@ -288,7 +351,8 @@ def main() -> int:
     else:
         print(body["result"])
         print(f"release claims: {result['claims']}; arms: {result['arms']}; "
-              f"superseded: {result['old']}; open actions: {body['open_actions']}")
+              f"superseded: {result['old']}; completed: {result['completed']}; "
+              f"open actions: {body['open_actions']}")
         for ident, readings in body["readings"].items():
             cells = ", ".join(f"{arm}={reading}" for arm, reading in readings.items())
             print(f"  {ident}: {cells}")

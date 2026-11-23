@@ -3,8 +3,9 @@
 Emitted from `spec/audit/release-claims.json` by `tools/build-mainnet-gates.py`.
 
 Each claim is a gate with one executable test over a decision trace, exercised by named
-**arms**. An arm has its own environment, evidence locality and next PR; its state is a
-measured **reading** of the newest committed record. `safe` is the only reading that
+**arms**. An arm has its own environment, evidence locality, and — while open — a next PR;
+a closed arm names the PR that closed it. Its state is a measured **reading** of the
+newest committed record. `safe` is the only reading that
 closes an arm. `unsafe-point` names a false predicate and its Rust and Lean anchors;
 `model-incomplete` names the trace that is the model gap; `evidence-insufficient` names
 the missing trace or coordinate; `precondition` and `not-observed` name the run that
@@ -17,50 +18,57 @@ cannot yet be made. No status is authored.
 
 | claim | arm | env | locality | reading | next action | next PR |
 |---|---|---|---|---|---|---|
-| `RC-1` | `local` | local | local-devnet | **safe** | — | — |
+| `RC-1` | `local` | local | local-devnet | **safe** | — | closed by #645 |
 | `RC-1` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest and run `tools/release-check.py run --claim RC-1 --env public`; the driver submits the deploy and records retention across two epoch boundaries | `rc-public-fleet` |
-| `RC-1` | `bond-leave` | local | local-devnet | **safe** | — | — |
-| `RC-2` | `local` | local | local-devnet | **safe** | — | — |
+| `RC-1` | `bond-leave` | local | local-devnet | **safe** | — | closed by #653 |
+| `RC-2` | `local` | local | local-devnet | **safe** | — | closed by #645 |
 | `RC-2` | `public` | public | public-live | **not-observed** | Run the operator's declared partition window on the public fleet. | `rc-public-fleet` |
 | `RC-2` | `multi-host` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm multi-host` and commit its record; the arm's harness lands in `rc-multi-host`. | `rc-multi-host` |
 | `RC-2` | `equivocation` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-2 --arm equivocation` and commit its record; the arm's harness lands in `rc-equivocation`. | `rc-equivocation` |
-| `RC-2` | `validator-set` | local | local-devnet | **safe** | — | — |
-| `RC-2` | `stall-denominator` | local | local-devnet | **safe** | — | — |
-| `RC-3` | `local` | local | local-devnet | **safe** | — | — |
+| `RC-2` | `validator-set` | local | local-devnet | **safe** | — | closed by #653 |
+| `RC-2` | `stall-denominator` | local | local-devnet | **safe** | — | closed by #652 |
+| `RC-3` | `local` | local | local-devnet | **safe** | — | closed by #645 |
 | `RC-3` | `public` | public | public-live | **not-observed** | Supply the four-host public manifest (deploy id, marker, provenance) and run `python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest.json>`. | `rc-public-fleet` |
 | `RC-3` | `availability` | public | public-live | **not-observed** | Run the finalised-block availability sweep on the public fleet: every finalised body and finalised-head state from every validator. | `rc-public-fleet` |
-| `RC-3` | `stall-episode` | local | local-devnet | **safe** | — | — |
-| `RC-4` | `local` | local | local-devnet | **safe** | — | — |
+| `RC-3` | `stall-episode` | local | local-devnet | **safe** | — | closed by #652 |
+| `RC-4` | `local` | local | local-devnet | **safe** | — | closed by #645 |
 | `RC-4` | `public` | public | public-live | **not-observed** | Run `tools/release-check.py run --claim RC-4 --env public`; the driver performs the single-validator stop and restart and captures the boot ids itself. | `rc-public-fleet` |
 | `RC-4` | `multi-host` | local | multi-host | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm multi-host` and commit its record; the arm's harness lands in `rc-multi-host`. | `rc-multi-host` |
 | `RC-4` | `failover` | local | off-host-claim | **not-observed** | Run `python3 tools/release-check.py run --claim RC-4 --arm failover` and commit its record; the arm's harness lands in `rc-failover`. | `rc-failover` |
-| `RC-4` | `returner` | local | local-devnet | **safe** | — | — |
-| `RC-5` | `local` | local | local-devnet | **safe** | — | — |
+| `RC-4` | `returner` | local | local-devnet | **safe** | — | closed by #653 |
+| `RC-5` | `local` | local | local-devnet | **safe** | — | closed by #645 |
 | `RC-5` | `public` | public | public-live | **not-observed** | Supply the capped/unset pressure record from the public endpoint and proxy. | `rc-public-fleet` |
-| `RC-5` | `transport` | local | local-devnet | **safe** | — | — |
-| `RC-6` | `local` | local | local-devnet | **safe** | — | — |
+| `RC-5` | `transport` | local | local-devnet | **safe** | — | closed by #657 |
+| `RC-6` | `local` | local | local-devnet | **safe** | — | closed by #645 |
 | `RC-6` | `public` | public | public-live | **not-observed** | Supply the operator's completed public join record. | `rc-public-fleet` |
 | `RC-6` | `off-host` | local | off-host-claim | **not-observed** | Run `python3 tools/release-check.py run --claim RC-6 --arm off-host` and commit its record; the arm's harness lands in `rc-offhost`. | `rc-offhost` |
 | `RC-6` | `availability` | public | public-live | **not-observed** | Bootstrap a joiner from a non-producer on the public fleet, restore the served anchor and audit it. | `rc-public-fleet` |
-| `RC-7` | `local` | local | local-devnet | **safe** | — | — |
+| `RC-7` | `local` | local | local-devnet | **safe** | — | closed by #646 |
 | `RC-7` | `public` | public | public-live | **not-observed** | Record the rolling fleet swap's mixed-window block agreement and the post-swap finalised head. | `rc-fleet-upgrade` |
 
 ## Next PRs
 
 | PR | closes | scope |
 |---|---|---|
-| `rc-confirm-local` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6 | Re-run the baseline local arms with the current image and commit the records. Read each failure with tools/trace-evaluate.py: unsafe-point names a predicate and its anchor; model-incomplete names a model gap; evidence-insufficient names the missing trace. Close an arm only when its committed record reads safe. |
-| `rc-stall-arms` | RC-2, RC-3 | Run the local stall arms (RC-2 stall-denominator, RC-3 stall-episode), read each failure with tools/trace-evaluate.py, pack and commit the records, and place the measured deviations on the HAZOP surface. An unexercised trigger is `not run`, never `safe`. |
-| `rc-harness-old-image` | RC-7 | Build and pin a prior image for the mixed fleet, set RNODE_OLD_IMAGE, and run RC-7's local mixed-store arm. |
 | `rc-public-fleet` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6, RC-7 | Bring up the four-host public fleet on a coordinated new genesis, perform the deploy and the single-validator restart through tools/fleet-run.py, and run RC-1/public and RC-4/public on the candidate. The source set and the N1/N4/N8 differential are recorded as diagnostics in the same campaign record; the remaining public arms keep this campaign as their next PR. |
-| `rc-bond-leave` | RC-1, RC-2, RC-4 | One bond/leave campaign feeds RC-1 bond-leave, RC-2 validator-set and RC-4 returner. |
 | `rc-offhost` | RC-6 | Run the pre-registered M3 two-host join and record RC-6 off-host, including the loopback negative. |
 | `rc-failover` | RC-4 | Add an ordered seed list to bootstrap resolution and run RC-4 failover with the first seed down. |
 | `rc-multi-host` | RC-2, RC-4 | Add the multi-host driver the M4 runbook owes, run N=4 and N=8 on declared hosts, and record RC-2/RC-4 multi-host from the one campaign. |
 | `rc-equivocation` | RC-2 | Inject an equivocation under a validator key on the M4 topology, add the finality coordinate, and record RC-2 equivocation. |
-| `rc-transport` | RC-5 | Drive one deploy id through HTTP, direct HTTP, gRPC and a proxy and record RC-5 transport. |
 | `rc-fleet-upgrade` | RC-7 | Roll the public fleet through the mixed window to the new image and record RC-7 public. |
 | `launch-gate` | RC-1, RC-2, RC-3, RC-4, RC-5, RC-6, RC-7 | Aggregate the required arms and the external obligations into the launch gate; refuse ready while any external item is open without a dated disposition. |
+
+## Completed PRs
+
+Merged campaigns, retained for the stall-coverage cross-reference; they are not next work.
+
+| PR | merged | closes | scope |
+|---|---|---|---|
+| `rc-confirm-local` | #645 | RC-1/local, RC-2/local, RC-3/local, RC-4/local, RC-5/local, RC-6/local | Re-run the baseline local arms with the current image and commit the records. Read each failure with tools/trace-evaluate.py: unsafe-point names a predicate and its anchor; model-incomplete names a model gap; evidence-insufficient names the missing trace. Close an arm only when its committed record reads safe. |
+| `rc-stall-arms` | #652 | RC-2/stall-denominator, RC-3/stall-episode | Run the local stall arms (RC-2 stall-denominator, RC-3 stall-episode), read each failure with tools/trace-evaluate.py, pack and commit the records, and place the measured deviations on the HAZOP surface. An unexercised trigger is `not run`, never `safe`. |
+| `rc-harness-old-image` | #646 | RC-7/local | Build and pin a prior image for the mixed fleet, set RNODE_OLD_IMAGE, and run RC-7's local mixed-store arm. |
+| `rc-bond-leave` | #653 | RC-1/bond-leave, RC-2/validator-set, RC-4/returner | One bond/leave campaign feeds RC-1 bond-leave, RC-2 validator-set and RC-4 returner. |
+| `rc-transport` | #657 | RC-5/transport | Drive one deploy id through HTTP, direct HTTP, gRPC and a proxy and record RC-5 transport. |
 
 ---
 

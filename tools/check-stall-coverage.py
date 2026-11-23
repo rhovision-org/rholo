@@ -147,7 +147,10 @@ def load_claims() -> tuple[dict[str, dict], dict[tuple[str, str], str], set[str]
         for arm in claim["arms"]
         if arm.get("required")
     }
+    # Table E keeps completed campaigns as tokens: a HAZOP row can be `owed` while the
+    # release-claim arm that shares its campaign has already closed.
     campaigns = {pr["id"] for pr in data.get("action_prs", [])}
+    campaigns |= {pr["id"] for pr in data.get("completed_prs", [])}
     return claims, required, campaigns
 
 
