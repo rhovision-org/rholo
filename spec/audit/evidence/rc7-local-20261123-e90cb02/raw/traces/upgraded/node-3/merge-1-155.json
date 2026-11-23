@@ -1,0 +1,98 @@
+{
+  "kind": "merge",
+  "parents": [
+    "0ff341a4052e318c8cea0d9d22f0c88e95dd485b3e8600ab6d977704d03e9bbf",
+    "1bac668c691333dc5118177066885ffe745c78c55508b25a69a9b0abaccae5e7",
+    "956e9e26e79e5d02e7343ce16b8799800547ffca7f1fec23b91ef2a8d16fdb49",
+    "fbe75a73d545acda12793c71b6292cb21f728f5b2863d569239d69d45ad9dbee"
+  ],
+  "mode": "conflict",
+  "merge_fringe": [
+    "0ff341a4052e318c8cea0d9d22f0c88e95dd485b3e8600ab6d977704d03e9bbf",
+    "1bac668c691333dc5118177066885ffe745c78c55508b25a69a9b0abaccae5e7",
+    "956e9e26e79e5d02e7343ce16b8799800547ffca7f1fec23b91ef2a8d16fdb49",
+    "fbe75a73d545acda12793c71b6292cb21f728f5b2863d569239d69d45ad9dbee"
+  ],
+  "final_fringe": [
+    "0a91509224265d2cd0294b5cb810be85556fc43e2b60a1f1eb555b20e7e00de6",
+    "445e2f1e74b4a200b180efaa7fac63edf8296c1ed893fa77f039cbf7cd0c2c80",
+    "802b58731ba7c1cfbcc0e8a46dc7cacb5b75fbcba09cd9a961a24a3af8266a1d",
+    "9d03e94f8203623ee74d423922713e20f7a9ae2a37e3f114f2d7e0d7182b4ede"
+  ],
+  "claims": [
+    {
+      "height": 9,
+      "id": "0ff341a4052e318c8cea0d9d22f0c88e95dd485b3e8600ab6d977704d03e9bbf",
+      "hash": "0ce9b99368a2e155fa34ce8f655b50c88da2abbce181851db6933496246bb850"
+    },
+    {
+      "height": 9,
+      "id": "1bac668c691333dc5118177066885ffe745c78c55508b25a69a9b0abaccae5e7",
+      "hash": "0ce9b99368a2e155fa34ce8f655b50c88da2abbce181851db6933496246bb850"
+    },
+    {
+      "height": 9,
+      "id": "956e9e26e79e5d02e7343ce16b8799800547ffca7f1fec23b91ef2a8d16fdb49",
+      "hash": "0ce9b99368a2e155fa34ce8f655b50c88da2abbce181851db6933496246bb850"
+    },
+    {
+      "height": 9,
+      "id": "fbe75a73d545acda12793c71b6292cb21f728f5b2863d569239d69d45ad9dbee",
+      "hash": "0ce9b99368a2e155fa34ce8f655b50c88da2abbce181851db6933496246bb850"
+    }
+  ],
+  "certified_base": null,
+  "base_source": "agreed",
+  "base_state": "0ce9b99368a2e155fa34ce8f655b50c88da2abbce181851db6933496246bb850",
+  "pre_state": "7ec59734758cde96d7bc01ab30efbc686edbeeb5d0a1efe569ca6f2b6e0035f4",
+  "post_state": "1656bbc47a99cfd0161fbac9e0b3d9411d50d2383036e55d3790548fcfe7959a",
+  "conflict_scope": [
+    "0ff341a4052e318c8cea0d9d22f0c88e95dd485b3e8600ab6d977704d03e9bbf",
+    "1bac668c691333dc5118177066885ffe745c78c55508b25a69a9b0abaccae5e7",
+    "3834f88f0400fd3194bf8b8a05ac7a96cd2704db08edd2cc30b2c957d8403137",
+    "5a11a90d3b5438efe0b04dd74179abfddcf9ff2d41b9493727faa1cd1a8aeb66",
+    "71df94db83a82e5f57241da3cb4862b2956bfbf9dbd46a3af9cf244de7cf426d",
+    "956e9e26e79e5d02e7343ce16b8799800547ffca7f1fec23b91ef2a8d16fdb49",
+    "b1abe30b8a2248cd51a044da140e84220da9cc7b2993488ad7e56a23acec4378",
+    "b37e230584d4d9ea74414494050323a3d309475036add02edcaccf1d6e920f81",
+    "fbe75a73d545acda12793c71b6292cb21f728f5b2863d569239d69d45ad9dbee"
+  ],
+  "final_scope": [
+    "0a91509224265d2cd0294b5cb810be85556fc43e2b60a1f1eb555b20e7e00de6",
+    "19cd8a59542013fd7897c3af3871e0065019b12e4cc7152dda3585c44ad2683a",
+    "1cb2c651096d928db0fe547b472d16473ce016dde442a691cb3a823df97a13b6",
+    "3977e88fa53e904383e2bdf63238db47ada8c33b278a7b1ae503d306f192f43c",
+    "445e2f1e74b4a200b180efaa7fac63edf8296c1ed893fa77f039cbf7cd0c2c80",
+    "6cd13a0c8ff44f7cc5f7d7c70556a89c767b33c78fd7ffc4c4a9dcc182a41010",
+    "802b58731ba7c1cfbcc0e8a46dc7cacb5b75fbcba09cd9a961a24a3af8266a1d",
+    "9d03e94f8203623ee74d423922713e20f7a9ae2a37e3f114f2d7e0d7182b4ede",
+    "aa5e31d7a4d43d7c55930139c3491a31d363499c31412152b69cb3afcb702d58",
+    "d06585b29e75e15cb74c7d276121cd3d0622f48bbd02a81be83189014bb62386",
+    "d3735ebb24dcca75b5f95ac68c471f56405f14896b7751c6cd2650a45b0526f5",
+    "f69c7982e5a62999b08fdd0f878f77279fbf89698b0014c387a63bd0bb8fb648"
+  ],
+  "fork_blocks": [
+    "3834f88f0400fd3194bf8b8a05ac7a96cd2704db08edd2cc30b2c957d8403137"
+  ],
+  "rejected_deploys": [],
+  "rejected_hosts": [
+    "3834f88f0400fd3194bf8b8a05ac7a96cd2704db08edd2cc30b2c957d8403137"
+  ],
+  "rejected_user_hosts": [],
+  "report": {
+    "conflict_chains": 18,
+    "kept_chains": 16,
+    "rejected_chains": 2,
+    "fork_rejected_chains": 2,
+    "final_scope_rejected_chains": 0,
+    "duplicate_rejections": 0,
+    "effect_free_rejections": 1,
+    "system_rejections": 1
+  },
+  "predicates": {
+    "base_ok": true,
+    "fork_ok": true,
+    "ledger_ok": true,
+    "scope_partition_ok": true
+  }
+}
