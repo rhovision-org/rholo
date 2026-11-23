@@ -346,7 +346,7 @@ pub async fn create_comm_state(
         conf.protocol_client.bootstrap.clone()
     };
     let bootstrap = bootstrap_seeds.first().cloned();
-    let rp_conf = RPConf {
+    let mut rp_conf = RPConf {
         local: local_peer.clone(),
         network_id: conf.protocol_client.network_id.clone(),
         bootstrap,
@@ -358,6 +358,36 @@ pub async fn create_comm_state(
                 .map_err(|e| e.to_string())?,
         },
     };
+
+    // **The first live seed is the one the node joins through.** The initial LFS fringe request
+    // names `RPConf.bootstrap`; with an ordered list, probe the seeds before that request so the
+    // joiner asks a live peer rather than the authored first seed. A single seed is not probed:
+    // the ordinary startup path is unchanged, and a dead sole bootstrap fails exactly as before.
+    let mut initial_connections: Vec<PeerNode> = Vec::new();
+    if should_dial_seeds(&bootstrap_seeds) {
+        initial_connections =
+            connect_seeds(transport.as_ref(), &rp_conf, &bootstrap_seeds, &[]).await;
+        if let Some(live) = initial_connections.first() {
+            if let Some(index) = bootstrap_seeds
+                .iter()
+                .position(|seed| seed.key() == live.key())
+            {
+                log.info(
+                    LogSource::new("coop.rchain.node.runtime.Setup"),
+                    &format!(
+                        "bootstrap seed {}/{} connected: {}",
+                        index + 1,
+                        bootstrap_seeds.len(),
+                        live.endpoint.host
+                    ),
+                );
+            }
+            rp_conf.bootstrap = Some(live.clone());
+        }
+    }
+    if !initial_connections.is_empty() {
+        *connections.write().await = initial_connections;
+    }
 
     let comm_util = Arc::new(CommUtil::new(
         transport.clone(),
