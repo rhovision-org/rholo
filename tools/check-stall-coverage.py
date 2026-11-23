@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """check-stall-coverage — gate the deadly-embrace HAZOP study.
 
-`docs/src/spec/stall-coverage.md` is a HAZOP study over the release claims: every deviation that can
-produce an absorbing stall is disposed against the eleven guide words, mapped to a Lean shape or a law
-owed, and assigned to an arm of the claim whose environment can exhibit it. This gate refuses the
-document the same way `check-hazop-worksheet.sh` refuses its worksheet:
+`docs/src/spec/stall-coverage.md` is a HAZOP study of stalls that stop block production. It is **not**
+a release claim and carries no reading. This gate keeps the three surfaces apart and the study honest:
 
+  * Table A is classified by representation, shape and root cause — never by claim or arm. A `Claim`,
+    `Claim arm` or `Stall arm` column in Table A is refused;
   * every guide word disposed exactly once, and a `row` word carried by a Table A row;
   * a Safeguard whose first token is a definite rung R1..R4;
-  * a Claim that exists in `spec/audit/release-claims.json`, an Environment that claim declares, and
-    an Arm that exists under that claim (`arm:<id>`) or is declared debt (`owed:`);
-  * a Lean cell that names a real declaration under `spec/Rchain/` or a law in `spec/laws.tsv`, or
-    says `owed`;
+  * every representation, shape and root cause in the closed vocabularies, with Table B naming all
+    three representations and Table C naming all nine root causes;
+  * a Lean cell that names a law in `spec/laws.tsv` or a declaration that actually exists under
+    `spec/Rchain/` (namespace-aware), or says `owed:`;
   * a Falsifier that is a real `path::symbol` or `owed:`;
-  * a coverage ledger with every required arm exactly once and every cell naming a real DE row (or
-    `n/a (reason)`);
+  * the "Outside the diagram" residue table, each row naming a real declaration or path;
+  * Table E placing every required claim arm exactly once, against a real `next_pr`, with `owed` or
+    `live` status only and evidence for every `live` row — and no claim, arm or reading change;
   * the debt line matching what the tables actually owe;
-  * a non-vacuous scan.
+  * no withdrawn `Law 129`–`Law 133` reference and no RC reading word on a table.
 
 Usage: tools/check-stall-coverage.py [--gate]
 Exit: 0 ok · 1 violation · 2 usage.
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -38,10 +40,43 @@ GUIDE_WORDS = [
     "NO", "MORE", "LESS", "AS WELL AS", "PART OF", "OTHER THAN", "REVERSE", "EARLY", "LATE",
     "BEFORE", "AFTER",
 ]
+REPRESENTATIONS = ("closed-silence", "protocol-wait", "protocol-stall")
+SHAPES = (
+    "void", "terminal", "drift", "split", "historic", "stuck", "silent", "persistent",
+    "unrestorable", "paced",
+)
+ROOT_CAUSES = (
+    "unsatisfiable-requirement", "self-referential-gating", "loss-blind-refusal",
+    "divergent-readers", "historic-predicate", "recovery-before-anchor", "premature-verdict",
+    "unverified-trust", "mixed-version",
+)
+READINGS = (
+    "safe", "not-observed", "precondition", "unsafe-point", "model-incomplete",
+    "evidence-insufficient",
+)
+
+TABLE_A_HEADER = [
+    "ID", "Guide word", "Deviation", "RCA anchor", "Root cause", "Shape", "Representation",
+    "Consequence", "Safeguard", "Lean cell", "Falsifier",
+]
+TABLE_B_HEADER = [
+    "Representation", "What can be stuck", "Possible shapes", "Lean module/law",
+    "Non-vacuity witness", "What it is not",
+]
+TABLE_C_HEADER = [
+    "Root cause", "Definition", "DE rows", "Canonical shapes", "Classifying laws", "Default rung",
+]
+TABLE_D_HEADER = ["Deviation", "Law or shape that captures it", "Why"]
+TABLE_E_HEADER = ["DE", "Claim", "Claim arm", "Campaign", "Measurement status", "Evidence"]
+RESIDUE_HEADER = ["Residue", "Why Lean cannot state it", "Witness"]
+
 RUNG = re.compile(r"^R[1-4]\b")
 DE_ID = re.compile(r"^DE-[0-9]+$")
-SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-PATH_SYMBOL = re.compile(r"([A-Za-z0-9_./-]+\.(?:rs|lean|md|sh|py|tsv|txt|json|toml|v))(::([A-Za-z0-9_:]+))?")
+LAW_REF = re.compile(r"\bLaw ([0-9]+[a-z]?)\b")
+LEAN_REF = re.compile(r"\bRchain\.[A-Za-z0-9_'.]+")
+PATH_SYMBOL = re.compile(
+    r"([A-Za-z0-9_./-]+\.(?:rs|lean|md|sh|py|tsv|txt|json|toml|v))(::([A-Za-z0-9_:]+))?")
+WITHDRAWN_LAW = re.compile(r"\bLaw (129|130|131|132|133)\b")
 
 
 class Violations:
@@ -76,7 +111,32 @@ def is_table_row(line: str) -> bool:
     return line.lstrip().startswith("|")
 
 
-def load_claims() -> tuple[dict[str, dict], dict[tuple[str, str], str]]:
+def is_separator(row: list[str]) -> bool:
+    return bool(row) and all(cell and set(cell) <= {"-", ":"} for cell in row) and any(
+        "-" in cell for cell in row)
+
+
+def table_rows(lines: list[str], header: list[str], label: str,
+               violations: Violations) -> list[list[str]]:
+    header_at = next((i for i, line in enumerate(lines)
+                      if is_table_row(line) and cells(line) == header), None)
+    if header_at is None:
+        violations.add(f"no {label} header (`| {' | '.join(header)} |`)")
+        return []
+    rows: list[list[str]] = []
+    for line in lines[header_at + 1:]:
+        if not is_table_row(line):
+            if rows:
+                break
+            continue
+        row = cells(line)
+        if is_separator(row):
+            continue
+        rows.append(row)
+    return rows
+
+
+def load_claims() -> tuple[dict[str, dict], dict[tuple[str, str], str], set[str]]:
     data = json.loads(CLAIMS.read_text())
     claims = {claim["id"]: claim for claim in data["claims"]}
     required = {
@@ -85,32 +145,81 @@ def load_claims() -> tuple[dict[str, dict], dict[tuple[str, str], str]]:
         for arm in claim["arms"]
         if arm.get("required")
     }
-    return claims, required
+    campaigns = {pr["id"] for pr in data.get("action_prs", [])}
+    return claims, required, campaigns
 
 
-def load_law_numbers() -> set[str]:
-    numbers: set[str] = set()
+def load_law_keys() -> set[str]:
+    """`number` and `number+clause`: `Law 51` and `Law 51b` both resolve."""
+    keys: set[str] = set()
     for line in LAWS.read_text().splitlines():
         if not line or line.startswith("#"):
             continue
-        first = line.split("\t", 1)[0].strip()
-        if first:
-            numbers.add(first)
-            base = re.match(r"[0-9]+", first)
-            if base:
-                numbers.add(base.group(0))
-    return numbers
+        fields = line.split("\t")
+        number = fields[0].strip()
+        if not number:
+            continue
+        keys.add(number)
+        clause = fields[1].strip() if len(fields) > 1 else ""
+        if clause:
+            keys.add(f"{number}{clause}")
+    return keys
 
 
-def lean_declaration_exists(name: str) -> bool:
-    """`Rchain.MergeScope.close_spec` → the final component must occur in a Lean source under spec/Rchain."""
-    symbol = name.rsplit(".", 1)[-1]
-    if not symbol:
-        return False
+def strip_comments(raw: str, in_block: bool) -> tuple[str, bool]:
+    """Remove Lean line and block comments from one line; return the line and the block state."""
+    line = raw
+    while "/-" in line:
+        before, rest = line.split("/-", 1)
+        if "-/" in rest:
+            line = before + rest.split("-/", 1)[1]
+            continue
+        line = before
+        in_block = True
+        break
+    if in_block:
+        if "-/" in line:
+            line = line.split("-/", 1)[1]
+            in_block = False
+        else:
+            return "", True
+    return line.split("--", 1)[0], in_block
+
+
+def load_lean_names() -> set[str]:
+    """Fully qualified declarations and namespaces under spec/Rchain, section-aware."""
+    names: set[str] = set()
+    declaration = re.compile(
+        r"^\s*(?:@\[[^\]]*\]\s*)?"
+        r"(?:protected\s+|private\s+|noncomputable\s+|partial\s+|unsafe\s+)?"
+        r"(theorem|lemma|def|abbrev|structure|inductive|class)\s+"
+        r"([A-Za-z_][A-Za-z0-9_'.]*)")
+    namespace = re.compile(r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_'.]*)\s*$")
+    section = re.compile(r"^\s*section(?:\s+[A-Za-z_][A-Za-z0-9_'.]*)?\s*$")
+    end = re.compile(r"^\s*end(?:\s+[A-Za-z_][A-Za-z0-9_'.]*)?\s*$")
     for path in LEAN.rglob("*.lean"):
-        if symbol in path.read_text(errors="ignore"):
-            return True
-    return False
+        stack: list[str] = []
+        in_block = False
+        for raw in path.read_text(errors="ignore").splitlines():
+            line, in_block = strip_comments(raw, in_block)
+            match = namespace.match(line)
+            if match:
+                stack.append(match.group(1))
+                names.add(".".join(stack))
+                continue
+            if section.match(line):
+                stack.append("")
+                continue
+            if end.match(line):
+                if stack:
+                    stack.pop()
+                continue
+            match = declaration.match(line)
+            if match:
+                prefix = [part for part in stack if part]
+                names.add(".".join(prefix + [match.group(2)]))
+                names.add(match.group(2))
+    return names
 
 
 def falsifier_exists(cell: str, violations: Violations, row_id: str) -> None:
@@ -130,24 +239,35 @@ def falsifier_exists(cell: str, violations: Violations, row_id: str) -> None:
         violations.add(f"{row_id}: Falsifier symbol {symbol!r} not found in {match.group(1)}")
 
 
-def lean_cell_ok(cell: str, law_numbers: set[str], violations: Violations, row_id: str) -> bool:
+def check_laws(cell: str, laws: set[str], violations: Violations, row_id: str) -> None:
+    for law in LAW_REF.findall(cell):
+        if law not in laws:
+            violations.add(f"{row_id}: law {law} is not in spec/laws.tsv")
+
+
+def check_lean_tokens(cell: str, lean: set[str], violations: Violations, row_id: str) -> None:
+    for token in LEAN_REF.findall(cell):
+        if token not in lean:
+            violations.add(f"{row_id}: Lean declaration {token!r} not found under spec/Rchain/")
+
+
+def lean_cell_ok(cell: str, laws: set[str], lean: set[str], violations: Violations,
+                 row_id: str) -> bool:
     text = strip_code(cell)
     if "owed" in text.lower():
         return True
     ok = False
     for part in [p.strip().strip("`") for p in text.split(",") if p.strip()]:
-        law = re.fullmatch(r"Law ([0-9]+[a-z]?)", part)
-        if law:
-            if law.group(1) not in law_numbers:
-                violations.add(f"{row_id}: law {law.group(1)} is not in spec/laws.tsv")
+        if LAW_REF.fullmatch(part):
+            check_laws(part, laws, violations, row_id)
             ok = True
             continue
-        if part.startswith("Rchain."):
-            if not lean_declaration_exists(part):
-                violations.add(f"{row_id}: Lean declaration {part!r} not found under spec/Rchain/")
+        if LEAN_REF.fullmatch(part):
+            check_lean_tokens(part, lean, violations, row_id)
             ok = True
             continue
-        violations.add(f"{row_id}: Lean cell part is neither a Law, an Rchain declaration, nor owed: {part!r}")
+        violations.add(
+            f"{row_id}: Lean cell part is neither a Law, an Rchain declaration, nor owed: {part!r}")
     if not ok:
         violations.add(f"{row_id}: Lean cell names nothing: {cell!r}")
     return ok
@@ -192,140 +312,217 @@ def parse_guide_words(lines: list[str], violations: Violations) -> set[str]:
     return rows
 
 
-def parse_table_a(lines: list[str], claims: dict[str, dict],
-                  required: dict[tuple[str, str], str], law_numbers: set[str],
-                  violations: Violations) -> dict[str, bool]:
-    """Return DE id → whether its Arm cell is debt."""
-    header_at = next((i for i, l in enumerate(lines)
-                      if is_table_row(l) and cells(l)[:3] == ["ID", "Claim", "Claim arm"]), None)
-    if header_at is None:
-        violations.add("no Table A header (`| ID | Claim | Claim arm | ...`)")
-        return {}
-    owed: dict[str, bool] = {}
-    seen: set[str] = set()
-    for line in lines[header_at + 1:]:
+def parse_table_a(lines: list[str], laws: set[str], lean: set[str],
+                  violations: Violations) -> tuple[dict[str, str], set[str]]:
+    """Return DE id → its root cause, and the set of guide words carried."""
+    for line in lines:
         if not is_table_row(line):
-            if seen:
-                break
             continue
         row = cells(line)
-        if row and all(cell and set(cell) <= {"-", ":"} for cell in row):
-            continue
+        if row and row[0] == "ID" and any(
+                cell in {"Claim", "Claim arm", "Stall arm"} for cell in row):
+            violations.add(
+                "Table A carries an RC column; the HAZOP surface has no Claim, Claim arm or Stall "
+                "arm column — placement belongs in Table E")
+    seen: dict[str, str] = {}
+    words: set[str] = set()
+    for row in table_rows(lines, TABLE_A_HEADER, "Table A", violations):
         if len(row) != 11:
-            violations.add(f"Table A row has {len(row)} cells, want 11: {line[:80]!r}")
+            violations.add(f"Table A row has {len(row)} cells, want 11: {' | '.join(row)[:90]!r}")
             continue
-        (row_id, claim_id, claim_arm, word, deviation, cause, consequence, safeguard,
-         lean, stall_arm, falsifier) = row
+        (row_id, word, deviation, anchor, cause, shape, representation, consequence, safeguard,
+         lean_cell, falsifier) = row
         if not DE_ID.fullmatch(row_id):
             violations.add(f"bad id {row_id!r}")
             continue
         if row_id in seen:
             violations.add(f"duplicate id {row_id}")
-        seen.add(row_id)
-        if claim_id not in claims:
-            violations.add(f"{row_id}: claim {claim_id} not in release-claims.json")
-        environment = None
-        if (claim_id, claim_arm) not in required:
-            violations.add(f"{row_id}: {claim_arm} is not a required arm of {claim_id}")
-        else:
-            environment = required[(claim_id, claim_arm)]
+        seen[row_id] = cause
         if word not in GUIDE_WORDS:
             violations.add(f"{row_id}: guide word {word!r} is not canonical")
+        words.add(word)
+        if cause not in ROOT_CAUSES:
+            violations.add(f"{row_id}: root cause {cause!r} is not in the vocabulary")
+        if shape not in SHAPES:
+            violations.add(f"{row_id}: shape {shape!r} is not in the vocabulary")
+        if representation not in REPRESENTATIONS:
+            violations.add(f"{row_id}: representation {representation!r} is not in the vocabulary")
         if not RUNG.match(strip_code(safeguard)):
             violations.add(f"{row_id}: safeguard does not start with R1..R4: {safeguard!r}")
-        if not cause:
-            violations.add(f"{row_id}: empty cause")
-        if not deviation or not consequence:
-            violations.add(f"{row_id}: empty deviation or consequence")
-        arm_text = strip_code(stall_arm)
-        if arm_text.startswith("owed:"):
-            owed_id = arm_text.split(":", 1)[1].strip()
-            if not SLUG.fullmatch(owed_id):
-                violations.add(f"{row_id}: owed arm is not a lowercase slug: {owed_id!r}")
-            owed[row_id] = True
-        elif arm_text.startswith("arm:"):
-            arm_id = arm_text.split(":", 1)[1].strip()
-            key = (claim_id, arm_id)
-            if key not in required:
-                violations.add(f"{row_id}: stall arm {arm_id} is not a required arm of {claim_id}")
-            elif environment is not None and required[key] != environment:
-                violations.add(
-                    f"{row_id}: stall arm {arm_id} is {required[key]}, not the claim arm's "
-                    f"{environment}")
-            owed[row_id] = False
-        else:
-            violations.add(f"{row_id}: Stall arm is neither arm:<id> nor owed:<slug>: {stall_arm!r}")
-            owed[row_id] = True
-        lean_cell_ok(lean, law_numbers, violations, row_id)
+        if not deviation or not consequence or not anchor:
+            violations.add(f"{row_id}: empty deviation, RCA anchor or consequence")
+        lean_cell_ok(lean_cell, laws, lean, violations, row_id)
         falsifier_exists(falsifier, violations, row_id)
     if not seen:
         violations.add("Table A has no rows")
-    return owed
+    return seen, words
 
 
-def parse_ledger(lines: list[str], required: dict[tuple[str, str], str],
-                 owed: dict[str, bool], violations: Violations) -> int:
-    header_at = next((i for i, l in enumerate(lines)
-                      if is_table_row(l) and cells(l)[:2] == ["Claim", "Arm"]), None)
-    if header_at is None:
-        violations.add("no coverage-ledger header (`| Claim | Arm | ...`)")
-        return 0
+def parse_table_b(lines: list[str], laws: set[str], lean: set[str],
+                  violations: Violations) -> None:
+    seen: set[str] = set()
+    for row in table_rows(lines, TABLE_B_HEADER, "Table B", violations):
+        if len(row) != 6:
+            violations.add(f"Table B row has {len(row)} cells, want 6")
+            continue
+        representation = strip_code(row[0])
+        if representation not in REPRESENTATIONS:
+            violations.add(f"Table B: unknown representation {representation!r}")
+        if representation in seen:
+            violations.add(f"Table B: duplicate representation {representation!r}")
+        seen.add(representation)
+        check_laws(row[3], laws, violations, f"Table B/{representation}")
+        check_lean_tokens(" ".join(row[3:]), lean, violations, f"Table B/{representation}")
+        if not LEAN_REF.search(" ".join(row[3:])) and "owed" not in " ".join(row[3:]).lower():
+            violations.add(f"Table B/{representation}: names no non-vacuity witness or owed debt")
+    missing = set(REPRESENTATIONS) - seen
+    if missing:
+        violations.add(f"Table B omits representation(s): {', '.join(sorted(missing))}")
+
+
+def parse_table_c(lines: list[str], de_ids: set[str], laws: set[str],
+                  violations: Violations) -> None:
+    seen: set[str] = set()
+    for row in table_rows(lines, TABLE_C_HEADER, "Table C", violations):
+        if len(row) != 6:
+            violations.add(f"Table C row has {len(row)} cells, want 6")
+            continue
+        cause = strip_code(row[0])
+        if cause not in ROOT_CAUSES:
+            violations.add(f"Table C: unknown root cause {cause!r}")
+        if cause in seen:
+            violations.add(f"Table C: duplicate root cause {cause!r}")
+        seen.add(cause)
+        ids = re.findall(r"DE-[0-9]+", row[2])
+        if not ids:
+            violations.add(f"Table C/{cause}: names no DE row")
+        for de in ids:
+            if de not in de_ids:
+                violations.add(f"Table C/{cause}: unknown DE row {de}")
+        shapes = [part.strip() for part in row[3].split(",") if part.strip()]
+        if not shapes:
+            violations.add(f"Table C/{cause}: names no canonical shape")
+        for shape in shapes:
+            if shape not in SHAPES:
+                violations.add(f"Table C/{cause}: unknown shape {shape!r}")
+        check_laws(row[4], laws, violations, f"Table C/{cause}")
+        if not RUNG.match(strip_code(row[5])):
+            violations.add(f"Table C/{cause}: default rung is not R1..R4: {row[5]!r}")
+    missing = set(ROOT_CAUSES) - seen
+    if missing:
+        violations.add(f"Table C omits root cause(s): {', '.join(sorted(missing))}")
+
+
+def parse_table_d(lines: list[str], de_ids: set[str], laws: set[str], lean: set[str],
+                  violations: Violations) -> None:
+    covered: set[str] = set()
+    for row in table_rows(lines, TABLE_D_HEADER, "Table D", violations):
+        if len(row) != 3:
+            violations.add(f"Table D row has {len(row)} cells, want 3")
+            continue
+        ids = re.findall(r"DE-[0-9]+", row[0])
+        if not ids and row[0].strip().lower() != "all":
+            violations.add(f"Table D row names no DE row: {row[0]!r}")
+        for de in ids:
+            if de not in de_ids:
+                violations.add(f"Table D: unknown DE row {de}")
+            covered.add(de)
+        check_laws(row[1], laws, violations, f"Table D/{row[0]}")
+        check_lean_tokens(row[1], lean, violations, f"Table D/{row[0]}")
+    missing = de_ids - covered
+    if missing:
+        violations.add(f"Table D omits deviation(s): {', '.join(sorted(missing))}")
+
+
+def tracked(relative: str) -> bool:
+    result = subprocess.run(["git", "-C", str(ROOT), "ls-files", "--error-unmatch", relative],
+                            capture_output=True, text=True)
+    return result.returncode == 0
+
+
+def parse_table_e(lines: list[str], required: dict[tuple[str, str], str],
+                  campaigns: set[str], de_ids: set[str],
+                  violations: Violations) -> tuple[int, int]:
     seen: set[tuple[str, str]] = set()
-    resting = 0
-    for line in lines[header_at + 1:]:
-        if not is_table_row(line):
-            if seen:
-                break
+    covered: set[str] = set()
+    owed = 0
+    for row in table_rows(lines, TABLE_E_HEADER, "Table E", violations):
+        if len(row) != 6:
+            violations.add(f"Table E row has {len(row)} cells, want 6")
             continue
-        row = cells(line)
-        if row and all(cell and set(cell) <= {"-", ":"} for cell in row):
-            continue
-        if len(row) != 4:
-            violations.add(f"ledger row has {len(row)} cells, want 4: {line[:80]!r}")
-            continue
-        claim_id, arm_id, environment, stall_rows = row
+        de, claim_id, arm_id, campaign, status, evidence = row
+        if de not in de_ids:
+            violations.add(f"Table E: unknown DE row {de!r}")
+        covered.add(de)
         key = (claim_id, arm_id)
         if key not in required:
-            violations.add(f"ledger: {claim_id}/{arm_id} is not a required arm")
+            violations.add(f"Table E: {claim_id}/{arm_id} is not a required arm")
             continue
         if key in seen:
-            violations.add(f"ledger: duplicate row for {claim_id}/{arm_id}")
+            violations.add(f"Table E: duplicate row for {claim_id}/{arm_id}")
         seen.add(key)
-        if required[key] != environment:
-            violations.add(f"ledger: {claim_id}/{arm_id} is {required[key]}, not {environment}")
-        if stall_rows.startswith("n/a"):
-            if not re.search(r"n/a \(.+\)", stall_rows):
-                violations.add(f"ledger: {claim_id}/{arm_id} is n/a without a reason")
-            continue
-        ids = [token for token in re.findall(r"DE-[0-9]+", stall_rows)]
-        if not ids:
-            violations.add(f"ledger: {claim_id}/{arm_id} names no DE row and is not n/a (reason)")
-            continue
-        if any(de not in owed for de in ids):
-            violations.add(f"ledger: {claim_id}/{arm_id} names an unknown DE row: {stall_rows!r}")
-        elif any(owed[de] for de in ids):
-            resting += 1
+        if campaign not in campaigns:
+            violations.add(f"Table E: {claim_id}/{arm_id} campaign {campaign!r} is not a next_pr")
+        if status == "owed":
+            owed += 1
+            if evidence != "-":
+                violations.add(f"Table E: {claim_id}/{arm_id} is owed but names evidence {evidence!r}")
+        elif status == "live":
+            if not evidence.startswith("spec/audit/evidence/"):
+                violations.add(
+                    f"Table E: {claim_id}/{arm_id} is live without a spec/audit/evidence path")
+            elif not (ROOT / evidence).exists() or not tracked(evidence):
+                violations.add(f"Table E: {claim_id}/{arm_id} evidence is not a tracked file: {evidence}")
+        elif status in READINGS:
+            violations.add(
+                f"Table E: {claim_id}/{arm_id} uses the RC reading {status!r}; the HAZOP surface "
+                "records owed/live measurement, not a claim reading")
+        else:
+            violations.add(f"Table E: {claim_id}/{arm_id} status {status!r} is neither owed nor live")
     for key in required:
         if key not in seen:
-            violations.add(f"ledger: required arm {key[0]}/{key[1]} has no row")
-    return resting
+            violations.add(f"Table E: required arm {key[0]}/{key[1]} has no placement row")
+    missing = de_ids - covered
+    if missing:
+        violations.add(f"Table E places no measurement for deviation(s): {', '.join(sorted(missing))}")
+    return owed, len(seen)
 
 
-def debt_line(lines: list[str], rows_owed: int, resting: int, violations: Violations) -> None:
+def parse_residue(lines: list[str], lean: set[str], violations: Violations) -> int:
+    rows = table_rows(lines, RESIDUE_HEADER, "residue", violations)
+    for row in rows:
+        if len(row) != 3:
+            violations.add(f"residue row has {len(row)} cells, want 3")
+            continue
+        witness = row[2]
+        tokens = LEAN_REF.findall(witness)
+        if tokens:
+            check_lean_tokens(witness, lean, violations, f"residue/{row[0]}")
+            continue
+        match = PATH_SYMBOL.search(witness)
+        if not match or not (ROOT / match.group(1)).exists():
+            violations.add(f"residue/{row[0]}: witness resolves to neither a declaration nor a path")
+    if len(rows) < 6:
+        violations.add(f"residue table has {len(rows)} rows, want at least 6")
+    return len(rows)
+
+
+def debt_line(lines: list[str], deviations: int, owed: int, placed: int, required: int,
+              violations: Violations) -> None:
     line = next((l for l in lines if l.strip().startswith("**Debt.**")), None)
     if line is None:
         violations.add("no `**Debt.**` line")
         return
-    match = re.search(r"stall rows owed: ([0-9]+) · ledger rows resting on an owed arm: ([0-9]+)",
-                      line)
+    match = re.search(
+        r"deviations: ([0-9]+) · placement rows owed: ([0-9]+) · required arms placed: "
+        r"([0-9]+)/([0-9]+)", line)
     if not match:
         violations.add(f"debt line is not in the gated form: {line.strip()!r}")
         return
-    if int(match.group(1)) != rows_owed:
-        violations.add(f"debt line says {match.group(1)} stall rows owed; the table has {rows_owed}")
-    if int(match.group(2)) != resting:
-        violations.add(
-            f"debt line says {match.group(2)} ledger rows resting on an owed arm; the ledger has {resting}")
+    declared = tuple(int(value) for value in match.groups())
+    actual = (deviations, owed, placed, required)
+    if declared != actual:
+        violations.add(f"debt line says {declared}; the tables say {actual}")
 
 
 def main(argv: list[str]) -> int:
@@ -339,35 +536,49 @@ def main(argv: list[str]) -> int:
     if not page.exists():
         print(f"check-stall-coverage: no {page}", file=sys.stderr)
         return 1
-    lines = page.read_text().splitlines()
-    claims, required = load_claims()
-    law_numbers = load_law_numbers()
+    text = page.read_text()
+    lines = text.splitlines()
+    claims, required, campaigns = load_claims()
+    laws = load_law_keys()
+    lean = load_lean_names()
     violations = Violations()
 
+    for law in sorted(set(WITHDRAWN_LAW.findall(text))):
+        violations.add(f"the page cites withdrawn Law {law}; the consolidation folds it into 51/53")
+    for word in ("pass_condition", "fail_condition"):
+        if word in text:
+            violations.add(f"the HAZOP surface must not carry the RC field {word!r}")
+
     row_words = parse_guide_words(lines, violations)
-    owed = parse_table_a(lines, claims, required, law_numbers, violations)
-    table_words = set()
-    for line in lines:
-        if is_table_row(line):
-            row = cells(line)
-            if len(row) == 11 and DE_ID.fullmatch(row[0]):
-                table_words.add(row[3])
+    de_causes, table_words = parse_table_a(lines, laws, lean, violations)
     for word in row_words:
         if word not in table_words:
             violations.add(f"guide word {word} is declared `row` but no Table A row carries it")
     for word in table_words:
         if word not in row_words:
             violations.add(f"Table A carries {word!r}, which is not declared `row`")
-    if not any(l.strip().startswith("**TE-7") or "TE-7" in l for l in lines):
+    if "TE-7" not in text:
         violations.add("the page never names TE-7")
-    resting = parse_ledger(lines, required, owed, violations)
-    debt_line(lines, sum(1 for value in owed.values() if value), resting, violations)
+
+    de_ids = set(de_causes)
+    parse_table_b(lines, laws, lean, violations)
+    parse_table_c(lines, de_ids, laws, violations)
+    parse_table_d(lines, de_ids, laws, lean, violations)
+    owed, placed = parse_table_e(lines, required, campaigns, de_ids, violations)
+    parse_residue(lines, lean, violations)
+
+    for row in table_rows(lines, TABLE_A_HEADER, "Table A", Violations()):
+        for cell in row:
+            if strip_code(cell) in READINGS:
+                violations.add(f"Table A carries the RC reading {strip_code(cell)!r}")
+
+    debt_line(lines, len(de_ids), owed, placed, len(required), violations)
 
     if not violations.ok():
         return violations.report("stall-coverage.md")
     print(
-        f"check-stall-coverage: ok {len(owed)} deviation row(s), {len(required)} required arm(s), "
-        f"{sum(1 for value in owed.values() if value)} owed row(s)")
+        f"check-stall-coverage: ok {len(de_ids)} deviation row(s), {placed} placement row(s) "
+        f"({owed} owed), {len(required)} required arm(s)")
     return 0
 
 
