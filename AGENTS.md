@@ -4,7 +4,7 @@ This file is the **authoritative intent + formal specification** for this node. 
 AI coding agents and humans: read it in full before writing or changing any Rust code, and treat its
 statements as binding constraints, not suggestions.
 
-**Snapshot — 2026-11-23, `dev` at `b8bbdd7bf`.**
+**Snapshot — 2026-11-23, `dev` at `688329442`.**
 
 - **The port is complete.** All <!-- recount:members -->14<!-- recount:end --> workspace members are at
   the repository root; the node builds, runs and serves its API.
@@ -14,11 +14,11 @@ statements as binding constraints, not suggestions.
   restated here.
 - **What passes today.** The current-build mainnet gate register reads **47 of 47 met**; the external
   register carries nine rows (one `blocked`, two `external`, three `reviewable`, two `owes`, one
-  `superseded`). The release-claim register has seven claims and 25 arms: the seven local-devnet arms
-  read `safe`, the other eighteen read `not-observed`.
+  `superseded`). The release-claim register has seven claims and 27 arms: thirteen read `safe`, the
+  other fourteen read `not-observed`.
 - **What remains is the release campaign**, not defects on the local path: the public four-host fleet,
-  plus the bond/leave, off-host, failover, multi-host, equivocation, transport and fleet-upgrade arms.
-  Each is a named campaign PR in the generated tracker (below).
+  plus the off-host, failover, multi-host, equivocation and fleet-upgrade arms. Each is a named
+  campaign PR in the generated tracker (below).
 - **No readiness claim.** The public gate is open. The project is not claiming readiness for mainnet,
   production, or outside validators, and issue #428 remains NO-GO; `--assert-ready` is not flipped.
 
@@ -43,7 +43,7 @@ papers**.
 | Operating manual for the register — numbering, statuses, commands, the Lean-first protocol | [`docs/src/ai/laws-reference.md`](docs/src/ai/laws-reference.md) |
 | Human-facing walkthrough: each law → concrete Rust file/type/function + test | [`docs/src/contributor/laws-to-rust.md`](docs/src/contributor/laws-to-rust.md) |
 | The ρ→CoC type-system spec | [`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md) |
-| **Release claims** — seven claims, 25 arms, readings derived from the newest committed record | [`spec/audit/release-claims.json`](spec/audit/release-claims.json); generated tracker [`spec/audit/release-campaigns.md`](spec/audit/release-campaigns.md) |
+| **Release claims** — seven claims, 27 arms, readings derived from the newest committed record | [`spec/audit/release-claims.json`](spec/audit/release-claims.json); generated tracker [`spec/audit/release-campaigns.md`](spec/audit/release-campaigns.md) |
 | **Mainnet gates** — the current-build register and the external obligations | [`spec/audit/mainnet-gates.json`](spec/audit/mainnet-gates.json), [`spec/audit/mainnet-gates.external.json`](spec/audit/mainnet-gates.external.json); normative rules [Gate measurement](docs/src/spec/gate-measurement.md), [Gate terms](docs/src/spec/gate-terms.md) |
 | **Public fleet campaign** — the four-host runbook, the driver, the manifest | [`docs/src/node/public-fleet.md`](docs/src/node/public-fleet.md) |
 | **Testnet acceptance** — is it ready for outside validators, and what falsifies that | [`docs/src/spec/testnet-acceptance.md`](docs/src/spec/testnet-acceptance.md) |
@@ -156,25 +156,23 @@ carries the obligations a build cannot discharge:
 
 **What remains is the release campaign.** Release truth is not authored. Each claim has named arms; an
 arm's state is a **reading** of the newest committed record, and `safe` is the only reading that closes
-it. The register holds seven claims and 25 arms; the seven local-devnet arms (`RC-1/local` …
-`RC-7/local`) read `safe`, and the other eighteen read `not-observed`. Their next actions are the
-campaign PRs in the generated tracker — the authority is
-[`spec/audit/release-campaigns.md`](spec/audit/release-campaigns.md). The remaining work:
+it. The register holds seven claims and 27 arms; thirteen read `safe` — the seven baselines
+(`RC-1/local` … `RC-7/local`) plus `RC-1/bond-leave`, `RC-2/validator-set`,
+`RC-2/stall-denominator`, `RC-3/stall-episode`, `RC-4/returner` and `RC-5/transport` — and the other
+fourteen read `not-observed`. Their next actions are the campaign PRs in the generated tracker — the
+authority is [`spec/audit/release-campaigns.md`](spec/audit/release-campaigns.md). The remaining work:
 
 | PR | Claims | Scope |
 |---|---|---|
 | `rc-public-fleet` | RC-1 … RC-7 | bring up the four independent hosts on a coordinated genesis; submit the deploy and perform the single-validator restart through `tools/fleet-run.py`; record the public arms |
-| `rc-bond-leave` | RC-1, RC-2, RC-4 | one bond/leave campaign feeding RC-1 bond-leave, RC-2 validator-set and RC-4 returner |
 | `rc-offhost` | RC-6 | the pre-registered two-host join, including the loopback negative control |
 | `rc-failover` | RC-4 | ordered seed list; run with the first seed down |
 | `rc-multi-host` | RC-2, RC-4 | the multi-host driver; N=4 and N=8 on declared hosts |
 | `rc-equivocation` | RC-2 | inject an equivocation under a validator key; add the finality coordinate |
-| `rc-transport` | RC-5 | one deploy id through HTTP, direct HTTP, gRPC and a proxy |
-| `rc-harness-old-image` | RC-7 | pin a prior image and run the mixed-store local arm |
 | `rc-fleet-upgrade` | RC-7 | roll the public fleet through the mixed window to the new image |
 | `launch-gate` | all | aggregate the required arms and external obligations; refuse ready while an external item is open without a dated disposition |
 
-The local arms were re-confirmed on 2026-11-22. **No release claim is made while any required arm
+The local arms were re-confirmed on 2026-11-23. **No release claim is made while any required arm
 reads `not-observed`:** a local pass is a mechanism check, and the public gate stays open until the
 fleet records read `safe`.
 

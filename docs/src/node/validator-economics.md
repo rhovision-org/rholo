@@ -407,11 +407,11 @@ preferences.
   set, is derived from the block's own chosen justification set; a proposer could make a rival read
   absent and take the withheld share.
 
-- **A share of fees for contract developers cannot be added after genesis.** `pay_executor` can pay
-  only the block's signed sender, and `PosParams` is written once, at genesis (`set_params` in
-  `rholang/src/native_state.rs`), so a developer share of the burn that genesis does not commit can
-  never be turned on without a hard fork. `fundPot` is not a substitute, because it pays the validator
-  pot. The capability audit is
+- **A native share of the burn for contract developers cannot be added after genesis.** A contract can
+  still charge fees of its own, but `pay_executor` pays only the block's signed sender, and `PosParams`
+  is written once, at genesis (`set_params` in `rholang/src/native_state.rs`), so a developer share of
+  the burn that genesis does not commit can never be turned on without a hard fork. `fundPot` is not a
+  substitute, because it pays the validator pot. The capability audit is
   [`spec/audit/forkless-developer-rewards-20261123.md`](../../../spec/audit/forkless-developer-rewards-20261123.md),
   and the requirement is issue #655.
 
