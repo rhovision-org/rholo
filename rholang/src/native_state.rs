@@ -288,9 +288,10 @@ impl DevVesting {
 /// that does not reserve, has exactly the post-state it had before the key existed.
 ///
 /// **Why a share fixed at genesis and not a setting.** A share that a genesis does not commit can never be
-/// enabled without a hard fork, because no deploy can write consensus parameters. So genesis commits a
-/// *ceiling*; how much of the reserve is actually paid to developers, and when, is the policy of whoever
-/// controls the recipient address, carried out with ordinary deploys (and `fundPot` returns any part a
+/// enabled without a hard fork, because no deploy can write consensus parameters. The protocol pays the
+/// reserve the **full** share of every burn — it is a fixed rate, not a variable one. It is a ceiling
+/// only on what can reach developers: how much of the reserve is paid onward, and when, is the policy
+/// of the reserve's signers, carried out with ordinary deploys (and `fundPot` returns any part a
 /// policy does not spend to the validator pot). See `spec/audit/forkless-developer-rewards-20261123.md`.
 pub fn pos_developer_reserve_key() -> Blake2b256Hash {
     Blake2b256Hash::create(b"pos:developer-reserve")
@@ -349,6 +350,10 @@ impl DeveloperReserve {
         }
         let address = String::from_utf8(bytes[12..].to_vec())
             .map_err(|e| format!("the developer reserve address is not UTF-8: {e}"))?;
+        // A stored address is one `bind_developer_reserve` validated; anything else is corruption.
+        RevAddress::parse(&address).map_err(|e| {
+            format!("the developer reserve address {address:?} is not a REV address: {e}")
+        })?;
         Ok(DeveloperReserve {
             share: NonNegI64::try_from(share)
                 .map_err(|e| format!("developer reserve share: {e}"))?,
@@ -6364,7 +6369,9 @@ mod tests {
     fn a_developer_reserve_record_round_trips_and_refuses_corruption() {
         let reserve = DeveloperReserve {
             share: nn(500),
-            address: "1111abc".to_string(),
+            address: RevAddress::from_public_key(&PublicKey::new(vec![7u8; 65]))
+                .unwrap()
+                .to_base58(),
         };
         assert_eq!(
             DeveloperReserve::decode(&reserve.encode()).unwrap(),
@@ -6382,6 +6389,14 @@ mod tests {
         let mut short = reserve.encode();
         short.pop();
         assert!(DeveloperReserve::decode(&short).is_err());
+        let not_an_address = DeveloperReserve {
+            share: nn(500),
+            address: "1111abc".to_string(),
+        };
+        assert!(
+            DeveloperReserve::decode(&not_an_address.encode()).is_err(),
+            "a stored address that is not a REV address is corruption"
+        );
     }
 
     #[tokio::test]

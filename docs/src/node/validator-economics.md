@@ -185,13 +185,15 @@ node's. The vault's handle is registered under a constant URI. If the vault was 
 genesis is refused rather than installed with a reserve nobody can spend. The signers and quorum
 cannot change after genesis; losing `quorum` keys strands the reserve. **Not yet spendable:** a
 multisig vault on this port cannot be spent from a block after the one that created it (#669), so no
-genesis should set a non-zero share until #669 is fixed. The conservation is `payFees_conserves` in
+genesis can set a non-zero share until #669 is fixed: the genesis refuses one
+(`check_reserve_spendable`). The conservation is `payFees_conserves` in
 [`spec/Rchain/Pos.lean`](../../../spec/Rchain/Pos.lean).
 
 The reason it is a genesis value is the reason it exists. No deploy can write a fee parameter, so a
 share that a genesis does not commit can never be enabled without a hard fork
 ([the capability audit](../../../spec/audit/forkless-developer-rewards-20261123.md) is on #655).
-What the genesis fixes is therefore a ceiling. How much of the reserve reaches developers, and when,
+The protocol pays the reserve the full share of every burn: it is a fixed rate, not a variable one,
+and it is a ceiling only on what can reach developers. How much of the reserve reaches developers, and when,
 is decided by the reserve's signers, through ordinary deploys (forwarding it to a governance treasury
 contract is #655's PR-C), and an unspent part can go back to the validator pot through `fundPot`.
 

@@ -77,6 +77,33 @@ fn deployer_key() -> PrivateKey {
     PrivateKey::new(blake2b256(b"rnode/genesis/developer-reserve/deployer").to_vec())
 }
 
+/// **Whether a multi-signature vault can be spent from a block after the one that created it** — false
+/// until #669 is fixed. While it is false a reserve would accrue and could never move, so
+/// [`check_reserve_spendable`] refuses every non-zero `developer-share` at the config boundary and
+/// before the ceremony signs. Flipping it is the one-line change that lands with #669, together with
+/// un-ignoring `casper/tests/developer_reserve.rs::the_reserve_is_spent_by_its_quorum_and_by_nobody_else`.
+pub const RESERVE_SPENDABLE: bool = false;
+
+/// **The #669 gate, in code rather than prose** (review on #660): refuse a non-zero share while
+/// [`RESERVE_SPENDABLE`] is false. Called where configuration becomes a genesis
+/// (`proof_of_stake_from_config`, `node_launch::create_genesis_block`), not inside [`deploy`] and
+/// [`bind`], so the mechanism stays testable under a non-zero share.
+pub fn check_reserve_spendable(share: NonNegI64) -> Result<(), String> {
+    gate_reserve(share, RESERVE_SPENDABLE)
+}
+
+fn gate_reserve(share: NonNegI64, spendable: bool) -> Result<(), String> {
+    if share != NonNegI64::zero() && !spendable {
+        return Err(format!(
+            "casper.genesis.developer-share is {} basis points, but the reserve's multi-signature \
+             vault cannot yet be spent from a later block (rhovision-org/rholo#669): a non-zero share \
+             would accrue a reserve nobody can move. Leave developer-share at 0 until #669 is fixed",
+            i64::from(share)
+        ));
+    }
+    Ok(())
+}
+
 /// **The genesis rule for the reserve's custody**: with a non-zero share, at least one signer key,
 /// every key a 65-byte uncompressed secp256k1 public key, no key twice, and a quorum in `1..=keys`.
 /// A zero share needs nothing (and the keys are ignored).
@@ -99,6 +126,14 @@ pub fn check_custody(share: NonNegI64, keys: &[String], quorum: i32) -> Result<(
             return Err(format!(
                 "developer-reserve-public-keys: {key:?} is not a 65-byte uncompressed secp256k1 \
                  public key"
+            ));
+        }
+        // On the curve, not only the right shape: `RevAddress::from_public_key` hashes the bytes
+        // without validating the point, and an off-curve signer can never confirm, so with
+        // `quorum == keys` it would strand the reserve (review on #660).
+        if !Secp256k1::pub_key_verify(&bytes) {
+            return Err(format!(
+                "developer-reserve-public-keys: {key:?} is not a point on the secp256k1 curve"
             ));
         }
         if RevAddress::from_public_key(&PublicKey::new(bytes.clone())).is_none() {
@@ -250,8 +285,29 @@ pub async fn bind(
         .ok_or_else(|| {
             format!("the developer reserve vault's registry entry {uri} was not written")
         })?;
+    // The binding is the custody proof, so the published handle and the paid address must agree:
+    // the registry entry must be the `(revAddress, multiSig)` pair for exactly this address.
+    check_registered_pair(&value, &address)?;
     native.registry_insert(&reserve_uri(), &value);
     native.bind_developer_reserve(&pos_genesis.params, &DeveloperReserve { share, address })
+}
+
+/// Refuse a registry entry that is not `(address, handle)` for the address being bound.
+fn check_registered_pair(value: &Par, address: &str) -> Result<(), String> {
+    use rchain_models::rholang::RhoType::{RhoString, RhoTupleN};
+    let entry_address = RhoTupleN::unapply(value)
+        .filter(|items| items.len() == 2)
+        .and_then(|items| RhoString::unapply(&items[0]))
+        .ok_or_else(|| {
+            "the developer reserve vault's registry entry is not a (revAddress, multiSig) pair"
+                .to_string()
+        })?;
+    if entry_address != address {
+        return Err(format!(
+            "the developer reserve vault published {address:?} but registered {entry_address:?}"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -322,10 +378,51 @@ mod tests {
             check_custody(nn(500), &["zz".to_string()], 1).is_err(),
             "not hex"
         );
+        // The right shape (65 bytes, 0x04, derives an address) but not a curve point.
+        let off_curve = format!("04{}", "00".repeat(64));
+        assert!(
+            RevAddress::from_public_key(&PublicKey::new(base16::decode(&off_curve).unwrap()))
+                .is_some()
+        );
+        let err = check_custody(nn(500), &[key(1), off_curve], 2).unwrap_err();
+        assert!(err.contains("not a point"), "{err}");
         assert!(
             check_custody(nn(500), &["04".repeat(33)], 1).is_err(),
             "wrong length"
         );
+    }
+
+    /// **The #669 gate is code**: while vaults are not spendable from a later block, every non-zero
+    /// share is refused with a message naming #669, and a zero share passes. Flipping the constant
+    /// is the whole of lifting it.
+    #[test]
+    fn a_non_zero_share_is_refused_until_the_reserve_is_spendable() {
+        assert!(
+            !RESERVE_SPENDABLE,
+            "lift this only with #669's fix and its witness passing"
+        );
+        assert!(check_reserve_spendable(nn(0)).is_ok());
+        let err = check_reserve_spendable(nn(1)).unwrap_err();
+        assert!(err.contains("#669"), "{err}");
+        assert!(
+            gate_reserve(nn(500), true).is_ok(),
+            "the gate is the constant and nothing else"
+        );
+    }
+
+    /// **The registered entry must match the address being bound.**
+    #[test]
+    fn a_registered_entry_that_disagrees_with_the_published_address_is_refused() {
+        use rchain_models::rholang::RhoType::{RhoString, RhoTupleN};
+        let pair = |a: &str| {
+            RhoTupleN::apply(vec![
+                RhoString::apply(a.to_string()),
+                RhoString::apply("h".into()),
+            ])
+        };
+        assert!(check_registered_pair(&pair("1111a"), "1111a").is_ok());
+        assert!(check_registered_pair(&pair("1111b"), "1111a").is_err());
+        assert!(check_registered_pair(&RhoString::apply("1111a".into()), "1111a").is_err());
     }
 
     /// **A zero share adds no deploy**, so a genesis that reserves nothing is the genesis it was.

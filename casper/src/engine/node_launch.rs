@@ -216,6 +216,9 @@ pub async fn create_genesis_block(
         &genesis.proof_of_stake.developer_reserve_public_keys,
         genesis.proof_of_stake.developer_reserve_quorum,
     )?;
+    crate::genesis::developer_reserve::check_reserve_spendable(
+        genesis.proof_of_stake.developer_share,
+    )?;
     crate::genesis::create_genesis_block(&ceremony, &genesis, runtime).await
 }
 

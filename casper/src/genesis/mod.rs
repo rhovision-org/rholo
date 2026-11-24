@@ -292,6 +292,7 @@ fn proof_of_stake_from_config(
         &pos.developer_reserve_public_keys,
         pos.developer_reserve_quorum,
     )?;
+    developer_reserve::check_reserve_spendable(pos.developer_share)?;
     Ok(pos)
 }
 
