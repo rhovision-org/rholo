@@ -67,3 +67,39 @@ rotation, appeal, reorganization, concurrency or actual RhoGov authority.
 
 No results are claimed until CI succeeds. No production law, custody path,
 real balance or governance policy is changed.
+
+## Phase III — authenticated decision and atomic local settlement witness
+
+This separate executable research adapter uses a domain-separated canonical
+JSON decision, exact manifest/policy/network/authority binding, immutable
+canonical-source membership, validity interval, and a quorum of distinct
+Ed25519 signatures verified by OpenSSL. Keys and funds are synthetic.
+The independently pinned configuration commits to the verified Phase I
+manifest, unresolved registry, reserve and authority set. No real authority
+is authenticated simply by constructing that configuration.
+
+A SQLite BEGIN IMMEDIATE transaction commits the reserve debit, beneficiary
+ledger credit, unique source consumption and full signed receipt together.
+The full audit rechecks receipt signatures and reserve conservation. Tests
+include concurrent duplicate claims, competing reserve debits, process death
+before/after commit, domain and signature tampering and refusal controls.
+A crash after commit is recoverable through a persisted receipt; retries
+cannot pay the same source twice. This is a single-host database witness,
+not a distributed finality or on-chain custody guarantee.
+
+Integration references (inspected, not integrated):
+- RhoGov main f93afaaf: src/chain/gov.ts derives outcomes from on-chain facts
+  and derives write identity from the signing deployer. A finalized Issue
+  result and decision authorization must be mapped into the envelope through
+  a separately verified adapter; a quorum signature is not itself a vote.
+- Rholo #674 merge e63b7e5a: examples/devrewards/Treasury.rho and Settlement.rho
+  use install-time distinct attestors, secp verification and private vault
+  payment. The Ed25519 research wire is not that contract's wire format.
+  Actual legacy custody and atomic debit/consumption need their own witness.
+- Quantum OS evidence export and QLF bridge are future work.
+
+The pinned trust configuration, finalized execution height and registry
+are external inputs. Policy rotation, appeals, chain reorganization, hostile
+database administrators, power-loss/storage faults and external payment
+atomicity are outside this model. No Genesis change or approved monetary
+policy is implied. Results require CI confirmation.

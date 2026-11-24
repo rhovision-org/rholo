@@ -41,3 +41,19 @@ jobs:
         with:
           name: formal-cross-language-witness
           path: spec/audit/legacy-rev-assurance/formal-witness.txt
+  authenticated-settlement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check signed decisions and transactional crash recovery
+        working-directory: spec/audit/legacy-rev-assurance
+        run: |
+          set -o pipefail
+          openssl version
+          python3 test_settlement.py 2>&1 | tee settlement-witness.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: authenticated-settlement-witness
+          path: spec/audit/legacy-rev-assurance/settlement-witness.txt
