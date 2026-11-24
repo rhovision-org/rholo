@@ -429,6 +429,24 @@ The evidence is PR #600, Laws 114/115/117, `casper/tests/checkpoint_join.rs`, an
 `spec/audit/evidence/c344-closeout-20261117/` record. These are A-candidates for review, not an
 independent safety attestation; the §6 table above is unchanged.
 
+**Addition, 2026-11-23 — the developer fee reserve (#655) is a category-A candidate.** It is
+recorded as a dated note rather than a new row, for the reason above. `pay_executor` can now pay a
+second share of a deploy's burn, `developer-share` basis points, to the reserve's custody vault, in
+the same native step as the producer's share; the merge's cost-accounting composition credits that
+address from the same `fee_split`. The custody vault is a `MultiSigRevVault` the genesis creates over
+`developer-reserve-public-keys`/`developer-reserve-quorum`; its address is read back after the genesis
+deploys and written with the share, once, to the `pos:developer-reserve` leaf, and only when the share
+is non-zero. Spending from the vault in a later block is blocked by #669. The
+contract has no counterpart: `Pos.rhox` makes no payment out of the burn to anyone. **Hard fork (#51
+category A), but only for a network that arms it:** a non-zero share moves REV out of the staking
+vault on every deploy, so post-states differ from a node without the rule. A zero share writes no leaf
+and pays nothing, so such a genesis and every block on it hash exactly as before. The reason it has to
+land before mainnet genesis is the reason it exists. `PosParams` and this leaf are written only by
+`install_genesis`, so a share that a genesis does not commit can never be enabled without a hard fork
+(`spec/audit/forkless-developer-rewards-20261123.md`, row 4). The model is `payReserve`/`payFees` in
+`spec/Rchain/Pos.lean` (law 44): `fee_split_le_burned`, `shares_above_the_whole_overpay`,
+`payFees_conserves`, `payFees_leaves_the_stake` and `a_zero_reserve_is_the_old_rule`.
+
 ## 7. Verification
 
 - `cargo check --workspace` — clean.

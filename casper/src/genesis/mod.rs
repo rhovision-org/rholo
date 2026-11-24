@@ -2,6 +2,7 @@
 
 pub mod contracts;
 pub mod dev_tax;
+pub mod developer_reserve;
 pub mod rgov;
 pub mod standard_deploys;
 
@@ -87,11 +88,18 @@ pub fn build_pos_genesis(
         liveness_vote_window: proof_of_stake.liveness_vote_window,
         liveness_slash_severity: proof_of_stake.liveness_slash_severity,
     };
+    // **The developer fee reserve** (#655): a non-zero share is the reserve; a zero share is none, so
+    // a network that does not reserve installs exactly the genesis it installed before the field. The
+    // reserve's address is not a descriptor: it is the custody vault the genesis creates
+    // (`developer_reserve::bind`).
+    let developer_share = (proof_of_stake.developer_share != NonNegI64::zero())
+        .then_some(proof_of_stake.developer_share);
     PosGenesis {
         bonds,
         trusted,
         params,
         dev_vesting,
+        developer_share,
     }
 }
 
@@ -187,6 +195,26 @@ pub fn genesis_descriptors_from_config(
     }))
 }
 
+/// **The configured developer fee reserve share** (#655), refused rather than clamped like the
+/// producer's share: a negative share is not a rule, and a share over the whole would pay more than a
+/// deploy burned. The joint bound with `executor-share` is checked by
+/// [`rchain_rholang::native_state::check_developer_share`] when the genesis is installed, and the
+/// custody keys by [`developer_reserve::check_custody`].
+pub fn developer_share_from_config(
+    gbd: &crate::conf::GenesisBlockData,
+) -> Result<NonNegI64, String> {
+    let share = NonNegI64::try_from(i64::from(gbd.developer_share))
+        .map_err(|e| format!("casper.genesis.developer-share must not be negative: {e}"))?;
+    if i64::from(share) > 10_000 {
+        return Err(format!(
+            "casper.genesis.developer-share is {} basis points, above the whole of what a deploy \
+             burns",
+            i64::from(share)
+        ));
+    }
+    Ok(share)
+}
+
 /// The configured PoS parameters with an already-parsed validator set.
 fn proof_of_stake_from_config(
     gbd: &crate::conf::GenesisBlockData,
@@ -240,6 +268,9 @@ fn proof_of_stake_from_config(
         pos_multi_sig_public_keys: gbd.pos_multi_sig_public_keys.clone(),
         pos_multi_sig_quorum: gbd.pos_multi_sig_quorum,
         pos_vault_pub_key: gbd.pos_vault_pub_key.clone(),
+        developer_share: developer_share_from_config(gbd)?,
+        developer_reserve_public_keys: gbd.developer_reserve_public_keys.clone(),
+        developer_reserve_quorum: gbd.developer_reserve_quorum,
 
         liveness_absence_threshold: gbd.liveness_absence_threshold,
         liveness_jail_after_boundaries: i64::from(gbd.liveness_jail_after_boundaries),
@@ -248,7 +279,20 @@ fn proof_of_stake_from_config(
         liveness_slash_severity: i64::from(gbd.liveness_slash_severity),
     };
     // The liveness config is all-or-nothing; check it at the config boundary where a person wrote it.
-    build_pos_genesis(&pos, None).params.validate()?;
+    let pos_genesis = build_pos_genesis(&pos, None);
+    pos_genesis.params.validate()?;
+    // So is the developer fee reserve (#655): its bound against `executor-share`, and a custody vault
+    // that someone can actually spend from.
+    rchain_rholang::native_state::check_developer_share(
+        &pos_genesis.params,
+        pos_genesis.developer_share,
+    )?;
+    developer_reserve::check_custody(
+        pos.developer_share,
+        &pos.developer_reserve_public_keys,
+        pos.developer_reserve_quorum,
+    )?;
+    developer_reserve::check_reserve_spendable(pos.developer_share)?;
     Ok(pos)
 }
 
@@ -477,17 +521,23 @@ pub async fn missing_governance_keys(
 ///
 /// Before this, a fresh chain's registry was empty, so `lookup!(\`rho:rchain:revVault\`, *ch)`
 /// answered `Nil` — and a consumer cannot tell a `Nil` reply from a pattern that never matched.
+///
+/// **The developer fee reserve's custody vault comes last** (#655), and only with a non-zero share:
+/// last, so it moves no other deploy's position (and so no other deploy's unforgeable names), and only
+/// with a share, so a genesis that reserves nothing is exactly the genesis it was.
 pub fn default_blessed_terms(
-    _proof_of_stake: &ProofOfStake,
+    proof_of_stake: &ProofOfStake,
     _registry: &Registry,
     _vaults: &[Vault],
     shard_id: &str,
     ceremony: &ValidatorIdentity,
 ) -> Result<Vec<SignedDeployData>, String> {
-    Ok(blessed_terms_named(shard_id, ceremony)?
+    let mut terms: Vec<SignedDeployData> = blessed_terms_named(shard_id, ceremony)?
         .into_iter()
         .map(|(_, deploy)| deploy)
-        .collect())
+        .collect();
+    terms.extend(developer_reserve::deploy(proof_of_stake, shard_id)?);
+    Ok(terms)
 }
 
 /// Seed the genesis registry aliases whose source is now available. Idempotent, so the genesis loop
@@ -692,6 +742,9 @@ mod tests {
             pos_multi_sig_public_keys: vec![],
             pos_multi_sig_quorum: 0,
             pos_vault_pub_key: String::new(),
+            developer_share: NonNegI64::zero(),
+            developer_reserve_public_keys: Vec::new(),
+            developer_reserve_quorum: 0,
             dev_tax_vesting_blocks: NonNegI64::zero(),
 
             liveness_absence_threshold: 0,
@@ -848,6 +901,9 @@ mod tests {
                 pos_multi_sig_public_keys: Vec::new(),
                 pos_multi_sig_quorum: 0,
                 pos_vault_pub_key: String::new(),
+                developer_share: 0,
+                developer_reserve_public_keys: Vec::new(),
+                developer_reserve_quorum: 0,
                 system_contract_pub_key: String::new(),
                 dev_tax_address: String::new(),
                 dev_tax_vesting_blocks: 0,

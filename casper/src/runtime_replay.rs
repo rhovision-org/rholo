@@ -281,6 +281,20 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
             }
         }
         if !with_cost_accounting {
+            // **Bind the developer fee reserve to the vault the genesis created** (#655), from the
+            // same publication `compute_genesis` reads, so play and replay write the same leaf.
+            let published = self
+                .runtime
+                .get_data(&crate::genesis::developer_reserve::publish_channel())
+                .await
+                .map_err(|e| ReplayFailure::internal_error(e.to_string()))?
+                .into_iter()
+                .flat_map(|d| d.a.pars.into_iter().map(|p| p.as_par().clone()))
+                .collect::<Vec<_>>();
+            let native = NativeSystemState::new(self.runtime.native_store());
+            crate::genesis::developer_reserve::bind(&published, &native, pos_genesis)
+                .await
+                .map_err(ReplayFailure::internal_error)?;
             // The genesis window opened above is popped only **now** — after the last deploy's alias
             // re-seeding — so every genesis write between the two lines is attributed to
             // `NativeWriter::Genesis` and none is left unattributed, which is what

@@ -215,6 +215,7 @@ async fn genesis_with_a_developer_allocation_creates_and_replays_the_same_state(
     let allocation = NonNegI64::try_from(20_000_000i64 * 100_000_000).unwrap();
     let pos_genesis = PosGenesis {
         dev_vesting: Some((dev_address.clone(), allocation)),
+        developer_share: None,
         ..Default::default()
     };
     let vaults = [seeded_vault()];
@@ -1264,6 +1265,7 @@ async fn play_and_replay_agree_for_a_block_with_a_close_block_deploy() {
             ..Default::default()
         },
         dev_vesting: None,
+        developer_share: None,
     };
     let (_pre, post, _) = rm
         .compute_genesis(
@@ -1378,6 +1380,7 @@ async fn a_block_replayed_against_a_different_fringe_reaches_a_different_post_st
             ..Default::default()
         },
         dev_vesting: None,
+        developer_share: None,
     };
     let (_pre, genesis_post, _) = rm
         .compute_genesis(
@@ -1613,6 +1616,7 @@ async fn the_producer_is_paid_a_share_of_the_burned_phlo_on_play_and_replay() {
             ..PosParams::default()
         },
         dev_vesting: None,
+        developer_share: None,
     };
     let (_pre, genesis_post, _) = rm
         .compute_genesis(&[], &rand, BlockData::empty(), &pos, &[seeded_vault()])

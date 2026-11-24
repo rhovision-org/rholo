@@ -1365,6 +1365,17 @@ impl RuntimeManager {
         // Install the native system-contract state before the final checkpoint so it is
         // content-addressed into the post-state hash.
         native.install_genesis(pos_genesis)?;
+        // **Bind the developer fee reserve to the vault the genesis just created** (#655): its
+        // address is only known now, after the deploys. The replay path does the same from the same
+        // publication (`runtime_replay.rs`), so the two write the same leaf.
+        {
+            let published = self
+                .runtime
+                .get_data_par(&crate::genesis::developer_reserve::publish_channel())
+                .await
+                .map_err(|e| e.to_string())?;
+            crate::genesis::developer_reserve::bind(&published, &native, pos_genesis).await?;
+        }
         // Seed the initial REV vault balances from the genesis wallets file so pre-charge can
         // deduct phlo (the native vault map is otherwise empty, and every deploy fails pre-charge).
         for vault in vaults {
@@ -2628,6 +2639,7 @@ mod tests {
                 ..PosParams::default()
             },
             dev_vesting: None,
+            developer_share: None,
         };
         let vaults = [Vault {
             rev_address: RevAddress::from_public_key(&deployer).expect("deployer address"),
@@ -2731,6 +2743,7 @@ mod tests {
                 ..PosParams::default()
             },
             dev_vesting: None,
+            developer_share: None,
         };
         let vaults = [Vault {
             rev_address: RevAddress::from_public_key(&deployer).expect("deployer address"),
@@ -2904,6 +2917,7 @@ mod tests {
                 ..PosParams::default()
             },
             dev_vesting: None,
+            developer_share: None,
         };
         let vaults = [Vault {
             rev_address: RevAddress::from_public_key(&deployer).expect("deployer address"),
@@ -3062,6 +3076,7 @@ mod tests {
             trusted: BTreeSet::new(),
             params: PosParams::default(),
             dev_vesting: None,
+            developer_share: None,
         };
         let (_pre, genesis_post, _) = rm
             .compute_genesis(&[], &rand, BlockData::empty(), &pos, &[])
@@ -3178,6 +3193,7 @@ mod tests {
                 ..PosParams::default()
             },
             dev_vesting: None,
+            developer_share: None,
         };
         let (_pre, genesis_post, _) = rm
             .compute_genesis(&[], &rand, BlockData::empty(), &pos, &[])
@@ -3248,6 +3264,7 @@ mod tests {
             trusted: BTreeSet::new(),
             params: PosParams::default(),
             dev_vesting: None,
+            developer_share: None,
         };
         let vaults = [
             Vault {
@@ -3343,6 +3360,7 @@ mod tests {
             trusted: BTreeSet::new(),
             params: PosParams::default(),
             dev_vesting: None,
+            developer_share: None,
         };
         let vaults = [
             Vault {
