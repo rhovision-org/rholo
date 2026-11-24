@@ -397,10 +397,12 @@ mod tests {
     /// is the whole of lifting it.
     #[test]
     fn a_non_zero_share_is_refused_until_the_reserve_is_spendable() {
-        assert!(
-            !RESERVE_SPENDABLE,
-            "lift this only with #669's fix and its witness passing"
-        );
+        const {
+            assert!(
+                !RESERVE_SPENDABLE,
+                "lift this only with #669's fix and its witness passing"
+            )
+        };
         assert!(check_reserve_spendable(nn(0)).is_ok());
         let err = check_reserve_spendable(nn(1)).unwrap_err();
         assert!(err.contains("#669"), "{err}");
