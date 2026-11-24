@@ -10,7 +10,7 @@ is right.
 
 | Artifact | What it is | Who writes it |
 |---|---|---|
-| [`spec/Rchain/Laws.lean`](../../../spec/Rchain/Laws.lean) | **The source.** Each law is a `Law` record: number, clause, layer, status, declarations, axioms, corpus, Rust anchors, Coq anchors, witness, falsifiability, statement, note, `rustWitness`. | a person, by hand |
+| [`spec/Rchain/Laws.lean`](../../../spec/Rchain/Laws.lean) | **The source.** The umbrella assembles the catalog; each law is a `Law` record in one of `spec/Rchain/Laws/Chunk01..09.lean` (one module per law-number range, so elaboration memory is bounded): number, clause, layer, status, declarations, axioms, corpus, Rust anchors, Coq anchors, witness, falsifiability, statement, note, `rustWitness`. | a person, by hand |
 | [`spec/Rchain/LawsMain.lean`](../../../spec/Rchain/LawsMain.lean) | **The checks.** Numbering `1..lawCeiling` with no gaps, `entryCeiling`, reference integrity, axiom accounting, a falsifier on every proved row, a real file behind every `rust` anchor, `fn <symbol>` behind every `rustWitness`. Runs at compile time. | a person, by hand |
 | [`spec/laws.tsv`](../../../spec/laws.tsv) | **The emitted data.** One row per **entry**; columns: `number`, `clause`, `layer`, `status`, `declarations`, `axioms`, `corpus`, `rust`, `coq`, `witness`, `falsifiable`, `statement`, `note`, `rustWitness`. | `tools/emit-lean-laws.sh` |
 | [`spec/LAWS.md`](../../../spec/LAWS.md) | **The rendered tables**, with a header summary of the status decomposition. | `tools/emit-lean-laws.sh` |
@@ -69,7 +69,7 @@ A finding's state is a different, three-word vocabulary: `todo`, `in progress`, 
 
 | Command | What it does | When |
 |---|---|---|
-| `tools/emit-lean-laws.sh` | re-emits `spec/laws.tsv` and `spec/LAWS.md` from the Lean | after changing `Laws.lean` **on purpose**; read the diff |
+| `tools/emit-lean-laws.sh` | re-emits `spec/laws.tsv` and `spec/LAWS.md` from the Lean | after changing a `Laws/Chunk*.lean` or `Laws.lean` **on purpose**; read the diff |
 | `tools/emit-lean-laws.sh --check` | refuses if the committed files are not what the Lean says | what the gate runs |
 | `tools/emit-lean-counts.sh` | rewrites every `<!-- counts:KEY -->…<!-- counts:end -->` span from `laws.tsv` | after adding a page or a marker |
 | `tools/emit-lean-counts.sh --check` | refuses a stale span **or a hand-written register total** in a scanned file | part of `check-lean-conformance.sh` |
