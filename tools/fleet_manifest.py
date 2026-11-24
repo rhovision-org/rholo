@@ -511,8 +511,23 @@ def _join(join, claim_id: str | None, names: list[str], nodes: list[dict],
         problems.append("manifest: join.min_height is not a positive integer")
     if not _positive_int(join.get("timeout_s")):
         problems.append("manifest: join.timeout_s is not a positive integer")
-    if "audit_config" in join and not _text(join["audit_config"]):
-        problems.append("manifest: join.audit_config is not a path")
+    if "audit_config" in join:
+        config = join["audit_config"]
+        if isinstance(config, str):
+            if not _text(config):
+                problems.append("manifest: join.audit_config is not a path")
+        elif isinstance(config, dict):
+            _unknown("join.audit_config", config,
+                     {"bonds_file", "wallets_file", "epoch_length", "dev_mode"}, problems)
+            for key in ("bonds_file", "wallets_file"):
+                if key in config and not _text(config[key]):
+                    problems.append(f"manifest: join.audit_config.{key} is not a path")
+            if "epoch_length" in config and not _positive_int(config["epoch_length"]):
+                problems.append("manifest: join.audit_config.epoch_length is not a positive integer")
+            if "dev_mode" in config and not isinstance(config["dev_mode"], bool):
+                problems.append("manifest: join.audit_config.dev_mode is not a boolean")
+        else:
+            problems.append("manifest: join.audit_config is not a path or an object")
     node_hosts = {node.get("host") for node in nodes
                   if isinstance(node, dict) and _text(node.get("host"))}
     problems.extend(_joiner(join.get("joiner"), names, node_hosts, transport))

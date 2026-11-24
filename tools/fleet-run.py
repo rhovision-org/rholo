@@ -1753,7 +1753,7 @@ class JoinRun:
         data_dir = "/tmp/rc6-audit-data"
         audit_out = "/tmp/rc6-audit-out"
         trace_dir = "/tmp/rc6-audit-traces"
-        command = ["rnode", "audit", "--bootstrap",
+        command = [joiner.get("binary_path") or "rnode", "audit", "--bootstrap",
                    bootstrap_node["http"], "--data-dir", data_dir, "--out", audit_out]
         if isinstance(config, dict):
             for key in ("bonds_file", "wallets_file"):
@@ -1776,7 +1776,7 @@ class JoinRun:
             report = json.loads(self.transport.read_remote_file(
                 joiner, audit_out + "/audit.json"))
         except (Precondition, ValueError) as error:
-            self.result["errors"] = [f"audit report: {error}"]
+            self.result.setdefault("errors", []).append(f"audit report: {error}")
         traces = []
         trace_listing = self.transport.shell_node(
             joiner, "ls -1 " + shlex.quote(trace_dir) + " 2>/dev/null", timeout=30)
