@@ -1,0 +1,20 @@
+name: Legacy REV assurance witness
+on:
+  push:
+    branches: [research/legacy-rev-assurance-412]
+permissions:
+  contents: read
+jobs:
+  synthetic:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run deterministic reference witness
+        working-directory: spec/audit/legacy-rev-assurance
+        run: |
+          set -o pipefail
+          python3 test_assurance.py | tee witness.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-assurance-witness
+          path: spec/audit/legacy-rev-assurance/witness.json
