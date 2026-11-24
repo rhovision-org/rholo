@@ -267,6 +267,22 @@ class RegisterTests(unittest.TestCase):
         self.assertNotEqual(rows[1]["status"], "met")
         self.assertTrue(rows[1]["status_reason"])
 
+    def test_a_met_row_is_idempotent_only_with_the_same_binding(self):
+        # The promotion is committed, so the next build reads the external row back already `met`.
+        # It must accept that (the launch gate could never close otherwise) and refuse a different
+        # binding on the same row.
+        binding = self.make_binding()
+        rows = self.apply_bindings([binding])
+        self.assertEqual(rows[0]["status"], "met")
+
+        same = self.apply_bindings([copy.deepcopy(binding)], rows=rows)
+        self.assertEqual(same[0]["status"], "met")
+
+        changed = copy.deepcopy(binding)
+        changed["witness_ref"] = "tools/check-mainnet-gates.py::other_probe"
+        with self.assertRaisesRegex(ValueError, "already met with a different binding"):
+            self.apply_bindings([changed], rows=rows)
+
     def test_an_orphan_binding_is_refused(self):
         rows = [self.unmet("G520-MIGRATION")]
         with self.assertRaisesRegex(ValueError, "names no gate"):
