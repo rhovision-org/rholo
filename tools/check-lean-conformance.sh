@@ -159,13 +159,14 @@ if command -v lake >/dev/null 2>&1; then
   fi
   printf 'lake build: finished %s\n' "$(date -Is)"
   phase "library build"
-  # **The rebuild count is the warm-cache signal.** Lake prints a `Built <module>` line for every
-  # module it re-elaborates and nothing for one it replays; `lean_rebuilt` near zero against
-  # `lean_modules` is what a fresh dev cache should look like, and a large number is the measurement
-  # the next cache change should explain. `grep -c` exits 1 on no match, hence the `|| true`.
-  lean_rebuilt="$(grep -cE '(^|[[:space:]])Built[[:space:]]' /tmp/lean-build.log || true)"
+  # **The built-line count is the warm-cache signal.** Lake prints `Built …` for every artifact it
+  # elaborates or recompiles (olean, C, object, executable) and nothing for one it replays; zero is
+  # a fully replayed build, and the number is the work a cache restore left to do. It is a line
+  # count, not a module count — one module accounts for several lines — so compare it with itself
+  # across runs, not with `lean_modules`. `grep -c` exits 1 on no match, hence the `|| true`.
+  lake_built_lines="$(grep -cE '(^|[[:space:]])Built[[:space:]]' /tmp/lean-build.log || true)"
   lean_modules="$(find "$SPEC/Rchain" -name '*.lean' -not -path '*/.lake/*' | wc -l)"
-  printf 'METRIC lean_modules=%s lean_rebuilt=%s\n' "$lean_modules" "$lean_rebuilt" | tee -a "$TIMINGS"
+  printf 'METRIC lean_modules=%s lake_built_lines=%s\n' "$lean_modules" "$lake_built_lines" | tee -a "$TIMINGS"
   # **The peak guards.** The per-process guard is the register's memory ratchet: a compiler-family
   # process that grows past 8 GiB is a signal to split the chunk that made it, not to raise the
   # number. The build-sum guard catches the case the process guard cannot — several compiler
