@@ -13,7 +13,7 @@
 # `shared/src/lmdb.rs` and `rspace/src/state/exporters.rs` are silently skipped without it, which is
 # how they escaped local runs while CI (`--all-features`) still exercised them.
 
-.PHONY: test test-unit test-integration test-multinode test-all check-register check-lean check-docs coverage coverage-ledger bench-scheduler bench-smoke spec deep status check
+.PHONY: test test-unit test-integration test-multinode test-all check-register check-lean check-lean-spec check-rust-conformance check-docs coverage coverage-ledger bench-scheduler bench-smoke spec deep status check
 
 test: test-all
 
@@ -84,12 +84,20 @@ check-docs:
 check-lean:
 	tools/check-lean-conformance.sh
 
+# The two halves of the same gate, for a machine that would rather run them one at a time (CI runs
+# them on separate runners). Each is the same script with one mode; neither is a weaker check.
+check-lean-spec:
+	tools/check-lean-conformance.sh --lean-only
+
+check-rust-conformance:
+	RUST_CORPUS_JOBS=2 RUST_WITNESS_JOBS=2 tools/check-lean-conformance.sh --rust-only
+
 # The deep gates, on demand — the same two the nightly runs, in the same order of cost.
 #
-# **Do not run this per change.** `check-lean` is ~104 serial `cargo test` invocations behind a Lean
-# build that is 16 minutes cold; `coverage` moves the whole workspace through an instrumented codegen
-# profile, so it reuses none of the warm `test` cache. Each is a thing to run at the end of a body of
-# work, or to leave to `.github/workflows/nightly.yml`.
+# **Do not run this per change.** `check-lean` is 442 `cargo test` invocations (22 corpus consumers
+# + 420 witness entries, 388 distinct) behind a Lean build that is 16 minutes cold; `coverage` moves
+# the whole workspace through an instrumented codegen profile, so it reuses none of the warm `test`
+# cache. Each is a thing to run at the end of a body of work, or to leave to `nightly.yml`.
 #
 # What *is* per change: `cargo fmt --all --check`, `cargo clippy`, `cargo test -p <crate> <filter>`
 # (0.2-2 s warm), `make status` (2.5 s) and `tools/audit-type-system.sh` (~30 s). See
