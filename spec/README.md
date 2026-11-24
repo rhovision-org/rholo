@@ -34,8 +34,10 @@ elaborated by its own `lean` process. `tools/measure-lean-memory.sh` prints each
 refuses a chunk over 4 GiB; the formal gate refuses a build whose peak process RSS is over 8 GiB, or
 whose compiler processes sum over 12 GiB.
 
-On a memory-constrained machine, do not re-elaborate the register: the formal job uploads its own
-compiled modules (`.lake/build/lib/lean` and `.lake/build/ir`) as the `rchain-lean-build` artifact.
+On a memory-constrained machine, do not re-elaborate the register: the canonical build (a `dev` push
+or the nightly) uploads its own compiled modules (`.lake/build/lib` and `.lake/build/ir`) as the
+`rchain-lean-build` artifact. `lib` — not `lib/lean` — is this project's module tree
+(`.lake/build/lib/<Namespace>/…`), and it carries the per-module oleans and their Lake traces.
 Download it into `spec/.lake/build` and let `lake build` replay:
 
 ```sh
@@ -44,6 +46,8 @@ gh run download <run-id> -n rchain-lean-build -D spec/.lake/build
 
 The artifact is valid only for the same toolchain, manifest and sources; Lake validates the traces and
 rebuilds anything that does not match, so a mismatched artifact is a slow build rather than a wrong one.
+The formal job also seeds an evicted build cache from the latest successful `dev` artifact, on the same
+principle.
 
 The build requires **Mathlib** (pinned to `v4.12.0` in `lakefile.toml`); the `.lean` files already
 import `Mathlib.Data.*`/`Mathlib.Order.*` for `Multiset`/`Finset`/`Order`.

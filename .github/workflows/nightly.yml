@@ -3,8 +3,9 @@
 # Every one of these is a cross-check whose cost is measured in tens of minutes, and none of them is
 # evidence for a Rust change:
 #
-#   * `check-lean-conformance.sh` is **~104 serial `cargo test` invocations** (15 corpus layers + 89
-#     witness entries) behind a Lean build that is 16 minutes cold and a Coq `make`;
+#   * `check-lean-conformance.sh` is **442 `cargo test` invocations** (22 corpus consumers + 420
+#     witness entries, 388 distinct) behind a Lean build that is ~16 minutes cold and a Coq `make`;
+#     the witness census now runs through a bounded pool, but the job is still tens of minutes;
 #   * `cargo llvm-cov` recompiles the whole workspace with source-based instrumentation — a codegen
 #     profile of its own, so none of the warm `test` cache is reused — and then runs the full suite.
 #
@@ -79,7 +80,8 @@ jobs:
         run: lake exe cache get
 
       - name: Restore the Lean build cache
-        # The nightly is the cache producer (see the matching step in formal-on-change.yml). Cache
+        # The dev-push run of formal-on-change.yml is the primary cache producer; the nightly is the
+        # backstop (see the matching step there). Cache
         # only this project's `.lake/build`; mathlib comes from `lake exe cache get`, and a restored
         # Lake configuration is worse than a cold build.
         id: lean-cache
@@ -91,18 +93,26 @@ jobs:
             lean-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json', 'spec/lakefile.toml') }}-
 
       - name: Formal gate
+        # The nightly is the full gate, so it runs both pools. The per-PR workflow splits the halves
+        # onto separate runners; here one job keeps the backstop simple.
+        env:
+          RUST_CORPUS_JOBS: 2
+          RUST_WITNESS_JOBS: 2
         run: tools/check-lean-conformance.sh
 
       - name: Upload the compiled Lean modules
         # The local-development escape hatch: `gh run download <run> -n rchain-lean-build -D
         # spec/.lake/build` lets a constrained machine replay these instead of re-elaborating the
-        # register. Mathlib's oleans are excluded; they come from `lake exe cache get`.
+        # register. `lib`, not `lib/lean`: this project writes `.lake/build/lib/<Namespace>/…`, and
+        # the old path matched nothing (the 2026-11-24 artifact was `ir` only). `lib` carries the
+        # per-module oleans and their Lake traces. Mathlib's oleans are excluded; they come from
+        # `lake exe cache get`.
         if: success()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rchain-lean-build
           path: |
-            spec/.lake/build/lib/lean
+            spec/.lake/build/lib
             spec/.lake/build/ir
           retention-days: 7
 
@@ -113,6 +123,16 @@ jobs:
         with:
           path: spec/.lake/build
           key: ${{ steps.lean-cache.outputs.cache-primary-key }}
+
+      - name: Record the gate's phase timings
+        if: always()
+        run: |
+          if [[ -f /tmp/formal-timings.log ]]; then
+            {
+              echo '### Phase timings'
+              grep -hE '^(PHASE|METRIC)' /tmp/formal-timings.log || true
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Diagnose the formal step
         # The step is intermittently SIGTERM'd before it can print its own failure
