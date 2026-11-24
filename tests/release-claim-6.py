@@ -124,11 +124,13 @@ def run(argv: list[str]) -> int:
     parser.add_argument("--head", help="the source SHA the operator run pins")
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--min-height", type=int, default=28)
+    parser.add_argument("--rehearse", action="store_true")
     args = parser.parse_args(argv)
     arm = args.arm or args.env or "local"
     meta = common.claim_arm(CLAIM_ID, arm)
     environment = meta["environment"]
-    record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm)
+    record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm,
+                               rehearsal=getattr(args, "rehearse", False))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     if arm == "off-host":
@@ -136,12 +138,51 @@ def run(argv: list[str]) -> int:
             return common.not_run(
                 out, record, "the off-host arm needs --campaign-result <M3 run dir>")[1]
         return common.run_offhost_arm(out, record, args.campaign_result, head=args.head)
+    if arm == "availability":
+        failure = common.preflight_failure(CLAIM_ID, environment, out, record,
+                                           getattr(args, "public_manifest", None),
+                                           rehearsal=getattr(args, "rehearse", False))
+        if failure is not None:
+            return failure
+        manifest = common.load_manifest(args.public_manifest) or {}
+        record["provenance"] = manifest.get("provenance") or {}
+        join_out = out / "join"
+        join_document, join_code = common.run_fleet_action(
+            args, join_out, "join", CLAIM_ID)
+        if join_code == 3 or join_document.get("harness_result") == "PRECONDITION":
+            return common.not_run(out, record, "; ".join(
+                map(str, join_document.get("reasons") or
+                    ["the non-producer join could not run"])))[1]
+        if join_code != 0 or join_document.get("join_result") != "pass":
+            common.finish(record, "fail", ["; ".join(
+                map(str, join_document.get("reasons") or ["the join did not pass"]))])
+            return common.write_record(out, record)[1]
+        document, code = common.run_fleet_action(
+            args, out, "availability", CLAIM_ID,
+            extra=["--join-artifact", str(join_out / "fleet-result.json")])
+        record["harness"] = {"name": "fleet-run availability", "exit_code": code,
+                             "out": str(out)}
+        record["observations"]["availability"] = document.get("availability")
+        record["observations"]["state_traces"] = document.get("state_traces") or []
+        if code == 3 or document.get("harness_result") == "PRECONDITION":
+            return common.not_run(out, record, "; ".join(
+                map(str, document.get("reasons") or
+                    ["the availability driver could not run"])))[1]
+        if code != 0:
+            common.finish(record, "fail", ["; ".join(
+                map(str, document.get("reasons") or
+                    ["the availability driver failed"]))])
+            return common.write_record(out, record)[1]
+        verdict, reasons = check(record)
+        common.finish(record, verdict, reasons)
+        return common.write_record(out, record)[1]
     if arm not in ("local", "public"):
         return common.not_run(
             out, record,
             f"the {arm} arm's harness lands in {meta['next_pr']}")[1]
     failure = common.preflight_failure(CLAIM_ID, environment, out, record,
-                                       getattr(args, "public_manifest", None))
+                                       getattr(args, "public_manifest", None),
+                                       rehearsal=getattr(args, "rehearse", False))
     if failure is not None:
         return failure
 
@@ -149,14 +190,24 @@ def run(argv: list[str]) -> int:
         manifest = common.load_manifest(args.public_manifest)
         if not manifest:
             return common.not_run(out, record, "no --public-manifest for the public fleet")[1]
-        target = common.public_target(manifest)
         record["provenance"] = manifest.get("provenance") or {}
-        record["observations"]["join_result"] = manifest.get("join_result")
-        if manifest.get("join_result") != "pass":
-            return common.not_run(
-                out, record,
-                "the public run needs the operator's completed join record")[1]
-        return _audit(target, record, out, manifest.get("audit_bootstrap"))
+        document, code = common.run_fleet_action(args, out, "join", CLAIM_ID)
+        record["harness"] = {"name": "fleet-run join", "exit_code": code, "out": str(out)}
+        for key in ("join_result", "chain_problems", "joiner_checkpoint", "audit",
+                    "digest_matches", "derived_root_matches", "audit_traces",
+                    "boot_traces", "joined"):
+            if key in document:
+                record["observations"][key] = document[key]
+        if code == 3 or document.get("harness_result") == "PRECONDITION":
+            return common.not_run(out, record, "; ".join(
+                map(str, document.get("reasons") or ["the join driver could not run"])))[1]
+        if code != 0 or document.get("harness_result") != "PASS":
+            common.finish(record, "fail", ["; ".join(
+                map(str, document.get("reasons") or ["the join driver did not pass"]))])
+            return common.write_record(out, record)[1]
+        verdict, reasons = check(record)
+        common.finish(record, verdict, reasons)
+        return common.write_record(out, record)[1]
 
     # The mature-join arm replays a chain that keeps producing during the sync; the node's
     # preflight floor scales with persisted blocks, so this arm gets 4 GiB per validator.

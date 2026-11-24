@@ -37,14 +37,23 @@ DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 TOP_LEVEL = {
     "schema", "campaign", "generated_at_utc", "locality", "transport", "rehearsal",
     "provenance", "nodes", "deploy", "actions", "redaction", "operator_fields",
-    # Reserved for the other public arms; an input for them, never for RC-1/RC-4.
-    "fault", "cycles", "pressure_record", "join_result", "audit_bootstrap", "upgrade_record",
+    # Typed inputs for the public arms beyond RC-1/RC-4.
+    "fault", "availability", "pressure", "join", "upgrade",
     # Present so a stale result block is refused by name rather than as a typo.
     "results", "harness_result", "boot_ids", "victim", "post_heads", "certificates_after",
+    "cycles", "pressure_record", "join_result", "audit_bootstrap", "upgrade_record",
     "redactions",
 }
 NODE_KEYS = {"name", "host", "ssh", "unit", "binary_path", "data_dir",
-             "http", "admin", "grpc_host", "grpc_port"}
+             "http", "admin", "grpc_host", "grpc_port", "p2p_host"}
+FAULT_KEYS = {"kind", "cycles", "victim_policy", "p2p_ports", "mechanism",
+              "dwell_blocks", "dwell_seconds", "heal_timeout_s"}
+AVAILABILITY_KEYS = {"window_blocks", "probe_timeout_s"}
+PRESSURE_KEYS = {"endpoint", "host", "port", "cap", "probes", "mode_order", "settle_s"}
+JOIN_KEYS = {"joiner", "bootstrap_from", "fresh_store", "min_height", "timeout_s",
+             "audit_config"}
+UPGRADE_KEYS = {"old", "new_binary_path", "old_binary_path", "order", "staging_host",
+                "mixed_window_blocks", "rollback_on_refusal", "timeout_s"}
 DEPLOY_KEYS = {"from", "marker", "value", "term", "term_file", "term_sha256",
                "phlo_limit", "phlo_price", "shard_id", "private_key_path", "relay",
                "deploy_id", "stage", "receipts"}
@@ -57,10 +66,12 @@ TIMEOUT_KEYS = {"preflight_s", "deploy_s", "settle_s", "stop_s", "advance_s",
 REDACTION_KEYS = {"fields", "host_pseudonyms"}
 
 # A result block is an output. It is never a legitimate input to any claim.
-OUTPUT_KEYS = ("results", "boot_ids", "victim", "post_heads", "certificates_after")
-# RC-4 must perform the stop and capture its own outcome; RC-1 must submit its own deploy.
-ACTUATED_CLAIMS = ("RC-1", "RC-4")
-DEPLOY_CLAIMS = ("RC-1", "RC-4")
+OUTPUT_KEYS = ("results", "boot_ids", "victim", "post_heads", "certificates_after",
+               "harness_result", "cycles", "pressure_record", "join_result",
+               "audit_bootstrap", "upgrade_record")
+# The driver performs the fault and captures the witness for every arm it actuates.
+ACTUATED_CLAIMS = ("RC-1", "RC-2", "RC-3", "RC-4", "RC-5", "RC-6", "RC-7")
+DEPLOY_CLAIMS = ("RC-1", "RC-3", "RC-4")
 
 
 def load(path: str | Path) -> dict:
@@ -200,17 +211,23 @@ def validate(manifest, *, claim_id: str | None = None, environment: str = "publi
     if claim_id in ACTUATED_CLAIMS and "harness_result" in manifest:
         problems.append(
             "manifest: harness_result is an output; the driver performs the action and records it")
-    if claim_id == "RC-1":
+    if claim_id in DEPLOY_CLAIMS:
         deploy = manifest.get("deploy")
         if isinstance(deploy, dict):
             for key in ("deploy_id", "stage", "receipts"):
                 if key in deploy:
                     problems.append(
-                        f"manifest: deploy.{key} is an output; RC-1 submits its own deploy")
+                        f"manifest: deploy.{key} is an output; the driver submits its own deploy")
 
     if claim_id in DEPLOY_CLAIMS:
         problems.extend(_deploy(manifest.get("deploy"), names, transport, locality))
     problems.extend(_actions(manifest.get("actions"), claim_id))
+    problems.extend(_fault(manifest.get("fault"), claim_id))
+    problems.extend(_availability(manifest.get("availability"), claim_id))
+    problems.extend(_pressure(manifest.get("pressure"), claim_id, names, transport))
+    problems.extend(_join(manifest.get("join"), claim_id, names,
+                          manifest.get("nodes") or [], transport))
+    problems.extend(_upgrade(manifest.get("upgrade"), claim_id, names, transport))
     redaction = manifest.get("redaction")
     if redaction is not None:
         if not isinstance(redaction, dict):
@@ -223,13 +240,6 @@ def validate(manifest, *, claim_id: str | None = None, environment: str = "publi
                 problems.append("manifest: redaction.fields is not a list of strings")
     if "operator_fields" in manifest and not isinstance(manifest["operator_fields"], dict):
         problems.append("manifest: operator_fields is not an object")
-    for key in ("pressure_record", "join_result", "audit_bootstrap", "upgrade_record"):
-        if key in manifest and not _text(manifest[key]):
-            problems.append(f"manifest: {key} is not a path")
-    if "fault" in manifest and not isinstance(manifest["fault"], dict):
-        problems.append("manifest: fault is not an object")
-    if "cycles" in manifest and not isinstance(manifest["cycles"], list):
-        problems.append("manifest: cycles is not a list")
     if "redactions" in manifest and not isinstance(manifest["redactions"], list):
         problems.append("manifest: redactions is not a list")
     return problems
@@ -355,6 +365,196 @@ def _deploy(deploy, names: list[str], transport, locality) -> list[str]:
                 type(relay["destination_port"]) is int
                 and 1 <= relay["destination_port"] <= 65535) and relay["destination_port"] is not None:
             problems.append("deploy.relay.destination_port is not a port")
+    return problems
+
+
+def _port(value) -> bool:
+    return type(value) is int and 1 <= value <= 65535
+
+
+def _output_words(prefix: str, value: dict, words: tuple[str, ...],
+                  problems: list[str]) -> None:
+    for word in words:
+        if word in value:
+            problems.append(f"{prefix}: {word} is an output; the driver produces it")
+
+
+def _fault(fault, claim_id: str | None) -> list[str]:
+    if claim_id == "RC-2" and fault is None:
+        return ["manifest: fault is missing; RC-2's partition window is an input"]
+    if fault is None:
+        return []
+    if not isinstance(fault, dict):
+        return ["manifest: fault is not an object"]
+    problems: list[str] = []
+    _unknown("fault", fault, FAULT_KEYS, problems)
+    _output_words("fault", fault,
+                  ("victim", "victim_index", "anchors", "containment", "harness_result",
+                   "producing_victim"), problems)
+    if fault.get("kind") != "partition":
+        problems.append("manifest: fault.kind must be partition")
+    if not _positive_int(fault.get("cycles")):
+        problems.append("manifest: fault.cycles is not a positive integer")
+    if not _text(fault.get("victim_policy")):
+        problems.append("manifest: fault.victim_policy is missing")
+    ports = fault.get("p2p_ports")
+    if not isinstance(ports, list) or not ports or not all(_port(port) for port in ports):
+        problems.append("manifest: fault.p2p_ports is not a non-empty list of ports")
+    if fault.get("mechanism") not in ("nftables", "docker-network"):
+        problems.append("manifest: fault.mechanism must be nftables or docker-network")
+    for field in ("dwell_blocks", "dwell_seconds", "heal_timeout_s"):
+        if not _positive_int(fault.get(field)):
+            problems.append(f"manifest: fault.{field} is not a positive integer")
+    return problems
+
+
+def _availability(availability, claim_id: str | None) -> list[str]:
+    if availability is None:
+        return []
+    if not isinstance(availability, dict):
+        return ["manifest: availability is not an object"]
+    problems: list[str] = []
+    _unknown("availability", availability, AVAILABILITY_KEYS, problems)
+    _output_words("availability", availability,
+                  ("blocks", "not_available", "verdict"), problems)
+    window = availability.get("window_blocks")
+    if not (type(window) is int and window >= 10):
+        problems.append("manifest: availability.window_blocks must be at least 10")
+    if not _positive_int(availability.get("probe_timeout_s")):
+        problems.append("manifest: availability.probe_timeout_s is not a positive integer")
+    return problems
+
+
+def _pressure(pressure, claim_id: str | None, names: list[str],
+              transport: str | None) -> list[str]:
+    if pressure is None:
+        return []
+    if not isinstance(pressure, dict):
+        return ["manifest: pressure is not an object"]
+    problems: list[str] = []
+    _unknown("pressure", pressure, PRESSURE_KEYS, problems)
+    _output_words("pressure", pressure,
+                  ("pressure_record", "transcript", "verdict", "counts", "refusal_class"),
+                  problems)
+    endpoint = pressure.get("endpoint")
+    if not _text(endpoint) or not (endpoint.startswith("http://")
+                                   or endpoint.startswith("https://")):
+        problems.append("manifest: pressure.endpoint is not an http(s) URL")
+    if pressure.get("host") not in names:
+        problems.append("manifest: pressure.host is not a node name")
+    if not _port(pressure.get("port")):
+        problems.append("manifest: pressure.port is not a port")
+    if not _positive_int(pressure.get("cap")):
+        problems.append("manifest: pressure.cap is not a positive integer")
+    if not _positive_int(pressure.get("probes")):
+        problems.append("manifest: pressure.probes is not a positive integer")
+    order = pressure.get("mode_order")
+    if (not isinstance(order, list) or not order
+            or any(mode not in ("capped", "unset") for mode in order)
+            or len(set(order)) != len(order)):
+        problems.append("manifest: pressure.mode_order must be a non-empty unique list of "
+                        "capped/unset")
+    if not _positive_int(pressure.get("settle_s")):
+        problems.append("manifest: pressure.settle_s is not a positive integer")
+    if transport == "ssh-systemd" and not _text(pressure.get("host")):
+        problems.append("manifest: pressure.host is missing on an ssh-systemd run")
+    return problems
+
+
+def _joiner(joiner, names: list[str], node_hosts: set[str], transport: str | None) -> list[str]:
+    problems: list[str] = []
+    if not isinstance(joiner, dict):
+        return ["manifest: join.joiner is not an object"]
+    _unknown("join.joiner", joiner, NODE_KEYS, problems)
+    for field in ("name", "host", "http"):
+        if not _text(joiner.get(field)):
+            problems.append(f"join.joiner: {field} is missing")
+    if joiner.get("name") in names:
+        problems.append("join.joiner.name duplicates a validator node name")
+    host = joiner.get("host")
+    if _text(host):
+        reason = _bad_host_label(host)
+        if reason:
+            problems.append(f"join.joiner: the declared host {host!r} is {reason}")
+        if host in node_hosts:
+            problems.append("join.joiner: the host is one of the four validators, not a fifth host")
+    if transport == "ssh-systemd":
+        for field in ("ssh", "unit", "binary_path", "data_dir"):
+            if not _text(joiner.get(field)):
+                problems.append(f"join.joiner: {field} is missing on an ssh-systemd joiner")
+    return problems
+
+
+def _join(join, claim_id: str | None, names: list[str], nodes: list[dict],
+          transport: str | None) -> list[str]:
+    if claim_id == "RC-6" and join is None:
+        return ["manifest: join is missing; RC-6 must supply the joiner and its bootstrap"]
+    if join is None:
+        return []
+    if not isinstance(join, dict):
+        return ["manifest: join is not an object"]
+    problems: list[str] = []
+    _unknown("join", join, JOIN_KEYS, problems)
+    _output_words("join", join,
+                  ("join_result", "chain", "chain_problems", "audit", "joiner_checkpoint",
+                   "audit_traces", "boot_traces"), problems)
+    bootstrap = join.get("bootstrap_from")
+    if bootstrap not in names:
+        problems.append("manifest: join.bootstrap_from is not a node name")
+    elif names and bootstrap == names[0]:
+        problems.append("manifest: join.bootstrap_from must be a non-producer, not the ceremony node")
+    if join.get("fresh_store") is not True:
+        problems.append("manifest: join.fresh_store must be true; the driver never deletes a store")
+    if not _positive_int(join.get("min_height")):
+        problems.append("manifest: join.min_height is not a positive integer")
+    if not _positive_int(join.get("timeout_s")):
+        problems.append("manifest: join.timeout_s is not a positive integer")
+    if "audit_config" in join and not _text(join["audit_config"]):
+        problems.append("manifest: join.audit_config is not a path")
+    node_hosts = {node.get("host") for node in nodes
+                  if isinstance(node, dict) and _text(node.get("host"))}
+    problems.extend(_joiner(join.get("joiner"), names, node_hosts, transport))
+    return problems
+
+
+def _upgrade(upgrade, claim_id: str | None, names: list[str],
+             transport: str | None) -> list[str]:
+    if claim_id == "RC-7" and upgrade is None:
+        return ["manifest: upgrade is missing; RC-7's rolling swap is an input"]
+    if upgrade is None:
+        return []
+    if not isinstance(upgrade, dict):
+        return ["manifest: upgrade is not an object"]
+    problems: list[str] = []
+    _unknown("upgrade", upgrade, UPGRADE_KEYS, problems)
+    _output_words("upgrade", upgrade,
+                  ("upgrade_record", "mixed", "migration_result", "downgrade", "rolled_back"),
+                  problems)
+    old = upgrade.get("old")
+    if not isinstance(old, dict):
+        problems.append("manifest: upgrade.old is not an object")
+    else:
+        _unknown("upgrade.old", old, {"image", "source_sha", "binary_sha256"}, problems)
+        digest = old.get("binary_sha256")
+        if not isinstance(digest, str) or not DIGEST_RE.match(digest):
+            problems.append("manifest: upgrade.old.binary_sha256 is not a 64-hex digest")
+        source = old.get("source_sha")
+        if source is not None and (not isinstance(source, str) or not SOURCE_RE.match(source)):
+            problems.append("manifest: upgrade.old.source_sha is not a 40-hex commit")
+    for field in ("new_binary_path", "old_binary_path", "staging_host"):
+        if not _text(upgrade.get(field)):
+            problems.append(f"manifest: upgrade.{field} is missing")
+    order = upgrade.get("order")
+    if not isinstance(order, list) or sorted(order) != sorted(names):
+        problems.append("manifest: upgrade.order must be a permutation of the four node names")
+    if not _positive_int(upgrade.get("mixed_window_blocks")):
+        problems.append("manifest: upgrade.mixed_window_blocks is not a positive integer")
+    if not isinstance(upgrade.get("rollback_on_refusal"), bool):
+        problems.append("manifest: upgrade.rollback_on_refusal is not a boolean")
+    if not _positive_int(upgrade.get("timeout_s")):
+        problems.append("manifest: upgrade.timeout_s is not a positive integer")
+    if transport == "ssh-systemd" and not _text(upgrade.get("staging_host")):
+        problems.append("manifest: upgrade.staging_host is missing on an ssh-systemd run")
     return problems
 
 

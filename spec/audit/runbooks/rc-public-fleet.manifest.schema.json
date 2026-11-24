@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/rhovision-org/rholo/spec/audit/runbooks/rc-public-fleet.manifest.schema.json",
   "title": "rc-public-fleet manifest",
-  "description": "The input contract for tools/fleet-run.py and the RC-1/RC-4 public paths. It names four nodes, the candidate pins, the one deploy plan and the action policy. It carries inputs only: harness results, the victim, boot ids, post heads, certificates and a pre-made deploy id are produced by the driver or read by the claim, and a manifest containing them is refused. The committed record carries a redacted copy; a redacted manifest is evidence, not an input.",
+  "description": "The input contract for tools/fleet-run.py and every public arm. It names four nodes, the candidate pins, the one deploy plan and the action policy, plus the typed fault/availability/pressure/join/upgrade inputs the driver consumes. It carries inputs only: harness results, cycles, the victim, boot ids, post heads, certificates, pressure records, join results and upgrade records are produced by the driver or read by the claim, and a manifest containing them is refused. The committed record carries a redacted copy; a redacted manifest is evidence, not an input.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -44,6 +44,10 @@
           "host": {
             "type": "string",
             "description": "Stable declared host label. A public run needs four distinct, non-loopback, non-private labels; the label is never resolved."
+          },
+          "p2p_host": {
+            "type": "string",
+            "description": "Optional address the partition driver drops. Defaults to the declared host label."
           },
           "ssh": { "type": "string", "description": "user@host for the ssh-systemd transport" },
           "unit": { "type": "string", "description": "systemd unit, or docker container name" },
@@ -136,12 +140,87 @@
       "additionalProperties": false
     },
     "operator_fields": { "type": "object" },
-    "fault": { "type": "object" },
-    "cycles": { "type": "array" },
-    "pressure_record": { "type": "string" },
-    "join_result": { "type": "string" },
-    "audit_bootstrap": { "type": "string" },
-    "upgrade_record": { "type": "string" },
+    "fault": {
+      "type": "object",
+      "description": "RC-2's partition input. It names the policy, never the victim or the outcome.",
+      "required": ["kind", "cycles", "victim_policy", "p2p_ports", "mechanism",
+                   "dwell_blocks", "dwell_seconds", "heal_timeout_s"],
+      "properties": {
+        "kind": { "const": "partition" },
+        "cycles": { "type": "integer", "minimum": 1 },
+        "victim_policy": { "type": "string" },
+        "p2p_ports": { "type": "array", "minItems": 1, "items": { "type": "integer" } },
+        "mechanism": { "enum": ["nftables", "docker-network"] },
+        "dwell_blocks": { "type": "integer", "minimum": 1 },
+        "dwell_seconds": { "type": "integer", "minimum": 1 },
+        "heal_timeout_s": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "availability": {
+      "type": "object",
+      "description": "RC-3/RC-6 availability sweep input; the block list is produced by the driver.",
+      "required": ["window_blocks", "probe_timeout_s"],
+      "properties": {
+        "window_blocks": { "type": "integer", "minimum": 10 },
+        "probe_timeout_s": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "pressure": {
+      "type": "object",
+      "description": "RC-5's pressure input. The transcript, counts and verdict are outputs.",
+      "required": ["endpoint", "host", "port", "cap", "probes", "mode_order", "settle_s"],
+      "properties": {
+        "endpoint": { "type": "string", "pattern": "^https?://" },
+        "host": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "cap": { "type": "integer", "minimum": 1 },
+        "probes": { "type": "integer", "minimum": 1 },
+        "mode_order": { "type": "array", "minItems": 1, "uniqueItems": true,
+                        "items": { "enum": ["capped", "unset"] } },
+        "settle_s": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "join": {
+      "type": "object",
+      "description": "RC-6's fresh-joiner input. The chain, audit and checkpoint are outputs.",
+      "required": ["joiner", "bootstrap_from", "fresh_store", "min_height", "timeout_s"],
+      "properties": {
+        "joiner": { "type": "object" },
+        "bootstrap_from": { "type": "string" },
+        "fresh_store": { "const": true },
+        "min_height": { "type": "integer", "minimum": 1 },
+        "timeout_s": { "type": "integer", "minimum": 1 },
+        "audit_config": { "type": ["string", "object"] }
+      },
+      "additionalProperties": false
+    },
+    "upgrade": {
+      "type": "object",
+      "description": "RC-7's rolling-swap input; the driver lands in the rc-fleet-upgrade window.",
+      "required": ["old", "new_binary_path", "old_binary_path", "order", "staging_host",
+                   "mixed_window_blocks", "rollback_on_refusal", "timeout_s"],
+      "properties": {
+        "old": { "type": "object" },
+        "new_binary_path": { "type": "string" },
+        "old_binary_path": { "type": "string" },
+        "order": { "type": "array", "minItems": 4, "maxItems": 4,
+                   "items": { "type": "string" } },
+        "staging_host": { "type": "string" },
+        "mixed_window_blocks": { "type": "integer", "minimum": 1 },
+        "rollback_on_refusal": { "type": "boolean" },
+        "timeout_s": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "cycles": { "description": "OUTPUT. tools/fleet_manifest.validate refuses it as an input." },
+    "pressure_record": { "description": "OUTPUT. The driver produces the pressure record." },
+    "join_result": { "description": "OUTPUT. The join driver performs the join." },
+    "audit_bootstrap": { "description": "OUTPUT. The join driver runs the audit." },
+    "upgrade_record": { "description": "OUTPUT. The upgrade driver produces it." },
+    "harness_result": { "description": "OUTPUT. The driver performs the action and records it." },
     "redactions": {
       "type": "array",
       "items": { "type": "string" },

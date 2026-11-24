@@ -11,7 +11,7 @@
         "RC-7"
       ],
       "id": "rc-public-fleet",
-      "scope": "Bring up the four-host public fleet on a coordinated new genesis, perform the deploy and the single-validator restart through tools/fleet-run.py, and run RC-1/public and RC-4/public on the candidate. The source set and the N1/N4/N8 differential are recorded as diagnostics in the same campaign record; the remaining public arms keep this campaign as their next PR."
+      "scope": "Bring up the four-host public fleet on a coordinated new genesis and run windows A-E: A = RC-1/public and RC-4/public (deploy and single-validator restart); B = RC-2/public (the `partition` driver installs and removes the fault and records the cycles); C = RC-3/public and RC-3/availability (the `deploy` and `availability` drivers); D = RC-5/public (the `pressure` driver); E = RC-6/public and RC-6/availability (the `join` and `availability --join-artifact` drivers). The source set and the N1/N4/N8 differential are diagnostics in the same campaign record. RC-7/public is the separate `rc-fleet-upgrade` window. The manifest carries typed inputs only; the driver chooses the fault and writes fleet-result.json at each record root."
     },
     {
       "claims": [
@@ -47,7 +47,7 @@
         "RC-7"
       ],
       "id": "rc-fleet-upgrade",
-      "scope": "Roll the public fleet through the mixed window to the new image and record RC-7 public."
+      "scope": "Roll the four-host public fleet through the mixed window to the new image and record RC-7/public. The typed `upgrade` manifest block names the old/new pins, order and staging host; `tools/fleet-run.py upgrade` (landing in this window's PR) performs the swap and writes the upgrade record. The pre-registered protocol is spec/audit/runbooks/rc-fleet-upgrade-20261124.md. A rollback is recorded and fails; a fresh-genesis run does not substitute."
     },
     {
       "claims": [
@@ -61,7 +61,7 @@
       ],
       "id": "launch-gate",
       "programme": true,
-      "scope": "Aggregate the required arms and the external obligations into the launch gate; refuse ready while any external item is open without a dated disposition."
+      "scope": "Aggregate the required arms and the external obligations into the launch gate. `release-check.py --assert-ready` remains the claims half; `tools/check-launch-gate.py --gate` requires exactly one dated disposition for every open row in mainnet-gates.external.json, and `--assert-ready` exits 0 only when the claims are ready and every external row is met or superseded. The decisions live in spec/audit/launch-gate.dispositions.json; a disposition is not a waiver."
     }
   ],
   "campaigns": [

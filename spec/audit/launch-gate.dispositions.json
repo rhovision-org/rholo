@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "as_of": "2026-11-24",
+  "rule": "Every external row in spec/audit/mainnet-gates.external.json whose status is not met or superseded is open and needs exactly one dated disposition here. This file carries decisions only; it never restates a status. A disposition records who decided and when; it is not a pass and it cannot make tools/check-launch-gate.py --assert-ready green.",
+  "dispositions": [
+    {
+      "gate_id": "G428-M5",
+      "disposition": "deferred",
+      "dated": "2026-11-15",
+      "authority": "Jim / release coordination (owner decision recorded on #428)",
+      "reference": "https://github.com/rhovision-org/rholo/issues/428#issuecomment-6892934659",
+      "note": "The authenticated historical 840->841 bundle is unavailable. This is a continuing release blocker, not a waiver: M5 stays open until a custodian supplies the bundle or an owner decision changes the requirement."
+    }
+  ]
+}

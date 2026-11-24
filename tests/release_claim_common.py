@@ -576,6 +576,34 @@ def preflight_failure(claim_id: str, environment: str, out, record: dict,
     return not_run(out, record, "; ".join(problems))[1]
 
 
+def run_fleet_action(args, out: Path, action: str, claim_id: str,
+                     extra: list[str] | None = None) -> tuple[dict, int]:
+    """Run one `fleet-run.py` action into the claim's record root.
+
+    The driver writes `fleet-result.json` (and any run artefacts) there, so the locality gate
+    finds the driver's own account of the run at the record root after packing. The claim test
+    reads the typed artefact; the driver never supplies the claim's verdict.
+    """
+    out.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, str(ROOT / "tools" / "fleet-run.py"), action,
+               "--manifest", args.public_manifest, "--out", str(out), "--claim", claim_id]
+    if getattr(args, "rehearse", False):
+        command.append("--rehearse")
+    command += [str(item) for item in (extra or [])]
+    try:
+        done = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=7200)
+    except subprocess.TimeoutExpired as error:
+        return {"harness_result": "PRECONDITION",
+                "reasons": [f"fleet-run {action} timed out: {error}"]}, 3
+    path = out / "fleet-result.json"
+    try:
+        document = json.loads(path.read_text())
+    except (OSError, ValueError):
+        document = {"harness_result": "FAIL",
+                    "reasons": [(done.stdout + done.stderr)[-1200:]]}
+    return document, done.returncode
+
+
 # --------------------------------------------------------------------------------------
 # The phase-space evaluator. Every predicate is recomputed from the trace coordinates; the
 # node's own `predicates`/`bounded`/`accepted` labels are never trusted.
@@ -1417,16 +1445,22 @@ def check_returner(record: dict) -> tuple[str, list[str]]:
 
 def availability_fixture(claim_id: str, title: str) -> dict:
     record = _arm_record(claim_id, title, "availability", "public", "public-live")
+    availability = {
+        "blocks": [
+            {"height": height, "hash": f"{height:064x}",
+             "validators": [{"validator": i, "body_present": True,
+                             "state_served": True, "error": None} for i in range(4)]}
+            for height in range(30, 41)
+        ],
+        "not_available": [],
+    }
+    if claim_id == "RC-6":
+        availability["join"] = {
+            "join_result": "pass", "bootstrap_from": "validator-1",
+            "chain_complete": True, "audit_verdict": "AGREE",
+        }
     record["observations"] = {
-        "availability": {
-            "blocks": [
-                {"height": height, "hash": f"{height:064x}",
-                 "validators": [{"validator": i, "body_present": True,
-                                 "state_served": True, "error": None} for i in range(4)]}
-                for height in range(30, 41)
-            ],
-            "not_available": [],
-        },
+        "availability": availability,
         "state_traces": [_safe_state_trace()],
     }
     return record
@@ -1438,6 +1472,23 @@ def check_availability(record: dict) -> tuple[str, list[str]]:
     body, problems = _arm_body(record, "availability")
     if body is None:
         return "fail", problems
+    if record.get("claim_id") == "RC-6":
+        join = body.get("join")
+        if not isinstance(join, dict):
+            problems.append("availability: RC-6 needs the non-producer join witness")
+        else:
+            if join.get("join_result") != "pass":
+                problems.append(
+                    f"availability: the non-producer join did not pass: "
+                    f"{join.get('join_result')!r}")
+            if join.get("chain_complete") is not True:
+                problems.append("availability: the non-producer join chain is incomplete")
+            if join.get("audit_verdict") != "AGREE":
+                problems.append(
+                    f"availability: the join audit read {join.get('audit_verdict')!r}, "
+                    "not AGREE")
+            if not join.get("bootstrap_from"):
+                problems.append("availability: the join names no bootstrap")
     blocks = body.get("blocks")
     if not isinstance(blocks, list) or len(blocks) < 10:
         problems.append("availability: fewer than ten finalised blocks were read")
