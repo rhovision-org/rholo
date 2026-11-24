@@ -4,6 +4,7 @@
 //! builds the `ScalaBodyFn` handlers (stdout/stderr, crypto verify/hash, block data, REV address,
 //! deployer-id ops, registry ops, sys-auth-token ops) that the runtime installs and dispatches to.
 
+use async_trait::async_trait;
 use rchain_shared::lock::Unpoison;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, Weak};
@@ -27,7 +28,7 @@ use rchain_shared::refined::{BlockHeight, NonNegI64, SeqNum};
 use rchain_shared::serialize::Serialize;
 
 use crate::contract_call::ContractCall;
-use crate::dispatch::{RholangAndScalaDispatcher, ScalaBodyFn};
+use crate::dispatch::{NativeBodyResolver, RholangAndScalaDispatcher, ScalaBodyFn};
 use crate::errors::RholangError;
 use crate::native_state::{NativeSystemState, TxnState};
 use crate::pretty_printer::PrettyPrinter;
@@ -535,6 +536,35 @@ where
     Ok(RhoName::apply_bytes(name_bytes))
 }
 
+/// Re-builds a minted vault handle's handler from its durable dispatch record (#669).
+///
+/// The ref is a function of the minted name, and `findOrCreate` writes `body_ref -> address` in the
+/// same native-state transaction as the mint. A replay's dispatcher has only the fixed system
+/// processes; asking this resolver for the missing id returns the same `vault_handle_handler` the
+/// minting block used, with the same address.
+struct VaultHandleResolver {
+    contract_call: ContractCall<ChargingRSpace, Weak<RholangAndScalaDispatcher>>,
+    native_state: Arc<NativeSystemState>,
+}
+
+#[async_trait]
+impl NativeBodyResolver for VaultHandleResolver {
+    async fn resolve(&self, body_ref: i64) -> Result<Option<ScalaBodyFn>, RholangError> {
+        let address = self
+            .native_state
+            .vault_handle_address(body_ref)
+            .await
+            .map_err(RholangError::ReduceError)?;
+        Ok(address.map(|address| {
+            vault_handle_handler(
+                self.contract_call.clone(),
+                self.native_state.clone(),
+                address,
+            )
+        }))
+    }
+}
+
 /// A vault handle's arms, **dispatched on the first field** (AUDIT C219, Law 60).
 ///
 /// The handle is installed once at `arity: 1, remainder: true`, so the method arrives as the first
@@ -706,6 +736,18 @@ impl SystemProcesses {
             block_data,
             native_state,
         }
+    }
+
+    /// The resolver a fresh dispatcher needs for minted vault handles (#669).
+    ///
+    /// Holds a `ContractCall` over the same charging space and a **weak** dispatcher, like every
+    /// handler here, so attaching it to the dispatcher does not create the self-reference the
+    /// #18/#23 lifecycle fixes removed.
+    pub fn native_body_resolver(&self) -> Arc<dyn NativeBodyResolver> {
+        Arc::new(VaultHandleResolver {
+            contract_call: self.contract_call.clone(),
+            native_state: self.native_state.clone(),
+        })
     }
 
     /// The ordered list of standard system contracts (port of `stdSystemProcesses` +
@@ -2789,11 +2831,16 @@ impl SystemProcesses {
                         RevAddress::parse(&addr).map_err(|e| {
                             illegal_arg(&format!("findOrCreate: {addr} is not a REV address: {e}"))
                         })?;
-                        // Price the vault leaf and the name leaf the call writes; the handle's own
-                        // install moves a message through the charged space.
+                        // Price the three leaves the call writes (#669): the vault record
+                        // (32-byte key + 8-byte balance), the name→address map (32-byte key +
+                        // address) and the body-ref→address dispatch record (32-byte key +
+                        // address). The handle's own install moves a message through the charged
+                        // space. Before the dispatch record existed this charged two leaves; the
+                        // difference is caller-visible only as the mint's cost, and both play and
+                        // replay execute this arm.
                         cc.cost()
                             .charge(crate::accounting::Costs::native_store_cost(
-                                addr.len() + 2 * 32 + 8,
+                                2 * addr.len() + 3 * 32 + 8,
                             ))?;
                         native
                             .find_or_create_vault(&addr)
@@ -2814,6 +2861,14 @@ impl SystemProcesses {
                         let mut rand = rand;
                         let name_bytes = rand.next();
                         native.set_vault_name(&name_bytes, &addr);
+                        // **The dispatch record, not just the name map** (#669). The handle's
+                        // continuation is checkpointed, but a replay builds a fresh dispatcher; this
+                        // is what lets that dispatcher re-build the handler for the same body ref.
+                        let body_ref = ContractCall::<
+                            ChargingRSpace,
+                            Weak<RholangAndScalaDispatcher>,
+                        >::native_body_ref(&name_bytes, 1);
+                        native.set_vault_handle_dispatch(body_ref, &addr);
                         let handle = install_vault_handle(
                             cc.clone(),
                             native.clone(),

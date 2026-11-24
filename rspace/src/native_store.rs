@@ -52,6 +52,20 @@ pub const PREFIX_VAULT_AUTH: u8 = 0x09;
 /// REV becomes one brand of, and a REV balance stays where it was rather than moving into a ledger
 /// whose shapes would then have to serve two masters.
 pub const PREFIX_ERTP: u8 = 0x0A;
+/// Trie prefix for the **vault-handle dispatch record** (`body-ref -> base58 rev-address`).
+///
+/// A minted handle is a persistent consume whose continuation is a `ScalaBodyRef`; the
+/// continuation is checkpointed with the block, but a replay builds a *fresh dispatcher* with an
+/// empty table. This leaf is what lets that dispatcher re-build the handler for a body ref it has
+/// never seen: the ref is a function of the minted name (`ContractCall::native_body_ref`), so
+/// storing the address under the ref is enough to reconstruct the same
+/// `vault_handle_handler` on play, replay and every later block (#669).
+///
+/// Kept apart from [`PREFIX_VAULT_NAME`]: the name map answers "which vault does this name open",
+/// this one answers "which handler does this continuation id run". They are written together at
+/// mint time but have different lifetimes — the name map is the capability's identity, the dispatch
+/// record is the reducer's resolution table.
+pub const PREFIX_VAULT_HANDLE: u8 = 0x0B;
 
 /// A native-state mutation, folded into the trie at checkpoint (port of a `NativeStoreAction`).
 #[derive(Clone, Debug, PartialEq, Eq)]

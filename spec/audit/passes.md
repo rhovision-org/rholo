@@ -14517,3 +14517,34 @@ authorization is created. The aggregate gate is a checker, not an independent si
 
 **State.** C411 done; external rows unchanged; `check-launch-gate.py --gate` exits 3 until the
 owners record the remaining decisions.
+
+## 196. C412 — a minted vault handle did not survive the block boundary (#669).
+
+`findOrCreate` minted a native handle whose continuation went into the hot store's
+`installed_continuations` — the map deliberately absent from `changes()` — and whose handler existed
+only in the minting block's dispatcher. The next block's `reset` and a replay's fresh dispatcher both
+lost it, so a send on the handle found no continuation. The genesis developer reserve is held by such
+a handle, so it accrued and could never be spent; that is why `RESERVE_SPENDABLE` was false.
+
+**Change.** The handle is installed as a persistent consume, so the continuation is checkpointed.
+`findOrCreate` writes a durable `body_ref -> address` leaf (`PREFIX_VAULT_HANDLE`), which the native
+trie folds into the state root; a new `NativeBodyResolver` rebuilds the handler on a `ScalaBodyRef`
+miss for a negative id; `clear_minted_handlers` makes play resolve from durable state the way replay
+already had to. The mint now prices that third leaf.
+
+**Why believed.** `casper/tests/vault_handle_across_blocks.rs` mints in block 1, reads `balance` in
+block 2, and replays both blocks with cost accounting on — the replayer refuses a cost mismatch, so
+the assertion is not just a state compare (measured mint 1422, balance 1324, replay equal). The
+reserve spend witness, now un-ignored, creates the vault in the genesis and moves REV out of it at
+block 4 through that handle. The mutation control — reverting to `space.install` — reddens the
+cross-block witness with an empty balance reply; restoring it returns to green.
+
+**A withdrawn diagnosis.** The reserve witness's block-3 `invalid auth` was the test harness: one
+`Blake2b512Random` was passed to every `compute_state`, so block 2's fresh `authKey` contract shared
+block 3's `new` name and answered block 3's `AuthKey.check` with block 2's token. One seed per
+evaluate fixes it with no contract change, and `casper/tests/devrewards_auth_shape.rs` pins both the
+shape and the one-block two-key control. The earlier "`deployerAuthKey` unreachable" claim came from a
+probe that inserted the single-shot `extractState`; it is withdrawn rather than quietly deleted.
+
+**What it does not claim.** No mainnet-scale, timing or economic-soundness claim. The change is
+consensus-visible and pre-genesis; there is no launched chain to migrate.

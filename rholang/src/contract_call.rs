@@ -7,6 +7,7 @@ use rchain_models::rholang::RhoType::RhoName;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_models::sorted::SortedProc;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::accounting::CostAccounting;
@@ -141,6 +142,18 @@ impl<T: Tuplespace, D: Dispatch> ContractCall<T, D> {
     /// **Register before installing**, so a failure leaves a handler nobody can reach rather than a
     /// continuation that dispatches into an empty table — the second is an error inside the reducer,
     /// the first is a name the caller is told about.
+    ///
+    /// **A persistent consume, not an `install`** (#669). `install` writes the hot store's
+    /// `installed_continuations`, which is deliberately absent from `changes()`: it is the right
+    /// shape for the fixed system processes, which are re-installed from compile-time definitions at
+    /// every reset, and the wrong shape for a handle minted by a deploy. A consume with
+    /// `persist: true` is a checkpointed `WaitingContinuation` and stays installed after it fires, so
+    /// the continuation is still in the store in the next block and on replay. Its handler is
+    /// re-built by the dispatcher's native-body resolver from the record
+    /// `NativeSystemState::set_vault_handle_dispatch` writes at mint time.
+    ///
+    /// **The name is fresh**, so a consume that matches immediately (*`Some`*) means something else
+    /// already produced on it; that is a bug, not a request to dispatch.
     pub async fn install_native(
         &self,
         name_bytes: Vec<u8>,
@@ -163,13 +176,22 @@ impl<T: Tuplespace, D: Dispatch> ContractCall<T, D> {
             },
             free_count: if remainder { arity + 1 } else { arity },
         }];
-        self.space
-            .install(
-                &SortedProc::new(channel.clone()),
+        let matched = self
+            .space
+            .consume(
+                &[SortedProc::new(channel.clone())],
                 &patterns,
                 TaggedContinuation::ScalaBodyRef(body_ref),
+                true,
+                BTreeSet::new(),
             )
             .await?;
+        if matched.is_some() {
+            return Err(RholangError::BugFoundError(format!(
+                "a freshly minted vault handle ({body_ref}) already carried data; refusing to \
+                 dispatch against a name the caller has not been handed yet"
+            )));
+        }
         Ok(channel)
     }
 }

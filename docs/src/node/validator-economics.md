@@ -183,9 +183,11 @@ it. After the genesis deploys run, the address is read back and written with the
 `pos:developer-reserve` leaf (`bind_developer_reserve`), on both the ceremony's path and a replaying
 node's. The vault's handle is registered under a constant URI. If the vault was not created, the
 genesis is refused rather than installed with a reserve nobody can spend. The signers and quorum
-cannot change after genesis; losing `quorum` keys strands the reserve. **Not yet spendable:** a
-multisig vault on this port cannot be spent from a block after the one that created it (#669), so no
-genesis can set a non-zero share until #669 is fixed: the genesis refuses one
+cannot change after genesis; losing `quorum` keys strands the reserve. **Spendable since #669 was
+fixed:** a minted vault handle is a checkpointed persistent consume whose handler is rebuilt from a
+durable dispatch record, so a vault the genesis creates can be spent from a later block. The spend
+witness creates the vault in the genesis and moves REV out of it at block 4. `RESERVE_SPENDABLE` is
+true; the gate remains in code so a deployment can deliberately refuse a non-zero share
 (`check_reserve_spendable`). The conservation is `payFees_conserves` in
 [`spec/Rchain/Pos.lean`](../../../spec/Rchain/Pos.lean).
 

@@ -63,8 +63,11 @@ evidence for it, not its witness, and it does not move the row.
 mechanism, and row 7's question of where the share is paid is settled: a `MultiSigRevVault` the
 genesis creates over `developer-reserve-public-keys`/`developer-reserve-quorum`, bound as the reserve's
 address. A genesis with a zero share still has no reserve, so the row is closed for a given network
-only if its genesis commits a non-zero share, and that must wait for #669 (multisig vaults are not yet
-spendable from a later block).
+only if its genesis commits a non-zero share. **#669 is fixed (2026-11-24, C412):** a minted vault
+handle is a checkpointed persistent consume whose handler is rebuilt from a durable dispatch record,
+so a vault created in the genesis can be spent from a later block. The spend witness now passes, and
+`RESERVE_SPENDABLE` is true. What remains for row 4 is the post-genesis treasury/activation service
+(PR-C/PR-D), not the custody mechanism.
 
 ## Non-claims
 

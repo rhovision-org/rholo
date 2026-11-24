@@ -2209,6 +2209,13 @@ pub trait Dispatch: std::marker::Send + std::marker::Sync {
             "this dispatcher cannot register a handler".to_string(),
         ))
     }
+
+    /// Drop handlers for **minted** native continuations (negative ids) before a new block's space
+    /// is installed. The fixed system processes stay. A minted handler is reconstructed from its
+    /// durable record on first use, so play and replay run the same resolution path (#669).
+    ///
+    /// The default is a no-op: a dispatcher that owns no table has nothing to clear.
+    fn clear_minted_handlers(&self) {}
 }
 
 /// An owned, flattened term (the borrow-free unit the scheduler reduces).
@@ -2586,6 +2593,11 @@ pub struct DebruijnInterpreter<T: Tuplespace, D: Dispatch> {
 }
 
 impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
+    /// Drop minted native handlers before a block's reset (see [`Dispatch::clear_minted_handlers`]).
+    pub fn clear_minted_handlers(&self) {
+        self.dispatcher.clear_minted_handlers();
+    }
+
     pub fn new(
         space: T,
         dispatcher: D,
