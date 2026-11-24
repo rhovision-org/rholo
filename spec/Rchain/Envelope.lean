@@ -79,6 +79,8 @@ def envelopeCatalog : List EnvelopeRow :=
         "checkpointAge", "syncPhase", "checkpoint", "audit",
         "adminHttp",
         "consecutiveSelfValidationFailures", "selfValidationRefusal", "divergenceHalt",
+        -- The four durable-state surfaces the U26 census owed (D26-02/13/14/15, F-U26-01, #658).
+        "ownSequenceRecord", "equivocationEvidence", "rspaceRoot", "gatewayTxn",
         "poolQuarantined",
         "autoproposeTimerHalted",
         "autoproposeTimerHaltEpisodes", "autoproposeHalt", "autoproposeTapSuppressed",

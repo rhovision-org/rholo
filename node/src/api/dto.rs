@@ -192,19 +192,74 @@ pub struct HaltStatusDto {
 /// **A divergence halt** (F-U26-02, #658): a spent restore budget stopped production on this shard
 /// and the node is serving the chain it holds. The block is the acknowledgement an operator must
 /// pass to `POST /api/v1/autopropose/resume`; there is no automatic exit.
+/// **The three states of the shard's divergence halt, as one tagged value** (F-U26-04, #658).
+///
+/// A null object used to mean both "no halt" and "the record could not be read", which are opposite
+/// instructions to a proposer. The tag says which: `clear`, `halted`, or `unreadable`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum DivergenceHaltDto {
+    /// No halt stands, and the record was read successfully.
+    #[default]
+    Clear,
+    Halted {
+        /// When the halt was taken, in milliseconds since the unix epoch.
+        at: i64,
+        /// The refused block, base16 — the value the resume route requires.
+        block: String,
+        seq_num: i64,
+        /// How many records this shard has given up on.
+        episodes: u64,
+        /// Whether the durable record holds it. `false` means this process is honouring a halt the
+        /// next one will not know about.
+        durable: bool,
+    },
+    /// **The durable record could not be read.** Unknown is not absence: production is stopped and
+    /// serving continues; the operator's resume is refused until a read succeeds.
+    Unreadable { reason: String },
+}
+
+/// The durable own-signed-sequence record (Law 122, D26-02).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DivergenceHaltDto {
-    /// When the halt was taken, in milliseconds since the unix epoch.
-    pub at: i64,
-    /// The refused block, base16 — the value the resume route requires.
-    pub block: String,
+pub struct OwnSequenceRecordDto {
+    pub height: i64,
     pub seq_num: i64,
-    /// How many records this shard has given up on.
-    pub episodes: u64,
-    /// Whether the durable record holds it. `false` means this process is honouring a halt the next
-    /// one will not know about.
-    pub durable: bool,
+    pub block: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnSequenceRecordStatusDto {
+    /// `None` with `error: None` means no record; `None` with `error: Some` is unknown, not absent.
+    pub record: Option<OwnSequenceRecordDto>,
+    pub error: Option<String>,
+}
+
+/// The durable equivocation evidence (D26-13).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EquivocationEvidenceStatusDto {
+    /// The validators whose offence evidence is stored, base16.
+    pub validators: Vec<String>,
+    pub error: Option<String>,
+}
+
+/// The committed RSpace root (D26-15).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RspaceRootStatusDto {
+    pub root: Option<String>,
+    pub error: Option<String>,
+}
+
+/// The node-local gateway coordinator ledger (D26-14).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayTxnStatusDto {
+    pub total: u64,
+    pub in_flight: u64,
+    pub error: Option<String>,
 }
 
 /// **The one shard's proposer health**, as the per-shard map carries it (W-N10-04).
@@ -267,7 +322,7 @@ pub struct ProposerHealthDto {
     pub key_equivocation_reason: Option<String>,
     /// **A divergence halt is standing** (F-U26-02, #658): production stopped, service continues,
     /// and the named block is the operator's acknowledgement.
-    pub divergence_halt: Option<DivergenceHaltDto>,
+    pub divergence_halt: DivergenceHaltDto,
     pub autopropose_timer_halted: bool,
     pub autopropose_timer_halt_episodes: u64,
     pub autopropose_halt: HaltStatusDto,
@@ -345,7 +400,14 @@ pub struct OperatorStatus {
     pub self_validation_refusal: Option<SelfValidationRefusalDto>,
     /// **A divergence halt is standing** (F-U26-02, #658): production stopped, service continues,
     /// and the named block is the operator's acknowledgement.
-    pub divergence_halt: Option<DivergenceHaltDto>,
+    pub divergence_halt: DivergenceHaltDto,
+    /// **The four durable-state surfaces the U26 census owed** (D26-02/13/14/15, F-U26-01, #658).
+    /// Every status carries its own `error`, so a read failure is unknown rather than an empty
+    /// reading.
+    pub own_sequence_record: OwnSequenceRecordStatusDto,
+    pub equivocation_evidence: EquivocationEvidenceStatusDto,
+    pub rspace_root: RspaceRootStatusDto,
+    pub gateway_txn: GatewayTxnStatusDto,
     /// #564: pooled deploy ids this proposer is holding out of selection after repeated self-replay
     /// refusals. Proposer-local operating state, not pool capacity — the deploys stay pooled and stay
     /// valid for every other node. Always present; zero on a healthy proposer.

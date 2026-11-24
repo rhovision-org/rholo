@@ -226,6 +226,12 @@ impl<C, P, A, K> HistoryRepository<C, P, A, K> {
         self.current_history.clone()
     }
 
+    /// **The durable `CURRENT_ROOT`** (D26-15, Law 80), read without recording the empty root — the
+    /// committed pointer a restart and a rewind agree on, not the in-memory history's root.
+    pub async fn current_root(&self) -> Result<Blake2b256Hash, String> {
+        self.roots_repository.current_root().await
+    }
+
     pub async fn checkpoint(
         &self,
         actions: &[HotStoreAction<C, P, A, K>],

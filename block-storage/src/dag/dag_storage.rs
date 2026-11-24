@@ -769,6 +769,13 @@ pub trait BlockDagStorage: Send + Sync {
         Ok(None)
     }
 
+    /// **The validators whose equivocation evidence is stored** (D26-13, F-U26-01, #658). The
+    /// default is an error, not an empty list: a backend that does not expose the evidence must not
+    /// read as "no offence on record".
+    async fn equivocation_evidence(&self) -> Result<Vec<String>, String> {
+        Err("this DAG storage does not expose equivocation evidence".to_string())
+    }
+
     /// **Record the signature before the proposal is broadcast.** The default **refuses**, for
     /// `write_reset_marker`'s reason and one sharper: a node that cannot remember selecting this
     /// sequence would derive it from the round snapshot again after a rewind, and the network would

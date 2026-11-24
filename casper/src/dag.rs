@@ -1494,6 +1494,16 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         Ok(marker)
     }
 
+    /// **The validators whose equivocation evidence is stored** (D26-13, F-U26-01, #658). The map
+    /// is loaded from the durable store at attach time, so this is the evidence a restart kept.
+    async fn equivocation_evidence(&self) -> Result<Vec<String>, String> {
+        let evidence = self.equivocations.lock().await;
+        Ok(evidence
+            .keys()
+            .map(|validator| rchain_shared::base16::encode(validator.as_bytes()))
+            .collect())
+    }
+
     /// **The validator's own signed sequence** (Law 122), `"height:seq"` under its own key in the
     /// durable-records store. Monotone by construction: the writer only ever raises it.
     async fn read_own_latest(&self) -> Result<Option<(BlockHeight, SeqNum, BlockHash)>, String> {
@@ -2936,6 +2946,17 @@ mod tests {
         let recorded = restarted.recorded_equivocations().await;
         assert_eq!(recorded.len(), 1, "the evidence survived the restart");
         assert_eq!(recorded[0].0, meta(second, &[], 0).sender);
+        // The operator surface reads the same evidence (D26-13, F-U26-01, #658).
+        let surfaced = restarted
+            .equivocation_evidence()
+            .await
+            .expect("the surface reads the evidence");
+        assert_eq!(
+            surfaced,
+            vec![rchain_shared::base16::encode(
+                meta(second, &[], 0).sender.as_bytes()
+            )]
+        );
         let decoded =
             rchain_models::casper::protocol::casper_message::EquivocationEvidence::decode(
                 &recorded[0].1,

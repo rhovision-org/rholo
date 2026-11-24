@@ -171,6 +171,14 @@ it latches. The public `/health` object keeps the four-field summary above; depl
 refused body, the reset attempt and the halt sentence are not published on an unauthenticated
 listener.
 
+**The four durable-state surfaces the census owed** (D26-02/13/14/15, F-U26-01, #658). The operator
+snapshot carries `ownSequenceRecord` (the Law 122 record: `{record: {height, seqNum, block}, error}`),
+`equivocationEvidence` (`{validators, error}`), `rspaceRoot` (`{root, error}`) and `gatewayTxn`
+(`{total, inFlight, error}`). Each status has its own `error`: a read failure is published as unknown,
+never as an empty reading, so the surface cannot quietly turn a store failure into "nothing on
+record". `ownSequenceRecord` and `equivocationEvidence` are the primary shard's, like the flat
+proposer fields; `rspaceRoot` is the runtime's committed pointer; `gatewayTxn` is node-level.
+
 The health-only fields are `diagVersion`, `bootId`, `ok`, `ready`, `readyReasons`, `phase`,
 `nodePhase`, `shardPhases`, `height`, `maxObservedHeight`, `finalizedHeight`, `finalizedHeightError`,
 `finalizedLag`, `lastBlockAgeMs`, `lastFinalityAgeMs` and `lastPeerAgeMs`. (Corrected twice on
@@ -220,10 +228,6 @@ counted debt, not an implied field.
 | owed diagnostic | why it matters | issue evidence |
 |---|---|---|
 | `syncBlockLegAgeMs`, `syncTrieLegAgeMs` | the trie leg has no idle bound, so a join can hang at h=0 with no per-leg age. (`syncPhase` is now published on `/api/v1/status` — §4.4.) | #100, #457, #13 |
-| `ownSequenceRecord` | the durable own-signed-sequence record (Law 122) is reconciled at boot but is not surfaced; an operator cannot see why a proposer is waiting for a catch-up to re-adopt a signature | #658 |
-| `equivocationEvidence` | the durable equivocation evidence store is not on any route; an operator cannot see the offence the proposer may need to attach | #658 |
-| `gatewayTxn` | the node-local coordinator ledger has no status route; an in-flight or terminal gateway transaction is invisible | #658 |
-| `rspaceRoot` | the committed RSpace root is not surfaced; `finalizedHeight` reads the finality fence, not the root the state was published from | #658 |
 | `peerStatus` / per-peer observations | **the surface exists — this is a consumer gap.** `/health` is already the peer-visible projection (§6), and the only in-tree reader of a peer's `/health` is the acceptance harness's container-loopback read. No connection decision reads it, and no node polls a peer's health. What is missing is a consumer and a reason to trust it, not another endpoint. | this standard, §6 |
 | `epoch` / `livenessEpoch` | RCHIP-55's clock is not on the health route, so a jailed validator's boundary distance is invisible | #428, RCHIP-55 |
 | `finalityCountersDurable` on the peer view | `finalityStallEpisodes` is peer-visible but its durability qualifier is operator-only; a peer cannot tell the shard's history from this process's running total | this standard, §6 |

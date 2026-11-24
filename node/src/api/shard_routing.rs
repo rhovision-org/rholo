@@ -22,9 +22,10 @@ use async_trait::async_trait;
 
 use rchain_block_storage::dag::dag_storage::DeployId;
 use rchain_casper::api::block_api::{
-    ApiErr, BlockApi, Capabilities, DeployPoolStats, DeployerInfo, FinalityHealth, ProposerHealth,
-    ShardHealthEntry,
+    ApiErr, BlockApi, Capabilities, DeployPoolStats, DeployerInfo, DurableStateSurfaces,
+    FinalityHealth, ProposerHealth, ShardHealthEntry,
 };
+use rchain_casper::gateway::ledger::TxnLedger;
 use rchain_casper::runtime_manager::CapturedReply;
 use rchain_models::ast::Par;
 use rchain_models::block_metadata::BlockMetadata;
@@ -124,6 +125,20 @@ impl BlockApi for ShardRoutingBlockApi {
     /// third field was added beside the two #157 ones).
     async fn proposer_health(&self) -> ProposerHealth {
         self.primary_api().proposer_health().await
+    }
+
+    /// **The primary shard's four durable-state surfaces** (D26-02/13/14/15, F-U26-01, #658). The
+    /// flat operator reading is the primary's, like `proposer_health`; the gateway ledger is
+    /// node-level and attached to every member.
+    async fn durable_state_surfaces(&self) -> DurableStateSurfaces {
+        self.primary_api().durable_state_surfaces().await
+    }
+
+    /// Fan the node-level ledger out to every member, so the primary's surface can read it.
+    fn attach_gateway_ledger(&self, ledger: Arc<TxnLedger>) {
+        for api in self.shards.values() {
+            api.attach_gateway_ledger(ledger.clone());
+        }
     }
 
     /// The **primary** shard's finality-and-merge health. The flat reading is the node's primary by
@@ -460,7 +475,7 @@ impl BlockApi for ShardRoutingBlockApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rchain_casper::api::block_api::HaltStatus;
+    use rchain_casper::api::block_api::{DivergenceHaltObservation, HaltStatus};
     use rchain_casper::runtime_manager::ReplySource;
     use rchain_models::block_metadata::SlashSeverity;
     use std::sync::Mutex;
@@ -610,7 +625,7 @@ mod tests {
             let primary = self.shard_id.ends_with("root");
             ProposerHealth {
                 self_validation_refusal: None,
-                divergence_halt: None,
+                divergence_halt: DivergenceHaltObservation::Clear,
                 // **The non-primary carries the halt marker** (W-N10-04): the row is that a shard whose
                 // timer has halted off the primary was invisible, so the fixture makes exactly that
                 // shard the halted one and the primary the healthy one.

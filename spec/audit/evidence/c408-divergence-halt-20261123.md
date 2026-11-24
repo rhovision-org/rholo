@@ -72,3 +72,18 @@ Removing the `divergence_halt::any()` check from `Proposer::do_propose` makes
 - **No live devnet arm.** `--merge-divergence-injection` was not shown to drive `unrestorableRecords
   > 0` deterministically, so the deterministic tests are the evidence and a live arm is owed.
 - The census gained D26-18 for the new key; the emitter now derives 48 identifiers, all classified.
+
+## Later correction — C409 (2026-11-24)
+
+The independent review of #667 found two fail-open paths in this record's rule, and they are closed by
+C409 rather than by rewriting this pinned run:
+
+- item 4 above says a read failure is "logged as unknown, not as 'never halted'". The log was true, but
+  the registry stayed empty, so the proposer **did** read it as never halted. C409 makes the unknown a
+  `HaltCell::Unreadable` latch (production stops, serving continues, only a successful read retires
+  it).
+- the read → acknowledge → delete → registry-clear transition was not atomic, so an acknowledgement of
+  an older halt could delete a newer one. C409 serialises it with a per-shard transition lock and
+  requires the acknowledgement to name the newest standing halt.
+
+The deterministic tests and mutation controls are in `c409-divergence-halt-unreadable-ack-20261124.md`.

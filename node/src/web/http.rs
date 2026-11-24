@@ -2181,6 +2181,10 @@ pub const OPENAPI_JSON: &str = r##"{
           "consecutiveSelfValidationFailures": { "type": "integer", "format": "int64", "description": "Self-validation failures the proposer has recorded in a row; cleared by a successful propose" },
           "selfValidationRefusal": { "$ref": "#/components/schemas/SelfValidationRefusalDto" },
           "divergenceHalt": { "$ref": "#/components/schemas/DivergenceHaltDto" },
+          "ownSequenceRecord": { "$ref": "#/components/schemas/OwnSequenceRecordStatusDto" },
+          "equivocationEvidence": { "$ref": "#/components/schemas/EquivocationEvidenceStatusDto" },
+          "rspaceRoot": { "$ref": "#/components/schemas/RspaceRootStatusDto" },
+          "gatewayTxn": { "$ref": "#/components/schemas/GatewayTxnStatusDto" },
           "poolQuarantined": { "type": "integer", "format": "int64", "description": "Pooled deploy ids this proposer is holding out of selection after repeated self-replay refusals (#564). Proposer-local liveness policy, not pool capacity: the deploys stay in the pool and remain valid for every other node" },
           "autoproposeTimerHalted": { "type": "boolean", "description": "The autopropose timer has stopped. Two things restart it: the process (the halt is durable, re-seeded at boot), and POST /api/v1/autopropose/resume on the admin listener, which clears the record and wakes the parked timer in-process. Not the same as block production having stopped: the tap and POST /api/propose keep running" },
           "autoproposeTimerHaltEpisodes": { "type": "integer", "format": "int64", "description": "How many times this shard's autopropose timer has stopped. Counting transitions, so a second note of the same halt does not move it; seeded from the durable record at boot, so it is the shard's count and not this process's (W-N10-01)" },
@@ -2308,15 +2312,82 @@ pub const OPENAPI_JSON: &str = r##"{
         }
       },
       "DivergenceHaltDto": {
+        "description": "The shard's divergence-halt state: clear, halted on a refused block, or unreadable (which is a halt, not an absence). The node keeps serving the chain it holds; there is no automatic exit, and POST /api/v1/autopropose/resume requires the named block as acknowledgeDivergence (F-U26-02/F-U26-04, #658)",
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["state"],
+            "properties": { "state": { "const": "clear" } },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["state", "at", "block", "seqNum", "episodes", "durable"],
+            "properties": {
+              "state": { "const": "halted" },
+              "at": { "type": "integer", "format": "int64", "description": "When the halt was taken, in milliseconds since the unix epoch" },
+              "block": { "type": "string", "description": "The refused block, base16 — the value the resume route requires" },
+              "seqNum": { "type": "integer", "format": "int64" },
+              "episodes": { "type": "integer", "format": "int64", "description": "How many records this shard has given up on" },
+              "durable": { "type": "boolean", "description": "Whether the durable record holds the halt; false means this process honours a halt the next one will not know about" }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["state", "reason"],
+            "properties": {
+              "state": { "const": "unreadable" },
+              "reason": { "type": "string", "description": "Why the durable halt record could not be read; production is stopped because unknown is not absence" }
+            }
+          }
+        ],
+        "discriminator": { "propertyName": "state" }
+      },
+      "OwnSequenceRecordDto": {
         "type": "object",
-        "description": "A spent restore budget stopped production on this shard; the node keeps serving the chain it holds. There is no automatic exit: POST /api/v1/autopropose/resume requires the named block as acknowledgeDivergence (F-U26-02, #658)",
-        "nullable": true,
+        "description": "The durable own-signed-sequence record (Law 122, D26-02): the highest block this validator signed, so a rewind cannot make it sign a duplicate",
+        "required": ["height", "seqNum", "block"],
         "properties": {
-          "at": { "type": "integer", "format": "int64", "description": "When the halt was taken, in milliseconds since the unix epoch" },
-          "block": { "type": "string", "description": "The refused block, base16 — the value the resume route requires" },
+          "height": { "type": "integer", "format": "int64" },
           "seqNum": { "type": "integer", "format": "int64" },
-          "episodes": { "type": "integer", "format": "int64", "description": "How many records this shard has given up on" },
-          "durable": { "type": "boolean", "description": "Whether the durable record holds the halt; false means this process honours a halt the next one will not know about" }
+          "block": { "type": "string", "description": "The block hash this validator signed, base16" }
+        }
+      },
+      "OwnSequenceRecordStatusDto": {
+        "type": "object",
+        "description": "The durable own-signed-sequence record as the operator reads it (D26-02, F-U26-01). `record: null` with `error: null` is no record; `record: null` with a non-null `error` is unknown, not absent",
+        "required": ["record", "error"],
+        "properties": {
+          "record": { "$ref": "#/components/schemas/OwnSequenceRecordDto" },
+          "error": { "type": "string", "nullable": true, "description": "Why the record could not be read; null when the read succeeded" }
+        }
+      },
+      "EquivocationEvidenceStatusDto": {
+        "type": "object",
+        "description": "The durable equivocation evidence store (D26-13, F-U26-01): the validators whose offence evidence is retained",
+        "required": ["validators", "error"],
+        "properties": {
+          "validators": { "type": "array", "items": { "type": "string" }, "description": "Validator public keys with stored offence evidence, base16" },
+          "error": { "type": "string", "nullable": true, "description": "Why the evidence could not be read; null when the read succeeded" }
+        }
+      },
+      "RspaceRootStatusDto": {
+        "type": "object",
+        "description": "The committed RSpace root the history publishes from (D26-15, F-U26-01)",
+        "required": ["root", "error"],
+        "properties": {
+          "root": { "type": "string", "nullable": true, "description": "The durable CURRENT_ROOT, base16; null when none is recorded" },
+          "error": { "type": "string", "nullable": true, "description": "Why the root could not be read; null when the read succeeded" }
+        }
+      },
+      "GatewayTxnStatusDto": {
+        "type": "object",
+        "description": "The node-local gateway coordinator ledger (D26-14, F-U26-01). Records reach a terminal state and are retained; an in-flight record is one a restart must finish",
+        "required": ["total", "inFlight", "error"],
+        "properties": {
+          "total": { "type": "integer", "format": "int64", "description": "Every record the ledger holds" },
+          "inFlight": { "type": "integer", "format": "int64", "description": "Records still awaiting a decision" },
+          "error": { "type": "string", "nullable": true, "description": "Why the ledger could not be read or why none is attached; null when the read succeeded" }
         }
       },
       "DeployData": {
@@ -3415,9 +3486,9 @@ pub async fn acquire_admin_http_server(
 mod tests {
     use super::*;
     use crate::api::dto::{
-        DataAtNameResponse, DeployExecStatus, ExploratoryDeployResponse, FaucetResponse,
-        HaltStatusDto, NodeCapabilities, OperatorStatus, PooledDeploy, PooledDeploys, PublicStatus,
-        RhoDataResponse, VersionInfo,
+        DataAtNameResponse, DeployExecStatus, DivergenceHaltDto, ExploratoryDeployResponse,
+        FaucetResponse, HaltStatusDto, NodeCapabilities, OperatorStatus, PooledDeploy,
+        PooledDeploys, PublicStatus, RhoDataResponse, VersionInfo,
     };
     use crate::diagnostics::scrape_data_builder::Configuration;
     use crate::resources::{ResourceGuard, ResourceSnapshot, ResourceState};
@@ -3426,7 +3497,9 @@ mod tests {
     use async_trait::async_trait;
     use axum::body::to_bytes;
     use rchain_block_storage::dag::codecs::{BlockHashCodec, BlockMessageCodec};
-    use rchain_casper::api::block_api::{FinalityHealth, ShardHealthEntry};
+    use rchain_casper::api::block_api::{
+        DivergenceHaltObservation, FinalityHealth, ShardHealthEntry,
+    };
     use rchain_casper::reporting::noop;
     use rchain_casper::runtime_manager::CapturedReply;
     use rchain_comm::peer_node::{NodeIdentifier, PeerNode};
@@ -3765,7 +3838,11 @@ mod tests {
             admin_http: true,
             consecutive_self_validation_failures: 0,
             self_validation_refusal: None,
-            divergence_halt: None,
+            divergence_halt: DivergenceHaltDto::Clear,
+            own_sequence_record: Default::default(),
+            equivocation_evidence: Default::default(),
+            rspace_root: Default::default(),
+            gateway_txn: Default::default(),
             pool_quarantined: 0,
             autopropose_timer_halted: false,
             autopropose_timer_halt_episodes: 0,
@@ -4853,7 +4930,7 @@ mod tests {
             finalized_result: None,
             proposer_health: rchain_casper::api::block_api::ProposerHealth {
                 consecutive_self_validation_failures: 8,
-                divergence_halt: None,
+                divergence_halt: DivergenceHaltObservation::Clear,
                 self_validation_refusal: Some(
                     rchain_casper::api::block_api::SelfValidationRefusal {
                         code: "justification-regression".to_string(),

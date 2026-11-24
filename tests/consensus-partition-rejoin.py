@@ -468,13 +468,20 @@ def anchor_agreement(d, anchor, victim=None):
                  victim_finalized=None, anchor_finalized=None)
         return None
     if victim_row["unrestorable_records"] > 0:
-        halt = victim_row.get("divergence_halt")
-        if halt:
+        halt = victim_row.get("divergence_halt") or {}
+        state = halt.get("state") if isinstance(halt, dict) else None
+        if state == "halted":
             raise RuntimeError(
                 f"FAIL_DIVERGENCE_HALTED: node {victim} unrestorableRecords="
                 f"{victim_row['unrestorable_records']} block={victim_row['unrestorable_block']}; "
                 f"the node stopped proposing and serves read-only — resume with "
                 f"POST /api/v1/autopropose/resume?acknowledgeDivergence={halt['block']}")
+        if state == "unreadable":
+            raise RuntimeError(
+                f"FAIL_DIVERGENCE_HALT_UNREADABLE: node {victim} unrestorableRecords="
+                f"{victim_row['unrestorable_records']} block={victim_row['unrestorable_block']}; "
+                f"the halt record could not be read ({halt.get('reason')}) — unknown is not "
+                f"absence, so the node is stopped and the resume is refused until a read succeeds")
         raise RuntimeError(
             f"FAIL_PERMANENT_DIVERGENCE: node {victim} unrestorableRecords="
             f"{victim_row['unrestorable_records']} block={victim_row['unrestorable_block']}")

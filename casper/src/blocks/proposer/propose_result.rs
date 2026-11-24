@@ -40,6 +40,12 @@ pub enum ProposeStatus {
         block: String,
         seq: i64,
     },
+    /// **The divergence-halt record could not be read** (F-U26-04, #658). Unknown is not absence:
+    /// every proposal trigger refuses while the shard's halt state is unknown. Serving continues,
+    /// and the operator's resume is refused until a read succeeds and names the halt it finds.
+    DivergenceHaltUnreadable {
+        shard: String,
+    },
     /// **The durable record of this validator's own signatures is ahead of the round snapshot**
     /// (Law 122). A rewind or a light join dropped the block that carried a later sequence, so the
     /// snapshot's next number would duplicate one the network already has — an equivocation the
@@ -89,6 +95,14 @@ impl fmt::Display for ProposeStatus {
                     f,
                     "Proposal halted: the restore budget was spent on block {block} (seq {seq}); \
                      serving continues, and the operator's acknowledgement is the only resume"
+                )
+            }
+            ProposeStatus::DivergenceHaltUnreadable { shard } => {
+                write!(
+                    f,
+                    "Proposal halted: the divergence halt record for shard {shard} could not be \
+                     read — an unreadable halt is not an absent one; serving continues, and the \
+                     operator resume is refused until a read succeeds"
                 )
             }
             ProposeStatus::OwnSeqNotReconciled {

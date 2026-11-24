@@ -1,8 +1,8 @@
 //! Web API protobuf conversion functions (port of the conversion fns in `api/WebApi.scala`).
 
 use rchain_casper::api::block_api::{
-    Capabilities, DeployPoolStats, DivergenceHaltStatus, FinalityHealth, ProposerHealth,
-    SelfValidationRefusal, ShardHealthEntry, SyncHealth,
+    Capabilities, DeployPoolStats, DivergenceHaltObservation, DurableStateSurfaces, FinalityHealth,
+    ProposerHealth, SelfValidationRefusal, ShardHealthEntry, SyncHealth,
 };
 use rchain_casper::runtime_manager::CapturedReply;
 use rchain_crypto::public_key::PublicKey;
@@ -17,10 +17,11 @@ use rchain_shared::base16;
 
 use super::dto::{
     DataAtNameResponse, DeployExecStatus as ApiDeployExecStatus, DeployPoolStatus, DeployRequest,
-    DivergenceHaltDto, ExploratoryDeployResponse, FinalityHealthDto, HaltStatusDto,
-    NodeCapabilities, OperatorStatus, PipelineGates, PooledDeploy, ProposerHealthDto, PublicStatus,
-    ResourceStatusDto, RhoDataResponse, RhoExprWithBlock, SelfValidationRefusalDto, ShardHealthDto,
-    SignatureException, SyncStatus, VersionInfo,
+    DivergenceHaltDto, EquivocationEvidenceStatusDto, ExploratoryDeployResponse, FinalityHealthDto,
+    GatewayTxnStatusDto, HaltStatusDto, NodeCapabilities, OperatorStatus,
+    OwnSequenceRecordStatusDto, PipelineGates, PooledDeploy, ProposerHealthDto, PublicStatus,
+    ResourceStatusDto, RhoDataResponse, RhoExprWithBlock, RspaceRootStatusDto,
+    SelfValidationRefusalDto, ShardHealthDto, SignatureException, SyncStatus, VersionInfo,
 };
 use super::rho_expr::{expr_from_par, RhoExpr};
 use crate::resources::admission::{effective_available_mb, threshold_mb};
@@ -57,15 +58,65 @@ fn to_self_validation_refusal_dto(
     })
 }
 
-/// Map a casper divergence halt to its DTO (F-U26-02, #658).
-fn to_divergence_halt_dto(status: Option<DivergenceHaltStatus>) -> Option<DivergenceHaltDto> {
-    status.map(|status| DivergenceHaltDto {
-        at: status.at_ms,
-        block: status.block,
-        seq_num: status.seq_num,
-        episodes: status.episodes,
-        durable: status.durable,
-    })
+/// Map a casper divergence-halt observation to its DTO (F-U26-02/F-U26-04, #658).
+fn to_divergence_halt_dto(status: DivergenceHaltObservation) -> DivergenceHaltDto {
+    match status {
+        DivergenceHaltObservation::Clear => DivergenceHaltDto::Clear,
+        DivergenceHaltObservation::Halted(status) => DivergenceHaltDto::Halted {
+            at: status.at_ms,
+            block: status.block,
+            seq_num: status.seq_num,
+            episodes: status.episodes,
+            durable: status.durable,
+        },
+        DivergenceHaltObservation::Unreadable { reason } => {
+            DivergenceHaltDto::Unreadable { reason }
+        }
+    }
+}
+
+/// Map the four durable-state surfaces (D26-02/13/14/15, F-U26-01, #658).
+fn to_own_sequence_record_status(
+    status: rchain_casper::api::block_api::OwnSequenceRecordStatus,
+) -> OwnSequenceRecordStatusDto {
+    OwnSequenceRecordStatusDto {
+        record: status
+            .record
+            .map(|record| super::dto::OwnSequenceRecordDto {
+                height: record.height,
+                seq_num: record.seq_num,
+                block: record.block,
+            }),
+        error: status.error,
+    }
+}
+
+fn to_equivocation_evidence_status(
+    status: rchain_casper::api::block_api::EquivocationEvidenceStatus,
+) -> EquivocationEvidenceStatusDto {
+    EquivocationEvidenceStatusDto {
+        validators: status.validators,
+        error: status.error,
+    }
+}
+
+fn to_rspace_root_status(
+    status: rchain_casper::api::block_api::RspaceRootStatus,
+) -> RspaceRootStatusDto {
+    RspaceRootStatusDto {
+        root: status.root,
+        error: status.error,
+    }
+}
+
+fn to_gateway_txn_status(
+    status: rchain_casper::api::block_api::GatewayTxnStatus,
+) -> GatewayTxnStatusDto {
+    GatewayTxnStatusDto {
+        total: status.total,
+        in_flight: status.in_flight,
+        error: status.error,
+    }
 }
 
 /// Map one casper [`ShardHealthEntry`] to its DTO (W-N10-04).
@@ -172,6 +223,9 @@ pub fn to_operator_status(
     // **Every member shard's health** (W-N10-04), gathered by the caller from `health_by_shard`. Threaded
     // like `sync` rather than fetched here, so a caller that has no members maps a status deterministically.
     shards: Option<std::collections::BTreeMap<String, ShardHealthEntry>>,
+    // **The four durable-state surfaces the U26 census owed** (D26-02/13/14/15, F-U26-01, #658).
+    // Threaded like `sync` and `shards`: a caller with no stores maps a status deterministically.
+    surfaces: &DurableStateSurfaces,
     resource: &ResourceSnapshot,
 ) -> OperatorStatus {
     OperatorStatus {
@@ -182,6 +236,12 @@ pub fn to_operator_status(
             health.self_validation_refusal.clone(),
         ),
         divergence_halt: to_divergence_halt_dto(health.divergence_halt.clone()),
+        own_sequence_record: to_own_sequence_record_status(surfaces.own_sequence_record.clone()),
+        equivocation_evidence: to_equivocation_evidence_status(
+            surfaces.equivocation_evidence.clone(),
+        ),
+        rspace_root: to_rspace_root_status(surfaces.rspace_root.clone()),
+        gateway_txn: to_gateway_txn_status(surfaces.gateway_txn.clone()),
         pool_quarantined: health.pool_quarantined,
         autopropose_timer_halted: health.autopropose_timer_halted,
         // The durable count, which is what the key always claimed to be (W-N10-01): it was an
@@ -544,7 +604,7 @@ mod tests {
         };
         let health = ProposerHealth {
             consecutive_self_validation_failures: 3,
-            divergence_halt: None,
+            divergence_halt: DivergenceHaltObservation::Clear,
             self_validation_refusal: Some(rchain_casper::api::block_api::SelfValidationRefusal {
                 code: "justification-regression".to_string(),
                 block_number: 3122,
@@ -612,6 +672,7 @@ mod tests {
             40,
             7,
             None,
+            &DurableStateSurfaces::default(),
             &ResourceSnapshot::default(),
         );
         assert_eq!(core.version.api, "1.0");
@@ -773,6 +834,7 @@ mod tests {
             0,
             0,
             None,
+            &DurableStateSurfaces::default(),
             &ResourceSnapshot::default(),
         );
         let s = api.sync.expect("the reading travels");
@@ -917,6 +979,7 @@ mod tests {
             0,
             0,
             None,
+            &DurableStateSurfaces::default(),
             &ResourceSnapshot::default(),
         );
         let json = serde_json::to_value(&api).expect("the operator status serializes");
@@ -1023,6 +1086,7 @@ mod tests {
             0,
             0,
             Some(shards),
+            &DurableStateSurfaces::default(),
             &ResourceSnapshot::default(),
         );
         // The flat field is the **primary's**, and the primary is healthy.
@@ -1200,6 +1264,7 @@ mod tests {
             0,
             0,
             None,
+            &DurableStateSurfaces::default(),
             &ResourceSnapshot::default(),
         );
         let json = serde_json::to_value(api).expect("serializes");
@@ -1359,5 +1424,81 @@ mod to_signed_deploy_tests {
         assert_eq!(dto.shard_id, "root");
         assert_eq!(dto.term, "Nil");
         assert_eq!(dto.valid_after_block_number, 3);
+    }
+
+    #[test]
+    fn the_divergence_halt_observation_has_three_distinct_states() {
+        assert_eq!(
+            to_divergence_halt_dto(DivergenceHaltObservation::Clear),
+            DivergenceHaltDto::Clear
+        );
+        let halted = to_divergence_halt_dto(DivergenceHaltObservation::Halted(
+            rchain_casper::api::block_api::DivergenceHaltStatus {
+                at_ms: 1,
+                block: "aa".to_string(),
+                seq_num: 9,
+                episodes: 2,
+                durable: false,
+            },
+        ));
+        assert_eq!(
+            halted,
+            DivergenceHaltDto::Halted {
+                at: 1,
+                block: "aa".to_string(),
+                seq_num: 9,
+                episodes: 2,
+                durable: false,
+            }
+        );
+        assert_eq!(
+            to_divergence_halt_dto(DivergenceHaltObservation::Unreadable {
+                reason: "the boot read failed".to_string(),
+            }),
+            DivergenceHaltDto::Unreadable {
+                reason: "the boot read failed".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn the_four_census_surfaces_map_with_their_errors() {
+        use rchain_casper::api::block_api::{
+            EquivocationEvidenceStatus, GatewayTxnStatus, OwnSequenceRecord,
+            OwnSequenceRecordStatus, RspaceRootStatus,
+        };
+        let surfaces = DurableStateSurfaces {
+            own_sequence_record: OwnSequenceRecordStatus {
+                record: Some(OwnSequenceRecord {
+                    height: 7,
+                    seq_num: 6,
+                    block: "ab".to_string(),
+                }),
+                error: None,
+            },
+            equivocation_evidence: EquivocationEvidenceStatus {
+                validators: vec!["cd".to_string()],
+                error: None,
+            },
+            rspace_root: RspaceRootStatus {
+                root: Some("ef".to_string()),
+                error: None,
+            },
+            gateway_txn: GatewayTxnStatus {
+                total: 3,
+                in_flight: 1,
+                error: Some("unreadable".to_string()),
+            },
+        };
+        let own = to_own_sequence_record_status(surfaces.own_sequence_record.clone());
+        assert_eq!(own.record.expect("the record").height, 7);
+        assert!(own.error.is_none());
+        let evidence = to_equivocation_evidence_status(surfaces.equivocation_evidence.clone());
+        assert_eq!(evidence.validators, vec!["cd".to_string()]);
+        let root = to_rspace_root_status(surfaces.rspace_root.clone());
+        assert_eq!(root.root.as_deref(), Some("ef"));
+        let txn = to_gateway_txn_status(surfaces.gateway_txn.clone());
+        assert_eq!((txn.total, txn.in_flight), (3, 1));
+        assert_eq!(txn.error.as_deref(), Some("unreadable"));
     }
 }

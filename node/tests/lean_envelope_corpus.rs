@@ -27,8 +27,9 @@ use rchain_models::casper::protocol::deploy_service::{
     BondInfo, DeployInfo, FinalityAttestation, LightBlockInfo, RawBlock,
 };
 use rchain_node::api::dto::{
-    DeployPoolStatus, ExploratoryDeployResponse, FaucetDripStatus, FaucetResponse, HaltStatusDto,
-    NodeCapabilities, OperatorStatus, PooledDeploys, PublicStatus, RhoDataResponse, VersionInfo,
+    DeployPoolStatus, DivergenceHaltDto, ExploratoryDeployResponse, FaucetDripStatus,
+    FaucetResponse, HaltStatusDto, NodeCapabilities, OperatorStatus, PooledDeploys, PublicStatus,
+    RhoDataResponse, VersionInfo,
 };
 use rchain_node::web::http::OPENAPI_JSON;
 use rchain_node::web::node_list::{NodeListEntry, NodeListResponse};
@@ -318,7 +319,11 @@ fn dto_by_name(name: &str) -> Value {
             admin_http: false,
             consecutive_self_validation_failures: 0,
             self_validation_refusal: None,
-            divergence_halt: None,
+            divergence_halt: DivergenceHaltDto::Clear,
+            own_sequence_record: Default::default(),
+            equivocation_evidence: Default::default(),
+            rspace_root: Default::default(),
+            gateway_txn: Default::default(),
             pool_quarantined: 0,
             autopropose_timer_halted: false,
             autopropose_timer_halt_episodes: 0,

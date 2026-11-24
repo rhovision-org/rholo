@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 
@@ -37,7 +37,9 @@ use rchain_shared::base16;
 
 use crate::api::block_api::{
     get_full_block_info, get_light_block_info, ApiErr, BlockApi, Capabilities, DeployPoolStats,
-    DeployerInfo, FinalityHealth, ProposeHealth, ProposerHealth, ShardHealthEntry,
+    DeployerInfo, DurableStateSurfaces, EquivocationEvidenceStatus, FinalityHealth,
+    GatewayTxnStatus, OwnSequenceRecord, OwnSequenceRecordStatus, ProposeHealth, ProposerHealth,
+    RspaceRootStatus, ShardHealthEntry,
 };
 use crate::api::graph_generator::{dag_as_cluster, ValidatorBlock};
 use crate::api::machine_verifiable_dag::machine_verifiable_dag;
@@ -139,6 +141,10 @@ pub struct BlockApiImpl {
     /// **The certificates this node has accepted** (sync/verification separation). A joiner fetches
     /// a certificate, not a bare fringe; the collector writes here and this surface reads it.
     checkpoint_store: rchain_block_storage::checkpoint_store::CheckpointStore,
+    /// **The node-level gateway ledger** (D26-14, F-U26-01, #658). It is opened after the per-shard
+    /// APIs exist, so it is attached later; a node that never attaches one publishes the surface as
+    /// an error, not as an empty ledger.
+    gateway_ledger: OnceLock<Arc<crate::gateway::ledger::TxnLedger>>,
 }
 
 /// The block a **no-hash** `explore-deploy` reads (AUDIT C129, #554).
@@ -402,6 +408,7 @@ impl BlockApiImpl {
             phase,
             relay,
             checkpoint_store,
+            gateway_ledger: OnceLock::new(),
         }
     }
 
@@ -737,6 +744,84 @@ impl BlockApi for BlockApiImpl {
         self.propose_health.snapshot()
     }
 
+    fn attach_gateway_ledger(&self, ledger: Arc<crate::gateway::ledger::TxnLedger>) {
+        // The ledger is opened once per node, after the shard APIs exist; a second attach is a
+        // wiring mistake, not a second ledger.
+        let _ = self.gateway_ledger.set(ledger);
+    }
+
+    /// **The four durable-state surfaces the census owed** (D26-02/13/14/15, F-U26-01, #658).
+    /// Every read failure is published as an `error`, never as an empty reading.
+    async fn durable_state_surfaces(&self) -> DurableStateSurfaces {
+        let own_sequence_record = match self.dag.read_own_latest().await {
+            Ok(Some((height, seq, block))) => OwnSequenceRecordStatus {
+                record: Some(OwnSequenceRecord {
+                    height: i64::from(height),
+                    seq_num: i64::from(seq),
+                    block: block.to_hex(),
+                }),
+                error: None,
+            },
+            Ok(None) => OwnSequenceRecordStatus::default(),
+            Err(e) => OwnSequenceRecordStatus {
+                record: None,
+                error: Some(e),
+            },
+        };
+        let equivocation_evidence = match self.dag.equivocation_evidence().await {
+            Ok(validators) => EquivocationEvidenceStatus {
+                validators,
+                error: None,
+            },
+            Err(e) => EquivocationEvidenceStatus {
+                validators: Vec::new(),
+                error: Some(e),
+            },
+        };
+        let rspace_root = match self.runtime.current_root().await {
+            Ok(root) => RspaceRootStatus {
+                root: Some(rchain_shared::base16::encode(root.as_bytes())),
+                error: None,
+            },
+            Err(e) => RspaceRootStatus {
+                root: None,
+                error: Some(e),
+            },
+        };
+        let gateway_txn = match self.gateway_ledger.get() {
+            None => GatewayTxnStatus {
+                total: 0,
+                in_flight: 0,
+                error: Some("no gateway coordinator ledger is attached".to_string()),
+            },
+            Some(ledger) => match ledger.count().await {
+                Ok(total) => match ledger.in_flight().await {
+                    Ok(in_flight) => GatewayTxnStatus {
+                        total: total as u64,
+                        in_flight: in_flight.len() as u64,
+                        error: None,
+                    },
+                    Err(e) => GatewayTxnStatus {
+                        total: total as u64,
+                        in_flight: 0,
+                        error: Some(e),
+                    },
+                },
+                Err(e) => GatewayTxnStatus {
+                    total: 0,
+                    in_flight: 0,
+                    error: Some(e),
+                },
+            },
+        };
+        DurableStateSurfaces {
+            own_sequence_record,
+            equivocation_evidence,
+            rspace_root,
+            gateway_txn,
+        }
+    }
+
     /// **This shard's own finality-and-merge observation** — read from the cell the validation path
     /// writes, never from a copy taken at setup (W-N10-02, W-N10-03).
     async fn finality_health(&self) -> FinalityHealth {
@@ -1010,15 +1095,18 @@ impl BlockApi for BlockApiImpl {
         &self,
         acknowledge_divergence: Option<&str>,
     ) -> Result<(), String> {
-        // **A divergence halt is a separate fact with no automatic exit** (F-U26-02, #658). The
-        // acknowledgement must name the refused block; a resume that did not name it would be the
-        // silent exit the record exists to prevent. Store-first, like the halt: a failed clear must
-        // not read as a resume.
-        if let Some(halt) = self.dag.read_divergence_halt().await? {
-            crate::divergence_halt::acknowledgement(acknowledge_divergence, &halt)?;
-            self.dag.clear_divergence_halt().await?;
-            self.propose_health.clear_divergence_halt();
-        }
+        // **A divergence halt is a separate fact with no automatic exit** (F-U26-02/F-U26-04/F-U26-05,
+        // #658). The acknowledgement must name the standing halt; a resume that did not name it
+        // would be the silent exit the record exists to prevent. The read, acknowledgement, durable
+        // clear and registry transition are one function under the shard's transition lock, so a
+        // newer halt written concurrently is never deleted by an older acknowledgement. A read
+        // failure is a refusal and leaves the shard halted: unknown is not absence.
+        crate::divergence_halt::acknowledge_divergence_halt(
+            self.dag.as_ref(),
+            &self.shard_id,
+            acknowledge_divergence,
+        )
+        .await?;
         self.dag.clear_halt_record().await?;
         // **The self-replay record is cleared with the halt** (#564). The operator resume is the one
         // way out of both; a record left standing would re-seed the latch at the next boot and make
