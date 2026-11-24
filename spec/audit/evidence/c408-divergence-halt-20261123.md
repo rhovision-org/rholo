@@ -47,9 +47,10 @@ python3 tests/test_recovery_harness_controls.py                      # 62 passed
 cargo check --locked --workspace --all-targets                       # clean
 ```
 
-Formal: `lake build Rchain.Laws` succeeded locally (mathlib packages fetched and cached); the full
-`tools/check-lean-conformance.sh` was running when this record was written, and the result is recorded
-in the PR. CI's `formal-on-change.yml` re-runs it because `spec/Rchain/**` changed.
+Formal: `tools/check-lean-conformance.sh` is **green** locally — the full `spec/` build, the Coq
+build, the emitted corpora and law register (128 laws / 187 entries, 0 unresolved declarations), and
+all 413 Rust witnesses, including
+`casper/tests/divergence_halt.rs::a_spent_restore_budget_halts_every_proposal_trigger_and_survives_a_restart`.
 
 ## Mutation control
 
