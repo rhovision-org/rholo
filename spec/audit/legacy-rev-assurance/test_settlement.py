@@ -50,11 +50,11 @@ class SettlementTest(unittest.TestCase):
         self.pin = sha(canonical(self.config))
         initialize(self.path,self.config,self.pin)
 
-    def decision(self, source="s1", **changes):
+    def decision(self, registry_source="s1", **changes):
         return dict(version=1,network=self.config["network"],manifest=self.config["manifest"],
                     policy=self.config["policy"],authority=authority_id(self.config),
-                    decision_id="decision-"+source,source=source,not_before=5,expires=15,
-                    action="approve",**self.config["pending"][source]) | changes
+                    decision_id="decision-"+registry_source,source=registry_source,not_before=5,expires=15,
+                    action="approve",**self.config["pending"][registry_source]) | changes
 
     def wire(self, d=None, signers=(0,1)):
         d = self.decision() if d is None else d
@@ -100,7 +100,7 @@ class SettlementTest(unittest.TestCase):
                     self.wire(self.decision(manifest="0"*64)),self.wire(self.decision(policy="1"*64)),
                     self.wire(self.decision(authority="2"*64)),self.wire(self.decision(owner="mallory")),
                     self.wire(self.decision(amount=71)),self.wire(self.decision(evidence="fake")),
-                    self.wire(self.decision(source="unknown")),self.wire(self.decision(source="verified"))):
+                    self.wire(self.decision(source="unknown")),self.wire(self.decision(source="verified",owner="alice",amount=7,evidence="e4"))):
             self.reject_unchanged(raw)
         raw=self.wire()
         altered=json.loads(raw);altered["decision"]["decision_id"]="tampered"
