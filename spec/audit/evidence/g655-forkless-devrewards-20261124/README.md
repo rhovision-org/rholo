@@ -36,33 +36,43 @@
 The settlement flow test also replays the paying claim with `with_cost_accounting = true`; the
 replayer refuses a cost mismatch, so the state-hash assertion is not the only check.
 
-## Live smoke, measured on a production genesis (partial arm)
+## Live four-validator arm, measured (2026-11-24)
 
-The node image was built from this tree (`rnode:devrewards`, `GIT_HEAD_COMMIT=1e934101b...`). A
-**non-dev** devnet was started, namespaced to avoid a peer session's containers and host ports:
+Image: `rnode:devrewards`, built from this tree with `GIT_HEAD_COMMIT=1e934101b`. Devnet: **four
+validators plus one read-only observer**, production genesis (no `--dev-mode`), `developer-share
+500`, a 2-of-2 reserve over validator keys 0 and 1, reporting enabled on the observer, namespaced
+containers/ports.
 
-```bash
-DEVNET_PREFIX=g655 DEVNET_NETWORK=g655 DEVNET_GRPC_BASE=41402 \
-DEVNET_HTTP_BASE=41403 DEVNET_ADMIN_BASE=41405 RNODE_IMAGE=rnode:devrewards \
-tools/devnet.sh up --validators 1 --fresh --production-genesis --developer-share 500 \
-  --developer-reserve-keys <pub0>,<pub1> --developer-reserve-quorum 2
-# exit 0; the bootstrap reached Running and produced blocks (latestBlockNumber=8)
+| step | measured |
+|---|---|
+| genesis + finality | five nodes healthy; the observer finalized block 1 and later 51, 112, 129 |
+| install | `devrewards/install.rendered.rho` succeeded as an ordinary signed deploy; `@"devrewards/treasury-address"` = `1111o8xM2GTeLyGC9iipZg3EvgvyqH9mycSzTVzZyoQTssov4NzLk` |
+| reserve → treasury | validator 0's `transfer` of the reserve's balance **4511** recorded nonce 0; validator 1's `confirm` returned `(true, (false, "done"))` |
+| top-up | 200 000 REV from the deployer's own vault. **Why:** a 5 % reserve is, by construction, a fraction of the installer's own burn, so it cannot cover the installer's full leaf; the top-up is stated rather than hidden |
+| beneficiary | validator 0 registered `111121VP3YyBCToBxa5ikc2nSgh3XK9P9F9bc3LmCZpZPpwnG3Subk`; `beneficiaryOf(v0, 51)` returned it |
+| observer manifest | the Rust observer (`node/examples/devrewards_observer.rs`) and `tools/devrewards_manifest.py` produced the **same root** `8ea03da9…d9c` and digest at anchor 51 |
+| accept | 2-of-2 secp256k1 attestations over the canonical digest were accepted on chain |
+| inactive | a claim before activation was refused `treasury inactive` |
+| activation | 2-of-2 over `blake2b256("devrewards-activate-v1" \|\| treasuryAddress)` activated the treasury |
+| claim | **123 871** paid once to the anchor-resolved beneficiary; the target balance became 123 871 |
+| negative arms | a replayed claim refused `already paid`; an over-claim refused `invalid proof`; a conflicting manifest for the epoch refused `conflicting manifest` |
+| restart | validator 3 stopped and restarted; after a post-restart deploy finality advanced 112 → 117 → 129 and the target balance stayed 123 871 |
+| benchmark | the identical no-op term cost **129** at block 117 and **129** at block 128 |
 
-tools/devnet.sh deploy devrewards/install.rendered.rho
-# Response: Success!  DeployId 3045...fc6   (block 4)
-```
+**The genesis report is refused by the node**: `getEventByHash` on block 0 fails with
+`ReplayException: Unused COMM event: replayData multimap has 17 elements left`, and the report API
+is served only by a read-only node. The observer therefore attributes post-genesis usage from height
+1; genesis deploys are not developer usage.
 
-Read back from the chain: `@"devrewards/treasury-address"` holds
-`11112fZs4p6axeZdLgKViKtYJmFWgFGUEUCMDz9wNM4QvpNnaqSdVn`, published by the install deploy in block 4.
-So the plan's main feasibility risk — **a non-dev genesis that funds a deployer and accepts an
-ordinary signed deploy** — is measured, and the DevRewards install runs on it.
+## Not run — and why G655 stays `owes`
 
-What this arm does **not** do: it is one validator, not four; it does not fund the treasury from the
-reserve, build a manifest from block events, or claim. A first attempt under the default container
-prefix collided with another session's `devnet-bootstrap` (the name is shared); the namespaced run
-above is the record.
-
-## Not run (and why the gate is not met)
+The gate's own pass condition also requires **injected service crashes** (not only a validator
+restart) that converge to exactly-once balances, and **one protocol version and one finalized state
+on every node**. Neither was measured: the restart arm restarted one validator; no observer crash
+between accept and claim, no repeated crash loop, and no five-node state/protocol census. The formal
+witness `tools/devrewards-experiment.py::run_gate` also does not yet drive the live flow; the
+measurements above were driven by `tools/devrewards_live.py` and the observer example. Promoting the
+row on this record would claim more than was measured.
 
 - **The live four-validator production genesis.** The devnet now has `--production-genesis` (no
   `--dev-mode`, the reserve genesis parameters, a funded deployer, no `--deployer-private-key`), and

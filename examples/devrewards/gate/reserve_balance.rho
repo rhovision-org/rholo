@@ -1,0 +1,7 @@
+new rl(`rho:registry:lookup`), resCh, m in {
+  rl!(`rho:id:r8byucdkfgdokxbd7zrtbxnhxq1gp6eur3mqcbe36upp6ecbdriy`, *resCh) |
+  for (@(_, multiSig) <- resCh) {
+    @multiSig!("balance", *m) |
+    for (@b <- m) { @"gate/reserve-balance"!(b) }
+  }
+}

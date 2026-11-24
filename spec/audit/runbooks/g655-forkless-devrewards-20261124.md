@@ -4,13 +4,17 @@
 gate's arms. This is a local-devnet witness, not mainnet-scale evidence.
 
 **Status of the arm.** The offline arms (contracts, settlement, registry, attribution, encoding,
-HAZOP) are green and listed in
-`spec/audit/evidence/g655-forkless-devrewards-20261124/README.md`. A **one-validator production-genesis
-smoke is green**: the genesis commits and the DevRewards install lands as an ordinary deploy (block 4;
-the treasury address is published). The full arm is **not** green: the node exposes the report tree
-over gRPC (`getEventByHash`) but no CLI command wraps it, so the independent observer has no client
-yet; the four-validator run, the reserve funding, the claim and the restart drills are owed. The
-observer client is the unblocker. G655 stays `owes`; do not promote it from this runbook alone.
+HAZOP) are green. A **four-validator production-genesis run** measured: the observer/national
+manifest, the reserve→treasury quorum transfer, beneficiary registration, accept, inactive refusal,
+activation, a 123 871 claim paid once, the negative arms, a validator restart with finality recovery,
+and a cost benchmark (129 = 129). The record is
+`spec/audit/evidence/g655-forkless-devrewards-20261124/README.md`.
+
+**G655 still stays `owes`.** The gate's pass condition also requires injected **service crashes**
+(not a single validator restart) converging to exactly-once balances, and one protocol version and
+one finalized state on **every** node. Neither is measured, and `run_gate` does not yet drive the
+live flow (the run used `tools/devrewards_live.py` and the observer example). Do not promote from
+this runbook alone.
 
 ## Preconditions
 

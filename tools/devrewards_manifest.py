@@ -13,7 +13,7 @@ Input schema (the experiment's export; heights are integers, byte strings are lo
      "anchor": {"height": 42, "hash": "<hex64>", "finalized": true},
      "blocks": [{"height": 1, "hash": "<hex64>", "finalized": true,
                  "deploys": [{"deployer": "<hex130>", "burned": 1234,
-                              "events": [{"consume_hash": "<hex64>"}]}]}]}
+                              "events": [{"consume_id": "<hex64>"}]}]}]}
 
 Encoding (shared with `Settlement.rho` and `casper/tests/devrewards_manifest_encoding.rs`):
 
@@ -65,6 +65,19 @@ def digest(epoch: int, anchor_hash: bytes, root: bytes) -> bytes:
     return h32(DOMAIN + epoch.to_bytes(8, "little") + anchor_hash + root)
 
 
+def _consume_id(event: dict) -> bytes:
+    """The observer's canonical consume identity, or the runtime's consume hash.
+
+    The node's `ConsumeEvent.hash` includes the continuation body, which the report API does not
+    carry; `devrewards_observer` derives `consume_id = H("devrewards-consume-v1" || channels ||
+    patterns)` instead. Both name the same installation for the first-appearance rule.
+    """
+    value = event.get("consume_id") or event.get("consume_hash")
+    if not value:
+        raise ValueError("an event needs consume_id (or consume_hash)")
+    return _hex(value, 32)
+
+
 def _hex(value: str, length: int | None = None) -> bytes:
     raw = bytes.fromhex(value)
     if length is not None and len(raw) != length:
@@ -84,7 +97,7 @@ def attribute(data: dict) -> dict[bytes, int]:
             burned = deploy["burned"]
             if isinstance(burned, bool) or not isinstance(burned, int) or burned < 0:
                 raise ValueError("a deploy's burned amount is a non-negative integer")
-            hashes = [_hex(event["consume_hash"], 32) for event in deploy.get("events", [])]
+            hashes = [_consume_id(event) for event in deploy.get("events", [])]
             priors = sorted({installers[h] for h in hashes if h in installers})
             if priors:
                 base, rem = divmod(burned, len(priors))

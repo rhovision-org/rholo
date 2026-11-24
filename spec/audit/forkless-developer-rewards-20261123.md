@@ -94,13 +94,17 @@ so a vault created in the genesis can be spent from a later block. The spend wit
   duplicate epoch, conflicting manifest, unauthorized change, over-claim, crash/restart, stale anchor,
   drained treasury and replayed attestation, each with a named falsifier.
 
-**Row 16 and §7 remain observed, not asserted.** `tools/devrewards-experiment.py` is the witness and
-its verdict engine refuses to call a `not-run` arm a pass. A **one-validator production-genesis smoke
-is green** — the non-dev genesis commits, and the DevRewards install is an ordinary deploy that
-publishes the treasury address in block 4 — which measures the plan's main feasibility risk. The
-four-validator run, the independent observer (no block-event export in this CLI), the reserve funding,
-the claim and the restart drills are owed, so `G655-FORKLESS-DEVREWARDS` stays `owes`. Nothing above
-promotes it.
+**Row 16 and §7: the live arms are measured; the gate still owes its crash census.**
+`tools/devrewards-experiment.py` is the verdict engine and refuses to call a `not-run` arm a pass. A
+four-validator production-genesis run (no `--dev-mode`) measured: the Rust observer and the Python
+builder agreeing on the manifest root/digest; the reserve→treasury 2-of-2 quorum transfer; a
+beneficiary registered at the anchor and resolved there; accept, inactive refusal, activation, and a
+123 871 claim paid exactly once to that beneficiary; the replayed/over-claim/conflict refusals; a
+validator restart with finality recovery; and a 129 = 129 cost benchmark. The detail is in
+`spec/audit/evidence/g655-forkless-devrewards-20261124/README.md`. What the gate's own pass condition
+additionally asks — **injected service crashes** (not one validator restart) converging to
+exactly-once balances, and one protocol version/finalized state on every node — is not measured, so
+`G655-FORKLESS-DEVREWARDS` stays `owes`. Nothing above promotes it.
 
 ## Non-claims
 

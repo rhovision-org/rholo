@@ -1,0 +1,7 @@
+new rv(`rho:rchain:revVault`), vaultCh, b in {
+  rv!("findOrCreate", "111121VP3YyBCToBxa5ikc2nSgh3XK9P9F9bc3LmCZpZPpwnG3Subk", *vaultCh) |
+  for (@(true, *h) <- vaultCh) {
+    h!("balance", *b) |
+    for (@bal <- b) { @"gate/target-balance"!(bal) }
+  }
+}

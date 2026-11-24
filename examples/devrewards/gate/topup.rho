@@ -1,0 +1,4 @@
+new rv(`rho:rchain:revVault`), deployerId(`rho:rchain:deployerId`), ch in {
+  rv!("transfer", *deployerId, "1111o8xM2GTeLyGC9iipZg3EvgvyqH9mycSzTVzZyoQTssov4NzLk", 200000, *ch) |
+  for (@r <- ch) { @"gate/topup"!(r) }
+}
