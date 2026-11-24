@@ -173,6 +173,10 @@ pub(crate) async fn build_runtime_core(
     }
 
     dispatcher.set_dispatch_table(dispatch_table);
+    // Minted vault handles are persisted as continuations but their handlers are not: a replay's
+    // dispatcher has only the fixed table above. Attach the resolver that reads the handle's durable
+    // dispatch record, so play and replay can both run a handle minted in an earlier block (#669).
+    dispatcher.set_native_resolver(system_processes.native_body_resolver());
     install_system_processes(space, &proc_defs)
         .await
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
@@ -440,6 +444,14 @@ impl RhoRuntime {
 
     pub async fn reset(&self, root: Blake2b256Hash) -> Result<(), String> {
         self.space.reset(root).await?;
+        // Minted native handlers belong to the block that minted them. Drop them so play, like a
+        // replay, resolves the handle from its durable record (#669). This is a **handler-parity**
+        // guard, not a cost one: resolution charges nothing, and the handle block's play/replay
+        // costs agree either way (`vault_handle_across_blocks` asserts both). What differs is *which*
+        // `ContractCall`/native reader a handler closes over — a stale in-memory one after the store
+        // is reset versus the one a fresh replay builds — so both paths are made to use the same
+        // construction from durable state.
+        self.reducer.clear_minted_handlers();
         // The reset replaces the hot store, dropping the in-memory system-process installs (they
         // are not checkpointed). Re-install so deploys/evaluations that run against this root still
         // reach the fixed-channel system contracts.
@@ -746,6 +758,7 @@ impl ReplayRhoRuntime {
 
     pub async fn reset(&self, root: Blake2b256Hash) -> Result<(), String> {
         self.space.reset(root).await?;
+        self.reducer.clear_minted_handlers();
         // Re-install the system processes after the reset (see `RhoRuntime::reset`).
         let ts: RhoTuplespace = self.space.clone();
         install_system_processes(&ts, &self.proc_defs)

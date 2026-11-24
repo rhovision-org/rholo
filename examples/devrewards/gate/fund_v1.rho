@@ -1,0 +1,8 @@
+new rv(`rho:rchain:revVault`), RevAddress(`rho:rev:address`),
+    deployerId(`rho:rchain:deployerId`), addrCh, ch in {
+  RevAddress!("fromPublicKey", "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc".hexToBytes(), *addrCh) |
+  for (@addr <- addrCh) {
+    rv!("transfer", *deployerId, addr, 10000000, *ch) |
+    for (@r <- ch) { @"gate/fund-v1"!(r) }
+  }
+}

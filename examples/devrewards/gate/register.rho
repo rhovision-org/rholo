@@ -1,0 +1,6 @@
+new deployerId(`rho:rchain:deployerId`), ret in {
+  for (r <<- @"devrewards/registry") {
+    r!("register", *deployerId, "111121VP3YyBCToBxa5ikc2nSgh3XK9P9F9bc3LmCZpZPpwnG3Subk", *ret) |
+    for (@ok <- ret) { @"gate/register"!(ok) }
+  }
+}

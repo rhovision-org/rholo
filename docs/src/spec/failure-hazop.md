@@ -1288,3 +1288,32 @@ the U20 side, not a hypothesis.
 and a user-deploy recovery; the code diff #478 does not touch the follower validation path; the
 existing `F-U4-01` already owns the Internal/no-requeue row. Claims that do not survive these
 checks are not recorded as root causes.
+
+### U27 — Developer rewards: the post-genesis service (2026-11-24)
+
+**Design intent.** A fee-funded developer-reward service is switched on by ordinary deploys, never by
+a consensus change, and every manifest, claim and beneficiary change has exactly one disposition.
+
+**Why this node exists.** The protocol's reserved fee share is genesis-only, so the service that
+spends it is the part that must be activatable later. Its hazards are contract-layer hazards — a
+duplicate epoch, a forged beneficiary, an over-claim — and none of the function nodes above studies
+them. `examples/devrewards/` is the implementation; `docs/src/node/developer-rewards.md` is the
+operator path.
+
+**Guide words.** row: NO, MORE, LESS, PART OF, AS WELL AS, OTHER THAN, REVERSE, EARLY, LATE, BEFORE, AFTER
+
+**Table A — deviations**
+
+| ID | Guide word | Deviation | RCA → causal chain | Current behaviour | Class | Disposition | Falsifier |
+|---|---|---|---|---|---|---|---|
+| **F-U27-01** | NO | **A second accepted manifest for an epoch with a different root** would pay two populations from one epoch | `accept` stores one digest per epoch; a differing digest is refused and appended to `conflicts` without replacing the first | refused, and the conflict is readable (`settlement("conflicts")`) | Drift | R2 | casper/tests/devrewards_flows.rs::the_settlement_pays_a_claim_once_and_refuses_a_conflicting_manifest |
+| **F-U27-02** | MORE | **A claim for more than the leaf commits** would pay an amount no attestor signed | the leaf commits the key and the amount; a different amount has no leaf under the root and the proof fold cannot reach it | refused as `invalid proof`; the paid balance is unchanged | Authority | R1 | casper/tests/devrewards_flows.rs::the_settlement_pays_a_claim_once_and_refuses_a_conflicting_manifest |
+| **F-U27-03** | LESS | **A claim the treasury cannot cover** would be marked paid and lost | the transfer is attempted first; the paid marker is written only on a `(true, …)` reply | refused; the marker is not written; the same claim succeeds after funding | Terminal | R2 | casper/tests/devrewards_flows.rs::an_underfunded_claim_is_refused_and_can_be_retried |
+| **F-U27-04** | PART OF | **A partial manifest presented as the epoch's whole** would redefine the root for part of the population | acceptance is all-or-nothing per epoch: one root, one digest, one total; a second root is a conflict | refused; the conflicting evidence is kept | Drift | R2 | casper/tests/devrewards_flows.rs::the_settlement_pays_a_claim_once_and_refuses_a_conflicting_manifest |
+| **F-U27-05** | AS WELL AS | **The same attestor signature supplied twice** would count as two signers and meet the threshold alone | `countAtts` keeps a set of seen public keys and counts only a key's first valid signature | the replay reaches the threshold count as one; activation refuses at a threshold of two | Authority | R1 | casper/tests/devrewards_flows.rs::a_replayed_attestation_counts_once |
+| **F-U27-06** | OTHER THAN | **A claim for an epoch nobody accepted** would consult the treasury on an empty record | `claim` looks up the accepted entry first and answers `unknown epoch` without calling `pay` | refused before any authority is consulted | Drift | R2 | casper/tests/devrewards_flows.rs::the_settlement_pays_a_claim_once_and_refuses_a_conflicting_manifest |
+| **F-U27-07** | REVERSE | **A beneficiary change applied backwards in time** would redirect an already-anchored reward | `register` appends `(height, beneficiary)`; `beneficiaryOf(key, asOfHeight)` returns the latest entry at or below the anchor | a change at height 5 is invisible at height 2 and visible at height 5 | Authority | R1 | casper/tests/devrewards_flows.rs::the_beneficiary_registry_is_self_scoped_and_anchor_versioned |
+| **F-U27-08** | EARLY | **A claim before activation** would spend the reserve while the network has not switched the service on | `pay` reads the treasury's active flag and refuses while it is false | refused as `treasury inactive`; the vault balance does not move | Authority | R2 | casper/tests/devrewards_flows.rs::the_settlement_pays_a_claim_once_and_refuses_a_conflicting_manifest |
+| **F-U27-09** | LATE | **A claim resolved after a later beneficiary change** would pay the new address for an old anchor | the anchor height stored with the epoch is passed to the registry, not the claim's block height | the anchor's version is paid | Authority | R1 | casper/tests/devrewards_flows.rs::the_beneficiary_registry_is_self_scoped_and_anchor_versioned |
+| **F-U27-10** | BEFORE | **A manifest built before its anchor is final** would be attested over a block that can vanish | `build` refuses a non-finalized anchor and refuses a deploy after the anchor | refused by the tool; no manifest is produced | Drift | R2 | tests/test_devrewards_manifest.py::test_an_unfinalized_anchor_is_refused |
+| **F-U27-11** | AFTER | **A crash or restart after a paid claim** would pay it again | the paid marker is part of the settlement's state, which is a chain object; a replay re-executes the same deploy log and reaches the same marker | a replayed claim is refused `already paid`; the paying block replays at the recorded cost | Terminal | R2 | casper/tests/devrewards_flows.rs::the_settlement_pays_a_claim_once_and_refuses_a_conflicting_manifest |

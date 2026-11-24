@@ -52,7 +52,7 @@ use rchain_shared::serialize::Serialize;
 
 use rchain_rspace::native_store::{
     InMemNativeStore, NativeStoreAction, PREFIX_ERTP, PREFIX_HTTP, PREFIX_POS, PREFIX_REGISTRY,
-    PREFIX_TXN, PREFIX_VAULT, PREFIX_VAULT_AUTH, PREFIX_VAULT_NAME,
+    PREFIX_TXN, PREFIX_VAULT, PREFIX_VAULT_AUTH, PREFIX_VAULT_HANDLE, PREFIX_VAULT_NAME,
 };
 
 use crate::pos_liveness::{
@@ -499,6 +499,14 @@ fn txn_key(id: &[u8]) -> Blake2b256Hash {
 /// purse per `findOrCreate` too — `RevVault.rho:103-140`).
 fn vault_name_key(name: &[u8]) -> Blake2b256Hash {
     Blake2b256Hash::create(name)
+}
+
+/// Leaf key for a vault handle's **dispatch record** (`body-ref -> base58 address`).
+///
+/// The ref is the negative `ScalaBodyRef` the handle's continuation carries. A replay starts with
+/// an empty dispatcher and only this record can name the handler that ref runs (#669).
+fn vault_handle_key(body_ref: i64) -> Blake2b256Hash {
+    Blake2b256Hash::create(&body_ref.to_be_bytes())
 }
 
 /// The state of a cross-shard two-phase-commit transaction record.
@@ -3529,14 +3537,48 @@ impl NativeSystemState {
     }
 
     /// Record that `name` opens the vault at `address` — what `findOrCreate` writes when it mints a
-    /// handle. Recorded in native state (not in the handler's closure) so the handle still resolves
-    /// in a later block and on the replay path, both of which construct a fresh dispatcher.
+    /// handle.
+    ///
+    /// **This map is the handle's identity, not its dispatch path.** Until #669 the doc here claimed
+    /// it was enough for the handle to resolve in a later block; it was not, because the handle's
+    /// continuation and its dispatcher entry were in-memory only. The later-block path is
+    /// [`Self::set_vault_handle_dispatch`] plus the persistent consume `install_native` now installs;
+    /// this record still answers "which vault was this name minted for".
     pub fn set_vault_name(&self, name: &[u8], address: &str) {
         self.store.put(
             PREFIX_VAULT_NAME,
             vault_name_key(name),
             address.as_bytes().to_vec(),
         );
+    }
+
+    /// Record the address a minted handle's continuation id runs (#669).
+    ///
+    /// Written in the same native-state transaction as the mint, so a checkpoint carries it. A
+    /// replay's dispatcher asks [`Self::vault_handle_address`] for an id it has not registered and
+    /// re-builds the same `vault_handle_handler` from the answer.
+    pub fn set_vault_handle_dispatch(&self, body_ref: i64, address: &str) {
+        self.store.put(
+            PREFIX_VAULT_HANDLE,
+            vault_handle_key(body_ref),
+            address.as_bytes().to_vec(),
+        );
+    }
+
+    /// The address a continuation id runs, or `None` when the id is not a minted vault handle.
+    ///
+    /// `None` is the refusal: a negative `ScalaBodyRef` with no dispatch record is a continuation
+    /// nobody can explain, and dispatching it as a no-op is how the cross-block handle used to die
+    /// silently. The caller errors instead.
+    pub async fn vault_handle_address(&self, body_ref: i64) -> Result<Option<String>, String> {
+        match self
+            .store
+            .get(PREFIX_VAULT_HANDLE, &vault_handle_key(body_ref))
+            .await?
+        {
+            Some(bytes) => Ok(String::from_utf8(bytes).ok()),
+            None => Ok(None),
+        }
     }
 
     /// Move `amount` from one vault to another: the spend rule, in one place.

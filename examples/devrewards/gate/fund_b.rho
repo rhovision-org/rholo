@@ -1,0 +1,12 @@
+new rl(`rho:registry:lookup`), deployerId(`rho:rchain:deployerId`),
+    resCh, msvCh, authCh, ret in {
+  rl!(`rho:id:r8byucdkfgdokxbd7zrtbxnhxq1gp6eur3mqcbe36upp6ecbdriy`, *resCh) |
+  rl!(`rho:rchain:multiSigRevVault`, *msvCh) |
+  for (@(_, multiSig) <- resCh & @(_, MultiSigRevVault) <- msvCh) {
+    @MultiSigRevVault!("deployerAuthKey", *deployerId, *authCh) |
+    for (auth <- authCh) {
+      @multiSig!("confirm", "1111o8xM2GTeLyGC9iipZg3EvgvyqH9mycSzTVzZyoQTssov4NzLk", 4511, *auth, 0, *ret) |
+      for (@r <- ret) { @"gate/fund-b"!(r) }
+    }
+  }
+}

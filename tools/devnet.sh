@@ -103,6 +103,16 @@ FRESH=false
 N=1
 M=0
 
+# **Production genesis** (#655). `--production-genesis` drops `--dev-mode` and passes the genesis
+# developer-reserve parameters, so the network's genesis is the one a real deployment makes: no
+# dev-mode allocation, no dummy-deploy keepalive, and a deployer funded from `wallets.txt` rather than
+# by a dev-only path. The reserve values are the devnet's, not a release's: this is how the forkless
+# developer-rewards experiment gets a non-dev genesis without shipping a mainnet one.
+PRODUCTION_GENESIS=false
+RESERVE_SHARE=""
+RESERVE_KEYS=""
+RESERVE_QUORUM=""
+
 # Throwaway validator keypairs (secp256k1, base16). validator[0] also funds the deployer wallet, so
 # the deployer private key is validator[0]'s private key.
 #
@@ -206,6 +216,13 @@ Commands:
   --fresh                        discard the nodes' data volumes first, so the bootstrap creates the
                                  genesis rather than rebuilding its stored chain (a *restart* rebuilds
                                  and replays the accumulated chain; `up` says which one it is doing)
+  --production-genesis           drop `--dev-mode` and pass the developer-reserve genesis parameters
+                                 (below), so the genesis is the one a real deployment makes. The
+                                 deployer is funded from wallets.txt and deploys are signed with
+                                 `rnode deploy --private-key`, not by the node
+  --developer-share N            reserve share in basis points (only with --production-genesis)
+  --developer-reserve-keys K,…   the reserve signers' 65-byte hex public keys, comma-separated
+  --developer-reserve-quorum N   confirmations a reserve transfer needs (1..=keys)
   --data-volume NAME             mount an existing data volume as the *bootstrap's* data directory,
                                  for measuring against a recorded chain (must already exist; the
                                  validators still use their own `${name}-data` volumes)
@@ -552,8 +569,21 @@ rnode_run_common() {
   # Two things this does **not** preserve: dev mode also enables `exploratory_deploy` on every
   # validator (`casper/src/api/block_api_impl.rs`), and the format-2 PosParams record changes every
   # genesis hash, so "the hashes are unchanged" is not a property of this line.
-  flags="$flags --dev-mode"
-  if $DEPLOYER; then flags="$flags --deployer-private-key ${DEPLOYER_PRIV}"; fi
+  if ! $PRODUCTION_GENESIS; then flags="$flags --dev-mode"; fi
+  # **Not in production mode.** `--deployer-private-key` drives the dev-mode dummy-deploy keepalive;
+  # a production-genesis network deploys with `rnode deploy --private-key`, so the node never holds
+  # the deployer key.
+  if $DEPLOYER && ! $PRODUCTION_GENESIS; then flags="$flags --deployer-private-key ${DEPLOYER_PRIV}"; fi
+  # The reserve parameters are *genesis* values and go on the shared flag string, so every bonded node
+  # agrees. `--developer-reserve-public-keys` takes `num_args = 1..`, so it is written last in this
+  # group and the keys are space-separated here (the CLI accepts them that way).
+  if $PRODUCTION_GENESIS && [[ -n "$RESERVE_SHARE" ]]; then
+    if [[ -z "$RESERVE_KEYS" || -z "$RESERVE_QUORUM" ]]; then
+      echo "--production-genesis with a non-zero --developer-share needs --developer-reserve-keys and --developer-reserve-quorum" >&2
+      return 2
+    fi
+    flags="$flags --developer-share $RESERVE_SHARE --developer-reserve-quorum $RESERVE_QUORUM --developer-reserve-public-keys ${RESERVE_KEYS//,/ }"
+  fi
   # A verbosity passthrough for diagnosing the **inbound** path, where a node's silence is otherwise
   # indistinguishable from a message that never arrived (issue #100): the frames a node *receives* are
   # logged at debug/trace and nowhere else, so without this a stalled handshake reads as a healthy
@@ -655,6 +685,10 @@ cmd_up() {
       --validators) n="${2:?}"; shift 2 ;;
       --observers)  m="${2:?}"; shift 2 ;;
       --fresh) FRESH=true; shift ;;
+      --production-genesis) PRODUCTION_GENESIS=true; shift ;;
+      --developer-share) RESERVE_SHARE="${2:?}"; shift 2 ;;
+      --developer-reserve-keys) RESERVE_KEYS="${2:?}"; shift 2 ;;
+      --developer-reserve-quorum) RESERVE_QUORUM="${2:?}"; shift 2 ;;
       --data-volume)
         # Only `up` reads this, and only for the bootstrap. It is how a measurement runs against the
         # recorded long chain (`devnet-stale-snapshot`) instead of `${BOOTSTRAP}-data`; `--fresh`
@@ -1202,25 +1236,29 @@ cmd_deploy() {
   local file="${1:?contract file required (relative to examples/)}"; shift
   local node="$BOOTSTRAP"
   if [[ "${1:-}" == "--to" ]]; then node="$(validator_name "${2:?}")"; shift 2; fi
-  local base; base="$(basename "$file")"
+  # **A path under `examples/`, not just a basename.** `docs/src/node/developer-rewards.md` and the
+  # DevRewards sources live in subdirectories, and `/contracts` is mounted at `examples/`; stripping
+  # the directory looked for `/contracts/install.rho` for `devrewards/install.rho` and failed with
+  # "No such file or directory".
+  local rel="${file#examples/}"
   # Anchor the deploy to the current height: a `valid_after_block_number = -1` deploy is "valid from
   # genesis" and expires after DEPLOY_LIFESPAN blocks, so on a long-running devnet it would be dropped
   # before it can be proposed.
   local height
   height="$(node_cli "$node" status 2>/dev/null | sed -n 's/.*"latestBlockNumber": *\([0-9]*\).*/\1/p')"
-  echo "==> deploying $base to $node (validAfterBlockNumber=${height:-0})"
+  echo "==> deploying $rel to $node (validAfterBlockNumber=${height:-0})"
   node_cli "$node" deploy \
     --phlo-limit 1000000 --phlo-price 1 \
     --private-key "$DEPLOYER_PRIV" \
     --shard-id "$SHARD_ID" \
     --valid-after-block-number "${height:-0}" \
-    "/contracts/$base"
+    "/contracts/$rel"
 }
 
 cmd_eval() {
   local file="${1:?file required (relative to examples/)}"
-  local base; base="$(basename "$file")"
-  node_cli "$BOOTSTRAP" eval "/contracts/$base"
+  local rel="${file#examples/}"
+  node_cli "$BOOTSTRAP" eval "/contracts/$rel"
 }
 
 cmd_query() {

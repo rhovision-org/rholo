@@ -41,6 +41,18 @@ pub type EvalBodyFn = Box<
         + Sync,
 >;
 
+/// Resolves a **minted** native continuation id that this dispatcher has not registered (#669).
+///
+/// A vault handle's continuation is checkpointed, but the dispatcher is not: play reuses a table
+/// built in an earlier block and replay starts with only the fixed system processes. The resolver
+/// reads the id's durable record and re-builds the handler, so both paths run the same code. It is
+/// asked only for negative (`ScalaBodyRef` minted) ids; a non-negative `BodyRef` that is missing is
+/// a bug, not a lookup.
+#[async_trait]
+pub trait NativeBodyResolver: Send + Sync {
+    async fn resolve(&self, body_ref: i64) -> Result<Option<ScalaBodyFn>, RholangError>;
+}
+
 /// Build an environment from the data captured by a match (port of `Dispatch.buildEnv`).
 pub fn build_env(data_list: &[ListParWithRandom]) -> Env<Par> {
     Env::make_env(
@@ -55,15 +67,25 @@ pub fn build_env(data_list: &[ListParWithRandom]) -> Env<Par> {
 ///
 /// `eval` is set after construction to break the reducer↔dispatcher cycle.
 pub struct RholangAndScalaDispatcher {
-    dispatch_table: Mutex<BTreeMap<i64, ScalaBodyFn>>,
+    /// `Arc` around each handler so a resolved id can be both registered and called: a
+    /// `ScalaBodyFn` is a boxed closure and cannot be cloned, and a resolution that used the
+    /// handler without keeping it would ask the resolver again on every send.
+    dispatch_table: Mutex<BTreeMap<i64, Arc<ScalaBodyFn>>>,
     eval: Mutex<Option<EvalBodyFn>>,
+    native_resolver: Mutex<Option<Arc<dyn NativeBodyResolver>>>,
 }
 
 impl RholangAndScalaDispatcher {
     pub fn new(dispatch_table: BTreeMap<i64, ScalaBodyFn>) -> Self {
         RholangAndScalaDispatcher {
-            dispatch_table: Mutex::new(dispatch_table),
+            dispatch_table: Mutex::new(
+                dispatch_table
+                    .into_iter()
+                    .map(|(id, handler)| (id, Arc::new(handler)))
+                    .collect(),
+            ),
             eval: Mutex::new(None),
+            native_resolver: Mutex::new(None),
         }
     }
 
@@ -72,7 +94,16 @@ impl RholangAndScalaDispatcher {
     }
 
     pub fn set_dispatch_table(&self, table: BTreeMap<i64, ScalaBodyFn>) {
-        *self.dispatch_table.lock().unpoison() = table;
+        *self.dispatch_table.lock().unpoison() = table
+            .into_iter()
+            .map(|(id, handler)| (id, Arc::new(handler)))
+            .collect();
+    }
+
+    /// Attach the resolver a fresh dispatcher uses for minted native ids (#669). Called once per
+    /// runtime, after the system-process table is built and before any deploy runs.
+    pub fn set_native_resolver(&self, resolver: Arc<dyn NativeBodyResolver>) {
+        *self.native_resolver.lock().unpoison() = Some(resolver);
     }
 
     /// Bind one handler to one id, leaving every other entry alone — the entry point the vault
@@ -88,12 +119,16 @@ impl RholangAndScalaDispatcher {
         body_ref: i64,
         handler: ScalaBodyFn,
     ) -> Result<(), RholangError> {
+        self.register_handler_arc(body_ref, Arc::new(handler));
+        Ok(())
+    }
+
+    fn register_handler_arc(&self, body_ref: i64, handler: Arc<ScalaBodyFn>) {
         let mut table = self.dispatch_table.lock().unpoison();
         if table.contains_key(&body_ref) {
-            return Ok(());
+            return;
         }
         table.insert(body_ref, handler);
-        Ok(())
     }
 }
 
@@ -126,18 +161,44 @@ impl Dispatch for RholangAndScalaDispatcher {
                 fut.await
             }
             TaggedContinuation::ScalaBodyRef(r) => {
-                let fut = {
+                let r = *r;
+                let known = {
                     let table = self.dispatch_table.lock().unpoison();
-                    match table.get(r) {
-                        Some(f) => f(data_list, path),
-                        None => {
-                            return Err(RholangError::ReduceError(format!(
-                                "dispatch: no function for {r}"
-                            )))
+                    table.get(&r).cloned()
+                };
+                let handler = match known {
+                    Some(handler) => handler,
+                    // A minted id this dispatcher has not seen: replay starts empty, and the live
+                    // runtime's table dies with its first block. Ask the durable-state resolver.
+                    None if r < 0 => {
+                        let resolver = {
+                            let attached = self.native_resolver.lock().unpoison();
+                            attached.clone()
                         }
+                        .ok_or_else(|| {
+                            RholangError::BugFoundError(format!(
+                                "dispatch: no native-body resolver for minted continuation {r}"
+                            ))
+                        })?;
+                        // **Not under the table lock.** The resolver reads native state, which may
+                        // await the store; holding the dispatcher's mutex across that would serialize
+                        // every other dispatch behind one I/O.
+                        let resolved = resolver.resolve(r).await?.ok_or_else(|| {
+                            RholangError::ReduceError(format!(
+                                "dispatch: minted continuation {r} has no durable handler record"
+                            ))
+                        })?;
+                        let handler = Arc::new(resolved);
+                        self.register_handler_arc(r, handler.clone());
+                        handler
+                    }
+                    None => {
+                        return Err(RholangError::ReduceError(format!(
+                            "dispatch: no function for {r}"
+                        )))
                     }
                 };
-                fut.await
+                handler(data_list, path).await
             }
             TaggedContinuation::Empty => Ok(()),
         }
@@ -148,6 +209,12 @@ impl Dispatch for RholangAndScalaDispatcher {
     /// one holder and silently not for another.
     fn register(&self, body_ref: i64, handler: ScalaBodyFn) -> Result<(), RholangError> {
         self.register_handler(body_ref, handler)
+    }
+
+    /// Drop minted handlers; the fixed system processes are the non-negative ids and stay.
+    fn clear_minted_handlers(&self) {
+        let mut table = self.dispatch_table.lock().unpoison();
+        table.retain(|id, _| *id >= 0);
     }
 }
 
@@ -164,6 +231,10 @@ impl Dispatch for Arc<RholangAndScalaDispatcher> {
 
     fn register(&self, body_ref: i64, handler: ScalaBodyFn) -> Result<(), RholangError> {
         self.as_ref().register_handler(body_ref, handler)
+    }
+
+    fn clear_minted_handlers(&self) {
+        self.as_ref().clear_minted_handlers();
     }
 }
 
@@ -193,6 +264,12 @@ impl Dispatch for Weak<RholangAndScalaDispatcher> {
             RholangError::BugFoundError("system dispatcher has been dropped".to_string())
         })?;
         dispatcher.register_handler(body_ref, handler)
+    }
+
+    fn clear_minted_handlers(&self) {
+        if let Some(dispatcher) = self.upgrade() {
+            dispatcher.clear_minted_handlers();
+        }
     }
 }
 

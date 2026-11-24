@@ -9,8 +9,11 @@
 //!   the genesis created, and a fee-paying deploy pays it exactly its share.
 //! * [`the_reserve_is_spent_by_its_quorum_and_by_nobody_else`] — the spend witness: a non-signer's
 //!   transfer is refused, one signer alone records but moves nothing, and the second signer's
-//!   confirmation moves the funds out of the reserve to the target. **Ignored until
-//!   #669 is fixed** — see the test.
+//!   confirmation moves the funds out of the reserve to the target. **It failed for a harness
+//!   reason, not a contract reason**: every evaluate shared one random seed, so block 2's AuthKey
+//!   token contract was installed on the same fresh name block 3 would mint, and block 3's
+//!   `check` was answered by block 2's token (a different shape) — `invalid auth`. Each block now
+//!   gets its own seed ([`seed`]), and the witness passes through the genesis-minted handle.
 //! * [`a_reserve_whose_vault_was_not_created_refuses_the_genesis`] — fail closed: a non-zero share
 //!   with no custody vault is not installed.
 //! * [`the_reserve_genesis_replays_to_the_same_state`] — play and replay bind the same reserve.
@@ -47,6 +50,16 @@ const EXECUTOR_SHARE: i64 = 2_500;
 
 fn nn(v: i64) -> NonNegI64 {
     NonNegI64::try_from(v).unwrap()
+}
+
+/// **One seed per evaluate.** `new`-bound names are derived from the deploy's random seed, so
+/// passing one seed to several `compute_state` calls makes a later deploy's fresh channels collide
+/// with an earlier deploy's — and a persistent contract installed on a colliding name (an AuthKey
+/// token, for instance) answers the later deploy with the earlier deploy's value. That reads exactly
+/// like a contract defect: it produced this file's `invalid auth` at block 3 before the seeds were
+/// separated. Every evaluate gets its own seed; the replay test deliberately reuses the genesis one.
+fn seed(n: u8) -> Blake2b512Random {
+    Blake2b512Random::from_init(&[n; 32])
 }
 
 fn public_key(seed: u8) -> PublicKey {
@@ -273,7 +286,7 @@ fn the_reserve_is_bound_to_its_vault_and_paid_its_share() {
                 &genesis_post,
                 &[deploy_by(r#"@"marker"!(true)"#, 0x01)],
                 &[],
-                &rand,
+                &seed(1),
                 block(1),
                 &fringe_state(1),
             )
@@ -293,15 +306,12 @@ fn the_reserve_is_bound_to_its_vault_and_paid_its_share() {
 /// **The witness.** The reserve receives its share of a real deploy's burn, and only the configured
 /// quorum can move it out — through the contract, to a target whose balance is what is asserted.
 ///
-/// **Ignored, and not passing: it found a defect this PR does not fix** (#669).
-/// A `MultiSigRevVault` created in one block does not work from a later block on this port: a native
-/// vault handle minted in block N answers nothing in block N+1 (its continuation and handler are
-/// installed in memory, not in the state a later block resets to), and the genesis-created vault
-/// answers its own signer's `transfer` with `invalid auth`. Until that is fixed the reserve accrues
-/// but cannot be spent, so no genesis may set a non-zero `developer-share`. This test is the
-/// acceptance check for the fix and must pass before one does.
+/// **The vault is created at genesis and spent four blocks later**, so this also exercises the
+/// cross-block handle end to end: the transfer inside `multiSig("confirm")` reaches the `revVault`
+/// handle the genesis minted, through the checkpointed continuation and the durable dispatch record
+/// (#669). The earlier `invalid auth` was the harness's shared seed colliding `authKey` names (see
+/// [`seed`]); with one seed per evaluate the transfer is recorded, confirmed, and the REV moves.
 #[test]
-#[ignore = "blocked: multisig vaults are not spendable from a later block (#669)"]
 fn the_reserve_is_spent_by_its_quorum_and_by_nobody_else() {
     with_big_stack(async {
         let rm = build_runtime_manager().await;
@@ -349,7 +359,7 @@ fn the_reserve_is_spent_by_its_quorum_and_by_nobody_else() {
                 &genesis_post,
                 &[deploy_by(r#"@"marker"!(true)"#, 0x01)],
                 &[],
-                &rand,
+                &seed(1),
                 block(1),
                 &fringe_state(1),
             )
@@ -379,7 +389,7 @@ fn the_reserve_is_spent_by_its_quorum_and_by_nobody_else() {
                 &post,
                 &[deploy_by(&reserve_call("outsider", &transfer), OUTSIDER)],
                 &[],
-                &rand,
+                &seed(2),
                 block(2),
                 &fringe_state(2),
             )
@@ -398,7 +408,7 @@ fn the_reserve_is_spent_by_its_quorum_and_by_nobody_else() {
                 &post,
                 &[deploy_by(&reserve_call("signer-a", &transfer), SIGNER_A)],
                 &[],
-                &rand,
+                &seed(3),
                 block(3),
                 &fringe_state(3),
             )
@@ -423,7 +433,7 @@ fn the_reserve_is_spent_by_its_quorum_and_by_nobody_else() {
                 &post,
                 &[deploy_by(&reserve_call("signer-b", &confirm), SIGNER_B)],
                 &[],
-                &rand,
+                &seed(4),
                 block(4),
                 &fringe_state(4),
             )

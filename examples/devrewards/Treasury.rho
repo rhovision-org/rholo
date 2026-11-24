@@ -1,0 +1,116 @@
+// Treasury — holds the reserve in a fresh unforgeable vault and refuses to move it until activated.
+//
+// **Included by 'install.rho'**; it expects the install's outer 'new' to bind 'treasuryState',
+// 'custody', 'treasuryAddr', 'blake', 'secp' and 'pay'.
+//
+// The vault is created inside the install from a fresh unforgeable name, so no key controls it and
+// the treasury address is not a signer's address. The spend rule is the reserve's own: the handle's
+// 'transfer' needs the 'unforgeableAuthKey' for that name, and the install keeps both in 'custody'.
+// 'pay' is defined on the private 'pay' name and is handed only to the settlement; the public bundle
+// exposes 'treasuryAddress', 'status' and 'activate', never a way to move funds.
+//
+// **Inactive means held.** Before the attestor quorum activates it, 'pay' refuses and the REV stays
+// in the vault. It is never handed back to validators or sent to the fee pot.
+//
+// Activation verifies a threshold of distinct signatures by the **validator keys fixed at install**
+// over 'blake2b256("devrewards-activate-v1" || treasuryAddress)'. 'countAtts' is shared with the
+// settlement's manifest check.
+
+contract treasury(@"treasuryAddress", ret) = {
+  ret!(treasuryAddr)
+} |
+
+contract treasury(@"status", ret) = {
+  for (@s <- treasuryState) {
+    treasuryState!(s) |
+    ret!(s)
+  }
+} |
+
+// List membership (`Set([a, b])` would be a set containing the list, not its elements).
+contract member(@x, @list, ret) = {
+  match list {
+    [] => { ret!(false) }
+    [h ... rest] => {
+      if (h == x) { ret!(true) } else { member!(x, rest, *ret) }
+    }
+  }
+} |
+
+// Count the distinct signers of 'digest' that are in the install-time attestor list and whose
+// signatures verify. 'seen' is a set of public keys already counted.
+contract countAtts(@list, @seen, @count, @digest, @attestors, ret) = {
+  match list {
+    [] => { ret!(count) }
+    [head ... rest] => {
+      match head {
+        (pk, sig) => {
+          new mCh in {
+            member!(pk, attestors, *mCh) |
+            for (@isMember <- mCh) {
+              if (isMember and not seen.contains(pk)) {
+                new okCh in {
+                  secp!(digest, sig, pk, *okCh) |
+                  for (@ok <- okCh) {
+                    if (ok) {
+                      countAtts!(rest, seen.add(pk), count + 1, digest, attestors, *ret)
+                    } else {
+                      countAtts!(rest, seen, count, digest, attestors, *ret)
+                    }
+                  }
+                }
+              } else {
+                countAtts!(rest, seen, count, digest, attestors, *ret)
+              }
+            }
+          }
+        }
+        _ => { countAtts!(rest, seen, count, digest, attestors, *ret) }
+      }
+    }
+  }
+} |
+
+contract treasury(@"activate", @signatures, ret) = {
+  for (@s <- treasuryState) {
+    if (s.get("active")) {
+      treasuryState!(s) |
+      ret!((true, "already active"))
+    } else {
+      new digestCh in {
+        blake!("devrewards-activate-v1".toUtf8Bytes() ++ treasuryAddr.toUtf8Bytes(), *digestCh) |
+        for (@digest <- digestCh) {
+          new countCh in {
+            countAtts!(signatures, Set(), 0, digest, $$ATTESTORS$$, *countCh) |
+            for (@count <- countCh) {
+              if (count >= $$THRESHOLD$$) {
+                treasuryState!({ "active": true }) |
+                ret!((true, "active"))
+              } else {
+                treasuryState!(s) |
+                ret!((false, "insufficient attestations"))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} |
+
+// The private spend arm. Holding 'pay' is the authority; 'custody' is never published.
+contract pay(@target, @amount, ret) = {
+  for (@s <- treasuryState) {
+    if (s.get("active")) {
+      treasuryState!(s) |
+      for (@(handle, auth) <<- custody) {
+        @handle!("transfer", target, amount, auth, *ret)
+      }
+    } else {
+      treasuryState!(s) |
+      ret!((false, "treasury inactive"))
+    }
+  }
+} |
+
+@"devrewards/treasury"!(bundle+{*treasury})

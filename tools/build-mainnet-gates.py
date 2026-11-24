@@ -322,7 +322,31 @@ def apply_bindings(rows: list[dict], document: dict, floor: int = 0) -> None:
         ident = binding["gate_id"]
         require(ident in by_id, f"{ident}: binding names no gate")
         row = by_id[ident]
-        require(row["status"] != "met", f"{ident}: already met")
+        if row["status"] == "met":
+            # **Idempotent re-run.** The external row is committed once promoted, so a later build
+            # reads it back already `met`. Accept that only when the row carries exactly this
+            # binding — a changed binding over a met row is a silent rewrite of evidence.
+            control = binding["witness_binding"]["control"]
+            expected = {
+                "witness_kind": binding["witness_kind"],
+                "witness_ref": binding["witness_ref"],
+                "witness_scope": binding["witness_scope"],
+                "locality": binding["locality"],
+                "sole_evidence": binding["sole_evidence"],
+                "docker_free": binding["docker_free"],
+                "does_not_claim": binding["does_not_claim"],
+                "witness_binding": binding["witness_binding"],
+                "evidence": binding["evidence"],
+                "negative_control": binding.get("negative_control") or control["description"],
+            }
+            if "criterion" in binding:
+                expected["criterion"] = binding["criterion"]
+            mismatched = [key for key, value in expected.items() if row.get(key) != value]
+            require(
+                not mismatched,
+                f"{ident}: already met with a different binding ({', '.join(mismatched)})",
+            )
+            continue
         eligible, reason = _eligible(row, met_ids)
         require(eligible, f"{ident}: {reason}")
         _binding_shape(binding, row)

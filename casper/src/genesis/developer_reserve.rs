@@ -77,12 +77,14 @@ fn deployer_key() -> PrivateKey {
     PrivateKey::new(blake2b256(b"rnode/genesis/developer-reserve/deployer").to_vec())
 }
 
-/// **Whether a multi-signature vault can be spent from a block after the one that created it** — false
-/// until #669 is fixed. While it is false a reserve would accrue and could never move, so
-/// [`check_reserve_spendable`] refuses every non-zero `developer-share` at the config boundary and
-/// before the ceremony signs. Flipping it is the one-line change that lands with #669, together with
-/// un-ignoring `casper/tests/developer_reserve.rs::the_reserve_is_spent_by_its_quorum_and_by_nobody_else`.
-pub const RESERVE_SPENDABLE: bool = false;
+/// **Whether a multi-signature vault can be spent from a block after the one that created it** — true:
+/// #669's fix makes a minted handle a checkpointed persistent consume whose handler is rebuilt from
+/// the durable dispatch record, and the witness
+/// `casper/tests/developer_reserve.rs::the_reserve_is_spent_by_its_quorum_and_by_nobody_else` spends a
+/// vault the genesis created, four blocks later, through that handle. The gate stays in code so a
+/// deployment can still refuse a non-zero share deliberately: [`check_reserve_spendable`] refuses one
+/// while this is false.
+pub const RESERVE_SPENDABLE: bool = true;
 
 /// **The #669 gate, in code rather than prose** (review on #660): refuse a non-zero share while
 /// [`RESERVE_SPENDABLE`] is false. Called where configuration becomes a genesis
@@ -95,9 +97,10 @@ pub fn check_reserve_spendable(share: NonNegI64) -> Result<(), String> {
 fn gate_reserve(share: NonNegI64, spendable: bool) -> Result<(), String> {
     if share != NonNegI64::zero() && !spendable {
         return Err(format!(
-            "casper.genesis.developer-share is {} basis points, but the reserve's multi-signature \
-             vault cannot yet be spent from a later block (rhovision-org/rholo#669): a non-zero share \
-             would accrue a reserve nobody can move. Leave developer-share at 0 until #669 is fixed",
+            "casper.genesis.developer-share is {} basis points, but this build marks the reserve's \
+             multi-signature vault as not spendable, so a non-zero share would accrue a reserve \
+             nobody can move. Leave developer-share at 0, or enable \
+             RESERVE_SPENDABLE now that rhovision-org/rholo#669 is fixed",
             i64::from(share)
         ));
     }
@@ -392,24 +395,24 @@ mod tests {
         );
     }
 
-    /// **The #669 gate is code**: while vaults are not spendable from a later block, every non-zero
-    /// share is refused with a message naming #669, and a zero share passes. Flipping the constant
-    /// is the whole of lifting it.
+    /// **The #669 gate is code, and it is open**: the witness spends a genesis-created vault four
+    /// blocks later, so a non-zero share is accepted. The gate itself still refuses when a deployment
+    /// turns it off, which is what keeps this a policy switch rather than dead code.
     #[test]
-    fn a_non_zero_share_is_refused_until_the_reserve_is_spendable() {
+    fn the_reserve_is_spendable_and_the_gate_still_refuses_when_switched_off() {
         const {
             assert!(
-                !RESERVE_SPENDABLE,
-                "lift this only with #669's fix and its witness passing"
+                RESERVE_SPENDABLE,
+                "the witness must pass before a genesis may set a non-zero developer-share"
             )
         };
         assert!(check_reserve_spendable(nn(0)).is_ok());
-        let err = check_reserve_spendable(nn(1)).unwrap_err();
-        assert!(err.contains("#669"), "{err}");
         assert!(
-            gate_reserve(nn(500), true).is_ok(),
-            "the gate is the constant and nothing else"
+            check_reserve_spendable(nn(1)).is_ok(),
+            "with #669 fixed a non-zero share is accepted"
         );
+        let err = gate_reserve(nn(500), false).unwrap_err();
+        assert!(err.contains("#669"), "{err}");
     }
 
     /// **The registered entry must match the address being bound.**

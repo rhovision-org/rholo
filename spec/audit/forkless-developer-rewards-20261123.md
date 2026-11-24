@@ -63,8 +63,48 @@ evidence for it, not its witness, and it does not move the row.
 mechanism, and row 7's question of where the share is paid is settled: a `MultiSigRevVault` the
 genesis creates over `developer-reserve-public-keys`/`developer-reserve-quorum`, bound as the reserve's
 address. A genesis with a zero share still has no reserve, so the row is closed for a given network
-only if its genesis commits a non-zero share, and that must wait for #669 (multisig vaults are not yet
-spendable from a later block).
+only if its genesis commits a non-zero share. **#669 is fixed (2026-11-24, C412):** a minted vault
+handle is a checkpointed persistent consume whose handler is rebuilt from a durable dispatch record,
+so a vault created in the genesis can be spent from a later block. The spend witness now passes, and
+`RESERVE_SPENDABLE` is true. What remains for row 4 is the post-genesis treasury/activation service
+(PR-C/PR-D), not the custody mechanism.
+
+**Status after PR-C (2026-11-24).** The post-genesis service now exists as ordinary deploys in
+`examples/devrewards/` and is exercised offline:
+
+- **Row 7/8 (treasury and activation).** A treasury holds a fresh unforgeable vault; before a threshold
+  of distinct install-time validator keys activates it, `pay` refuses and the REV is held. The private
+  `pay` name is held only by the settlement; the public bundle exposes the address, status and
+  activation. `casper/tests/devrewards_flows.rs` covers inactive refusal, activation, and the
+  replayed-attestation count.
+- **Row 10 (attribution).** The two properties this record said were unverified are now pinned by
+  `casper/tests/devrewards_attribution.rs`: byte-identical installs by different deploys log
+  **distinct** consume hashes, and an invocation's COMM resolves to **exactly one** install. The
+  attribution policy (first appearance installs; a burn splits equally among invoked installers;
+  deterministic remainder) is `devrewards-usage-v1` in `tools/devrewards_manifest.py`.
+- **Row 11 (fee policy).** The split is off-chain and versioned in that tool; the protocol does not
+  meter per contract.
+- **Row 12 (beneficiary).** `BeneficiaryRegistry.rho` is append-only and self-scoped: the caller
+  supplies its own `deployerId`, the key is derived from it, and `beneficiaryOf(key, asOfHeight)`
+  applies a change at its height and never before.
+- **Row 15 (encoding).** Leaf, node and digest are pinned in
+  `tests/fixtures/devrewards_manifest_golden.json`, read by both the Python suite and
+  `casper/tests/devrewards_manifest_encoding.rs`.
+- **Row 17 (recovery).** `docs/src/spec/failure-hazop.md` U27 dispositions all eleven guide words for
+  duplicate epoch, conflicting manifest, unauthorized change, over-claim, crash/restart, stale anchor,
+  drained treasury and replayed attestation, each with a named falsifier.
+
+**Row 16 and §7: the live arms are measured; the gate still owes its crash census.**
+`tools/devrewards-experiment.py` is the verdict engine and refuses to call a `not-run` arm a pass. A
+four-validator production-genesis run (no `--dev-mode`) measured: the Rust observer and the Python
+builder agreeing on the manifest root/digest; the reserve→treasury 2-of-2 quorum transfer; a
+beneficiary registered at the anchor and resolved there; accept, inactive refusal, activation, and a
+123 871 claim paid exactly once to that beneficiary; the replayed/over-claim/conflict refusals; a
+validator restart with finality recovery; and a 129 = 129 cost benchmark. The detail is in
+`spec/audit/evidence/g655-forkless-devrewards-20261124/README.md`. What the gate's own pass condition
+additionally asks — **injected service crashes** (not one validator restart) converging to
+exactly-once balances, and one protocol version/finalized state on every node — is not measured, so
+`G655-FORKLESS-DEVREWARDS` stays `owes`. Nothing above promotes it.
 
 ## Non-claims
 
