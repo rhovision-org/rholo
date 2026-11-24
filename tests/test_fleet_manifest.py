@@ -277,6 +277,13 @@ class InputOnlyTests(unittest.TestCase):
         self.assertTrue(any("not a node name" in problem for problem in problems))
         self.assertTrue(any("mode_order" in problem for problem in problems))
 
+    def test_rc5_needs_both_pressure_lifetimes(self):
+        document = manifest(pressure={"endpoint": "https://rpc.example.org",
+                                      "host": "validator-1", "port": 40403, "cap": 2,
+                                      "probes": 4, "mode_order": ["capped"], "settle_s": 5})
+        problems = fleet.validate(document, claim_id="RC-5", head=HEAD)
+        self.assertTrue(any("both the capped and the unset" in problem for problem in problems))
+
     def test_an_upgrade_order_is_a_permutation(self):
         document = manifest(upgrade={
             "old": {"binary_sha256": "1" * 64}, "new_binary_path": "/new", "old_binary_path": "/old",

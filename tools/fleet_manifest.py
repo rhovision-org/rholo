@@ -456,6 +456,8 @@ def _pressure(pressure, claim_id: str | None, names: list[str],
             or len(set(order)) != len(order)):
         problems.append("manifest: pressure.mode_order must be a non-empty unique list of "
                         "capped/unset")
+    elif claim_id == "RC-5" and set(order) != {"capped", "unset"}:
+        problems.append("manifest: RC-5 needs both the capped and the unset lifetime")
     if not _positive_int(pressure.get("settle_s")):
         problems.append("manifest: pressure.settle_s is not a positive integer")
     if transport == "ssh-systemd" and not _text(pressure.get("host")):
