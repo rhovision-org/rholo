@@ -1768,6 +1768,34 @@ async fn note_unrestorable_if_exhausted(
             ),
         );
     }
+    // **The acting rule** (F-U26-02, #658). A spent restore budget is a divergence this node cannot
+    // repair without an anchor the network has not agreed: so it stops **producing** and keeps
+    // **serving** the chain it holds. The durable record is written first, then the in-process
+    // registry is noted — a crash between the two leaves a halt the next boot reads rather than a
+    // halt that existed only in a dead process. `durable: false` is the surface saying the write did
+    // not land, not a reason to keep proposing.
+    let mut halt = rchain_block_storage::dag::dag_storage::DivergenceHalt {
+        at_ms: rchain_shared::time::nano_time() / 1_000_000,
+        block_hash: *hash.as_bytes(),
+        seq_num: i64::from(record.seq_num),
+        episodes: health.unrestorable_records(),
+        durable: true,
+    };
+    match dag.write_divergence_halt(halt).await {
+        Ok(()) => {}
+        Err(e) => {
+            halt.durable = false;
+            log.error(
+                source.clone(),
+                &format!(
+                    "block {} was given up on but the divergence halt was not recorded: {e} — this \
+                     process stops proposing, and the surface says the halt is not durable (F-U26-02)",
+                    hash.to_hex()
+                ),
+            );
+        }
+    }
+    crate::divergence_halt::note(shard_id, halt);
     log.error(
         source,
         &format!(

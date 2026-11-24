@@ -2180,6 +2180,7 @@ pub const OPENAPI_JSON: &str = r##"{
           "adminHttp": { "type": "boolean", "description": "The admin HTTP surface is published" },
           "consecutiveSelfValidationFailures": { "type": "integer", "format": "int64", "description": "Self-validation failures the proposer has recorded in a row; cleared by a successful propose" },
           "selfValidationRefusal": { "$ref": "#/components/schemas/SelfValidationRefusalDto" },
+          "divergenceHalt": { "$ref": "#/components/schemas/DivergenceHaltDto" },
           "poolQuarantined": { "type": "integer", "format": "int64", "description": "Pooled deploy ids this proposer is holding out of selection after repeated self-replay refusals (#564). Proposer-local liveness policy, not pool capacity: the deploys stay in the pool and remain valid for every other node" },
           "autoproposeTimerHalted": { "type": "boolean", "description": "The autopropose timer has stopped. Two things restart it: the process (the halt is durable, re-seeded at boot), and POST /api/v1/autopropose/resume on the admin listener, which clears the record and wakes the parked timer in-process. Not the same as block production having stopped: the tap and POST /api/propose keep running" },
           "autoproposeTimerHaltEpisodes": { "type": "integer", "format": "int64", "description": "How many times this shard's autopropose timer has stopped. Counting transitions, so a second note of the same halt does not move it; seeded from the durable record at boot, so it is the shard's count and not this process's (W-N10-01)" },
@@ -2250,6 +2251,7 @@ pub const OPENAPI_JSON: &str = r##"{
         "properties": {
           "consecutiveSelfValidationFailures": { "type": "integer", "format": "int64" },
           "selfValidationRefusal": { "$ref": "#/components/schemas/SelfValidationRefusalDto" },
+          "divergenceHalt": { "$ref": "#/components/schemas/DivergenceHaltDto" },
           "poolQuarantined": { "type": "integer", "format": "int64" },
           "selfReplayFaultHalted": { "type": "boolean", "description": "The node-level self-replay rung latched: the attestation fallback also failed, so proposing and attesting are stopped until POST /api/v1/autopropose/resume clears it (#564)" },
           "selfReplayFaultReason": { "type": "string", "nullable": true, "description": "The sentence behind selfReplayFaultHalted, null when the latch is clear" },
@@ -2303,6 +2305,18 @@ pub const OPENAPI_JSON: &str = r##"{
         "properties": {
           "at": { "type": "integer", "format": "int64", "nullable": true },
           "durable": { "type": "boolean" }
+        }
+      },
+      "DivergenceHaltDto": {
+        "type": "object",
+        "description": "A spent restore budget stopped production on this shard; the node keeps serving the chain it holds. There is no automatic exit: POST /api/v1/autopropose/resume requires the named block as acknowledgeDivergence (F-U26-02, #658)",
+        "nullable": true,
+        "properties": {
+          "at": { "type": "integer", "format": "int64", "description": "When the halt was taken, in milliseconds since the unix epoch" },
+          "block": { "type": "string", "description": "The refused block, base16 — the value the resume route requires" },
+          "seqNum": { "type": "integer", "format": "int64" },
+          "episodes": { "type": "integer", "format": "int64", "description": "How many records this shard has given up on" },
+          "durable": { "type": "boolean", "description": "Whether the durable record holds the halt; false means this process honours a halt the next one will not know about" }
         }
       },
       "DeployData": {
@@ -2581,8 +2595,22 @@ async fn admin_propose(State(state): State<AdminState>) -> Response {
 /// The one way out of a halt that survives a restart. Served on the admin listener, behind
 /// `admin_origin_guard` and the resume rate limiter, for the reason every actuator here is: it changes
 /// what the node does on the caller's word.
-async fn admin_resume_autopropose(State(state): State<AdminState>) -> Response {
-    json_result(state.admin_web_api.resume_autopropose().await)
+#[derive(Debug, Default, serde::Deserialize)]
+struct ResumeAutoproposeQuery {
+    #[serde(rename = "acknowledgeDivergence")]
+    acknowledge_divergence: Option<String>,
+}
+
+async fn admin_resume_autopropose(
+    State(state): State<AdminState>,
+    Query(query): Query<ResumeAutoproposeQuery>,
+) -> Response {
+    json_result(
+        state
+            .admin_web_api
+            .resume_autopropose(query.acknowledge_divergence.as_deref())
+            .await,
+    )
 }
 
 /// `POST /api/v1/resources/resume` — clear a latched resource fallback state (unit C, B37).
@@ -3737,6 +3765,7 @@ mod tests {
             admin_http: true,
             consecutive_self_validation_failures: 0,
             self_validation_refusal: None,
+            divergence_halt: None,
             pool_quarantined: 0,
             autopropose_timer_halted: false,
             autopropose_timer_halt_episodes: 0,
@@ -4824,6 +4853,7 @@ mod tests {
             finalized_result: None,
             proposer_health: rchain_casper::api::block_api::ProposerHealth {
                 consecutive_self_validation_failures: 8,
+                divergence_halt: None,
                 self_validation_refusal: Some(
                     rchain_casper::api::block_api::SelfValidationRefusal {
                         code: "justification-regression".to_string(),
@@ -5273,7 +5303,10 @@ mod tests {
             Ok(test_operator_status())
         }
 
-        async fn resume_autopropose(&self) -> Result<String, BlockApiException> {
+        async fn resume_autopropose(
+            &self,
+            _acknowledge_divergence: Option<&str>,
+        ) -> Result<String, BlockApiException> {
             Ok("resumed".to_string())
         }
 
@@ -6133,7 +6166,10 @@ mod tests {
         /// Delegates to the floored read: this double has no unfinalised view of its own, and the
         /// method is required rather than defaulted so that is a decision rather than an oversight
         /// (`ShardRoutingBlockApi` is the implementation that had to forward it for real).
-        async fn clear_autopropose_halt(&self) -> Result<(), String> {
+        async fn clear_autopropose_halt(
+            &self,
+            _acknowledge_divergence: Option<&str>,
+        ) -> Result<(), String> {
             Ok(())
         }
 

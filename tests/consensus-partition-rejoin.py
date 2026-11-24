@@ -222,6 +222,9 @@ def victim_sample(node):
         "finalized_lag": health.get("finalizedLag"),
         "finality_stalled": health.get("finalityStalled"),
         "unrestorable_records": operator.get("unrestorableRecords"),
+        # **The acting rule's surface** (F-U26-02, #658): the durable halt a spent restore budget
+        # leaves. When it stands, the verdict names the block the operator must acknowledge.
+        "divergence_halt": operator.get("divergenceHalt"),
         "cgroup_oom_kills": (operator.get("resources") or {}).get("cgroupOomKills"),
     }
 
@@ -465,6 +468,13 @@ def anchor_agreement(d, anchor, victim=None):
                  victim_finalized=None, anchor_finalized=None)
         return None
     if victim_row["unrestorable_records"] > 0:
+        halt = victim_row.get("divergence_halt")
+        if halt:
+            raise RuntimeError(
+                f"FAIL_DIVERGENCE_HALTED: node {victim} unrestorableRecords="
+                f"{victim_row['unrestorable_records']} block={victim_row['unrestorable_block']}; "
+                f"the node stopped proposing and serves read-only — resume with "
+                f"POST /api/v1/autopropose/resume?acknowledgeDivergence={halt['block']}")
         raise RuntimeError(
             f"FAIL_PERMANENT_DIVERGENCE: node {victim} unrestorableRecords="
             f"{victim_row['unrestorable_records']} block={victim_row['unrestorable_block']}")

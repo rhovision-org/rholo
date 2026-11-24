@@ -671,18 +671,30 @@ def lawsChunk05 : List Law := [
       store holds. `rustWitness` is owed — the write's failure path has no fault-injection point here." },
 
   { number := 76, layer := "Casper",
-    statement := "**A concluded stop stops.** Once a fault the node cannot serve through is reported, \
-      the node is not serving and cannot return to serving: the report and the stop are one step, and it \
-      is the last step available",
+    statement := "**A concluded stop stops, and a safe halt stops production without stopping service.** \
+      Once a fault the node cannot serve through is reported, the node is not serving and cannot return \
+      to serving: the report and the stop are one step, and it is the last step available. A divergence \
+      the node cannot repair without an anchor the network has not agreed is the weaker case: proposing \
+      stops, serving continues, and only an operator's act resumes it",
     status := .provedModel,
     declarations := [`Rchain.ServeState, `Rchain.serveStep, `Rchain.serveSystem,
-      `Rchain.a_reported_fault_stops_the_node],
+      `Rchain.a_reported_fault_stops_the_node,
+      `Rchain.HaltState, `Rchain.haltFresh, `Rchain.safeHaltStep, `Rchain.operatorResumeStep,
+      `Rchain.haltStep, `Rchain.a_safe_halt_stops_production_not_serving,
+      `Rchain.a_safe_halt_has_no_automatic_exit,
+      `Rchain.a_safe_halt_can_be_resumed_by_an_operator],
     axioms := [],
     rust := ["node/src/runtime/shutdown.rs", "node/src/main.rs",
-      "node/src/runtime/node_runtime.rs"],
-    rustWitness := ["node/src/runtime/shutdown.rs:a_reported_fatal_resolves_the_wait_with_the_first_reason"],
+      "node/src/runtime/node_runtime.rs", "casper/src/engine/reset.rs",
+      "casper/src/blocks/proposer/proposer.rs", "casper/src/api/block_api.rs",
+      "casper/src/multi_parent_casper.rs"],
+    rustWitness := ["node/src/runtime/shutdown.rs:a_reported_fatal_resolves_the_wait_with_the_first_reason",
+      "casper/tests/divergence_halt.rs:a_spent_restore_budget_halts_every_proposal_trigger_and_survives_a_restart"],
     witness := [`Rchain.a_note_without_a_stop_leaves_the_node_serving,
-      `Rchain.a_reported_fault_reaches_a_stopped_state],
+      `Rchain.a_reported_fault_reaches_a_stopped_state,
+      `Rchain.a_safe_halt_stops_production_not_serving,
+      `Rchain.a_safe_halt_has_no_automatic_exit,
+      `Rchain.a_safe_halt_can_be_resumed_by_an_operator],
     falsifiable := "The port's old shape, where reporting the fault leaves the node serving. \
       `a_note_without_a_stop_leaves_the_node_serving` exhibits the reachable state it admits — the latch \
       set, the listeners up — and `a_reported_fault_reaches_a_stopped_state` keeps the law from being \
@@ -693,7 +705,10 @@ def lawsChunk05 : List Law := [
       receiver, processor, proposer and API kept serving a node whose stores may have moved under a view \
       that was not rebuilt. **Fixed 2026-10-13**: `shutdown::report_fatal` sets a latch the spawn wrapper \
       writes and `main`'s wait selects on, stopping the process without draining. HAZOP row F-U12-03 \
-      (docs/src/spec/failure-hazop.md)." },
+      (docs/src/spec/failure-hazop.md). **The safe-halt half was added 2026-11-23 for F-U26-02 \
+      (#658)**: a spent restore budget has no automatic exit — `a_safe_halt_has_no_automatic_exit` — \
+      and the operator's acknowledgement of the refused block is the only resume. The node keeps \
+      serving the chain it holds; it stops producing on it." },
   { number := 77, layer := "RSpace",
     statement := "**A reset is a projection onto its root.** The reset keeps the root it names and drops \
       the overlay, so an install made *before* a reset to that root is **unobservable** after it — and \

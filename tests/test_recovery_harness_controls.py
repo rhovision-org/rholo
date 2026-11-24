@@ -27,7 +27,7 @@ class ConsumerContractTests(unittest.TestCase):
     ]
     OPERATOR_ONLY = {
         "latestBlockNumber", "peers", "finalityCountersDurable", "unrestorableRecords",
-        "unrestorableBlock", "undeliveredSends", "resources", "cgroupOomKills",
+        "unrestorableBlock", "divergenceHalt", "undeliveredSends", "resources", "cgroupOomKills",
         # Published on the operator surface beside the gates, but not readiness terms.
         "finalityStalled", "finalityStallEpisodes",
     }
@@ -111,7 +111,8 @@ def healthy_status(node):
         "finality_stall_episodes": 0, "tip": 69, "height": 70,
         "ready_reasons": [], "finalized_height": 70, "finalized_lag": 0, "peers": 7,
         "finality_counters_durable": True, "unrestorable_records": 0,
-        "unrestorable_block": None, "undelivered_sends": 0, "cgroup_oom_kills": 0,
+        "unrestorable_block": None, "divergence_halt": None, "undelivered_sends": 0,
+        "cgroup_oom_kills": 0,
     }
 
 
@@ -200,6 +201,19 @@ class RejoinAgreementTests(unittest.TestCase):
         statuses[7]["unrestorable_block"] = "fatal-block"
         run = self.drill(statuses=statuses)
         with self.assertRaisesRegex(RuntimeError, "FAIL_PERMANENT_DIVERGENCE"):
+            run.anchor_agreement(ANCHOR)
+
+    def test_a_divergence_halt_names_the_operator_route(self):
+        statuses = [healthy_status(i) for i in range(8)]
+        statuses[7]["unrestorable_records"] = 1
+        statuses[7]["unrestorable_block"] = "fatal-block"
+        statuses[7]["divergence_halt"] = {
+            "at": 1, "block": "aa" * 32, "seqNum": 9, "episodes": 1, "durable": True,
+        }
+        run = self.drill(statuses=statuses)
+        with self.assertRaisesRegex(
+            RuntimeError, r"FAIL_DIVERGENCE_HALTED.*acknowledgeDivergence=aa"
+        ):
             run.anchor_agreement(ANCHOR)
 
     def test_latched_pipeline_fault_is_a_named_precondition(self):
