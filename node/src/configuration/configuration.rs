@@ -965,6 +965,9 @@ mod tests {
                         system_contract_pub_key: String::new(),
                         dev_tax_address: String::new(),
                         dev_tax_vesting_blocks: 18_934_560,
+                        developer_share: 0,
+                        developer_reserve_public_keys: Vec::new(),
+                        developer_reserve_quorum: 0,
 
                         liveness_absence_threshold: 0,
                         liveness_jail_after_boundaries: 0,
@@ -1637,6 +1640,9 @@ mod tests {
                         system_contract_pub_key: default_system_contract_pub_key(),
                         dev_tax_address: String::new(),
                         dev_tax_vesting_blocks: 18_934_560,
+                        developer_share: 0,
+                        developer_reserve_public_keys: Vec::new(),
+                        developer_reserve_quorum: 0,
 
                         liveness_absence_threshold: 0,
                         liveness_jail_after_boundaries: 0,

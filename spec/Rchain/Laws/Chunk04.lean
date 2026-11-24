@@ -29,7 +29,12 @@ def lawsChunk04 : List Law := [
       "rholang/src/property_tests.rs:law44_a_zero_knee_withholds_nothing",
       "rholang/src/property_tests.rs:law44_between_the_grace_and_the_knee_a_validator_is_paid_in_part",
       "rholang/src/native_state.rs:the_boundary_pays_on_the_participation_it_is_handed",
-      "casper/src/runtime_manager.rs:a_boundarys_participation_reaches_play_and_replay_alike"],
+      "casper/src/runtime_manager.rs:a_boundarys_participation_reaches_play_and_replay_alike",
+      "rholang/src/native_state.rs:the_developer_reserve_is_paid_a_share_of_what_the_deploy_burned",
+      "rholang/src/native_state.rs:a_zero_developer_share_writes_no_leaf_and_pays_nothing",
+      "rholang/src/native_state.rs:a_developer_reserve_the_genesis_cannot_honour_is_refused",
+      "rholang/src/native_state.rs:the_fee_split_floors_each_share_and_refuses_more_than_the_whole",
+      "casper/src/merging.rs:the_developer_reserve_composes_across_concurrent_blocks"],
     statement := "Membership takes effect at an **epoch boundary**: the epoch sequence runs only when \
       `blockNumber % epochLength = 0`, and off a boundary a bond is pooled but not activated, a \
       withdrawal is staged but not moved, and no claim is paid. The same machine carries the **slash**, \
@@ -38,7 +43,12 @@ def lawsChunk04 : List Law := [
       the remainder returns to its own vault, so the loss is bounded by the tier and a milder tier never \
       takes more. And the same vault pays for **work**: a share of a deploy's burned phlo goes to the \
       block's own signed sender (`payExecutor`), which is a transfer inside the staking vault — it moves \
-      income, never stake, and it is monotone in what the deploy burned. A boundary may also **scale** a \
+      income, never stake, and it is monotone in what the deploy burned. The same move can pay a \
+      **developer fee reserve** (#655, `payFees`): a second share, committed at genesis, to an address \
+      the genesis names; the two shares together are at most the whole burn (`fee_split_le_burned`, and \
+      `shares_above_the_whole_overpay` shows the bound is load-bearing), so the split conserves value \
+      (`payFees_conserves`), and a zero reserve is exactly the producer's share alone \
+      (`a_zero_reserve_is_the_old_rule`). A boundary may also **scale** a \
       drawn validator's reward by its participation (`absenceAdjusted`, over `participationWeight`), which \
       is income only: the weight is a function of the reward and of how far behind the last finalised \
       fringe the validator's latest *message* sits, so no stake is reachable from it. The weight is the \
@@ -63,6 +73,10 @@ def lawsChunk04 : List Law := [
       `Rchain.executorShare, `Rchain.producer_share_le_burned, `Rchain.payExecutor,
       `Rchain.payExecutor_conserves, `Rchain.payExecutor_leaves_the_stake,
       `Rchain.producer_pay_is_monotone,
+      `Rchain.payReserve, `Rchain.payFees, `Rchain.fee_split_le_burned,
+      `Rchain.shares_above_the_whole_overpay, `Rchain.payFees_conserves,
+      `Rchain.payFees_leaves_the_stake, `Rchain.a_zero_reserve_is_the_old_rule,
+      `Rchain.the_split_is_a_split,
       `Rchain.absenceAdjusted, `Rchain.absence_never_raises,
       `Rchain.a_returning_validator_is_paid_in_full, `Rchain.the_absence_rule_moves_no_stake,
       `Rchain.absence_withholds,
@@ -72,7 +86,7 @@ def lawsChunk04 : List Law := [
       `Rchain.absence_withholds_past_the_knee, `Rchain.the_ramp_is_a_ramp],
     axioms := [],
     rust := ["rholang/src/native_state.rs"],
-    witness := [`Rchain.closeBlock_off_a_boundary, `Rchain.epochStep_conserves, `Rchain.the_ledger_steps_leave_the_coins, `Rchain.a_bond_pools_but_does_not_activate, `Rchain.a_boundary_activates_the_pool, `Rchain.slash_conserves, `Rchain.a_milder_tier_takes_no_more, `Rchain.slash_clears_every_ledger, `Rchain.taken_le_risk, `Rchain.payExecutor_conserves, `Rchain.payExecutor_leaves_the_stake, `Rchain.producer_pay_is_monotone, `Rchain.absence_never_raises, `Rchain.a_returning_validator_is_paid_in_full, `Rchain.the_absence_rule_moves_no_stake, `Rchain.absence_withholds, `Rchain.participationWeight_le, `Rchain.participationWeight_full, `Rchain.participationWeight_zero, `Rchain.participationWeight_antitone, `Rchain.weighted_rewards_le_pot, `Rchain.absence_withholds_past_the_knee, `Rchain.the_ramp_is_a_ramp],
+    witness := [`Rchain.closeBlock_off_a_boundary, `Rchain.epochStep_conserves, `Rchain.the_ledger_steps_leave_the_coins, `Rchain.a_bond_pools_but_does_not_activate, `Rchain.a_boundary_activates_the_pool, `Rchain.slash_conserves, `Rchain.a_milder_tier_takes_no_more, `Rchain.slash_clears_every_ledger, `Rchain.taken_le_risk, `Rchain.payExecutor_conserves, `Rchain.payExecutor_leaves_the_stake, `Rchain.producer_pay_is_monotone, `Rchain.fee_split_le_burned, `Rchain.shares_above_the_whole_overpay, `Rchain.payFees_conserves, `Rchain.payFees_leaves_the_stake, `Rchain.a_zero_reserve_is_the_old_rule, `Rchain.the_split_is_a_split, `Rchain.absence_never_raises, `Rchain.a_returning_validator_is_paid_in_full, `Rchain.the_absence_rule_moves_no_stake, `Rchain.absence_withholds, `Rchain.participationWeight_le, `Rchain.participationWeight_full, `Rchain.participationWeight_zero, `Rchain.participationWeight_antitone, `Rchain.weighted_rewards_le_pot, `Rchain.absence_withholds_past_the_knee, `Rchain.the_ramp_is_a_ramp],
     falsifiable := some "`the_epoch_gate_does_nothing_off_a_boundary` builds the off-boundary state — a \
       staged withdrawal *and* a full reward pot — and asserts the whole state is unchanged, then that \
       the same call at the boundary moves it and pays it; the bond half is in the same test (pooled at \

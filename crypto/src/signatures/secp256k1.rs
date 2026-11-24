@@ -67,6 +67,12 @@ impl Secp256k1 {
         VerifyingKey::from(&pk).verify_prehash(data, &sig).is_ok()
     }
 
+    /// Check that `pub_key` is a SEC1-encoded point **on the curve** (not only the right shape): a
+    /// 65-byte `0x04…` string that is not a curve point can never verify a signature.
+    pub fn pub_key_verify(pub_key: &[u8]) -> bool {
+        k256::PublicKey::from_sec1_bytes(pub_key).is_ok()
+    }
+
     /// Check that a 32-byte secret key is a valid scalar.
     pub fn sec_key_verify(seckey: &[u8]) -> bool {
         SecretKey::from_slice(seckey).is_ok()

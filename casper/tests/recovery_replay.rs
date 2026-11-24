@@ -161,6 +161,9 @@ fn independent_recovery_replays_epoch_boundaries_and_refuses_forged_claims() {
                         pos_multi_sig_public_keys: Vec::new(),
                         pos_multi_sig_quorum: 1,
                         pos_vault_pub_key: String::new(),
+                        developer_share: NonNegI64::zero(),
+                        developer_reserve_public_keys: Vec::new(),
+                        developer_reserve_quorum: 0,
 
                         liveness_absence_threshold: 0,
                         liveness_jail_after_boundaries: 0,

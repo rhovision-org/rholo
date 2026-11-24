@@ -279,6 +279,21 @@ pub fn from_options(options: &Options) -> Hocon {
         );
         opt_i32(
             &mut e,
+            "casper.genesis-block-data.developer-share",
+            run.developer_share,
+        );
+        opt_str_list(
+            &mut e,
+            "casper.genesis-block-data.developer-reserve-public-keys",
+            &run.developer_reserve_public_keys,
+        );
+        opt_i32(
+            &mut e,
+            "casper.genesis-block-data.developer-reserve-quorum",
+            run.developer_reserve_quorum,
+        );
+        opt_i32(
+            &mut e,
             "casper.genesis-block-data.absence-slack",
             run.absence_slack,
         );

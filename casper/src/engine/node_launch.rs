@@ -123,6 +123,9 @@ pub async fn create_genesis_block(
     system_contract_pub_key: &str,
     dev_tax_address: &str,
     dev_tax_vesting_blocks: i64,
+    developer_share: NonNegI64,
+    developer_reserve_public_keys: &[String],
+    developer_reserve_quorum: i32,
     liveness_absence_threshold: i64,
     liveness_jail_after_boundaries: i64,
     liveness_jail_epochs: i64,
@@ -180,6 +183,9 @@ pub async fn create_genesis_block(
             dev_tax_vesting_blocks: NonNegI64::try_from(dev_tax_vesting_blocks).map_err(|e| {
                 format!("casper.genesis.dev-tax-vesting-blocks must not be negative: {e}")
             })?,
+            developer_share,
+            developer_reserve_public_keys: developer_reserve_public_keys.to_vec(),
+            developer_reserve_quorum,
 
             liveness_absence_threshold,
             liveness_jail_after_boundaries,
@@ -196,9 +202,23 @@ pub async fn create_genesis_block(
 
     // The liveness config is all-or-nothing, and this is the other path that turns config into
     // consensus state: refuse an incoherent one before the genesis block is signed.
-    crate::genesis::build_pos_genesis(&genesis.proof_of_stake, genesis.dev_vesting.clone())
-        .params
-        .validate()?;
+    // So is the developer fee reserve (#655): checked here, before the block is signed, by the same
+    // rule `install_genesis` applies.
+    let pos_genesis =
+        crate::genesis::build_pos_genesis(&genesis.proof_of_stake, genesis.dev_vesting.clone());
+    pos_genesis.params.validate()?;
+    rchain_rholang::native_state::check_developer_share(
+        &pos_genesis.params,
+        pos_genesis.developer_share,
+    )?;
+    crate::genesis::developer_reserve::check_custody(
+        genesis.proof_of_stake.developer_share,
+        &genesis.proof_of_stake.developer_reserve_public_keys,
+        genesis.proof_of_stake.developer_reserve_quorum,
+    )?;
+    crate::genesis::developer_reserve::check_reserve_spendable(
+        genesis.proof_of_stake.developer_share,
+    )?;
     crate::genesis::create_genesis_block(&ceremony, &genesis, runtime).await
 }
 
@@ -237,6 +257,7 @@ pub async fn create_genesis_block_from_config(
     // negative one is refused here like the other genesis numbers: "no floor" is `0`.
     let min_phlo_price = NonNegI64::try_from(gbd.min_phlo_price)
         .map_err(|e| format!("casper.min-phlo-price must not be negative: {e}"))?;
+    let developer_share = crate::genesis::developer_share_from_config(gbd)?;
     create_genesis_block(
         validator,
         &shard_id,
@@ -260,6 +281,9 @@ pub async fn create_genesis_block_from_config(
         &gbd.system_contract_pub_key,
         &gbd.dev_tax_address,
         gbd.dev_tax_vesting_blocks,
+        developer_share,
+        &gbd.developer_reserve_public_keys,
+        gbd.developer_reserve_quorum,
         gbd.liveness_absence_threshold,
         i64::from(gbd.liveness_jail_after_boundaries),
         i64::from(gbd.liveness_jail_epochs),

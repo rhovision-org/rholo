@@ -167,6 +167,36 @@ existed decodes to. See [`spec/RUST-FIRST.md`](../../../spec/RUST-FIRST.md) for 
 `payExecutor_conserves` in [`spec/Rchain/Pos.lean`](../../../spec/Rchain/Pos.lean) for the conservation
 that holds across it.
 
+**The developer fee reserve, off by default** (#655). The same step can pay a second share of each
+deploy's burn: `developer-share` basis points, to the reserve's custody vault
+(`pay_executor` and `fee_split` in `rholang/src/native_state.rs`, composed at merge time by the same
+`fee_split` in `casper/src/merging.rs`). Like the producer's share it is a reallocation inside the same
+pie, and the epoch pot is smaller by exactly what is paid. The genesis refuses a pair of shares that
+adds up to more than the whole burn. **A zero share, the shipped default, adds no deploy, writes no
+leaf and pays nothing**, so such a genesis is byte-identical to one made before the keys existed.
+
+**Custody is a vault the genesis creates, not a configured address.** A non-zero share makes the
+genesis create a `MultiSigRevVault` over `developer-reserve-public-keys` with
+`developer-reserve-quorum` confirmations (`casper/src/genesis/developer_reserve.rs`). The reserve is
+paid to *that vault's* REV address, which comes from a fresh unforgeable name, so no single key holds
+it. After the genesis deploys run, the address is read back and written with the share to the
+`pos:developer-reserve` leaf (`bind_developer_reserve`), on both the ceremony's path and a replaying
+node's. The vault's handle is registered under a constant URI. If the vault was not created, the
+genesis is refused rather than installed with a reserve nobody can spend. The signers and quorum
+cannot change after genesis; losing `quorum` keys strands the reserve. **Not yet spendable:** a
+multisig vault on this port cannot be spent from a block after the one that created it (#669), so no
+genesis can set a non-zero share until #669 is fixed: the genesis refuses one
+(`check_reserve_spendable`). The conservation is `payFees_conserves` in
+[`spec/Rchain/Pos.lean`](../../../spec/Rchain/Pos.lean).
+
+The reason it is a genesis value is the reason it exists. No deploy can write a fee parameter, so a
+share that a genesis does not commit can never be enabled without a hard fork
+([the capability audit](../../../spec/audit/forkless-developer-rewards-20261123.md) is on #655).
+The protocol pays the reserve the full share of every burn: it is a fixed rate, not a variable one,
+and it is a ceiling only on what can reach developers. How much of the reserve reaches developers, and when,
+is decided by the reserve's signers, through ordinary deploys (forwarding it to a governance treasury
+contract is #655's PR-C), and an unspent part can go back to the validator pot through `fundPot`.
+
 **The absence rule, off by default.** A validator's epoch reward is scaled by its **participation**: how
 far behind the last finalised fringe its latest *message* sits. Each node derives that itself from its own
 DAG — the same object the epoch's seed is anchored to, and for the same reason, since it is agreed by
@@ -407,11 +437,10 @@ preferences.
   set, is derived from the block's own chosen justification set; a proposer could make a rival read
   absent and take the withheld share.
 
-- **A native share of the burn for contract developers cannot be added after genesis.** A contract can
-  still charge fees of its own, but `pay_executor` pays only the block's signed sender, and `PosParams`
-  is written once, at genesis (`set_params` in `rholang/src/native_state.rs`), so a developer share of
-  the burn that genesis does not commit can never be turned on without a hard fork. `fundPot` is not a
-  substitute, because it pays the validator pot. The capability audit is
+- **A share of fees for contract developers cannot be added after genesis.** No deploy can write a
+  fee parameter, so the only such share a chain will ever have is the one its genesis commits: the
+  developer fee reserve above. `fundPot` is not a substitute, because it pays the validator pot. The
+  capability audit is
   [`spec/audit/forkless-developer-rewards-20261123.md`](../../../spec/audit/forkless-developer-rewards-20261123.md),
   and the requirement is issue #655.
 

@@ -668,6 +668,73 @@ theorem producer_pay_is_monotone {a b : Nat} (h : a ≤ b) :
     a * executorShare / 10000 ≤ b * executorShare / 10000 :=
   Nat.div_le_div_right (Nat.mul_le_mul_right _ h)
 
+/-! ## The developer fee reserve (#655)
+
+The producer's share is the one per-deploy split the protocol had, and its payee is fixed: the block's
+signed sender. **A share of the burn for developer usage rewards is a second payee in the same move**,
+and it has to exist at genesis, because the share is consensus state and no deploy can write it: a
+share a genesis does not commit can never be enabled without a hard fork. So the genesis commits a
+*ceiling*, and how much of it is paid to developers is policy carried out later by ordinary deploys.
+
+`native_state.rs`'s `pay_executor` pays both in one native step (`fee_split` computes the two amounts,
+and the merge's cost-accounting composition calls the same function). The reserve is paid to an
+address, so in this model it is a move from `vault` to `user`, like the producer's share. -/
+
+/-- **Pay the developer fee reserve**: `burned * share / 10000` leaves the staking vault and arrives in
+    the reserve's address. Like `payExecutor` it moves income and never stake. -/
+def payReserve (s : PosState) (burned share : Nat) : PosState :=
+  { s with vault := s.vault - burned * share / 10000,
+           user := s.user + burned * share / 10000 }
+
+/-- **One deploy's fee split**: the producer's share, then the reserve's — `pay_executor`'s order. -/
+def payFees (s : PosState) (burned share : Nat) : PosState :=
+  payReserve (payExecutor s burned) burned share
+
+/-- **The two shares never take more than was burned** when they sum to at most the whole, which is
+    the genesis rule `check_developer_reserve` enforces (`executor-share + developer-share ≤ 10000`).
+    Each share is floored separately, so this is the bound on what the vault pays out per deploy. -/
+theorem fee_split_le_burned (burned : Nat) {e d : Nat} (h : e + d ≤ 10000) :
+    burned * e / 10000 + burned * d / 10000 ≤ burned := by
+  have h1 : burned * e + burned * d ≤ burned * 10000 := by
+    rw [← Nat.mul_add]
+    exact Nat.mul_le_mul_left _ h
+  omega
+
+/-- **And the bound is load-bearing**: two shares above the whole (here 9 000 + 2 000) pay out more
+    than the deploy burned, which is why the genesis refuses them rather than trusting the split. -/
+theorem shares_above_the_whole_overpay :
+    ¬ (1000 * 9000 / 10000 + 1000 * 2000 / 10000 ≤ 1000) := by decide
+
+/-- **The reserve is a transfer, not a mint**, given the genesis bound and that the burn was charged
+    into this vault. The producer's share and the reserve together conserve `totalRev`. -/
+theorem payFees_conserves (s : PosState) (burned share : Nat) (hburned : burned ≤ s.vault)
+    (hshare : executorShare + share ≤ 10000) :
+    totalRev (payFees s burned share) = totalRev s := by
+  have hsplit := fee_split_le_burned burned hshare
+  simp only [totalRev, payFees, payReserve, payExecutor]
+  omega
+
+/-- **It moves income, never stake**: the pool, the active set and the committed ledger are untouched,
+    for the reason `payExecutor_leaves_the_stake` gives. -/
+theorem payFees_leaves_the_stake (s : PosState) (burned share : Nat) :
+    (payFees s burned share).pool = s.pool
+      ∧ (payFees s burned share).active = s.active
+      ∧ (payFees s burned share).committed = s.committed := by
+  refine ⟨?_, ?_, ?_⟩ <;> simp only [payFees, payReserve, payExecutor]
+
+/-- **A zero share is no reserve**: the split is exactly the producer's share alone, so a genesis that
+    reserves nothing runs the rule it ran before the reserve existed. -/
+theorem a_zero_reserve_is_the_old_rule (s : PosState) (burned : Nat) :
+    payFees s burned 0 = payExecutor s burned := by
+  cases s
+  simp [payFees, payReserve, payExecutor]
+
+/-- **A decided instance, so the split is not vacuous**: a burn of 1 000 at the shipped producer share
+    and a 500-basis-point reserve pays 250 to the producer and 50 to the reserve, and leaves 700. -/
+theorem the_split_is_a_split :
+    1000 * executorShare / 10000 = 250 ∧ 1000 * 500 / 10000 = 50
+      ∧ 1000 - 1000 * executorShare / 10000 - 1000 * 500 / 10000 = 700 := by decide
+
 /-! ## The absence rule (B4)
 
 The epoch pays for *being drawn*; `payExecutor` pays for *producing*. Neither says anything about a
