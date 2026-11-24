@@ -68,10 +68,13 @@ above is the record.
   `--dev-mode`, the reserve genesis parameters, a funded deployer, no `--deployer-private-key`), and
   the image build was started from this tree. The live arm is recorded by
   `tools/devrewards-experiment.py run`; until it writes `"result": "pass"`, this section stays.
-- **The independent observer.** The node CLI in this build has no block-event export
-  (`CommEvent.consume.hash`), so the observer cannot recompute the manifest from finalized blocks.
-  The experiment records that arm as `not-run` with this reason rather than substituting the
-  experiment's own deploy log — a self-report is not an independent recomputation.
+- **The independent observer.** The node exposes the report tree over gRPC —
+  `getEventByHash(ReportQuery) returns EventInfoResponse` (`models/proto/deploy_service_v1.proto`,
+  served at `node/src/api/grpc/deploy_grpc_service_v1.rs`), which carries `CommEvent.consume.hash`
+  and the deploy's `ConsumeEvent.hash` — but **no CLI command wraps it**, so the observer has nothing
+  to call yet. A small gRPC client that walks finalized blocks and calls `getEventByHash` is the
+  unblocker. The experiment records the arm as `not-run` rather than substituting its own deploy log:
+  a self-report is not an independent recomputation.
 - **Restart drills, benchmarks, compatibility and the negative live arms.** They depend on the
   observer and are `not-run`.
 

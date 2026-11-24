@@ -7,10 +7,10 @@ gate's arms. This is a local-devnet witness, not mainnet-scale evidence.
 HAZOP) are green and listed in
 `spec/audit/evidence/g655-forkless-devrewards-20261124/README.md`. A **one-validator production-genesis
 smoke is green**: the genesis commits and the DevRewards install lands as an ordinary deploy (block 4;
-the treasury address is published). The full arm is **not** green: this build has no block-event
-export, so the independent observer cannot recompute the manifest, and the four-validator run, the
-reserve funding, the claim and the restart drills are owed. G655 stays `owes`; do not promote it from
-this runbook alone.
+the treasury address is published). The full arm is **not** green: the node exposes the report tree
+over gRPC (`getEventByHash`) but no CLI command wraps it, so the independent observer has no client
+yet; the four-validator run, the reserve funding, the claim and the restart drills are owed. The
+observer client is the unblocker. G655 stays `owes`; do not promote it from this runbook alone.
 
 ## Preconditions
 
