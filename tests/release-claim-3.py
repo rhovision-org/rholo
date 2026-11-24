@@ -252,21 +252,38 @@ def run(argv: list[str]) -> int:
     parser.add_argument("--out", required=True)
     parser.add_argument("--public-manifest")
     parser.add_argument("--keep", action="store_true")
+    parser.add_argument("--rehearse", action="store_true")
     args = parser.parse_args(argv)
     arm = args.arm or args.env or "local"
     meta = common.claim_arm(CLAIM_ID, arm)
     environment = meta["environment"]
-    record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm)
+    record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm,
+                               rehearsal=getattr(args, "rehearse", False))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     if arm == "stall-episode":
         return _run_stall(args, out, record)
+    if arm == "availability":
+        failure = common.preflight_failure(CLAIM_ID, environment, out, record,
+                                           getattr(args, "public_manifest", None),
+                                           rehearsal=getattr(args, "rehearse", False))
+        if failure is not None:
+            return failure
+        manifest = common.load_manifest(args.public_manifest) or {}
+        record["provenance"] = manifest.get("provenance") or {}
+        document, code = common.run_fleet_action(args, out, "availability", CLAIM_ID)
+        record["harness"] = {"name": "fleet-run availability", "exit_code": code,
+                             "out": str(out)}
+        record["observations"]["availability"] = document.get("availability")
+        record["observations"]["state_traces"] = document.get("state_traces") or []
+        return _finish_driver(out, record, document, code)
     if arm not in ("local", "public"):
         return common.not_run(
             out, record,
             f"the {arm} arm's harness lands in {meta['next_pr']}")[1]
     failure = common.preflight_failure(CLAIM_ID, environment, out, record,
-                                       getattr(args, "public_manifest", None))
+                                       getattr(args, "public_manifest", None),
+                                       rehearsal=getattr(args, "rehearse", False))
     if failure is not None:
         return failure
 
@@ -276,7 +293,16 @@ def run(argv: list[str]) -> int:
             return common.not_run(out, record, "no --public-manifest for the public fleet")[1]
         target = common.public_target(manifest)
         record["provenance"] = manifest.get("provenance") or {}
-        return _observe(target, record, out)
+        document, code = common.run_fleet_action(args, out, "deploy", CLAIM_ID)
+        record["harness"] = {"name": "fleet-run deploy", "exit_code": code, "out": str(out)}
+        if code == 3 or document.get("harness_result") == "PRECONDITION":
+            return common.not_run(out, record, "; ".join(
+                map(str, document.get("reasons") or ["the fleet deploy could not run"])))[1]
+        if code != 0:
+            common.finish(record, "fail", ["; ".join(
+                map(str, document.get("reasons") or ["the fleet deploy failed"]))])
+            return common.write_record(out, record)[1]
+        return _observe(target, record, out, submitted=document.get("deploy") or {})
 
     devnet = common.Devnet("releaserc3", validators=4, http_base=43403,
                            admin_base=43405, grpc_base=43402)
@@ -292,12 +318,29 @@ def run(argv: list[str]) -> int:
             devnet.down()
 
 
-def _observe(target, record: dict, out: Path, devnet=None) -> int:
+def _finish_driver(out: Path, record: dict, document: dict, code: int) -> int:
+    if code == 3 or document.get("harness_result") == "PRECONDITION":
+        return common.not_run(out, record, "; ".join(
+            map(str, document.get("reasons") or
+                ["the availability driver could not run"])))[1]
+    if code != 0:
+        common.finish(record, "fail", ["; ".join(
+            map(str, document.get("reasons") or ["the availability driver failed"]))])
+        return common.write_record(out, record)[1]
+    verdict, reasons = check(record)
+    common.finish(record, verdict, reasons)
+    return common.write_record(out, record)[1]
+
+
+def _observe(target, record: dict, out: Path, devnet=None,
+             submitted: dict | None = None) -> int:
     observations = record["observations"]
-    marker = "release-claim:" + str(time.time_ns())
-    value = common.MARKER_VALUE
+    marker = (submitted or {}).get("marker") or "release-claim:" + str(time.time_ns())
+    value = int((submitted or {}).get("value", common.MARKER_VALUE))
     try:
-        if devnet is not None:
+        if submitted:
+            deploy_id = submitted.get("deploy_id")
+        elif devnet is not None:
             deploy_id = devnet.deploy(f'@{json.dumps(marker)}!({value})')
         else:
             deploy_id = None

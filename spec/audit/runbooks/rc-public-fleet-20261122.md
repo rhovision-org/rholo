@@ -18,6 +18,12 @@ not filtered by kind, and a single finalised-head snapshot raced a producing cha
 without loss). Every other public arm keeps `rc-public-fleet` as its next PR and is not claimed
 here.
 
+**Windows B–E (2026-11-24).** The same fleet and genesis carry the remaining public arms in four
+separate pre-registered windows: B = RC-2/public partition, C = RC-3/public + RC-3/availability,
+D = RC-5/public pressure, E = RC-6/public + RC-6/availability. Each has its own typed manifest
+input and its own record. The rolling swap (RC-7/public) is the separate `rc-fleet-upgrade` window
+and is not run here.
+
 **What the window also records:** the source set and the N1/N4/N8 differential requested in review
 of #642. Those are diagnostics; only the current candidate's public arms are claims.
 
@@ -136,6 +142,99 @@ Fill the README's non-claims, declare **`public-live`** as the locality, and ver
 python3 tools/evidence-pack.py verify --record <record> --require-pins
 python3 tools/check-evidence-locality.py --gate
 ```
+
+## Windows B–E — the remaining public arms
+
+The fleet is the same four hosts and the same coordinated genesis. Each window is separately
+pre-registered and separately packed; a window that fails is recorded, not erased. **A window never
+reads its result from the manifest.** The typed input block names the fault or the policy; the
+driver chooses the victim, captures the witness and writes `fleet-result.json` at the record root.
+
+### Window B — RC-2/public partition
+
+Input: a `fault` block with `kind: partition`, `cycles`, `victim_policy`, `p2p_ports`,
+`mechanism: nftables`, `dwell_blocks`, `dwell_seconds`, `heal_timeout_s`. It may not name the
+victim.
+
+```sh
+python3 tools/release-check.py run --claim RC-2 --env public --public-manifest <manifest> \
+  --out target/rc-public-fleet/RC-2
+python3 tools/release-check.py record --claim RC-2 --arm public \
+  --record target/rc-public-fleet/RC-2
+```
+
+The driver installs an nftables table that drops the other three peers' p2p ports on the chosen
+victim, rotates the victim across the declared cycles, measures whether the victim keeps proposing
+while its finalised fence is frozen, waits for the survivors to finalise past the anchor, removes
+the table in a `finally`, and waits for the victim to rejoin. A removal failure is exit 1 and never
+PASS. The claim then re-reads containment and regression itself.
+
+NO-GO: a leaked partition (the victim's finalised height advances), a non-producing victim, an
+unremoved table, or fewer than two cycles. Rollback: `nft delete table inet rc_partition_<pid>_<i>`
+on the victim.
+
+### Window C — RC-3/public and RC-3/availability
+
+The `deploy` block is the manifest's one deploy plan. The driver submits it; the claim reads the
+state triples and the kept marker. The availability input is `availability: {window_blocks >= 10,
+probe_timeout_s}`.
+
+```sh
+python3 tools/release-check.py run --claim RC-3 --env public --public-manifest <manifest> \
+  --out target/rc-public-fleet/RC-3
+python3 tools/release-check.py run --claim RC-3 --arm availability --env public \
+  --public-manifest <manifest> --out target/rc-public-fleet/RC-3-availability
+python3 tools/release-check.py record --claim RC-3 --arm public --record target/rc-public-fleet/RC-3
+python3 tools/release-check.py record --claim RC-3 --arm availability \
+  --record target/rc-public-fleet/RC-3-availability
+```
+
+The availability driver samples at least ten finalised heights, requires each hash finalised on all
+four validators, reads the raw body and a state query on every validator, and records
+`not_available` for any miss. NO-GO: fewer than ten finalised blocks, a block not finalised by all
+four, or any finalised body/state unavailable.
+
+### Window D — RC-5/public pressure
+
+Input: `pressure: {endpoint, host, port, cap, probes, mode_order, settle_s}`. Use a dedicated
+non-validator RPC host so the capped/unset unit restarts do not disturb consensus. The endpoint
+must be a non-local plain-HTTP listener; the proxy surface remains deferred and is not claimed.
+
+```sh
+python3 tools/release-check.py run --claim RC-5 --env public --public-manifest <manifest> \
+  --out target/rc-public-fleet/RC-5
+python3 tools/release-check.py record --claim RC-5 --arm public --record target/rc-public-fleet/RC-5
+```
+
+The driver sets/removes `RNODE_HTTP_MAX_INFLIGHT_DEPLOY`, restarts the declared unit for each
+lifetime, captures the unit environment and version, runs `tools/m2-pressure-arm.py phase` for
+capped and unset, runs its gRPC observation, assembles the record, and restores the original unit
+environment in a `finally`. This needs a systemd unit, so it is SSH-only; the Docker transport
+cannot mutate a running container's environment and is a precondition, not a rehearsal path. The
+claim re-runs `tools/m2-pressure.py check`. NO-GO: a local endpoint, a 5xx, an accepted deploy that
+later disappears, or a unit environment not restored.
+
+### Window E — RC-6/public and RC-6/availability
+
+Input: `join: {joiner, bootstrap_from, fresh_store, min_height, timeout_s, audit_config}`. The
+joiner is a fifth host, not one of the four validators; `bootstrap_from` is a non-producer.
+
+```sh
+python3 tools/release-check.py run --claim RC-6 --env public --public-manifest <manifest> \
+  --out target/rc-public-fleet/RC-6
+python3 tools/release-check.py run --claim RC-6 --arm availability --env public \
+  --public-manifest <manifest> --out target/rc-public-fleet/RC-6-availability
+python3 tools/release-check.py record --claim RC-6 --arm public --record target/rc-public-fleet/RC-6
+python3 tools/release-check.py record --claim RC-6 --arm availability \
+  --record target/rc-public-fleet/RC-6-availability
+```
+
+The join driver verifies the joiner store is empty, starts the joiner, captures both logs, builds
+the six-stage chain with `tools/m3-join-chain.py build`, reads the operator checkpoint, runs
+`rnode audit` on the joiner and records the audit verdict and traces. The availability arm runs the
+join first and then the sweep, so its observation carries the non-producer join witness the RC-6
+predicate now requires. NO-GO: a store deleted to manufacture `fresh_store`, a loopback/private
+bootstrap, an incomplete chain, or an audit that is not AGREE.
 
 ## Reading the result
 

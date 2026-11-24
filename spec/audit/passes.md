@@ -14452,3 +14452,68 @@ separate change.
 
 **State.** C409 done; F-U26-04 and F-U26-05 Drift; D26-18's writer/clearer/test updated; the census
 surfaces owed fall to 0; the four surfaces are live on the operator status.
+
+## 194. The public manifest accepted the operator's answer, and three public arms could not be actuated — 2026-11-24
+
+**Finding.** The public column's method says the manifest is input-only, but the code did not
+enforce it for the arms beyond RC-1/RC-4. `tests/release-claim-2.py` read `manifest["harness_result"]`
+and `manifest["cycles"]`; `tests/release-claim-6.py` trusted `manifest["join_result"] == "pass"`;
+`tools/fleet_manifest.py` refused neither. `tests/release-claim-3.py`'s public path never submitted a
+marker (`deploy_id = None`) and then waited 240 s for a visibility that could not happen, so
+RC-3/public could not pass. `fleet-run.py` collected only `boot-*` and `merge-*` traces, making a
+finality/state/audit/format failure read `evidence-insufficient`. A claim could leave
+`fleet-result.json` under `out/<action>/`, which the locality gate does not read. The two
+`availability` arms had no runner at all, and RC-6/availability's authored behaviour described a
+non-producer join that its predicate did not require.
+
+**Change.**
+
+- `tools/fleet_manifest.py` gains typed `fault`, `availability`, `pressure`, `join` and `upgrade`
+  blocks; refuses `harness_result`, `cycles`, `pressure_record`, `join_result`, `audit_bootstrap`
+  and `upgrade_record` by name; refuses a fault that names the victim; and actuates every public
+  claim (`ACTUATED_CLAIMS`).
+- `tools/fleet-run.py` gains `partition`, `availability`, `pressure` and `join`, a trace-prefix
+  argument, partition install/remove for nftables and docker networks, unit-environment mutation,
+  and remote log/audit reads. Every action writes `fleet-result.json` at the claim's record root.
+- The public claim tests invoke the driver and consume its typed artefact: RC-2 reads the driver's
+  cycles and then re-reads containment itself; RC-3 submits the manifest's deploy and observes;
+  RC-3/RC-6 availability read the sweep; RC-5 re-runs the m2 check on the driver's pressure record;
+  RC-6 reads the driver's chain and audit. RC-7/public returns `not run` until the deferred
+  `rc-fleet-upgrade` driver lands.
+- `check_availability` now requires the non-producer join block when `claim_id == "RC-6"`, and the
+  availability driver records it from the join driver's artifact.
+
+**Why believed.** `tests/test_fleet_arms.py` proves the partition driver rotates victims, fails a
+non-producing victim and an unremoved partition, and that availability fails on a missing body or
+state; `tests/test_fleet_manifest.py` proves each result-shaped key is refused by name;
+`tests/test_release_campaigns.py` still proves every fixture passes and a decisive mutation fails.
+
+**What it does not claim.** No public arm is closed; no reading changes. The `upgrade` driver, the
+proxy/TLS pressure surface and a fifth-host join rehearsal are deferred to their windows. A local
+Docker run is a rehearsal and is never packed.
+
+**State.** C410 done; `rc-public-fleet` windows B–E are runnable; the arm readings are unchanged.
+
+## 195. The launch gate's external clause was prose — 2026-11-24
+
+**Finding.** The `launch-gate` action says "refuse ready while any external item is open without a
+dated disposition", but no checker read `mainnet-gates.external.json`. `check-release-campaigns.py`
+examines arms only, so eight open external rows (M5, M6, C357, G520-MIGRATION, G655, TA-C3 and the
+two S6 prose rows) were invisible to every readiness command.
+
+**Change.** `tools/check-launch-gate.py` derives the open set from the external register;
+`spec/audit/launch-gate.dispositions.json` carries decisions only. `--gate` requires exactly one
+valid dated disposition per open row (exit 3 when missing, exit 2 on malformed or anti-rot rows);
+`--assert-ready` is green only when `release-check.py --assert-ready` is green and every external
+row is `met`/`superseded`. The M5 owner decision of 2026-11-15 is recorded; the other seven rows
+are deliberately missing.
+
+**Why believed.** `tests/test_launch_gate.py` proves a missing disposition, a duplicate, a
+disposition on a superseded row, an unknown id, a future date, an empty authority and a non-https
+reference are refused; `--assert-ready` stays 3 with a valid M5 disposition while M5 is open.
+
+**What it does not claim.** A disposition is not a waiver or a pass. M5 remains blocked; no launch
+authorization is created. The aggregate gate is a checker, not an independent sign-off.
+
+**State.** C411 done; external rows unchanged; `check-launch-gate.py --gate` exits 3 until the
+owners record the remaining decisions.

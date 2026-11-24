@@ -188,16 +188,19 @@ def run(argv: list[str]) -> int:
     parser.add_argument("--out", required=True)
     parser.add_argument("--public-manifest")
     parser.add_argument("--keep", action="store_true")
+    parser.add_argument("--rehearse", action="store_true")
     parser.add_argument("--old-image", default=os.environ.get("RNODE_OLD_IMAGE"))
     args = parser.parse_args(argv)
     arm = args.arm or args.env or "local"
     meta = common.claim_arm(CLAIM_ID, arm)
     environment = meta["environment"]
-    record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm)
+    record = common.new_record(CLAIM_ID, TITLE, environment, meta["locality"], arm=arm,
+                               rehearsal=getattr(args, "rehearse", False))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     failure = common.preflight_failure(CLAIM_ID, environment, out, record,
-                                       getattr(args, "public_manifest", None))
+                                       getattr(args, "public_manifest", None),
+                                       rehearsal=getattr(args, "rehearse", False))
     if failure is not None:
         return failure
 
@@ -205,17 +208,11 @@ def run(argv: list[str]) -> int:
         manifest = common.load_manifest(args.public_manifest)
         if not manifest:
             return common.not_run(out, record, "no --public-manifest for the public fleet")[1]
-        supplied = manifest.get("upgrade_record")
-        if not supplied:
-            return common.not_run(
-                out, record,
-                "the public run needs the operator's migration and mixed-version record")[1]
-        observations = json.loads(Path(supplied).read_text())
-        record["observations"] = observations
         record["provenance"] = manifest.get("provenance") or {}
-        verdict, reasons = check(record)
-        common.finish(record, verdict, reasons)
-        return common.write_record(out, record)[1]
+        return common.not_run(
+            out, record,
+            "the rolling-swap driver lands in rc-fleet-upgrade; the manifest carries the "
+            "upgrade input, not an operator-supplied result")[1]
 
     try:
         record["provenance"] = _provenance()

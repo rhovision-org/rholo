@@ -323,7 +323,8 @@ def run(argv: list[str]) -> int:
             out, record,
             f"the {arm} arm's harness lands in {meta['next_pr']}")[1]
     failure = common.preflight_failure(CLAIM_ID, environment, out, record,
-                                       getattr(args, "public_manifest", None))
+                                       getattr(args, "public_manifest", None),
+                                       rehearsal=getattr(args, "rehearse", False))
     if failure is not None:
         return failure
 
@@ -337,12 +338,20 @@ def run(argv: list[str]) -> int:
                 "the public run needs the operator's declared partition window and victim")[1]
         target = common.public_target(manifest)
         record["provenance"] = manifest.get("provenance") or {}
-        record["observations"]["harness_result"] = manifest.get("harness_result")
-        record["observations"]["cycles"] = manifest.get("cycles") or []
-        if manifest.get("harness_result") != PASS_TOKEN:
-            return common.not_run(
-                out, record,
-                "the public manifest does not carry a completed partition/rejoin result")[1]
+        document, code = common.run_fleet_action(args, out, "partition", CLAIM_ID)
+        record["harness"] = {"name": "fleet-run partition", "exit_code": code,
+                             "out": str(out)}
+        record["observations"]["harness_result"] = document.get("harness_result")
+        record["observations"]["cycles"] = document.get("cycles") or []
+        record["observations"]["finality_traces"] = document.get("finality_traces") or []
+        if code == 3 or document.get("harness_result") == "PRECONDITION":
+            return common.not_run(out, record, "; ".join(
+                map(str, document.get("reasons") or ["the partition driver could not run"])))[1]
+        if code != 0 or document.get("harness_result") != PASS_TOKEN:
+            common.finish(record, "fail", [
+                "; ".join(map(str, document.get("reasons") or
+                              ["the partition driver did not pass"]))])
+            return common.write_record(out, record)[1]
         return _containment(target, record, out)
 
     devnet = common.Devnet("acceptance", validators=4, network="acceptance", grpc_base=45402,

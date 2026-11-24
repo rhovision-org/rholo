@@ -47,6 +47,17 @@ Every gate names:
   merged-state hashes, a replay verdict, or the wire format.
 - **Heights are not blocks.** A height counts rounds; one block per bonded validator per round.
 
+## The claims gate and the aggregate gate
+
+The gate register and the release campaign are different instruments. `check-mainnet-gates.py`
+asks whether every current-build gate has a witness, a control and pinned evidence.
+`tools/release-check.py --assert-ready` asks whether every required release arm reads `safe` over a
+committed record. `tools/check-launch-gate.py` is the aggregate: its open set is derived from
+`mainnet-gates.external.json`, every open row needs exactly one dated decision in
+`launch-gate.dispositions.json`, and `--assert-ready` is green only when the claims are ready and
+every external row is `met` or `superseded`. A disposition is an owner decision with a date; it is
+not a pass, and it does not make a blocked external row disappear.
+
 ## Status lifecycle
 
 `owes` → a named witness or record is missing. `blocked` → an external input is absent.

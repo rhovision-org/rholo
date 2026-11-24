@@ -191,6 +191,13 @@ The rules that follow are stated normatively in [Gate measurement](../spec/gate-
 record check does not prove a campaign ran, Docker is never the sole evidence, `PRECONDITION` is
 never `PASS`, one sign-off does not discharge several gates, and a name is not independence.
 
+The aggregate launch gate has two halves. `tools/release-check.py --assert-ready` is the claims
+half: every required arm must read `safe` over a committed record. `tools/check-launch-gate.py`
+adds the external half: the open set is derived from `mainnet-gates.external.json`, each open row
+needs exactly one dated decision in `launch-gate.dispositions.json`, and `--assert-ready` is green
+only when every external row is `met` or `superseded`. A dated disposition records who decided and
+when; it is not a pass and it cannot substitute for closure.
+
 ### 3.7 Supersession as a self-correcting method
 
 The method records its own corrections. The live and host-level rows that had been written as
@@ -416,6 +423,9 @@ In-tree:
 - [`tools/release-check.py`](../../../tools/release-check.py),
   [`tools/build-mainnet-gates.py`](../../../tools/build-mainnet-gates.py),
   [`tools/trace-evaluate.py`](../../../tools/trace-evaluate.py) — derivation and anchors
+- [`tools/check-launch-gate.py`](../../../tools/check-launch-gate.py) and
+  [`spec/audit/launch-gate.dispositions.json`](../../../spec/audit/launch-gate.dispositions.json)
+  — the aggregate gate and its dated decisions
 - [`tools/fleet-run.py`](../../../tools/fleet-run.py),
   [`tools/fleet_manifest.py`](../../../tools/fleet_manifest.py) — the public driver and manifest
   validator

@@ -39,26 +39,40 @@ class RehearsalTests(unittest.TestCase):
                         "--validators", "4", "--fresh"],
                        cwd=ROOT, env=cls.env, check=True, timeout=1200)
         cls.work = Path(tempfile.mkdtemp(dir=ROOT / "target", prefix="rc-public-fleet-"))
-        cls.manifest = cls.work / "manifest.json"
-        subprocess.run([sys.executable, str(ROOT / "tools" / "fleet-run.py"), "manifest",
-                        "--prefix", PREFIX, "--transport", "docker",
-                        "--out", str(cls.manifest)],
-                       cwd=ROOT, env=cls.env, check=True, timeout=300)
+        cls.manifests = {}
+        for claim in ("RC-1", "RC-4"):
+            cls.manifests[claim] = cls._manifest(claim)
+        for claim in ("RC-2", "RC-3"):
+            cls.manifests[claim] = cls._manifest(claim, typed=True)
+
+    @classmethod
+    def _manifest(cls, claim: str, typed: bool = False) -> Path:
+        path = cls.work / f"manifest-{claim.lower()}.json"
+        command = [sys.executable, str(ROOT / "tools" / "fleet-run.py"), "manifest",
+                   "--prefix", PREFIX, "--transport", "docker", "--out", str(path)]
+        if typed:
+            command += ["--claim", claim]
+        subprocess.run(command, cwd=ROOT, env=cls.env, check=True, timeout=300)
+        return path
 
     @classmethod
     def tearDownClass(cls):
         subprocess.run(["bash", str(ROOT / "tools" / "devnet.sh"), "down", "-v"],
                        cwd=ROOT, env=cls.env, timeout=600)
 
-    def _run_claim(self, claim: str) -> tuple[int, dict]:
-        out = self.work / claim
-        result = subprocess.run(
-            [sys.executable, str(ROOT / "tools" / "release-check.py"), "run",
-             "--claim", claim, "--env", "public", "--rehearse",
-             "--public-manifest", str(self.manifest), "--out", str(out)],
-            cwd=ROOT, env=self.env, text=True, capture_output=True, timeout=3600)
+    def _run_claim(self, claim: str, arm: str | None = None) -> tuple[int, dict]:
+        out = self.work / (claim if arm is None else f"{claim}-{arm}")
+        command = [sys.executable, str(ROOT / "tools" / "release-check.py"), "run",
+                   "--claim", claim, "--env", "public", "--rehearse",
+                   "--public-manifest", str(self.manifests[claim]), "--out", str(out)]
+        if arm is not None:
+            command += ["--arm", arm]
+        result = subprocess.run(command, cwd=ROOT, env=self.env, text=True,
+                                capture_output=True, timeout=3600)
         action = "fleet-deploy" if claim == "RC-1" else "fleet-recovery"
-        fleet = out / action / "fleet-result.json"
+        fleet = out / "fleet-result.json"
+        if not fleet.is_file():
+            fleet = out / action / "fleet-result.json"
         document = json.loads(fleet.read_text()) if fleet.is_file() else {}
         return result.returncode, document
 
@@ -81,6 +95,29 @@ class RehearsalTests(unittest.TestCase):
             self.assertTrue(record.get("rehearsal"))
             self.assertEqual(record.get("locality"), "local-devnet")
             self._predicate_passes(claim, record)
+
+    def test_the_typed_public_arms_run_on_four_local_validators(self):
+        rc2_code, rc2 = self._run_claim("RC-2")
+        self.assertEqual(rc2_code, 3, rc2.get("reasons"))  # a rehearsal is not evidence
+        self.assertEqual(rc2.get("harness_result"),
+                         "PASS_BOUNDED_WORKLOAD_PARTITION_REJOIN", rc2.get("reasons"))
+        self.assertEqual(len(rc2.get("cycles") or []), 2)
+        for cycle in rc2["cycles"]:
+            self.assertTrue(cycle["producing_victim"])
+            self.assertTrue(all(row["finalized_anchor"]
+                                for row in cycle["anchor_retention"]))
+        self._predicate_passes("RC-2",
+                               json.loads((self.work / "RC-2" / "claim.json").read_text()))
+
+        rc3_code, rc3 = self._run_claim("RC-3", arm="availability")
+        self.assertEqual(rc3_code, 3, rc3.get("reasons"))
+        self.assertEqual(rc3.get("harness_result"), "PASS", rc3.get("reasons"))
+        availability = rc3.get("availability") or {}
+        self.assertGreaterEqual(len(availability.get("blocks") or []), 10)
+        self.assertEqual(availability.get("not_available"), [])
+        self._predicate_passes(
+            "RC-3",
+            json.loads((self.work / "RC-3-availability" / "claim.json").read_text()))
 
     def _predicate_passes(self, claim: str, record: dict) -> None:
         """The observations, read without the rehearsal marker, satisfy the claim's own check."""

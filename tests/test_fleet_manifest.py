@@ -212,5 +212,87 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(fleet.manifest_sha256(one), fleet.manifest_sha256(two))
 
 
+def fault(**overrides):
+    document = {"kind": "partition", "cycles": 2, "victim_policy": "highest-finalised",
+                "p2p_ports": [40400, 40404], "mechanism": "nftables",
+                "dwell_blocks": 2, "dwell_seconds": 30, "heal_timeout_s": 300}
+    document.update(overrides)
+    return document
+
+
+def join_block(**overrides):
+    document = {
+        "joiner": {"name": "joiner", "host": "joiner.example.org",
+                   "ssh": "root@joiner", "unit": "rnode-joiner",
+                   "binary_path": "/usr/local/bin/rnode",
+                   "data_dir": "/var/lib/rnode-joiner",
+                   "http": "https://joiner.example.org",
+                   "admin": "http://127.0.0.1:40405"},
+        "bootstrap_from": "validator-1", "fresh_store": True,
+        "min_height": 28, "timeout_s": 600,
+    }
+    document.update(overrides)
+    return document
+
+
+class InputOnlyTests(unittest.TestCase):
+    def test_result_shaped_inputs_are_refused_by_name(self):
+        for key, value in (("cycles", []), ("pressure_record", "x"),
+                           ("join_result", "pass"), ("audit_bootstrap", "x"),
+                           ("upgrade_record", "x"), ("harness_result", "PASS")):
+            problems = fleet.validate(manifest(**{key: value}), claim_id="RC-2", head=HEAD)
+            self.assertTrue(any(key in problem and "output" in problem for problem in problems),
+                            f"{key} was not refused: {problems}")
+
+    def test_a_fault_cannot_name_the_victim(self):
+        document = manifest(fault=fault(victim="validator-1"))
+        problems = fleet.validate(document, claim_id="RC-2", head=HEAD)
+        self.assertTrue(any("fault: victim is an output" in problem for problem in problems))
+
+    def test_a_fault_is_required_for_rc2(self):
+        problems = fleet.validate(manifest(), claim_id="RC-2", head=HEAD)
+        self.assertTrue(any("fault is missing" in problem for problem in problems))
+
+    def test_availability_needs_ten_finalised_blocks(self):
+        document = manifest(availability={"window_blocks": 9, "probe_timeout_s": 20})
+        problems = fleet.validate(document, claim_id="RC-3", head=HEAD)
+        self.assertTrue(any("at least 10" in problem for problem in problems))
+
+    def test_a_join_cannot_bootstrap_from_the_ceremony_node(self):
+        document = manifest(join=join_block(bootstrap_from="validator-0"))
+        problems = fleet.validate(document, claim_id="RC-6", head=HEAD)
+        self.assertTrue(any("non-producer" in problem for problem in problems))
+
+    def test_a_joiner_cannot_share_a_validator_host(self):
+        document = manifest(join=join_block())
+        document["join"]["joiner"]["host"] = "8.8.8.2"
+        problems = fleet.validate(document, claim_id="RC-6", head=HEAD)
+        self.assertTrue(any("fifth host" in problem for problem in problems))
+
+    def test_pressure_needs_a_node_host_and_a_mode_order(self):
+        document = manifest(pressure={"endpoint": "https://rpc.example.org", "host": "nope",
+                                      "port": 40403, "cap": 2, "probes": 4,
+                                      "mode_order": ["capped", "capped"], "settle_s": 5})
+        problems = fleet.validate(document, claim_id="RC-5", head=HEAD)
+        self.assertTrue(any("not a node name" in problem for problem in problems))
+        self.assertTrue(any("mode_order" in problem for problem in problems))
+
+    def test_rc5_needs_both_pressure_lifetimes(self):
+        document = manifest(pressure={"endpoint": "https://rpc.example.org",
+                                      "host": "validator-1", "port": 40403, "cap": 2,
+                                      "probes": 4, "mode_order": ["capped"], "settle_s": 5})
+        problems = fleet.validate(document, claim_id="RC-5", head=HEAD)
+        self.assertTrue(any("both the capped and the unset" in problem for problem in problems))
+
+    def test_an_upgrade_order_is_a_permutation(self):
+        document = manifest(upgrade={
+            "old": {"binary_sha256": "1" * 64}, "new_binary_path": "/new", "old_binary_path": "/old",
+            "order": ["validator-0", "validator-0", "validator-1", "validator-2"],
+            "staging_host": "staging", "mixed_window_blocks": 3,
+            "rollback_on_refusal": True, "timeout_s": 600})
+        problems = fleet.validate(document, claim_id="RC-7", head=HEAD)
+        self.assertTrue(any("permutation" in problem for problem in problems))
+
+
 if __name__ == "__main__":
     unittest.main()

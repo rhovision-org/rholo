@@ -151,3 +151,29 @@ environments) and by `check-hardfork-51-closeout.py --verify-local-git --assert-
 `tests/test_hardfork_51_closeout.py` (`FinalityCampaignTests`, `M2PressureArmTests`), the same
 discovered seam the register check and the M1 collector use. No workflow file changes: the
 discovery line for `test_hardfork_51_closeout.py` already exists.
+
+## The public-driver and launch-gate suites (2026-11-24)
+
+The public-arm readiness tranche adds offline suites that should run in the existing static-gates
+job:
+
+```sh
+python3 -m unittest discover -s tests -p 'test_fleet_manifest.py' -v
+python3 -m unittest discover -s tests -p 'test_fleet_run.py' -v
+python3 -m unittest discover -s tests -p 'test_fleet_arms.py' -v
+python3 -m unittest discover -s tests -p 'test_launch_gate.py' -v
+python3 -m unittest discover -s tests -p 'test_release_campaigns.py' -v
+python3 -m unittest discover -s tests -p 'test_release_arm_runners.py' -v
+python3 tools/check-release-campaigns.py --check
+set +e
+python3 tools/check-launch-gate.py --gate
+code=$?
+set -e
+test "$code" -eq 3
+```
+
+The final check is the hardfork-closeout convention: the external rows are open today, so
+`--gate` exits 3 until every open row has a dated disposition. It flips to 0 only when that
+happens. The Docker four-validator rehearsal (`FLEET_REHEARSAL=1`) is **not** a CI step; it needs
+Docker and minutes, and its records are never packed. No workflow file is edited here; this is a
+request for the owner merge.
