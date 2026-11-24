@@ -431,10 +431,12 @@ independent safety attestation; the §6 table above is unchanged.
 
 **Addition, 2026-11-23 — the developer fee reserve (#655) is a category-A candidate.** It is
 recorded as a dated note rather than a new row, for the reason above. `pay_executor` can now pay a
-second share of a deploy's burn, `developer-share` basis points, to the REV address
-`developer-reserve-address`, in the same native step as the producer's share; the merge's
-cost-accounting composition credits that address from the same `fee_split`. Both values are written
-once, at genesis, to the `pos:developer-reserve` leaf, and only when the share is non-zero. The
+second share of a deploy's burn, `developer-share` basis points, to the reserve's custody vault, in
+the same native step as the producer's share; the merge's cost-accounting composition credits that
+address from the same `fee_split`. The custody vault is a `MultiSigRevVault` the genesis creates over
+`developer-reserve-public-keys`/`developer-reserve-quorum`; its address is read back after the genesis
+deploys and written with the share, once, to the `pos:developer-reserve` leaf, and only when the share
+is non-zero. Spending from the vault in a later block is blocked by #669. The
 contract has no counterpart: `Pos.rhox` makes no payment out of the burn to anyone. **Hard fork (#51
 category A), but only for a network that arms it:** a non-zero share moves REV out of the staking
 vault on every deploy, so post-states differ from a node without the rule. A zero share writes no leaf

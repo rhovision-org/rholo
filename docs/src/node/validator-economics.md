@@ -168,23 +168,32 @@ existed decodes to. See [`spec/RUST-FIRST.md`](../../../spec/RUST-FIRST.md) for 
 that holds across it.
 
 **The developer fee reserve, off by default** (#655). The same step can pay a second share of each
-deploy's burn: `developer-share` basis points, to the REV address `developer-reserve-address`
+deploy's burn: `developer-share` basis points, to the reserve's custody vault
 (`pay_executor` and `fee_split` in `rholang/src/native_state.rs`, composed at merge time by the same
 `fee_split` in `casper/src/merging.rs`). Like the producer's share it is a reallocation inside the same
 pie, and the epoch pot is smaller by exactly what is paid. The genesis refuses a pair of shares that
-adds up to more than the whole burn, and a non-zero share without a REV address. Both values are
-written once, at genesis, to the `pos:developer-reserve` leaf (`install_genesis`). **A zero share,
-the shipped default, writes no leaf and pays nothing**, so such a genesis is byte-identical to one
-made before the keys existed. The conservation is `payFees_conserves` in
+adds up to more than the whole burn. **A zero share, the shipped default, adds no deploy, writes no
+leaf and pays nothing**, so such a genesis is byte-identical to one made before the keys existed.
+
+**Custody is a vault the genesis creates, not a configured address.** A non-zero share makes the
+genesis create a `MultiSigRevVault` over `developer-reserve-public-keys` with
+`developer-reserve-quorum` confirmations (`casper/src/genesis/developer_reserve.rs`). The reserve is
+paid to *that vault's* REV address, which comes from a fresh unforgeable name, so no single key holds
+it. After the genesis deploys run, the address is read back and written with the share to the
+`pos:developer-reserve` leaf (`bind_developer_reserve`), on both the ceremony's path and a replaying
+node's. The vault's handle is registered under a constant URI. If the vault was not created, the
+genesis is refused rather than installed with a reserve nobody can spend. The signers and quorum
+cannot change after genesis; losing `quorum` keys strands the reserve. **Not yet spendable:** a
+multisig vault on this port cannot be spent from a block after the one that created it (#669), so no
+genesis should set a non-zero share until #669 is fixed. The conservation is `payFees_conserves` in
 [`spec/Rchain/Pos.lean`](../../../spec/Rchain/Pos.lean).
 
 The reason it is a genesis value is the reason it exists. No deploy can write a fee parameter, so a
 share that a genesis does not commit can never be enabled without a hard fork
 ([the capability audit](../../../spec/audit/forkless-developer-rewards-20261123.md) is on #655).
 What the genesis fixes is therefore a ceiling. How much of the reserve reaches developers, and when,
-is decided by whoever controls the recipient address, through ordinary deploys, and an unspent part
-can go back to the validator pot through `fundPot`. **The address cannot change after genesis
-either**, so its custody is a launch decision.
+is decided by the reserve's signers, through ordinary deploys (forwarding it to a governance treasury
+contract is #655's PR-C), and an unspent part can go back to the validator pot through `fundPot`.
 
 **The absence rule, off by default.** A validator's epoch reward is scaled by its **participation**: how
 far behind the last finalised fringe its latest *message* sits. Each node derives that itself from its own

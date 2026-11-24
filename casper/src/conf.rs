@@ -379,9 +379,14 @@ pub struct GenesisBlockData {
     /// a genesis does not commit can never be enabled without a hard fork, because no deploy can write
     /// consensus parameters. `executor_share + developer_share` may not exceed `10000`.
     pub developer_share: i32,
-    /// **The REV address the developer fee reserve is paid to** (#655). Required when
-    /// `developer_share` is non-zero; ignored when it is zero.
-    pub developer_reserve_address: String,
+    /// **Who controls the developer fee reserve** (#655): the hex secp256k1 public keys of the
+    /// `MultiSigRevVault` the genesis creates to hold it. The reserve is paid to *that vault's* address,
+    /// which the genesis derives — there is no configured address, so there is no address nobody is
+    /// shown to control. Required (non-empty) when `developer_share` is non-zero; ignored when it is zero.
+    pub developer_reserve_public_keys: Vec<String>,
+    /// How many of `developer_reserve_public_keys` must confirm a transfer out of the reserve, in
+    /// `1..=keys`. Ignored when `developer_share` is zero.
+    pub developer_reserve_quorum: i32,
     /// Liveness enforcement's five parameters (RCHIP #55, Law 89). All zero is the shipped
     /// pre-change rule; a network arms the mechanism at genesis.
     pub liveness_absence_threshold: i64,
@@ -418,7 +423,8 @@ mod tests {
             dev_tax_address: String::new(),
             dev_tax_vesting_blocks: 0,
             developer_share: 0,
-            developer_reserve_address: String::new(),
+            developer_reserve_public_keys: Vec::new(),
+            developer_reserve_quorum: 0,
 
             liveness_absence_threshold: 0,
             liveness_jail_after_boundaries: 0,

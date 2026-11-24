@@ -463,9 +463,13 @@ fn genesis_block_data_from_hocon(h: &Hocon) -> Result<GenesisBlockData, String> 
             Some(v) => to_i32(v)?,
             None => 0,
         },
-        developer_reserve_address: match get_opt(h, "developer-reserve-address") {
-            Some(v) => to_string(v)?,
-            None => String::new(),
+        developer_reserve_public_keys: match get_opt(h, "developer-reserve-public-keys") {
+            Some(v) => to_string_list(v)?,
+            None => Vec::new(),
+        },
+        developer_reserve_quorum: match get_opt(h, "developer-reserve-quorum") {
+            Some(v) => to_i32(v)?,
+            None => 0,
         },
 
         // Liveness enforcement (RCHIP #55, Law 89): optional and off by default. A config written
@@ -572,8 +576,11 @@ fn genesis_block_data_over(
     if let Some(v) = get_opt(h, "developer-share") {
         out.developer_share = to_i32(v)?;
     }
-    if let Some(v) = get_opt(h, "developer-reserve-address") {
-        out.developer_reserve_address = to_string(v)?;
+    if let Some(v) = get_opt(h, "developer-reserve-public-keys") {
+        out.developer_reserve_public_keys = to_string_list(v)?;
+    }
+    if let Some(v) = get_opt(h, "developer-reserve-quorum") {
+        out.developer_reserve_quorum = to_i32(v)?;
     }
     if let Some(v) = get_opt(h, "liveness-absence-threshold") {
         out.liveness_absence_threshold = to_i64(v)?;
@@ -1023,7 +1030,8 @@ mod tests {
             dev_tax_address: String::new(),
             dev_tax_vesting_blocks: 0,
             developer_share: 0,
-            developer_reserve_address: String::new(),
+            developer_reserve_public_keys: Vec::new(),
+            developer_reserve_quorum: 0,
 
             liveness_absence_threshold: 0,
             liveness_jail_after_boundaries: 0,

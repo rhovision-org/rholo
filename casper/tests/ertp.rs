@@ -208,7 +208,8 @@ fn proof_of_stake() -> ProofOfStake {
         pos_multi_sig_quorum: 1,
         pos_vault_pub_key: String::new(),
         developer_share: NonNegI64::zero(),
-        developer_reserve_address: String::new(),
+        developer_reserve_public_keys: Vec::new(),
+        developer_reserve_quorum: 0,
         dev_tax_vesting_blocks: NonNegI64::zero(),
 
         liveness_absence_threshold: 0,

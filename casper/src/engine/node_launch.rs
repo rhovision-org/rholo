@@ -124,7 +124,8 @@ pub async fn create_genesis_block(
     dev_tax_address: &str,
     dev_tax_vesting_blocks: i64,
     developer_share: NonNegI64,
-    developer_reserve_address: &str,
+    developer_reserve_public_keys: &[String],
+    developer_reserve_quorum: i32,
     liveness_absence_threshold: i64,
     liveness_jail_after_boundaries: i64,
     liveness_jail_epochs: i64,
@@ -183,7 +184,8 @@ pub async fn create_genesis_block(
                 format!("casper.genesis.dev-tax-vesting-blocks must not be negative: {e}")
             })?,
             developer_share,
-            developer_reserve_address: developer_reserve_address.to_string(),
+            developer_reserve_public_keys: developer_reserve_public_keys.to_vec(),
+            developer_reserve_quorum,
 
             liveness_absence_threshold,
             liveness_jail_after_boundaries,
@@ -205,9 +207,14 @@ pub async fn create_genesis_block(
     let pos_genesis =
         crate::genesis::build_pos_genesis(&genesis.proof_of_stake, genesis.dev_vesting.clone());
     pos_genesis.params.validate()?;
-    rchain_rholang::native_state::check_developer_reserve(
+    rchain_rholang::native_state::check_developer_share(
         &pos_genesis.params,
-        pos_genesis.developer_reserve.as_ref(),
+        pos_genesis.developer_share,
+    )?;
+    crate::genesis::developer_reserve::check_custody(
+        genesis.proof_of_stake.developer_share,
+        &genesis.proof_of_stake.developer_reserve_public_keys,
+        genesis.proof_of_stake.developer_reserve_quorum,
     )?;
     crate::genesis::create_genesis_block(&ceremony, &genesis, runtime).await
 }
@@ -272,7 +279,8 @@ pub async fn create_genesis_block_from_config(
         &gbd.dev_tax_address,
         gbd.dev_tax_vesting_blocks,
         developer_share,
-        &gbd.developer_reserve_address,
+        &gbd.developer_reserve_public_keys,
+        gbd.developer_reserve_quorum,
         gbd.liveness_absence_threshold,
         i64::from(gbd.liveness_jail_after_boundaries),
         i64::from(gbd.liveness_jail_epochs),

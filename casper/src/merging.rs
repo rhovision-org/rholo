@@ -4424,9 +4424,15 @@ mod boundary_merge_tests {
                     liveness_slash_severity: 0,
                 },
                 dev_vesting: None,
-                developer_reserve,
+                developer_share: developer_reserve.as_ref().map(|r| r.share),
             })
             .unwrap();
+        // The genesis binds the reserve to its custody vault after its deploys; here the address is
+        // given directly, because this test is about the merge, not about custody.
+        if let Some(reserve) = &developer_reserve {
+            let params = native.params().await.unwrap();
+            native.bind_developer_reserve(&params, reserve).unwrap();
+        }
         for byte in [8, 9] {
             native.set_vault_balance(&payer(byte).1, nn(1000));
         }
@@ -4646,7 +4652,7 @@ mod boundary_merge_tests {
                     liveness_slash_severity: 2,
                 },
                 dev_vesting: None,
-                developer_reserve: None,
+                developer_share: None,
             })
             .unwrap();
         let repo = repo

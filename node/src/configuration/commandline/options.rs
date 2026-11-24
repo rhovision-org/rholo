@@ -734,14 +734,21 @@ pub struct Run {
     pub executor_share: Option<i32>,
 
     /// **The developer fee reserve's share of a deploy's burned phlo, in basis points** (#655), paid to
-    /// `--developer-reserve-address`. A *genesis* parameter; `0` (the default) is no reserve.
+    /// the multi-signature vault the genesis creates for it. A *genesis* parameter; `0` (the default)
+    /// is no reserve.
     #[arg(long = "developer-share")]
     pub developer_share: Option<i32>,
 
-    /// **The REV address the developer fee reserve is paid to** (#655). Required with a non-zero
+    /// **The public keys that control the developer fee reserve** (#655): the signers of the
+    /// `MultiSigRevVault` the genesis creates to hold it. Required with a non-zero
     /// `--developer-share`; a *genesis* parameter.
-    #[arg(long = "developer-reserve-address")]
-    pub developer_reserve_address: Option<String>,
+    #[arg(long = "developer-reserve-public-keys", num_args = 1..)]
+    pub developer_reserve_public_keys: Option<Vec<String>>,
+
+    /// **How many reserve keys must confirm a transfer out of the reserve** (#655), in `1..=keys`. A
+    /// *genesis* parameter.
+    #[arg(long = "developer-reserve-quorum")]
+    pub developer_reserve_quorum: Option<i32>,
 
     /// **How long a validator may go without signing a block before an epoch stops paying it** (B4,
     /// #150), in heights; `0` is the contract's behaviour and the shipped default. It is the *knee* of

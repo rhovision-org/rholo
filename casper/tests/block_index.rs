@@ -537,7 +537,7 @@ async fn a_slashed_validator_is_absent_from_the_bonds_at_a_merged_root() {
         trusted: BTreeSet::new(),
         params: PosParams::default(),
         dev_vesting: None,
-        developer_reserve: None,
+        developer_share: None,
     };
     let (_pre, genesis_post, _) = rm
         .compute_genesis(&[], &rand, BlockData::empty(), &pos, &[seeded_vault()])

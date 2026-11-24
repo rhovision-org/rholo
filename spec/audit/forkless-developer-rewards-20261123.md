@@ -58,10 +58,13 @@ evidence for it, not its witness, and it does not move the row.
    two installs of identical source by different deploys log distinct consume hashes, and that an
    invocation's COMM resolves to exactly one installing deploy.
 
-**Status of row 4 after PR-B.** The developer fee reserve (`developer-share`,
-`developer-reserve-address`, the `pos:developer-reserve` leaf, and the split in `pay_executor` and the
-merge composition) supplies the mechanism. A genesis with a zero share still has no reserve, so the
-row is closed for a given network only if its genesis commits a non-zero share.
+**Status of row 4 after PR-B.** The developer fee reserve (`developer-share`, the
+`pos:developer-reserve` leaf, and the split in `pay_executor` and the merge composition) supplies the
+mechanism, and row 7's question of where the share is paid is settled: a `MultiSigRevVault` the
+genesis creates over `developer-reserve-public-keys`/`developer-reserve-quorum`, bound as the reserve's
+address. A genesis with a zero share still has no reserve, so the row is closed for a given network
+only if its genesis commits a non-zero share, and that must wait for #669 (multisig vaults are not yet
+spendable from a later block).
 
 ## Non-claims
 
