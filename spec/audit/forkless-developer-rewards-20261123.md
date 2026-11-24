@@ -69,6 +69,39 @@ so a vault created in the genesis can be spent from a later block. The spend wit
 `RESERVE_SPENDABLE` is true. What remains for row 4 is the post-genesis treasury/activation service
 (PR-C/PR-D), not the custody mechanism.
 
+**Status after PR-C (2026-11-24).** The post-genesis service now exists as ordinary deploys in
+`examples/devrewards/` and is exercised offline:
+
+- **Row 7/8 (treasury and activation).** A treasury holds a fresh unforgeable vault; before a threshold
+  of distinct install-time validator keys activates it, `pay` refuses and the REV is held. The private
+  `pay` name is held only by the settlement; the public bundle exposes the address, status and
+  activation. `casper/tests/devrewards_flows.rs` covers inactive refusal, activation, and the
+  replayed-attestation count.
+- **Row 10 (attribution).** The two properties this record said were unverified are now pinned by
+  `casper/tests/devrewards_attribution.rs`: byte-identical installs by different deploys log
+  **distinct** consume hashes, and an invocation's COMM resolves to **exactly one** install. The
+  attribution policy (first appearance installs; a burn splits equally among invoked installers;
+  deterministic remainder) is `devrewards-usage-v1` in `tools/devrewards_manifest.py`.
+- **Row 11 (fee policy).** The split is off-chain and versioned in that tool; the protocol does not
+  meter per contract.
+- **Row 12 (beneficiary).** `BeneficiaryRegistry.rho` is append-only and self-scoped: the caller
+  supplies its own `deployerId`, the key is derived from it, and `beneficiaryOf(key, asOfHeight)`
+  applies a change at its height and never before.
+- **Row 15 (encoding).** Leaf, node and digest are pinned in
+  `tests/fixtures/devrewards_manifest_golden.json`, read by both the Python suite and
+  `casper/tests/devrewards_manifest_encoding.rs`.
+- **Row 17 (recovery).** `docs/src/spec/failure-hazop.md` U27 dispositions all eleven guide words for
+  duplicate epoch, conflicting manifest, unauthorized change, over-claim, crash/restart, stale anchor,
+  drained treasury and replayed attestation, each with a named falsifier.
+
+**Row 16 and §7 remain observed, not asserted.** `tools/devrewards-experiment.py` is the witness and
+its verdict engine refuses to call a `not-run` arm a pass. A **one-validator production-genesis smoke
+is green** — the non-dev genesis commits, and the DevRewards install is an ordinary deploy that
+publishes the treasury address in block 4 — which measures the plan's main feasibility risk. The
+four-validator run, the independent observer (no block-event export in this CLI), the reserve funding,
+the claim and the restart drills are owed, so `G655-FORKLESS-DEVREWARDS` stays `owes`. Nothing above
+promotes it.
+
 ## Non-claims
 
 This record does not show that any reward can be activated, that the treasury is secure, that

@@ -1,0 +1,205 @@
+// Settlement — accepts a signed, finalized reward manifest and pays claims against its Merkle root.
+//
+// **Included by 'install.rho'**; it expects the install's outer 'new' to bind 'settlementState',
+// 'registry', 'pay', 'blake' and 'secp', and the install-time attestor key list and threshold.
+//
+// A manifest is '(epoch, anchorHeight, anchorHash, root, total)'; its digest is
+// 'blake2b256("devrewards-manifest-v1" || epoch_u64_le || anchorHash || root)'. 'accept' counts
+// distinct signatures by the validator keys fixed at install; a second accept for an epoch with a
+// different digest is refused and recorded as a conflict. A claim recomputes the leaf
+// 'blake2b256(0x00 || deployerKey || amount_i64_le)', walks the proof against the stored root,
+// resolves the beneficiary at the anchor height, and calls the treasury's private 'pay'. The
+// claim is marked paid only after the transfer succeeds, so an under-funded claim can be retried
+// and an unclaimed entitlement is never swept: it carries forward.
+//
+// Proof format: a bottom-up list of '(isLeft, sibling32)' pairs. The root is a 32-byte byte array.
+
+new encodeU64, verifyProof in {
+  // Little-endian u64 of a non-negative integer, as 8 bytes. Sixteen hex digits are enough for one
+  // byte; 'n' is non-negative (amounts and epochs are checked at the edges).
+  contract encodeU64(@n, @i, @acc, ret) = {
+    if (i == 8) {
+      ret!(acc)
+    } else {
+      encodeU64!(
+        n / 256,
+        i + 1,
+        acc ++ ("0123456789abcdef".slice((n % 256) / 16, (n % 256) / 16 + 1) ++
+                "0123456789abcdef".slice((n % 256) % 16, (n % 256) % 16 + 1)).hexToBytes(),
+        *ret
+      )
+    }
+  } |
+
+  // Fold the proof into a candidate root: 'next = H(0x01 || left || right)'.
+  contract verifyProof(@node, @proof, ret) = {
+    match proof {
+      [] => { ret!(node) }
+      [head ... rest] => {
+        match head {
+          (left, sibling) => {
+            new nextCh in {
+              match left {
+                true => { blake!("01".hexToBytes() ++ sibling ++ node, *nextCh) }
+                false => { blake!("01".hexToBytes() ++ node ++ sibling, *nextCh) }
+                _ => { nextCh!("bad proof side") }
+              } |
+              for (@next <- nextCh) {
+                match next {
+                  bytes => {
+                    // A 32-byte array is the next node; anything else ends the walk.
+                    if (bytes.length() == 32) { verifyProof!(next, rest, *ret) }
+                    else { ret!("bad proof node") }
+                  }
+                }
+              }
+            }
+          }
+          _ => { ret!("bad proof node") }
+        }
+      }
+    }
+  } |
+
+  contract settlement(@"accept", @epoch, @anchorHeight, @anchorHash, @root, @total, @attestations, ret) = {
+    if (epoch < 0) {
+      ret!((false, "invalid epoch"))
+    } else {
+      new epochLeCh in {
+        encodeU64!(epoch, 0, "".hexToBytes(), *epochLeCh) |
+        for (@epochLe <- epochLeCh) {
+          new digestCh in {
+            blake!("devrewards-manifest-v1".toUtf8Bytes() ++ epochLe ++ anchorHash ++ root, *digestCh) |
+            for (@digest <- digestCh) {
+              new countCh in {
+                countAtts!(attestations, Set(), 0, digest, $$ATTESTORS$$, *countCh) |
+                for (@count <- countCh) {
+                  for (@st <- settlementState) {
+                    if (count < $$THRESHOLD$$) {
+                      settlementState!(st) |
+                      ret!((false, "insufficient attestations"))
+                    } else {
+                      match st.get("accepted").get(epoch) {
+                        Nil => {
+                          settlementState!(st.set(
+                            "accepted",
+                            st.get("accepted").set(
+                              epoch,
+                              (anchorHeight, anchorHash, root, digest, total)
+                            )
+                          )) |
+                          ret!((true, "accepted"))
+                        }
+                        (h, ah, r, d, t) => {
+                          if (d == digest) {
+                            settlementState!(st) |
+                            ret!((true, "already accepted"))
+                          } else {
+                            settlementState!(st.set(
+                              "conflicts",
+                              st.get("conflicts") ++ [(epoch, anchorHeight, anchorHash, root, digest, attestations)]
+                            )) |
+                            ret!((false, "conflicting manifest"))
+                          }
+                        }
+                        _ => {
+                          settlementState!(st) |
+                          ret!((false, "corrupt accepted entry"))
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } |
+
+  contract settlement(@"claim", @epoch, @deployerKey, @amount, @proof, ret) = {
+    if (amount < 0) {
+      ret!((false, "invalid amount"))
+    } else {
+      for (@st <- settlementState) {
+        match st.get("accepted").get(epoch) {
+          Nil => {
+            settlementState!(st) |
+            ret!((false, "unknown epoch"))
+          }
+          (anchorHeight, anchorHash, root, digest, total) => {
+            new amountLeCh in {
+              encodeU64!(amount, 0, "".hexToBytes(), *amountLeCh) |
+              for (@amountLe <- amountLeCh) {
+                new leafCh in {
+                  blake!("00".hexToBytes() ++ deployerKey ++ amountLe, *leafCh) |
+                  for (@leaf <- leafCh) {
+                    new rootCh in {
+                      verifyProof!(leaf, proof, *rootCh) |
+                      for (@computed <- rootCh) {
+                        if (computed != root) {
+                          settlementState!(st) |
+                          ret!((false, "invalid proof"))
+                        } else {
+                          if (st.get("paid").contains(epoch.toString() ++ ":" ++ deployerKey.bytesToHex())) {
+                            settlementState!(st) |
+                            ret!((false, "already paid"))
+                          } else {
+                            new beneficiaryCh in {
+                              registry!("beneficiaryOf", deployerKey, anchorHeight, *beneficiaryCh) |
+                              for (@beneficiary <- beneficiaryCh) {
+                                new payCh in {
+                                  pay!(beneficiary, amount, *payCh) |
+                                  for (@res <- payCh) {
+                                    match res {
+                                      (true, _) => {
+                                        settlementState!(st.set(
+                                          "paid",
+                                          st.get("paid").set(
+                                            epoch.toString() ++ ":" ++ deployerKey.bytesToHex(),
+                                            true
+                                          )
+                                        )) |
+                                        ret!((true, "paid"))
+                                      }
+                                      (false, reason) => {
+                                        settlementState!(st) |
+                                        ret!((false, reason))
+                                      }
+                                      _ => {
+                                        settlementState!(st) |
+                                        ret!((false, "unexpected treasury reply"))
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          _ => {
+            settlementState!(st) |
+            ret!((false, "corrupt accepted entry"))
+          }
+        }
+      }
+    }
+  } |
+
+  contract settlement(@"conflicts", ret) = {
+    for (@st <- settlementState) {
+      settlementState!(st) |
+      ret!(st.get("conflicts"))
+    }
+  } |
+
+  @"devrewards/settlement"!(bundle+{*settlement})
+}

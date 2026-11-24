@@ -1,0 +1,64 @@
+// BeneficiaryRegistry — the key-to-beneficiary map for developer rewards.
+//
+// **Included by 'install.rho'**; it is not a deploy on its own. It expects the install's outer
+// 'new' to bind 'registryState', 'deployerId', 'deployerIdOps' and 'revAddress'.
+//
+// The registry is append-only and self-scoped: a caller can only register a beneficiary for the key
+// it proves by being the deployer ('rho:rchain:deployerId:ops "pubKeyBytes"'). There is no API that
+// names another key, so one developer cannot redirect another's reward. Entries are
+// '(height, address)' in append order; 'beneficiaryOf(key, asOfHeight)' returns the latest entry at
+// or below the anchor, and the address derived from the key itself when there is none. A change made
+// after an anchor therefore never applies before that anchor.
+//
+// Published for discovery: '@"devrewards/registry"!(bundle+{*registry})'.
+
+// The caller passes its own `rho:rchain:deployerId` value: a persistent contract has no ambient
+// caller, so the install-time binding would name the installer. A DeployerId is unforgeable and is
+// produced by the deploy system process, so the key derived here is the caller's own.
+contract registry(@"register", deployerId, @beneficiary, ret) = {
+  new pkCh, bd(`rho:block:data`), bdCh in {
+    deployerIdOps!("pubKeyBytes", *deployerId, *pkCh) |
+    for (@pk <- pkCh) {
+      bd!(*bdCh) |
+      for (@height, _, _ <- bdCh) {
+        for (@state <- registryState) {
+          match state.get(pk) {
+            Nil => { registryState!(state.set(pk, [(height, beneficiary)])) }
+            entries => { registryState!(state.set(pk, entries ++ [(height, beneficiary)])) }
+          } |
+          ret!(true)
+        }
+      }
+    }
+  }
+} |
+
+contract registry(@"beneficiaryOf", @key, @asOfHeight, ret) = {
+  for (@state <- registryState) {
+    // Peek: the registry state is unchanged by a read.
+    registryState!(state) |
+    match state.get(key) {
+      Nil => { revAddress!("fromPublicKey", key, *ret) }
+      entries => {
+        new find in {
+          contract find(@list, @i, findRet) = {
+            if (i < 0) {
+              revAddress!("fromPublicKey", key, *findRet)
+            } else {
+              match list.nth(i) {
+                (h, b) => {
+                  if (h <= asOfHeight) { findRet!(b) }
+                  else { find!(list, i - 1, *findRet) }
+                }
+                _ => { revAddress!("fromPublicKey", key, *findRet) }
+              }
+            }
+          } |
+          find!(entries, entries.length() - 1, *ret)
+        }
+      }
+    }
+  }
+} |
+
+@"devrewards/registry"!(bundle+{*registry})

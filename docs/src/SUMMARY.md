@@ -54,6 +54,7 @@
 - [Ringfencing a node](node/resource-ringfence.md)
 - [Validator risk, hardware and participation](node/operator-risk.md)
 - [Validator economics](node/validator-economics.md)
+- [Developer rewards: activating a fee-funded service after genesis](node/developer-rewards.md)
 - [Scaling and performance limits](node/scaling.md)
 - [Local devnet (Docker)](node/devnet.md)
 - [The public testnet](node/testnet.md)

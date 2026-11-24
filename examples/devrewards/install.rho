@@ -1,0 +1,62 @@
+// DevRewards v1 — **the one post-genesis install deploy**.
+//
+// Rendered from this template by 'tools/devrewards_install.py' (tests and the experiment use the
+// same function): the three fragment markers are replaced by the files of the same names, and
+// the two configuration placeholders (the attestor key list and the threshold) are replaced
+// with the install-time configuration. Nothing else changes.
+//
+// The install is one deploy because the treasury and the settlement are wired by a **private name**
+// ('pay') that must never appear in a deploy term: the treasury's public surface exposes the
+// address, status and activation, and the only way to move the reserve is to hold 'pay'. The
+// settlement is the only holder.
+//
+// Published for discovery, on fixed string channels:
+//   @"devrewards/registry"            bundle+{*registry}
+//   @"devrewards/treasury"            bundle+{*treasury}
+//   @"devrewards/settlement"          bundle+{*settlement}
+//   @"devrewards/treasury-address"    the treasury's fresh REV address (a string)
+
+new
+  deployerId(`rho:rchain:deployerId`),
+  deployerIdOps(`rho:rchain:deployerId:ops`),
+  revAddress(`rho:rev:address`),
+  revVault(`rho:rchain:revVault`),
+  blake(`rho:crypto:blake2b256Hash`),
+  secp(`rho:crypto:secp256k1Verify`),
+  registryState,
+  treasuryState,
+  settlementState,
+  custody,
+  registry,
+  treasury,
+  settlement,
+  countAtts,
+  member,
+  pay,
+  unf,
+  addrCh,
+  authCh,
+  vaultCh
+in {
+  revAddress!("fromUnforgeable", *unf, *addrCh) |
+  revVault!("unforgeableAuthKey", *unf, *authCh) |
+  for (@treasuryAddr <- addrCh & @treasuryAuth <- authCh) {
+    revVault!("findOrCreate", treasuryAddr, *vaultCh) |
+    for (@created <- vaultCh) {
+      match created {
+        (true, treasuryHandle) => {
+          custody!((treasuryHandle, treasuryAuth)) |
+          @"devrewards/treasury-address"!(treasuryAddr) |
+          registryState!({}) |
+          treasuryState!({ "active": false }) |
+          settlementState!({ "accepted": {}, "paid": {}, "conflicts": [] }) |
+          // {{BENEFICIARY_REGISTRY}}
+          // {{TREASURY}}
+          // {{SETTLEMENT}}
+          Nil
+        }
+        other => { @"devrewards/error"!(other) }
+      }
+    }
+  }
+}

@@ -177,3 +177,23 @@ The final check is the hardfork-closeout convention: the external rows are open 
 happens. The Docker four-validator rehearsal (`FLEET_REHEARSAL=1`) is **not** a CI step; it needs
 Docker and minutes, and its records are never packed. No workflow file is edited here; this is a
 request for the owner merge.
+
+## The developer-rewards suites (2026-11-24)
+
+The #655 service is ordinary deploys plus an off-chain manifest tool. Its checks are offline and
+belong in the static-gates job:
+
+```sh
+python3 -m unittest discover -s tests -p 'test_devrewards_manifest.py' -v
+python3 tools/devrewards_install.py --self-test
+python3 tools/devrewards_manifest.py self-test
+python3 tools/devrewards-experiment.py self-test
+tools/check-hazop-worksheet.sh --gate
+```
+
+The Rust integration suites need no wiring: the existing `cargo test` job compiles every
+`casper/tests/*.rs`, which now includes `devrewards`, `devrewards_flows`, `devrewards_attribution`
+and `devrewards_manifest_encoding`. The **live** four-validator production-genesis run
+(`tools/devrewards-experiment.py run`) is not a CI step: it needs Docker, a built image and minutes,
+and its verdict is `not-run` until the independent-observer arm exists. No workflow file is edited
+here; this is a request for the owner merge.
