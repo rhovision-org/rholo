@@ -60,52 +60,65 @@ const MAX_ATTESTATION_BYTES: usize = 8 * 1024;
 /// validator; the cap is generous and still independent of what a peer chooses to send.
 const MAX_CERTIFICATE_BYTES: usize = 1024 * 1024;
 
-/// **The production source**: the bootstrap's `/api/v1/checkpoint`, on its client port.
+/// **The production source**: an ordered list of bootstrap `/api/v1/checkpoint` URLs, on each
+/// seed's client port. The first seed to answer is used; a down first seed falls through, which is
+/// the same order the connection dialler follows.
 pub struct HttpCheckpointSource {
     client: reqwest::Client,
-    url: String,
+    urls: Vec<String>,
 }
 
 impl HttpCheckpointSource {
+    fn client() -> Result<reqwest::Client, String> {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .connect_timeout(ATTESTATION_TIMEOUT)
+            .timeout(ATTESTATION_TIMEOUT)
+            .user_agent(concat!("rchain-rnode/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|e| format!("checkpoint source client: {e}"))
+    }
+
     /// An explicit client-API base URL (`casper.checkpoint-source`), for a bootstrap on a
     /// non-standard client port or a harness whose ports are assigned dynamically.
     pub fn from_url(base: &str) -> Result<Self, String> {
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .connect_timeout(ATTESTATION_TIMEOUT)
-            .timeout(ATTESTATION_TIMEOUT)
-            .user_agent(concat!("rchain-rnode/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|e| format!("checkpoint source client: {e}"))?;
         Ok(HttpCheckpointSource {
-            client,
-            url: format!("{}/api/v1/checkpoint", base.trim_end_matches('/')),
+            client: Self::client()?,
+            urls: vec![format!("{}/api/v1/checkpoint", base.trim_end_matches('/'))],
         })
     }
 
-    /// The bootstrap's HTTP endpoint is the protocol port plus the published offset — the same
-    /// derivation the node list and the peer probe use, so a node published there is the one asked.
+    /// One bootstrap seed's HTTP endpoint: the protocol port plus the published offset — the same
+    /// derivation the node list and the peer probe use.
     pub fn from_bootstrap(peer: &PeerNode) -> Result<Self, String> {
-        let port = u16::from(peer.endpoint.tcp_port)
-            .checked_add(NODE_LIST_HTTP_PORT_OFFSET)
-            .ok_or_else(|| {
-                format!(
-                    "bootstrap {}'s client port overflows u16",
-                    peer.endpoint.host
-                )
-            })?;
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .connect_timeout(ATTESTATION_TIMEOUT)
-            .timeout(ATTESTATION_TIMEOUT)
-            .user_agent(concat!("rchain-rnode/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|e| format!("checkpoint source client: {e}"))?;
+        Self::from_bootstraps(std::slice::from_ref(peer))
+    }
+
+    /// **The ordered seed list.** A down first seed falls through to the next; the URLs are kept
+    /// in the authored order so the first live seed is the one that serves the certificate.
+    pub fn from_bootstraps(peers: &[PeerNode]) -> Result<Self, String> {
+        if peers.is_empty() {
+            return Err("no bootstrap seed for the checkpoint source".to_string());
+        }
+        let mut urls = Vec::with_capacity(peers.len());
+        for peer in peers {
+            let port = u16::from(peer.endpoint.tcp_port)
+                .checked_add(NODE_LIST_HTTP_PORT_OFFSET)
+                .ok_or_else(|| {
+                    format!(
+                        "bootstrap {}'s client port overflows u16",
+                        peer.endpoint.host
+                    )
+                })?;
+            urls.push(format!(
+                "http://{}:{}/api/v1/checkpoint",
+                peer.endpoint.host, port
+            ));
+        }
         Ok(HttpCheckpointSource {
-            client,
-            url: format!("http://{}:{}/api/v1/checkpoint", peer.endpoint.host, port),
+            client: Self::client()?,
+            urls,
         })
     }
 }
@@ -113,7 +126,7 @@ impl HttpCheckpointSource {
 #[async_trait::async_trait]
 impl CheckpointSource for HttpCheckpointSource {
     async fn fetch_certificate(&self) -> Result<CheckpointCertificate, String> {
-        self.get_certificate(&self.url).await
+        self.get_first(|url| url.to_string()).await
     }
 
     async fn fetch_certificate_at_anchor(
@@ -123,12 +136,27 @@ impl CheckpointSource for HttpCheckpointSource {
         // The anchor route is a sibling of the head route, on the same client port and with the
         // same body shape. A node that restarted behind its peers asks for the certificate that
         // anchors *its* accepted fringe rather than the head.
-        let url = format!("{}/anchor/{}", self.url, anchor);
-        self.get_certificate(&url).await
+        self.get_first(|url| format!("{url}/anchor/{anchor}")).await
     }
 }
 
 impl HttpCheckpointSource {
+    /// Try the seeds in order; the first success wins. With one seed the error string is exactly
+    /// the single URL's error, so existing diagnostics do not change.
+    async fn get_first<F: Fn(&str) -> String>(
+        &self,
+        path: F,
+    ) -> Result<CheckpointCertificate, String> {
+        let mut errors = Vec::with_capacity(self.urls.len());
+        for base in &self.urls {
+            match self.get_certificate(&path(base)).await {
+                Ok(certificate) => return Ok(certificate),
+                Err(error) => errors.push(error),
+            }
+        }
+        Err(errors.join("; "))
+    }
+
     async fn get_certificate(&self, url: &str) -> Result<CheckpointCertificate, String> {
         let response = self
             .client
@@ -407,5 +435,73 @@ impl CheckpointCollector {
             }
         }
         attestations
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rchain_comm::peer_node::NodeIdentifier;
+    use rchain_shared::refined::Port;
+
+    fn peer(id: u8, host: &str) -> PeerNode {
+        PeerNode::from(
+            NodeIdentifier::new(vec![id]),
+            host.to_string(),
+            Port::new(40400),
+            Port::new(40404),
+        )
+    }
+
+    /// **The seed URLs are the authored order.** The first live seed serves the certificate, so a
+    /// reordering here would silently change which bootstrap a joiner trusts.
+    #[test]
+    fn the_seed_urls_are_kept_in_the_authored_order() {
+        let source =
+            HttpCheckpointSource::from_bootstraps(&[peer(1, "a.example"), peer(2, "b.example")])
+                .expect("two seeds");
+        assert_eq!(
+            source.urls,
+            vec![
+                "http://a.example:40403/api/v1/checkpoint".to_string(),
+                "http://b.example:40403/api/v1/checkpoint".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_seed_list_is_refused() {
+        assert!(HttpCheckpointSource::from_bootstraps(&[]).is_err());
+    }
+
+    /// One seed is the old source exactly: the same URL string and the same single error.
+    #[test]
+    fn one_seed_keeps_the_single_url_form() {
+        let from_seed = HttpCheckpointSource::from_bootstrap(&peer(1, "a.example")).unwrap();
+        let from_url = HttpCheckpointSource::from_url("http://a.example:40403").unwrap();
+        assert_eq!(from_seed.urls, from_url.urls);
+    }
+
+    /// **A down first seed must not stop the certificate fetch.** Both seeds are attempted, in
+    /// order, and the joined error names them in that order.
+    #[tokio::test]
+    async fn a_down_first_seed_falls_through_to_the_second() {
+        let source = HttpCheckpointSource {
+            client: HttpCheckpointSource::client().expect("client"),
+            urls: vec![
+                "http://127.0.0.1:1/api/v1/checkpoint".to_string(),
+                "http://127.0.0.1:2/api/v1/checkpoint".to_string(),
+            ],
+        };
+        let error = source
+            .fetch_certificate()
+            .await
+            .expect_err("no server is listening");
+        let first = error.find("127.0.0.1:1").expect("the first error is kept");
+        let second = error.find("127.0.0.1:2").expect("the second error is kept");
+        assert!(
+            first < second,
+            "the errors follow the authored order: {error}"
+        );
     }
 }

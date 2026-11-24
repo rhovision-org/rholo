@@ -1,0 +1,393 @@
+{
+  "arm": "local",
+  "claim_id": "RC-7",
+  "claim_title": "Upgrade compatibility",
+  "environment": "local",
+  "errors": [],
+  "files": {},
+  "finished_at": "2026-11-23T20:59:39Z",
+  "harness": {
+    "command": [
+      "/home/patrick/miniforge3/bin/python3",
+      "/home/patrick/RNodeRust/.claude/worktrees/pr-567/tools/populated-store-migration-drill.py",
+      "--gate",
+      "--out",
+      "target/release-claims/campaign-20261123b/rc7-local/migration"
+    ],
+    "exit_code": 0,
+    "name": "populated-store-migration-drill",
+    "out": "target/release-claims/campaign-20261123b/rc7-local/migration"
+  },
+  "locality": "local-devnet",
+  "observations": {
+    "downgrade": {
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "-v",
+        "/tmp/rc7-store-nlz_nz23:/data",
+        "-e",
+        "RNODE_TRACE_DIR=/data/traces",
+        "rnode:tranche-20261123",
+        "--profile",
+        "docker",
+        "run",
+        "--data-dir",
+        "/data"
+      ],
+      "refused": true,
+      "stderr": "            1            0       0               5       5               0       0               0       0               2       2               0         0               0           0\n                     ---\n                 640  17         20480            32      32             0       0              1         1        1           32            1              0   32   5      1            1       1            0       0            1            0       0               5       5               0       0               0       0               2       2               0         0               0           0\n                     ---\nlarge:          size ind    allocated      nmalloc (#/sec)      ndalloc (#/sec)    nrequests (#/sec)  curlextents\n                     ---\nextents:        size ind       ndirty        dirty       nmuzzy        muzzy    nretained     retained       ntotal        total\n                     ---\nBytes in small extent cache: 0\nTotal hits in small extent cache: 0\nTotal misses in small extent cache: 0\nDalloc calls without flush in small extent cache: 0\nDalloc calls with flush in small extent cache: 0\nsec_fill calls that went over max_bytes: 0\nHPA shard stats:\n  Pageslabs: 0 (0 huge, 0 nonhuge)\n  Active pages: 0 (0 huge, 0 nonhuge)\n  Dirty pages: 0 (0 huge, 0 nonhuge)\n  Retained pages: 0\n  Purge passes: 0 (0 / sec)\n  Purges: 0 (0 / sec)\n  Hugeifies: 0 (0 / sec)\n  Hugify failures: 0 (0 / sec)\n  Dehugifies: 0 (0 / sec)\n\n  In full slabs:\n      npageslabs: 0 huge, 0 nonhuge\n      nactive: 0 huge, 0 nonhuge \n      ndirty: 0 huge, 0 nonhuge \n      nretained: 0 huge, 0 nonhuge \n  In empty slabs:\n      npageslabs: 0 huge, 0 nonhuge\n      nactive: 0 huge, 0 nonhuge \n      ndirty: 0 huge, 0 nonhuge \n      nretained: 0 huge, 0 nonhuge \n  In nonfull slabs:\n                size ind npageslabs_huge    nactive_huge     ndirty_huge  npageslabs_nonhuge     nactive_nonhuge      ndirty_nonhuge   nretained_nonhuge\n                     ---\n--- End jemalloc statistics ---\n"
+    },
+    "format_traces": [
+      {
+        "build": 4,
+        "decision": "refuse_newer",
+        "durable": false,
+        "file": "format-1-0.json",
+        "kind": "format",
+        "marker_path": "/data/store-format",
+        "on_disk": 5,
+        "present": "5",
+        "stage": "probe",
+        "stamped": false
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": false,
+        "file": "format-1-0.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "probe",
+        "stamped": false,
+        "validator": 0
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": true,
+        "file": "format-1-1.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "check",
+        "stamped": true,
+        "validator": 0
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": false,
+        "file": "format-1-0.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "probe",
+        "stamped": false,
+        "validator": 1
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": true,
+        "file": "format-1-1.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "check",
+        "stamped": true,
+        "validator": 1
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": false,
+        "file": "format-1-0.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "probe",
+        "stamped": false,
+        "validator": 2
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": true,
+        "file": "format-1-1.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "check",
+        "stamped": true,
+        "validator": 2
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": false,
+        "file": "format-1-0.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "probe",
+        "stamped": false,
+        "validator": 3
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": true,
+        "file": "format-1-1.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "check",
+        "stamped": true,
+        "validator": 3
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": false,
+        "file": "format-1-0.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "probe",
+        "stamped": false,
+        "validator": 0
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": true,
+        "file": "format-1-1.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "check",
+        "stamped": true,
+        "validator": 0
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": false,
+        "file": "format-1-0.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "probe",
+        "stamped": false,
+        "validator": 1
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": true,
+        "file": "format-1-1.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "check",
+        "stamped": true,
+        "validator": 1
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": false,
+        "file": "format-1-0.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "probe",
+        "stamped": false,
+        "validator": 2
+      },
+      {
+        "build": 4,
+        "decision": "stamp",
+        "durable": true,
+        "file": "format-1-1.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": null,
+        "present": null,
+        "stage": "check",
+        "stamped": true,
+        "validator": 2
+      },
+      {
+        "build": 4,
+        "decision": "accept",
+        "durable": false,
+        "file": "format-1-0.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": 4,
+        "present": "4",
+        "stage": "probe",
+        "stamped": false,
+        "validator": 3
+      },
+      {
+        "build": 4,
+        "decision": "accept",
+        "durable": false,
+        "file": "format-1-1.json",
+        "kind": "format",
+        "marker_path": "/var/lib/rnode/store-format",
+        "on_disk": 4,
+        "present": "4",
+        "stage": "check",
+        "stamped": false,
+        "validator": 3
+      }
+    ],
+    "migration_reasons": [],
+    "migration_result": "PASS",
+    "mixed": {
+      "agreement": true,
+      "deploy_id": "3045022100d28b1ace4b778edd47d176d6e6daba2dcbb18f93bb64acf86364947ec90c36b802202e201c573914b72104c6e77a11c97ab5383125338e4665469d5f51ff4660b212",
+      "new_binary_sha256": "d15055c580782dd0dc259c19700c7295dd850d1a0b0577123c918155a9df55cf",
+      "old_binary_sha256": "25537e1d30e238becdb86bdc3619d58925f8875d2cec91baabdf5146f735cef1",
+      "old_image": "rnode:pr567-old",
+      "refusal": null,
+      "upgrade": {
+        "common_hash": "88a6e2c94538a35df24d1540ed9c7349da69b617275ab7c5787a7bc2e93af917",
+        "common_height": 14,
+        "hash": "ec3a5c041e9acdd6f664cb07b1430b371346fd8b2525f226a18a11eee943b644",
+        "heads_agree": true,
+        "height": 15,
+        "marker_present": true
+      }
+    },
+    "mixed_block": {
+      "hash": "ec3a5c041e9acdd6f664cb07b1430b371346fd8b2525f226a18a11eee943b644",
+      "height": 15,
+      "new": [
+        "cdecd25de5a49c644eec6f9b0ad7ae1fc1e764e48560c92e04db2a29420453e4",
+        "98f292d16b27d85714e72ad149c58429f6cb1c9c88c253ae6cb67051c501c83b",
+        []
+      ],
+      "old": [
+        "cdecd25de5a49c644eec6f9b0ad7ae1fc1e764e48560c92e04db2a29420453e4",
+        "98f292d16b27d85714e72ad149c58429f6cb1c9c88c253ae6cb67051c501c83b",
+        []
+      ]
+    },
+    "prior_path": {
+      "install_deploy_id": "3045022100d28b1ace4b778edd47d176d6e6daba2dcbb18f93bb64acf86364947ec90c36b802202e201c573914b72104c6e77a11c97ab5383125338e4665469d5f51ff4660b212",
+      "install_hash": "ec3a5c041e9acdd6f664cb07b1430b371346fd8b2525f226a18a11eee943b644",
+      "install_height": 15,
+      "installed_on_old_binary": true,
+      "invoke_deploy_id": "3044022041ff06b5a64b958e43713fac66244bdba0a10e6fa8b8488e59118cad9ddd071702204279c6409bd18d0243050585d9306a6c3710a03f6de91b41a8e911ef2045c1ca",
+      "invoke_hash": "297a24f145ce025161bbc52141a347c210448e9a5324f2bd97276bb815f1731a",
+      "invoke_height": 66,
+      "prior_block_reread": {
+        "error": null,
+        "hash": "ec3a5c041e9acdd6f664cb07b1430b371346fd8b2525f226a18a11eee943b644",
+        "height": 15,
+        "marker_present": true,
+        "state_triple_matches": true
+      },
+      "read_after_upgrade": true,
+      "result_present": true,
+      "submitted_via": 3
+    },
+    "stall_episode": {
+      "cause": "mixed-version",
+      "deviations": [
+        "DE-18"
+      ],
+      "exercise": {
+        "boundary": {
+          "crossed": true,
+          "epoch_length": 10,
+          "height": 10
+        },
+        "deviation_observed": false,
+        "install": {
+          "deploy_id": "3045022100d28b1ace4b778edd47d176d6e6daba2dcbb18f93bb64acf86364947ec90c36b802202e201c573914b72104c6e77a11c97ab5383125338e4665469d5f51ff4660b212",
+          "hash": "ec3a5c041e9acdd6f664cb07b1430b371346fd8b2525f226a18a11eee943b644",
+          "height": 15,
+          "marker_present": true,
+          "submitted_via": 3
+        },
+        "invoke": {
+          "deploy_id": "3044022041ff06b5a64b958e43713fac66244bdba0a10e6fa8b8488e59118cad9ddd071702204279c6409bd18d0243050585d9306a6c3710a03f6de91b41a8e911ef2045c1ca",
+          "error": null,
+          "hash": "297a24f145ce025161bbc52141a347c210448e9a5324f2bd97276bb815f1731a",
+          "height": 66,
+          "settled": true
+        },
+        "new_binary_sha256": "d15055c580782dd0dc259c19700c7295dd850d1a0b0577123c918155a9df55cf",
+        "not_exercised_reason": null,
+        "old_binary_sha256": "25537e1d30e238becdb86bdc3619d58925f8875d2cec91baabdf5146f735cef1",
+        "prior_block_reread": {
+          "error": null,
+          "hash": "ec3a5c041e9acdd6f664cb07b1430b371346fd8b2525f226a18a11eee943b644",
+          "height": 15,
+          "marker_present": true,
+          "state_triple_matches": true
+        },
+        "result_present": true,
+        "safeguard_observed": true,
+        "store_format": {
+          "format_boundary_crossed": false,
+          "read_build": 4,
+          "read_decision": "accept",
+          "read_present": "4",
+          "same_format": true,
+          "validator": 3,
+          "written_build": 4
+        },
+        "trigger": "a persistent contract installed by the prior binary is invoked after the current binary opens the store the prior binary wrote",
+        "trigger_exercised": true
+      },
+      "law": "Law 53b",
+      "representation": "protocol-stall",
+      "rung": "R3",
+      "shape": "terminal"
+    },
+    "store_format": {
+      "format_boundary_crossed": false,
+      "read_build": 4,
+      "read_decision": "accept",
+      "read_present": "4",
+      "same_format": true,
+      "validator": 3,
+      "written_build": 4
+    }
+  },
+  "preconditions": [],
+  "provenance": {
+    "binary_sha256": "d15055c580782dd0dc259c19700c7295dd850d1a0b0577123c918155a9df55cf",
+    "devnet_prefix": "rc7",
+    "image_id": "sha256:742654e7a2a7ba14d52d1643d1b5eb0c8ea9b4838d85b60bf146bbf1b8031fbb",
+    "profile": "local-4",
+    "source_dirty": false,
+    "source_sha": "2315ef37ec82624983894a6fe620fe07b0c678ed"
+  },
+  "reasons": [],
+  "schema": 1,
+  "started_at": "2026-11-23T20:56:08Z",
+  "verdict": "pass"
+}

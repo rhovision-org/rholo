@@ -119,7 +119,21 @@ import Rchain.FinalityRead
 import Rchain.DeploySettlement
 import Rchain.FringeClaim
 import Rchain.RecoveryPreservation
--- The law register (`Rchain/Laws.lean`) is pure data with no imports: the catalog of every law, and the
--- rows `Rchain/LawsMain.lean` checks the tree against. (Its own count is `lawCeiling`, checked against
--- the rows at build time; a number written in a comment here is a number nothing checks.)
+-- The law register is pure data: the catalog of every law, and the rows `Rchain/LawsMain.lean` checks
+-- the tree against. (Its own count is `lawCeiling`, checked against the rows at build time; a number
+-- written in a comment here is a number nothing checks.) The rows live in one module per law-number
+-- range (`Rchain/Laws/Chunk01..09.lean`) so each is elaborated by its own `lean` process; the umbrella
+-- `Rchain/Laws.lean` assembles them. They are imported here directly because the completeness check in
+-- `tools/check-lean-conformance.sh` requires every module to be a direct import of this root; the
+-- umbrella imports them too, which Lean deduplicates.
+import Rchain.Laws.Base
+import Rchain.Laws.Chunk01
+import Rchain.Laws.Chunk02
+import Rchain.Laws.Chunk03
+import Rchain.Laws.Chunk04
+import Rchain.Laws.Chunk05
+import Rchain.Laws.Chunk06
+import Rchain.Laws.Chunk07
+import Rchain.Laws.Chunk08
+import Rchain.Laws.Chunk09
 import Rchain.Laws

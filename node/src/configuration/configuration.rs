@@ -870,7 +870,7 @@ mod tests {
             },
             protocol_client: ProtocolClient {
                 network_id: "testnet".to_string(),
-                bootstrap,
+                bootstrap: vec![bootstrap],
                 disable_lfs: false,
                 batch_max_connections: 20,
                 network_timeout: secs(5),
@@ -1541,7 +1541,7 @@ mod tests {
             },
             protocol_client: ProtocolClient {
                 network_id: "testnet".to_string(),
-                bootstrap,
+                bootstrap: vec![bootstrap],
                 disable_lfs: true,
                 batch_max_connections: 111111,
                 network_timeout: secs(111111),

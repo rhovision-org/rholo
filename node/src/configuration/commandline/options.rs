@@ -378,9 +378,10 @@ pub struct Run {
     #[arg(short = 's', long = "standalone")]
     pub standalone: bool,
 
-    /// Address of RNode to bootstrap from.
+    /// Address of RNode to bootstrap from. Repeat for an ordered seed list: the node joins
+    /// through the first live seed.
     #[arg(short = 'b', long = "bootstrap", value_parser = parse_peer_node_arg)]
-    pub bootstrap: Option<PeerNode>,
+    pub bootstrap: Vec<PeerNode>,
 
     /// ID of the RChain network to connect to.
     #[arg(long = "network-id")]

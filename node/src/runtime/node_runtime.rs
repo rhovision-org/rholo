@@ -63,7 +63,9 @@ use rchain_comm::discovery::kademlia_store::table as kademlia_table;
 use rchain_comm::discovery::node_discovery::KademliaNodeDiscovery;
 use rchain_comm::discovery::{KademliaRpc, NodeDiscovery};
 use rchain_comm::peer_node::{NodeIdentifier, PeerNode};
-use rchain_comm::rp::connect::{add_conn, clear_connections, find_and_connect, remove_conn};
+use rchain_comm::rp::connect::{
+    add_conn, clear_connections, connect_seeds, find_and_connect, remove_conn, should_dial_seeds,
+};
 use rchain_comm::rp::handle_messages::{self, RoutingMessage};
 use rchain_comm::rp::rp_conf::{ClearConnectionsConf, RPConf};
 use rchain_comm::transport::chunker::Blob;
@@ -287,6 +289,9 @@ pub struct CommState {
     pub transport: Arc<dyn TransportLayer>,
     pub connections: ConnectionsCell,
     pub rp_conf: RPConf,
+    /// The authored ordered seed list. `rp_conf.bootstrap` stays the first entry, so every
+    /// existing single-bootstrap path is unchanged; the ordered fallback reads this list.
+    pub bootstrap_seeds: Vec<PeerNode>,
     pub comm_util: Arc<CommUtil>,
     pub block_retriever: Arc<BlockRetriever>,
     pub local_peer: PeerNode,
@@ -332,12 +337,16 @@ pub async fn create_comm_state(
 
     // Comm state (connections cell + RPConf).
     let connections: ConnectionsCell = Arc::new(tokio::sync::RwLock::new(Vec::new()));
-    let bootstrap = if conf.standalone {
-        None
+    // A standalone node has no peers to ask; otherwise the authored list is kept in order. The
+    // first seed is the `RPConf` bootstrap, so the LFS/retriever paths that ask "the bootstrap"
+    // keep their meaning.
+    let bootstrap_seeds = if conf.standalone {
+        Vec::new()
     } else {
-        Some(conf.protocol_client.bootstrap.clone())
+        conf.protocol_client.bootstrap.clone()
     };
-    let rp_conf = RPConf {
+    let bootstrap = bootstrap_seeds.first().cloned();
+    let mut rp_conf = RPConf {
         local: local_peer.clone(),
         network_id: conf.protocol_client.network_id.clone(),
         bootstrap,
@@ -349,6 +358,36 @@ pub async fn create_comm_state(
                 .map_err(|e| e.to_string())?,
         },
     };
+
+    // **The first live seed is the one the node joins through.** The initial LFS fringe request
+    // names `RPConf.bootstrap`; with an ordered list, probe the seeds before that request so the
+    // joiner asks a live peer rather than the authored first seed. A single seed is not probed:
+    // the ordinary startup path is unchanged, and a dead sole bootstrap fails exactly as before.
+    let mut initial_connections: Vec<PeerNode> = Vec::new();
+    if should_dial_seeds(&bootstrap_seeds) {
+        initial_connections =
+            connect_seeds(transport.as_ref(), &rp_conf, &bootstrap_seeds, &[]).await;
+        if let Some(live) = initial_connections.first() {
+            if let Some(index) = bootstrap_seeds
+                .iter()
+                .position(|seed| seed.key() == live.key())
+            {
+                log.info(
+                    LogSource::new("coop.rchain.node.runtime.Setup"),
+                    &format!(
+                        "bootstrap seed {}/{} connected: {}",
+                        index + 1,
+                        bootstrap_seeds.len(),
+                        live.endpoint.host
+                    ),
+                );
+            }
+            rp_conf.bootstrap = Some(live.clone());
+        }
+    }
+    if !initial_connections.is_empty() {
+        *connections.write().await = initial_connections;
+    }
 
     let comm_util = Arc::new(CommUtil::new(
         transport.clone(),
@@ -400,18 +439,20 @@ pub async fn create_comm_state(
         // key (W-N1-01). Read here, not in the task, so the future captures a `usize` and not `conf`.
         let kademlia_max_recv =
             usize::try_from(conf.protocol_server.grpc_max_recv_message_size).unwrap_or(262144);
+        let kademlia_log = log.clone();
         rchain_shared::supervise::spawn_supervised("kademlia-serve", async move {
             if let Err(e) =
                 kademlia_serve(discovery_addr, server, kademlia_max_recv, kademlia_tls).await
             {
-                log.error(source, &format!("Kademlia RPC server failed: {e}"));
+                kademlia_log.error(source, &format!("Kademlia RPC server failed: {e}"));
             }
         });
     }
 
-    // Seed the bootstrap peer into the routing table.
-    if let Some(bootstrap) = &rp_conf.bootstrap {
-        kademlia_store.update_last_seen(bootstrap.clone());
+    // Seed every configured bootstrap peer into the routing table, in authored order. One seed is
+    // the ordinary case and the result is the same as before.
+    for peer in &bootstrap_seeds {
+        kademlia_store.update_last_seen(peer.clone());
     }
 
     let discovery: Arc<dyn NodeDiscovery> = Arc::new(KademliaNodeDiscovery::new(
@@ -426,14 +467,38 @@ pub async fn create_comm_state(
         let transport = transport.clone();
         let rp_conf = rp_conf.clone();
         let connections = connections.clone();
+        let seeds = bootstrap_seeds.clone();
+        let seed_log = log.clone();
         let interval = conf.peers_discovery.lookup_interval;
         rchain_shared::supervise::spawn_supervised("peer-discovery", async move {
             loop {
                 discovery.discover().await;
                 let current = connections.read().await.clone();
-                let new_peers =
+                // **The authored seed order is tried before discovered peers.** A single seed
+                // takes the old path exactly; with several, a down first seed falls through to
+                // the next, and the successful index is logged as the join witness.
+                let mut new_peers = if should_dial_seeds(&seeds) {
+                    connect_seeds(transport.as_ref(), &rp_conf, &seeds, &current).await
+                } else {
+                    Vec::new()
+                };
+                if let Some(joined) = new_peers.first() {
+                    if let Some(index) = seeds.iter().position(|s| s.key() == joined.key()) {
+                        seed_log.info(
+                            LogSource::new("coop.rchain.node.runtime.Setup"),
+                            &format!(
+                                "bootstrap seed {}/{} connected: {}",
+                                index + 1,
+                                seeds.len(),
+                                joined.endpoint.host
+                            ),
+                        );
+                    }
+                }
+                new_peers.extend(
                     find_and_connect(discovery.as_ref(), &rp_conf, transport.as_ref(), &current)
-                        .await;
+                        .await,
+                );
                 if !new_peers.is_empty() {
                     let mut guard = connections.write().await;
                     *guard = add_conn(&guard, &new_peers);
@@ -469,6 +534,7 @@ pub async fn create_comm_state(
         transport,
         connections,
         rp_conf,
+        bootstrap_seeds,
         comm_util,
         block_retriever,
         local_peer,
@@ -2441,23 +2507,20 @@ async fn setup_shard_runtime(
                 None
             }
         }
+    } else if comm_state.bootstrap_seeds.is_empty() {
+        None
     } else {
-        match comm_state.rp_conf.bootstrap.as_ref() {
-            Some(peer) => {
-                match crate::runtime::checkpoint_collector::HttpCheckpointSource::from_bootstrap(
-                    peer,
-                ) {
-                    Ok(source) => Some(Arc::new(source)),
-                    Err(e) => {
-                        log.warn(
-                            LogSource::new("coop.rchain.node.runtime.Setup"),
-                            &format!("no checkpoint source for {shard_id}: {e}"),
-                        );
-                        None
-                    }
-                }
+        match crate::runtime::checkpoint_collector::HttpCheckpointSource::from_bootstraps(
+            &comm_state.bootstrap_seeds,
+        ) {
+            Ok(source) => Some(Arc::new(source)),
+            Err(e) => {
+                log.warn(
+                    LogSource::new("coop.rchain.node.runtime.Setup"),
+                    &format!("no checkpoint source for {shard_id}: {e}"),
+                );
+                None
             }
-            None => None,
         }
     };
 

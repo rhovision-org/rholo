@@ -1,0 +1,6 @@
+{
+ "passthrough": [
+  "python3 tools/m2-pressure.py check --record target/release-claims/campaign-20261123b/rc5-local/record --locality local-devnet",
+  "python3 tools/gate-check.py --gate G428-M2 --observations target/release-claims/campaign-20261123b/rc5-local/record/observations.json"
+ ]
+}

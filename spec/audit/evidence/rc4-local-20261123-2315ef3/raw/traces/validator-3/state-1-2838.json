@@ -1,0 +1,20 @@
+{
+  "kind": "state",
+  "origin": "self-built",
+  "block": "c37cee9894d179981b8d33afe0c6b0009979964630e770fa38b2c9c3ebe4c5ca",
+  "height": 151,
+  "sender": "04ea3ce04abbe780205eb5f94a82889600630ca73bd31e7a336efb6700e24c515b900dea427d3e0c0fc74a8a6d5e173331433f00df2de4b7f953c2922297c2c08e",
+  "parents": [
+    "131d0b00f58206c349247228d0f355d656883726f0bcd29560467e77c0de4be2",
+    "aceeaa88f7a5b54ed5e4b6c7434bb703c185958f41cafb2f2693644aac4f7410",
+    "d2c207436b31b46f7c63cfe4ed853c6b840caf315e2a0342a067b331272aef37",
+    "d6aeeb3f9d61b2ab510dd5bcf6082052ea60371d860ea83abdc1df51fcbf849f"
+  ],
+  "claimed_pre": "59a0e3008f34da5b9da663bbef3df3f62f7210930f6def536fe9fb538a103abd",
+  "computed_pre": "59a0e3008f34da5b9da663bbef3df3f62f7210930f6def536fe9fb538a103abd",
+  "claimed_post": "51d3db866da61be666c6296da19ee120cedaa753d5237fda4f73e3c5689690c0",
+  "replayed_post": "51d3db866da61be666c6296da19ee120cedaa753d5237fda4f73e3c5689690c0",
+  "claimed_rejected": [],
+  "computed_rejected": [],
+  "verdict": "matched"
+}

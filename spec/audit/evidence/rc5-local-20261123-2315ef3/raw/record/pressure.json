@@ -1,0 +1,113 @@
+{
+ "candidate": {
+  "binary_sha256": "d15055c580782dd0dc259c19700c7295dd850d1a0b0577123c918155a9df55cf",
+  "source_sha": "2315ef37ec82624983894a6fe620fe07b0c678ed"
+ },
+ "endpoint": {
+  "proxy": "none",
+  "url": "http://127.0.0.1:56403"
+ },
+ "gate_id": "G428-M2",
+ "locality": "local-devnet",
+ "runs": {
+  "capped": {
+   "env": {
+    "RNODE_HTTP_MAX_INFLIGHT_DEPLOY": 2
+   },
+   "inspect": "capped-inspect.json",
+   "version": "capped-version.txt"
+  },
+  "unset": {
+   "env": {},
+   "inspect": "unset-inspect.json",
+   "version": "unset-version.txt"
+  }
+ },
+ "schema": 1,
+ "surfaces": {
+  "direct_http": {
+   "capped": {
+    "retry_after": 1,
+    "status_line": "HTTP/1.1 429",
+    "transcript": "direct-capped.txt"
+   },
+   "endpoint": {
+    "proxy": "none",
+    "url": "http://127.0.0.1:56403"
+   },
+   "unset": {
+    "status_line": "HTTP/1.1 400",
+    "transcript": "direct-unset.txt"
+   }
+  },
+  "grpc": {
+   "candidate": {
+    "binary_sha256": null,
+    "source_sha": null
+   },
+   "candidate_record": "grpc-candidate.json",
+   "capped": {
+    "arms": {
+     "ingress_rate": {
+      "admitted": 1,
+      "code": 8,
+      "refused": 1,
+      "retry_after": null
+     },
+     "pool_full": {
+      "admitted": 0,
+      "code": 8,
+      "refused": 1,
+      "retry_after": 1
+     }
+    },
+    "server_errors": 0,
+    "transcript": "grpc-capped.jsonl"
+   },
+   "endpoint": {
+    "proxy": "none",
+    "url": "",
+    "used": false
+   },
+   "origin": "candidate-test",
+   "permissive": {
+    "admitted": 2,
+    "refused": 0,
+    "transcript": "grpc-permissive.jsonl"
+   },
+   "scope": "candidate-code"
+  },
+  "http": {
+   "capped": {
+    "admitted": 0,
+    "cap": 2,
+    "handler_reached_after_release": true,
+    "held": 2,
+    "probe": 4,
+    "refusal": {
+     "class": "429",
+     "message": "HTTP in-flight capacity exhausted"
+    },
+    "refused": 4,
+    "requests_per_second": 6.58,
+    "retry_after": 4,
+    "server_errors": 0,
+    "transcript": "http-capped.jsonl"
+   },
+   "endpoint": {
+    "proxy": "none",
+    "url": "http://127.0.0.1:56403"
+   },
+   "unset": {
+    "admitted": 4,
+    "handler_reached_after_release": true,
+    "probe": 4,
+    "refused": 0,
+    "requests_per_second": 6.59,
+    "retry_after": 0,
+    "server_errors": 0,
+    "transcript": "http-unset.jsonl"
+   }
+  }
+ }
+}

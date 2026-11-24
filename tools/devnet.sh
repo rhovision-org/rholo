@@ -822,10 +822,23 @@ cmd_up() {
     # validator key is passed: reading the bonds is not joining the bonded set.
     docker stop -t 10 "$name" >/dev/null 2>&1 || true
     docker rm -f "$name" >/dev/null 2>&1 || true
+    # **An ordered seed list, for the failover diagnostic.** `DEVNET_OBSERVER_SEEDS` is a
+    # comma-separated list of addresses tried *before* the live bootstrap, in order, so a dead
+    # first seed exercises the fallback while the bootstrap remains the last, live seed. Unset is
+    # the ordinary single-bootstrap observer.
+    seed_args=()
+    if [[ -n "${DEVNET_OBSERVER_SEEDS:-}" ]]; then
+      IFS=',' read -r -a extra_seeds <<< "${DEVNET_OBSERVER_SEEDS}"
+      for seed in "${extra_seeds[@]}"; do
+        [[ -n "$seed" ]] && seed_args+=(--bootstrap "$seed")
+      done
+      echo "    (ordered seeds: ${#seed_args[@]} before the live bootstrap)"
+    fi
     # shellcheck disable=SC2046
     docker run $(docker_opts "$name" "$host_port" "$http_port" "$admin_port") \
       -v "${genesis_dir}:/genesis:ro" \
       "$(node_image "$name")" $(rnode_run_common "$name") \
+        "${seed_args[@]}" \
         --bootstrap "rnode://${id}@${BOOTSTRAP}?protocol=40400&discovery=40404" \
         --bonds-file /genesis/bonds.txt --wallets-file /genesis/wallets.txt \
         "${archive_flag[@]}"

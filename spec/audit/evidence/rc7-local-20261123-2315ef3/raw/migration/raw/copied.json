@@ -1,0 +1,44 @@
+{
+  "anchor": "22ba89d003a941fc4fa226b2fc76ba57c378255f5541cf44632faa01c0985645",
+  "anchor_height": 9,
+  "anchor_post_state": "4f92a8399c4d8f90f6a851f6ed0f243d744e7a78c8bec757ca26b3f2bb2f8a9b",
+  "block_hash": "22ba89d003a941fc4fa226b2fc76ba57c378255f5541cf44632faa01c0985645",
+  "certificate": {
+    "attestations": [
+      {
+        "checkpointDigest": "d4c1e43b60f1bdf459046d6f067677b34db27f3eb75078d8d6f6fa4c3c0d63af",
+        "sender": "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4",
+        "sig": "3045022100fe401479fabb1d653dc626582d3dbad4cf0e0aed1c9ea228713065c00a6649fc022068e1fc95703e867a005bd73aa106240625f8f203db17793f284d9fce749ae856",
+        "sigAlgorithm": "secp256k1"
+      }
+    ],
+    "checkpoint": {
+      "anchor": "22ba89d003a941fc4fa226b2fc76ba57c378255f5541cf44632faa01c0985645",
+      "anchorHeight": 9,
+      "anchorPostState": "4f92a8399c4d8f90f6a851f6ed0f243d744e7a78c8bec757ca26b3f2bb2f8a9b",
+      "epoch": 0,
+      "fringeHashes": [
+        "22ba89d003a941fc4fa226b2fc76ba57c378255f5541cf44632faa01c0985645"
+      ],
+      "fringeHeadersRoot": "6bb0d8ebd967b84e005548201fb5047bb39e6c8cb9f2ca0c48919deab8ed80c5",
+      "fringeState": "21bcc8de7c1c15fdd9ee8f9d0ac00a1a55d131bdd850ed7d0058ab49f180b784",
+      "historyRoot": "5045497bc42023cc6e2696fd15f77ec40cd1b207622b03a6372ad4c0eb5390aa",
+      "metadataRoot": "850254b63304badb05dca3be99647e35247b8fde35dd6e81054ac6763aad1c91",
+      "parentDigest": null,
+      "shardId": "/root"
+    }
+  },
+  "digest": "b76c2e5c1a1ef98875b00d1b342069391bac8b3bd85f96c2beddf64bb34aca04",
+  "genesis_hash": "f66b0b8a513b52e6248a9867bec37315eac184ef68f43fb7f4494a793d0b3929",
+  "height": 9,
+  "post_state": "4f92a8399c4d8f90f6a851f6ed0f243d744e7a78c8bec757ca26b3f2bb2f8a9b",
+  "verdict": {
+    "anchor": "22ba89d003a941fc4fa226b2fc76ba57c378255f5541cf44632faa01c0985645",
+    "anchorHeight": 9,
+    "digest": "d4c1e43b60f1bdf459046d6f067677b34db27f3eb75078d8d6f6fa4c3c0d63af",
+    "supportingStake": 100,
+    "totalStake": 100,
+    "verified": true
+  },
+  "verified": true
+}

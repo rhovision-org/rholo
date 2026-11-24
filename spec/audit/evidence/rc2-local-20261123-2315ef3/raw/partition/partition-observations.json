@@ -1,0 +1,1150 @@
+[
+  {
+    "cycle": 1,
+    "victim_index": 3,
+    "isolated_validator": "acceptance-validator-3",
+    "phase": "retention",
+    "producing_victim": true,
+    "victim_view_at_install": {
+      "tip": 39,
+      "height": 40,
+      "autopropose": true,
+      "peers": 1,
+      "finalized_height": 36,
+      "finalized_hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044",
+      "ready": true,
+      "ready_reasons": [],
+      "finalized_lag": 3,
+      "finality_stalled": false,
+      "unrestorable_records": 0,
+      "cgroup_oom_kills": 0
+    },
+    "container_lifecycle_at_install": "5fbea4b467f2209159d99c9b01e0c3bd4ea43116a94ffc69cfbcad35a1f01803 2026-11-23T20:40:38.874487487Z 0 false [\"run\",\"--host\",\"acceptance-validator-3\",\"--api-host\",\"0.0.0.0\",\"--data-dir\",\"/var/lib/rnode\",\"--protocol-port\",\"40400\",\"--discovery-port\",\"40404\",\"--api-port-grpc-external\",\"40401\",\"--api-port-grpc-internal\",\"40402\",\"--api-port-http\",\"40403\",\"--api-port-admin-http\",\"40405\",\"--autopropose\",\"--propose-on-deploy\",\"--api-enable-devnet-cors\",\"--api-enable-devnet-admin-public\",\"--dev-mode\",\"--deployer-private-key\",\"a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76\",\"--epoch-length\",\"10\",\"--bootstrap\",\"rnode://9899d15afda7a54426a1b18323cf29ef6a4baf09@acceptance-bootstrap?protocol=40400&discovery=40404\",\"--bonds-file\",\"/genesis/bonds.txt\",\"--wallets-file\",\"/genesis/wallets.txt\",\"--validator-private-key-path\",\"/var/lib/rnode/validator.hex\"]",
+    "before_height": 35,
+    "online_observations": [
+      [
+        {
+          "node": 0,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 1,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 2,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 1,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 2,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 1,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 2,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 1,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 2,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 1,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 2,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 1,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 2,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 1,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        },
+        {
+          "node": 2,
+          "height": 36,
+          "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 1,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 39,
+          "hash": "f58d9039284b5f03aaed098dbe03bf18f9c1d6ace371402fdd4f6783e7e912e7"
+        },
+        {
+          "node": 1,
+          "height": 39,
+          "hash": "f58d9039284b5f03aaed098dbe03bf18f9c1d6ace371402fdd4f6783e7e912e7"
+        },
+        {
+          "node": 2,
+          "height": 37,
+          "hash": "4c6fa1a65b94229c7ab45e29440c03f7fa3b9ceb5d030797ddd197de6292d2ae"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 39,
+          "hash": "f58d9039284b5f03aaed098dbe03bf18f9c1d6ace371402fdd4f6783e7e912e7"
+        },
+        {
+          "node": 1,
+          "height": 39,
+          "hash": "f58d9039284b5f03aaed098dbe03bf18f9c1d6ace371402fdd4f6783e7e912e7"
+        },
+        {
+          "node": 2,
+          "height": 39,
+          "hash": "f58d9039284b5f03aaed098dbe03bf18f9c1d6ace371402fdd4f6783e7e912e7"
+        }
+      ]
+    ],
+    "isolation_samples": [
+      {
+        "tip": 39,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 39,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 39,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 39,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 39,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 39,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 39,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 39,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 39,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 39,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 40,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 40,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 40,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 40,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 40,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 40,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 41,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 41,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 41,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 41,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 41,
+        "peers": 1,
+        "finalized_height": 36
+      },
+      {
+        "tip": 41,
+        "peers": 1,
+        "finalized_height": 36
+      }
+    ],
+    "partition_progress_observed": true,
+    "epoch_target_height": 40,
+    "healing_anchor": {
+      "height": 41,
+      "hash": "9277b7c08d0790558fc7794b301926c329d4ada702a773ee1ee4bb5f1f9d8a47",
+      "node": 0,
+      "case": "seven-ahead",
+      "victim_finalized_height": 36
+    },
+    "victim_finalized_at_rejoin": {
+      "height": 36,
+      "hash": "d77229d20eb774fd7aacb94d1362f7fc5a1b8d01922e3c05fc3649d996558044"
+    },
+    "healing_window_seconds": 270,
+    "healing_gap": 5,
+    "finality_interval_seconds": null,
+    "healing_k": 2,
+    "rejoined": [
+      {
+        "node": 0,
+        "height": 51,
+        "hash": "847f151be22442d06a82fdb89e7a3e9de04222caea8bbd9ce101e5f0824c899e"
+      },
+      {
+        "node": 1,
+        "height": 51,
+        "hash": "847f151be22442d06a82fdb89e7a3e9de04222caea8bbd9ce101e5f0824c899e"
+      },
+      {
+        "node": 2,
+        "height": 51,
+        "hash": "847f151be22442d06a82fdb89e7a3e9de04222caea8bbd9ce101e5f0824c899e"
+      },
+      {
+        "node": 3,
+        "height": 51,
+        "hash": "847f151be22442d06a82fdb89e7a3e9de04222caea8bbd9ce101e5f0824c899e"
+      }
+    ],
+    "anchor_dwell_samples": 3,
+    "anchor_retention": [
+      {
+        "node": 0,
+        "finalized_anchor": true
+      },
+      {
+        "node": 1,
+        "finalized_anchor": true
+      },
+      {
+        "node": 2,
+        "finalized_anchor": true
+      },
+      {
+        "node": 3,
+        "finalized_anchor": true
+      }
+    ],
+    "healing_failure_class": null,
+    "epoch_boundary_crossed": true,
+    "original_finalized_snapshots_retained": true,
+    "same_volume": true,
+    "result": "PASS"
+  },
+  {
+    "cycle": 2,
+    "victim_index": 1,
+    "isolated_validator": "acceptance-validator-1",
+    "phase": "retention",
+    "producing_victim": true,
+    "victim_view_at_install": {
+      "tip": 57,
+      "height": 58,
+      "autopropose": true,
+      "peers": 1,
+      "finalized_height": 54,
+      "finalized_hash": "218cd7b554f3f6c1dfe2fbe03b6aba0fa0a0addf6e094b781c9ee83c0d9651c0",
+      "ready": true,
+      "ready_reasons": [],
+      "finalized_lag": 3,
+      "finality_stalled": false,
+      "unrestorable_records": 0,
+      "cgroup_oom_kills": 0
+    },
+    "container_lifecycle_at_install": "4ef51381422d91879e9ce939712d45bb62dc827761df5985b2c20ed9e9d0c6f2 2026-11-23T20:40:36.604051777Z 0 false [\"run\",\"--host\",\"acceptance-validator-1\",\"--api-host\",\"0.0.0.0\",\"--data-dir\",\"/var/lib/rnode\",\"--protocol-port\",\"40400\",\"--discovery-port\",\"40404\",\"--api-port-grpc-external\",\"40401\",\"--api-port-grpc-internal\",\"40402\",\"--api-port-http\",\"40403\",\"--api-port-admin-http\",\"40405\",\"--autopropose\",\"--propose-on-deploy\",\"--api-enable-devnet-cors\",\"--api-enable-devnet-admin-public\",\"--dev-mode\",\"--deployer-private-key\",\"a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76\",\"--epoch-length\",\"10\",\"--bootstrap\",\"rnode://9899d15afda7a54426a1b18323cf29ef6a4baf09@acceptance-bootstrap?protocol=40400&discovery=40404\",\"--bonds-file\",\"/genesis/bonds.txt\",\"--wallets-file\",\"/genesis/wallets.txt\",\"--validator-private-key-path\",\"/var/lib/rnode/validator.hex\"]",
+    "before_height": 54,
+    "online_observations": [
+      [
+        {
+          "node": 0,
+          "height": 54,
+          "hash": "218cd7b554f3f6c1dfe2fbe03b6aba0fa0a0addf6e094b781c9ee83c0d9651c0"
+        },
+        {
+          "node": 2,
+          "height": 54,
+          "hash": "218cd7b554f3f6c1dfe2fbe03b6aba0fa0a0addf6e094b781c9ee83c0d9651c0"
+        },
+        {
+          "node": 3,
+          "height": 54,
+          "hash": "218cd7b554f3f6c1dfe2fbe03b6aba0fa0a0addf6e094b781c9ee83c0d9651c0"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 2,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 3,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 2,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 3,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 2,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 3,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 2,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 3,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 2,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 3,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 2,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 3,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 2,
+          "height": 55,
+          "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 2,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        },
+        {
+          "node": 3,
+          "height": 56,
+          "hash": "ea42e76b25f05b50ef7c42754d22b0e3f9fcdf7b9b70af8798e9f0e302237f46"
+        }
+      ],
+      [
+        {
+          "node": 0,
+          "height": 61,
+          "hash": "52e45d2d7d767a848135b794484192bed7903af98be7e3c77f22a9fca7aa18d2"
+        },
+        {
+          "node": 2,
+          "height": 61,
+          "hash": "52e45d2d7d767a848135b794484192bed7903af98be7e3c77f22a9fca7aa18d2"
+        },
+        {
+          "node": 3,
+          "height": 61,
+          "hash": "52e45d2d7d767a848135b794484192bed7903af98be7e3c77f22a9fca7aa18d2"
+        }
+      ]
+    ],
+    "isolation_samples": [
+      {
+        "tip": 57,
+        "peers": 1,
+        "finalized_height": 54
+      },
+      {
+        "tip": 57,
+        "peers": 1,
+        "finalized_height": 54
+      },
+      {
+        "tip": 57,
+        "peers": 1,
+        "finalized_height": 54
+      },
+      {
+        "tip": 57,
+        "peers": 1,
+        "finalized_height": 54
+      },
+      {
+        "tip": 57,
+        "peers": 1,
+        "finalized_height": 54
+      },
+      {
+        "tip": 57,
+        "peers": 1,
+        "finalized_height": 54
+      },
+      {
+        "tip": 58,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 58,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 58,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 58,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 58,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 58,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 58,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 59,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 59,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 59,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 59,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 59,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 59,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 60,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 60,
+        "peers": 1,
+        "finalized_height": 55
+      },
+      {
+        "tip": 60,
+        "peers": 1,
+        "finalized_height": 55
+      }
+    ],
+    "partition_progress_observed": true,
+    "epoch_target_height": 60,
+    "healing_anchor": {
+      "height": 61,
+      "hash": "52e45d2d7d767a848135b794484192bed7903af98be7e3c77f22a9fca7aa18d2",
+      "node": 0,
+      "case": "seven-ahead",
+      "victim_finalized_height": 55
+    },
+    "victim_finalized_at_rejoin": {
+      "height": 55,
+      "hash": "54ba50bed11c54cd4edb99ad260772134dee6d581d59133e18d35d49a2b5e86f"
+    },
+    "healing_window_seconds": 270,
+    "healing_gap": 6,
+    "finality_interval_seconds": 6.9014612471684815,
+    "healing_k": 2,
+    "rejoined": [
+      {
+        "node": 0,
+        "height": 72,
+        "hash": "287d90f4a67abbce44f419410f5a8dfb25a10b86059a90a77e24d17d3e0aa619"
+      },
+      {
+        "node": 1,
+        "height": 72,
+        "hash": "287d90f4a67abbce44f419410f5a8dfb25a10b86059a90a77e24d17d3e0aa619"
+      },
+      {
+        "node": 2,
+        "height": 72,
+        "hash": "287d90f4a67abbce44f419410f5a8dfb25a10b86059a90a77e24d17d3e0aa619"
+      },
+      {
+        "node": 3,
+        "height": 72,
+        "hash": "287d90f4a67abbce44f419410f5a8dfb25a10b86059a90a77e24d17d3e0aa619"
+      }
+    ],
+    "anchor_dwell_samples": 3,
+    "anchor_retention": [
+      {
+        "node": 0,
+        "finalized_anchor": true
+      },
+      {
+        "node": 1,
+        "finalized_anchor": true
+      },
+      {
+        "node": 2,
+        "finalized_anchor": true
+      },
+      {
+        "node": 3,
+        "finalized_anchor": true
+      }
+    ],
+    "healing_failure_class": null,
+    "epoch_boundary_crossed": true,
+    "original_finalized_snapshots_retained": true,
+    "same_volume": true,
+    "result": "PASS"
+  }
+]

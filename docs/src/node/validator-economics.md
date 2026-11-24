@@ -426,12 +426,10 @@ preferences.
   set, is derived from the block's own chosen justification set; a proposer could make a rival read
   absent and take the withheld share.
 
-- **A native share of the burn for contract developers cannot be added after genesis.** A contract can
-  still charge fees of its own, but `pay_executor` pays only the block's signed sender and the developer
-  fee reserve above, and both shares are written once, at genesis (`set_params` and the
-  `pos:developer-reserve` leaf in `rholang/src/native_state.rs`), so a developer share of the burn that
-  genesis does not commit can never be turned on without a hard fork. `fundPot` is not a substitute,
-  because it pays the validator pot. The capability audit is
+- **A share of fees for contract developers cannot be added after genesis.** No deploy can write a
+  fee parameter, so the only such share a chain will ever have is the one its genesis commits: the
+  developer fee reserve above. `fundPot` is not a substitute, because it pays the validator pot. The
+  capability audit is
   [`spec/audit/forkless-developer-rewards-20261123.md`](../../../spec/audit/forkless-developer-rewards-20261123.md),
   and the requirement is issue #655.
 

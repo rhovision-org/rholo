@@ -63,21 +63,23 @@ def _typed_cycle(cycle: int, victim_index: int, count: int,
 class Campaign(dict):
     """One synthetic campaign: the declaration plus every artefact it names."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, pairs=None, hosts=None, approved=None):
+        pairs = pairs or PAIRS
         super().__init__({"schema": 1, "campaign": {
             "name": "n4-n8-finality-campaign",
             "locality": "multi-host",
             "bootstrap": "v1",
             "selected": {"source_sha": SOURCE, "binary_sha256": BINARY},
-            "hosts": ["host-a", "host-b", "host-c", "host-d"],
+            "hosts": list(hosts or ["host-a", "host-b", "host-c", "host-d"]),
             "rerun": {
                 "n4": "python3 tests/consensus-partition-rejoin.py --validators 4 --out n4",
                 "n8": "python3 tests/consensus-partition-rejoin.py --validators 8 --out n8",
             },
         }, "workloads": {}})
         self.root = root
-        for key, pairs in PAIRS.items():
-            self.add(key, pairs)
+        self.approved = dict(approved or {})
+        for key, workload_pairs in pairs.items():
+            self.add(key, workload_pairs)
 
     def write(self, path: Path, document: dict) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -88,7 +90,7 @@ class Campaign(dict):
         count = len(pairs)
         directory = self.root / key
         capacity = fixtures._m4_capacity(pairs)
-        approved = "a" * 64 if key == "n4" else "b" * 64
+        approved = self.approved.get(key) or ("a" * 64 if key == "n4" else "b" * 64)
         lost_host = "host-d"
         id_host = dict(pairs)
         survivors = [ident for ident, host in pairs if host != lost_host]
@@ -336,6 +338,74 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         document = json.loads(out.read_text())
         self.assertEqual(document["survivors"], ["v1"])
+
+
+class EquivocationObserverTests(unittest.TestCase):
+    """The observer records what each validator finalised; it does not refuse the unsafe answer."""
+
+    def setUp(self):
+        self.server = HTTPServer(("127.0.0.1", 0), _Handler)  # answers `true` to every path
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.directory.cleanup()
+
+    def files(self, *, slashing=False):
+        detection = self.root / "detection.json"
+        detection.write_text(json.dumps({"refusals": [
+            {"validator": "v2", "block": "b" * 64, "reason": "twin at the same height"}]}))
+        policy = self.root / "policy.json"
+        policy.write_text(json.dumps({"slashing_enabled": slashing}))
+        return detection, policy
+
+    def run_tool(self, *arguments):
+        return subprocess.run([sys.executable, str(TOOL), *arguments],
+                              capture_output=True, text=True, check=False)
+
+    def test_both_twins_finalised_is_recorded_not_refused(self):
+        detection, policy = self.files()
+        out = self.root / "equivocation.json"
+        result = self.run_tool(
+            "observe-equivocation", "--injector", "v1", "--height", "50",
+            "--block", "a" * 64, "--block", "b" * 64,
+            "--detection", str(detection), "--policy", str(policy), "--out", str(out),
+            "--validator", f"v1={self.url}", "--validator", f"v2={self.url}",
+            "--validator", f"v3={self.url}", "--validator", f"v4={self.url}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads(out.read_text())
+        self.assertEqual(document["finalised_by"]["v1"], ["a" * 64, "b" * 64])
+        self.assertTrue(document["detected"])
+        self.assertIs(document["slashing_enabled"], False)
+
+    def test_fewer_than_four_validators_is_refused(self):
+        detection, policy = self.files()
+        result = self.run_tool(
+            "observe-equivocation", "--injector", "v1", "--height", "50",
+            "--block", "a" * 64, "--block", "b" * 64,
+            "--detection", str(detection), "--policy", str(policy),
+            "--out", str(self.root / "out.json"),
+            "--validator", f"v1={self.url}", "--validator", f"v2={self.url}",
+            "--validator", f"v3={self.url}")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("at least four", result.stdout + result.stderr)
+
+    def test_one_block_twice_is_refused(self):
+        detection, policy = self.files()
+        result = self.run_tool(
+            "observe-equivocation", "--injector", "v1", "--height", "50",
+            "--block", "a" * 64, "--block", "a" * 64,
+            "--detection", str(detection), "--policy", str(policy),
+            "--out", str(self.root / "out.json"),
+            "--validator", f"v1={self.url}", "--validator", f"v2={self.url}",
+            "--validator", f"v3={self.url}", "--validator", f"v4={self.url}")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("two distinct", result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

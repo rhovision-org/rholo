@@ -46,7 +46,10 @@ jobs:
     # 1:1 against them, and runs the static protocol/channel-balance audits.
     name: Formal specification (Lean, Coq, conformance)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # 90, not 60: the gate is ~55 minutes cold, and the internal `timeout 1800` bounds can put the
+    # Rust witnesses over a 60-minute wall before the step can report which half ran long. The Lean
+    # build cache below makes the common case much shorter; the ceiling is for the cold one.
+    timeout-minutes: 90
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,8 +78,41 @@ jobs:
         working-directory: spec
         run: lake exe cache get
 
+      - name: Restore the Lean build cache
+        # The nightly is the cache producer (see the matching step in formal-on-change.yml). Cache
+        # only this project's `.lake/build`; mathlib comes from `lake exe cache get`, and a restored
+        # Lake configuration is worse than a cold build.
+        id: lean-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: spec/.lake/build
+          key: lean-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json', 'spec/lakefile.toml') }}-${{ hashFiles('spec/Rchain/**/*.lean', 'spec/Rchain.lean') }}
+          restore-keys: |
+            lean-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json', 'spec/lakefile.toml') }}-
+
       - name: Formal gate
         run: tools/check-lean-conformance.sh
+
+      - name: Upload the compiled Lean modules
+        # The local-development escape hatch: `gh run download <run> -n rchain-lean-build -D
+        # spec/.lake/build` lets a constrained machine replay these instead of re-elaborating the
+        # register. Mathlib's oleans are excluded; they come from `lake exe cache get`.
+        if: success()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rchain-lean-build
+          path: |
+            spec/.lake/build/lib/lean
+            spec/.lake/build/ir
+          retention-days: 7
+
+      - name: Save the Lean build cache
+        # Only the canonical (dev) build is saved; a hit means the entry already exists.
+        if: success() && github.ref == 'refs/heads/dev' && steps.lean-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: spec/.lake/build
+          key: ${{ steps.lean-cache.outputs.cache-primary-key }}
 
       - name: Diagnose the formal step
         # The step is intermittently SIGTERM'd before it can print its own failure
@@ -90,8 +126,8 @@ jobs:
           echo '--- memory sampler tail ---'; tail -n 200 /tmp/lean-memory.log || true
 
       - name: Record the formal gate memory
-        # A passing run also needs the peak and the available memory: #417's
-        # residual is the 14.2 GB isolated peak against the runner's 16 GB.
+        # The gate enforces its own peak now (8 GiB process, 12 GiB build RSS); this step keeps the
+        # raw evidence, including the sampler tail, when a run is killed before the gate can report.
         if: always()
         run: |
           echo '--- memory after the gate ---'; free -m || true
