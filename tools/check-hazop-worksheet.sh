@@ -199,6 +199,19 @@ sed -e 's/→/->/g' -e 's/·/@SEP@/g' "$sheet" \
 status=$?
 set -e
 
+# **The census half of the same page.** U26's completeness is a claim about the tree — every durable
+# identifier classified — so it is read by its own checker. It is called from here rather than from a
+# new CI step so the gate rides the existing invocation and no workflow change is needed.
+census_status=0
+if [[ -f "$root/tools/check-durable-state-census.py" ]]; then
+  if (( gate == 1 )); then
+    python3 "$root/tools/check-durable-state-census.py" --gate "$sheet" || census_status=$?
+  else
+    python3 "$root/tools/check-durable-state-census.py" "$sheet" || census_status=$?
+  fi
+fi
+if (( census_status != 0 )); then status=1; fi
+
 if (( status == 0 )); then
   echo "check-hazop-worksheet: every node dispositions all eleven guide words, every row is decided and evidenced."
   exit 0
