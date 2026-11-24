@@ -141,3 +141,27 @@ Either tuple. The funding program matches Nil inside Rholang and emits an
 explicit boolean acknowledgement. A block-pinned 100-unit balance is still
 required; a successful deploy or acknowledgement alone is insufficient.
 The failed run 45506881601 retains the original incompatible reply shape.
+
+## Phase V-A — offline evidence admission controls
+
+Source baseline inspected: Rholo dev e63b7e5a8ccfcc25ff64860ac989d95a748eaaca.
+The proposed N4 campaign uses the repository's source-pinned Dockerfile
+and isolated devnet tooling, not public validators. Live execution is not
+yet available. This increment only implements offline accounting/anchor
+shape verification of synthetic fixtures.
+
+Frozen synthetic matrix: reserve 100; A=20 (carol), B=70 (carol),
+C=50 (dave), D=5 (dave; refused by governance). A must settle once;
+either B or C but not both may then settle. Every phase record requires
+four distinct node readbacks at one common finalized block hash, consistent
+beneficiary balances, reserve conservation and monotone source consumption.
+The verifier does not treat node labels as authenticated identities or
+the supplied finalized booleans as consensus proofs. The seven phase
+labels are structural requirements, not evidence of executed faults.
+Live provenance, actual concurrent submissions, network isolation,
+same-volume process restart, and fresh finality after replay remain open.
+
+The positive fixture is deliberately synthetic; fourteen mutations
+challenge its accounting/anchor shape. Successful unit tests do not
+establish N4 safety, distributed atomicity, liveness or a live acceptance
+result. Phase V remains OPEN.

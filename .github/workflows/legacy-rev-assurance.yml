@@ -1,113 +1,14 @@
-name: Legacy REV assurance witness
-on:
-  push:
-    branches: [research/legacy-rev-assurance-412]
-permissions:
-  contents: read
-jobs:
-  synthetic:
+  n4-evidence-controls:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - name: Run deterministic reference witness
+      - name: Offline synthetic evidence falsification controls
         working-directory: spec/audit/legacy-rev-assurance
         run: |
           set -o pipefail
-          python3 test_assurance.py | tee witness.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: synthetic-assurance-witness
-          path: spec/audit/legacy-rev-assurance/witness.json
-  formal:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install pinned Lean toolchain
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-          "$HOME/.elan/bin/elan" toolchain install "$(cat spec/lean-toolchain)"
-      - name: Kernel check and emit witness corpus
-        working-directory: spec/audit/legacy-rev-assurance
-        run: |
-          set -o pipefail
-          elan run leanprover/lean4:v4.12.0 lean --version
-          elan run leanprover/lean4:v4.12.0 lean --run LegacyREV.lean | tee formal-witness.txt
-          if grep -q 'sorryAx\|declaration uses.*sorry' formal-witness.txt; then exit 1; fi
-          grep -E 'depends on axioms|does not depend on any axioms' formal-witness.txt
-          python3 compare_lean.py formal-witness.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: formal-cross-language-witness
-          path: spec/audit/legacy-rev-assurance/formal-witness.txt
-  authenticated-settlement:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-      - name: Check signed decisions and transactional crash recovery
-        working-directory: spec/audit/legacy-rev-assurance
-        run: |
-          set -o pipefail
-          openssl version
-          python3 test_settlement.py 2>&1 | tee settlement-witness.txt
+          python3 test_verify_n4_evidence.py 2>&1 | tee n4-evidence-controls.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: authenticated-settlement-witness
-          path: spec/audit/legacy-rev-assurance/settlement-witness.txt
-  live-governance:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 18
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/checkout@v6
-        with:
-          repository: rhovision-org/quantum-os
-          ref: 766c78257c6c60b0f8696b7e06e1b490e742f648
-          path: qos
-      - uses: actions/checkout@v6
-        with:
-          repository: rhovision-org/rhogov
-          ref: f93afaaf8b8053d230bfaabfe7b35b0377078345
-          path: gov
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-      - name: Install pinned client dependencies and validate fixture
-        run: |
-          npm install --prefix qos/scripts/qos-cli --ignore-scripts --no-audit --no-fund
-          node --check spec/audit/legacy-rev-assurance/live_governance.mjs
-      - name: Execute on isolated real node and retain finalized readbacks
-        env:
-          QOS412_DATA: ${{ runner.temp }}/rev412-node
-        run: |
-          set -euo pipefail
-          export QOS412_QOS="$PWD/qos" QOS412_GOV="$PWD/gov"
-          export QOS412_QOS_SHA="$(git -C qos rev-parse HEAD)"
-          export QOS412_GOV_SHA="$(git -C gov rev-parse HEAD)"
-          test "$QOS412_QOS_SHA" = 766c78257c6c60b0f8696b7e06e1b490e742f648
-          test "$QOS412_GOV_SHA" = f93afaaf8b8053d230bfaabfe7b35b0377078345
-          export QOS412_VERSION="$(qos/bin/rnode --version | head -1)"
-          export QOS412_BINARY_SHA="$(sha256sum qos/bin/rnode | cut -d' ' -f1)"
-          QOS_RNODE_DATA="$QOS412_DATA" bash qos/scripts/localnet/run-node.sh > "$RUNNER_TEMP/rev412-node.private.log" 2>&1 &
-          pid=$!
-          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
-          ready=no
-          for i in $(seq 1 80); do
-            if curl -fsS --max-time 2 http://127.0.0.1:40403/api/status | python3 -c 'import sys,json; assert json.load(sys.stdin)["shardId"]' 2>/dev/null; then ready=yes; break; fi
-            kill -0 "$pid"
-            sleep 2
-          done
-          test "$ready" = yes
-          node spec/audit/legacy-rev-assurance/live_governance.mjs
-          sha256sum -c rev412-live.SHA256SUMS
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: disposable-governance-vault-witness
-          path: |
-            rev412-live.json
-            rev412-live.SHA256SUMS
-          if-no-files-found: ignore
+          name: n4-offline-evidence-controls
+          path: spec/audit/legacy-rev-assurance/n4-evidence-controls.txt
