@@ -16,3 +16,7 @@ node-words owed); `tools/check-node-diagnostics.py --gate` (0 violations).
 **Negative controls.** A removed row, an unknown class, a fabricated `path::symbol`, an uncounted
 `owed:` test and an `owed:` surface absent from §5 are each refused; a `#[cfg(test)]` key stays
 excluded.
+
+**Later change (C408).** Stage 4 added the divergence-halt key: the emitter now derives 48
+identifiers and Table D has 18 rows; the `f9e509038` baseline in this record was 47 / 17. See
+`spec/audit/evidence/658-durable-state-census-20261123/results.md`.

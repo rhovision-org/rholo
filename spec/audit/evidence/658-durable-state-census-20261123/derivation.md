@@ -41,3 +41,9 @@ The row's full cells are in `docs/src/spec/failure-hazop.md` U26.
   (Stage 3).
 - **`unrestorableRecords`** — the live gap. D26-08 and F-U26-02/03 record it; Stage 4 supplies the
   acting rule.
+
+## Added in Stage 4 (C408)
+
+| row | resolves | class decision |
+|---|---|---|
+| D26-18 | the divergence halt (`DIVERGENCE_HALT_KEY`) | `operator-action`: `note_unrestorable_if_exhausted` writes the record store-first and notes the registry; `clear_autopropose_halt` requires the refused block hash to clear it. There is no automatic exit, and serving continues |

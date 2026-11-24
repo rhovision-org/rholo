@@ -132,6 +132,7 @@ pub const OPERATOR_STATUS_KEYS: &[&str] = &[
     "consecutiveSelfValidationFailures",
     "degraded",
     "devMode",
+    "divergenceHalt",
     "finalityCountersDurable",
     "finalityStall",
     "finalityStallEpisodes",
