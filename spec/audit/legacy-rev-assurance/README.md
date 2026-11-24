@@ -103,3 +103,33 @@ are external inputs. Policy rotation, appeals, chain reorganization, hostile
 database administrators, power-loss/storage faults and external payment
 atomicity are outside this model. No Genesis change or approved monetary
 policy is implied. Results require CI confirmation.
+
+## Phase IV-A — narrow disposable real-chain witness
+
+The new live_governance.mjs harness installs the actual RhoGov main
+Issue/4 source (f93afaaf), signs two distinct votes using the pinned Quantum
+OS client and uses the shipped RNode executable from Quantum OS 766c782.
+The node source version and executable hash are retained; this is not
+automatically a test of current Rholo dev e63b7e5a. All writes target only
+127.0.0.1 on an isolated Actions runner with public disposable fixture keys.
+
+The one-claim gate fixes the exact claim title (canonical JSON), manifest,
+policy, amount, beneficiary, issue URI, opener, group and two-voter roll.
+It ignores opener-written results and requires closed status, exact ballots,
+no guests or roll edits. The proposed result before voting is a refusal
+control. The independent reader obtains a last-finalized block and requires
+an exact block-hash response for every snapshot. The gate uses a fresh
+private unforgeable vault and resolves its handle at payment time. The
+target checks are a 100-unit reserve, one 70-unit transfer, consumed flag
+and cross-deployer replay refusal with unchanged balances.
+
+This is a deliberately narrow fixed unanimous-vote policy, not RhoGov's
+general weighted/liquid-democracy tally. The installed Issue/4 admin can
+load state; trusted installation and immutable registry provenance are
+assumptions. On-chain gate checks current facts, not a cryptographically
+verified historical-finality certificate. The off-chain receipt is an
+observed block-pinned artifact from the same node, not independent
+consensus proof. Single-validator, one-claim execution does not prove
+multi-validator atomicity, arbitrary claim registry, crash recovery,
+reserve insolvency handling, or general refinement of Phase III.
+No production policy or real funds. No success is claimed before CI.
