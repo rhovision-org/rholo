@@ -32,14 +32,14 @@ fn every_recorded_format_trace_replays_to_its_decision() {
 
 #[test]
 fn a_newer_store_is_never_opened() {
-    let decision = decide_store_format(Some("5"), 4);
+    let decision = decide_store_format(Some("6"), 5);
     assert!(decision.refused());
-    assert_eq!(decision, StoreFormatDecision::RefuseNewer { on_disk: 5 });
+    assert_eq!(decision, StoreFormatDecision::RefuseNewer { on_disk: 6 });
 }
 
 #[test]
 fn an_unreadable_marker_is_never_guessed() {
-    let decision = decide_store_format(Some("  "), 4);
+    let decision = decide_store_format(Some("  "), 5);
     assert!(decision.refused());
     assert!(matches!(
         decision,
@@ -49,8 +49,8 @@ fn an_unreadable_marker_is_never_guessed() {
 
 #[test]
 fn a_stamp_is_written_only_for_an_absent_or_older_marker() {
-    assert!(decide_store_format(None, 4).needs_stamp());
-    assert!(decide_store_format(Some("2"), 4).needs_stamp());
-    assert!(!decide_store_format(Some("4"), 4).needs_stamp());
-    assert!(!decide_store_format(Some("5"), 4).needs_stamp());
+    assert!(decide_store_format(None, 5).needs_stamp());
+    assert!(decide_store_format(Some("4"), 5).needs_stamp());
+    assert!(!decide_store_format(Some("5"), 5).needs_stamp());
+    assert!(!decide_store_format(Some("6"), 5).needs_stamp());
 }

@@ -47,9 +47,12 @@ impl AdminWebApi for AdminWebApiImpl {
     /// The fan-out to every member shard is the router's `clear_autopropose_halt`, and its error names
     /// the shards whose clear did not reach the store. That is the reading that must not be swallowed:
     /// a partial resume reported as a whole one is the fault this route exists to let an operator fix.
-    async fn resume_autopropose(&self) -> Result<String, BlockApiException> {
+    async fn resume_autopropose(
+        &self,
+        acknowledge_divergence: Option<&str>,
+    ) -> Result<String, BlockApiException> {
         self.block_api
-            .clear_autopropose_halt()
+            .clear_autopropose_halt(acknowledge_divergence)
             .await
             .map(|()| {
                 "autopropose resumed: every member shard's halt record is cleared and its timer is live"
@@ -184,7 +187,10 @@ mod tests {
         /// Delegates to the floored read: this double has no unfinalised view of its own, and the
         /// method is required rather than defaulted so that is a decision rather than an oversight
         /// (`ShardRoutingBlockApi` is the implementation that had to forward it for real).
-        async fn clear_autopropose_halt(&self) -> Result<(), String> {
+        async fn clear_autopropose_halt(
+            &self,
+            _acknowledge_divergence: Option<&str>,
+        ) -> Result<(), String> {
             Ok(())
         }
 

@@ -562,9 +562,9 @@ def lawsChunk09 : List Law := [
       `Rchain.Casper.StoreFormat.store_decision_is_total,
       `Rchain.Casper.StoreFormat.opening_a_newer_store_is_the_unsafe_witness,
       `Rchain.Casper.StoreFormat.law118_falsifier],
-    falsifiable := "Open any present marker (`openAny`): a store written by format 5 under a build \
-      that writes 4 is accepted, which is `law118_mutant` and `law118_falsifier` exhibits it. In \
-      Rust, `decide_store_format(Some(\"5\"), 4)` is `RefuseNewer`, and the probe refuses before \
+    falsifiable := "Open any present marker (`openAny`): a store written by format 6 under a build \
+      that writes 5 is accepted, which is `law118_mutant` and `law118_falsifier` exhibits it. In \
+      Rust, `decide_store_format(Some(\"6\"), 5)` is `RefuseNewer`, and the probe refuses before \
       `block_store::create`; deleting the probe makes the store open first.",
     note := "The marker is not a schema hash and does not derive a version; the number is a promise \
       about the rows and is bumped by hand (`casper/src/storage.rs`). The gate cannot tell an \

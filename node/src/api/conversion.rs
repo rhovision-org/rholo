@@ -1,8 +1,8 @@
 //! Web API protobuf conversion functions (port of the conversion fns in `api/WebApi.scala`).
 
 use rchain_casper::api::block_api::{
-    Capabilities, DeployPoolStats, FinalityHealth, ProposerHealth, SelfValidationRefusal,
-    ShardHealthEntry, SyncHealth,
+    Capabilities, DeployPoolStats, DivergenceHaltStatus, FinalityHealth, ProposerHealth,
+    SelfValidationRefusal, ShardHealthEntry, SyncHealth,
 };
 use rchain_casper::runtime_manager::CapturedReply;
 use rchain_crypto::public_key::PublicKey;
@@ -17,9 +17,9 @@ use rchain_shared::base16;
 
 use super::dto::{
     DataAtNameResponse, DeployExecStatus as ApiDeployExecStatus, DeployPoolStatus, DeployRequest,
-    ExploratoryDeployResponse, FinalityHealthDto, HaltStatusDto, NodeCapabilities, OperatorStatus,
-    PipelineGates, PooledDeploy, ProposerHealthDto, PublicStatus, ResourceStatusDto,
-    RhoDataResponse, RhoExprWithBlock, SelfValidationRefusalDto, ShardHealthDto,
+    DivergenceHaltDto, ExploratoryDeployResponse, FinalityHealthDto, HaltStatusDto,
+    NodeCapabilities, OperatorStatus, PipelineGates, PooledDeploy, ProposerHealthDto, PublicStatus,
+    ResourceStatusDto, RhoDataResponse, RhoExprWithBlock, SelfValidationRefusalDto, ShardHealthDto,
     SignatureException, SyncStatus, VersionInfo,
 };
 use super::rho_expr::{expr_from_par, RhoExpr};
@@ -57,6 +57,17 @@ fn to_self_validation_refusal_dto(
     })
 }
 
+/// Map a casper divergence halt to its DTO (F-U26-02, #658).
+fn to_divergence_halt_dto(status: Option<DivergenceHaltStatus>) -> Option<DivergenceHaltDto> {
+    status.map(|status| DivergenceHaltDto {
+        at: status.at_ms,
+        block: status.block,
+        seq_num: status.seq_num,
+        episodes: status.episodes,
+        durable: status.durable,
+    })
+}
+
 /// Map one casper [`ShardHealthEntry`] to its DTO (W-N10-04).
 fn to_shard_health_dto(entry: &ShardHealthEntry) -> ShardHealthDto {
     ShardHealthDto {
@@ -72,6 +83,7 @@ fn to_shard_health_dto(entry: &ShardHealthEntry) -> ShardHealthDto {
             self_replay_fault_reason: entry.proposer.self_replay_fault_reason.clone(),
             key_equivocation_halted: entry.proposer.key_equivocation_halted,
             key_equivocation_reason: entry.proposer.key_equivocation_reason.clone(),
+            divergence_halt: to_divergence_halt_dto(entry.proposer.divergence_halt.clone()),
             autopropose_timer_halted: entry.proposer.autopropose_timer_halted,
             autopropose_timer_halt_episodes: entry.proposer.autopropose_halt.episodes,
             autopropose_halt: HaltStatusDto {
@@ -169,6 +181,7 @@ pub fn to_operator_status(
         self_validation_refusal: to_self_validation_refusal_dto(
             health.self_validation_refusal.clone(),
         ),
+        divergence_halt: to_divergence_halt_dto(health.divergence_halt.clone()),
         pool_quarantined: health.pool_quarantined,
         autopropose_timer_halted: health.autopropose_timer_halted,
         // The durable count, which is what the key always claimed to be (W-N10-01): it was an
@@ -531,6 +544,7 @@ mod tests {
         };
         let health = ProposerHealth {
             consecutive_self_validation_failures: 3,
+            divergence_halt: None,
             self_validation_refusal: Some(rchain_casper::api::block_api::SelfValidationRefusal {
                 code: "justification-regression".to_string(),
                 block_number: 3122,

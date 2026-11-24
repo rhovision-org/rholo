@@ -189,6 +189,24 @@ pub struct HaltStatusDto {
     pub durable: bool,
 }
 
+/// **A divergence halt** (F-U26-02, #658): a spent restore budget stopped production on this shard
+/// and the node is serving the chain it holds. The block is the acknowledgement an operator must
+/// pass to `POST /api/v1/autopropose/resume`; there is no automatic exit.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DivergenceHaltDto {
+    /// When the halt was taken, in milliseconds since the unix epoch.
+    pub at: i64,
+    /// The refused block, base16 — the value the resume route requires.
+    pub block: String,
+    pub seq_num: i64,
+    /// How many records this shard has given up on.
+    pub episodes: u64,
+    /// Whether the durable record holds it. `false` means this process is honouring a halt the next
+    /// one will not know about.
+    pub durable: bool,
+}
+
 /// **The one shard's proposer health**, as the per-shard map carries it (W-N10-04).
 ///
 /// The same facts the flat fields beside it carry, but attributable to a named member: a node whose
@@ -247,6 +265,9 @@ pub struct ProposerHealthDto {
     pub key_equivocation_halted: bool,
     /// The refused block behind `key_equivocation_halted`, null when the halt is clear.
     pub key_equivocation_reason: Option<String>,
+    /// **A divergence halt is standing** (F-U26-02, #658): production stopped, service continues,
+    /// and the named block is the operator's acknowledgement.
+    pub divergence_halt: Option<DivergenceHaltDto>,
     pub autopropose_timer_halted: bool,
     pub autopropose_timer_halt_episodes: u64,
     pub autopropose_halt: HaltStatusDto,
@@ -322,6 +343,9 @@ pub struct OperatorStatus {
     /// refused block. `None` after a successful propose or an operator resume. This is the field the
     /// counter could not carry: on the height-3122 wedge the only reason was a stderr line.
     pub self_validation_refusal: Option<SelfValidationRefusalDto>,
+    /// **A divergence halt is standing** (F-U26-02, #658): production stopped, service continues,
+    /// and the named block is the operator's acknowledgement.
+    pub divergence_halt: Option<DivergenceHaltDto>,
     /// #564: pooled deploy ids this proposer is holding out of selection after repeated self-replay
     /// refusals. Proposer-local operating state, not pool capacity — the deploys stay pooled and stay
     /// valid for every other node. Always present; zero on a healthy proposer.

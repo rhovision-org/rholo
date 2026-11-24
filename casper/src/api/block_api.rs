@@ -104,6 +104,18 @@ pub struct HaltStatus {
     pub durable: bool,
 }
 
+/// **The operator's view of a divergence halt** (F-U26-02, #658). The block is base16 so the operator
+/// can pass it back as the acknowledgement; `durable` carries the same "unknown, not never" meaning
+/// [`HaltStatus::durable`] does.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DivergenceHaltStatus {
+    pub at_ms: i64,
+    pub block: String,
+    pub seq_num: i64,
+    pub episodes: u64,
+    pub durable: bool,
+}
+
 /// **A shard's proposer health, as the API reports it.**
 ///
 /// **The flag names its trigger, and that is the point.** Three paths feed the proposer queue — the
@@ -359,6 +371,10 @@ pub struct ProposerHealth {
     pub self_replay_fault_halted: bool,
     /// The reason behind [`Self::self_replay_fault_halted`], when it is set.
     pub self_replay_fault_reason: Option<String>,
+    /// **A divergence halt is standing** (F-U26-02, #658): a block's restore budget was spent, so the
+    /// node stopped proposing and kept serving. The record names the block the operator must
+    /// acknowledge; there is no automatic exit.
+    pub divergence_halt: Option<DivergenceHaltStatus>,
     /// **This validator's own key has equivocated** (#576): a block by this key was refused because
     /// a different block by the same key already held its sequence. Proposing is stopped
     /// **permanently** — the proof is a durable verdict, and the operator resume does not clear it;
@@ -415,11 +431,22 @@ pub struct ProposeHealth {
     /// it in-process rather than the operator needing a second restart to get a live timer back.
     resume: Arc<tokio::sync::Notify>,
     stale_snapshot_equivocations: Arc<AtomicU64>,
+    /// The shard this cell reports, when the runtime knows it. Used to read **this shard's**
+    /// divergence halt from the process registry; `None` falls back to the conservative any-shard
+    /// answer, which is what a proposer-only test wants.
+    shard_id: Option<String>,
 }
 
 impl ProposeHealth {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Name the shard this cell reports, so a divergence halt is read per shard rather than
+    /// conservatively across the process. The runtime knows the id; the proposer-only tests do not.
+    pub fn with_shard_id(mut self, shard_id: impl Into<String>) -> Self {
+        self.shard_id = Some(shard_id.into());
+        self
     }
 
     /// The counter the proposer bumps on a self-validation failure and clears on success — the same
@@ -526,6 +553,49 @@ impl ProposeHealth {
         }
     }
 
+    /// **Seed the divergence halt from its durable record** (F-U26-02, #658). A record left by the
+    /// previous process means that process gave up on a block and stopped proposing; this one must
+    /// not resume on the same divergent view. A read that fails leaves the registry unfilled and
+    /// returns the error so the caller can say "unknown" — a boot refusal would trade a silence for an
+    /// outage, the same policy the autopropose halt's seed keeps.
+    pub async fn seed_divergence_halt_from_store(
+        &self,
+        dag: &dyn BlockDagStorage,
+    ) -> Result<(), String> {
+        match dag.read_divergence_halt().await {
+            Ok(record) => {
+                if let Some(shard_id) = &self.shard_id {
+                    crate::divergence_halt::seed(shard_id, record);
+                }
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// This shard's divergence halt, in the operator surface's shape.
+    pub fn divergence_halt_status(&self) -> Option<DivergenceHaltStatus> {
+        let halt = match &self.shard_id {
+            Some(shard_id) => crate::divergence_halt::for_shard(shard_id),
+            None => crate::divergence_halt::any().map(|(_, halt)| halt),
+        };
+        halt.map(|halt| DivergenceHaltStatus {
+            at_ms: halt.at_ms,
+            block: rchain_shared::base16::encode(&halt.block_hash),
+            seq_num: halt.seq_num,
+            episodes: halt.episodes,
+            durable: halt.durable,
+        })
+    }
+
+    /// Whether a divergence halt stands for this shard (or, when the shard is unknown, for any).
+    pub fn divergence_halted(&self) -> bool {
+        match &self.shard_id {
+            Some(shard_id) => crate::divergence_halt::for_shard(shard_id).is_some(),
+            None => crate::divergence_halt::halted(),
+        }
+    }
+
     /// Record that the autopropose timer has stopped, and hand back **the record the caller must
     /// persist** — the timer cannot write the store itself, and it has already decided to stop, so it
     /// cannot refuse either.
@@ -590,6 +660,20 @@ impl ProposeHealth {
         self.resume.notify_one();
     }
 
+    /// **The operator's acknowledgement of a divergence halt** (F-U26-02, #658): forget this shard's
+    /// entry and wake a parked timer. The caller has already cleared the durable record, store-first;
+    /// a failed clear must not read as a resume. **Deliberately not called by [`Self::clear_halt`]**:
+    /// a divergence halt has no automatic exit, and the acknowledgement names the refused block.
+    pub fn clear_divergence_halt(&self) -> Option<DivergenceHaltStatus> {
+        let cleared = self.divergence_halt_status();
+        if let Some(shard_id) = &self.shard_id {
+            crate::divergence_halt::clear(shard_id);
+        }
+        // `notify_one`, not `notify_waiters`, for the same lost-wakeup reason as `clear_halt`.
+        self.resume.notify_one();
+        cleared
+    }
+
     /// The clear's wake, for a halted timer to park on.
     pub fn resumed(&self) -> Arc<tokio::sync::Notify> {
         self.resume.clone()
@@ -626,6 +710,7 @@ impl ProposeHealth {
         // third has no wake by design, so its park is terminal for this key.
         while self.timer_halted()
             || self.self_validation_refusal.self_replay_halted()
+            || self.divergence_halted()
             || crate::blocks::block_processor::own_key_equivocation().is_some()
         {
             self.resume.notified().await;
@@ -654,6 +739,7 @@ impl ProposeHealth {
             pool_quarantined: self.self_validation_refusal.quarantined(),
             self_replay_fault_halted: self.self_validation_refusal.self_replay_halted(),
             self_replay_fault_reason: self.self_validation_refusal.self_replay_halt_reason(),
+            divergence_halt: self.divergence_halt_status(),
             key_equivocation_halted: key_equivocation.is_some(),
             key_equivocation_reason: key_equivocation,
             autopropose_timer_halted: self.timer_halted.load(Ordering::Relaxed),
@@ -881,7 +967,13 @@ pub trait BlockApi: Send + Sync {
     /// a default would let a wrapper answer this for one shard and silently do nothing for the rest,
     /// which is the same defect as the halt itself — a surface that says one thing and a node that does
     /// another. An implementation that does not say what it clears does not compile.
-    async fn clear_autopropose_halt(&self) -> Result<(), String>;
+    /// `acknowledge_divergence` names the refused block when a divergence halt stands (F-U26-02,
+    /// #658); it is ignored when none does. A divergence halt has no automatic exit, so a resume
+    /// without the matching block hash is refused.
+    async fn clear_autopropose_halt(
+        &self,
+        acknowledge_divergence: Option<&str>,
+    ) -> Result<(), String>;
 
     async fn get_unfinalised_name_data_response(
         &self,
