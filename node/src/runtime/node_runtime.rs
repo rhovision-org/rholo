@@ -1973,6 +1973,12 @@ async fn build_gateway(
         );
     }
     let ledger = Arc::new(TxnLedger::open(store_manager).await?);
+    // **The gateway ledger's operator surface** (D26-14, F-U26-01, #658). The ledger is node-level
+    // and opened after the shard APIs exist, so every member shard gets the same handle; the
+    // routing API forwards the operator read to the primary.
+    for rt in shards.values() {
+        rt.parts.block_api.attach_gateway_ledger(ledger.clone());
+    }
     let gateway = Arc::new(GatewayTxn::new(
         Arc::new(LocalShardDeployService::new(locals)),
         ledger,
@@ -2219,8 +2225,9 @@ async fn setup_shard_runtime(
         log.warn(
             LogSource::new("coop.rchain.node.runtime.Setup"),
             &format!(
-                "could not read the divergence halt record for shard {}: {e} — this shard's halt \
-                 history is unknown, not empty",
+                "could not read the divergence halt record for shard {}: {e} — unknown is not \
+                 absence: this shard will not propose until the record can be read, and serving \
+                 continues",
                 spec.shard_id
             ),
         );

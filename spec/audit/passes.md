@@ -14387,3 +14387,50 @@ member production until the named shard is acknowledged.
 
 **State.** C408 done; D26-18 classifies the new key; the census's surfaces owed fall to 4 and the
 falsifiers owed to 25.
+
+## 193. An unreadable halt is a halt, and an acknowledgement names the halt it read — 2026-11-24
+
+**Finding.** The independent review of #667 found two safety gates in the divergence halt. First, a
+boot read that failed returned `Err` without installing anything, and `setup_shard_runtime` only
+logged; a fresh process therefore had an empty registry, which the proposer could not tell from "no
+halt on record" — it would propose on a view whose durable halt it could not read. Second,
+`clear_autopropose_halt` read A → acknowledged A → deleted → cleared the registry in separate awaits,
+so a halt B recorded between them was deleted by A's acknowledgement. The storeless test cleared the
+registry after the failed seed and asserted nothing, so it proved neither property.
+
+**Change.**
+
+- Law 76 is amended in place again (`spec/Rchain/Stop.lean`): `HaltState` gains `read` and
+  `haltedOn`; `haltUnread` and `haltReadFailedStep` make an unreadable record a halt
+  (`an_unreadable_halt_record_stops_production`); `operatorResumeStep` requires the acknowledgement
+  to equal the standing halt (`an_acknowledgement_of_an_older_halt_cannot_resume_a_newer_one`,
+  witnessed by `a_newer_halt_survives_an_acknowledgement_of_the_older`).
+- `HaltCell` (Halted | Unreadable) replaces the bare record map. `with_shard_id` marks the shard
+  unknown at construction; the boot seed marks it before and on a failed read; `Proposer::do_propose`
+  refuses with `DivergenceHaltUnreadable`; a successful read retires the unknown state and wakes the
+  timer. Serving continues throughout.
+- A per-shard transition lock serialises `record_halt` (write → latch) against
+  `acknowledge_divergence_halt` (read → acknowledge → delete → forget). The acknowledgement names the
+  newest standing halt, and a non-durable registry halt is now ackable; the old path never cleared it.
+- `divergenceHalt` is one tagged observation (`clear` | `halted` | `unreadable`), and the four census
+  surfaces (`ownSequenceRecord`, `equivocationEvidence`, `rspaceRoot`, `gatewayTxn`) are published on
+  the operator status, each carrying its own `error` so a read failure is unknown, not empty.
+- The partition-rejoin harness reports `FAIL_DIVERGENCE_HALT_UNREADABLE` when the record cannot be
+  read.
+
+**Why believed.** The two negative controls the review asked for are deterministic tests:
+`a_failed_boot_read_stops_every_proposal_trigger_until_a_successful_read` (fresh cell + injected read
+error refuses both sources and refuses the resume) and
+`an_acknowledgement_cannot_delete_a_halt_recorded_while_it_reads` (a gated store opens the read→delete
+window; B survives in the store, the registry and a fresh boot seed). Removing the construction-time
+unknown, either side of the transition lock, or the non-durable acknowledge path makes its named test
+red. The Lean build and register gate run in the PR; the evidence is
+`spec/audit/evidence/c409-divergence-halt-unreadable-ack-20261124.md`.
+
+**What it does not claim.** No live devnet arm; the deterministic tests and their mutation controls
+are the evidence. The acknowledgement remains the admin listener plus the block hash, not a signature.
+The proposer still consults any member shard's halt conservatively; per-shard proposal gating is a
+separate change.
+
+**State.** C409 done; F-U26-04 and F-U26-05 Drift; D26-18's writer/clearer/test updated; the census
+surfaces owed fall to 0; the four surfaces are live on the operator status.

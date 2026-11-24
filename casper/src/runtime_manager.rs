@@ -651,6 +651,11 @@ impl RuntimeManager {
         self.history_repo.publish_if_known(post_state).await
     }
 
+    /// **The committed RSpace root** the history publishes from (D26-15, F-U26-01, #658).
+    pub async fn current_root(&self) -> Result<Blake2b256Hash, String> {
+        self.history_repo.current_root().await
+    }
+
     pub fn get_mergeable_store(&self) -> &MergeableStore {
         &self.mergeable_store
     }

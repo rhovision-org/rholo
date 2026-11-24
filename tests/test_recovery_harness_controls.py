@@ -208,11 +208,25 @@ class RejoinAgreementTests(unittest.TestCase):
         statuses[7]["unrestorable_records"] = 1
         statuses[7]["unrestorable_block"] = "fatal-block"
         statuses[7]["divergence_halt"] = {
-            "at": 1, "block": "aa" * 32, "seqNum": 9, "episodes": 1, "durable": True,
+            "state": "halted", "at": 1, "block": "aa" * 32, "seqNum": 9, "episodes": 1,
+            "durable": True,
         }
         run = self.drill(statuses=statuses)
         with self.assertRaisesRegex(
             RuntimeError, r"FAIL_DIVERGENCE_HALTED.*acknowledgeDivergence=aa"
+        ):
+            run.anchor_agreement(ANCHOR)
+
+    def test_an_unreadable_divergence_halt_is_not_an_absence(self):
+        statuses = [healthy_status(i) for i in range(8)]
+        statuses[7]["unrestorable_records"] = 1
+        statuses[7]["unrestorable_block"] = "fatal-block"
+        statuses[7]["divergence_halt"] = {
+            "state": "unreadable", "reason": "the boot read failed",
+        }
+        run = self.drill(statuses=statuses)
+        with self.assertRaisesRegex(
+            RuntimeError, r"FAIL_DIVERGENCE_HALT_UNREADABLE.*unknown is not absence"
         ):
             run.anchor_agreement(ANCHOR)
 

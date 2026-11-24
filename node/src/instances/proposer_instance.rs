@@ -75,6 +75,22 @@ fn log_propose_result(log: &Arc<dyn Log>, result: &(ProposeResult, Option<BlockM
                      (#576)"
                 ),
             ),
+            ProposeStatus::DivergenceHalted { block, seq } => log.error(
+                source,
+                &format!(
+                    "propose halted: a spent restore budget cannot validate block {block} \
+                     (seq {seq}) — production is stopped, serving continues, and the only resume is \
+                     POST /api/v1/autopropose/resume?acknowledgeDivergence={block} (F-U26-02)"
+                ),
+            ),
+            ProposeStatus::DivergenceHaltUnreadable { shard } => log.error(
+                source,
+                &format!(
+                    "propose halted: the divergence halt record for shard {shard} could not be read \
+                     — unknown is not absence, so production is stopped and serving continues; the \
+                     operator resume is refused until a read succeeds (F-U26-04)"
+                ),
+            ),
             ProposeStatus::ResourcePressure(state) => log.warn(
                 source,
                 &format!(

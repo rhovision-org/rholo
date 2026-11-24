@@ -28,6 +28,7 @@ use rchain_block_storage::dag::dag_storage::{
 };
 use rchain_shared::lock::Unpoison;
 
+use crate::gateway::ledger::TxnLedger;
 use crate::runtime_manager::CapturedReply;
 
 /// Milliseconds since the unix epoch, or `0` for a clock before it.
@@ -114,6 +115,83 @@ pub struct DivergenceHaltStatus {
     pub seq_num: i64,
     pub episodes: u64,
     pub durable: bool,
+}
+
+/// **The shard's divergence-halt state, as one observation** (F-U26-04, #658).
+///
+/// Three states, not a nullable record beside a boolean: a null `divergenceHalt` used to mean both
+/// "no halt" and "the record could not be read", and those are opposite instructions to a proposer.
+/// `Unreadable` is a halt — production stops and serving continues — and only a successful read
+/// retires it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum DivergenceHaltObservation {
+    #[default]
+    Clear,
+    Halted(DivergenceHaltStatus),
+    /// The durable record could not be read. **Unknown is not absence.**
+    Unreadable {
+        reason: String,
+    },
+}
+
+impl DivergenceHaltObservation {
+    /// Whether production is stopped by this observation. Serving is unaffected by either halt.
+    pub fn halted(&self) -> bool {
+        !matches!(self, Self::Clear)
+    }
+}
+
+/// The durable own-signed-sequence record (Law 122, D26-02), as the operator surface reads it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OwnSequenceRecordStatus {
+    /// The record on disk. `None` with `error: None` means no record; `None` with `error: Some`
+    /// means the read failed — **unknown**, not absent.
+    pub record: Option<OwnSequenceRecord>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OwnSequenceRecord {
+    pub height: i64,
+    pub seq_num: i64,
+    pub block: String,
+}
+
+/// The durable equivocation evidence (D26-13): the validators whose offence is stored.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EquivocationEvidenceStatus {
+    pub validators: Vec<String>,
+    /// Why the evidence could not be read; **unknown**, not "no evidence".
+    pub error: Option<String>,
+}
+
+/// The committed RSpace root (D26-15).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RspaceRootStatus {
+    pub root: Option<String>,
+    /// Why the root could not be read; **unknown**, not "no root".
+    pub error: Option<String>,
+}
+
+/// The node-local gateway coordinator ledger (D26-14).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GatewayTxnStatus {
+    pub total: u64,
+    pub in_flight: u64,
+    /// Why the ledger could not be read, or why none is attached.
+    pub error: Option<String>,
+}
+
+/// **The four durable-state surfaces the U26 census owed** (D26-02/13/14/15, F-U26-01, #658).
+///
+/// Every status carries its own `error`: a read failure is published as unknown, never as an empty
+/// reading, so the surface cannot quietly turn a store failure into "nothing on record".
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DurableStateSurfaces {
+    pub own_sequence_record: OwnSequenceRecordStatus,
+    pub equivocation_evidence: EquivocationEvidenceStatus,
+    pub rspace_root: RspaceRootStatus,
+    pub gateway_txn: GatewayTxnStatus,
 }
 
 /// **A shard's proposer health, as the API reports it.**
@@ -371,10 +449,11 @@ pub struct ProposerHealth {
     pub self_replay_fault_halted: bool,
     /// The reason behind [`Self::self_replay_fault_halted`], when it is set.
     pub self_replay_fault_reason: Option<String>,
-    /// **A divergence halt is standing** (F-U26-02, #658): a block's restore budget was spent, so the
-    /// node stopped proposing and kept serving. The record names the block the operator must
-    /// acknowledge; there is no automatic exit.
-    pub divergence_halt: Option<DivergenceHaltStatus>,
+    /// **The divergence-halt state** (F-U26-02/F-U26-04, #658): a block's restore budget was spent,
+    /// so the node stopped proposing and kept serving; or the durable record could not be read, which
+    /// is a halt of its own. The halted record names the block the operator must acknowledge; there
+    /// is no automatic exit.
+    pub divergence_halt: DivergenceHaltObservation,
     /// **This validator's own key has equivocated** (#576): a block by this key was refused because
     /// a different block by the same key already held its sequence. Proposing is stopped
     /// **permanently** — the proof is a durable verdict, and the operator resume does not clear it;
@@ -445,7 +524,16 @@ impl ProposeHealth {
     /// Name the shard this cell reports, so a divergence halt is read per shard rather than
     /// conservatively across the process. The runtime knows the id; the proposer-only tests do not.
     pub fn with_shard_id(mut self, shard_id: impl Into<String>) -> Self {
-        self.shard_id = Some(shard_id.into());
+        let shard_id = shard_id.into();
+        // **A production shard is unknown until its record has been read.** This constructor is the
+        // only place that knows the id, and the boot seed runs after it; marking the shard unknown
+        // here closes the window in which a proposer could read an empty registry as "no halt". A
+        // seed that is dropped entirely is now a stopped proposer, not a fail-open one.
+        crate::divergence_halt::seed_unreadable(
+            &shard_id,
+            "the shard's durable halt record has not been read",
+        );
+        self.shard_id = Some(shard_id);
         self
     }
 
@@ -553,45 +641,66 @@ impl ProposeHealth {
         }
     }
 
-    /// **Seed the divergence halt from its durable record** (F-U26-02, #658). A record left by the
-    /// previous process means that process gave up on a block and stopped proposing; this one must
-    /// not resume on the same divergent view. A read that fails leaves the registry unfilled and
-    /// returns the error so the caller can say "unknown" — a boot refusal would trade a silence for an
-    /// outage, the same policy the autopropose halt's seed keeps.
+    /// **Seed the divergence halt from its durable record** (F-U26-02/F-U26-04, #658). A record left
+    /// by the previous process means that process gave up on a block and stopped proposing; this one
+    /// must not resume on the same divergent view.
+    ///
+    /// **A read that fails is a halt, not an empty registry.** The shard is marked `Unreadable`
+    /// before the read and on its failure, so the proposer refuses every trigger; the runtime still
+    /// boots and serves. Only a successful read retires the unknown state. `seed_boot` never weakens
+    /// a halt a live detection recorded while this read was in flight.
     pub async fn seed_divergence_halt_from_store(
         &self,
         dag: &dyn BlockDagStorage,
     ) -> Result<(), String> {
+        let Some(shard_id) = self.shard_id.clone() else {
+            return Ok(());
+        };
+        crate::divergence_halt::seed_unreadable(&shard_id, "the boot read has not completed");
+        let _transition = crate::divergence_halt::transition(&shard_id).await;
         match dag.read_divergence_halt().await {
             Ok(record) => {
-                if let Some(shard_id) = &self.shard_id {
-                    crate::divergence_halt::seed(shard_id, record);
-                }
+                crate::divergence_halt::seed_boot(&shard_id, record);
                 Ok(())
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                crate::divergence_halt::seed_unreadable(
+                    &shard_id,
+                    format!("the boot read failed: {e}"),
+                );
+                Err(e)
+            }
         }
     }
 
-    /// This shard's divergence halt, in the operator surface's shape.
-    pub fn divergence_halt_status(&self) -> Option<DivergenceHaltStatus> {
-        let halt = match &self.shard_id {
-            Some(shard_id) => crate::divergence_halt::for_shard(shard_id),
-            None => crate::divergence_halt::any().map(|(_, halt)| halt),
+    /// This shard's divergence-halt state, in the operator surface's shape.
+    pub fn divergence_halt_status(&self) -> DivergenceHaltObservation {
+        let state = match &self.shard_id {
+            Some(shard_id) => crate::divergence_halt::state_for_shard(shard_id),
+            None => crate::divergence_halt::any_state().map(|(_, state)| state),
         };
-        halt.map(|halt| DivergenceHaltStatus {
-            at_ms: halt.at_ms,
-            block: rchain_shared::base16::encode(&halt.block_hash),
-            seq_num: halt.seq_num,
-            episodes: halt.episodes,
-            durable: halt.durable,
-        })
+        match state {
+            Some(crate::divergence_halt::HaltCell::Halted(halt)) => {
+                DivergenceHaltObservation::Halted(DivergenceHaltStatus {
+                    at_ms: halt.at_ms,
+                    block: rchain_shared::base16::encode(&halt.block_hash),
+                    seq_num: halt.seq_num,
+                    episodes: halt.episodes,
+                    durable: halt.durable,
+                })
+            }
+            Some(crate::divergence_halt::HaltCell::Unreadable { reason }) => {
+                DivergenceHaltObservation::Unreadable { reason }
+            }
+            None => DivergenceHaltObservation::Clear,
+        }
     }
 
-    /// Whether a divergence halt stands for this shard (or, when the shard is unknown, for any).
+    /// Whether production is stopped for this shard (or, when the shard is unknown, for any):
+    /// a named halt and an unreadable record are both stops.
     pub fn divergence_halted(&self) -> bool {
         match &self.shard_id {
-            Some(shard_id) => crate::divergence_halt::for_shard(shard_id).is_some(),
+            Some(shard_id) => crate::divergence_halt::state_for_shard(shard_id).is_some(),
             None => crate::divergence_halt::halted(),
         }
     }
@@ -658,20 +767,6 @@ impl ProposeHealth {
         // that lands between the timer's halt and its park is not lost. `notify_waiters` wakes only
         // waiters already registered, which is a lost-wakeup race on the one path out of a halt.
         self.resume.notify_one();
-    }
-
-    /// **The operator's acknowledgement of a divergence halt** (F-U26-02, #658): forget this shard's
-    /// entry and wake a parked timer. The caller has already cleared the durable record, store-first;
-    /// a failed clear must not read as a resume. **Deliberately not called by [`Self::clear_halt`]**:
-    /// a divergence halt has no automatic exit, and the acknowledgement names the refused block.
-    pub fn clear_divergence_halt(&self) -> Option<DivergenceHaltStatus> {
-        let cleared = self.divergence_halt_status();
-        if let Some(shard_id) = &self.shard_id {
-            crate::divergence_halt::clear(shard_id);
-        }
-        // `notify_one`, not `notify_waiters`, for the same lost-wakeup reason as `clear_halt`.
-        self.resume.notify_one();
-        cleared
     }
 
     /// The clear's wake, for a halted timer to park on.
@@ -884,6 +979,34 @@ pub trait BlockApi: Send + Sync {
     async fn deploy_pool_stats(&self) -> ApiErr<DeployPoolStats> {
         Ok(DeployPoolStats::default())
     }
+
+    /// **The four durable-state surfaces the census owed** (D26-02/13/14/15, F-U26-01, #658). The
+    /// default is the "nothing attached" answer, and each status carries that as an `error` rather
+    /// than as an empty reading, so a stub cannot look like a healthy store.
+    async fn durable_state_surfaces(&self) -> DurableStateSurfaces {
+        DurableStateSurfaces {
+            own_sequence_record: OwnSequenceRecordStatus {
+                error: Some("this API has no DAG to read the own-sequence record from".to_string()),
+                ..OwnSequenceRecordStatus::default()
+            },
+            equivocation_evidence: EquivocationEvidenceStatus {
+                error: Some("this API has no DAG to read equivocation evidence from".to_string()),
+                ..EquivocationEvidenceStatus::default()
+            },
+            rspace_root: RspaceRootStatus {
+                error: Some("this API has no RSpace to read the committed root from".to_string()),
+                ..RspaceRootStatus::default()
+            },
+            gateway_txn: GatewayTxnStatus {
+                error: Some("this API has no gateway ledger attached".to_string()),
+                ..GatewayTxnStatus::default()
+            },
+        }
+    }
+
+    /// Attach the node-level gateway coordinator ledger, which is opened after the per-shard APIs
+    /// exist. The default is a no-op for stubs and test doubles.
+    fn attach_gateway_ledger(&self, _ledger: Arc<TxnLedger>) {}
 
     /// The node's block-creation mode + deploy-gating capabilities.
     async fn capabilities(&self) -> Capabilities;

@@ -108,6 +108,10 @@ impl AdminWebApi for AdminWebApiImpl {
             .map_err(super::dto::BlockApiException::client)?;
         let core =
             super::conversion::to_public_status(&status, &caps, &self.resources.snapshot(), &pool);
+        // **The four census surfaces** (D26-02/13/14/15, F-U26-01, #658). Read through the API so
+        // the shard that owns the DAG/RSpace answers, and the gateway ledger is attached by the
+        // runtime before this route can be served.
+        let surfaces = self.block_api.durable_state_surfaces().await;
         Ok(super::conversion::to_operator_status(
             core,
             &caps,
@@ -140,6 +144,7 @@ impl AdminWebApi for AdminWebApiImpl {
             // swallowed, and nothing published the count.
             rchain_shared::chan::undelivered_sends(),
             Some(shards),
+            &surfaces,
             &self.resources.snapshot(),
         ))
     }
