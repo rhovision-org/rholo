@@ -267,12 +267,15 @@ jobs:
           cache-on-failure: false
 
       - name: Formal gate (Rust half)
-        # The first measured run of this split took 23m02s cold with the census at 2 (15m31s, slowest
-        # node witnesses ~45s); 4 is the next measured value, not a guess. If a node test shows a
-        # port or temp-path collision, drop this to 2 (or 1) — the checker is unchanged by the knob.
+        # **Measured on this PR, and the reason the census stays at 2.** At 2 the census was 931 s
+        # (cold cargo cache) and the slowest node web witnesses ~45 s each; at 4 it was 908 s and the
+        # same tests took ~99 s each — the pool saturates on those tests, so the extra jobs buy no
+        # wall time and move the runtimes toward their timeouts. 2 is the measured value, not a
+        # default; `RUST_WITNESS_JOBS=1` is the rollback if a node test shows a port or temp-path
+        # collision.
         env:
           RUST_CORPUS_JOBS: 2
-          RUST_WITNESS_JOBS: 4
+          RUST_WITNESS_JOBS: 2
         run: tools/check-lean-conformance.sh --rust-only
 
       - name: Record the gate's phase timings
