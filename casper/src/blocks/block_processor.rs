@@ -1125,6 +1125,12 @@ mod tests {
     /// tests need only to take turns.
     static OWN_KEY_HALT_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+    /// **The pipeline-fault set is process-global**, so tests that read or write it must not run
+    /// concurrently: the deferral test asserts its outstanding count is unchanged, and a recorder
+    /// test on another thread can move it between the two samples. The lock is separate from the
+    /// own-key one because the cells are independent; no test takes both in the opposite order.
+    static PIPELINE_FAULT_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     /// **A missing justification is recorded under its own stage** (Law 88d): not "validation
     /// internal", where it would be indistinguishable from a store or runtime fault.
     #[test]
@@ -1142,8 +1148,9 @@ mod tests {
     /// **The latch is a current obligation, not a lifetime count** (Law 54a). Seeding models the
     /// durable ledger at startup; a repeated row is still one obligation; a settled verdict clears
     /// it. Uses a synthetic hash so it cannot collide with the block fixture's obligations.
-    #[test]
-    fn the_fault_latch_is_a_current_obligation() {
+    #[tokio::test]
+    async fn the_fault_latch_is_a_current_obligation() {
+        let _guard = PIPELINE_FAULT_TEST_LOCK.lock().await;
         let hash = BlockHash::new([0xcd; 32]);
         assert!(!pipeline_fault_is_outstanding(&hash));
         seed_pipeline_faults([hash]);
@@ -1166,6 +1173,7 @@ mod tests {
     /// after every restart — how one equivocating validator stalled the node in the M3 join arm).
     #[tokio::test]
     async fn an_equivocation_verdict_accounts_for_the_body_without_owing_it() {
+        let _fault_guard = PIPELINE_FAULT_TEST_LOCK.lock().await;
         let _halt_guard = OWN_KEY_HALT_TEST_LOCK.lock().await;
         use crate::block_disposition::BlockDispositionCodec;
         use rchain_block_storage::dag::codecs::BlockHashCodec;
@@ -1386,6 +1394,7 @@ mod tests {
     /// process-wide fault the readiness/refusal gates read.
     #[tokio::test]
     async fn a_hung_validation_times_out_and_faults_the_pipeline() {
+        let _guard = PIPELINE_FAULT_TEST_LOCK.lock().await;
         use crate::block_disposition::{BlockDisposition, BlockDispositionCodec, PendingStage};
         use rchain_block_storage::dag::codecs::BlockHashCodec;
         use rchain_shared::store_manager::{database, InMemoryStoreManager};
@@ -1715,6 +1724,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_justification_is_deferred_not_failed() {
+        let _guard = PIPELINE_FAULT_TEST_LOCK.lock().await;
         use crate::block_disposition::{BlockDisposition, BlockDispositionCodec, PendingStage};
         use rchain_block_storage::dag::codecs::BlockHashCodec;
         use rchain_shared::store_manager::{database, InMemoryStoreManager};
@@ -1775,5 +1785,135 @@ mod tests {
             .expect("a named deferral")
             .contains(&missing[0].to_hex()));
         clear_deferral(&block.block_hash);
+    }
+
+    /// **A refused merge is recorded for retry, not dropped** (F-U4-01).
+    ///
+    /// The three merge refusals — the search budget, the native-relation conflict and the
+    /// number-channel overflow — become `ValidateError::Internal` and arrive at this recorder. The
+    /// contract this pins is: a durable `Faulted` row at `validation internal`, the pipeline
+    /// obligation set, and the row due on the retry schedule; the attempt count grows and the row
+    /// leaves the due set when the budget is spent. The producer path is read, not run — the three
+    /// causes are expensive to construct — so this is the recording/retry contract for the exact
+    /// reason classes, not an end-to-end merge.
+    #[tokio::test]
+    async fn the_three_merge_refusals_are_recorded_for_retry() {
+        let _guard = PIPELINE_FAULT_TEST_LOCK.lock().await;
+        use crate::block_disposition::{
+            now_unix_millis, BlockDisposition, BlockDispositionCodec, BlockDispositionStore,
+            FIRST_RETRY_DELAY_MS, MAX_FAULT_RETRIES, MAX_RETRY_DELAY_MS,
+        };
+        use rchain_block_storage::dag::codecs::BlockHashCodec;
+        use rchain_shared::store_manager::{database, InMemoryStoreManager};
+
+        let manager = InMemoryStoreManager::default();
+        let kv = database(
+            &manager,
+            "block-disposition-test-merge-refusals",
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockDispositionCodec),
+        )
+        .await
+        .expect("in-memory ledger");
+        let store = BlockDispositionStore::from_store(Arc::new(kv));
+        let log: Arc<dyn Log> = Arc::new(rchain_shared::log::NopLog);
+
+        let reasons = [
+            "merge search exceeded its budget (H-U4-01)",
+            "blocks 0000000000000000000000000000000000000000000000000000000000000001 and \
+             0000000000000000000000000000000000000000000000000000000000000002 both write \
+             native slot <0, 0>; neither has seen the other",
+            "number channel diff accumulation overflow: 9223372036854775807 + 1 does not fit i64",
+        ];
+        for (i, reason) in reasons.iter().enumerate() {
+            let mut block = sample_block();
+            block.block_hash = BlockHash::new([0x80 + i as u8; 32]);
+            record_block_fault(
+                &store,
+                &block,
+                internal_fault_stage(reason),
+                reason,
+                &log,
+                LogSource::new("casper.blocks.BlockProcessor"),
+            )
+            .await;
+
+            let row = store
+                .get(&block.block_hash)
+                .await
+                .expect("ledger read")
+                .expect("a fault row");
+            match &row {
+                BlockDisposition::Faulted {
+                    stage,
+                    attempts,
+                    reason: stored,
+                    ..
+                } => {
+                    assert_eq!(
+                        stage, "validation internal",
+                        "the fault's stage names the funnel"
+                    );
+                    assert_eq!(*attempts, 1, "the first fault is attempt one");
+                    assert_eq!(stored, reason, "the refusal is preserved for the operator");
+                }
+                other => panic!("a refused merge must be Faulted, not {other:?}"),
+            }
+            assert!(
+                pipeline_fault_is_outstanding(&block.block_hash),
+                "the refused merge is an outstanding pipeline obligation"
+            );
+            let due = store
+                .due_retries(now_unix_millis() + FIRST_RETRY_DELAY_MS + 1)
+                .await
+                .expect("the due set");
+            assert!(
+                due.iter().any(|(hash, _)| *hash == block.block_hash),
+                "a refused merge must be due for a retry, not dropped"
+            );
+
+            // The budget: the row stays Faulted but stops being due once it is spent.
+            for _ in 1..MAX_FAULT_RETRIES {
+                record_block_fault(
+                    &store,
+                    &block,
+                    internal_fault_stage(reason),
+                    reason,
+                    &log,
+                    LogSource::new("casper.blocks.BlockProcessor"),
+                )
+                .await;
+            }
+            let spent = store
+                .get(&block.block_hash)
+                .await
+                .expect("ledger read")
+                .expect("a fault row");
+            assert_eq!(
+                spent.attempts(),
+                MAX_FAULT_RETRIES,
+                "the count reaches the budget and does not exceed it"
+            );
+            let due = store
+                .due_retries(now_unix_millis() + MAX_RETRY_DELAY_MS + 1)
+                .await
+                .expect("the due set");
+            assert!(
+                !due.iter().any(|(hash, _)| *hash == block.block_hash),
+                "a quarantined fault owes no retry"
+            );
+
+            // Negative control: a settled row is not due.
+            store.settle(block.block_hash).await.expect("settle");
+            let due = store
+                .due_retries(now_unix_millis() + MAX_RETRY_DELAY_MS + 1)
+                .await
+                .expect("the due set");
+            assert!(
+                !due.iter().any(|(hash, _)| *hash == block.block_hash),
+                "a settled verdict leaves no retry obligation"
+            );
+            clear_pipeline_fault(&block.block_hash);
+        }
     }
 }
