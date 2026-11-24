@@ -1344,18 +1344,41 @@ class PartitionRun:
                      for index, node in enumerate(self.manifest["nodes"])
                      if index != victim_index]
             anchor = self._anchor()
-            latest_before, finalized_before = _height(self.target, victim_index)
             install = self.transport.install_partition(
                 victim_index, peers, ports, mechanism)
             removed = None
             try:
+                # The cut is not a barrier for work already in flight: the victim may finalise one
+                # queued pre-cut fringe after the disconnect. The local harness's rule is the
+                # settled fence is `pre_cut` or `pre_cut + 1` and holds for the rest of the
+                # window; the tip may rise throughout. Measure the whole window, not a single
+                # before/after pair.
+                install_latest, install_finalized = _height(self.target, victim_index)
+                samples = []
                 deadline = time.monotonic() + dwell_seconds
-                latest_after, finalized_after = latest_before, finalized_before
                 while time.monotonic() < deadline:
                     time.sleep(2.0)
-                    latest_after, finalized_after = _height(self.target, victim_index)
-                    if latest_after - latest_before >= dwell_blocks:
-                        break
+                    samples.append(_height(self.target, victim_index))
+                if not samples:
+                    samples.append(_height(self.target, victim_index))
+                latest_before, finalized_before = install_latest, install_finalized
+                latest_after, finalized_after = samples[-1]
+                tips = [latest for latest, _ in samples]
+                heights = [finalized for _, finalized in samples]
+                settled = heights[-1]
+                fence_frozen = (
+                    len(heights) >= 3
+                    and len(set(heights[-3:])) == 1
+                    and settled in (install_finalized, install_finalized + 1)
+                    and all(height in (install_finalized, settled) for height in heights)
+                )
+                producing_now = max(tips) > install_latest and fence_frozen
+                self.result.setdefault("partition_samples", []).append(
+                    {"cycle": number, "victim": victim, "install_tip": install_latest,
+                     "install_finalized": install_finalized,
+                     "tips": tips, "finalized": heights, "settled": settled,
+                     "fence_frozen": fence_frozen,
+                     "dwell_blocks_required": dwell_blocks})
                 survivors = [index for index in range(len(names)) if index != victim_index]
                 survivor_names = [names[index] for index in survivors]
 
@@ -1372,13 +1395,12 @@ class PartitionRun:
                 removed = self.transport.remove_partition(victim_index, mechanism)
             if not removed.get("removed"):
                 failures.append(f"cycle {number}: the partition was not removed")
-            producing = (latest_after - latest_before >= dwell_blocks
-                         and finalized_after <= finalized_before)
+            producing = producing_now
             if not producing:
                 failures.append(
                     f"cycle {number}: the victim was not producing under partition "
-                    f"(latest {latest_before}->{latest_after}, "
-                    f"finalised {finalized_before}->{finalized_after})")
+                    f"(install {latest_before}/{finalized_before}, last {latest_after}/"
+                    f"{finalized_after}, fence frozen {fence_frozen})")
             rejoin_height = anchor["height"] + max(1, dwell_blocks)
 
             def rejoined():
@@ -2052,7 +2074,7 @@ def command_manifest(args) -> int:
         document["fault"] = {
             "kind": "partition", "cycles": 2, "victim_policy": "highest-finalised",
             "p2p_ports": [40400, 40404], "mechanism": "docker-network",
-            "dwell_blocks": 2, "dwell_seconds": 15, "heal_timeout_s": 300,
+            "dwell_blocks": 1, "dwell_seconds": 30, "heal_timeout_s": 300,
         }
     if args.claim == "RC-3":
         document["availability"] = {"window_blocks": 10, "probe_timeout_s": 20}

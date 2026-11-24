@@ -34,6 +34,7 @@ class ArmFleet(base.FakeFleet):
     def __init__(self, document):
         super().__init__(document)
         self.partitioned = set()
+        self.partition_polls = {}
         self.removal_ok = True
         self.producing = True
         self.latest_bonus = 5
@@ -58,9 +59,11 @@ class ArmFleet(base.FakeFleet):
             block_hash = path.rsplit("/", 1)[-1]
             return {"blockHash": block_hash}
         if path == "/api/v1/status" and name in self.partitioned:
+            self.partition_polls[name] = self.partition_polls.get(name, 0) + 1
             return {"networkId": "testnet", "shardId": "/testnet",
                     "latestBlockNumber": self.heights[name] + 1
-                    + (self.latest_bonus if self.producing else 0)}
+                    + (self.latest_bonus + self.partition_polls[name]
+                       if self.producing else 0)}
         if path == "/health" and name in self.partitioned:
             return {"bootId": self.boot_ids[name], "ready": True,
                     "finalizedHeight": self.heights[name],
@@ -85,6 +88,7 @@ class ArmFleet(base.FakeFleet):
     def install_partition(self, index, peers, ports, mechanism):
         name = self.nodes[index]["name"]
         self.partitioned.add(name)
+        self.partition_polls[name] = 0
         for other in NAMES:
             if other != name:
                 self.heights[other] += 5
@@ -101,7 +105,7 @@ class ArmFleet(base.FakeFleet):
 def partition_manifest(**overrides):
     fault = {"kind": "partition", "cycles": 2, "victim_policy": "highest-finalised",
              "p2p_ports": [40400, 40404], "mechanism": "docker-network",
-             "dwell_blocks": 2, "dwell_seconds": 0.01, "heal_timeout_s": 30}
+             "dwell_blocks": 2, "dwell_seconds": 6.5, "heal_timeout_s": 30}
     return base.manifest(fault=fault, **overrides)
 
 

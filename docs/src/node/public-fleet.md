@@ -97,7 +97,9 @@ The `pressure` block names the endpoint, the declared unit, the cap and the mode
 sets and removes `RNODE_HTTP_MAX_INFLIGHT_DEPLOY`, restarts the unit for each lifetime, captures the
 unit environment and version, and runs the existing `m2-pressure-arm.py` phases and gRPC
 observation. The claim re-runs `m2-pressure.py check`; the driver never supplies the verdict. A
-local endpoint is refused as a precondition, and the proxy surface remains deferred.
+local endpoint is refused as a precondition, and the proxy surface remains deferred. The driver
+mutates a systemd unit's environment, so the pressure arm is SSH-only: its rehearsal is the two
+devnet lifetimes described in `tools/m2-pressure-arm.py`, not a four-validator fleet action.
 
 ## RC-6/public and RC-6/availability — join and audit
 

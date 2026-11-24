@@ -209,8 +209,10 @@ python3 tools/release-check.py record --claim RC-5 --arm public --record target/
 The driver sets/removes `RNODE_HTTP_MAX_INFLIGHT_DEPLOY`, restarts the declared unit for each
 lifetime, captures the unit environment and version, runs `tools/m2-pressure-arm.py phase` for
 capped and unset, runs its gRPC observation, assembles the record, and restores the original unit
-environment in a `finally`. The claim re-runs `tools/m2-pressure.py check`. NO-GO: a local
-endpoint, a 5xx, an accepted deploy that later disappears, or a unit environment not restored.
+environment in a `finally`. This needs a systemd unit, so it is SSH-only; the Docker transport
+cannot mutate a running container's environment and is a precondition, not a rehearsal path. The
+claim re-runs `tools/m2-pressure.py check`. NO-GO: a local endpoint, a 5xx, an accepted deploy that
+later disappears, or a unit environment not restored.
 
 ### Window E — RC-6/public and RC-6/availability
 

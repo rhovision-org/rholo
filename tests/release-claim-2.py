@@ -323,7 +323,8 @@ def run(argv: list[str]) -> int:
             out, record,
             f"the {arm} arm's harness lands in {meta['next_pr']}")[1]
     failure = common.preflight_failure(CLAIM_ID, environment, out, record,
-                                       getattr(args, "public_manifest", None))
+                                       getattr(args, "public_manifest", None),
+                                       rehearsal=getattr(args, "rehearse", False))
     if failure is not None:
         return failure
 
