@@ -14351,3 +14351,39 @@ construct inside the processor, so this pins the recording/retry contract for th
 classes rather than an end-to-end merge. No release claim, no public arm, no consensus-rule change.
 
 **State.** C407 done; F-U4-01 Drift; the branch is stacked on the census PR #662.
+
+## 192. A spent restore budget halts production, not service — 2026-11-24
+
+**Subject.** `unrestorableRecords` was published and nothing acted on it: a block's restore budget
+could be spent and the node kept proposing on a view it could neither validate nor rewind past
+without an anchor the network had not agreed. F-U26-02 records the gap; F-U26-03 records the ordering
+the halt needs.
+
+**Change.**
+
+- Law 76 is amended in place with the safe-halt machine (`spec/Rchain/Stop.lean`): `safeHaltStep`
+  stops proposing and leaves serving; no safe-halt step restores production; only the operator's
+  resume does. No new law number.
+- `DIVERGENCE_HALT_KEY` in the per-shard control-record store, a fixed 56-byte codec, written
+  store-first from `note_unrestorable_if_exhausted`; the process registry is keyed by shard.
+- `Proposer::do_propose` refuses every trigger with `DivergenceHalted { block, seq }`;
+  `park_while_halted` parks the timer; the boot seed reads the record before the timer spawns.
+- `POST /api/v1/autopropose/resume?acknowledgeDivergence=<hex>` requires the refused block hash; the
+  clear is store-first. `divergenceHalt` is operator-only.
+- `STORE_FORMAT_VERSION` is 5, so a v4 binary refuses the store instead of ignoring the halt.
+- The partition-rejoin harness reports `FAIL_DIVERGENCE_HALTED` naming the resume route.
+
+**Why believed.** The four integration tests cover every trigger, a restart, a storeless write, the
+wrong acknowledgement and the acknowledged resume; removing the `do_propose` check makes the
+total-trigger test red. The unit, storage, conversion, diagnostics and envelope tests pass; the
+harness controls pass 62; the Lean build and register gate run in the PR. The evidence is
+`spec/audit/evidence/c408-divergence-halt-20261123.md`.
+
+**What it does not claim.** No live devnet arm — `--merge-divergence-injection` was not shown to
+produce `unrestorableRecords > 0` deterministically, so a live arm is owed. The acknowledgement is the
+admin boundary plus the block hash, not a signature. The acting decision is conservative across member
+shards: the registry is per shard, but a proposer consults any halt, so a multi-shard node stops all
+member production until the named shard is acknowledged.
+
+**State.** C408 done; D26-18 classifies the new key; the census's surfaces owed fall to 4 and the
+falsifiers owed to 25.
