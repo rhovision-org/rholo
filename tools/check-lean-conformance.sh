@@ -59,35 +59,86 @@ if command -v lake >/dev/null 2>&1; then
   # SIGTERM'd with no `ok`/`FAIL` line (issue #417). The runner is discarded, so
   # the workflow's `if: failure()` step tails this file; without it the only
   # surviving evidence is the step's absence.
-  (
-    while sleep 20; do
-      date -Is >>/tmp/lean-memory.log
-      free -m >>/tmp/lean-memory.log 2>&1 || true
-      ps -eo pid,rss,pcpu,comm --sort=-rss | head -8 >>/tmp/lean-memory.log 2>&1 || true
-      echo >>/tmp/lean-memory.log
-    done
-  ) &
-  sampler=$!
+  sample_memory() {
+    {
+      date -Is
+      free -m 2>&1 || true
+      ps -eo pid,rss,pcpu,comm --sort=-rss | head -8 2>&1 || true
+      # The build's own resident set, not the machine's: `free -m`'s used field includes whatever else
+      # the host is running, so it is meaningless on a developer machine and only useful on the
+      # dedicated runner. Summing the compiler-family processes measures what can actually OOM this
+      # job, on either.
+      local build_kb
+      build_kb="$(ps -eo rss,comm --no-headers 2>/dev/null | awk '$2 ~ /^(lean|lake|clang|leanc|cc1|cc1plus|gcc|g\+\+)$/ { s += $1 } END { print s + 0 }' || true)"
+      printf 'BUILD_RSS_KB %s\n' "$build_kb"
+      echo
+    } >>/tmp/lean-memory.log || true
+  }
+  # **The sampler is a foreground poll of the build's PID, not a background subshell.** A background
+  # sampler was observed on 2026-11-23 to write one sample and then stop while the build continued —
+  # the evidence a SIGTERM'd run exists for, silent. `kill -0` on the build's own PID ties the
+  # sampling to its lifetime and keeps the loop in the shell that is waited on.
   printf 'lake build: starting %s\n' "$(date -Is)"
-  # **The register is the memory peak.** `Rchain/Laws.lean` is one 103-row list
-  # whose elaboration is a unification problem (its own comment records the
-  # heartbeats it outgrew). Building it alone leaves that peak unshared with the
-  # rest of the library; the second build then uses the cached module.
-  if (cd "$SPEC" && timeout 1200 lake build Rchain.Laws) >>/tmp/lean-build.log 2>&1; then
-    ok "lake build Rchain.Laws (the register alone)"
+  # **The register is the memory peak, and it is split into modules for that reason.** One module
+  # holding all 187 entries elaborated at 15,102,104 KiB RSS on the 16 GiB runner (measured 2026-11-23,
+  # the run that also found the stale-register failure). A `def` boundary inside a module does not
+  # bound that memory — one `lean` process elaborates every declaration in the module — so the rows
+  # live in `Rchain/Laws/Chunk01..09.lean` and this step builds each chunk in its own Lake invocation,
+  # sequentially. That keeps two chunks from being resident together; the umbrella then replays them.
+  (cd "$SPEC" && timeout 1800 bash -c '
+        set -euo pipefail
+        lake build Rchain.Laws.Base
+        for t in $(grep -oE "^import Rchain\.Laws\.Chunk[0-9]+" Rchain/Laws.lean | sed "s/^import //"); do
+          lake build "$t"
+        done
+        lake build Rchain.Laws
+      ') >>/tmp/lean-build.log 2>&1 &
+  register_pid=$!
+  while kill -0 "$register_pid" 2>/dev/null; do
+    sample_memory || true
+    sleep 5
+  done
+  if wait "$register_pid"; then
+    ok "lake build Rchain.Laws (the register, one Lean process per chunk)"
   else
-    fail "lake build Rchain.Laws — see /tmp/lean-build.log (a 124 there is the 1200 s bound above, not a proof error)"
+    fail "lake build Rchain.Laws — see /tmp/lean-build.log (a 124 there is the 1800 s bound above, not a proof error)"
     tail -n 120 /tmp/lean-build.log || true
   fi
-  if (cd "$SPEC" && timeout 1800 bash -c 'lake build && lake build rchain-corpus && lake build rchain-laws && lake build rchain-tables') >>/tmp/lean-build.log 2>&1; then
+  (cd "$SPEC" && timeout 1800 bash -c 'lake build && lake build rchain-corpus && lake build rchain-laws && lake build rchain-tables') >>/tmp/lean-build.log 2>&1 &
+  rest_pid=$!
+  while kill -0 "$rest_pid" 2>/dev/null; do
+    sample_memory || true
+    sleep 5
+  done
+  if wait "$rest_pid"; then
     ok "lake build (spec/, library + executables + the law-register checks)"
   else
     fail "lake build (spec/) — see /tmp/lean-build.log (a 124 there is the 1800 s bound above, not a proof error)"
     tail -n 120 /tmp/lean-build.log || true
   fi
-  kill "$sampler" 2>/dev/null || true
-  wait "$sampler" 2>/dev/null || true
   printf 'lake build: finished %s\n' "$(date -Is)"
+  # **The peak guards.** The per-process guard is the register's memory ratchet: a compiler-family
+  # process that grows past 8 GiB is a signal to split the chunk that made it, not to raise the
+  # number. The build-sum guard catches the case the process guard cannot — several compiler
+  # processes resident at once — by summing only the compiler-family processes, so a busy developer
+  # host does not trip it. Before the split, the register's process peak was 15.1 GiB and the build
+  # sum was ~15 GiB; see `tools/measure-lean-memory.sh`.
+  LEAN_PEAK_CEILING_MB=8192
+  LEAN_BUILD_CEILING_MB=12288
+  peak_kb="$(awk '$4 ~ /^(lean|lake|clang|leanc|cc1|cc1plus|gcc|g\+\+)$/ { if ($2+0 > m) m=$2+0 } END { print m+0 }' /tmp/lean-memory.log)"
+  peak_build_kb="$(awk '/^BUILD_RSS_KB / { if ($2+0 > m) m=$2+0 } END { print m+0 }' /tmp/lean-memory.log)"
+  peak_mb=$((peak_kb / 1024))
+  peak_build_mb=$((peak_build_kb / 1024))
+  if (( peak_mb > LEAN_PEAK_CEILING_MB )); then
+    fail "the Lean build peaked at ${peak_mb} MiB process RSS, over the ${LEAN_PEAK_CEILING_MB} MiB budget — split the largest register chunk at the next law-number boundary (tools/measure-lean-memory.sh) rather than raising the budget"
+  else
+    ok "Lean peak process RSS: ${peak_mb} MiB (budget ${LEAN_PEAK_CEILING_MB} MiB)"
+  fi
+  if (( peak_build_mb > LEAN_BUILD_CEILING_MB )); then
+    fail "the build's own compiler processes peaked at ${peak_build_mb} MiB RSS, over the ${LEAN_BUILD_CEILING_MB} MiB budget — the runner is one allocation from an OOM kill"
+  else
+    ok "Lean peak build RSS: ${peak_build_mb} MiB (budget ${LEAN_BUILD_CEILING_MB} MiB)"
+  fi
 else
   fail "lake is not installed (elan: https://github.com/leanprover/elan)"
 fi
@@ -167,7 +218,7 @@ if [[ -n "$exe_roots" ]]; then
     expected="$(printf '%s\n' "$expected" | grep -v "^$(printf '%s' "$root" | sed -e 's/\.lean$//' -e 's#/#.#g')$")"
   done <<< "$exe_roots"
 fi
-actual="$(grep -oE '^import Rchain[.A-Za-z]*' "$SPEC/Rchain.lean" | sed -e 's/^import //' | sort)"
+actual="$(grep -oE '^import Rchain[.A-Za-z0-9_]*' "$SPEC/Rchain.lean" | sed -e 's/^import //' | sort)"
 if [[ "$expected" == "$actual" ]]; then
   ok "Rchain.lean imports every module ($(printf '%s\n' "$expected" | wc -l) files)"
 else
@@ -362,16 +413,18 @@ fi
 # directly (`-s/--tstack`, in Kb) if a caller would rather pass it than raise the process limit. The
 # `ulimit` line itself stays above the mapping with step 1; only this prose could move down.
 #
-# --- and step 1's own bound, in the same shape: a measurement, not a guess ----------------------
+# --- and step 1's own bounds, in the same shape: measurements, not guesses -----------------------
 # Step 1 used to run `lake build` **unbounded**, so a module that cannot finish looked like a gate that
-# has not finished — indistinguishable, to a reader waiting on it, from a slow one. The bound is
-# `timeout 1800` around the whole three-target chain, and the measurement behind the number is CI's:
-# the Lean conformance job gets **60 minutes for everything** (`ci.yml:117`), and the cold library build
-# is the largest single item in it. A separate measurement from the sort unit's reland attempt, which is
-# why the bound is generous: that tree did not finish in 1200 s and reached line 719 of 2,448 — an
-# *unfinished* build, not a slow one — so the bound has to be loose enough to pass a real cold build and
-# tight enough to become a loud failure rather than a hang. 1800 s does both; if a future build legitimately
-# needs more, raise it *with* the measurement that says so, the way this comment does.
+# has not finished — indistinguishable, to a reader waiting on it, from a slow one. There are now two
+# bounds, both `timeout 1800`: the register phase (Base, then each chunk in its own Lake invocation,
+# then the umbrella) and the rest of the library plus the executables. The measurement behind them is
+# CI's: the formal job gets **90 minutes for everything** (`formal-on-change.yml`/`nightly.yml`; it was
+# 60 while the gate was slower than its cache), and the cold library build is the largest single item.
+# A separate measurement from the sort unit's reland attempt is why the bound is generous: that tree
+# did not finish in 1200 s and reached line 719 of 2,448 — an *unfinished* build, not a slow one — so
+# the bound has to pass a real cold build and still become a loud failure rather than a hang. If a
+# future build legitimately needs more, raise it *with* the measurement that says so, the way this
+# comment does.
 
 # --- 5b. the law register is current -------------------------------------------
 # `spec/laws.tsv` and `spec/LAWS.md` are generated from `Rchain/Laws.lean`, and the documents' law counts
