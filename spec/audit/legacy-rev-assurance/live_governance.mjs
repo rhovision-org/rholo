@@ -57,6 +57,7 @@ async function finalRead(term,check,label) {
     const b=await finalized();
     const v=await at(term,b);
     if(check(v))return {block:b,values:v};
+    report.lastUnmatchedFinalizedRead={label,block:b,values:v};
     await sleep(1500);
   }
   throw Error("finalized read timeout: "+label);
@@ -195,6 +196,7 @@ async function main(){
         const value=response(v,tag);
         assert.ok(value,label+" missing expected "+tag+" reply: "+JSON.stringify(v).slice(0,180));
         report.stages.push({name:label,verdict:"PROCESSED",deployId:r.sig,result:value});
+        console.log("REV412 PROCESSED",label,JSON.stringify(value).slice(0,180));
         return value;
       }
       await sleep(1500);
@@ -220,11 +222,12 @@ async function main(){
   const claimTerm=wrap(lookup(gate,"claim","@found!(*ans)"));
   const fund=wrap(`new rv(\`rho:rchain:revVault\`), deployerId(\`rho:rchain:deployerId\`), ch in {
     rv!("transfer", *deployerId, ${q(treasury)}, 100, *ch) |
-    for (@r <- ch) { ans!(("fund",r)) }
+    for (@r <- ch) { match r { Nil => { ans!(("fund", true)) } _ => { ans!(("fund", false)) } } }
   }`);
   const funding=await write("deployer",fund,"fund","fund fresh private treasury");
-  assert.equal(funding[1][0],true);
-  const initial=await finalRead(balance(treasury),v=>v[0]===100,"treasury funding");
+  assert.deepEqual(funding,["fund",true],"classic native transfer must return Nil; normalized by Rholang");
+  const initial=await finalRead(balance(treasury),v=>v.length===1&&v[0]===100,"treasury funding");
+  stage("finalized treasury funding",{block:initial.block,amount:100});
   const base=await at(balance(p.owner),initial.block);
   assert.ok(Number.isSafeInteger(base[0]));
   report.initial={block:initial.block,treasury:100,beneficiary:base[0]};
@@ -262,4 +265,4 @@ async function main(){
   stage("cross-deployer replay refused; finalized balances unchanged",{block:replayBlock});
   report.result="PASS_NARROW_DISPOSABLE_VAULT_WITNESS";
 }
-try{await main();}catch(e){report.result="FAIL_OR_BLOCKED";report.failure=String(e).slice(0,800);console.error("REV412 FAIL",report.failure);process.exitCode=1;}finally{save();}
+try{await main();}catch(e){report.result="FAIL_OR_BLOCKED";report.failure=String(e.stack??e).slice(0,1800);console.error("REV412 FAIL",report.failure);process.exitCode=1;}finally{save();}

@@ -133,3 +133,11 @@ consensus proof. Single-validator, one-claim execution does not prove
 multi-validator atomicity, arbitrary claim registry, crash recovery,
 reserve insolvency handling, or general refinement of Phase III.
 No production policy or real funds. No success is claimed before CI.
+
+
+Funding API boundary: the pinned bc80abb native classic transfer returns
+Nil on success and a deploy error on failure, unlike the handle transfer's
+Either tuple. The funding program matches Nil inside Rholang and emits an
+explicit boolean acknowledgement. A block-pinned 100-unit balance is still
+required; a successful deploy or acknowledgement alone is insufficient.
+The failed run 45506881601 retains the original incompatible reply shape.
