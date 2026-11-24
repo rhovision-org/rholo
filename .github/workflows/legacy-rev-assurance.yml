@@ -18,3 +18,26 @@ jobs:
         with:
           name: synthetic-assurance-witness
           path: spec/audit/legacy-rev-assurance/witness.json
+  formal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pinned Lean toolchain
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/elan" toolchain install "$(cat spec/lean-toolchain)"
+      - name: Kernel check and emit witness corpus
+        working-directory: spec/audit/legacy-rev-assurance
+        run: |
+          set -o pipefail
+          elan run leanprover/lean4:v4.12.0 lean --version
+          elan run leanprover/lean4:v4.12.0 lean --run LegacyREV.lean | tee formal-witness.txt
+          if grep -q 'sorryAx\|declaration uses.*sorry' formal-witness.txt; then exit 1; fi
+          grep -E 'depends on axioms|does not depend on any axioms' formal-witness.txt
+          python3 compare_lean.py formal-witness.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formal-cross-language-witness
+          path: spec/audit/legacy-rev-assurance/formal-witness.txt
