@@ -8,13 +8,13 @@ jobs:
   synthetic:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Run deterministic reference witness
         working-directory: spec/audit/legacy-rev-assurance
         run: |
           set -o pipefail
           python3 test_assurance.py | tee witness.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: synthetic-assurance-witness
           path: spec/audit/legacy-rev-assurance/witness.json
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install pinned Lean toolchain
         run: |
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
@@ -37,7 +37,7 @@ jobs:
           if grep -q 'sorryAx\|declaration uses.*sorry' formal-witness.txt; then exit 1; fi
           grep -E 'depends on axioms|does not depend on any axioms' formal-witness.txt
           python3 compare_lean.py formal-witness.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: formal-cross-language-witness
           path: spec/audit/legacy-rev-assurance/formal-witness.txt
@@ -45,14 +45,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Check signed decisions and transactional crash recovery
         working-directory: spec/audit/legacy-rev-assurance
         run: |
           set -o pipefail
           openssl version
           python3 test_settlement.py 2>&1 | tee settlement-witness.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: authenticated-settlement-witness
@@ -61,18 +61,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 18
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: rhovision-org/quantum-os
           ref: 766c78257c6c60b0f8696b7e06e1b490e742f648
           path: qos
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: rhovision-org/rhogov
           ref: f93afaaf8b8053d230bfaabfe7b35b0377078345
           path: gov
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
       - name: Install pinned client dependencies and validate fixture
@@ -103,7 +103,7 @@ jobs:
           test "$ready" = yes
           node spec/audit/legacy-rev-assurance/live_governance.mjs
           sha256sum -c rev412-live.SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: disposable-governance-vault-witness
@@ -114,13 +114,13 @@ jobs:
   n4-evidence-controls:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Offline synthetic evidence falsification controls
         working-directory: spec/audit/legacy-rev-assurance
         run: |
           set -o pipefail
           python3 test_verify_n4_evidence.py 2>&1 | tee n4-evidence-controls.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: n4-offline-evidence-controls
