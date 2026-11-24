@@ -62,7 +62,8 @@ theorem vesting_monotone (a d h k : Nat) (hk : h <= k) :
       simpa [vested, hd, he] using hb
     · have hh : ¬ d <= h := by omega
       simp only [vested, if_neg hd, if_neg he, if_neg hh]
-      exact Nat.div_le_div_right (Nat.mul_le_mul_left a hk)
+      apply (Nat.le_div_iff_mul_le (show 0 < d by omega)).2
+      exact Nat.le_trans (Nat.div_mul_le_self (a * h) d) (Nat.mul_le_mul_left a hk)
 
 theorem vesting_at_start (a d : Nat) (hd : 0 < d) : vested a d 0 = 0 := by
   have h0 : d ≠ 0 := by omega
@@ -126,7 +127,7 @@ def settle (pending : List Claim) (approved : Claim → Bool)
 theorem settle_guard {p : List Claim} {auth : Claim → Bool} {s s' : State} {c : Claim}
     (h : settle p auth s c = some s') : allowed p auth s c ∧ s' = next s c := by
   by_cases hg : allowed p auth s c
-  · simp [settle, hg] at h
+  · simp only [settle, if_pos hg, Option.some.injEq] at h
     exact ⟨hg, h.symm⟩
   · simp [settle, hg] at h
 
