@@ -185,10 +185,11 @@ async function main(){
   report.sources={rholoResearch:process.env.GITHUB_SHA,rhogov:process.env.QOS412_GOV_SHA,quantumOs:process.env.QOS412_QOS_SHA};
   async function write(who,term,tag,label) {
     const r=await deployTerm({...DEFAULT_CONFIG,url:NODE,key:keys[who],shard:st.shardId,phloLimit:8000000},term,{waitAttempts:0});
-    assert.ok(r.ok&&r.sig,label+" submission refused");
+    assert.ok(r.ok&&r.sig,label+" submission refused: "+String(r.message??"missing reply").slice(0,400));
     for(let i=0;i<40;i++){
-      const j=await api("/api/v1/deploy-status/"+encodeURIComponent(r.sig));
-      assert.ok(!j.ProcessedWithError,label+" processed with error");
+      let j;
+      try { j=await api("/api/v1/deploy-status/"+encodeURIComponent(r.sig)); } catch(e) { if(!/HTTP 404|HTTP 503/.test(String(e)))throw e;await sleep(1500);continue; }
+      assert.ok(!j.ProcessedWithError,label+" processed with error: "+JSON.stringify(j.ProcessedWithError??null).slice(0,400));
       if(j.ProcessedWithSuccess){
         const v=(j.ProcessedWithSuccess.deployResult??[]).map(decode);
         const value=response(v,tag);
@@ -207,8 +208,10 @@ async function main(){
     manifest:sha("synthetic manifest 412"),policy:sha("fixed two-of-two fixture"),
     source:"synthetic-source-412",owner:addr.carol,amount:70,group:"legacy-rev-412",
     opener:addr.deployer,roll:[addr.alice,addr.bob].sort(),issueContract:issue};
-  const title=canon(p), iid="rev412-"+sha(title);
-  report.claim=p;report.issue={uri:issue,id:iid,titleHash:sha(title)};
+  const claimHash=sha(canon(p));
+  const title="legacy-rev-claim/1:"+encodeURIComponent(canon(p)), iid="rev412-"+claimHash;
+  assert.deepEqual(JSON.parse(decodeURIComponent(title.slice("legacy-rev-claim/1:".length))),p);
+  report.claim=p;report.issue={uri:issue,id:iid,titleHash:sha(title),claimHash};
   await write("deployer",C.openIssueProgram(issue,iid,p.group,title,"approval",["approve","reject"],p.roll),"opened","open exact claim issue");
   const gateResult=await write("deployer",installGate(issue,p,title,iid),"installed-gate","install one-claim private treasury gate");
   const gate=uri(gateResult[1]), treasury=gateResult[2];

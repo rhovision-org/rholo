@@ -113,7 +113,7 @@ The node source version and executable hash are retained; this is not
 automatically a test of current Rholo dev e63b7e5a. All writes target only
 127.0.0.1 on an isolated Actions runner with public disposable fixture keys.
 
-The one-claim gate fixes the exact claim title (canonical JSON), manifest,
+The one-claim gate fixes the exact claim title (URI-encoded canonical JSON), manifest,
 policy, amount, beneficiary, issue URI, opener, group and two-voter roll.
 It ignores opener-written results and requires closed status, exact ballots,
 no guests or roll edits. The proposed result before voting is a refusal
