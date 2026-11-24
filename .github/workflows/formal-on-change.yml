@@ -1,8 +1,16 @@
 # The formal gate, on the change that can make it stale.
 #
-# `tools/check-lean-conformance.sh` runs in `nightly.yml` — it is a Lean build (16 minutes cold), a Coq
-# `make`, and ~104 serial `cargo test` invocations, which is why it is not a step of every push. The hole
-# that leaves is narrow and real, and it was measured: on 2026-10-09 an envelope row moved
+# `tools/check-lean-conformance.sh` runs in `nightly.yml` — a Lean build (11 minutes warm, ~16 cold), a
+# Coq `make`, 22 corpus-consumer `cargo test` invocations and 420 `rustWitness` entries (388 distinct),
+# which is why it is not a step of every push. **Measured 2026-11-24** (run 45395731139, PR 670): the
+# gate step took 40m52s, of which the Lean build was 11m25s, the corpus consumers 5m40s and the
+# *serial* witness census 23m26s. So the job is split into a Lean half and a Rust half on separate
+# runners, and the Rust half runs the census in a bounded pool (`RUST_WITNESS_JOBS`, deduplicated
+# execution). The two halves run concurrently; the named check below is an aggregator that requires
+# both. A `push` to `dev` runs only the Lean half: it builds and saves the canonical cache every PR
+# restores — the "build the cache once" that a manual dispatch used to be the only source of.
+#
+# The hole this gate closes is narrow and real, and it was measured: on 2026-10-09 an envelope row moved
 # (`FaucetResponse` gained two keys) and the corpora had to be re-emitted **by hand**, because nothing in
 # the per-push path compares `spec/conformance/*.tsv` against the Lean that emits it. If that hand-run is
 # forgotten, the branch merges green and the corpus is stale until the next 03:37 — and the failure then
@@ -68,28 +76,43 @@ on:
       - "rholang/src/system_processes.rs"
       - "node/src/api/**"
       - "node/src/web/**"
+  push:
+    # **The cache warmer, not a second nightly.** Only the Lean build inputs: a dev push builds the
+    # canonical `spec/.lake/build` and saves it, so every PR restores a cache from dev HEAD instead of
+    # an arbitrary older dispatch (the measured cause of the 10m54s Lean phase on 2026-11-24). The
+    # Rust half stays on the nightly, which is the full backstop. Keep this block after the
+    # `pull_request` block: the gate's trigger-list check reads the *first* `paths:` block.
+    branches: [dev]
+    paths:
+      - "spec/Rchain/**"
+      - "spec/Rchain.lean"
+      - "spec/lean-toolchain"
+      - "spec/lakefile.toml"
+      - "spec/lake-manifest.json"
+      - "tools/check-lean-conformance.sh"
   workflow_dispatch:
 
 permissions:
   # Least privilege, stated rather than defaulted (AUDIT C137).
   contents: read
+  # The cache-miss seed reads a prior dev run's artifact; nothing here writes anything else.
+  actions: read
 
 concurrency:
   group: formal-on-change-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  formal:
+  lean:
     # The oracle is the mathematical specification (`AGENTS.md`'s *Prime directive*). This job is the
-    # per-PR half of the same gate `nightly.yml` owns on a schedule: one implementation, two cadences,
-    # so the two cannot disagree about what "the specification holds" means.
-    name: Formal specification (Lean, Coq, conformance)
+    # Lean half: build, scans, Coq, corpora emission/staleness, the register and trigger checks. It
+    # also runs on a push to `dev`, where its build is the canonical cache every PR restores (see the
+    # trigger's comment). The named check is the aggregator at the bottom, which requires this job and
+    # the Rust half.
+    name: Formal gate — Lean half (build, Coq, emission)
     runs-on: ubuntu-24.04
-    # 90, not 60: the gate is ~55 minutes cold, and the internal `timeout 1800` bounds can put the
-    # 417 Rust witnesses over a 60-minute wall before the step has a chance to report which half ran
-    # long. The Lean build cache (below) makes the common case much shorter; the ceiling is for the
-    # cold one and for a real failure to name itself.
-    timeout-minutes: 90
+    # 60: the cold build is ~16-20 minutes; the warm one ~11. A ceiling, not an expectation.
+    timeout-minutes: 60
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -102,14 +125,6 @@ jobs:
         # attempt and retries the whole install with backoff, so a transient mirror outage is a retry
         # rather than a false red, and a persistent one names itself in minutes.
         run: sudo tools/ci-apt-install.sh coq
-
-      - name: Install protobuf compiler
-        run: sudo tools/ci-apt-install.sh protobuf-compiler libprotobuf-dev
-
-      - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          cache-on-failure: false
 
       - name: Install elan (the Lean toolchain comes from spec/lean-toolchain)
         run: |
@@ -135,34 +150,80 @@ jobs:
           restore-keys: |
             lean-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json', 'spec/lakefile.toml') }}-
 
-      - name: Formal gate
-        run: tools/check-lean-conformance.sh
+      - name: Seed the build from the latest successful dev artifact
+        # QLF's eviction fallback (rhovision-org/quantum-logical-framework, `lean-verify.yml`), adapted:
+        # the cache restore handles the normal case; this covers an evicted entry, where the 7-day
+        # artifact survives. No identical-input refusal is needed — Lake validates every trace and
+        # rebuilds what does not match, so a mismatched seed is a slow build, never a wrong one.
+        if: steps.lean-cache.outputs.cache-matched-key == ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh run list --workflow formal-on-change.yml --branch dev --status success \
+                      --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)"
+          if [[ -z "$run_id" ]]; then
+            echo 'No successful dev run to seed from; using a cold build.'
+            exit 0
+          fi
+          seed_dir="$(mktemp -d)"
+          if ! gh run download "$run_id" -n rchain-lean-build -D "$seed_dir"; then
+            echo 'The dev artifact is unavailable; using a cold build.'
+            exit 0
+          fi
+          if [[ -z "$(find "$seed_dir" -name '*.olean' -print -quit)" ]]; then
+            echo 'The dev artifact carries no oleans; using a cold build.'
+            exit 0
+          fi
+          mkdir -p spec/.lake/build
+          cp -a "$seed_dir"/. spec/.lake/build/
+          echo "Seeded the build from dev run $run_id."
+
+      - name: Formal gate (Lean half)
+        run: tools/check-lean-conformance.sh --lean-only
 
       - name: Upload the compiled Lean modules
-        # The local-development escape hatch: a constrained machine can
-        # `gh run download <run> -n rchain-lean-build -D spec/.lake/build` and let `lake build`
-        # replay these instead of re-elaborating the register. Mathlib's oleans are excluded; they
-        # come from `lake exe cache get`.
-        if: success()
+        # The local-development escape hatch and the seed above. The path is `lib`, not `lib/lean`:
+        # this project's `lean_lib` writes under `.lake/build/lib/<Namespace>/…` (there is no
+        # `lib/lean`), and the 2026-11-24 artifact was 3.3 MB of `ir` with no oleans because of it.
+        # `lib` carries the per-module `.olean`/`.ilean` **and their `.trace` files**, which is what
+        # lets a seed replay. Mathlib's oleans are excluded; they come from `lake exe cache get`.
+        # Upload on a dev build only: a real artifact is tens of MB, and PR runs have the cache.
+        if: success() && github.ref == 'refs/heads/dev'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rchain-lean-build
           path: |
-            spec/.lake/build/lib/lean
+            spec/.lake/build/lib
             spec/.lake/build/ir
           retention-days: 7
 
       - name: Save the Lean build cache
-        # Save only the canonical (dev) build. PRs restore it through the prefix; letting every PR
-        # save a ~0.7 GB entry would churn the repository's cache budget. The key is the one the
-        # restore step computed; a hit means the entry already exists.
+        # Save only the canonical (dev) build — including the dev-push warmer, which is what makes
+        # the prefix restore fresh. PR-created caches are scoped to the PR ref and cannot help other
+        # PRs, so letting every PR save an entry would only churn the repository's cache budget. The
+        # key is the one the restore step computed; a hit means the entry already exists.
         if: success() && github.ref == 'refs/heads/dev' && steps.lean-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: spec/.lake/build
           key: ${{ steps.lean-cache.outputs.cache-primary-key }}
 
-      - name: Diagnose the formal step
+      - name: Record the gate's phase timings
+        # Data, not a verdict: the phase and rebuild lines the gate writes to /tmp/formal-timings.log.
+        # The next cache or parallelism decision should start from these numbers.
+        if: always()
+        run: |
+          if [[ -f /tmp/formal-timings.log ]]; then
+            {
+              echo '### Phase timings'
+              grep -hE '^(PHASE|METRIC)' /tmp/formal-timings.log || true
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Diagnose the Lean half
         # The step is intermittently SIGTERM'd before it can print its own failure
         # (issue #417). The sampler and build log are on the runner; print them
         # where the next reader can see them.
@@ -173,7 +234,7 @@ jobs:
           echo '--- lean build tail ---'; tail -n 120 /tmp/lean-build.log || true
           echo '--- memory sampler tail ---'; tail -n 200 /tmp/lean-memory.log || true
 
-      - name: Record the formal gate memory
+      - name: Record the Lean half's memory
         # The gate enforces its own peak now (8 GiB process, 12 GiB build RSS); this step keeps the
         # raw evidence, including the sampler tail, when a run is killed before the gate can report.
         if: always()
@@ -182,3 +243,74 @@ jobs:
           echo '--- peak RSS sample ---'
           grep -E '^[[:space:]]*[0-9]+[[:space:]]+[0-9]+' /tmp/lean-memory.log 2>/dev/null | sort -k2 -nr | head -3 || true
           echo '--- sampler tail ---'; tail -n 40 /tmp/lean-memory.log || true
+
+  rust:
+    # The Rust half: the 22 committed corpora's consumers and the register's witness census. No elan,
+    # no Coq — it reads the committed corpora and register, and the Lean job is what proves they are
+    # current. The census deduplicates its input and runs through a bounded pool; two jobs on a
+    # 4-core runner is the first measured value, not an assumed optimum.
+    name: Formal gate — Rust half (corpora, witnesses)
+    if: github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    # 45: a cold cargo build plus the census; once the crate cache is warm the census is minutes.
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install protobuf compiler
+        run: sudo tools/ci-apt-install.sh protobuf-compiler libprotobuf-dev
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: false
+
+      - name: Formal gate (Rust half)
+        # **Measured on this PR, and the reason the census stays at 2.** At 2 the census was 931 s
+        # (cold cargo cache) and the slowest node web witnesses ~45 s each; at 4 it was 908 s and the
+        # same tests took ~99 s each — the pool saturates on those tests, so the extra jobs buy no
+        # wall time and move the runtimes toward their timeouts. 2 is the measured value, not a
+        # default; `RUST_WITNESS_JOBS=1` is the rollback if a node test shows a port or temp-path
+        # collision.
+        env:
+          RUST_CORPUS_JOBS: 2
+          RUST_WITNESS_JOBS: 2
+        run: tools/check-lean-conformance.sh --rust-only
+
+      - name: Record the gate's phase timings
+        # The witness checker's own metrics (distinct entries, jobs, slowest five) land here too.
+        if: always()
+        run: |
+          if [[ -f /tmp/formal-timings.log ]]; then
+            {
+              echo '### Phase timings'
+              grep -hE '^(PHASE|METRIC)' /tmp/formal-timings.log || true
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Diagnose the Rust half
+        if: failure()
+        run: |
+          echo '--- witness log tail ---'; tail -n 80 /tmp/rust-witnesses.log || true
+          echo '--- corpus logs ---'; ls -l /tmp/lean_*_corpus.log 2>/dev/null | tail -5 || true
+
+  formal:
+    # **The named check, preserved.** It requires both halves. A green Rust half cannot hide a stale
+    # corpus — the Lean half owns the emission check — and a cancelled half fails this job rather than
+    # skipping the name. `dev` has no required status checks today; the name is kept for readers and
+    # for the day one is added.
+    name: Formal specification (Lean, Coq, conformance)
+    needs: [lean, rust]
+    if: always() && github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Both halves passed
+        env:
+          LEAN_RESULT: ${{ needs.lean.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+        run: |
+          echo "lean: $LEAN_RESULT"
+          echo "rust: $RUST_RESULT"
+          [[ "$LEAN_RESULT" == "success" && "$RUST_RESULT" == "success" ]]

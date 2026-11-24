@@ -31,7 +31,17 @@
 #      environment. The documents that quote the register's totals are re-derived from `spec/laws.tsv`
 #      here too (`tools/emit-lean-counts.sh`), so a number in prose cannot drift from it.
 #
-# Usage: tools/check-lean-conformance.sh
+# **Two halves, one gate.** `--lean-only` runs steps 1–5, 5b–5e and the API-SCHEMA check; it needs
+# elan and Coq. `--rust-only` runs the corpus consumers and the witness census; it needs cargo, and
+# reads the committed corpora and register rather than re-emitting them. CI runs the halves on
+# separate runners so a pull request waits for the slower half rather than the sum of both. No flag
+# runs the whole gate, which is what `make check-lean` and a local verification use. The split is a
+# scheduling decision, not a weaker standard: each half runs the same checks, in the same order, that
+# the single gate ran.
+#
+# Usage: tools/check-lean-conformance.sh [--lean-only | --rust-only]
+# Env:   RUST_CORPUS_JOBS (corpus-consumer pool, default 1)
+#        RUST_WITNESS_JOBS (witness-census pool, default 1; read by check-rust-witnesses.sh)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -40,9 +50,39 @@ failures=0
 fail() { printf 'FAIL  %s\n' "$*"; failures=$((failures + 1)); }
 ok() { printf 'ok    %s\n' "$*"; }
 
+want_lean=1
+want_rust=1
+while (( $# > 0 )); do
+  case "$1" in
+    --lean-only) want_rust=0 ;;
+    --rust-only) want_lean=0 ;;
+    *) echo "usage: $0 [--lean-only | --rust-only]" >&2; exit 2 ;;
+  esac
+  shift
+done
+if (( want_lean == 0 && want_rust == 0 )); then
+  echo "usage: $0 [--lean-only | --rust-only]" >&2
+  exit 2
+fi
+
+# Phase timings and rebuild counts are data, not verdicts: they are printed for the CI step summary
+# and never affect the exit status. The file is per-run and copied to a stable path on exit, so a
+# run that is killed before its summary still leaves the measurement behind.
+TIMINGS="${TMPDIR:-/tmp}/formal-timings.$$"
+: >"$TIMINGS"
+trap 'cp "$TIMINGS" /tmp/formal-timings.log 2>/dev/null || true' EXIT
+run_start=$SECONDS
+phase_start=$SECONDS
+phase() {
+  local now=$SECONDS
+  printf 'PHASE %-24s %ss\n' "$1" "$((now - phase_start))" | tee -a "$TIMINGS"
+  phase_start=$now
+}
+
 # the stack the elaborator needs (measured): see the note below the corpus-to-test mapping (AUDIT C76).
 ulimit -s 65536 2>/dev/null || true
 
+if (( want_lean )); then
 # --- 1. the library builds -----------------------------------------------------
 # The executable targets are built too, and that is load-bearing: a module that is an `lean_exe` root
 # (the corpus emitter) is *not* pulled in by the library target, so `lake build` alone would compile
@@ -104,6 +144,7 @@ if command -v lake >/dev/null 2>&1; then
     fail "lake build Rchain.Laws — see /tmp/lean-build.log (a 124 there is the 1800 s bound above, not a proof error)"
     tail -n 120 /tmp/lean-build.log || true
   fi
+  phase "register build"
   (cd "$SPEC" && timeout 1800 bash -c 'lake build && lake build rchain-corpus && lake build rchain-laws && lake build rchain-tables') >>/tmp/lean-build.log 2>&1 &
   rest_pid=$!
   while kill -0 "$rest_pid" 2>/dev/null; do
@@ -117,6 +158,15 @@ if command -v lake >/dev/null 2>&1; then
     tail -n 120 /tmp/lean-build.log || true
   fi
   printf 'lake build: finished %s\n' "$(date -Is)"
+  phase "library build"
+  # **The built-line count is the warm-cache signal.** Lake prints `Built …` for every artifact it
+  # elaborates or recompiles (olean, C, object, executable) and nothing for one it replays; zero is
+  # a fully replayed build, and the number is the work a cache restore left to do. It is a line
+  # count, not a module count — one module accounts for several lines — so compare it with itself
+  # across runs, not with `lean_modules`. `grep -c` exits 1 on no match, hence the `|| true`.
+  lake_built_lines="$(grep -cE '(^|[[:space:]])Built[[:space:]]' /tmp/lean-build.log || true)"
+  lean_modules="$(find "$SPEC/Rchain" -name '*.lean' -not -path '*/.lake/*' | wc -l)"
+  printf 'METRIC lean_modules=%s lake_built_lines=%s\n' "$lean_modules" "$lake_built_lines" | tee -a "$TIMINGS"
   # **The peak guards.** The per-process guard is the register's memory ratchet: a compiler-family
   # process that grows past 8 GiB is a signal to split the chunk that made it, not to raise the
   # number. The build-sum guard catches the case the process guard cannot — several compiler
@@ -322,8 +372,25 @@ if [[ -x "$ROOT/tools/emit-lean-corpus.sh" ]]; then
     printf '%s\n' "$dirty" | sed 's/^/      /'
   fi
 fi
+phase "spec emission and scans"
+fi
 
+if (( want_rust )); then
 if [[ -d "$ROOT/spec/conformance" ]]; then
+  # The corpus consumers are independent readers of committed TSVs, so they can run concurrently;
+  # `RUST_CORPUS_JOBS` (default 1) bounds the pool. Each worker gets its own log and verdict file in
+  # a per-run directory — the fixed `/tmp/<test>.log` path was shared state between two gate runs on
+  # one host (the lesson `check-rust-witnesses.sh` already carries) — and the parent prints the
+  # verdicts in corpus order, so the output does not depend on which test finished first.
+  corpus_jobs="${RUST_CORPUS_JOBS:-1}"
+  if [[ ! "$corpus_jobs" =~ ^[0-9]+$ ]] || (( corpus_jobs < 1 )); then
+    corpus_jobs=1
+  fi
+  CORPUS_LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/lean-corpus.XXXXXX")"
+  corpus_test=()
+  corpus_crate=()
+  corpus_dir=()
+  corpus_layer=()
   for corpus in "$ROOT"/spec/conformance/*.tsv; do
     [[ -e "$corpus" ]] || continue
     layer="$(basename "$corpus" .tsv)"
@@ -367,12 +434,52 @@ if [[ -d "$ROOT/spec/conformance" ]]; then
     else
       dir=models
     fi
-    if (cd "$ROOT" && cargo test -p "$crate" --test "$test_name" >/tmp/"$test_name".log 2>&1); then
-      ok "$dir/tests/$test_name.rs agrees with spec/conformance/$layer.tsv"
+    corpus_test+=("$test_name")
+    corpus_crate+=("$crate")
+    corpus_dir+=("$dir")
+    corpus_layer+=("$layer")
+  done
+  # One worker: the same `cargo test` the serial loop ran, with its own log and verdict.
+  run_corpus() {
+    local i="$1"
+    local test_name="${corpus_test[$i]}" crate="${corpus_crate[$i]}"
+    local dir="${corpus_dir[$i]}" layer="${corpus_layer[$i]}"
+    local log="$CORPUS_LOGDIR/$test_name.log"
+    if (cd "$ROOT" && cargo test -p "$crate" --test "$test_name" >"$log" 2>&1); then
+      printf 'ok    %s/tests/%s.rs agrees with spec/conformance/%s.tsv\n' \
+        "$dir" "$test_name" "$layer" >"$CORPUS_LOGDIR/print.$i"
+      printf 'OK\n' >"$CORPUS_LOGDIR/status.$i"
     else
-      fail "$dir/tests/$test_name.rs disagrees with the corpus — see /tmp/$test_name.log"
+      cp "$log" "/tmp/$test_name.log" 2>/dev/null || true
+      printf 'FAIL  %s/tests/%s.rs disagrees with the corpus — see /tmp/%s.log\n' \
+        "$dir" "$test_name" "$test_name" >"$CORPUS_LOGDIR/print.$i"
+      printf 'FAIL\n' >"$CORPUS_LOGDIR/status.$i"
+    fi
+  }
+  running=0
+  for i in "${!corpus_test[@]}"; do
+    run_corpus "$i" &
+    running=$((running + 1))
+    if (( running >= corpus_jobs )); then
+      wait -n || true
+      running=$((running - 1))
     fi
   done
+  wait || true
+  for i in "${!corpus_test[@]}"; do
+    if [[ -f "$CORPUS_LOGDIR/print.$i" && -f "$CORPUS_LOGDIR/status.$i" ]]; then
+      cat "$CORPUS_LOGDIR/print.$i"
+      read -r corpus_status <"$CORPUS_LOGDIR/status.$i" || corpus_status=FAIL
+    else
+      printf 'FAIL  %s/tests/%s.rs — no verdict was recorded for this corpus\n' \
+        "${corpus_dir[$i]}" "${corpus_test[$i]}"
+      corpus_status=FAIL
+    fi
+    [[ "$corpus_status" == "OK" ]] || failures=$((failures + 1))
+  done
+  rm -rf "$CORPUS_LOGDIR"
+fi
+phase "corpus consumers"
 fi
 
 # **The scope of the two steps above (the token scan and the completeness check) is every `.lean`
@@ -387,18 +494,18 @@ fi
 # root — there is no third kind, and a scratch file belongs outside `spec/`. `.lake/` is excluded
 # because it holds 5,668 generated `.lean` files, which is why the old scope looked reasonable.
 #
-# This note sits BELOW the corpus-to-test mapping on purpose: `Laws.lean` cites a *line* of this
-# script for law 30, and a line-anchored citation into a script moves whenever a step above it grows.
+# This note sits BELOW the corpus-to-test mapping on purpose. Law 30 used to cite a *line* of this
+# script, and a line-anchored citation moves whenever a step above it grows.
 #
-# **That is not a stylistic preference — it was paid for twice** (AUDIT C70, C76). C70's first version
-# grew the region above the mapping by 40 lines and the register audit failed on the stale window; C75
-# added a 13-line `ulimit` comment at line 36 for the very measurement below, and moved law 30's
-# citation `208 → 222`, past the audit's ±8 window — while C75's own commit message and AUDIT row
-# claimed the audit was green. **Nothing in the tree could tell**: the gate does not run the audit, and
-# the audit's own record of the citation was prose. The durable fix is the symbol form
-# (`tools/check-lean-conformance.sh:lean_parse_corpus`, which the register is landing); until it lands,
-# **any line added above the mapping re-stales law 30's citation**, so keep the header block at its
-# current length (the mapping must stay within ±8 lines of the cited line 207).
+# **That was paid for twice** (AUDIT C70, C76). C70's first version grew the region above the mapping
+# by 40 lines and the register audit failed on the stale window; C75 added a 13-line `ulimit` comment
+# at line 36 for the very measurement below, and moved law 30's citation `208 → 222`, past the
+# audit's ±8 window — while C75's own commit message and AUDIT row claimed the audit was green.
+# **Nothing in the tree could tell**: the gate does not run the audit, and the audit's own record of
+# the citation was prose. The durable fix has landed: law 30 cites the symbol form
+# (`tools/check-lean-conformance.sh:lean_parse_corpus`), which a line insertion cannot shift, and
+# `5b1ffe8f1` makes that form resolvable and checked. The mapping still stays where it is — the
+# symbol is a better anchor than a line, not permission to move the step it names.
 
 # --- the stack the elaborator needs, measured ----------------------------------
 # `Rchain/Sort.lean`'s comparator blocks are elaborated with tactic cascades over a 24-constructor
@@ -426,6 +533,7 @@ fi
 # future build legitimately needs more, raise it *with* the measurement that says so, the way this
 # comment does.
 
+if (( want_lean )); then
 # --- 5b. the law register is current -------------------------------------------
 # `spec/laws.tsv` and `spec/LAWS.md` are generated from `Rchain/Laws.lean`, and the documents' law counts
 # and statuses are supposed to come from them. Committed and re-emitted here for the same reason the
@@ -587,6 +695,8 @@ if [[ -f "$ROOT/spec/conformance/protocol.tsv" ]]; then
     ok "every urn in law 39's catalog has a row in spec/API-SCHEMA.md"
   fi
 fi
+phase "register and schema checks"
+fi
 
 # --- the register's Rust half, run by name -------------------------------------
 #
@@ -628,6 +738,7 @@ fi
 # writes its own `mktemp` file, the success line is a line *matched as the checker's summary* rather
 # than whatever sits last in the file, and the failure path still copies the log to the stable
 # `/tmp/rust-witnesses.log` a reader has always been pointed at.
+if (( want_rust )); then
 witness_col="$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "rustWitness") { print i; exit } }' \
                  "$ROOT/spec/laws.tsv")"
 if [[ -z "$witness_col" ]]; then
@@ -644,6 +755,9 @@ else
                        "$witness_log" | tail -1 || true)"
   if (( witness_rc == 0 )) && [[ -n "$witness_summary" ]]; then
     ok "$witness_summary"
+    # The checker's own measurements (distinct entries, jobs, slowest five) are data, not verdicts;
+    # surface them in the CI log so the next parallelism change is decided on a number.
+    grep '^metric ' "$witness_log" | sed 's/^/      /' || true
     rm -f "$witness_log"
   else
     kept="/tmp/rust-witnesses.log"
@@ -658,6 +772,8 @@ else
     rm -f "$witness_log"
   fi
 fi
+phase "witness census"
+fi
 
 # (`tools/audit-protocols.sh` was to be a *static* audit of the vendored protocol content — a
 # "linear consume with no paired produce" walk for law 41 and a call-shape table for law 40. Law 41's
@@ -666,9 +782,17 @@ fi
 # layer like the others, not as a hook here: a conditional check for a file that does not exist is a
 # green that means nothing.)
 
+phase "final checks"
+printf 'PHASE %-24s %ss\n' "total" "$((SECONDS - run_start))" | tee -a "$TIMINGS"
 echo ""
 if (( failures > 0 )); then
   echo "===== $failures formal check(s) FAILED ====="
   exit 1
 fi
-echo "===== the formal gate is green ====="
+if (( want_lean && want_rust )); then
+  echo "===== the formal gate is green ====="
+elif (( want_lean )); then
+  echo "===== the Lean half of the formal gate is green ====="
+else
+  echo "===== the Rust half of the formal gate is green ====="
+fi
