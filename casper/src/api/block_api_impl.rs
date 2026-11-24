@@ -1006,7 +1006,19 @@ impl BlockApi for BlockApiImpl {
     /// The store is cleared **first**, and its failure is propagated: a timer woken before the record
     /// is gone would resume, halt again on the next failure, and find the old record still standing —
     /// so a clear that did not reach the store cannot be allowed to read as a resume.
-    async fn clear_autopropose_halt(&self) -> Result<(), String> {
+    async fn clear_autopropose_halt(
+        &self,
+        acknowledge_divergence: Option<&str>,
+    ) -> Result<(), String> {
+        // **A divergence halt is a separate fact with no automatic exit** (F-U26-02, #658). The
+        // acknowledgement must name the refused block; a resume that did not name it would be the
+        // silent exit the record exists to prevent. Store-first, like the halt: a failed clear must
+        // not read as a resume.
+        if let Some(halt) = self.dag.read_divergence_halt().await? {
+            crate::divergence_halt::acknowledgement(acknowledge_divergence, &halt)?;
+            self.dag.clear_divergence_halt().await?;
+            self.propose_health.clear_divergence_halt();
+        }
         self.dag.clear_halt_record().await?;
         // **The self-replay record is cleared with the halt** (#564). The operator resume is the one
         // way out of both; a record left standing would re-seed the latch at the next boot and make

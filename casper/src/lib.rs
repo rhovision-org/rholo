@@ -18,6 +18,7 @@ pub mod checkpoint;
 pub mod conf;
 pub mod construct_deploy;
 pub mod dag;
+pub mod divergence_halt;
 pub mod engine;
 pub mod event_converter;
 pub mod gateway;

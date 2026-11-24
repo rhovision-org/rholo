@@ -187,10 +187,13 @@ impl BlockApi for ShardRoutingBlockApi {
     /// fault, not choosing a shard. Clearing a shard that is not halted is a no-op, so fanning out is
     /// safe; the reverse — resuming only one member — would leave the others halted with no route to
     /// reach them.
-    async fn clear_autopropose_halt(&self) -> Result<(), String> {
+    async fn clear_autopropose_halt(
+        &self,
+        acknowledge_divergence: Option<&str>,
+    ) -> Result<(), String> {
         let mut failed: Vec<String> = Vec::new();
         for (shard_id, api) in &self.shards {
-            if let Err(e) = api.clear_autopropose_halt().await {
+            if let Err(e) = api.clear_autopropose_halt(acknowledge_divergence).await {
                 failed.push(format!("{shard_id}: {e}"));
             }
         }
@@ -607,6 +610,7 @@ mod tests {
             let primary = self.shard_id.ends_with("root");
             ProposerHealth {
                 self_validation_refusal: None,
+                divergence_halt: None,
                 // **The non-primary carries the halt marker** (W-N10-04): the row is that a shard whose
                 // timer has halted off the primary was invisible, so the fixture makes exactly that
                 // shard the halted one and the primary the healthy one.
@@ -694,7 +698,10 @@ mod tests {
             self.record("get_propose_result");
             Ok(self.shard_id.clone())
         }
-        async fn clear_autopropose_halt(&self) -> Result<(), String> {
+        async fn clear_autopropose_halt(
+            &self,
+            _acknowledge_divergence: Option<&str>,
+        ) -> Result<(), String> {
             self.record("clear_autopropose_halt");
             Ok(())
         }

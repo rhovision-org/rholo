@@ -115,6 +115,12 @@ The operator surface carries **every `PublicStatus` field** (flattened), plus `P
 `orphanDetections`, `proposalHalted`, `proposalHaltReason`) and the operator-only state already
 defined by `OperatorStatus` (divergence, halt, reset marker, sync, resources, per-shard health).
 
+**`divergenceHalt`** is the operator-only record of a spent restore budget (F-U26-02, #658):
+`{at, block, seqNum, episodes, durable}`. The named `block` is the acknowledgement
+`POST /api/v1/autopropose/resume?acknowledgeDivergence=<hex>` requires to clear it; there is no
+automatic exit, and the node keeps serving the chain it holds while production is stopped. `durable:
+false` carries the same "unknown, not never" meaning as `autoproposeHalt`.
+
 It is **not** a superset of `/health`. The two surfaces overlap in three groups, and nothing else:
 
 1. **`PublicStatus`, flattened** — `version`, `address`, `networkId`, `shardId`, `peers`, `nodes`,
@@ -214,7 +220,6 @@ counted debt, not an implied field.
 | owed diagnostic | why it matters | issue evidence |
 |---|---|---|
 | `syncBlockLegAgeMs`, `syncTrieLegAgeMs` | the trie leg has no idle bound, so a join can hang at h=0 with no per-leg age. (`syncPhase` is now published on `/api/v1/status` — §4.4.) | #100, #457, #13 |
-| `unrestorableRecords` acting rule | the counter is published but **nothing in the node acts on it**; an operator can see a permanent divergence and do nothing with it. (An external consumer does act: the N8 partition/rejoin harness fails with `FAIL_PERMANENT_DIVERGENCE` when it is non-zero — `tests/consensus-partition-rejoin.py`.) | #287, #320, #658 |
 | `ownSequenceRecord` | the durable own-signed-sequence record (Law 122) is reconciled at boot but is not surfaced; an operator cannot see why a proposer is waiting for a catch-up to re-adopt a signature | #658 |
 | `equivocationEvidence` | the durable equivocation evidence store is not on any route; an operator cannot see the offence the proposer may need to attach | #658 |
 | `gatewayTxn` | the node-local coordinator ledger has no status route; an in-flight or terminal gateway transaction is invisible | #658 |

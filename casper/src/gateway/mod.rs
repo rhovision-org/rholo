@@ -589,7 +589,10 @@ mod tests {
         /// Delegates to the floored read: this double has no unfinalised view of its own, and the
         /// method is required rather than defaulted so that is a decision rather than an oversight
         /// (`ShardRoutingBlockApi` is the implementation that had to forward it for real).
-        async fn clear_autopropose_halt(&self) -> Result<(), String> {
+        async fn clear_autopropose_halt(
+            &self,
+            _acknowledge_divergence: Option<&str>,
+        ) -> Result<(), String> {
             Ok(())
         }
 

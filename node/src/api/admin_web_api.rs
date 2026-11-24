@@ -28,7 +28,12 @@ pub trait AdminWebApi: Send + Sync {
     /// a choice of shard, and clearing a shard that is not halted is a no-op. The returned string names
     /// the shards whose clear *failed*, which is the case an operator has to know about — a clear that
     /// did not reach the store must not read as a resume.
-    async fn resume_autopropose(&self) -> Result<String, BlockApiException>;
+    /// `acknowledge_divergence` must name the refused block when a divergence halt stands
+    /// (F-U26-02, #658); it is ignored when none does.
+    async fn resume_autopropose(
+        &self,
+        acknowledge_divergence: Option<&str>,
+    ) -> Result<String, BlockApiException>;
 
     /// **The resource-fallback resume** (unit C, B37): take a fresh sample and clear a latched
     /// `throttled`/`critical`/`unavailable` state **only if that sample is actually clear**. Returns

@@ -728,6 +728,22 @@ impl Proposer {
                 None,
             ));
         }
+        // **A divergence halt stops every trigger** (F-U26-02, #658): the restore budget was spent on
+        // a block this node can neither validate nor rewind past without an anchor the network has not
+        // agreed. The proposer has no shard id, so it consults the registry conservatively — any
+        // halted member stops production — while serving continues. The operator's acknowledgement of
+        // the named block is the only exit.
+        if let Some((_, halt)) = crate::divergence_halt::any() {
+            return Ok((
+                ProposeResult {
+                    propose_status: ProposeStatus::DivergenceHalted {
+                        block: rchain_shared::base16::encode(&halt.block_hash),
+                        seq: halt.seq_num,
+                    },
+                },
+                None,
+            ));
+        }
         // A DAG that cannot be read is an error, not `NotBonded` (AUDIT C67): the oracle's
         // `lookupUnsafe` raises, and reporting "not bonded" would stop this node proposing on a wrong
         // reason with nothing in the log.
