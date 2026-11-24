@@ -427,6 +427,8 @@ def _availability(availability, claim_id: str | None) -> list[str]:
 
 def _pressure(pressure, claim_id: str | None, names: list[str],
               transport: str | None) -> list[str]:
+    if claim_id == "RC-5" and pressure is None:
+        return ["manifest: pressure is missing; RC-5's endpoint and cap are inputs"]
     if pressure is None:
         return []
     if not isinstance(pressure, dict):

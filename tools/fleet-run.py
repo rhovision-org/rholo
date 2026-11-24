@@ -1489,6 +1489,8 @@ class AvailabilityRun:
     def run(self) -> dict:
         _begin(self.manifest, self.transport, self.result)
         names = [node["name"] for node in self.manifest["nodes"]]
+        if not self.availability:
+            raise Precondition("manifest: availability is missing; the sweep window is an input")
         window = int(self.availability.get("window_blocks", 10))
         if window < 10:
             raise Precondition("availability.window_blocks must be at least 10")
