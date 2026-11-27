@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import time
@@ -56,6 +57,14 @@ def _fixture_baseline(arm: str = "local") -> dict:
                 for i in range(4)
             ],
             "rejected": [{"validator": i, "found": False} for i in range(4)],
+            **({
+                "epoch_length": 10,
+                "retention": [
+                    {"validator": i, "boundary": boundary, "height": boundary,
+                     "hash": "ef" * 32, "marker_present": True}
+                    for boundary in (20, 30) for i in range(4)
+                ],
+            } if arm == "public" else {}),
             "traces": [{
                 "kind": "merge", "validator": 0, "parents": ["ab" * 32],
                 "mode": "fringe",
@@ -67,6 +76,36 @@ def _fixture_baseline(arm: str = "local") -> dict:
             }],
         },
     }
+
+
+def _check_public_retention(observations: dict, inclusion_height: int | None,
+                            validators: set) -> list[str]:
+    epoch = observations.get("epoch_length")
+    rows = observations.get("retention")
+    if type(epoch) is not int or epoch <= 0 or inclusion_height is None:
+        return ["public retention has no valid inclusion height or epoch length"]
+    if not isinstance(rows, list):
+        return ["public retention samples are missing"]
+    first = ((inclusion_height // epoch) + 1) * epoch
+    expected = {(validator, boundary)
+                for validator in validators for boundary in (first, first + epoch)}
+    observed = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            return ["public retention sample is not an object"]
+        validator, boundary = row.get("validator"), row.get("boundary")
+        height, block_hash = row.get("height"), row.get("hash")
+        if (type(validator) is not int or type(boundary) is not int
+                or type(height) is not int or height < boundary
+                or not isinstance(block_hash, str) or re.fullmatch(r"[0-9a-f]{64}", block_hash) is None
+                or row.get("marker_present") is not True):
+            return ["public retention sample does not show a retained marker at its epoch boundary"]
+        if (validator, boundary) in observed:
+            return ["public retention repeats a validator and epoch boundary"]
+        observed.add((validator, boundary))
+    if not expected <= observed:
+        return ["public retention is missing a validator sample at one of the two next epoch boundaries"]
+    return []
 
 
 def _check_baseline(record: dict) -> tuple[str, list[str]]:
@@ -108,7 +147,10 @@ def _check_baseline(record: dict) -> tuple[str, list[str]]:
                            default=None)
     if inclusion_height is None:
         problems.append("settlements carry no inclusion height")
-    validators = {row.get("validator") for row in finalised if isinstance(row, dict)}
+    validators = {row["validator"] for row in finalised
+                  if isinstance(row, dict) and type(row.get("validator")) is int}
+    if common.arm_of(record) == "public":
+        problems.extend(_check_public_retention(observations, inclusion_height, validators))
     if len(validators) < 4:
         problems.append(f"finalised heads read on {len(validators)} validators, expected 4")
     for row in finalised:
@@ -475,6 +517,7 @@ def _observe(target, record: dict, source: dict, out: Path, validators: int,
             # The public arm has no drill summary: retention is sampled from the live chain, at
             # two further epoch boundaries, and `drill_result` is derived from those reads.
             retention = _retention_samples(target, settlements, marker, value, actions, validators)
+            record["observations"]["epoch_length"] = actions.get("epoch_length")
             record["observations"]["retention"] = retention
             record["observations"]["drill_result"] = (
                 "pass" if retention and all(row["marker_present"] for row in retention)

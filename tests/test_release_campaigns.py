@@ -367,6 +367,24 @@ class ClaimTests(unittest.TestCase):
             derived = builder.derive_claim(row, roots=(Path(root),))
         self.assertNotEqual(derived["public"]["action"]["reading"], "safe")
 
+    def test_rc1_rederives_public_retention_from_both_boundaries(self):
+        module = checker.load_test(self.claim("RC-1"))
+        valid = module.fixture("public")
+        self.assertEqual(module.check(valid)[0], "pass")
+        for mutate in (
+            lambda rows: rows.clear(),
+            lambda rows: rows.pop(),
+            lambda rows: rows[-1].update(height=29),
+            lambda rows: rows[-1].update(marker_present=False),
+            lambda rows: rows[-1].update(validator=0),
+        ):
+            with self.subTest(mutation=mutate):
+                record = copy.deepcopy(valid)
+                mutate(record["observations"]["retention"])
+                verdict, reasons = module.check(record)
+                self.assertEqual(verdict, "fail")
+                self.assertTrue(any("public retention" in reason for reason in reasons), reasons)
+
     def test_a_public_not_observed_action_names_the_manifest(self):
         row = self.claim("RC-1")
         with tempfile.TemporaryDirectory() as root:
