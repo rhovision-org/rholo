@@ -101,6 +101,21 @@ def main():
             and history.is_finalized(40403, expected_hash)):
         raise AssertionError("Anchor no longer finalized on both nodes before key activation")
 
+    checkpoints = {}
+    for label, endpoint in (
+        ("serving", "/api/v1/checkpoint"),
+        ("accepted_anchor", "/api/v1/checkpoint/anchor/" + expected_hash),
+    ):
+        try:
+            checkpoints[label] = history.fetch(41403, endpoint)
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            checkpoints[label] = {"read_error": str(exc)[:200]}
+    persist("before_reactivation.json", {
+        "source_head": live_source,
+        "joiner_head": live_joiner,
+        "joiner_checkpoints": checkpoints,
+    })
+
     before = inspect()
     if before["Name"] != "/" + NAME:
         raise AssertionError("Unexpected Docker container")
@@ -140,10 +155,11 @@ def main():
     cmd = original + ["--validator-private-key-path", "/var/lib/rnode/validator.hex"]
     assert "--validator-private-key-path" not in original
 
-    # Containers may be replaced only in this disposable hosted-runner namespace;
-    # the node's volume is never deleted or recreated.
+    # Match the normal activation sequence in tools/devnet.sh. Close the passive
+    # process cleanly before replacing its container in the disposable runner.
+    call("docker", "stop", NAME, timeout=50)
+    call("docker", "rm", NAME)
     activation_ts = time.time()
-    call("docker", "rm", "-f", NAME)
     started = call(*(flags + [image] + cmd), timeout=55).stdout.strip()
     after = inspect()
     state_after = [m for m in after["Mounts"] if m["Destination"] == "/var/lib/rnode"]
@@ -219,7 +235,12 @@ def main():
 
     fresh = call("docker", "logs", "--since", str(int(activation_ts)-1), NAME, timeout=25)
     logs = fresh.stdout + fresh.stderr
-    active_blocks = active_proposal_witness(logs)
+    proposal_error = None
+    try:
+        active_blocks = active_proposal_witness(logs)
+    except AssertionError as exc:
+        active_blocks = []
+        proposal_error = str(exc)
     reported_equivocation = "equivocation detected" in logs
     reported_bad_state = "declared pre-state hash is not the state" in logs
     had_new_lfs = "LFS state is successfully restored." in logs
@@ -228,6 +249,7 @@ def main():
         "anchor_hash": expected_hash, "anchor_height": expected_height,
         "accepted_work_marker": driver.marker,
         "successful_local_proposals": active_blocks,
+        "proposal_error": proposal_error,
         "same_volume": True, "validator_key_reenabled": True,
         "observations": observations, "proposals": proposals,
         "after": last, "new_lfs_after_reactivation": had_new_lfs,
@@ -241,6 +263,8 @@ def main():
         "equivocation": reported_equivocation, "bad_prestate": reported_bad_state
     }), flush=True)
 
+    if proposal_error:
+        raise AssertionError(proposal_error)
     if had_new_lfs or reported_equivocation or reported_bad_state:
         raise AssertionError("Activation introduced a fresh sync, equivocation, or prestate error")
     if not last.get("original_anchor_finalized") or not last.get("state_hashes_identical") or not last.get("new_marker_finalized"):

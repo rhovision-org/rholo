@@ -573,7 +573,7 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                     )
                     .await;
                     let outcome = match outcome {
-                        Ok(state) => {
+                        Ok((state, restored_fringe)) => {
                             // **The accepted state is written before `finished`.** The launch reads
                             // this slot and refuses a `finished` signal without it (Law 108): a sync
                             // that did not produce an anchor cannot move the node to Running.
@@ -584,15 +584,18 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
                                     "checkpoint"
                                 }
                             };
-                            *accepted_state.lock().await = Some(state);
-                            report_restored_checkpoint(
+                            let checkpoint = report_restored_checkpoint(
                                 &approved_store,
-                                &target,
+                                &restored_fringe,
                                 accepted_root,
                                 accepted_kind,
                                 log.as_ref(),
                             )
-                            .await
+                            .await;
+                            if checkpoint.is_ok() {
+                                *accepted_state.lock().await = Some(state);
+                            }
+                            checkpoint
                         }
                         Err(error) => Err(error),
                     };
@@ -779,7 +782,8 @@ async fn wait_for_anchored_target(
 }
 
 /// Download the approved (last finalized) state — blocks + tuple space in parallel — and populate the
-/// DAG (port of `requestApprovedState`). Free function so it can be spawned off the dispatch loop.
+/// DAG (port of `requestApprovedState`). Return the fringe actually restored since certificate
+/// selection can replace the request that started this attempt.
 #[allow(clippy::too_many_arguments)]
 async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     fringe: &FinalizedFringe,
@@ -807,7 +811,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     latest_fringe: &tokio::sync::Mutex<Option<FinalizedFringe>>,
     fringe_arrived: &tokio::sync::Notify,
     trim_state: bool,
-) -> Result<crate::engine::anchor::AcceptedState, String> {
+) -> Result<(crate::engine::anchor::AcceptedState, FinalizedFringe), String> {
     let source = LogSource::new("casper.engine.NodeSyncing");
     let replay =
         replay.ok_or_else(|| "LFS recovery has no independent replay context".to_string())?;
@@ -914,7 +918,7 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
                 "genesis-only network: accepted the genesis block and its state; no checkpoint \
                  certificate is required below the first finalized height",
             );
-            return Ok(accepted);
+            return Ok((accepted, fringe.clone()));
         }
         // A target above genesis: the body is now stored, so the certified path's genesis fetch is
         // a store hit; continue with the certificate as usual.
@@ -1333,7 +1337,8 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     );
     // **The accepted state: the anchor is the certificate, the root is its checkpoint root, and the
     // window is the set this sync hydrated.** Law 108 and Law 109 are on the running path together.
-    crate::engine::anchor::AcceptedState::from_certificate(verified.clone(), window)
+    let accepted = crate::engine::anchor::AcceptedState::from_certificate(verified, window)?;
+    Ok((accepted, anchored))
 }
 
 /// **Fetch, verify and tie the certificate to the fringe the bootstrap served.**
