@@ -108,6 +108,33 @@ class LfsReplyLossEvidenceTests(unittest.TestCase):
         cls.lfs = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.lfs)
 
+    def test_accepts_only_a_certified_anchor_matching_the_finalized_body(self):
+        from unittest.mock import patch
+
+        key, state = "ab" * 32, "cd" * 32
+        block = {"blockHash": key, "blockNumber": 3, "postStateHash": state}
+        certificate = {
+            "checkpoint": {"anchor": key, "anchorHeight": 3, "anchorPostState": state},
+            "attestations": [{"sender": "witness"}],
+        }
+        with patch.object(self.lfs.history, "fetch", return_value=certificate) as fetch, \
+             patch.object(self.lfs, "read_block", return_value=block) as read_block, \
+             patch.object(self.lfs.history, "is_finalized", return_value=True):
+            self.assertEqual(self.lfs.certified_anchor(40403), (block, certificate))
+            fetch.assert_called_once_with(40403, "/api/v1/checkpoint")
+            read_block.assert_called_once_with(40403, key)
+
+        with patch.object(self.lfs.history, "fetch", return_value=certificate), \
+             patch.object(self.lfs, "read_block", return_value=block), \
+             patch.object(self.lfs.history, "is_finalized", return_value=False):
+            self.assertIsNone(self.lfs.certified_anchor(40403))
+        with patch.object(self.lfs.history, "fetch", return_value=certificate), \
+             patch.object(self.lfs, "read_block", return_value={**block, "postStateHash": "ef" * 32}), \
+             patch.object(self.lfs.history, "is_finalized", return_value=True):
+            self.assertIsNone(self.lfs.certified_anchor(40403))
+        with patch.object(self.lfs.history, "fetch", side_effect=OSError("checkpoint missing")):
+            self.assertIsNone(self.lfs.certified_anchor(40403))
+
     def test_counts_distinct_sends_to_the_named_peer_and_anchor(self):
         peer, anchor = "ab" * 20, "cd" * 32
         first = (

@@ -41,6 +41,32 @@ def read_block(port, hash_):
     return info
 
 
+def certified_anchor(port):
+    """Return a served checkpoint and the finalized block it actually names."""
+    try:
+        certificate = history.fetch(port, "/api/v1/checkpoint")
+        if not isinstance(certificate, dict):
+            return None
+        statement = certificate.get("checkpoint")
+        attestations = certificate.get("attestations")
+        if not isinstance(statement, dict) or not isinstance(attestations, list) or not attestations:
+            return None
+        key, height = statement.get("anchor"), statement.get("anchorHeight")
+        if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}", key):
+            return None
+        if type(height) is not int or height < 2:
+            return None
+        block = read_block(port, key)
+        if (block.get("blockNumber") != height
+                or not block.get("postStateHash")
+                or block["postStateHash"] != statement.get("anchorPostState")
+                or not history.is_finalized(port, key)):
+            return None
+        return block, certificate
+    except (OSError, ValueError, AssertionError):
+        return None
+
+
 def closure(port, anchor):
     found = {}
     stack = [anchor]
@@ -246,28 +272,31 @@ def main():
     genesis = positive.genesis_hash(40403)
     if not genesis:
         raise AssertionError("missing genesis before controlled proposal")
-    deployment = subprocess.run(["tools/devnet.sh", "deploy", "hello.rho"], text=True,
-                                capture_output=True, timeout=60)
-    if deployment.returncode:
-        raise AssertionError("seed deploy rejected: " + deployment.stdout[-500:])
-    print("LFS_ANCHOR_DEPLOY " + deployment.stdout[-200:], flush=True)
-
     baseline = None
     for attempt in range(30):
-        proposed = subprocess.run(["tools/devnet.sh", "propose"], text=True,
-                                  capture_output=True, timeout=30)
-        anchor = history.last_finalized(40403)
-        if anchor and anchor["blockNumber"] >= 2:
+        # A finalized block is not sufficient for the certified LFS path. Until
+        # the source serves a certificate, keep supplying bounded real work to
+        # the quiet network before cutting the reply path.
+        if attempt % 4 == 0:
+            deployment = subprocess.run(["tools/devnet.sh", "deploy", "hello.rho"], text=True,
+                                        capture_output=True, timeout=60)
+            if deployment.returncode:
+                raise AssertionError("seed deploy rejected: " + deployment.stdout[-500:])
+            print("LFS_ANCHOR_DEPLOY " + deployment.stdout[-200:], flush=True)
+        subprocess.run(["tools/devnet.sh", "propose"], text=True, capture_output=True, timeout=30)
+        candidate = certified_anchor(40403)
+        if candidate:
+            anchor, certificate = candidate
             ancestor = closure(40403, anchor["blockHash"])
             changed = [fp for fp in ancestor.values()
                        if fp["blockNumber"] > 0 and fp["preStateHash"] and fp["preStateHash"] != fp["postStateHash"]]
             if len(ancestor) >= 3 and changed:
-                baseline = {"anchor": anchor, "ancestry": ancestor,
+                baseline = {"anchor": anchor, "ancestry": ancestor, "certificate": certificate,
                             "changed_ancestors": len(changed), "attempts": attempt+1}
                 break
         time.sleep(2)
     if not baseline:
-        raise AssertionError("could not drive a nontrivial finalized anchor and state change")
+        raise AssertionError("SETUP_CHECKPOINT: no served certificate for a nontrivial finalized anchor")
     save("anchor_baseline.json", baseline)
     print("LFS_ANCHOR_BASELINE " + json.dumps({
         "hash": baseline["anchor"]["blockHash"], "height": baseline["anchor"]["blockNumber"],
