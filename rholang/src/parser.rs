@@ -1107,36 +1107,25 @@ impl Parser {
     /// (arithmetic and below — no sends, no `|`, no `new`), while a tuple requires a comma after its
     /// first element. So the tuple case is decided by `lparen_opens_a_tuple` **on the tokens** and
     /// handed straight to the collection path — the interior is read once, by the full grammar — and
-    /// only the group case is tried speculatively here.
-    ///
-    /// The speculation rewinds for an interior this attempt could not read as a `Proc4` (a comma-less
-    /// `(a!(b))`, a `(a | b)`, an unclosed paren), and that is cheap: the failure is detected at the
-    /// first token the group's grammar cannot continue (the `!` of a send), not after a complete
-    /// re-parse of a nested interior. **No successful parse is ever re-read** — which is what made
-    /// nested tuples cost 2^n before this fix (parse only, debug, 32 MiB: 10 levels 7 ms, 20 levels
-    /// 4.8 s, 30 levels > 45 s, per AUDIT C102).
+    /// a group is parsed with `Proc4`. If the group fails, return its error: a comma-free
+    /// interior cannot be a tuple. Rewinding on a depth or syntax error re-enters every
+    /// enclosing group and can repeat the same work exponentially.
     fn parse_proc11_head(&mut self) -> Result<Proc, RholangError> {
-        if self.peek() != &Tok::LParen {
+        if self.peek() != &Tok::LParen || self.lparen_opens_a_tuple() {
             return self.parse_proc12();
         }
-        if self.lparen_opens_a_tuple() {
-            // A tuple: let the collection path parse the interior once, with the full grammar.
-            return self.parse_proc12();
-        }
-        let save = self.pos;
         self.next();
-        match self.parse_proc4() {
-            Ok(inner) if self.peek() == &Tok::RParen => {
-                self.next();
-                Ok(inner)
-            }
-            // The interior did not fit `Proc4`, or the `)` never came: hand the text back to the
-            // collection path, which requires the comma too.
-            _ => {
-                self.pos = save;
-                self.parse_proc12()
-            }
+        let inner = self.parse_proc4()?;
+        if self.peek() != &Tok::RParen {
+            return Err(RholangError::SyntaxError(format!(
+                "a tuple needs a comma: `(x,)` for one element, `(x, y)` for more, and a \
+                 parenthesised expression may not contain a send, `|`, `new` or `if` \
+                 (pos={})",
+                self.pos
+            )));
         }
+        self.next();
+        Ok(inner)
     }
 
     fn parse_proc12(&mut self) -> Result<Proc, RholangError> {
@@ -1410,14 +1399,13 @@ impl Parser {
         }
     }
 
-    /// A tuple's tail, given its **first element** and a current token of `Comma`: `TupleSingle` for
-    /// `(x,)` and `TupleMultiple` for `(x, y, …)`.
+    /// A tuple's tail after the first element and its comma: `TupleSingle` for `(x,)`
+    /// and `TupleMultiple` for `(x, y, …)`.
     ///
     /// Named rather than inlined because it *is* the tuple production, and because the second attempt
     /// at AUDIT C102 wanted to call it from a second place — see `lparen_opens_a_tuple` for why that
     /// turned out to be the wrong shape and this is back to one caller.
     fn parse_tuple_tail(&mut self, first: Proc) -> Result<Collection, RholangError> {
-        self.next(); // the comma
         if self.peek() == &Tok::RParen {
             self.next();
             Ok(Collection::CollectTuple(Tuple::TupleSingle(Box::new(
@@ -1475,24 +1463,9 @@ impl Parser {
             Tok::LParen => {
                 self.next();
                 let first = self.parse_proc()?;
-                if self.peek() == &Tok::Comma {
-                    self.parse_tuple_tail(first)
-                } else {
-                    // Reached only through `parse_proc11_head`'s fallback: the interior was not a
-                    // `Proc4` (so it is not the `PExprs` group) *and* there is no comma (so it is
-                    // not a tuple, whose productions — `TupleSingle ::= "(" Proc ",)"` and
-                    // `TupleMultiple ::= "(" Proc "," [Proc] ")"` — both require one). `(a!(b))`
-                    // and `(a | b)` land here, and both are syntax errors in the grammar: this
-                    // parser used to accept them as one-element tuples, which silently changed the
-                    // meaning of any expression feeding an operator (`(a + b) % c` reduced as
-                    // `Tuple([a + b]) % c`).
-                    return Err(RholangError::SyntaxError(format!(
-                        "a tuple needs a comma: `(x,)` for one element, `(x, y)` for more, and a \
-                         parenthesised expression may not contain a send, `|`, `new` or `if` \
-                         (pos={})",
-                        self.pos
-                    )));
-                }
+                self.expect(Tok::Comma)?;
+                // The tail reader starts immediately after the comma.
+                self.parse_tuple_tail(first)
             }
             Tok::LBrace => {
                 self.next();
@@ -2056,8 +2029,23 @@ mod tests {
         );
     }
 
-    /// The control for the test above: the same *shape*, just under the budget, still parses. Without
-    /// it the refusal could be a generator that emits nonsense rather than a bound doing its job.
+    /// A committed group returns its first depth refusal instead of reparsing its interior.
+    #[test]
+    fn a_group_preserves_the_recursion_limit_error() {
+        let mut parser = Parser {
+            toks: lex("(1)").unwrap(),
+            pos: 0,
+            depth: MAX_PARSE_DEPTH,
+        };
+        let depth_error = RholangError::SyntaxError("parse depth exceeded".into());
+        assert_eq!(parser.parse_proc11_head(), Err(depth_error));
+        assert_eq!(
+            parser.pos, 1,
+            "a group failure must leave the cursor at the refusal"
+        );
+    }
+
+    /// The same AST shape just under the composed budget still parses.
     #[test]
     fn accepts_a_deep_ast_under_the_budget() {
         let inner = nested_chain(3, 100);
@@ -2215,7 +2203,7 @@ mod tests {
         for src in ["(a!(b))", "(a | b)", "(new x in { Nil })"] {
             let err = parse(src).expect_err("must not parse: {src}");
             assert!(
-                format!("{err}").contains("a tuple needs a comma"),
+                matches!(err, RholangError::SyntaxError(_)),
                 "{src}: unexpected error {err}"
             );
         }
