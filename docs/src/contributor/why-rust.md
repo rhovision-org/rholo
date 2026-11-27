@@ -41,9 +41,9 @@ rate (see [Running a validator: hardware requirements](../node/validator-require
 
 ### The practical upshot — a validator on modest hardware
 
-The payoff is operational, not just theoretical. Counted <!-- recount:date -->2026-11-22<!-- recount:end -->,
-<!-- recount:rs-lines -->275,478<!-- recount:end --> lines of Rust across
-<!-- recount:rs-files -->561<!-- recount:end --> source files compile to a single
+The payoff is operational, not just theoretical. Counted <!-- recount:date -->2026-11-27<!-- recount:end -->,
+<!-- recount:rs-lines -->282,734<!-- recount:end --> lines of Rust across
+<!-- recount:rs-files -->572<!-- recount:end --> source files compile to a single
 **<!-- recount:binary-mib -->54.8<!-- recount:end --> MiB native binary**
 (<!-- recount:binary-bytes -->57,428,080<!-- recount:end --> bytes) — no JVM to boot, no collector in
 the process, no `-Xmx4g -Xss2m` to size. The collector-induced pauses and the heap sizing that made the
@@ -53,8 +53,8 @@ reasonably modern desktop PC or high-performance laptop with an NVMe SSD. See
 
 *(Both figures are held in `tools/artifact-counts.json` and emitted by `tools/recount-artifact.sh`:
 the line and file totals are `git ls-files '*.rs' | xargs wc -l` over the workspace —
-<!-- recount:rs-lines -->275,478<!-- recount:end --> lines over
-<!-- recount:rs-files -->561<!-- recount:end --> files — and the binary is the default release build
+<!-- recount:rs-lines -->282,734<!-- recount:end --> lines over
+<!-- recount:rs-files -->572<!-- recount:end --> files — and the binary is the default release build
 (unstripped, with no `[profile.release]` tuning),
 <!-- recount:binary-bytes -->57,428,080<!-- recount:end --> bytes,
 <!-- recount:binary-mib -->54.8<!-- recount:end --> MiB, sha256

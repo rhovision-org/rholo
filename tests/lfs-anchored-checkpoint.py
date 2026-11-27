@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import time
 import urllib.error
@@ -155,7 +156,21 @@ def wait_for_local_finality(result, port=41403, deadline=75):
 
 
 
-def reset_with_reply_loss(bootstrap_ip, node_id, genesis):
+def acknowledged_fringe_requests(log, peer, anchor):
+    """Keep one acknowledged send per retry to the intended peer and anchor."""
+    sent = re.compile(
+        rf"\bLFS fringe request ([1-9][0-9]*)/[1-9][0-9]* sent to peer "
+        rf"{re.escape(peer)} \(anchor {re.escape(anchor)}\); awaiting admitted reply\s*$"
+    )
+    attempts = {}
+    for line in log.splitlines():
+        match = sent.search(line)
+        if match:
+            attempts.setdefault(int(match[1]), line)
+    return list(attempts.values())
+
+
+def reset_with_reply_loss(bootstrap_ip, node_id, anchor):
     """Drop bootstrap replies while the joiner request is acknowledged."""
     if os.environ.get("LFS_INITIAL_REPLY_LOSS") != "1":
         adversarial.reset(bootstrap_ip, key=node_id)
@@ -186,8 +201,7 @@ def reset_with_reply_loss(bootstrap_ip, node_id, genesis):
             if startup_errors:
                 save("joiner_startup_failure.json", {"errors": startup_errors})
                 raise AssertionError("SETUP_JOINER_STARTUP: " + startup_errors[-1])
-            requests = [line for line in observed.splitlines()
-                        if "LFS fringe request " in line and "sent; awaiting admitted reply" in line]
+            requests = acknowledged_fringe_requests(observed, node_id, anchor)
             if "LFS state is successfully restored." in observed:
                 raise AssertionError("reply-loss control failed: restored through blocked path")
             if len(requests) >= 2:
@@ -265,7 +279,7 @@ def main():
     node_id = adversarial.cert_id(positive.BOOTSTRAP)
     os.environ["DEVNET_RESET_SYNC_ANCHOR"] = baseline["anchor"]["blockHash"]
     os.environ["DEVNET_RESET_PASSIVE"] = "1"
-    reset_with_reply_loss(bootstrap_ip, node_id, genesis)
+    reset_with_reply_loss(bootstrap_ip, node_id, baseline["anchor"]["blockHash"])
     args = json.loads(positive.cmd(
         "docker", "inspect", "-f", "{{json .Config.Cmd}}", positive.JOINER))
     if "--sync-anchor" not in args or args[args.index("--sync-anchor") + 1] != baseline["anchor"]["blockHash"]:

@@ -99,6 +99,35 @@ class RecoveryHarnessTests(unittest.TestCase):
             with self.assertRaises(AssertionError):m.durable_state_volume({"Mounts":mounts})
 
 
+class LfsReplyLossEvidenceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "lfs_anchor", ROOT / "tests/lfs-anchored-checkpoint.py"
+        )
+        cls.lfs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.lfs)
+
+    def test_counts_distinct_sends_to_the_named_peer_and_anchor(self):
+        peer, anchor = "ab" * 20, "cd" * 32
+        first = (
+            "2026-11-27T12:50:07.152Z INFO  [casper.protocol.CommUtil] "
+            f"LFS fringe request 1/10 sent to peer {peer} (anchor {anchor}); "
+            "awaiting admitted reply"
+        )
+        second = first.replace("1/10", "2/10")
+        wrong_peer = second.replace(peer, "ef" * 20)
+        wrong_anchor = second.replace(anchor, "latest")
+        send_failure = second.replace("sent to peer", "failed to send to peer")
+        reply = f"LFS fringe reply admitted for peer {peer} on attempt 2/10"
+        noise = "\n".join([first, first, wrong_peer, wrong_anchor, send_failure, reply])
+        self.assertEqual(self.lfs.acknowledged_fringe_requests(noise, peer, anchor), [first])
+        self.assertEqual(
+            self.lfs.acknowledged_fringe_requests(noise + "\n" + second, peer, anchor),
+            [first, second],
+        )
+
+
 ANCHOR = {"height": 60, "hash": "ab" * 32, "node": 0, "case": "seven-ahead"}
 
 

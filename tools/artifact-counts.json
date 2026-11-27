@@ -10,8 +10,8 @@
     "strip": "not stripped"
   },
   "code_dirty": false,
-  "date": "2026-11-22",
-  "git_commit": "b8bbdd7bf",
+  "date": "2026-11-27",
+  "git_commit": "4a8500c2",
   "git_dirty": false,
   "known_stale": [
     "39102784",
@@ -23,37 +23,39 @@
     "226974",
     "231044",
     "232773",
+    "275478",
     "43.6",
     "461",
     "467",
     "474",
     "508",
     "513",
-    "515"
+    "515",
+    "561"
   ],
   "legacy": {
     "bytes": 27425437,
     "citation_paths": 165,
-    "citation_refs": 257,
+    "citation_refs": 255,
     "files": 1596
   },
   "members": 14,
   "per_crate": {
     "block-storage": {
       "files": 21,
-      "lines": 7891
+      "lines": 7999
     },
     "casper": {
-      "files": 117,
-      "lines": 100449
+      "files": 127,
+      "lines": 105553
     },
     "comm": {
       "files": 39,
-      "lines": 9632
+      "lines": 9807
     },
     "crypto": {
       "files": 28,
-      "lines": 4977
+      "lines": 4983
     },
     "graphz": {
       "files": 1,
@@ -64,8 +66,8 @@
       "lines": 14089
     },
     "node": {
-      "files": 110,
-      "lines": 52397
+      "files": 111,
+      "lines": 53577
     },
     "ocapn": {
       "files": 30,
@@ -77,11 +79,11 @@
     },
     "rholang": {
       "files": 54,
-      "lines": 43367
+      "lines": 44030
     },
     "rspace": {
       "files": 60,
-      "lines": 16765
+      "lines": 16785
     },
     "rspace-bench": {
       "files": 1,
@@ -97,8 +99,8 @@
     }
   },
   "schema": 1,
-  "tracked_rs_files": 561,
-  "tracked_rs_lines": 275478,
+  "tracked_rs_files": 572,
+  "tracked_rs_lines": 282734,
   "workspace": {
     "files": 11,
     "lines": 3461
