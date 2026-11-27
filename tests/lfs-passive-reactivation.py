@@ -60,6 +60,21 @@ def active_proposal_witness(log):
     return rows
 
 
+def anchored_head_matches(joiner, source, height, expected_hash):
+    """Require the exact anchor or a later head independently finalized by both nodes."""
+    if not isinstance(joiner, dict) or not isinstance(source, dict):
+        return False
+    head_height, head_hash = joiner.get("blockNumber"), joiner.get("blockHash")
+    if type(head_height) is not int or head_height < height:
+        return False
+    if head_height == height:
+        return head_hash == expected_hash
+    return (source.get("blockNumber") == head_height
+            and isinstance(head_hash, str)
+            and re.fullmatch(r"[0-9a-f]{64}", head_hash) is not None
+            and source.get("blockHash") == head_hash)
+
+
 def main():
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted":
         raise SystemExit("Refusing activation outside disposable hosted Actions runner")
@@ -73,10 +88,18 @@ def main():
         raise AssertionError("Passive LFS acceptance is not green; refusing activation")
     if checkpoint["source_anchor_hash"] != expected_hash:
         raise AssertionError("Source anchor changed in persisted evidence")
-    if checkpoint["after_restart"]["lfb_hash"] != expected_hash:
-        raise AssertionError("Passive joiner did not hold exactly the anchor LFB")
-    if not history.is_finalized(41403, expected_hash):
-        raise AssertionError("Anchor no longer finalized before key activation")
+    previous = checkpoint["after_restart"]
+    joiner = {"blockNumber": previous["lfb"], "blockHash": previous["lfb_hash"]}
+    source = {"blockNumber": previous["source_lfb"], "blockHash": previous["source_lfb_hash"]}
+    if not anchored_head_matches(joiner, source, expected_height, expected_hash):
+        raise AssertionError("Passive joiner did not retain the anchor or reach a shared finalized successor")
+    live_joiner = history.last_finalized(41403)
+    live_source = history.last_finalized(40403)
+    if not anchored_head_matches(live_joiner, live_source, expected_height, expected_hash):
+        raise AssertionError("The passive finalized head is not corroborated before key activation")
+    if not (history.is_finalized(41403, expected_hash)
+            and history.is_finalized(40403, expected_hash)):
+        raise AssertionError("Anchor no longer finalized on both nodes before key activation")
 
     before = inspect()
     if before["Name"] != "/" + NAME:
@@ -99,6 +122,9 @@ def main():
 
     flags = ["docker", "run", "-d", "--name", NAME, "--network", "devnet"]
     flags += port_bindings(before)
+    sysctls = before["HostConfig"].get("Sysctls") or {}
+    for name, value in sorted(sysctls.items()):
+        flags += ["--sysctl", f"{name}={value}"]
     memory = before["HostConfig"].get("Memory", 0)
     swap = before["HostConfig"].get("MemorySwap", 0)
     if memory:
@@ -125,6 +151,8 @@ def main():
         raise AssertionError("Reactivate did not preserve original data volume")
     if "--validator-private-key-path" not in after["Config"]["Cmd"]:
         raise AssertionError("Validator key was not enabled")
+    if (after["HostConfig"].get("Sysctls") or {}) != sysctls:
+        raise AssertionError("Reactivation did not preserve the node's service port reservation")
     print("LFS_VALIDATOR_REACTIVATED " + json.dumps({
         "same_volume": True, "volume": volume_name,
         "validator_key_enabled": True, "anchor": expected_hash,
@@ -174,7 +202,8 @@ def main():
             if (last["source_lfb"] is not None
                     and last["source_lfb"] > expected_height
                     and last["joiner_lfb"] is not None
-                    and last["joiner_lfb"] >= last["source_lfb"]
+                    and last["joiner_lfb"] == last["source_lfb"]
+                    and last["joiner_lfb_hash"] == last["source_lfb_hash"]
                     and still_final and consistent["state_hashes_identical"] and last["new_marker_finalized"]):
                 break
         except (OSError, AssertionError, ValueError, KeyError, urllib.error.URLError) as exc:
@@ -217,7 +246,8 @@ def main():
     if not last.get("original_anchor_finalized") or not last.get("state_hashes_identical") or not last.get("new_marker_finalized"):
         raise AssertionError("Recovery invariant degraded after reactivating validator")
     if not (last.get("source_lfb") is not None and last["source_lfb"] > expected_height
-            and last.get("joiner_lfb") is not None and last["joiner_lfb"] >= last["source_lfb"]):
+            and last.get("joiner_lfb") == last["source_lfb"]
+            and last.get("joiner_lfb_hash") == last.get("source_lfb_hash")):
         raise AssertionError("Activated validator did not demonstrate post-anchor finality progression")
     print("LFS_REACTIVATION_PASS " + json.dumps(last), flush=True)
 

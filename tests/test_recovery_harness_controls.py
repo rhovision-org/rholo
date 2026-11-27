@@ -108,6 +108,23 @@ class LfsReplyLossEvidenceTests(unittest.TestCase):
         cls.lfs = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.lfs)
 
+    def test_passive_reactivation_requires_anchor_or_shared_successor(self):
+        spec = importlib.util.spec_from_file_location(
+            "lfs_reactivation", ROOT / "tests/lfs-passive-reactivation.py"
+        )
+        reactivation = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(reactivation)
+        exact = {"blockNumber": 5, "blockHash": "ab" * 32}
+        successor = {"blockNumber": 6, "blockHash": "cd" * 32}
+        fork = {"blockNumber": 6, "blockHash": "ef" * 32}
+        behind = {"blockNumber": 4, "blockHash": "dc" * 32}
+        check = reactivation.anchored_head_matches
+        self.assertTrue(check(exact, successor, 5, exact["blockHash"]))
+        self.assertTrue(check(successor, successor, 5, exact["blockHash"]))
+        self.assertFalse(check(successor, fork, 5, exact["blockHash"]))
+        self.assertFalse(check(successor, exact, 5, exact["blockHash"]))
+        self.assertFalse(check(behind, behind, 5, exact["blockHash"]))
+
     def test_accepts_only_a_certified_anchor_matching_the_finalized_body(self):
         from unittest.mock import patch
 
