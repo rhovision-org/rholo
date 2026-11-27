@@ -601,13 +601,7 @@ pub async fn apply<
         // **The accepted fringe the boot must anchor** (Law 108). It is also the hint a restart
         // behind its peers gives the source: the head certificate may be *ahead* of this fringe,
         // and a certificate for an anchor in it is what the agreement below can accept.
-        let recorded_fringe: Option<BTreeSet<BlockHash>> = approved_store
-            .get(&[rchain_block_storage::approved_store::FINALIZED_FRINGE_KEY])
-            .await?
-            .into_iter()
-            .next()
-            .flatten()
-            .map(|accepted| accepted.hashes.iter().copied().collect());
+        let recorded_fringe = get_approved_block(&approved_store).await?;
         let acquisition = acquire_boot_certificate(
             &checkpoint_store,
             checkpoint_source.as_ref(),
@@ -729,7 +723,8 @@ pub async fn apply<
                     ),
                 );
             }
-            let recorded = recorded_fringe;
+            let recorded: Option<BTreeSet<_>> =
+                recorded_fringe.map(|accepted| accepted.hashes.into_iter().collect());
             let certified_set: BTreeSet<_> = verified
                 .checkpoint
                 .fringe_hashes
@@ -2615,9 +2610,10 @@ impl BootDecision {
     }
 }
 
-/// **Acquire the boot certificate.** A stored head is re-verified; with none, the configured
-/// checkpoint source is pulled, verified against the genesis bonds, shard-checked, recorded and
-/// adopted. `Ok(None)` means there is no stored certificate *and* no source to ask — the caller
+/// **Acquire the boot certificate.** A stored head and any matching accepted anchor are
+/// re-verified. With no head, the configured source is pulled, verified against the genesis
+/// bonds, shard-checked, recorded and adopted. `Ok(None)` means there is no stored certificate
+/// *and* no source to ask — the caller
 /// decides whether a genesis-only DAG can still proceed. A source that answers badly is a named
 /// refusal, not a silent fall-through to the generic no-certificate sentence.
 async fn acquire_boot_certificate(
@@ -2625,7 +2621,7 @@ async fn acquire_boot_certificate(
     source: Option<&Arc<dyn crate::engine::checkpoint_source::CheckpointSource>>,
     bonds: &BTreeMap<rchain_models::validator::Validator, NonNegI64>,
     shard_id: &str,
-    recorded_fringe: Option<&BTreeSet<BlockHash>>,
+    recorded_fringe: Option<&FinalizedFringe>,
 ) -> Result<Option<BootCertificate>, String> {
     acquire_boot_certificate_with(
         store,
@@ -2649,7 +2645,7 @@ async fn acquire_boot_certificate_with(
     source: Option<&Arc<dyn crate::engine::checkpoint_source::CheckpointSource>>,
     bonds: &BTreeMap<rchain_models::validator::Validator, NonNegI64>,
     shard_id: &str,
-    recorded_fringe: Option<&BTreeSet<BlockHash>>,
+    recorded_fringe: Option<&FinalizedFringe>,
     verify: &(dyn Fn(
         &rchain_models::casper::protocol::checkpoint::CheckpointCertificate,
         &BTreeMap<rchain_models::validator::Validator, NonNegI64>,
@@ -2658,7 +2654,7 @@ async fn acquire_boot_certificate_with(
           + Sync),
 ) -> Result<Option<BootCertificate>, String> {
     if let Some(certificate) = store.latest().await? {
-        let verified = verify(&certificate, bonds).map_err(|e| {
+        let mut verified = verify(&certificate, bonds).map_err(|e| {
             format!(
                 "the stored checkpoint certificate failed re-verification at boot, so the \
                  accepted fringe cannot be attributed: {e}"
@@ -2669,6 +2665,52 @@ async fn acquire_boot_certificate_with(
                 "the stored checkpoint certificate names shard {:?}, not this node's {:?}",
                 verified.checkpoint.shard_id, shard_id
             ));
+        }
+        // The serving head can advance after LFS persisted an accepted singleton anchor. Use
+        // its local certificate when the signed post-state matches the accepted record. The DAG
+        // agreement and signed commitment checks still run on the selected certificate.
+        let accepted_anchor = recorded_fringe.and_then(|fringe| match fringe.hashes.as_slice() {
+            [anchor]
+                if !verified
+                    .checkpoint
+                    .anchor
+                    .eq_ignore_ascii_case(&anchor.to_hex()) =>
+            {
+                Some((*anchor, fringe.state_hash))
+            }
+            _ => None,
+        });
+        if let Some((anchor, state_hash)) = accepted_anchor {
+            let Some(digest) = store.find_by_anchor(&anchor.into()).await? else {
+                return Ok(Some(BootCertificate {
+                    verified,
+                    source: BootCertificateSource::Stored,
+                }));
+            };
+            let certificate = store.get(&digest).await?.ok_or_else(|| {
+                "the accepted checkpoint anchor index has no certificate".to_string()
+            })?;
+            let accepted_certificate = verify(&certificate, bonds)
+                .map_err(|e| format!("the accepted checkpoint certificate was refused: {e}"))?;
+            if accepted_certificate.digest != digest
+                || accepted_certificate.checkpoint.shard_id != shard_id
+                || !accepted_certificate
+                    .checkpoint
+                    .anchor
+                    .eq_ignore_ascii_case(&anchor.to_hex())
+            {
+                return Err(
+                    "the accepted checkpoint certificate disagrees with its index or shard"
+                        .to_string(),
+                );
+            }
+            if accepted_certificate
+                .checkpoint
+                .anchor_post_state
+                .eq_ignore_ascii_case(&base16::encode(state_hash.as_bytes()))
+            {
+                verified = accepted_certificate;
+            }
         }
         return Ok(Some(BootCertificate {
             verified,
@@ -2689,7 +2731,7 @@ async fn acquire_boot_certificate_with(
     let mut candidates: Vec<rchain_models::casper::protocol::checkpoint::CheckpointCertificate> =
         Vec::new();
     if let Some(fringe) = recorded_fringe {
-        for anchor in fringe {
+        for anchor in fringe.hashes.iter().collect::<BTreeSet<_>>() {
             if let Ok(certificate) = source.fetch_certificate_at_anchor(&anchor.to_hex()).await {
                 candidates.push(certificate);
             }
@@ -3572,9 +3614,13 @@ mod tests {
         let certificate = a_certificate();
         let expected = verified_of(&certificate);
         let anchor = "11".repeat(32);
-        let mut fringe = BTreeSet::new();
-        fringe
-            .insert(BlockHash::try_from_hex(&anchor).expect("the fixture anchor is a block hash"));
+        let fringe = FinalizedFringe {
+            hashes: vec![
+                BlockHash::try_from_hex(&anchor).expect("the fixture anchor is a block hash")
+            ],
+            state_hash: StateHash::new([0x22; 32]),
+            ancestry: Vec::new(),
+        };
         let source: Arc<dyn crate::engine::checkpoint_source::CheckpointSource> =
             Arc::new(AnchorSource {
                 anchor,
@@ -3628,5 +3674,49 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[tokio::test]
+    async fn an_accepted_lfs_anchor_survives_advancement_of_the_serving_head() {
+        use rchain_models::casper::protocol::checkpoint::CheckpointCertificate;
+
+        let store = an_empty_store().await;
+        let bonds: BTreeMap<rchain_models::validator::Validator, NonNegI64> = BTreeMap::new();
+        let accepted = a_certificate();
+        let mut head = a_certificate();
+        head.checkpoint.anchor = "33".repeat(32);
+        head.checkpoint.fringe_hashes = vec![head.checkpoint.anchor.clone()];
+        head.checkpoint.anchor_height = 2;
+        let verify = |certificate: &CheckpointCertificate, _: &_| -> Result<_, String> {
+            let mut verified = verified_of(certificate);
+            verified.digest = crate::checkpoint::checkpoint_digest(&certificate.checkpoint)
+                .map_err(|error| error.to_string())?;
+            Ok(verified)
+        };
+        for certificate in [&accepted, &head] {
+            let digest = verify(certificate, &bonds).unwrap().digest;
+            store.record(&digest, certificate).await.unwrap();
+            store.adopt(&digest, certificate, false).await.unwrap();
+        }
+        let mut fringe = FinalizedFringe {
+            hashes: vec![BlockHash::try_from_hex(&accepted.checkpoint.anchor).unwrap()],
+            state_hash: StateHash::new([0x22; 32]),
+            ancestry: Vec::new(),
+        };
+        let acquired =
+            acquire_boot_certificate_with(&store, None, &bonds, "root", Some(&fringe), &verify)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(acquired.verified.checkpoint, accepted.checkpoint);
+        assert_eq!(store.latest().await.unwrap(), Some(head.clone()));
+
+        fringe.state_hash = StateHash::new([0x44; 32]);
+        let acquired =
+            acquire_boot_certificate_with(&store, None, &bonds, "root", Some(&fringe), &verify)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(acquired.verified.checkpoint, head.checkpoint);
     }
 }

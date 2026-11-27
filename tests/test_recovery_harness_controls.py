@@ -99,6 +99,79 @@ class RecoveryHarnessTests(unittest.TestCase):
             with self.assertRaises(AssertionError):m.durable_state_volume({"Mounts":mounts})
 
 
+class LfsReplyLossEvidenceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "lfs_anchor", ROOT / "tests/lfs-anchored-checkpoint.py"
+        )
+        cls.lfs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.lfs)
+
+    def test_passive_reactivation_requires_anchor_or_shared_successor(self):
+        spec = importlib.util.spec_from_file_location(
+            "lfs_reactivation", ROOT / "tests/lfs-passive-reactivation.py"
+        )
+        reactivation = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(reactivation)
+        exact = {"blockNumber": 5, "blockHash": "ab" * 32}
+        successor = {"blockNumber": 6, "blockHash": "cd" * 32}
+        fork = {"blockNumber": 6, "blockHash": "ef" * 32}
+        behind = {"blockNumber": 4, "blockHash": "dc" * 32}
+        check = reactivation.anchored_head_matches
+        self.assertTrue(check(exact, successor, 5, exact["blockHash"]))
+        self.assertTrue(check(successor, successor, 5, exact["blockHash"]))
+        self.assertFalse(check(successor, fork, 5, exact["blockHash"]))
+        self.assertFalse(check(successor, exact, 5, exact["blockHash"]))
+        self.assertFalse(check(behind, behind, 5, exact["blockHash"]))
+
+    def test_accepts_only_a_certified_anchor_matching_the_finalized_body(self):
+        from unittest.mock import patch
+
+        key, state = "ab" * 32, "cd" * 32
+        block = {"blockHash": key, "blockNumber": 3, "postStateHash": state}
+        certificate = {
+            "checkpoint": {"anchor": key, "anchorHeight": 3, "anchorPostState": state},
+            "attestations": [{"sender": "witness"}],
+        }
+        with patch.object(self.lfs.history, "fetch", return_value=certificate) as fetch, \
+             patch.object(self.lfs, "read_block", return_value=block) as read_block, \
+             patch.object(self.lfs.history, "is_finalized", return_value=True):
+            self.assertEqual(self.lfs.certified_anchor(40403), (block, certificate))
+            fetch.assert_called_once_with(40403, "/api/v1/checkpoint")
+            read_block.assert_called_once_with(40403, key)
+
+        with patch.object(self.lfs.history, "fetch", return_value=certificate), \
+             patch.object(self.lfs, "read_block", return_value=block), \
+             patch.object(self.lfs.history, "is_finalized", return_value=False):
+            self.assertIsNone(self.lfs.certified_anchor(40403))
+        with patch.object(self.lfs.history, "fetch", return_value=certificate), \
+             patch.object(self.lfs, "read_block", return_value={**block, "postStateHash": "ef" * 32}), \
+             patch.object(self.lfs.history, "is_finalized", return_value=True):
+            self.assertIsNone(self.lfs.certified_anchor(40403))
+        with patch.object(self.lfs.history, "fetch", side_effect=OSError("checkpoint missing")):
+            self.assertIsNone(self.lfs.certified_anchor(40403))
+
+    def test_counts_distinct_sends_to_the_named_peer_and_anchor(self):
+        peer, anchor = "ab" * 20, "cd" * 32
+        first = (
+            "2026-11-27T12:50:07.152Z INFO  [casper.protocol.CommUtil] "
+            f"LFS fringe request 1/10 sent to peer {peer} (anchor {anchor}); "
+            "awaiting admitted reply"
+        )
+        second = first.replace("1/10", "2/10")
+        wrong_peer = second.replace(peer, "ef" * 20)
+        wrong_anchor = second.replace(anchor, "latest")
+        send_failure = second.replace("sent to peer", "failed to send to peer")
+        reply = f"LFS fringe reply admitted for peer {peer} on attempt 2/10"
+        noise = "\n".join([first, first, wrong_peer, wrong_anchor, send_failure, reply])
+        self.assertEqual(self.lfs.acknowledged_fringe_requests(noise, peer, anchor), [first])
+        self.assertEqual(
+            self.lfs.acknowledged_fringe_requests(noise + "\n" + second, peer, anchor),
+            [first, second],
+        )
+
+
 ANCHOR = {"height": 60, "hash": "ab" * 32, "node": 0, "case": "seven-ahead"}
 
 

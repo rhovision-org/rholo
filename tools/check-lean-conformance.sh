@@ -16,8 +16,8 @@
 #      proves by evaluation in compiled code, admitting the result through `Lean.ofReduceBool`, so the
 #      compiler joins the trusted base. Four sites remain, all in `Rchain/Corpus.lean`'s corpus
 #      verdicts where the kernel does not reduce the goal at all, and the count may only go down.
-#   3. **The library is complete** — every `.lean` under `spec/` is the library root, imported by
-#      `Rchain.lean`, or a declared `lean_exe` root; there is no third kind (AUDIT C75, C76).
+#   3. **The library is complete** — every `.lean` under `spec/` is accounted for by the
+#      library root, a library import, a declared executable or an explicitly checked audit model.
 #   4. **The Coq builds** — `make` in `spec/coq/` (the second formalization of laws 2, 3, 5, 6).
 #   5. **The conformance corpora are current** — `lake exe rchain-corpus` re-emits them and
 #      `git diff --exit-code` proves the committed corpora are exactly what the Lean definitions
@@ -39,7 +39,7 @@
 # scheduling decision, not a weaker standard: each half runs the same checks, in the same order, that
 # the single gate ran.
 #
-# Usage: tools/check-lean-conformance.sh [--lean-only | --rust-only]
+# Usage: tools/check-lean-conformance.sh [--lean-only | --rust-only | --imports-only]
 # Env:   RUST_CORPUS_JOBS (corpus-consumer pool, default 1)
 #        RUST_WITNESS_JOBS (witness-census pool, default 1; read by check-rust-witnesses.sh)
 set -euo pipefail
@@ -50,18 +50,49 @@ failures=0
 fail() { printf 'FAIL  %s\n' "$*"; failures=$((failures + 1)); }
 ok() { printf 'ok    %s\n' "$*"; }
 
+# The legacy REV witness is a standalone research model. Elaborate it below and
+# retain it in the tree-wide trust scans. It is outside the Rchain law library.
+standalone_audit_module=audit/legacy-rev-assurance/LegacyREV.lean
+
+check_lean_imports() {
+  local expected actual root
+  if [[ ! -f "$SPEC/$standalone_audit_module" ]]; then
+    fail "declared standalone Lean model is missing: $standalone_audit_module"
+    return
+  fi
+  expected="$(cd "$SPEC" && find . -name '*.lean' -not -path './.lake/*' \
+    -not -path "./$standalone_audit_module" \
+    | sed -e 's#^\./##' -e 's/\.lean$//' -e 's#/#.#g' | grep -vx 'Rchain' | sort)"
+  # The executable roots are built separately and may import the library.
+  while IFS= read -r root; do
+    expected="$(printf '%s\n' "$expected" | grep -Fvx -- "$root")"
+  done < <(sed -nE 's/^root = "([^"]+)"$/\1/p' "$SPEC/lakefile.toml")
+  actual="$(grep -oE '^import Rchain[.A-Za-z0-9_]*' "$SPEC/Rchain.lean" | sed 's/^import //' | sort)"
+  if [[ "$expected" == "$actual" ]]; then
+    ok "Rchain.lean imports every library module ($(printf '%s\n' "$expected" | wc -l) files)"
+  else
+    fail "Rchain.lean's imports differ from the tree:"
+    diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") | sed 's/^/      /' || true
+  fi
+}
+
+if [[ $# -eq 1 && "$1" == --imports-only ]]; then
+  check_lean_imports
+  exit "$(( failures != 0 ))"
+fi
+
 want_lean=1
 want_rust=1
 while (( $# > 0 )); do
   case "$1" in
     --lean-only) want_rust=0 ;;
     --rust-only) want_lean=0 ;;
-    *) echo "usage: $0 [--lean-only | --rust-only]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--lean-only | --rust-only | --imports-only]" >&2; exit 2 ;;
   esac
   shift
 done
 if (( want_lean == 0 && want_rust == 0 )); then
-  echo "usage: $0 [--lean-only | --rust-only]" >&2
+  echo "usage: $0 [--lean-only | --rust-only | --imports-only]" >&2
   exit 2
 fi
 
@@ -156,6 +187,12 @@ if command -v lake >/dev/null 2>&1; then
   else
     fail "lake build (spec/) — see /tmp/lean-build.log (a 124 there is the 1800 s bound above, not a proof error)"
     tail -n 120 /tmp/lean-build.log || true
+  fi
+  if (cd "$SPEC" && timeout 180 lake env lean "$standalone_audit_module") >>/tmp/lean-build.log 2>&1; then
+    ok "standalone Lean research model elaborates: $standalone_audit_module"
+  else
+    fail "standalone Lean research model did not elaborate: $standalone_audit_module"
+    tail -n 60 /tmp/lean-build.log || true
   fi
   printf 'lake build: finished %s\n' "$(date -Is)"
   phase "library build"
@@ -257,24 +294,7 @@ else
 fi
 
 # --- 3. the library is complete ------------------------------------------------
-# The library root is the import list itself, and is not imported by anything (`grep -v` here).
-expected="$(cd "$SPEC" && find . -name '*.lean' -not -path './.lake/*' | sed -e 's#^\./##' -e 's/\.lean$//' -e 's#/#.#g' | grep -v '^Rchain$' | sort)"
-# `lean_exe` roots (e.g. the corpus emitter) are executables, not library content: exclude them.
-exe_roots="$(grep -oE 'root = "[^"]+"' "$SPEC/lakefile.toml" | sed -e 's/root = "//' -e 's/"//' \
-  | sed -e 's/\./\//g' | sed -e 's#$#.lean#')"
-if [[ -n "$exe_roots" ]]; then
-  while read -r root; do
-    [[ -n "$root" ]] || continue
-    expected="$(printf '%s\n' "$expected" | grep -v "^$(printf '%s' "$root" | sed -e 's/\.lean$//' -e 's#/#.#g')$")"
-  done <<< "$exe_roots"
-fi
-actual="$(grep -oE '^import Rchain[.A-Za-z0-9_]*' "$SPEC/Rchain.lean" | sed -e 's/^import //' | sort)"
-if [[ "$expected" == "$actual" ]]; then
-  ok "Rchain.lean imports every module ($(printf '%s\n' "$expected" | wc -l) files)"
-else
-  fail "Rchain.lean's imports differ from the tree:"
-  diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") | sed 's/^/      /' || true
-fi
+check_lean_imports
 
 # --- 4. the Coq builds ---------------------------------------------------------
 # The version is pinned in `spec/coq/coq-version` and asserted here rather than installed by the gate:

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import time
 import urllib.error
@@ -38,6 +39,32 @@ def read_block(port, hash_):
     if info.get("blockHash") != hash_:
         raise AssertionError("wrong block returned")
     return info
+
+
+def certified_anchor(port):
+    """Return a served checkpoint and the finalized block it actually names."""
+    try:
+        certificate = history.fetch(port, "/api/v1/checkpoint")
+        if not isinstance(certificate, dict):
+            return None
+        statement = certificate.get("checkpoint")
+        attestations = certificate.get("attestations")
+        if not isinstance(statement, dict) or not isinstance(attestations, list) or not attestations:
+            return None
+        key, height = statement.get("anchor"), statement.get("anchorHeight")
+        if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}", key):
+            return None
+        if type(height) is not int or height < 2:
+            return None
+        block = read_block(port, key)
+        if (block.get("blockNumber") != height
+                or not block.get("postStateHash")
+                or block["postStateHash"] != statement.get("anchorPostState")
+                or not history.is_finalized(port, key)):
+            return None
+        return block, certificate
+    except (OSError, ValueError, AssertionError):
+        return None
 
 
 def closure(port, anchor):
@@ -155,7 +182,21 @@ def wait_for_local_finality(result, port=41403, deadline=75):
 
 
 
-def reset_with_reply_loss(bootstrap_ip, node_id, genesis):
+def acknowledged_fringe_requests(log, peer, anchor):
+    """Keep one acknowledged send per retry to the intended peer and anchor."""
+    sent = re.compile(
+        rf"\bLFS fringe request ([1-9][0-9]*)/[1-9][0-9]* sent to peer "
+        rf"{re.escape(peer)} \(anchor {re.escape(anchor)}\); awaiting admitted reply\s*$"
+    )
+    attempts = {}
+    for line in log.splitlines():
+        match = sent.search(line)
+        if match:
+            attempts.setdefault(int(match[1]), line)
+    return list(attempts.values())
+
+
+def reset_with_reply_loss(bootstrap_ip, node_id, anchor):
     """Drop bootstrap replies while the joiner request is acknowledged."""
     if os.environ.get("LFS_INITIAL_REPLY_LOSS") != "1":
         adversarial.reset(bootstrap_ip, key=node_id)
@@ -186,8 +227,7 @@ def reset_with_reply_loss(bootstrap_ip, node_id, genesis):
             if startup_errors:
                 save("joiner_startup_failure.json", {"errors": startup_errors})
                 raise AssertionError("SETUP_JOINER_STARTUP: " + startup_errors[-1])
-            requests = [line for line in observed.splitlines()
-                        if "LFS fringe request " in line and "sent; awaiting admitted reply" in line]
+            requests = acknowledged_fringe_requests(observed, node_id, anchor)
             if "LFS state is successfully restored." in observed:
                 raise AssertionError("reply-loss control failed: restored through blocked path")
             if len(requests) >= 2:
@@ -232,28 +272,31 @@ def main():
     genesis = positive.genesis_hash(40403)
     if not genesis:
         raise AssertionError("missing genesis before controlled proposal")
-    deployment = subprocess.run(["tools/devnet.sh", "deploy", "hello.rho"], text=True,
-                                capture_output=True, timeout=60)
-    if deployment.returncode:
-        raise AssertionError("seed deploy rejected: " + deployment.stdout[-500:])
-    print("LFS_ANCHOR_DEPLOY " + deployment.stdout[-200:], flush=True)
-
     baseline = None
     for attempt in range(30):
-        proposed = subprocess.run(["tools/devnet.sh", "propose"], text=True,
-                                  capture_output=True, timeout=30)
-        anchor = history.last_finalized(40403)
-        if anchor and anchor["blockNumber"] >= 2:
+        # A finalized block is not sufficient for the certified LFS path. Until
+        # the source serves a certificate, keep supplying bounded real work to
+        # the quiet network before cutting the reply path.
+        if attempt % 4 == 0:
+            deployment = subprocess.run(["tools/devnet.sh", "deploy", "hello.rho"], text=True,
+                                        capture_output=True, timeout=60)
+            if deployment.returncode:
+                raise AssertionError("seed deploy rejected: " + deployment.stdout[-500:])
+            print("LFS_ANCHOR_DEPLOY " + deployment.stdout[-200:], flush=True)
+        subprocess.run(["tools/devnet.sh", "propose"], text=True, capture_output=True, timeout=30)
+        candidate = certified_anchor(40403)
+        if candidate:
+            anchor, certificate = candidate
             ancestor = closure(40403, anchor["blockHash"])
             changed = [fp for fp in ancestor.values()
                        if fp["blockNumber"] > 0 and fp["preStateHash"] and fp["preStateHash"] != fp["postStateHash"]]
             if len(ancestor) >= 3 and changed:
-                baseline = {"anchor": anchor, "ancestry": ancestor,
+                baseline = {"anchor": anchor, "ancestry": ancestor, "certificate": certificate,
                             "changed_ancestors": len(changed), "attempts": attempt+1}
                 break
         time.sleep(2)
     if not baseline:
-        raise AssertionError("could not drive a nontrivial finalized anchor and state change")
+        raise AssertionError("SETUP_CHECKPOINT: no served certificate for a nontrivial finalized anchor")
     save("anchor_baseline.json", baseline)
     print("LFS_ANCHOR_BASELINE " + json.dumps({
         "hash": baseline["anchor"]["blockHash"], "height": baseline["anchor"]["blockNumber"],
@@ -265,7 +308,7 @@ def main():
     node_id = adversarial.cert_id(positive.BOOTSTRAP)
     os.environ["DEVNET_RESET_SYNC_ANCHOR"] = baseline["anchor"]["blockHash"]
     os.environ["DEVNET_RESET_PASSIVE"] = "1"
-    reset_with_reply_loss(bootstrap_ip, node_id, genesis)
+    reset_with_reply_loss(bootstrap_ip, node_id, baseline["anchor"]["blockHash"])
     args = json.loads(positive.cmd(
         "docker", "inspect", "-f", "{{json .Config.Cmd}}", positive.JOINER))
     if "--sync-anchor" not in args or args[args.index("--sync-anchor") + 1] != baseline["anchor"]["blockHash"]:
