@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use rchain_casper::runtime_manager::RuntimeManager;
 use rchain_models::validator::Validator;
 use rchain_rholang::native_state::NativeSystemState;
+use rchain_rspace::native_store::InMemNativeStore;
 
 use crate::api::web_api::WebApi;
 
@@ -113,7 +114,7 @@ pub trait PosReadApi: Send + Sync {
     ) -> Result<Vec<DelegatorPosition>, String>;
 }
 
-/// The real read: the primary shard's live native state, plus the status API for the head's height.
+/// Reads the primary shard's committed native state and the status API's head height.
 pub struct ShardPosRead {
     runtime: Arc<RuntimeManager>,
     web_api: Arc<dyn WebApi>,
@@ -123,13 +124,25 @@ impl ShardPosRead {
     pub fn new(runtime: Arc<RuntimeManager>, web_api: Arc<dyn WebApi>) -> Self {
         ShardPosRead { runtime, web_api }
     }
+
+    async fn committed_native_state(&self) -> Result<NativeSystemState, String> {
+        // Capture one published root for the whole response. The play store belongs to execution
+        // and can hold an empty or unfinished state while the node has a committed root.
+        let root = self.runtime.current_root().await?;
+        let reader = self.runtime.get_history_repo().get_native_reader(root).await;
+        let store = Arc::new(InMemNativeStore::new(reader));
+        Ok(NativeSystemState::new(store))
+    }
 }
 
 #[async_trait]
 impl PosReadApi for ShardPosRead {
     async fn pos_status(&self) -> Result<PosStatus, String> {
-        let native = NativeSystemState::new(self.runtime.runtime().native_store());
-        let params = native.params().await?;
+        let native = self.committed_native_state().await?;
+        let params = native
+            .params_opt()
+            .await?
+            .ok_or_else(|| "PoS params leaf not found in committed state".to_string())?;
         let active = native.active_validators().await?;
         let pending = native.pending_withdrawers().await?;
         // The head's height, from the same read `/api/status` answers with — one definition of
@@ -163,7 +176,7 @@ impl PosReadApi for ShardPosRead {
         &self,
         delegator: &Validator,
     ) -> Result<Vec<DelegatorPosition>, String> {
-        let native = NativeSystemState::new(self.runtime.runtime().native_store());
+        let native = self.committed_native_state().await?;
         let latest = self
             .web_api
             .status()
