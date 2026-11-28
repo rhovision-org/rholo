@@ -129,7 +129,11 @@ impl ShardPosRead {
         // Capture one published root for the whole response. The play store belongs to execution
         // and can hold an empty or unfinished state while the node has a committed root.
         let root = self.runtime.current_root().await?;
-        let reader = self.runtime.get_history_repo().get_native_reader(root).await;
+        let reader = self
+            .runtime
+            .get_history_repo()
+            .get_native_reader(root)
+            .await;
         let store = Arc::new(InMemNativeStore::new(reader));
         Ok(NativeSystemState::new(store))
     }
