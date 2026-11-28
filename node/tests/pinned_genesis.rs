@@ -6,6 +6,8 @@ mod common;
 
 use std::time::Duration;
 
+use rchain_node::web::pos_read::PosStatus;
+
 use common::{deploy_conf, free_ports, start, temp_dir, test_runtime};
 
 async fn wait_for_log(node: &common::TestNode, needle: &str) {
@@ -114,11 +116,33 @@ fn populated_dag_restart_accepts_its_pin_and_refuses_a_different_pin() {
         {
             let node = start(&correct, matching_ports[4], matching_ports[0]).await;
             wait_for_log(&node, "Making a transition to Running state.").await;
-            let restored_hash =
-                read_genesis_hash(&format!("http://127.0.0.1:{}", matching_ports[0])).await;
+            let base = format!("http://127.0.0.1:{}", matching_ports[0]);
+            let restored_hash = read_genesis_hash(&base).await;
             assert_eq!(
                 restored_hash, canonical,
                 "matching-pin restart must retain its genesis"
+            );
+            let root = node.runtime.current_root().await.expect("committed root");
+            let params = node.params_at_hex(&root.to_hex()).await;
+            let pos = reqwest::get(format!("{base}/api/v1/pos"))
+                .await
+                .expect("request PoS status")
+                .error_for_status()
+                .expect("PoS status must be available after restart")
+                .json::<PosStatus>()
+                .await
+                .expect("decode PoS status");
+            assert!(params.epoch_length > 1, "fixture needs a non-default epoch");
+            assert_eq!(pos.epoch_length, params.epoch_length);
+            assert_eq!(pos.quarantine_length, params.quarantine_length);
+            assert_eq!(
+                pos.active_validators,
+                node.runtime
+                    .genesis_pos()
+                    .bonds
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>()
             );
             node.request_stop();
             tokio::time::timeout(Duration::from_secs(30), node.handle)
