@@ -85,7 +85,7 @@ jobs:
         # only this project's `.lake/build`; mathlib comes from `lake exe cache get`, and a restored
         # Lake configuration is worse than a cold build.
         id: lean-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: spec/.lake/build
           key: lean-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json', 'spec/lakefile.toml') }}-${{ hashFiles('spec/Rchain/**/*.lean', 'spec/Rchain.lean') }}
@@ -119,7 +119,7 @@ jobs:
       - name: Save the Lean build cache
         # Only the canonical (dev) build is saved; a hit means the entry already exists.
         if: success() && github.ref == 'refs/heads/dev' && steps.lean-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: spec/.lake/build
           key: ${{ steps.lean-cache.outputs.cache-primary-key }}
